@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Permission lifecycle types: options, decisions, states, rules.
-
 // Kinds of options the daemon may propose on a permission prompt.
 Permission_Option_Kind :: enum {
     // Allow once for this call only.

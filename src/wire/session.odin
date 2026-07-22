@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Session summary and activity wire types.
-
 // Request-time system prompt override; the default arm means the field was omitted.
 System_Prompt_Default :: struct {}
 

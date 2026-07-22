@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Content parts and media sources for user input and messages.
-
 // Fetched over HTTP by URL.
 Media_Url :: struct {
     // Remote URL. @bounded 4096

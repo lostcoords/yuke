@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Cron job types: schedule, spec, job record.
-
 // Optional-field patch applied to an existing cron job.
 Cron_Patch :: struct {
     // New display name, if changing.

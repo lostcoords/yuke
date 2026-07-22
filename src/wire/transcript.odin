@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Transcript types: messages, parts, tool state.
-
 // Creation/completion timestamps on an assistant message.
 Message_Time :: struct {
     // Creation epoch ms.

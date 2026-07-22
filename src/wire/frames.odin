@@ -1,8 +1,5 @@
 package wire
 
-
-// Top-level application frame shells.
-
 // Client request frame with typed method params. The discriminator `type` is
 // written first, then `id`, then `method` before `params` so a streaming decoder
 // can resolve the params type before reading them.

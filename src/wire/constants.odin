@@ -1,7 +1,5 @@
 package wire
 
-// Protocol constants: `PROTOCOL_VERSION`, `LIMITS`, and `CLOSE`.
-
 // Wire protocol version this daemon speaks.
 PROTOCOL_VERSION :: 1
 

@@ -1,7 +1,5 @@
 package wire
 
-// Validation helpers for annotated wire fields.
-
 // Errors returned when parsed wire data violates the v1 contract.
 Validation_Error :: enum {
     None,

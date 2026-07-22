@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Display-only tool output views.
-
 // One hunk of a unified diff.
 Diff_Hunk :: struct {
     // 1-based start line in old file.

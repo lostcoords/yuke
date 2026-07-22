@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Run lifecycle types: kind, outcome, stop reason, timing, usage.
-
 // What kind of run occupies a session.
 Run_Kind :: enum {
     // User-driven round of model + tool calls.

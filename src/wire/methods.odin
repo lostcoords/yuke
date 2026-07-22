@@ -1,8 +1,5 @@
 package wire
 
-// Protocol method registry and typed method payloads.
-
-
 // Closed enum of RPC method names. Source of truth for the method set.
 Method_Name :: enum {
     // Read a bounded daemon-ordered session-index page.

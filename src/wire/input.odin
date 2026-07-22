@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Input, queued input, and streaming part deltas.
-
 // Raw content parts. At most LIMITS.max_input_parts.
 Input_Content :: struct {
     // Raw content parts. At most LIMITS.max_input_parts.

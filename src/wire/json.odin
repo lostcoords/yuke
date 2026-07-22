@@ -3,10 +3,6 @@ package wire
 import "core:strconv"
 import "core:strings"
 
-// JSON encode back end: a discriminator-first `Emitter` and the field writers used
-// by every `*_emit`. Decoding is streaming and token-based (see stream.odin);
-// nothing here builds or parses a value tree.
-
 // Emit a required-but-nullable u64 field: always writes the key, null when absent.
 field_required_null_u64 :: proc(e: ^Emitter, name: string, m: Maybe(u64)) {
     key(e, name)

@@ -1,8 +1,5 @@
 package wire
 
-
-// Request-failure error codes and the error object returned by a failed response.
-
 // Why a request failed. Distinct from run failures (RunErrorCode).
 Error_Code :: enum {
     // Request was syntactically or semantically invalid.

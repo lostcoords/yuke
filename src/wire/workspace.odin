@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Workspace wire types.
-
 // Daemon-known workspace directory. Non-owning.
 Workspace :: struct {
     // Derived workspace id. @fixed 16

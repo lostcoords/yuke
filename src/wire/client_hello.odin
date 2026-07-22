@@ -2,11 +2,6 @@ package wire
 
 import "core:strings"
 
-// Client `client.hello` opening frame.
-//
-// The first frame sent on the wire after the WebSocket upgrade. Includes the
-// connection-level identity and the protocol version this client speaks.
-
 // Connection-level client identity carried inside `client.hello`.
 Client :: struct {
     // Client connection name (e.g. `"yuke-tui"`). @bounded 64

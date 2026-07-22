@@ -1,10 +1,5 @@
 package wire
 
-// Identifier types.
-//
-// Global durable ids (session, workspace, …) are 16 lowercase hex chars.
-// Session-scoped ids (message, run, input, …) are u64 on the wire as JSON numbers.
-
 // 16 lowercase hex chars. Doubles as an on-disk directory name. @fixed 16
 Session_Id :: distinct [16]u8
 

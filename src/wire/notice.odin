@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Daemon diagnostic notices.
-
 // Severity of a daemon diagnostic notice.
 Notice_Level :: enum {
     // Informational.

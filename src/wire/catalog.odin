@@ -4,8 +4,6 @@ import "core:math"
 import "core:strconv"
 import "core:strings"
 
-// Catalog wire types used by hello and catalog methods.
-
 // Catalog content hash. @fixed 64
 Catalog_Rev :: distinct [64]u8
 

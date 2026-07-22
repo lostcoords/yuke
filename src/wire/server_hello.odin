@@ -1,8 +1,6 @@
 package wire
 
 
-// Server `hello` snapshot.
-
 // Daemon identity and clock. Non-owning.
 Daemon_Info :: struct {
     // Daemon build/version string. @bounded 32

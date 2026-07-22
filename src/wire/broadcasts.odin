@@ -2,8 +2,6 @@ package wire
 
 import "core:strings"
 
-// Broadcast registry and typed payload union.
-
 // Closed enum of broadcast names. Source of truth for the broadcast set.
 Broadcast_Name :: enum {
     // Durable session summary changed.
