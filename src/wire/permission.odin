@@ -15,6 +15,9 @@ Permission_Option_Kind :: enum {
 
     // Reject this call only.
     Reject_Once,
+
+    // Persist a deny rule and reject; its `creates` patterns produce deny rules (mirror of Allow_Always).
+    Reject_Always,
 }
 
 // Permission_Option_Kind <-> wire string, indexed by the enum so a missing mapping is visible.
@@ -24,6 +27,7 @@ permission_option_kind_wire := [Permission_Option_Kind]string {
     .Allow_Session = "allow_session",
     .Allow_Always  = "allow_always",
     .Reject_Once   = "reject_once",
+    .Reject_Always = "reject_always",
 }
 
 // Wire string for a permission option kind.
@@ -60,6 +64,32 @@ denied_by_to_wire :: proc(d: Denied_By) -> string {
 // Denied-by value for a wire string; ok is false for an unknown value.
 denied_by_from_wire :: proc(s: string) -> (Denied_By, bool) {
     return enum_from_wire(denied_by_wire, s)
+}
+
+// New: rule action, since rules were previously allow-only.
+Rule_Action :: enum {
+    // Rule allows the matched call.
+    Allow,
+
+    // Rule denies the matched call.
+    Deny,
+}
+
+// Rule_Action <-> wire string, indexed by the enum so a missing mapping is visible.
+@(rodata)
+rule_action_wire := [Rule_Action]string {
+    .Allow = "allow",
+    .Deny  = "deny",
+}
+
+// Wire string for a rule action.
+rule_action_to_wire :: proc(a: Rule_Action) -> string {
+    return rule_action_wire[a]
+}
+
+// Rule action for a wire string; ok is false for an unknown value.
+rule_action_from_wire :: proc(s: string) -> (Rule_Action, bool) {
+    return enum_from_wire(rule_action_wire, s)
 }
 
 // One option the daemon proposes for a permission request.
@@ -280,17 +310,23 @@ permission_state_clone :: proc(self: Permission_State, allocator := context.allo
 
 // A remembered "allow always" answer, scoped to a workspace.
 Permission_Rule :: struct {
-    // Rule id. @fixed 16
+    // @fixed 16
+    // Rule id.
     id:            Rule_Id,
 
     // If non-null, rule is scoped to one session.
     session_id:    Maybe(Session_Id),
 
-    // Tool name this rule applies to. @bounded 128
+    // @bounded 128
+    // Tool name this rule applies to.
     tool:          string,
 
-    // Human-readable rule label. @bounded 256
+    // @bounded 256
+    // Human-readable rule label.
     label:         string,
+
+    // Allow or deny. Existing/decoded-absent rules default to Allow.
+    action:        Rule_Action,
 
     // Creation epoch ms.
     created_at_ms: u64,
@@ -310,6 +346,7 @@ permission_rule_emit :: proc(e: ^Emitter, self: Permission_Rule) {
 
     field_string(e, "tool", self.tool)
     field_string(e, "label", self.label)
+    field_string(e, "action", rule_action_to_wire(self.action))
     field_u64(e, "created_at_ms", self.created_at_ms)
     key(e, "created_by")
     client_emit(e, self.created_by)
@@ -337,6 +374,7 @@ permission_rule_clone :: proc(self: Permission_Rule, allocator := context.alloca
         session_id = self.session_id,
         tool = strings.clone(self.tool, allocator),
         label = strings.clone(self.label, allocator),
+        action = self.action,
         created_at_ms = self.created_at_ms,
         created_by = client_clone(self.created_by, allocator),
     }
@@ -354,7 +392,13 @@ Permission_Decide_Params :: struct {
     part_id:    Part_Id,
 
     // @bounded 32
+    //
     option_id:  string,
+
+    // @bounded max_permission_reject_message_bytes
+    // Client-supplied reason, meaningful only when option_id resolves to a reject
+    // kind; the daemon routes it into Tool_State_Denied.reason.
+    message:    Maybe(string),
 }
 
 // Write permission.decide params.
@@ -364,14 +408,20 @@ permission_decide_params_emit :: proc(e: ^Emitter, self: Permission_Decide_Param
     field_u64(e, "message_id", u64(self.message_id))
     field_u64(e, "part_id", u64(self.part_id))
     field_string(e, "option_id", self.option_id)
+    field_string_opt(e, "message", self.message)
     object_end(e)
 }
 
 // Verify annotated field bounds.
 permission_decide_params_validate :: proc(self: Permission_Decide_Params) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
+    enforce_bounded(32, self.option_id) or_return
 
-    return enforce_bounded(32, self.option_id)
+    if msg, ok := self.message.?; ok {
+        return enforce_bounded(LIMITS.max_permission_reject_message_bytes, msg)
+    }
+
+    return .None
 }
 
 // Params for permission.rules.
@@ -628,6 +678,9 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
             rule.label = dec_string(d) or_return
             seen += {.Label}
 
+        case "action":
+            rule.action = dec_enum(d, rule_action_wire) or_return
+
         case "created_at_ms":
             rule.created_at_ms = dec_u64(d) or_return
             seen += {.Created}
@@ -685,6 +738,11 @@ permission_decide_params_from_reader :: proc(
         case "option_id":
             params.option_id = dec_string(d) or_return
             seen += {.Oid}
+
+        case "message":
+            if !dec_is_null(d) {
+                params.message = dec_string(d) or_return
+            }
 
         case:
             dec_skip(d) or_return

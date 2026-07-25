@@ -12,6 +12,11 @@ test_error_code_roundtrip :: proc(t: ^testing.T) {
 
     _, unknown := error_code_from_wire("not_a_real_code")
     testing.expect(t, !unknown, "unknown wire code must not map")
+
+    overloaded, overloaded_ok := error_code_from_wire("overloaded")
+    testing.expect(t, overloaded_ok, "overloaded wire code should map back")
+    testing.expect_value(t, overloaded, Error_Code.Overloaded)
+    testing.expect_value(t, error_code_to_wire(.Overloaded), "overloaded")
 }
 
 @(test)

@@ -1,5 +1,6 @@
 package wire
 
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -54,7 +55,7 @@ test_permission_decision_rejects_sibling_field :: proc(t: ^testing.T) {
 
 @(test)
 test_permission_rule_roundtrip :: proc(t: ^testing.T) {
-    input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
+    input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
     v := decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
@@ -92,10 +93,135 @@ test_permission_decide_params_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_permission_decide_params_message_roundtrip :: proc(t: ^testing.T) {
+    // Message present roundtrips.
+    with_msg := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1","message":"use ripgrep instead"}`
+    v := decoder_init(with_msg, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    params, derr := permission_decide_params_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    msg, has_msg := params.message.?
+    testing.expect(t, has_msg, "message should be present")
+    testing.expect_value(t, msg, "use ripgrep instead")
+    testing.expect(t, permission_decide_params_validate(params) == .None, "params should validate")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    permission_decide_params_emit(&e, params)
+    testing.expect_value(t, to_string(&e), with_msg)
+
+    // Message absent still roundtrips with nil.
+    no_msg := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1"}`
+    v2 := decoder_init(no_msg, context.temp_allocator)
+    p2, derr2 := permission_decide_params_from_reader(&v2)
+    testing.expect(t, derr2 == .None, "decode should succeed")
+    _, has2 := p2.message.?
+    testing.expect(t, !has2, "message should be absent")
+
+    e2: Emitter
+    emitter_init(&e2)
+    defer emitter_destroy(&e2)
+    permission_decide_params_emit(&e2, p2)
+    testing.expect_value(t, to_string(&e2), no_msg)
+}
+
+@(test)
+test_permission_decide_params_rejects_oversized_message :: proc(t: ^testing.T) {
+    big := strings.repeat("x", LIMITS.max_permission_reject_message_bytes + 1, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    sid: [16]u8
+    copy(sid[:], "0123456789abcdef")
+    params := Permission_Decide_Params {
+        session_id = Session_Id(sid),
+        option_id  = "opt-1",
+        message    = big,
+    }
+    testing.expect(t, permission_decide_params_validate(params) == .Overflow, "oversized message must be rejected")
+}
+
+@(test)
+test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
+    // Deny roundtrips.
+    deny := `{"id":"0123456789abcdef","tool":"bash","label":"deny bash","action":"deny","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
+    v := decoder_init(deny, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    rule, derr := permission_rule_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect_value(t, rule.action, Rule_Action.Deny)
+    testing.expect(t, permission_rule_validate(rule) == .None, "rule should validate")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    permission_rule_emit(&e, rule)
+    testing.expect_value(t, to_string(&e), deny)
+
+    // Allow roundtrips.
+    allow := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
+    v2 := decoder_init(allow, context.temp_allocator)
+    r2, derr2 := permission_rule_from_reader(&v2)
+    testing.expect(t, derr2 == .None, "decode should succeed")
+    testing.expect_value(t, r2.action, Rule_Action.Allow)
+
+    e2: Emitter
+    emitter_init(&e2)
+    defer emitter_destroy(&e2)
+    permission_rule_emit(&e2, r2)
+    testing.expect_value(t, to_string(&e2), allow)
+}
+
+@(test)
+test_permission_rule_absent_action_defaults_to_allow :: proc(t: ^testing.T) {
+    // A rule persisted before the action field carries no "action" member.
+    input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
+    v := decoder_init(input, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    rule, derr := permission_rule_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect_value(t, rule.action, Rule_Action.Allow)
+}
+
+@(test)
+test_permission_rule_rejects_unknown_action :: proc(t: ^testing.T) {
+    input := `{"id":"0123456789abcdef","tool":"bash","label":"x","action":"maybe","created_at_ms":1,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
+    v := decoder_init(input, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    _, derr := permission_rule_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "unknown action must be rejected")
+}
+
+@(test)
+test_permission_option_kind_reject_always_roundtrip :: proc(t: ^testing.T) {
+    input := `{"id":"opt-9","kind":"reject_always","label":"Never allow","creates":["bash(rm *)"]}`
+    v := decoder_init(input, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    opt, derr := permission_option_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect_value(t, opt.kind, Permission_Option_Kind.Reject_Always)
+    creates, has_creates := opt.creates.?
+    testing.expect(t, has_creates, "creates should be present")
+    testing.expect_value(t, len(creates), 1)
+    testing.expect(t, permission_option_validate(opt) == .None, "option should validate")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    _permission_option_emit(&e, opt)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+@(test)
 test_permission_rules_result_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    input := `{"rules":[{"id":"0123456789abcdef","tool":"bash","label":"allow bash","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}]}`
+    input := `{"rules":[{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}]}`
     v := decoder_init(input, context.temp_allocator)
 
     result, derr := permission_rules_result_from_reader(&v)

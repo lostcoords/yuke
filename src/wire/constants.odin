@@ -6,159 +6,163 @@ PROTOCOL_VERSION :: 1
 // Bounds enforced across the wire protocol.
 Limits :: struct {
     // Max WebSocket message size. A larger frame is a protocol error.
-    max_frame_bytes:                    int,
+    max_frame_bytes:                     int,
 
     // Decoded inline media above this must use MediaSource.blob.
-    max_inline_media_bytes:             int,
+    max_inline_media_bytes:              int,
 
     // Max aggregate raw string bytes in one display-only tool view.
-    max_view_bytes:                     int,
+    max_view_bytes:                      int,
 
     // Max accumulated display output streamed for one running tool part.
-    max_tool_output_stream_bytes:       int,
+    max_tool_output_stream_bytes:        int,
 
     // Max stored bytes in one content-addressed blob.
-    max_blob_bytes:                     u64,
+    max_blob_bytes:                      u64,
 
     // Max content parts in one accepted input.
-    max_input_parts:                    int,
+    max_input_parts:                     int,
 
     // Max display views attached to one tool state or input.
-    max_views_per_tool:                 int,
+    max_views_per_tool:                  int,
 
     // Max entries in any nested view collection.
-    max_view_items:                     int,
+    max_view_items:                      int,
 
     // Max sessions in one subscription set.
-    max_subscriptions:                  int,
+    max_subscriptions:                   int,
 
     // Default window for session.resync / session.history.
-    default_page_size:                  int,
+    default_page_size:                   int,
 
     // Max window for session.resync / session.history.
-    max_page_size:                      int,
+    max_page_size:                       int,
 
     // Default window for session.list.
-    default_session_list_page_size:     int,
+    default_session_list_page_size:      int,
 
     // Max window for session.list.
-    max_session_list_page_size:         int,
+    max_session_list_page_size:          int,
 
     // Max bytes in an opaque session.list cursor.
-    max_session_list_cursor_bytes:      int,
+    max_session_list_cursor_bytes:       int,
 
     // Default number of directories returned by workspace.browse.
-    default_workspace_browse_page_size: int,
+    default_workspace_browse_page_size:  int,
 
     // Max directories returned by one workspace.browse page.
-    max_workspace_browse_page_size:     int,
+    max_workspace_browse_page_size:      int,
 
     // Max bytes in an opaque workspace.browse cursor.
-    max_workspace_browse_cursor_bytes:  int,
+    max_workspace_browse_cursor_bytes:   int,
 
     // Default number of jobs returned by cron.list.
-    default_cron_list_page_size:        int,
+    default_cron_list_page_size:         int,
 
     // Max jobs returned by one cron.list page.
-    max_cron_list_page_size:            int,
+    max_cron_list_page_size:             int,
 
     // Max bytes in an opaque cron.list cursor.
-    max_cron_list_cursor_bytes:         int,
+    max_cron_list_cursor_bytes:          int,
 
     // Max durable jobs accepted by one local daemon.
-    max_cron_jobs:                      int,
+    max_cron_jobs:                       int,
 
     // Max workspaces sent in hello.
-    max_workspaces:                     int,
+    max_workspaces:                      int,
 
     // Max profiles sent in hello.
-    max_profiles:                       int,
+    max_profiles:                        int,
 
     // Max models sent in one catalog snapshot.
-    max_catalog_models:                 int,
+    max_catalog_models:                  int,
 
     // Max reasoning levels carried by one model.
-    max_reasoning_levels:               int,
+    max_reasoning_levels:                int,
 
     // Max skipped-provider records in catalog health.
-    max_skipped_providers:              int,
+    max_skipped_providers:               int,
 
     // Max discovered skills returned for one workspace.
-    max_skills:                         int,
+    max_skills:                          int,
 
     // Max remembered permission rules returned for one workspace.
-    max_permission_rules:               int,
+    max_permission_rules:                int,
 
     // Max options on one permission prompt.
-    max_permission_options:             int,
+    max_permission_options:              int,
 
     // Max rule patterns created by one permission option.
-    max_permission_creates:             int,
+    max_permission_creates:              int,
+
+    // Bound on the client-supplied permission rejection message (§4a). Peer input is capped; the transcript-side reason stays unbounded daemon-side.
+    max_permission_reject_message_bytes: int,
 
     // Max bytes in ActivityState.retrying.message.
-    max_activity_retry_message_bytes:   int,
+    max_activity_retry_message_bytes:    int,
 
     // Max accepted inputs waiting behind a run.
-    max_queued_inputs:                  int,
+    max_queued_inputs:                   int,
 
     // Max parts in one assistant message, including an active draft.
-    max_active_draft_parts:             int,
+    max_active_draft_parts:              int,
 
     // Max run-config records carried by one transcript snapshot.
-    max_snapshot_configs:               int,
+    max_snapshot_configs:                int,
 
     // Max aggregate raw string bytes retained by one active draft.
-    max_active_draft_string_bytes:      int,
+    max_active_draft_string_bytes:       int,
 
     // Max human-readable request error bytes.
-    max_error_message_bytes:            int,
+    max_error_message_bytes:             int,
 
     // Daemon WebSocket ping interval.
-    ping_interval_ms:                   u64,
+    ping_interval_ms:                    u64,
 
     // Daemon closes a connection that has not answered its pings by this age.
-    dead_connection_ms:                 u64,
+    dead_connection_ms:                  u64,
 }
 
 LIMITS :: Limits {
-    max_frame_bytes                    = 8 * 1024 * 1024,
-    max_inline_media_bytes             = 256 * 1024,
-    max_view_bytes                     = 1024 * 1024,
-    max_tool_output_stream_bytes       = 1024 * 1024,
-    max_blob_bytes                     = 64 * 1024 * 1024,
-    max_input_parts                    = 256,
-    max_views_per_tool                 = 64,
-    max_view_items                     = 1024,
-    max_subscriptions                  = 64,
-    default_page_size                  = 50,
-    max_page_size                      = 500,
-    default_session_list_page_size     = 25,
-    max_session_list_page_size         = 100,
-    max_session_list_cursor_bytes      = 256,
-    default_workspace_browse_page_size = 100,
-    max_workspace_browse_page_size     = 500,
-    max_workspace_browse_cursor_bytes  = 256,
-    default_cron_list_page_size        = 25,
-    max_cron_list_page_size            = 100,
-    max_cron_list_cursor_bytes         = 256,
-    max_cron_jobs                      = 1024,
-    max_workspaces                     = 1024,
-    max_profiles                       = 256,
-    max_catalog_models                 = 4096,
-    max_reasoning_levels               = 32,
-    max_skipped_providers              = 256,
-    max_skills                         = 1024,
-    max_permission_rules               = 4096,
-    max_permission_options             = 32,
-    max_permission_creates             = 32,
-    max_activity_retry_message_bytes   = 1024,
-    max_queued_inputs                  = 128,
-    max_active_draft_parts             = 1024,
-    max_snapshot_configs               = 501,
-    max_active_draft_string_bytes      = 1024 * 1024,
-    max_error_message_bytes            = 4096,
-    ping_interval_ms                   = 30_000,
-    dead_connection_ms                 = 90_000,
+    max_frame_bytes                     = 8 * 1024 * 1024,
+    max_inline_media_bytes              = 256 * 1024,
+    max_view_bytes                      = 1024 * 1024,
+    max_tool_output_stream_bytes        = 1024 * 1024,
+    max_blob_bytes                      = 64 * 1024 * 1024,
+    max_input_parts                     = 256,
+    max_views_per_tool                  = 64,
+    max_view_items                      = 1024,
+    max_subscriptions                   = 64,
+    default_page_size                   = 50,
+    max_page_size                       = 500,
+    default_session_list_page_size      = 25,
+    max_session_list_page_size          = 100,
+    max_session_list_cursor_bytes       = 256,
+    default_workspace_browse_page_size  = 100,
+    max_workspace_browse_page_size      = 500,
+    max_workspace_browse_cursor_bytes   = 256,
+    default_cron_list_page_size         = 25,
+    max_cron_list_page_size             = 100,
+    max_cron_list_cursor_bytes          = 256,
+    max_cron_jobs                       = 1024,
+    max_workspaces                      = 1024,
+    max_profiles                        = 256,
+    max_catalog_models                  = 4096,
+    max_reasoning_levels                = 32,
+    max_skipped_providers               = 256,
+    max_skills                          = 1024,
+    max_permission_rules                = 4096,
+    max_permission_options              = 32,
+    max_permission_creates              = 32,
+    max_permission_reject_message_bytes = 4096,
+    max_activity_retry_message_bytes    = 1024,
+    max_queued_inputs                   = 128,
+    max_active_draft_parts              = 1024,
+    max_snapshot_configs                = 501,
+    max_active_draft_string_bytes       = 1024 * 1024,
+    max_error_message_bytes             = 4096,
+    ping_interval_ms                    = 30_000,
+    dead_connection_ms                  = 90_000,
 }
 
 // Max valid request/response id. JSON numbers must stay within `2^53 - 1`

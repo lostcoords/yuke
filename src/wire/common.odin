@@ -76,6 +76,11 @@ Error_Code :: enum {
 
     // Catch-all for unspecified internal errors.
     Internal,
+
+    // Retry this request after backoff; the connection stays up, only this
+    // request was shed. Client behavior: exponential-backoff re-send of the
+    // same request.
+    Overloaded,
 }
 
 // Error_Code <-> wire string, indexed by the enum so a missing mapping is visible.
@@ -106,6 +111,7 @@ error_code_wire := [Error_Code]string {
     .Unsupported_Model          = "unsupported_model",
     .Unsupported_Reasoning      = "unsupported_reasoning",
     .Internal                   = "internal",
+    .Overloaded                 = "overloaded",
 }
 
 // Wire string for an error code.
@@ -123,7 +129,8 @@ Error_Object :: struct {
     // Machine-readable error category.
     code:    Error_Code,
 
-    // Human-readable. Clients branch on `code`, never on this. @bounded 4096
+    // @bounded 4096
+    // Human-readable. Clients branch on `code`, never on this.
     message: string,
 }
 

@@ -3,7 +3,8 @@ package wire
 
 // Daemon identity and clock. Non-owning.
 Daemon_Info :: struct {
-    // Daemon build/version string. @bounded 32
+    // @bounded 32
+    // Daemon build/version string.
     version:       string,
 
     // Daemon wall-clock epoch ms at hello send time.
@@ -16,6 +17,37 @@ daemon_info_emit :: proc(e: ^Emitter, self: Daemon_Info) {
     field_string(e, "version", self.version)
     field_u64(e, "server_now_ms", self.server_now_ms)
     object_end(e)
+}
+
+// Optional daemon surface a client may probe for. This is the ONE enum decoded
+// tolerantly: an unknown capability string is IGNORED, never a Validation_Error.
+// Tolerant decode is the whole point — a newer daemon advertises a token an older
+// client does not know, and the client must skip it, not reject the frame. Every
+// other enum in this package hard-rejects an unknown value; this one must not.
+Capability :: enum {
+    // Interactive PTY side-channel (`GET /term/<id>`); see terminal-side-channel.
+    Terminal,
+
+    // `session.eval` control-plane Lua REPL (daemon-port-analysis §3.5).
+    Eval,
+
+    // `session.revert` / `session.unrevert` (revert-unrevert-design.md).
+    Revert,
+
+    // Client→daemon blob upload (`PUT /blob/<hash>`, §2).
+    Blob_Upload,
+
+    // Filesystem browse/search methods + `GET /file` (§3).
+    Fs,
+}
+
+@(rodata)
+capability_wire := [Capability]string {
+    .Terminal    = "terminal",
+    .Eval        = "eval",
+    .Revert      = "revert",
+    .Blob_Upload = "blob_upload",
+    .Fs          = "fs",
 }
 
 // Coarse daemon snapshot after `client.hello`.
@@ -41,11 +73,15 @@ Server_Hello :: struct {
     // Current cron-index revision for this connection generation.
     cron_revision:    Cron_Revision,
 
-    // Catalog content hash. @fixed 64
+    // @fixed 64
+    // Catalog content hash.
     catalog_rev:      Catalog_Rev,
 
     // Catalog load health.
     catalog_health:   Catalog_Health,
+
+    // Optional daemon surfaces this build/config advertises; see `Capability`.
+    capabilities:     bit_set[Capability],
 }
 
 // Write `type` first, then the remaining hello fields.
@@ -76,6 +112,16 @@ server_hello_emit :: proc(e: ^Emitter, self: Server_Hello) {
     field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
     key(e, "catalog_health")
     catalog_health_emit(e, self.catalog_health)
+    key(e, "capabilities")
+    array_begin(e)
+    for cap in Capability {
+        if cap in self.capabilities {
+            elem(e)
+            val_string(e, capability_wire[cap])
+        }
+    }
+
+    array_end(e)
     object_end(e)
 }
 
@@ -220,6 +266,20 @@ server_hello_from_reader :: proc(d: ^Decoder) -> (out: Server_Hello, err: Valida
         case "catalog_health":
             out.catalog_health = catalog_health_from_reader(d) or_return
             seen += {.Health}
+
+        case "capabilities":
+            dec_array_begin(d) or_return
+            for {
+                more := dec_elem(d) or_return
+                if !more do break
+                s := dec_string(d) or_return
+
+                // Tolerant lookup: an unrecognized token is a newer daemon's
+                // capability this build doesn't know yet — skip it, don't reject.
+                if cap, ok := enum_from_wire(capability_wire, s); ok {
+                    out.capabilities += {cap}
+                }
+            }
 
         case:
             dec_skip(d) or_return
