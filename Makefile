@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-client test-support test-ui test-term check-windows fmt clean
+.PHONY: test test-wire test-ws test-http test-client test-daemon test-support test-ui test-term check-windows fmt clean
 
 # Run all wire package tests.
 test-wire:
@@ -27,6 +27,12 @@ test-client:
 	@mkdir -p build
 	$(ODIN) test src/client $(COLLECTION) -out:build/client_test.bin
 
+# Run the daemon package tests (front-door routes plus the hello exchange).
+test-daemon:
+	@mkdir -p build
+	$(ODIN) test src/daemon $(COLLECTION) -out:build/daemon_test.bin
+
+
 # Run the testsupport package tests.
 test-support:
 	@mkdir -p build
@@ -42,7 +48,7 @@ test-term:
 	@mkdir -p build
 	$(ODIN) test src/term $(COLLECTION) -out:build/term_test.bin
 
-test: test-wire test-ws test-http test-client test-support test-ui test-term
+test: test-wire test-ws test-http test-client test-daemon test-support test-ui test-term
 
 # Cross-compile type-check of the Windows arms from the host (no Windows machine
 # needed). `odin check` defaults to an executable package, so -no-entry-point is

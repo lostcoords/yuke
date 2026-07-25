@@ -1,0 +1,1220 @@
+package daemon
+
+import "core:crypto"
+import "core:encoding/base64"
+import "core:fmt"
+import "core:mem"
+import "core:nbio"
+import "core:net"
+import "core:os"
+import "core:strings"
+import "core:sync"
+import "core:testing"
+import "core:thread"
+import "core:time"
+import "core:unicode/utf8"
+import http_server "libs:http/server"
+import ws "libs:websocket"
+import client "src:client"
+import wire "src:wire"
+
+// --- Daemon driver tests ------------------------------------------------------
+//
+// These drive the EXISTING `src/client` driver against the new `daemon` on ONE
+// shared `nbio.Event_Loop`, in-process, no worker threads — accept, upgrade, the
+// hello exchange, and request routing all interleave on a single loop. The
+// protocol-error cases (malformed/oversequenced frames, wrong protocol version,
+// binary frame, trailing bytes) need a peer the `src/client` driver cannot be —
+// it only ever sends a well-formed `client.hello` — so those use a blocking raw
+// TCP peer on a worker thread while the daemon drives the loop on the main thread,
+// mirroring `libs/websocket/server_test.odin`.
+//
+// Helpers bind an OS-assigned ephemeral port (port 0); recover it with
+// `daemon_bound_port` after `daemon_start`.
+
+// Bring a daemon all the way down and reclaim it.
+daemon_test_teardown :: proc(d: ^Daemon) {
+    daemon_shutdown(d)
+    nbio.run_until(&d.ws_server.shutdown_complete)
+    nbio.run_until(&d.front_door.shutdown_complete)
+    daemon_destroy(d)
+}
+
+// Recover the ephemeral port the daemon's front door bound, for dialing clients.
+daemon_bound_port :: proc(d: ^Daemon) -> int {
+    return http_server.bound_port(&d.front_door)
+}
+
+// --- 1 & 2. Hello handshake + request-after-Ready via the real client driver ---
+
+// Observations recorded by the `src/client` callbacks, reached through the driver's
+// `user_data`.
+Cli_Obs :: struct {
+    // Whether to fire a request from `on_ready` (test 2) versus close (test 1).
+    send_request_on_ready: bool,
+
+    // Driver reached Ready.
+    ready:                 bool,
+
+    // Retained protocol version, read at Ready.
+    protocol:              u32,
+
+    // Retained session-index revision, read at Ready.
+    session_revision:      wire.Session_Revision,
+
+    // Retained cron-index revision, read at Ready.
+    cron_revision:         wire.Cron_Revision,
+
+    // A response frame was delivered.
+    got_response:          bool,
+
+    // The delivered response was an `error` frame.
+    resp_is_error:         bool,
+
+    // Error code carried by the delivered error response.
+    resp_error_code:       wire.Error_Code,
+
+    // Terminal callback fired.
+    done:                  bool,
+
+    // Close code reported to the terminal `on_close`.
+    close_code:            ws.Close_Code,
+
+    // Terminal driver error, if any.
+    err:                   client.Protocol_Error,
+}
+
+cli_on_ready :: proc(c: ^client.Client) {
+    o := (^Cli_Obs)(c.user_data)
+    o.ready = true
+    o.protocol = c.protocol
+    o.session_revision = c.session_revision
+    o.cron_revision = c.cron_revision
+
+    if o.send_request_on_ready {
+        // A method with no dispatch handler; its empty params validate, so the request
+        // reaches the router and falls through to the `Unknown_Method` arm.
+        client.client_send_request(c, .Session_Create, wire.Create_Session{})
+    } else {
+        client.client_close(c)
+    }
+}
+
+cli_on_response :: proc(c: ^client.Client, resp: wire.Response) {
+    o := (^Cli_Obs)(c.user_data)
+    o.got_response = true
+
+    #partial switch v in resp {
+    case wire.Response_Error:
+        o.resp_is_error = true
+        o.resp_error_code = v.error.code
+
+    case wire.Response_Ok:
+        o.resp_is_error = false
+    }
+
+    client.client_close(c)
+}
+
+cli_on_close :: proc(c: ^client.Client, code: ws.Close_Code) {
+    o := (^Cli_Obs)(c.user_data)
+    o.close_code = code
+    o.done = true
+}
+
+cli_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
+    o := (^Cli_Obs)(c.user_data)
+    o.err = err
+    o.done = true
+}
+
+cli_callbacks :: proc() -> client.Client_Callbacks {
+    return client.Client_Callbacks {
+        on_ready = cli_on_ready,
+        on_response = cli_on_response,
+        on_close = cli_on_close,
+        on_error = cli_on_error,
+    }
+}
+
+@(test)
+test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "9.8.7"})
+    testing.expect_value(t, derr, Daemon_Error.None)
+
+    obs: Cli_Obs
+    c: client.Client
+    cerr := client.client_open(
+        &c,
+        loop,
+        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        "yuke-test",
+        "0.1.0",
+        cli_callbacks(),
+        &obs,
+        context.temp_allocator,
+    )
+    testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+    nbio.run_until(&obs.done)
+
+    testing.expect(t, obs.ready, "client should reach Ready")
+    testing.expect_value(t, obs.protocol, u32(wire.PROTOCOL_VERSION))
+    // The retained daemon version is the one the daemon was started with.
+    testing.expect_value(t, c.daemon_version, "9.8.7")
+    testing.expect_value(t, obs.session_revision, wire.Session_Revision(0))
+    testing.expect_value(t, obs.cron_revision, wire.Cron_Revision(0))
+    testing.expect_value(t, obs.err, client.Protocol_Error.None)
+
+    client.client_destroy(&c)
+    daemon_test_teardown(&d)
+}
+
+@(test)
+test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Daemon_Error.None)
+
+    obs := Cli_Obs {
+        send_request_on_ready = true,
+    }
+    c: client.Client
+    cerr := client.client_open(
+        &c,
+        loop,
+        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        "yuke-test",
+        "0.1.0",
+        cli_callbacks(),
+        &obs,
+        context.temp_allocator,
+    )
+    testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+    nbio.run_until(&obs.done)
+
+    testing.expect(t, obs.ready, "client should reach Ready")
+    testing.expect(t, obs.got_response, "a request after Ready must be answered, not dropped")
+    testing.expect(t, obs.resp_is_error, "the answer must be an error response")
+    // `session.create` is a valid method the router does not handle, so it answers
+    // with `Unknown_Method` rather than dropping the request.
+    testing.expect_value(t, obs.resp_error_code, wire.Error_Code.Unknown_Method)
+    testing.expect_value(t, obs.err, client.Protocol_Error.None)
+
+    client.client_destroy(&c)
+    daemon_test_teardown(&d)
+}
+
+// --- Read-only method handlers via the real client driver ---------------------
+//
+// Each drives one request from `on_ready`, then runs a per-test `check` against the
+// delivered response while it is still alive — the driver reclaims its decode arena
+// when the callback returns, so every assertion happens inside the callback. A check
+// returns whether the exchange is finished; a paginated case sends a follow-up and
+// returns false so the loop keeps running.
+
+// Per-test observation and context reached through the driver's `user_data`.
+Handler_Obs :: struct {
+    // Method the request drives.
+    method:    wire.Method_Name,
+
+    // Params for that request.
+    params:    wire.Request_Params,
+
+    // Assertions run against each delivered response; returns true when finished.
+    check:     proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool,
+
+    // A filesystem path the test set up, read by describe/browse checks.
+    dir:       string,
+
+    // Response counter, for multi-page exchanges.
+    page:      int,
+
+    // The active testing context, so checks can assert from inside the callback.
+    t:         ^testing.T,
+
+    // Terminal callback fired.
+    done:      bool,
+
+    // The check declared the exchange complete and initiated the client close.
+    finished:  bool,
+
+    // Either a terminal callback or the harness timeout fired.
+    wait_done: bool,
+
+    // The harness timeout fired before a terminal callback.
+    timed_out: bool,
+
+    // At least one response was delivered to `handler_on_response`. Without this, a
+    // daemon that closes the connection instead of answering would still leave
+    // `done` set (by `handler_on_close`) and no `check` ever runs, so the test would
+    // vacuously pass.
+    responded: bool,
+
+    // Terminal driver error, if any.
+    err:       client.Protocol_Error,
+}
+
+handler_on_ready :: proc(c: ^client.Client) {
+    o := (^Handler_Obs)(c.user_data)
+    client.client_send_request(c, o.method, o.params)
+}
+
+handler_on_response :: proc(c: ^client.Client, resp: wire.Response) {
+    o := (^Handler_Obs)(c.user_data)
+    o.responded = true
+
+    // `done` is latched by the terminal callback, not here: destroying a client with
+    // its close frame still in flight would free buffers the loop still owns.
+    if o.check(c, resp, o) {
+        o.finished = true
+        client.client_close(c)
+    }
+}
+
+handler_on_close :: proc(c: ^client.Client, code: ws.Close_Code) {
+    o := (^Handler_Obs)(c.user_data)
+    o.done = true
+    o.wait_done = true
+}
+
+handler_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
+    o := (^Handler_Obs)(c.user_data)
+    o.err = err
+    o.done = true
+    o.wait_done = true
+}
+
+handler_on_timeout :: proc(_: ^nbio.Operation, o: ^Handler_Obs) {
+    o.timed_out = true
+    o.wait_done = true
+}
+
+handler_callbacks :: proc() -> client.Client_Callbacks {
+    return client.Client_Callbacks {
+        on_ready = handler_on_ready,
+        on_response = handler_on_response,
+        on_close = handler_on_close,
+        on_error = handler_on_error,
+    }
+}
+
+// Bring up a daemon, drive `obs`'s single request through the real client driver,
+// and run its check(s) to completion. Binds an OS-assigned ephemeral port.
+daemon_run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
+    obs.t = t
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Daemon_Error.None)
+
+    c: client.Client
+    cerr := client.client_open(
+        &c,
+        loop,
+        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        "yuke-test",
+        "0.1.0",
+        handler_callbacks(),
+        obs,
+        context.temp_allocator,
+    )
+    testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+    timeout_op := nbio.timeout_poly(2 * time.Second, obs, handler_on_timeout, loop)
+    nbio.run_until(&obs.wait_done)
+
+    if !obs.timed_out {
+        nbio.remove(timeout_op)
+    } else {
+        // Force a terminal callback before destroying the client; the timeout only
+        // bounds the request exchange, not the transport's buffer lifetime.
+        daemon_shutdown(&d)
+        nbio.run_until(&obs.done)
+    }
+
+    // A daemon that closes or errors the connection instead of answering must not
+    // pass silently: without a delivered response, `check` (and every expectation it
+    // holds) never ran.
+    testing.expect(t, !obs.timed_out, "the daemon request should terminate before the harness timeout")
+    testing.expect(t, obs.done, "the client terminal callback should fire")
+    testing.expect(t, obs.responded, "the daemon should have answered the request")
+    testing.expect(t, obs.finished, "the response check should run to completion")
+    testing.expect_value(t, obs.err, client.Protocol_Error.None)
+
+    client.client_destroy(&c)
+    daemon_test_teardown(&d)
+}
+
+// Create a fresh, empty directory under the temp root, removing any stale copy first.
+daemon_test_make_dir :: proc(name: string) -> string {
+    base, has := os.lookup_env("TMPDIR", context.temp_allocator)
+    if !has {
+        base = "/tmp"
+    }
+
+    dir, _ := os.join_path({base, name}, context.temp_allocator)
+    os.remove_all(dir)
+    os.make_directory_all(dir)
+
+    return dir
+}
+
+// A name 270 UTF-8 bytes long (90 repeated 3-byte "あ" runes) but only 90 characters:
+// over the wire's 256-byte `Dir_Entry.name`/`Workspace.title` bound, yet well within
+// APFS's 255-character filename limit — the overlong-name regression fixture.
+daemon_test_overlong_name :: proc() -> string {
+    b := strings.builder_make(context.temp_allocator)
+    for _ in 0 ..< 90 {
+        strings.write_string(&b, "あ")
+    }
+
+    return strings.to_string(b)
+}
+
+check_session_list_empty :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "session.list should succeed") {
+        return true
+    }
+
+    page, is_page := ok.result.(wire.Session_List_Result)
+    if !testing.expect(t, is_page, "result is a session.list page") {
+        return true
+    }
+
+    testing.expect_value(t, page.revision, wire.Session_Revision(0))
+    testing.expect_value(t, len(page.items), 0)
+    testing.expect_value(t, page.total, u64(0))
+    _, has_cursor := page.next_cursor.?
+    testing.expect(t, !has_cursor, "the only page carries a null next_cursor")
+
+    return true
+}
+
+@(test)
+test_daemon_session_list_empty :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Session_List,
+        params = wire.Session_List_Params {
+            scope = wire.Session_Scope_All{},
+            population = wire.Session_Population_Top_Level{},
+            view = .Active_Recent,
+        },
+        check = check_session_list_empty,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_catalog_full :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "catalog.list should succeed") {
+        return true
+    }
+
+    result, is_cat := ok.result.(wire.Catalog_List_Result)
+    if !testing.expect(t, is_cat, "result is a catalog.list result") {
+        return true
+    }
+
+    full, is_full := result.(wire.Catalog_List_Result_Full)
+    if !testing.expect(t, is_full, "an absent since_rev yields a full snapshot") {
+        return true
+    }
+
+    testing.expect_value(t, len(full.models), 0)
+    testing.expect_value(t, len(full.health.skipped), 0)
+
+    return true
+}
+
+@(test)
+test_daemon_catalog_list_full_when_no_since_rev :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Catalog_List,
+        params = wire.Catalog_List_Params{},
+        check  = check_catalog_full,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_catalog_unchanged :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "catalog.list should succeed") {
+        return true
+    }
+
+    result, is_cat := ok.result.(wire.Catalog_List_Result)
+    if !testing.expect(t, is_cat, "result is a catalog.list result") {
+        return true
+    }
+
+    _, is_unchanged := result.(wire.Catalog_List_Result_Unchanged)
+    testing.expect(t, is_unchanged, "a since_rev equal to the current rev yields unchanged")
+
+    return true
+}
+
+@(test)
+test_daemon_catalog_list_unchanged_when_since_rev_matches :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Catalog_List,
+        params = wire.Catalog_List_Params{since_rev = daemon_empty_catalog_rev()},
+        check = check_catalog_unchanged,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "describe should succeed") {
+        return true
+    }
+
+    result, is_desc := ok.result.(wire.Workspace_Describe_Result)
+    if !testing.expect(t, is_desc, "result is a describe result") {
+        return true
+    }
+
+    _, has_git := result.git.?
+    testing.expect(t, !has_git, "a plain directory has no git info")
+
+    canonical, cerr := os.get_absolute_path(o.dir, context.temp_allocator)
+    testing.expect(t, cerr == nil, "the temp dir canonicalizes")
+    testing.expect_value(t, result.workspace.root, canonical)
+    testing.expect_value(t, result.workspace.id, daemon_workspace_id(canonical))
+    testing.expect_value(t, result.workspace.title, os.base(canonical))
+    testing.expect(t, result.last_modified_ms > 0, "mtime is populated")
+    _, has_model := result.last_used_model.?
+    testing.expect(t, !has_model, "no store means no last_used_model")
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_describe_non_git :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-odin-describe-nongit")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Describe,
+        params = wire.Workspace_Describe_Params{path = dir},
+        check = check_describe_non_git,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_describe_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "describe should succeed") {
+        return true
+    }
+
+    result, is_desc := ok.result.(wire.Workspace_Describe_Result)
+    if !testing.expect(t, is_desc, "result is a describe result") {
+        return true
+    }
+
+    git, has_git := result.git.?
+    if !testing.expect(t, has_git, "a directory with a .git is a repo") {
+        return true
+    }
+
+    testing.expect_value(t, git.branch, "feature-x")
+    testing.expect(t, !git.dirty, "dirty is not detected without the git binary")
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_describe_git :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-odin-describe-git")
+    defer os.remove_all(dir)
+
+    git_dir, _ := os.join_path({dir, ".git"}, context.temp_allocator)
+    os.make_directory_all(git_dir)
+    head, _ := os.join_path({git_dir, "HEAD"}, context.temp_allocator)
+    _ = os.write_entire_file(head, "ref: refs/heads/feature-x\n")
+
+    obs := Handler_Obs {
+        method = .Workspace_Describe,
+        params = wire.Workspace_Describe_Params{path = dir},
+        check = check_describe_git,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_describe_invalid_utf8_branch :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "describe should succeed with a non-UTF-8 branch") {
+        return true
+    }
+
+    result, is_desc := ok.result.(wire.Workspace_Describe_Result)
+    if !testing.expect(t, is_desc, "result is a describe result") {
+        return true
+    }
+
+    git, has_git := result.git.?
+    if !testing.expect(t, has_git, "a directory with a .git is a repo") {
+        return true
+    }
+
+    // A `.git/HEAD` ref whose branch component is not valid UTF-8 degrades to the same
+    // empty branch as a detached or unreadable HEAD; it never rides an invalid frame.
+    testing.expect_value(t, git.branch, "")
+
+    return true
+}
+
+// Regression for invalid UTF-8 in filesystem bytes: a `.git/HEAD` whose branch is not
+// valid UTF-8 must not produce a TEXT frame the WebSocket peer would reject; the
+// branch comes back empty.
+@(test)
+test_daemon_workspace_describe_invalid_utf8_branch :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-odin-describe-badbranch")
+    defer os.remove_all(dir)
+
+    git_dir, _ := os.join_path({dir, ".git"}, context.temp_allocator)
+    os.make_directory_all(git_dir)
+    head, _ := os.join_path({git_dir, "HEAD"}, context.temp_allocator)
+
+    head_bytes := make([dynamic]u8, context.temp_allocator)
+    append(&head_bytes, ..transmute([]u8)string("ref: refs/heads/"))
+    append(&head_bytes, 0xFF, 0xFE)
+    append(&head_bytes, '\n')
+    _ = os.write_entire_file(head, head_bytes[:])
+
+    obs := Handler_Obs {
+        method = .Workspace_Describe,
+        params = wire.Workspace_Describe_Params{path = dir},
+        check = check_describe_invalid_utf8_branch,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_describe_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    e, is_err := resp.(wire.Response_Error)
+    if !testing.expect(t, is_err, "a missing path is an error response") {
+        return true
+    }
+
+    testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_describe_missing_path :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Workspace_Describe,
+        params = wire.Workspace_Describe_Params{path = "/no/such/path/yuke-odin-xyz"},
+        check = check_describe_missing,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_describe_overlong_basename :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "describe should succeed even with an over-bound basename") {
+        return true
+    }
+
+    result, is_desc := ok.result.(wire.Workspace_Describe_Result)
+    if !testing.expect(t, is_desc, "result is a describe result") {
+        return true
+    }
+
+    testing.expect(t, len(result.workspace.title) <= 256, "the title is clamped to the wire bound")
+    testing.expect(t, utf8.valid_string(result.workspace.title), "a clamped title is still valid UTF-8")
+
+    return true
+}
+
+// Regression for the daemon abort fixed by clamping `Workspace.title`: a directory
+// whose basename exceeds the 256-byte wire bound (but is a legal APFS name) must not
+// crash `describe` when it builds the result frame.
+@(test)
+test_daemon_workspace_describe_overlong_basename :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    parent := daemon_test_make_dir("yuke-odin-describe-overlong")
+    defer os.remove_all(parent)
+
+    dir, _ := os.join_path({parent, daemon_test_overlong_name()}, context.temp_allocator)
+    if merr := os.make_directory_all(dir); merr != nil {
+        fmt.printfln("skipping: filesystem rejected an overlong-basename directory: %v", merr)
+        return
+    }
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Describe,
+        params = wire.Workspace_Describe_Params{path = dir},
+        check = check_describe_overlong_basename,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+// Populate a browse fixture: subdirectories `alpha`, `beta`, and `repo` (a git repo),
+// plus a plain file that must be omitted from the listing.
+daemon_test_make_browse_dir :: proc(name: string) -> string {
+    dir := daemon_test_make_dir(name)
+
+    for sub in ([]string{"alpha", "beta", "repo"}) {
+        p, _ := os.join_path({dir, sub}, context.temp_allocator)
+        os.make_directory_all(p)
+    }
+
+    repo_git, _ := os.join_path({dir, "repo", ".git"}, context.temp_allocator)
+    os.make_directory_all(repo_git)
+    file, _ := os.join_path({dir, "zeta.txt"}, context.temp_allocator)
+    _ = os.write_entire_file(file, "x")
+
+    return dir
+}
+
+check_browse_listing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "browse should succeed") {
+        return true
+    }
+
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(t, is_browse, "result is a browse result") {
+        return true
+    }
+
+    if testing.expect_value(t, len(result.entries), 3) {
+        // Directories only, `.git` and files omitted, sorted case-insensitively.
+        testing.expect_value(t, result.entries[0].name, "alpha")
+        testing.expect_value(t, result.entries[1].name, "beta")
+        testing.expect_value(t, result.entries[2].name, "repo")
+        testing.expect(t, result.entries[2].is_git_repo, "repo carries a .git")
+        testing.expect(t, !result.entries[0].is_git_repo, "alpha carries no .git")
+    }
+
+    _, has_parent := result.parent.?
+    testing.expect(t, has_parent, "a temp dir has a parent")
+    _, has_cursor := result.next_cursor.?
+    testing.expect(t, !has_cursor, "a single full page has a null next_cursor")
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_browse_lists_directories :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_browse_dir("yuke-odin-browse-list")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir},
+        check = check_browse_listing,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "browse should succeed") {
+        return true
+    }
+
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(t, is_browse, "result is a browse result") {
+        return true
+    }
+
+    if o.page == 0 {
+        testing.expect_value(t, len(result.entries), 2)
+
+        cursor, has := result.next_cursor.?
+        if !testing.expect(t, has, "a 3-entry dir paged by 2 has a next_cursor") {
+            return true
+        }
+
+        // The cursor is borrowed for this callback only; `client_send_request` copies
+        // it into the outbound frame synchronously, so it is safe to forward here.
+        o.page = 1
+        client.client_send_request(
+            c,
+            .Workspace_Browse,
+            wire.Workspace_Browse_Params{path = o.dir, limit = 2, cursor = cursor},
+        )
+
+        return false
+    }
+
+    testing.expect_value(t, len(result.entries), 1)
+    _, has := result.next_cursor.?
+    testing.expect(t, !has, "the final page has a null next_cursor")
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_browse_paginates :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_browse_dir("yuke-odin-browse-page")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir, limit = 2},
+        check = check_browse_paginated,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_browse_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    e, is_err := resp.(wire.Response_Error)
+    if !testing.expect(t, is_err, "a missing path is an error response") {
+        return true
+    }
+
+    testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
+
+    return true
+}
+
+@(test)
+test_daemon_workspace_browse_missing_path :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = "/no/such/path/yuke-odin-xyz"},
+        check = check_browse_missing,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_browse_skips_overlong_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "browse should succeed even with an unrepresentable entry name") {
+        return true
+    }
+
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(t, is_browse, "result is a browse result") {
+        return true
+    }
+
+    found_normal := false
+    for entry in result.entries {
+        testing.expect(t, len(entry.name) <= 256, "every emitted entry name is within the wire bound")
+        if entry.name == "normal" {
+            found_normal = true
+        }
+    }
+
+    testing.expect(t, found_normal, "the normal sibling entry is still listed")
+
+    return true
+}
+
+// Regression for the daemon abort fixed by skipping over-bound directory entries: a
+// subdirectory whose name exceeds the 256-byte wire bound (but is a legal APFS name)
+// must not crash `browse` when it builds the result frame; it is simply omitted.
+@(test)
+test_daemon_workspace_browse_skips_overlong_name :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-odin-browse-overlong")
+    defer os.remove_all(dir)
+
+    normal, _ := os.join_path({dir, "normal"}, context.temp_allocator)
+    os.make_directory_all(normal)
+
+    overlong, _ := os.join_path({dir, daemon_test_overlong_name()}, context.temp_allocator)
+    if merr := os.make_directory_all(overlong); merr != nil {
+        fmt.printfln("skipping: filesystem rejected an overlong-name directory: %v", merr)
+        return
+    }
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir},
+        check = check_browse_skips_overlong_name,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+check_browse_skips_non_utf8_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "browse should succeed even with a non-UTF-8 entry name") {
+        return true
+    }
+
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(t, is_browse, "result is a browse result") {
+        return true
+    }
+
+    found_normal := false
+    for entry in result.entries {
+        testing.expect(t, utf8.valid_string(entry.name), "every emitted entry name is valid UTF-8")
+        testing.expect(t, utf8.valid_string(entry.path), "every emitted entry path is valid UTF-8")
+        if entry.name == "normal" {
+            found_normal = true
+        }
+    }
+
+    testing.expect(t, found_normal, "the normal sibling entry is still listed")
+
+    return true
+}
+
+// Regression for invalid UTF-8 in filesystem bytes: a subdirectory whose name is not
+// valid UTF-8 cannot ride a WebSocket TEXT frame, so `browse` omits it rather than
+// emitting a frame the peer would reject; the valid sibling is still listed.
+@(test)
+test_daemon_workspace_browse_skips_non_utf8_name :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-odin-browse-nonutf8")
+    defer os.remove_all(dir)
+
+    normal, _ := os.join_path({dir, "normal"}, context.temp_allocator)
+    os.make_directory_all(normal)
+
+    // A subdirectory name built from raw bytes (0xFF 0xFE) that are not valid UTF-8.
+    // Some filesystems reject such names, in which case the case skips like the
+    // overlong-name fixture.
+    name := [?]u8{0xFF, 0xFE}
+    path_bytes := make([]u8, len(dir) + 1 + len(name), context.temp_allocator)
+    copy(path_bytes[:], transmute([]u8)dir)
+    path_bytes[len(dir)] = '/'
+    copy(path_bytes[len(dir) + 1:], name[:])
+    invalid := string(path_bytes)
+    if merr := os.make_directory_all(invalid); merr != nil {
+        fmt.printfln("skipping: filesystem rejected a non-UTF-8 directory name: %v", merr)
+        return
+    }
+    defer os.remove_all(invalid)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir},
+        check = check_browse_skips_non_utf8_name,
+        dir = dir,
+    }
+    daemon_run_handler(t, &obs)
+}
+
+// --- Raw blocking TCP peer harness (worker thread) ----------------------------
+
+// A raw peer that upgrades, sends one hand-built frame, then reads back the
+// server's reaction (a Close frame with its code, or a bare socket close).
+Raw_Peer :: struct {
+    // Port to connect to.
+    port:          int,
+
+    // Opcode of the single frame the peer sends after upgrading.
+    opcode:        ws.Op_Code,
+
+    // Payload of that frame (borrowed static bytes; read-only across the thread).
+    payload:       []byte,
+
+    // The peer ran its script to completion.
+    ok:            bool,
+
+    // The server closed the TCP connection.
+    server_closed: bool,
+
+    // The server sent a WebSocket Close frame before closing.
+    got_close:     bool,
+
+    // Close code carried by that Close frame.
+    close_code:    u16,
+}
+
+// Connect a blocking TCP socket to loopback:port.
+daemon_raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
+    endpoint := net.Endpoint {
+        address = net.IP4_Loopback,
+        port    = port,
+    }
+
+    sock, err := net.dial_tcp(endpoint)
+    if err != nil {
+        return {}, false
+    }
+
+    return sock, true
+}
+
+// Perform the client half of the WebSocket upgrade and validate the 101.
+daemon_raw_upgrade :: proc(sock: net.TCP_Socket) -> bool {
+    key_raw: [ws.SEC_WEBSOCKET_KEY_BYTES]byte
+    crypto.rand_bytes(key_raw[:])
+    key_encoded: [ws.SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte
+    base64.encode_into_buf(key_encoded[:], key_raw[:])
+
+    request := ws.build_upgrade_request("/ws", "127.0.0.1", key_encoded[:], "", context.temp_allocator)
+    if _, serr := net.send_tcp(sock, request); serr != nil {
+        return false
+    }
+
+    buf: [4096]byte
+    n := 0
+    for n < len(buf) {
+        got, rerr := net.recv_tcp(sock, buf[n:])
+        if rerr != nil || got == 0 {
+            return false
+        }
+
+        n += got
+        result, _, status := ws.parse_upgrade_response(buf[:n], key_encoded[:])
+        if status == .Ready {
+            return result == .Ok
+        }
+    }
+
+    return false
+}
+
+// Upgrade, send the configured (masked, as a real client) frame, then read back the
+// server's Close frame or observe the socket close.
+daemon_raw_peer :: proc(p: ^Raw_Peer) {
+    defer free_all(context.temp_allocator)
+
+    sock, ok := daemon_raw_dial(p.port)
+    if !ok {
+        return
+    }
+    defer net.close(sock)
+
+    if !daemon_raw_upgrade(sock) {
+        return
+    }
+
+    key: [ws.MASK_KEY_BYTES]byte
+    crypto.rand_bytes(key[:])
+    frame := ws.encode_frame(true, p.opcode, p.payload, key, context.temp_allocator)
+    if _, serr := net.send_tcp(sock, frame); serr != nil {
+        return
+    }
+
+    // Read with a client-role decoder (rejects masking, which a server never applies).
+    dec: ws.Decoder
+    ws.decoder_init(&dec, 1 << 20, 1 << 20, .Client, context.temp_allocator)
+    defer ws.decoder_destroy(&dec)
+
+    buf: [4096]byte
+    for {
+        msg, has, derr := ws.decoder_next(&dec, context.temp_allocator)
+        if derr != .None {
+            break
+        }
+
+        if has {
+            if msg.kind == .Close {
+                parsed, _ := ws.parse_close(msg.data)
+                p.got_close = true
+                p.close_code = u16(parsed.code)
+                break
+            }
+
+            continue
+        }
+
+        got, rerr := net.recv_tcp(sock, buf[:])
+        if rerr != nil || got == 0 {
+            p.server_closed = true
+            break
+        }
+
+        ws.decoder_feed(&dec, buf[:got])
+    }
+
+    p.ok = true
+}
+
+// Drive the loop while `peer` runs its blocking script, then assert the observed
+// close. Shared by the protocol-error cases; each supplies a peer and the expected
+// close code. Binds an OS-assigned ephemeral port.
+daemon_run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expect_code: u16) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Daemon_Error.None)
+
+    p := Raw_Peer {
+        port    = daemon_bound_port(&d),
+        opcode  = opcode,
+        payload = transmute([]byte)payload,
+    }
+    peer := thread.create_and_start_with_poly_data(&p, daemon_raw_peer)
+    defer {
+        thread.join(peer)
+        thread.destroy(peer)
+    }
+
+    for _ in 0 ..< 2000 {
+        nbio.tick(time.Millisecond)
+        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 {
+            break
+        }
+    }
+
+    thread.join(peer)
+
+    testing.expect(t, p.got_close, "server should send a Close frame")
+    testing.expect_value(t, p.close_code, expect_code)
+
+    daemon_test_teardown(&d)
+}
+
+@(test)
+test_daemon_malformed_first_frame_closes :: proc(t: ^testing.T) {
+    // A text frame that is not a `client.hello` (invalid JSON) is a protocol error.
+    daemon_run_raw(t, .Text, "not json at all", wire.CLOSE.protocol_error)
+}
+
+@(test)
+test_daemon_wrong_protocol_closes :: proc(t: ^testing.T) {
+    // A well-formed hello with an unsupported protocol closes with the dedicated code.
+    hello := `{"type":"client.hello","protocol":2,"client":{"name":"x","version":"y"}}`
+    daemon_run_raw(t, .Text, hello, wire.CLOSE.unsupported_protocol)
+}
+
+@(test)
+test_daemon_binary_frame_closes :: proc(t: ^testing.T) {
+    // The v1 protocol carries only text frames; a binary frame is a protocol error
+    // regardless of content.
+    hello := `{"type":"client.hello","protocol":1,"client":{"name":"x","version":"y"}}`
+    daemon_run_raw(t, .Binary, hello, wire.CLOSE.protocol_error)
+}
+
+@(test)
+test_daemon_trailing_bytes_closes :: proc(t: ^testing.T) {
+    // One JSON value per frame: a valid hello followed by a trailing token is rejected
+    // by `dec_finish` before the hello takes effect.
+    hello := `{"type":"client.hello","protocol":1,"client":{"name":"x","version":"y"}} 5`
+    daemon_run_raw(t, .Text, hello, wire.CLOSE.protocol_error)
+}
+
+// --- Lifecycle soak under a tracking allocator (leak hunt) --------------------
+
+// Repeated connect -> hello -> Ready -> close cycles must leave zero leaked
+// allocations and zero bad frees: the daemon's per-connection lifecycle (accept,
+// allocate `Conn`, open, hello, retain identity, close, release) frees everything
+// it allocates on every cycle, mirroring the WebSocket package's soak rigor.
+@(test)
+test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    track: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track, context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+    tracked := mem.tracking_allocator(&track)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "1.0.0"}, tracked)
+    testing.expect_value(t, derr, Daemon_Error.None)
+
+    port := daemon_bound_port(&d)
+    ITERATIONS :: 32
+
+    for i in 0 ..< ITERATIONS {
+        obs: Cli_Obs
+        c: client.Client
+        cerr := client.client_open(
+            &c,
+            loop,
+            {host = "127.0.0.1", port = port, path = "/ws"},
+            "yuke-test",
+            "0.1.0",
+            cli_callbacks(),
+            &obs,
+            tracked,
+        )
+        testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+        nbio.run_until(&obs.done)
+        client.client_destroy(&c)
+
+        // Drain the daemon-side connection's deferred teardown before the next cycle
+        // so releases interleave with fresh accepts, not batch at the end.
+        for _ in 0 ..< 64 {
+            if len(d.ws_server.conns) == 0 {
+                break
+            }
+
+            nbio.tick(time.Millisecond)
+        }
+
+        testing.expectf(t, obs.ready, "cycle %d should reach Ready", i)
+    }
+
+    daemon_test_teardown(&d)
+
+    testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
+    testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))
+}
