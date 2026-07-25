@@ -353,7 +353,7 @@ parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u16, bool) {
 
 // Map a completed CSI sequence (params + final byte) to a key/mouse/resize event.
 parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
-    mods := mods_from_param(p.params[1]) if p.param_count >= 2 else Modifiers{}
+    mods := mods_from_param(p.params[1]) if p.param_count >= 2 else {}
     switch final {
     case 'A':
         return make_key(.Up, mods)

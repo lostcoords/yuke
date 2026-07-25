@@ -84,24 +84,31 @@ Session :: struct {
     // Advertised capabilities from negotiation.
     caps:                        Capabilities,
 
+    // @private
     // Borrowed tty handle, used for negotiation reads. Must outlive the session.
     tty:                         Tty_Handle,
 
+    // @private
     // Borrowed mode-write sink. Must outlive the session.
     out:                         io.Writer,
 
+    // @private
     // Saved raw-mode state; `session_leave` restores it.
     raw:                         Raw_Term,
 
+    // @private
     // Pre-enter cursor visibility (DEC mode 25), for presentation restore.
     initial_cursor:              Mode_Status,
 
+    // @private
     // Pre-enter synchronized-output state (DEC mode 2026), for presentation restore.
     initial_synchronized_output: Mode_Status,
 
+    // @private
     // Exactly what enter turned on; leave disables the same set.
     enabled:                     Enabled,
 
+    // @private
     // Saved console-output configuration (Windows: VT-processing mode + code pages),
     // restored last by `session_leave`. Zero-size no-op on POSIX.
     out_mode:                    Output_Mode_State,

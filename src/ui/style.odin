@@ -73,5 +73,5 @@ style_patch :: proc(base, top: Style) -> Style {
 
     mods := base.mods | top.mods
 
-    return Style{fg = fg, bg = bg, mods = mods}
+    return {fg = fg, bg = bg, mods = mods}
 }

@@ -174,7 +174,7 @@ Cell_Flag :: enum u8 {
 Cell_Flags :: bit_set[Cell_Flag;u8]
 
 // A terminal grid cell. The Odin zero value is NOT a valid empty cell — glyph 0 is NUL, not
-// a space — so every clear/reset path must use EMPTY_CELL, never Cell{}.
+// a space — so every clear/reset path must use EMPTY_CELL, never {}.
 Cell :: struct {
     glyph:  Glyph,
     // Foreground / background; nil = inherit/unset (see Style).
@@ -190,7 +190,7 @@ EMPTY_CELL :: Cell {
 
 // This cell's current style.
 cell_style_of :: proc(cell: Cell) -> Style {
-    return Style{fg = cell.fg, bg = cell.bg, mods = cell.mods}
+    return {fg = cell.fg, bg = cell.bg, mods = cell.mods}
 }
 
 // Patch the cell's style with the set fields of `s`, written back onto the cell. Write-only-

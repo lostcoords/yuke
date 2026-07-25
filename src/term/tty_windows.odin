@@ -30,7 +30,7 @@ enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
         return {}, .Set_Attr_Failed
     }
 
-    return Raw_Term{saved = saved, handle = handle}, .None
+    return {saved = saved, handle = handle}, .None
 }
 
 // Restore the console input mode captured by `enable_raw_mode`.
@@ -55,5 +55,5 @@ get_size :: proc(handle: Tty_Handle) -> (Size, Term_Error) {
     width := int(info.srWindow.Right) - int(info.srWindow.Left) + 1
     height := int(info.srWindow.Bottom) - int(info.srWindow.Top) + 1
 
-    return Size{width = u16(width), height = u16(height)}, .None
+    return {width = u16(width), height = u16(height)}, .None
 }

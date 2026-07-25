@@ -55,30 +55,37 @@ Cursor_State :: struct {
 // committed frame used for diffing. Both grids are flat row-major (idx = y*width + x).
 // Free with buffer_destroy.
 Buffer :: struct {
+    // @private
     // Allocator backing both grids and both pools; supplied at init and reused on resize.
     allocator:    mem.Allocator,
 
     // Grid area in cells.
     area:         Rect,
 
+    // @private
     // Current frame being drawn.
     cells:        []Cell,
 
+    // @private
     // Last committed frame (read-only during a frame).
     prev:         []Cell,
 
+    // @private
     // Grapheme pool for `cells`.
     pool:         Grapheme_Pool,
 
+    // @private
     // Grapheme pool for `prev`, used by the diff to resolve the previous frame's clusters.
     prev_pool:    Grapheme_Pool,
 
     // Hardware cursor for the current frame.
     cursor:       Cursor_State,
 
+    // @private
     // Hardware cursor from the last committed frame.
     prev_cursor:  Cursor_State,
 
+    // @private
     // The next flush must repaint every cell. Starts true.
     force_redraw: bool,
 }
@@ -109,7 +116,7 @@ buffer_init :: proc(allocator: mem.Allocator, width, height: u16) -> (Buffer, Bu
 
     b := Buffer {
         allocator = allocator,
-        area = Rect{width = width, height = height},
+        area = {width = width, height = height},
         cells = cells,
         prev = prev,
         force_redraw = true,
@@ -720,7 +727,7 @@ write_str :: proc(w: io.Writer, s: string) -> Buffer_Error {
 buffer_clamp :: proc(b: ^Buffer, area: Rect) -> Rect {
     x := min(area.x, b.area.width)
     y := min(area.y, b.area.height)
-    return Rect{x = x, y = y, width = min(area.width, b.area.width - x), height = min(area.height, b.area.height - y)}
+    return {x = x, y = y, width = min(area.width, b.area.width - x), height = min(area.height, b.area.height - y)}
 }
 
 // Cell index for (x,y), or ok=false when out of bounds.

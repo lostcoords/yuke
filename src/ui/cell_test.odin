@@ -138,14 +138,14 @@ test_cell_style_round_trip_and_flags :: proc(t: ^testing.T) {
     testing.expect(t, cell_is_wide(c))
     testing.expect(t, !cell_is_continuation(c))
 
-    cell_set_style(&c, Style{fg = Ansi_Color.Red, mods = {.Bold}})
+    cell_set_style(&c, {fg = Ansi_Color.Red, mods = {.Bold}})
     s := cell_style_of(c)
     testing.expect(t, s.fg != nil)
     testing.expect_value(t, s.fg.(Ansi_Color), Ansi_Color.Red)
     testing.expect(t, .Bold in s.mods)
 
     // setStyle patches onto the CURRENT style and never clears prior modifiers.
-    cell_set_style(&c, Style{mods = {.Italic}})
+    cell_set_style(&c, {mods = {.Italic}})
     s2 := cell_style_of(c)
     testing.expect(t, s2.fg != nil)
     testing.expect_value(t, s2.fg.(Ansi_Color), Ansi_Color.Red)

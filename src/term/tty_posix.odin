@@ -70,7 +70,7 @@ enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
         return {}, .Set_Attr_Failed
     }
 
-    return Raw_Term{saved = saved, fd = handle}, .None
+    return {saved = saved, fd = handle}, .None
 }
 
 // Restore the terminal state captured by `enable_raw_mode`.
@@ -91,5 +91,5 @@ get_size :: proc(handle: Tty_Handle) -> (Size, Term_Error) {
         return {}, .Size_Query_Failed
     }
 
-    return Size{width = ws.ws_col, height = ws.ws_row}, .None
+    return {width = ws.ws_col, height = ws.ws_row}, .None
 }

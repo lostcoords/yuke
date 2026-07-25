@@ -33,18 +33,23 @@ Resize_Error :: enum {
 // SIGWINCH self-pipe notifier. `tty` is borrowed for `get_size` re-queries; it
 // must outlive the notifier.
 Resize_Notifier :: struct {
-    // Self-pipe read end (non-blocking); polled by `resize_notifier_wait`.
+    // Self-pipe read end (non-blocking); polled by `resize_notifier_wait`. A caller
+    // polling it directly must drain the pipe and re-query the size.
     read_fd:    posix.FD,
 
+    // @private
     // Self-pipe write end; published to `g_write_fd` for the handler.
     write_fd:   posix.FD,
 
+    // @private
     // Previous SIGWINCH disposition, restored by `resize_notifier_destroy`.
     old_action: posix.sigaction_t,
 
+    // @private
     // Borrowed tty handle, re-queried via `get_size` on wake. Must outlive the notifier.
     tty:        Tty_Handle,
 
+    // @private
     // Guards against concurrent `resize_notifier_wait` calls.
     waiting:    bool,
 }
@@ -107,7 +112,7 @@ resize_notifier_init :: proc(tty: Tty_Handle) -> (Resize_Notifier, Resize_Error)
         return {}, .Sigaction_Failed
     }
 
-    return Resize_Notifier{read_fd = fds[0], write_fd = fds[1], old_action = old, tty = tty}, .None
+    return {read_fd = fds[0], write_fd = fds[1], old_action = old, tty = tty}, .None
 }
 
 // Set O_NONBLOCK and FD_CLOEXEC on one pipe end.
@@ -174,13 +179,6 @@ drain_pipe :: proc(fd: posix.FD) {
     }
 }
 
-// Read end of the self-pipe, for a caller running its own `poll` loop over
-// stdin and this fd together (driving the terminal `Reader` while also
-// watching for resize). On readiness the caller must drain the pipe and
-// re-query the size itself, the same as `resize_notifier_wait` does.
-resize_notifier_fd :: proc(n: ^Resize_Notifier) -> posix.FD {
-    return n.read_fd
-}
 
 // Tear down the notifier: restore the previous SIGWINCH disposition and close
 // the pipe. The caller must have no `resize_notifier_wait` in flight.

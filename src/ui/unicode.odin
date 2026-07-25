@@ -37,7 +37,7 @@ Iterator :: struct {
 
 // Iterate the grapheme clusters of `str` (UAX #29).
 clusters :: proc(str: string) -> Iterator {
-    return Iterator{str = str}
+    return {str = str}
 }
 
 iter_next :: proc(it: ^Iterator) -> (Cluster, bool) {
@@ -104,7 +104,7 @@ iter_next_bounded :: proc(it: ^Iterator, max_bytes: int) -> (Cluster, bool, Unic
         it.done = true
     }
 
-    return Cluster{offset = start, len = length}, true, .None
+    return {offset = start, len = length}, true, .None
 }
 
 // Position `it` at the first rune that would push a cluster past `max_bytes`,

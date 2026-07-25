@@ -16,7 +16,8 @@ test_enable_raw_mode_on_non_tty_fails :: proc(t: ^testing.T) {
 
     raw, err := enable_raw_mode(fd)
     testing.expect_value(t, err, Term_Error.Get_Attr_Failed)
-    testing.expect_value(t, raw, Raw_Term{})
+    zero := Raw_Term{}
+    testing.expect_value(t, raw, zero)
 }
 
 @(test)
@@ -27,5 +28,6 @@ test_get_size_on_non_tty_fails :: proc(t: ^testing.T) {
 
     size, err := get_size(fd)
     testing.expect_value(t, err, Term_Error.Size_Query_Failed)
-    testing.expect_value(t, size, Size{})
+    zero := Size{}
+    testing.expect_value(t, size, zero)
 }

@@ -20,7 +20,7 @@ Test_Writer :: struct {
 }
 
 test_writer_stream :: proc(tw: ^Test_Writer) -> io.Writer {
-    return io.Writer{procedure = test_writer_proc, data = tw}
+    return {procedure = test_writer_proc, data = tw}
 }
 
 test_writer_proc :: proc(
@@ -116,7 +116,7 @@ test_buffer_wide_fill_blanks_unmatched_final_cell :: proc(t: ^testing.T) {
     defer buffer_destroy(&buf)
 
     buffer_set(&buf, 2, 0, "x", {})
-    buffer_fill(&buf, Rect{width = 3, height = 1}, "漢", Style{bg = Indexed(4)})
+    buffer_fill(&buf, {width = 3, height = 1}, "漢", {bg = Indexed(4)})
 
     sb: [4]u8
     testing.expect_value(t, buffer_symbol_at(&buf, 0, 0, &sb), "漢")
@@ -187,8 +187,8 @@ test_buffer_text_preserves_existing_background_wash :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Buffer_Error.None)
     defer buffer_destroy(&buf)
 
-    buffer_fill(&buf, Rect{x = 0, y = 0, width = 4, height = 1}, " ", Style{bg = Indexed(237)})
-    _, serr := buffer_set_string_n(&buf, 0, 0, "hi", 2, Style{fg = Ansi_Color.Cyan})
+    buffer_fill(&buf, {x = 0, y = 0, width = 4, height = 1}, " ", {bg = Indexed(237)})
+    _, serr := buffer_set_string_n(&buf, 0, 0, "hi", 2, {fg = Ansi_Color.Cyan})
     testing.expect_value(t, serr, Buffer_Error.None)
 
     testing.expect(t, buffer_cell_at(&buf, 0, 0).bg.(Indexed) == Indexed(237)) // bg kept

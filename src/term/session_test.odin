@@ -251,11 +251,11 @@ test_restore_only_enabled_modes :: proc(t: ^testing.T) {
 
     // A cleared Enabled (the state after `session_leave` resets it) writes nothing, so a
     // second leave is a no-op for the modes.
-    restore(w, Enabled{})
+    restore(w, {})
     testing.expect_value(t, len(strings.to_string(b)), 0)
 
     // Only the recorded modes are disabled.
-    restore(w, Enabled{bracketed_paste = true})
+    restore(w, {bracketed_paste = true})
     out := strings.to_string(b)
     testing.expect(t, strings.contains(out, BRACKETED_PASTE_DISABLE))
     testing.expect(t, !strings.contains(out, ALT_SCREEN_EXIT))
