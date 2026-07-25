@@ -15,6 +15,19 @@ PAYLOAD_LEN_16 :: 126
 // Value of `Header1.payload_len` selecting a following 64-bit big-endian length.
 PAYLOAD_LEN_64 :: 127
 
+// Which side of the connection a codec surface acts for. Masking is direction-
+// strict (RFC 6455 §5.1): a client MUST mask every frame it writes, a server MUST
+// NOT. This single distinction drives strictness in both directions — on the read
+// side `Role` names which masking a decoder requires; on the write side the same
+// rule is carried by whether a masking key is supplied (see `make_header`).
+Role :: enum {
+    // Reads server->client frames (rejects masked) and writes masked client frames.
+    Client,
+
+    // Reads client->server frames (rejects unmasked) and writes unmasked server frames.
+    Server,
+}
+
 // First frame byte: FIN, three reserved bits, and the 4-bit opcode. Bit_field
 // members are LSB-first, so `opcode` is the low nibble.
 Header0 :: bit_field u8 {
@@ -34,13 +47,15 @@ Header0 :: bit_field u8 {
     fin:    bool | 1,
 }
 
-// Second frame byte: 7-bit payload-length code plus the mask bit. Clients set
-// `mask` on write; a server frame with it set is a protocol error.
+
+// Second frame byte: 7-bit payload-length code plus the mask bit. Which value is
+// legal depends on direction (RFC 6455 §5.1): a client MUST set `mask`, a server
+// MUST leave it clear. `parse_header` enforces the rule for its `Role`.
 Header1 :: bit_field u8 {
     // 0-125 is the length; 126 selects a 16-bit and 127 a 64-bit extended length.
     payload_len: u8   | 7,
 
-    // Mask bit. Set on client writes, rejected on reads.
+    // Mask bit. Required on client->server frames, forbidden on server->client.
     mask:        bool | 1,
 }
 
@@ -66,22 +81,30 @@ Op_Code :: enum u8 {
     Pong             = 0xA,
 }
 
-// A decoded frame header. Payload is not included; the caller consumes `len`
+// A decoded frame header. Payload is not included; the caller consumes `payload_length`
 // bytes after the header from the same buffer.
 Frame_Header :: struct {
     // Opcode of this frame.
-    opcode: Op_Code,
+    opcode:         Op_Code,
 
     // Payload length in bytes.
-    len:    int,
+    payload_length: int,
 
     // Whether this is the final fragment of its message.
-    fin:    bool,
+    fin:            bool,
+
+    // True when the frame carried a masking key (only server-role reads). The
+    // payload following the header is masked and must be unmasked with `mask_key`.
+    masked:         bool,
+
+    // Masking key copied out of the header when `masked`; unused otherwise. Fixed
+    // array, so it is owned by the value and outlives the source buffer.
+    mask_key:       [MASK_KEY_BYTES]byte,
 }
 
 // Whether `parse_header` decoded a header or needs more buffered bytes.
 Header_Status :: enum {
-    // A full header was decoded; `Frame_Header` and the returned length are valid.
+    // A full header was decoded; `Frame_Header` and `header_length` are valid.
     Ready,
 
     // The buffer is shorter than the encoded header; feed more bytes and retry.
@@ -95,14 +118,20 @@ Protocol_Error :: enum {
     // No error.
     None,
 
+    // Internal buffering or message materialization could not be allocated.
+    Out_Of_Memory,
+
     // Opcode is not in the assigned set.
     Unrecognized_Opcode,
 
     // A reserved bit was set without a negotiated extension.
     Reserved_Bit_Set,
 
-    // Server sent a masked frame.
+    // A client received a masked frame; a server never masks (RFC 6455 §5.1).
     Masked,
+
+    // A server received an unmasked frame; a client MUST mask (RFC 6455 §5.1).
+    Unmasked,
 
     // A control frame had FIN cleared (control frames may not fragment).
     Control_Frame_Fragmented,
@@ -170,14 +199,17 @@ op_code_is_control :: proc(op: Op_Code) -> bool {
     return (u8(op) & 0x8) != 0
 }
 
-// Decode a frame header from the front of `buf` without consuming payload. On
-// `.Need_More`, retry from the same offset after more bytes arrive; a non-`.None`
-// `err` must fail the connection (RFC 6455 §5).
+// Decode a frame header from the front of `buf` without consuming payload. `role`
+// selects the direction-strict masking rule (RFC 6455 §5.1): a `.Client` rejects a
+// masked frame, a `.Server` rejects an unmasked one and copies the 4-byte masking
+// key into the returned header. On `.Need_More`, retry from the same offset after
+// more bytes arrive; a non-`.None` `err` must fail the connection (RFC 6455 §5).
 parse_header :: proc(
     buf: []byte,
+    role: Role,
 ) -> (
     header: Frame_Header,
-    header_len: int,
+    header_length: int,
     status: Header_Status,
     err: Protocol_Error,
 ) {
@@ -197,9 +229,21 @@ parse_header :: proc(
         return {}, 0, .Ready, .Reserved_Bit_Set
     }
 
-    if h1.mask {
-        return {}, 0, .Ready, .Masked
+    // Enforce direction-strict masking before reading anything further.
+    switch role {
+    case .Client:
+        if h1.mask {
+            return {}, 0, .Ready, .Masked
+        }
+
+    case .Server:
+        if !h1.mask {
+            return {}, 0, .Ready, .Unmasked
+        }
     }
+
+    // A masked frame carries a 4-byte key after any extended length bytes.
+    mask_len := h1.mask ? MASK_KEY_BYTES : 0
 
     control := op_code_is_control(opcode)
 
@@ -207,10 +251,10 @@ parse_header :: proc(
         return {}, 0, .Ready, .Control_Frame_Fragmented
     }
 
-    // Validate the length code before requiring the extended bytes, so an illegal
-    // control length fails fast.
-    length: int
-    header_len = 2
+    // Validate the length code before requiring the extended and mask bytes, so an
+    // illegal control length fails fast. `extended_length_bytes` is its encoded width.
+    payload_length: int
+    extended_length_bytes := 0
 
     switch h1.payload_len {
     case PAYLOAD_LEN_16:
@@ -218,13 +262,13 @@ parse_header :: proc(
             return {}, 0, .Ready, .Control_Frame_Too_Big
         }
 
-        header_len = 4
-        if len(buf) < header_len {
+        extended_length_bytes = 2
+        if len(buf) < 2 + extended_length_bytes {
             return {}, 0, .Need_More, .None
         }
 
-        length = int(u16(buf[2]) << 8 | u16(buf[3]))
-        if length < PAYLOAD_LEN_16 {
+        payload_length = int(u16(buf[2]) << 8 | u16(buf[3]))
+        if payload_length < PAYLOAD_LEN_16 {
             return {}, 0, .Ready, .Non_Minimal_Length
         }
 
@@ -233,8 +277,8 @@ parse_header :: proc(
             return {}, 0, .Ready, .Control_Frame_Too_Big
         }
 
-        header_len = 10
-        if len(buf) < header_len {
+        extended_length_bytes = 8
+        if len(buf) < 2 + extended_length_bytes {
             return {}, 0, .Need_More, .None
         }
 
@@ -248,67 +292,90 @@ parse_header :: proc(
             return {}, 0, .Ready, .Frame_Length_Overflow
         }
 
-        length = int(v)
-        if length < 1 << 16 {
+        payload_length = int(v)
+        if payload_length < 1 << 16 {
             return {}, 0, .Ready, .Non_Minimal_Length
         }
 
     case:
-        length = int(h1.payload_len)
+        payload_length = int(h1.payload_len)
     }
 
-    if opcode == .Connection_Close && length == 1 {
+    if opcode == .Connection_Close && payload_length == 1 {
         return {}, 0, .Ready, .Bad_Close
     }
 
-    return Frame_Header{opcode = opcode, len = length, fin = h0.fin}, header_len, .Ready, .None
+    // The full header — fixed bytes, extended length, and any masking key — must be
+    // buffered before the caller may consume `header_length` and the payload.
+    header_length = 2 + extended_length_bytes + mask_len
+    if len(buf) < header_length {
+        return {}, 0, .Need_More, .None
+    }
+
+    header = Frame_Header {
+        opcode         = opcode,
+        payload_length = payload_length,
+        fin            = h0.fin,
+        masked         = h1.mask,
+    }
+    if h1.mask {
+        copy(header.mask_key[:], buf[2 + extended_length_bytes:][:MASK_KEY_BYTES])
+    }
+
+    return header, header_length, .Ready, .None
 }
 
-// Write a masked client frame header into `buf`, returning the used prefix.
-// `mask_key` is copied in verbatim and pairs with `mask_payload`, which XORs
-// `payload[i]` with `mask_key[i % 4]`.
+// Write a frame header into `buf`, returning the used prefix. The masking key
+// carries the direction: a client supplies one — the mask bit is set and the four
+// key bytes are appended, pairing with `mask_payload` — while a server passes `nil`
+// for an unmasked header with the mask bit clear and no key bytes.
 make_header :: proc(
     buf: ^[MAX_HEADER_BYTES]byte,
     fin: bool,
     opcode: Op_Code,
-    length: int,
-    mask_key: [MASK_KEY_BYTES]byte,
+    payload_length: int,
+    mask_key: Maybe([MASK_KEY_BYTES]byte),
 ) -> []byte {
+    key, masked := mask_key.?
+    assert(payload_length >= 0, "frame payload length must be non-negative")
+    assert(!op_code_is_control(opcode) || payload_length <= 125, "control frame payload exceeds 125 bytes")
+
     buf[0] = transmute(u8)Header0{fin = fin, opcode = u8(opcode)}
 
     n := 2
 
     switch {
-    case length > int(max(u16)):
-        buf[1] = transmute(u8)Header1{mask = true, payload_len = PAYLOAD_LEN_64}
-        u := u64(length)
+    case payload_length > int(max(u16)):
+        buf[1] = transmute(u8)Header1{mask = masked, payload_len = PAYLOAD_LEN_64}
+        u := u64(payload_length)
         for i in 0 ..< 8 {
             buf[2 + i] = byte(u >> uint((7 - i) * 8))
         }
 
         n = 10
 
-    case length >= PAYLOAD_LEN_16:
-        buf[1] = transmute(u8)Header1{mask = true, payload_len = PAYLOAD_LEN_16}
-        buf[2] = byte(u16(length) >> 8)
-        buf[3] = byte(length)
+    case payload_length >= PAYLOAD_LEN_16:
+        buf[1] = transmute(u8)Header1{mask = masked, payload_len = PAYLOAD_LEN_16}
+        buf[2] = byte(u16(payload_length) >> 8)
+        buf[3] = byte(payload_length)
         n = 4
 
     case:
-        buf[1] = transmute(u8)Header1{mask = true, payload_len = u8(length)}
+        buf[1] = transmute(u8)Header1{mask = masked, payload_len = u8(payload_length)}
     }
 
-    // Bind the by-value key to a local so it is addressable; `copy` memmoves the
-    // four mask bytes.
-    key := mask_key
-    copy(buf[n:][:MASK_KEY_BYTES], key[:])
-    n += MASK_KEY_BYTES
+    if masked {
+        // `copy` memmoves the four mask bytes; `key` is already an addressable local.
+        copy(buf[n:][:MASK_KEY_BYTES], key[:])
+        n += MASK_KEY_BYTES
+    }
 
     return buf[:n]
 }
 
 // XOR `src` into `dst` under `mask_key` (byte i keyed by `mask_key[i % 4]`).
-// Lengths must match; out-of-place so a caller's read-only payload is untouched.
+// Lengths must match. Byte i depends only on `src[i]`, so `dst` may alias `src` for
+// in-place unmasking, or be a separate buffer to leave a read-only payload untouched.
 mask_payload :: proc(dst, src: []byte, mask_key: [MASK_KEY_BYTES]byte) {
     assert(len(dst) == len(src))
 
@@ -317,14 +384,15 @@ mask_payload :: proc(dst, src: []byte, mask_key: [MASK_KEY_BYTES]byte) {
     }
 }
 
-// Allocate and return one complete masked client frame (header + masked payload).
-// Caller-owned; under nbio it must stay alive until the consuming send completes.
-// Free with `delete(frame, allocator)`.
+// Allocate and return one complete frame (header + payload). A client supplies a
+// `mask_key` (masked payload, mask bit set); a server passes `nil` (payload copied
+// verbatim, mask bit clear). Caller-owned; under nbio it must stay alive until the
+// consuming send completes. Free with `delete(frame, allocator)`.
 encode_frame :: proc(
     fin: bool,
     opcode: Op_Code,
     payload: []byte,
-    mask_key: [MASK_KEY_BYTES]byte,
+    mask_key: Maybe([MASK_KEY_BYTES]byte),
     allocator := context.allocator,
 ) -> (
     frame: []byte,
@@ -335,7 +403,12 @@ encode_frame :: proc(
 
     out := make([]byte, len(header) + len(payload), allocator) or_return
     copy(out, header)
-    mask_payload(out[len(header):], payload, mask_key)
+
+    if key, masked := mask_key.?; masked {
+        mask_payload(out[len(header):], payload, key)
+    } else {
+        copy(out[len(header):], payload)
+    }
 
     return out, .None
 }
@@ -414,7 +487,7 @@ Parsed_Close :: struct {
 // `close_code_valid_on_wire` and any reason bytes must be valid UTF-8.
 parse_close :: proc(data: []byte) -> (Parsed_Close, Protocol_Error) {
     if len(data) == 0 {
-        return Parsed_Close{code = .No_Status_Rcvd, reason = ""}, .None
+        return {code = .No_Status_Rcvd, reason = ""}, .None
     }
 
     code := u16(data[0]) << 8 | u16(data[1])
@@ -427,5 +500,5 @@ parse_close :: proc(data: []byte) -> (Parsed_Close, Protocol_Error) {
         return {}, .Invalid_Utf8
     }
 
-    return Parsed_Close{code = Close_Code(code), reason = reason}, .None
+    return {code = Close_Code(code), reason = reason}, .None
 }

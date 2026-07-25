@@ -130,42 +130,17 @@ srv_read_request :: proc(conn: net.TCP_Socket, buf: []byte) -> (n: int, ok: bool
     return n, false
 }
 
-// Derive Sec-WebSocket-Accept from the client key found in a raw request. The
-// client sends header names lowercased, so the marker matches verbatim.
-srv_derive_accept :: proc(request: []byte, out: []byte) -> (accept: []byte, ok: bool) {
-    marker := "sec-websocket-key: "
-    s := string(request)
-    ki := strings.index(s, marker)
-    if ki < 0 {
+// Validate the client's upgrade request and build the matching 101 response with
+// the package's own server-side handshake primitives. ok is false on a malformed
+// request. Exercises `parse_upgrade_request` + `build_upgrade_response` from a real
+// server caller. The response borrows `allocator`.
+srv_build_upgrade_response :: proc(request: []byte, allocator := context.temp_allocator) -> (resp: []byte, ok: bool) {
+    req, result, _, status := parse_upgrade_request(request)
+    if status != .Ready || result != .Ok {
         return nil, false
     }
 
-    key_start := ki + len(marker)
-    rel := strings.index(s[key_start:], "\r\n")
-    if rel < 0 {
-        return nil, false
-    }
-
-    key := s[key_start:key_start + rel]
-
-    return make_sec_websocket_accept(transmute([]byte)key, out), true
-}
-
-// Build the bytes of a valid 101 upgrade response for `accept`.
-srv_build_101 :: proc(accept: []byte, allocator := context.allocator) -> []byte {
-    text := strings.concatenate(
-        {
-            "HTTP/1.1 101 Switching Protocols\r\n",
-            "Upgrade: websocket\r\n",
-            "Connection: Upgrade\r\n",
-            "Sec-WebSocket-Accept: ",
-            string(accept),
-            "\r\n\r\n",
-        },
-        allocator,
-    )
-
-    return transmute([]byte)text
+    return build_upgrade_response(transmute([]byte)req.key, allocator), true
 }
 
 // Read the request and send a valid 101 response. The common successful upgrade.
@@ -176,13 +151,11 @@ srv_upgrade :: proc(conn: net.TCP_Socket) -> bool {
         return false
     }
 
-    accept_buf: [SEC_WEBSOCKET_ACCEPT_ENCODED_BYTES]byte
-    accept, dok := srv_derive_accept(req[:n], accept_buf[:])
+    resp, dok := srv_build_upgrade_response(req[:n], context.temp_allocator)
     if !dok {
         return false
     }
 
-    resp := srv_build_101(accept, context.temp_allocator)
     _, serr := net.send_tcp(conn, resp)
 
     return serr == nil
@@ -226,73 +199,66 @@ srv_close_body :: proc(buf: ^[2]byte, code: u16) -> []byte {
     return buf[:]
 }
 
-// Buffered reader for the masked frames the client writes back. `parse_header`
-// rejects masked frames (it is the client-side codec), so the server unmasks
-// with this minimal reader instead.
+// Buffered reader for the masked frames the client writes back, built on a
+// server-role `Decoder` — the same primitive a real server uses to enforce masking
+// and unmask payloads. Zero-initialized at each use site; the decoder is created
+// lazily on the first read.
 Srv_Frame_Reader :: struct {
-    conn: net.TCP_Socket,
-    buf:  [8192]byte,
-    lo:   int,
-    hi:   int,
+    conn:    net.TCP_Socket,
+    decoder: Decoder,
+    started: bool,
+    buf:     [8192]byte,
 }
 
-// Read the next whole frame, unmasking its payload in place. The returned payload
-// borrows the reader's buffer and is valid only until the next call.
+// Read the next whole frame via the server-role decoder, which rejects an unmasked
+// frame and unmasks the payload. The returned payload is allocated in the enclosing
+// server's temp arena and stays valid until it is freed.
 srv_next_frame :: proc(r: ^Srv_Frame_Reader) -> (opcode: Op_Code, payload: []byte, ok: bool) {
+    if !r.started {
+        decoder_init(&r.decoder, 1 << 20, 1 << 20, .Server, context.temp_allocator)
+        r.started = true
+    }
+
     for {
-        // Compact the consumed prefix so a long frame stream reuses the buffer.
-        if r.lo > 0 {
-            copy(r.buf[:], r.buf[r.lo:r.hi])
-            r.hi -= r.lo
-            r.lo = 0
+        msg, has, err := decoder_next(&r.decoder, context.temp_allocator)
+        if err != .None {
+            return .Continuation, nil, false
         }
 
-        avail := r.buf[:r.hi]
-        if len(avail) >= 2 {
-            b1 := avail[1]
-            masked := (b1 & 0x80) != 0
-            l7 := int(b1 & 0x7f)
-            hdr := 2
-            plen := l7
-            have_hdr := true
-            if l7 == PAYLOAD_LEN_16 {
-                if len(avail) < 4 {
-                    have_hdr = false
-                } else {
-                    plen = int(avail[2]) << 8 | int(avail[3])
-                    hdr = 4
-                }
-            }
-
-            if have_hdr {
-                mask_len := masked ? MASK_KEY_BYTES : 0
-                total := hdr + mask_len + plen
-                if len(avail) >= total {
-                    opc := Op_Code(avail[0] & 0x0f)
-                    body := r.buf[hdr + mask_len:total]
-                    if masked {
-                        key: [MASK_KEY_BYTES]byte
-                        copy(key[:], r.buf[hdr:hdr + mask_len])
-                        for i in 0 ..< len(body) {
-                            body[i] ~= key[i % MASK_KEY_BYTES]
-                        }
-                    }
-
-                    r.lo = total
-
-                    return opc, body, true
-                }
-            }
+        if has {
+            return message_kind_opcode(msg.kind), msg.data, true
         }
 
-        // Not a whole frame yet; pull more bytes.
-        n, rerr := net.recv_tcp(r.conn, r.buf[r.hi:])
+        // Not a whole frame yet; pull more bytes and feed the decoder.
+        n, rerr := net.recv_tcp(r.conn, r.buf[:])
         if rerr != nil || n == 0 {
             return .Continuation, nil, false
         }
 
-        r.hi += n
+        decoder_feed(&r.decoder, r.buf[:n])
     }
+}
+
+// Map a decoded message kind back to the wire opcode the server tests assert on.
+message_kind_opcode :: proc(kind: Message_Kind) -> Op_Code {
+    switch kind {
+    case .Text:
+        return .Text
+
+    case .Binary:
+        return .Binary
+
+    case .Ping:
+        return .Ping
+
+    case .Pong:
+        return .Pong
+
+    case .Close:
+        return .Connection_Close
+    }
+
+    return .Continuation
 }
 
 // Bounded wait for a server thread to begin accepting before the client dials.
@@ -310,7 +276,7 @@ srv_wait_listening :: proc(listening: ^bool) -> bool {
 }
 
 // What the client callbacks record for the test to assert. Reached via
-// `client_user_data`; terminal counters catch a callback firing more than once.
+// `c.user_data`; terminal counters catch a callback firing more than once.
 Client_Obs :: struct {
     // on_open fired.
     opened:               bool,
@@ -342,7 +308,7 @@ Client_Obs :: struct {
 
 // Terminal-close callback shared by tests that do not destroy from within it.
 obs_on_close :: proc(c: ^Client, code: Close_Code) {
-    o := (^Client_Obs)(client_user_data(c))
+    o := (^Client_Obs)(c.user_data)
     o.close_code = code
     o.state_at_term = c.state
     o.terminal_count += 1
@@ -351,7 +317,7 @@ obs_on_close :: proc(c: ^Client, code: Close_Code) {
 
 // Terminal-error callback.
 obs_on_error :: proc(c: ^Client, err: Client_Error) {
-    o := (^Client_Obs)(client_user_data(c))
+    o := (^Client_Obs)(c.user_data)
     o.err = err
     o.state_at_term = c.state
     o.terminal_count += 1
@@ -360,20 +326,20 @@ obs_on_error :: proc(c: ^Client, err: Client_Error) {
 
 // Record a message without closing (used where no further action is expected).
 obs_on_message :: proc(c: ^Client, kind: Message_Kind, data: []byte) {
-    o := (^Client_Obs)(client_user_data(c))
+    o := (^Client_Obs)(c.user_data)
     append(&o.message, ..data)
     o.message_count += 1
 }
 
 // Record a message, then begin a graceful close.
 obs_on_message_close :: proc(c: ^Client, kind: Message_Kind, data: []byte) {
-    o := (^Client_Obs)(client_user_data(c))
+    o := (^Client_Obs)(c.user_data)
     append(&o.message, ..data)
     o.message_count += 1
     client_close(c)
 }
 
-// State the client callbacks report back into. Reached via `client_user_data`
+// State the client callbacks report back into. Reached via `c.user_data`
 // because Odin proc literals cannot capture.
 Loopback_Result :: struct {
     // on_open fired.
@@ -427,20 +393,20 @@ test_client_loopback :: proc(t: ^testing.T) {
 
     callbacks := Callbacks {
         on_open = proc(c: ^Client) {
-            r := (^Loopback_Result)(client_user_data(c))
+            r := (^Loopback_Result)(c.user_data)
             r.opened = true
         },
         on_message = proc(c: ^Client, kind: Message_Kind, data: []byte) {
-            r := (^Loopback_Result)(client_user_data(c))
+            r := (^Loopback_Result)(c.user_data)
             append(&r.message, ..data)
             client_close(c)
         },
         on_close = proc(c: ^Client, code: Close_Code) {
-            r := (^Loopback_Result)(client_user_data(c))
+            r := (^Loopback_Result)(c.user_data)
             r.done = true
         },
         on_error = proc(c: ^Client, err: Client_Error) {
-            r := (^Loopback_Result)(client_user_data(c))
+            r := (^Loopback_Result)(c.user_data)
             r.err = err
             r.done = true
         },
@@ -450,7 +416,7 @@ test_client_loopback :: proc(t: ^testing.T) {
     cerr := client_connect(
         &c,
         loop,
-        Options{host = "127.0.0.1", port = args.port, path = "/ws"},
+        {host = "127.0.0.1", port = args.port, path = "/ws"},
         callbacks,
         &result,
         context.temp_allocator,
@@ -535,7 +501,7 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
 
     callbacks := Callbacks {
         on_open = proc(c: ^Client) {
-            o := (^Client_Obs)(client_user_data(c))
+            o := (^Client_Obs)(c.user_data)
             o.opened = true
             // Trigger the close from a subsequent tick, not from inside a callback
             // running on the client's own op completion.
@@ -543,7 +509,7 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
         },
         on_message = obs_on_message,
         on_close = proc(c: ^Client, code: Close_Code) {
-            o := (^Client_Obs)(client_user_data(c))
+            o := (^Client_Obs)(c.user_data)
             o.close_code = code
             o.terminal_count += 1
             // Destroy immediately from the terminal callback (zeroes `c`), then
@@ -555,14 +521,7 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
     }
 
     c: Client
-    cerr := client_connect(
-        &c,
-        loop,
-        Options{host = "127.0.0.1", port = s.port, path = "/ws"},
-        callbacks,
-        &obs,
-        tracked,
-    )
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs, tracked)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -575,7 +534,9 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
 
     testing.expect(t, obs.opened, "on_open should fire")
     testing.expect_value(t, obs.terminal_count, 1)
-    testing.expect_value(t, obs.close_code, Close_Code.Normal_Closure)
+    // The peer reads our Close but drops TCP without echoing one, so RFC 6455
+    // requires the locally synthesized abnormal status.
+    testing.expect_value(t, obs.close_code, Close_Code.Abnormal_Closure)
     testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
     testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))
 }
@@ -596,7 +557,7 @@ test_client_dial_failure :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
@@ -607,7 +568,7 @@ test_client_dial_failure :: proc(t: ^testing.T) {
     cerr := client_connect(
         &c,
         loop,
-        Options{host = "127.0.0.1", port = 47832, path = "/ws", handshake_timeout = 2 * time.Second},
+        {host = "127.0.0.1", port = 47832, path = "/ws", handshake_timeout = 2 * time.Second},
         callbacks,
         &obs,
     )
@@ -669,14 +630,14 @@ test_client_handshake_bad_status :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -749,14 +710,14 @@ test_client_handshake_cap :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -788,13 +749,11 @@ srv_pipelined :: proc(s: ^Srv) {
         return
     }
 
-    accept_buf: [SEC_WEBSOCKET_ACCEPT_ENCODED_BYTES]byte
-    accept, dok := srv_derive_accept(req[:n], accept_buf[:])
+    resp, dok := srv_build_upgrade_response(req[:n], context.temp_allocator)
     if !dok {
         return
     }
 
-    resp := srv_build_101(accept, context.temp_allocator)
     frame := srv_frame_bytes(true, .Text, transmute([]byte)string("pipelined"), context.temp_allocator)
     combined := make([]byte, len(resp) + len(frame), context.temp_allocator)
     copy(combined, resp)
@@ -834,7 +793,7 @@ test_client_pipelined_first_frame :: proc(t: ^testing.T) {
     obs.message = make([dynamic]byte, context.temp_allocator)
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message_close,
         on_close = obs_on_close,
         on_error = obs_on_error,
@@ -844,7 +803,7 @@ test_client_pipelined_first_frame :: proc(t: ^testing.T) {
     cerr := client_connect(
         &c,
         loop,
-        Options{host = "127.0.0.1", port = s.port, path = "/ws"},
+        {host = "127.0.0.1", port = s.port, path = "/ws"},
         callbacks,
         &obs,
         context.temp_allocator,
@@ -922,14 +881,14 @@ test_client_ping_pong :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1010,14 +969,14 @@ test_client_peer_close_with_code :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1089,14 +1048,14 @@ test_client_peer_close_empty :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1157,14 +1116,14 @@ test_client_abrupt_close :: proc(t: ^testing.T) {
     obs: Client_Obs
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message,
         on_close = obs_on_close,
         on_error = obs_on_error,
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1240,7 +1199,7 @@ test_client_fragmented_message :: proc(t: ^testing.T) {
     obs.message = make([dynamic]byte, context.temp_allocator)
 
     callbacks := Callbacks {
-        on_open = proc(c: ^Client) {o := (^Client_Obs)(client_user_data(c)); o.opened = true},
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
         on_message = obs_on_message_close,
         on_close = obs_on_close,
         on_error = obs_on_error,
@@ -1250,7 +1209,7 @@ test_client_fragmented_message :: proc(t: ^testing.T) {
     cerr := client_connect(
         &c,
         loop,
-        Options{host = "127.0.0.1", port = s.port, path = "/ws"},
+        {host = "127.0.0.1", port = s.port, path = "/ws"},
         callbacks,
         &obs,
         context.temp_allocator,
@@ -1328,7 +1287,7 @@ test_client_send_serialization :: proc(t: ^testing.T) {
 
     callbacks := Callbacks {
         on_open = proc(c: ^Client) {
-            o := (^Client_Obs)(client_user_data(c))
+            o := (^Client_Obs)(c.user_data)
             o.opened = true
             client_send_text(c, transmute([]byte)string("m0"))
             client_send_text(c, transmute([]byte)string("m1"))
@@ -1341,7 +1300,7 @@ test_client_send_serialization :: proc(t: ^testing.T) {
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1406,7 +1365,7 @@ test_client_send_after_close :: proc(t: ^testing.T) {
 
     callbacks := Callbacks {
         on_open = proc(c: ^Client) {
-            o := (^Client_Obs)(client_user_data(c))
+            o := (^Client_Obs)(c.user_data)
             o.opened = true
             client_close(c)
             o.send_after_close_err = client_send_text(c, transmute([]byte)string("x"))
@@ -1417,7 +1376,7 @@ test_client_send_after_close :: proc(t: ^testing.T) {
     }
 
     c: Client
-    cerr := client_connect(&c, loop, Options{host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = s.port, path = "/ws"}, callbacks, &obs)
     testing.expect_value(t, cerr, Client_Error.None)
 
     nbio.run_until(&obs.done)
@@ -1426,4 +1385,63 @@ test_client_send_after_close :: proc(t: ^testing.T) {
     testing.expect(t, obs.opened, "on_open should fire")
     testing.expect_value(t, obs.send_after_close_err, Client_Error.Not_Open)
     testing.expect_value(t, obs.terminal_count, 1)
+}
+
+@(test)
+test_client_send_queue_and_message_limits_are_explicit :: proc(t: ^testing.T) {
+    c := Client {
+        allocator            = context.temp_allocator,
+        state                = .Open,
+        max_frame_bytes      = 16,
+        max_send_queue_bytes = 16 + MAX_HEADER_BYTES,
+        sending              = true,
+    }
+    c.send_queue = make([dynamic][]byte, context.temp_allocator)
+    c.send_batch = make([dynamic][]byte, context.temp_allocator)
+
+    first: [16]byte
+    testing.expect_value(t, client_send_binary(&c, first[:]), Client_Error.None)
+    testing.expect(t, c.pending_send_bytes > 0, "the first frame should be accounted")
+
+    testing.expect_value(t, client_send_binary(&c, transmute([]byte)string("x")), Client_Error.Send_Queue_Full)
+
+    too_large: [17]byte
+    testing.expect_value(t, client_send_binary(&c, too_large[:]), Client_Error.Message_Too_Large)
+
+    c.sending = false
+    c.state = .Closed
+    client_destroy(&c)
+}
+
+// `extra_headers` is spliced verbatim, so only complete CRLF-terminated `name: value`
+// lines are accepted; anything else could inject a header, a body, or the terminator.
+@(test)
+test_client_extra_headers_validation :: proc(t: ^testing.T) {
+    testing.expect(t, extra_headers_valid(""), "no extra headers is valid")
+    testing.expect(t, extra_headers_valid("Authorization: Bearer tok\r\n"), "one complete line is valid")
+    testing.expect(t, extra_headers_valid("a: 1\r\nb: 2\r\n"), "several complete lines are valid")
+
+    testing.expect(t, !extra_headers_valid("Authorization: Bearer tok"), "an unterminated line is rejected")
+    testing.expect(t, !extra_headers_valid("no-colon\r\n"), "a line without a colon is rejected")
+    testing.expect(t, !extra_headers_valid(": 1\r\n"), "an empty header name is rejected")
+    testing.expect(t, !extra_headers_valid("a: 1\n\r\n"), "a bare LF control byte is rejected")
+    testing.expect(t, !extra_headers_valid("a: \x00\r\n"), "a NUL is rejected")
+}
+
+// A control byte or header-injection attempt in the options is refused before any
+// I/O, so nothing malformed reaches the socket.
+@(test)
+test_client_rejects_injectable_options :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    c: Client
+    err := client_connect(
+        &c,
+        loop,
+        {host = "127.0.0.1", port = 1, path = "/ws", extra_headers = "Authorization: tok"},
+        {},
+    )
+    testing.expect_value(t, err, Client_Error.Invalid_Options)
 }

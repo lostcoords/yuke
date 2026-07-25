@@ -10,7 +10,7 @@ test-wire:
 	@mkdir -p build
 	$(ODIN) test src/wire $(COLLECTION) -out:build/wire_test.bin
 
-# Run the yuke-agnostic WebSocket client tests.
+# Run the yuke-agnostic WebSocket tests (both drivers plus the sans-IO core).
 test-ws:
 	@mkdir -p build
 	$(ODIN) test libs/websocket $(COLLECTION) -out:build/ws_test.bin

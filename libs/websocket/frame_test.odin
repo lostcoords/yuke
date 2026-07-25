@@ -114,13 +114,13 @@ test_mask_payload_xor :: proc(t: ^testing.T) {
 test_parse_header_unmasked_text :: proc(t: ^testing.T) {
     buf := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}
 
-    h, hlen, status, err := parse_header(buf)
+    h, header_length, status, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, status, Header_Status.Ready)
-    testing.expect_value(t, hlen, 2)
+    testing.expect_value(t, header_length, 2)
     testing.expect_value(t, h.opcode, Op_Code.Text)
-    testing.expect_value(t, h.len, 5)
+    testing.expect_value(t, h.payload_length, 5)
     testing.expect(t, h.fin, "fin should be set")
 }
 
@@ -129,7 +129,7 @@ test_parse_header_unmasked_text :: proc(t: ^testing.T) {
 test_parse_header_rejects_masked :: proc(t: ^testing.T) {
     buf := []byte{0x81, 0x85, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o'}
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Masked)
 }
@@ -139,7 +139,7 @@ test_parse_header_rejects_masked :: proc(t: ^testing.T) {
 test_parse_header_rejects_reserved_bit :: proc(t: ^testing.T) {
     buf := []byte{0xC1, 0x05, 'h', 'e', 'l', 'l', 'o'}
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Reserved_Bit_Set)
 }
@@ -149,7 +149,7 @@ test_parse_header_rejects_reserved_bit :: proc(t: ^testing.T) {
 test_parse_header_rejects_unrecognized_opcode :: proc(t: ^testing.T) {
     buf := []byte{0x8F, 0x00} // FIN + opcode 0xF, unassigned
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Unrecognized_Opcode)
 }
@@ -160,18 +160,18 @@ test_parse_header_rejects_unrecognized_opcode :: proc(t: ^testing.T) {
 @(test)
 test_parse_header_extended_length_16bit_boundaries :: proc(t: ^testing.T) {
     min_buf := []byte{0x82, 0x7E, 0x00, 0x7E} // binary, len 126
-    h_min, hlen_min, status_min, err_min := parse_header(min_buf)
+    h_min, header_length_min, status_min, err_min := parse_header(min_buf, .Client)
     testing.expect_value(t, err_min, Protocol_Error.None)
     testing.expect_value(t, status_min, Header_Status.Ready)
-    testing.expect_value(t, hlen_min, 4)
-    testing.expect_value(t, h_min.len, 126)
+    testing.expect_value(t, header_length_min, 4)
+    testing.expect_value(t, h_min.payload_length, 126)
 
     max_buf := []byte{0x82, 0x7E, 0xFF, 0xFF} // binary, len 65535
-    h_max, hlen_max, status_max, err_max := parse_header(max_buf)
+    h_max, header_length_max, status_max, err_max := parse_header(max_buf, .Client)
     testing.expect_value(t, err_max, Protocol_Error.None)
     testing.expect_value(t, status_max, Header_Status.Ready)
-    testing.expect_value(t, hlen_max, 4)
-    testing.expect_value(t, h_max.len, 65535)
+    testing.expect_value(t, header_length_max, 4)
+    testing.expect_value(t, h_max.payload_length, 65535)
 }
 
 // A 64-bit extended length decodes at its minimal-encoding boundary: 65536, the
@@ -180,12 +180,12 @@ test_parse_header_extended_length_16bit_boundaries :: proc(t: ^testing.T) {
 test_parse_header_extended_length_64bit_boundary :: proc(t: ^testing.T) {
     buf := []byte{0x82, 0x7F, 0, 0, 0, 0, 0, 1, 0, 0} // binary, len 65536
 
-    h, hlen, status, err := parse_header(buf)
+    h, header_length, status, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, status, Header_Status.Ready)
-    testing.expect_value(t, hlen, 10)
-    testing.expect_value(t, h.len, 65536)
+    testing.expect_value(t, header_length, 10)
+    testing.expect_value(t, h.payload_length, 65536)
 }
 
 // A 16-bit extended length under 126 could have been encoded directly and is a
@@ -194,7 +194,7 @@ test_parse_header_extended_length_64bit_boundary :: proc(t: ^testing.T) {
 test_parse_header_rejects_non_minimal_16bit_length :: proc(t: ^testing.T) {
     buf := []byte{0x82, 0x7E, 0x00, 0x7D} // binary, 16-bit ext encoding len 125
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Non_Minimal_Length)
 }
@@ -205,7 +205,7 @@ test_parse_header_rejects_non_minimal_16bit_length :: proc(t: ^testing.T) {
 test_parse_header_rejects_non_minimal_64bit_length :: proc(t: ^testing.T) {
     buf := []byte{0x82, 0x7F, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF} // binary, 64-bit ext encoding len 65535
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Non_Minimal_Length)
 }
@@ -216,7 +216,7 @@ test_parse_header_rejects_non_minimal_64bit_length :: proc(t: ^testing.T) {
 test_parse_header_rejects_64bit_length_overflow :: proc(t: ^testing.T) {
     buf := []byte{0x82, 0x7F, 0x80, 0, 0, 0, 0, 0, 0, 0} // binary, 64-bit ext, MSB set
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Frame_Length_Overflow)
 }
@@ -227,7 +227,7 @@ test_parse_header_rejects_control_extended_length :: proc(t: ^testing.T) {
     // Unmasked ping (0x89) whose length code 0x7E promises a 16-bit length.
     buf := []byte{0x89, 0x7E, 0x00, 0x80}
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Control_Frame_Too_Big)
 }
@@ -237,7 +237,7 @@ test_parse_header_rejects_control_extended_length :: proc(t: ^testing.T) {
 test_parse_header_rejects_bad_close :: proc(t: ^testing.T) {
     buf := []byte{0x88, 0x01, 0x03}
 
-    _, _, _, err := parse_header(buf)
+    _, _, _, err := parse_header(buf, .Client)
 
     testing.expect_value(t, err, Protocol_Error.Bad_Close)
 }
@@ -246,13 +246,13 @@ test_parse_header_rejects_bad_close :: proc(t: ^testing.T) {
 // both the two fixed bytes and any promised extended-length bytes must arrive.
 @(test)
 test_parse_header_need_more :: proc(t: ^testing.T) {
-    short, _, s1, e1 := parse_header([]byte{0x81})
+    short, _, s1, e1 := parse_header([]byte{0x81}, .Client)
     testing.expect_value(t, s1, Header_Status.Need_More)
     testing.expect_value(t, e1, Protocol_Error.None)
-    testing.expect_value(t, short.len, 0)
+    testing.expect_value(t, short.payload_length, 0)
 
     // 16-bit length code present but its two length bytes are missing.
-    _, _, s2, e2 := parse_header([]byte{0x81, 0x7E})
+    _, _, s2, e2 := parse_header([]byte{0x81, 0x7E}, .Client)
     testing.expect_value(t, s2, Header_Status.Need_More)
     testing.expect_value(t, e2, Protocol_Error.None)
 }
@@ -277,6 +277,128 @@ test_encode_frame_masked_layout :: proc(t: ^testing.T) {
     recovered := make([]byte, len(masked), context.temp_allocator)
     mask_payload(recovered, masked, key)
     testing.expect(t, slice.equal(recovered, payload), "unmasked payload matches original")
+}
+
+// A well-formed masked client text frame decodes under the server role: the
+// header length includes the 4 mask bytes and the key is copied out verbatim.
+@(test)
+test_parse_header_server_masked_text :: proc(t: ^testing.T) {
+    key := [MASK_KEY_BYTES]byte{0x37, 0xFA, 0x21, 0x3D}
+    payload := transmute([]byte)string("hello")
+    masked := make([]byte, len(payload), context.temp_allocator)
+    mask_payload(masked, payload, key)
+
+    buf := make([dynamic]byte, context.temp_allocator)
+    append(&buf, 0x81, 0x85, key[0], key[1], key[2], key[3])
+    append(&buf, ..masked)
+
+    h, header_length, status, err := parse_header(buf[:], .Server)
+
+    testing.expect_value(t, err, Protocol_Error.None)
+    testing.expect_value(t, status, Header_Status.Ready)
+    testing.expect_value(t, header_length, 2 + MASK_KEY_BYTES)
+    testing.expect_value(t, h.opcode, Op_Code.Text)
+    testing.expect_value(t, h.payload_length, 5)
+    testing.expect(t, h.fin, "fin should be set")
+    testing.expect(t, h.masked, "masked flag should be set")
+    testing.expect(t, slice.equal(h.mask_key[:], key[:]), "mask key copied out verbatim")
+
+    // Unmasking the payload with the recovered key restores the plaintext.
+    recovered := make([]byte, h.payload_length, context.temp_allocator)
+    mask_payload(recovered, buf[header_length:header_length + h.payload_length], h.mask_key)
+    testing.expect_value(t, string(recovered), "hello")
+}
+
+// A masked 16-bit extended-length header places the mask key after the two length
+// bytes, so the full header is 8 bytes.
+@(test)
+test_parse_header_server_masked_extended_length :: proc(t: ^testing.T) {
+    key := [MASK_KEY_BYTES]byte{0x11, 0x22, 0x33, 0x44}
+    buf := []byte{0x82, 0xFE, 0x00, 0x7E, key[0], key[1], key[2], key[3]} // binary, masked, len 126
+
+    h, header_length, status, err := parse_header(buf, .Server)
+
+    testing.expect_value(t, err, Protocol_Error.None)
+    testing.expect_value(t, status, Header_Status.Ready)
+    testing.expect_value(t, header_length, 4 + MASK_KEY_BYTES)
+    testing.expect_value(t, h.payload_length, 126)
+    testing.expect(t, slice.equal(h.mask_key[:], key[:]), "mask key follows the length bytes")
+}
+
+// A server rejects an unmasked client frame (RFC 6455 §5.1 requires the client to
+// mask), the mirror of the client rejecting a masked server frame.
+@(test)
+test_parse_header_server_rejects_unmasked :: proc(t: ^testing.T) {
+    buf := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'} // unmasked
+
+    _, _, _, err := parse_header(buf, .Server)
+
+    testing.expect_value(t, err, Protocol_Error.Unmasked)
+}
+
+// Under the server role a masked header whose mask key bytes have not all arrived
+// yet reports `.Need_More`, not a spurious error.
+@(test)
+test_parse_header_server_need_more_for_mask_key :: proc(t: ^testing.T) {
+    // Fixed bytes present, but only 2 of the 4 mask-key bytes buffered.
+    buf := []byte{0x81, 0x85, 0x00, 0x00}
+
+    _, _, status, err := parse_header(buf, .Server)
+
+    testing.expect_value(t, status, Header_Status.Need_More)
+    testing.expect_value(t, err, Protocol_Error.None)
+}
+
+// `make_header` with no masking key builds an unmasked server header: the mask bit
+// is clear and no key bytes are appended.
+@(test)
+test_make_header_server_unmasked :: proc(t: ^testing.T) {
+    buf: [MAX_HEADER_BYTES]byte
+
+    // FIN + text, length 5: single-byte length, no mask key.
+    testing.expect(t, slice.equal(make_header(&buf, true, .Text, 5, nil), []byte{0x81, 0x05}), "unmasked text len 5")
+
+    // 16-bit extended length stays unmasked and ends after the two length bytes.
+    testing.expect(
+        t,
+        slice.equal(make_header(&buf, true, .Binary, 126, nil), []byte{0x82, 0x7E, 0x00, 0x7E}),
+        "unmasked binary len 126",
+    )
+}
+
+// `encode_frame` with no key builds a complete unmasked server frame: the mask bit
+// is clear and the payload is copied verbatim (no masking transform).
+@(test)
+test_encode_frame_server_unmasked_layout :: proc(t: ^testing.T) {
+    payload := transmute([]byte)string("hello world")
+
+    frame := encode_frame(true, .Text, payload, nil, context.temp_allocator)
+
+    testing.expect_value(t, len(frame), 2 + len(payload))
+    testing.expect_value(t, frame[0], u8(0x81)) // FIN + text
+    testing.expect_value(t, frame[1], u8(len(payload))) // no mask bit
+    testing.expect(t, slice.equal(frame[2:], payload), "payload copied verbatim")
+}
+
+// A frame built by the client encoder decodes back through the server-role header
+// parser: `encode_frame` (masked) and `parse_header(.Server)` are exact duals.
+@(test)
+test_encode_then_parse_header_server_round_trip :: proc(t: ^testing.T) {
+    key := [MASK_KEY_BYTES]byte{0x01, 0x02, 0x03, 0x04}
+    payload := transmute([]byte)string("round trip")
+
+    frame := encode_frame(true, .Binary, payload, key, context.temp_allocator)
+
+    h, header_length, status, err := parse_header(frame, .Server)
+    testing.expect_value(t, err, Protocol_Error.None)
+    testing.expect_value(t, status, Header_Status.Ready)
+    testing.expect_value(t, h.opcode, Op_Code.Binary)
+    testing.expect_value(t, h.payload_length, len(payload))
+    testing.expect(t, slice.equal(h.mask_key[:], key[:]), "mask key round-trips")
+
+    recovered := make([]byte, h.payload_length, context.temp_allocator)
+    mask_payload(recovered, frame[header_length:header_length + h.payload_length], h.mask_key)
+    testing.expect(t, slice.equal(recovered, payload), "payload round-trips")
 }
 
 // A valid code with a UTF-8 reason round-trips through decode.
