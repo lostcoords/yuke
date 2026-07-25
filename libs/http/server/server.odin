@@ -1,0 +1,1293 @@
+package http_server
+
+import "base:runtime"
+import "core:log"
+import "core:mem"
+import "core:nbio"
+import "core:net"
+import "core:strconv"
+import "core:strings"
+import "core:time"
+import dt "core:time/datetime"
+import http "libs:http"
+
+Status :: http.Status
+Header :: http.Header
+
+// Synchronous `listen` failures.
+Error :: enum {
+    None,
+    Invalid_Options,
+    Out_Of_Memory,
+    Listen_Failed,
+}
+
+// Errors returned before a response takes ownership of its inputs.
+Response_Error :: enum {
+    None,
+    Invalid_Header,
+    Out_Of_Memory,
+}
+
+// Listen and request-reading options. Zero-valued fields default in `listen`.
+Options :: struct {
+    // Dotted IPv4 bind address (no scheme). Defaults to `127.0.0.1`.
+    host:             string,
+
+    // TCP port to bind. Zero requests an ephemeral port.
+    port:             int,
+
+    // Hard cap on connections not yet answered or hijacked.
+    max_connections:  int,
+
+    // Exact ceiling on the request head, including its terminating CRLF pair.
+    max_head_bytes:   int,
+
+    // Size of the reusable socket receive buffer.
+    recv_chunk_bytes: int,
+
+    // Absolute request-head deadline and per-response write timeout.
+    request_timeout:  time.Duration,
+}
+
+// One validated request handed to `On_Request`. All fields borrow the connection
+// and remain valid only for the callback.
+Request :: struct {
+    head:           http.Request_Head,
+
+    // Bytes read past the head: for a bodyless route the leading pipelined/upgrade
+    // bytes; for a body-bearing route the leading bytes of the request body.
+    trailing:       []byte,
+
+    // Declared request-body length from Content-Length (0 when absent). The handler
+    // enforces its own size cap on this before opting into `receive_body`.
+    content_length: i64,
+}
+
+// Fired once per connection. The handler must respond, hijack, or opt into streaming
+// the request body with `receive_body` before returning.
+On_Request :: #type proc(c: ^Conn, req: Request)
+
+// Sink for one bounded request-body chunk. `chunk` borrows the recv buffer and is
+// valid only for the call. Returning false aborts the transfer: the server finalizes
+// the connection and fires `On_Body_End` with `ok = false`. Called zero or more times
+// before `On_Body_End`.
+On_Body_Chunk :: #type proc(c: ^Conn, user_data: rawptr, chunk: []byte) -> bool
+
+// Fired exactly once to close out a `receive_body`. `ok = true` means the whole
+// declared body was delivered and the connection is back in a state to `respond`;
+// `ok = false` means the transfer failed (short body, peer reset, timeout, or a sink
+// abort) and the connection is already being finalized — the callback must free its
+// own state but must not touch the connection.
+On_Body_End :: #type proc(c: ^Conn, user_data: rawptr, ok: bool)
+
+// Server lifecycle: Idle -> Serving -> Closing -> Closed.
+Server_State :: enum {
+    Idle,
+    Serving,
+    Closing,
+    Closed,
+}
+
+// A one-request HTTP/1.1 front door driven by a caller-owned nbio loop.
+Server :: struct {
+    // @private
+    // Borrowed event loop; the caller owns and runs it.
+    loop:              ^nbio.Event_Loop,
+
+    // @private
+    // Backs the connection map and every owned `Conn`; outlives `destroy`.
+    allocator:         mem.Allocator,
+
+    // Bound listen socket; exposed so callers can inspect an ephemeral port.
+    socket:            net.TCP_Socket,
+
+    // @private
+    // Current lifecycle state; see `Server_State`.
+    state:             Server_State,
+
+    // @private
+    listen_closed:     bool,
+
+    // Set after the listen socket and every owned connection are closed.
+    shutdown_complete: bool,
+
+    // @private
+    // Resolved connection cap copied from `Options` in `listen`.
+    max_connections:   int,
+
+    // @private
+    // Resolved request-head ceiling copied from `Options` in `listen`.
+    max_head_bytes:    int,
+
+    // @private
+    // Resolved recv-buffer size copied from `Options` in `listen`.
+    recv_chunk_bytes:  int,
+
+    // @private
+    // Resolved head deadline and write timeout copied from `Options` in `listen`.
+    request_timeout:   time.Duration,
+
+    // @private
+    // Owned connections; the bool value is unused (set membership only).
+    conns:             map[^Conn]bool,
+
+    // @private
+    // In-flight accept operation; nil when disarmed.
+    accept_op:         ^nbio.Operation,
+
+    // @private
+    // Per-connection request callback.
+    on_request:        On_Request,
+
+    // Opaque application pointer available through `c.server.user_data`.
+    user_data:         rawptr,
+}
+
+// Per-connection lifecycle: Reading -> Responding -> Closed, or Reading -> Hijacked.
+// A body-bearing route may take the Reading -> Receiving_Body -> Reading -> Responding
+// path while `receive_body` streams the request body.
+Conn_State :: enum {
+    Reading,
+    Receiving_Body,
+    Responding,
+    Hijacked,
+    Closed,
+}
+
+// One accepted connection owned by its `Server` until response or hijack.
+Conn :: struct {
+    // Owning server.
+    server:            ^Server,
+
+    // Borrowed event loop.
+    loop:              ^nbio.Event_Loop,
+
+    // Allocator backing all owned storage.
+    allocator:         mem.Allocator,
+
+    // @private
+    // TCP socket; owned until `hijack` or finalize.
+    socket:            net.TCP_Socket,
+
+    // @private
+    // Current lifecycle state; see `Conn_State`.
+    state:             Conn_State,
+
+    // @private
+    // Accumulates request-head bytes until the terminating CRLFCRLF.
+    head_buf:          [dynamic]byte,
+
+    // @private
+    // Byte offset already scanned for the terminator; avoids rescanning appends.
+    scanned:           int,
+
+    // @private
+    // Bytes of `head_buf` consumed by the request head; the remainder is the leading
+    // request body during a body receive.
+    head_consumed:     int,
+
+    // @private
+    // Declared request-body bytes still to deliver during a body receive.
+    body_remaining:    i64,
+
+    // @private
+    // Application body sink; nil outside a body receive.
+    body_on_chunk:     On_Body_Chunk,
+
+    // @private
+    // Application body completion callback; nil outside a body receive. Non-nil is the
+    // single signal that a `receive_body` is owed an end notification.
+    body_on_end:       On_Body_End,
+
+    // @private
+    // Opaque application pointer threaded to the body callbacks.
+    body_user:         rawptr,
+
+    // @private
+    // Reusable recv scratch, sliced into each recv operation.
+    recv_buf:          []byte,
+
+    // @private
+    // Owned serialized response head.
+    resp_head:         []byte,
+
+    // @private
+    // Owned body: caller copy for `respond`, or failure text for a rejected file.
+    resp_body:         []byte,
+
+    // @private
+    // Owned serialized extra-header bytes.
+    resp_extra:        []byte,
+
+    // @private
+    // Two-slot gather for the head and optional body send.
+    send_bufs:         [2][]byte,
+
+    // @private
+    // File handle for `sendfile`; owned only when `owns_file` is set.
+    file:              nbio.Handle,
+
+    // @private
+    // True once `respond_file` took ownership; the file is closed on finalize.
+    owns_file:         bool,
+
+    // @private
+    // Owned clone of the file response's content type.
+    file_content_type: string,
+
+    // @private
+    // Owned failure body, consumed if the stat rejects the file.
+    file_failure_body: []byte,
+
+    // @private
+    // Status emitted when the file is rejected.
+    file_failure:      Status,
+
+    // @private
+    // Status emitted on a successful file send.
+    file_status:       Status,
+
+    // @private
+    // Upper bound on accepted file size.
+    file_max_bytes:    i64,
+
+    // @private
+    // Statted size sent via `sendfile`.
+    file_bytes:        int,
+
+    // @private
+    // Outstanding resource-close completions before release.
+    close_pending:     int,
+
+    // @private
+    // In-flight recv operation; nil when not armed.
+    recv_op:           ^nbio.Operation,
+
+    // @private
+    // In-flight head/body send; nil when not armed.
+    send_op:           ^nbio.Operation,
+
+    // @private
+    // In-flight head-deadline timeout; nil when cancelled or fired.
+    timeout_op:        ^nbio.Operation,
+
+    // @private
+    // In-flight stat/sendfile; nil when not armed.
+    file_op:           ^nbio.Operation,
+}
+
+// Bind and arm the accept loop. The caller owns and runs `loop`.
+listen :: proc(
+    s: ^Server,
+    loop: ^nbio.Event_Loop,
+    options: Options,
+    on_request: On_Request,
+    user_data: rawptr = nil,
+    allocator := context.allocator,
+) -> Error {
+    if s == nil || loop == nil || on_request == nil {
+        return .Invalid_Options
+    }
+
+    opts := options
+    if opts.host == "" {
+        opts.host = "127.0.0.1"
+    }
+    if opts.max_connections == 0 {
+        opts.max_connections = 512
+    }
+    if opts.max_head_bytes == 0 {
+        opts.max_head_bytes = 64 << 10
+    }
+    if opts.recv_chunk_bytes == 0 {
+        opts.recv_chunk_bytes = 8 << 10
+    }
+    if opts.request_timeout == 0 {
+        opts.request_timeout = 10 * time.Second
+    }
+
+    if opts.port < 0 ||
+       opts.port > 65535 ||
+       opts.max_connections <= 0 ||
+       opts.max_head_bytes < 4 ||
+       opts.recv_chunk_bytes <= 0 ||
+       opts.request_timeout <= 0 {
+        return .Invalid_Options
+    }
+
+    addr, ok := net.parse_ip4_address(opts.host)
+    if !ok {
+        return .Invalid_Options
+    }
+
+    conns, aerr := make(map[^Conn]bool, opts.max_connections, allocator)
+    if aerr != nil {
+        return .Out_Of_Memory
+    }
+
+    socket, listen_err := nbio.listen_tcp({address = addr, port = opts.port}, 1000, loop)
+    if listen_err != nil {
+        delete(conns)
+        return .Listen_Failed
+    }
+
+    s^ = {}
+    s.loop = loop
+    s.allocator = allocator
+    s.socket = socket
+    s.state = .Serving
+    s.max_connections = opts.max_connections
+    s.max_head_bytes = opts.max_head_bytes
+    s.recv_chunk_bytes = opts.recv_chunk_bytes
+    s.request_timeout = opts.request_timeout
+    s.conns = conns
+    s.on_request = on_request
+    s.user_data = user_data
+
+    assert(s.max_connections > 0, "connection cap must be positive")
+    assert(s.max_head_bytes >= 4 && s.recv_chunk_bytes > 0, "buffer sizes must be positive")
+
+    arm_accept(s)
+    log.debugf("http_server: listening on %s:%d max_connections=%d", opts.host, opts.port, opts.max_connections)
+
+    return .None
+}
+
+// Stop accepting and close every owned connection. Idempotent and asynchronous.
+shutdown :: proc(s: ^Server) {
+    assert(s != nil, "shutdown needs a server")
+
+    if s.state != .Serving {
+        return
+    }
+
+    log.debug("http_server: shutdown started")
+    s.state = .Closing
+    if s.accept_op != nil {
+        nbio.remove(s.accept_op)
+        s.accept_op = nil
+    }
+
+    nbio.close_poly(s.socket, s, on_listen_closed, s.loop)
+    for c in s.conns {
+        if c.state != .Hijacked {
+            conn_finalize(c)
+        }
+    }
+
+    maybe_finish_shutdown(s)
+}
+
+// Release the connection map after shutdown completes.
+destroy :: proc(s: ^Server) {
+    assert(s != nil, "destroy needs a server")
+    assert(len(s.conns) == 0, "destroy before all connections released")
+    assert(s.state == .Idle || s.state == .Closed, "destroy while server is active")
+
+    delete(s.conns)
+    s^ = {}
+}
+
+// TCP port of the bound listen socket. Useful after `listen` with port 0.
+bound_port :: proc(s: ^Server) -> int {
+    assert(s != nil, "bound_port needs a server")
+
+    ep, err := net.bound_endpoint(s.socket)
+    if err != nil {
+        return 0
+    }
+
+    return ep.port
+}
+
+// Custom headers are serialized and `body` is copied, so caller-supplied response
+// bytes need not outlive this call.
+respond :: proc(
+    c: ^Conn,
+    status: Status,
+    content_type: string,
+    body: []byte,
+    extra_headers: []Header = nil,
+) -> Response_Error {
+    assert(c != nil && c.state == .Reading, "respond on an answered connection")
+
+    extra, response_err := serialize_extra_headers(c, extra_headers)
+    if response_err != .None {
+        return response_err
+    }
+
+    body_copy: []byte
+    if len(body) > 0 {
+        aerr: runtime.Allocator_Error
+        body_copy, aerr = make([]byte, len(body), c.allocator)
+        if aerr != nil {
+            delete(extra, c.allocator)
+            return .Out_Of_Memory
+        }
+        copy(body_copy, body)
+    }
+
+    head, aerr := build_response_head(status, content_type, len(body_copy), extra, c.allocator)
+    if aerr != nil {
+        delete(extra, c.allocator)
+        delete(body_copy, c.allocator)
+        return .Out_Of_Memory
+    }
+
+    c.resp_extra = extra
+    c.resp_head = head
+    c.resp_body = body_copy
+    conn_begin_response(c)
+    conn_send_head_and_body(c)
+
+    return .None
+}
+
+// `respond` with a `text/plain` body.
+respond_text :: proc(c: ^Conn, status: Status, text: string, extra_headers: []Header = nil) -> Response_Error {
+    return respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text, extra_headers)
+}
+
+// Ownership of `file` transfers only on `.None`; the post-transfer stat keeps
+// `Content-Length` and `max_file_bytes` describing the same open file. An invalid,
+// unavailable, or oversized file receives the supplied small failure response.
+respond_file :: proc(
+    c: ^Conn,
+    status: Status,
+    content_type: string,
+    file: nbio.Handle,
+    max_file_bytes: i64,
+    failure_status: Status,
+    failure_text: string,
+    extra_headers: []Header = nil,
+) -> Response_Error {
+    assert(c != nil && c.state == .Reading, "respond_file on an answered connection")
+    assert(max_file_bytes >= 0, "file response needs a non-negative byte cap")
+
+    if !http.field_value_valid(content_type) {
+        return .Invalid_Header
+    }
+
+    extra, response_err := serialize_extra_headers(c, extra_headers)
+    if response_err != .None {
+        return response_err
+    }
+
+    owned_content_type, aerr := strings.clone(content_type, c.allocator)
+    if aerr != nil {
+        delete(extra, c.allocator)
+        return .Out_Of_Memory
+    }
+
+    failure_body: []byte
+    failure_body, aerr = make([]byte, len(failure_text), c.allocator)
+    if aerr != nil {
+        delete(extra, c.allocator)
+        delete(owned_content_type, c.allocator)
+        return .Out_Of_Memory
+    }
+    copy(failure_body, transmute([]byte)failure_text)
+
+    c.resp_extra = extra
+    c.file_content_type = owned_content_type
+    c.file_failure_body = failure_body
+    c.file_failure = failure_status
+    c.file_status = status
+    c.file_max_bytes = max_file_bytes
+    c.file = file
+    c.owns_file = true
+    conn_begin_response(c)
+    c.file_op = nbio.stat_poly(file, c, conn_on_file_stat, c.loop)
+
+    return .None
+}
+
+// Hand the socket to another protocol. The caller becomes responsible for closing
+// it; returned trailing bytes remain valid only until the handler returns.
+hijack :: proc(c: ^Conn) -> (socket: net.TCP_Socket, loop: ^nbio.Event_Loop) {
+    assert(c != nil && c.state == .Reading, "hijack on an answered connection")
+
+    conn_cancel_head_timeout(c)
+    c.state = .Hijacked
+    log.debug("http_server: connection hijacked")
+
+    return c.socket, c.loop
+}
+
+// Stream the request body to the handler instead of responding immediately. Called
+// once from within `On_Request` for a body-bearing route: each received slice is
+// delivered to `on_chunk`, and `on_end` fires exactly once when the whole declared
+// body arrives (`ok = true`, connection back in `Reading` so the handler can `respond`)
+// or the transfer fails (`ok = false`, connection already finalizing). The server caps
+// each recv at the declared remainder, so it never reads into a following request and
+// only ever holds one recv buffer of body in memory. The caller must have already
+// bounded `req.content_length` against its own size limit.
+receive_body :: proc(c: ^Conn, user_data: rawptr, on_chunk: On_Body_Chunk, on_end: On_Body_End) {
+    assert(c != nil && c.state == .Reading, "receive_body on an answered connection")
+    assert(on_chunk != nil && on_end != nil, "receive_body needs both callbacks")
+    assert(c.body_on_end == nil, "receive_body called twice on one request")
+
+    conn_cancel_head_timeout(c)
+    c.state = .Receiving_Body
+    c.body_on_chunk = on_chunk
+    c.body_on_end = on_end
+    c.body_user = user_data
+
+    // The bytes past the head are the leading body bytes; deliver those before any
+    // further recv so a body that fully arrived with the head completes at once.
+    trailing := c.head_buf[c.head_consumed:]
+    if len(trailing) > 0 {
+        take := int(min(i64(len(trailing)), c.body_remaining))
+        if take > 0 && !deliver_body_chunk(c, trailing[:take]) {
+            return
+        }
+    }
+
+    if c.body_remaining == 0 {
+        body_complete(c)
+        return
+    }
+
+    arm_body_recv(c)
+}
+
+// Tear down a connection that cannot be answered (for example after allocation
+// failure). This is the only valid fallback after a fallible response call.
+abort :: proc(c: ^Conn) {
+    assert(c != nil && c.state != .Hijacked, "abort on an invalid connection")
+
+    conn_finalize(c)
+}
+
+// Re-arm accept; no-op when not `Serving`.
+@(private)
+arm_accept :: proc(s: ^Server) {
+    assert(s != nil, "arm_accept needs a server")
+
+    if s.state != .Serving {
+        return
+    }
+
+    assert(s.accept_op == nil, "accept already armed")
+    s.accept_op = nbio.accept_poly(s.socket, s, on_accept, nbio.NO_TIMEOUT, s.loop)
+}
+
+// Accept completion: drop the new socket on shutdown, otherwise start a
+// connection and re-arm accept.
+@(private)
+on_accept :: proc(op: ^nbio.Operation, s: ^Server) {
+    assert(op == s.accept_op, "accept completion does not match stored operation")
+    s.accept_op = nil
+
+    if s.state != .Serving {
+        if op.accept.err == nil {
+            nbio.close(op.accept.client, l = s.loop)
+        }
+
+        return
+    }
+
+    if op.accept.err != nil {
+        log.errorf("http_server: accept failed: %v", op.accept.err)
+    } else {
+        conn_start(s, op.accept.client)
+    }
+
+    arm_accept(s)
+}
+
+// Listen-socket close completion: advance `Closing` once the close is observed.
+@(private)
+on_listen_closed :: proc(op: ^nbio.Operation, s: ^Server) {
+    assert(s.state == .Closing, "listen socket closed outside shutdown")
+    assert(!s.listen_closed, "listen socket closed twice")
+
+    s.listen_closed = true
+    maybe_finish_shutdown(s)
+}
+
+// Advance `Closing` to `Closed` once the listen socket has closed and every owned
+// connection has released. The final transition signals `shutdown_complete`.
+@(private)
+maybe_finish_shutdown :: proc(s: ^Server) {
+    assert(s != nil, "shutdown check needs a server")
+
+    if s.state == .Closing && s.listen_closed && len(s.conns) == 0 {
+        s.state = .Closed
+        s.shutdown_complete = true
+        log.debug("http_server: shutdown complete")
+    }
+}
+
+// Silently drops the socket when the connection cap is reached or any allocation
+// fails; otherwise enrolls the new connection and arms the head timeout and recv.
+@(private)
+conn_start :: proc(s: ^Server, socket: net.TCP_Socket) {
+    assert(s.state == .Serving, "connection admitted while server is not serving")
+    assert(len(s.conns) <= s.max_connections, "connection table exceeds its cap")
+
+    if len(s.conns) >= s.max_connections {
+        log.warnf("http_server: connection cap reached (%d); dropping socket", s.max_connections)
+        nbio.close(socket, l = s.loop)
+        return
+    }
+
+    c, aerr := new(Conn, s.allocator)
+    if aerr != nil {
+        log.error("http_server: out of memory enrolling connection")
+        nbio.close(socket, l = s.loop)
+        return
+    }
+
+    head_buf: [dynamic]byte
+    head_buf, aerr = make([dynamic]byte, 0, min(s.recv_chunk_bytes, s.max_head_bytes), s.allocator)
+    if aerr != nil {
+        log.error("http_server: out of memory allocating head buffer")
+        free(c, s.allocator)
+        nbio.close(socket, l = s.loop)
+        return
+    }
+
+    recv_buf: []byte
+    recv_buf, aerr = make([]byte, min(s.recv_chunk_bytes, s.max_head_bytes), s.allocator)
+    if aerr != nil {
+        log.error("http_server: out of memory allocating recv buffer")
+        delete(head_buf)
+        free(c, s.allocator)
+        nbio.close(socket, l = s.loop)
+        return
+    }
+
+    c^ = {}
+    c.server = s
+    c.loop = s.loop
+    c.allocator = s.allocator
+    c.socket = socket
+    c.state = .Reading
+    c.head_buf = head_buf
+    c.recv_buf = recv_buf
+    if map_insert(&s.conns, c, true) == nil {
+        log.error("http_server: out of memory inserting connection")
+        delete(c.head_buf)
+        delete(c.recv_buf, c.allocator)
+        free(c, s.allocator)
+        nbio.close(socket, l = s.loop)
+        return
+    }
+
+    c.timeout_op = nbio.timeout_poly(s.request_timeout, c, conn_on_head_timeout, s.loop)
+    conn_start_recv(c)
+}
+
+// Arm a recv capped so the head buffer never exceeds `max_head_bytes`.
+@(private)
+conn_start_recv :: proc(c: ^Conn) {
+    assert(c.state == .Reading, "request receive outside Reading")
+    assert(c.recv_op == nil, "request receive already armed")
+
+    remaining := c.server.max_head_bytes - len(c.head_buf)
+    if remaining <= 0 {
+        conn_respond_error(c, .Request_Header_Fields_Too_Large, "request head too large")
+        return
+    }
+
+    recv_bytes := min(len(c.recv_buf), remaining)
+    c.recv_op = nbio.recv_poly(
+        c.socket,
+        [][]byte{c.recv_buf[:recv_bytes]},
+        c,
+        conn_on_recv,
+        false,
+        nbio.NO_TIMEOUT,
+        c.loop,
+    )
+}
+
+// Scan resumes from three bytes before the last scan point so a CRLFCRLF split
+// across recvs is still found. The handler must respond or hijack before
+// returning; remaining `Reading` is a contract violation.
+@(private)
+conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Reading, "request receive completed outside Reading")
+    assert(op == c.recv_op, "request receive completion does not match stored operation")
+    c.recv_op = nil
+
+    if op.recv.err != nil || op.recv.received == 0 {
+        conn_finalize(c)
+        return
+    }
+
+    if _, aerr := append(&c.head_buf, ..c.recv_buf[:op.recv.received]); aerr != nil {
+        conn_finalize(c)
+        return
+    }
+
+    from := max(0, c.scanned - 3)
+    found := strings.index(string(c.head_buf[from:]), "\r\n\r\n")
+    c.scanned = len(c.head_buf)
+    if found < 0 {
+        conn_start_recv(c)
+        return
+    }
+
+    consumed := from + found + 4
+    assert(consumed <= c.server.max_head_bytes, "accepted head exceeds configured cap")
+
+    head, status, head_err := http.parse_request_head(c.head_buf[:consumed])
+    assert(status == .Ready, "terminator found but parser requested more data")
+    if head_err != .None {
+        log.debugf("http_server: malformed request head: %v", head_err)
+        conn_respond_error(c, .Bad_Request, "malformed request")
+        return
+    }
+
+    body_length, request_err := http.validate_body(head)
+    switch request_err {
+    case .None:
+
+    case .Unsupported_Expectation:
+        log.debug("http_server: rejecting Expect header")
+        conn_respond_error(c, .Expectation_Failed, "expectation not supported")
+        return
+
+    case .Invalid_Content_Length, .Unsupported_Transfer_Coding:
+        log.debugf("http_server: rejecting body framing: %v", request_err)
+        conn_respond_error(c, .Bad_Request, "request body not supported")
+        return
+    }
+
+    log.debugf("http_server: request %s %s", head.method, head.target)
+    c.head_consumed = consumed
+    c.body_remaining = body_length
+    request := Request {
+        head           = head,
+        trailing       = c.head_buf[consumed:],
+        content_length = body_length,
+    }
+    c.server.on_request(c, request)
+
+    switch c.state {
+    case .Hijacked:
+        conn_release(c)
+
+    case .Receiving_Body, .Responding, .Closed:
+
+    case .Reading:
+        assert(false, "request handler must respond, hijack, or receive the body")
+        conn_finalize(c)
+    }
+}
+
+// Arm one body recv, capped at the declared remainder so it never reads into a
+// following request. Each recv carries the request timeout as an idle deadline.
+@(private)
+arm_body_recv :: proc(c: ^Conn) {
+    assert(c.state == .Receiving_Body, "body receive armed outside a body receive")
+    assert(c.recv_op == nil, "body receive already armed")
+    assert(c.body_remaining > 0, "body receive armed with nothing left to read")
+
+    recv_bytes := int(min(i64(len(c.recv_buf)), c.body_remaining))
+    c.recv_op = nbio.recv_poly(
+        c.socket,
+        [][]byte{c.recv_buf[:recv_bytes]},
+        c,
+        conn_on_body_recv,
+        false,
+        c.server.request_timeout,
+        c.loop,
+    )
+}
+
+// Body recv completion: a reset, timeout, or premature EOF finalizes the connection
+// (which fires the end callback with `ok = false`); otherwise deliver the chunk and
+// either complete or arm the next recv.
+@(private)
+conn_on_body_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Receiving_Body, "body receive completed outside a body receive")
+    assert(op == c.recv_op, "body receive completion does not match stored operation")
+    c.recv_op = nil
+
+    if op.recv.err != nil || op.recv.received == 0 {
+        conn_finalize(c)
+        return
+    }
+
+    assert(i64(op.recv.received) <= c.body_remaining, "body recv delivered past the declared length")
+    if !deliver_body_chunk(c, c.recv_buf[:op.recv.received]) {
+        return
+    }
+
+    if c.body_remaining == 0 {
+        body_complete(c)
+        return
+    }
+
+    arm_body_recv(c)
+}
+
+// Feed one non-empty body slice to the sink and account for it. Returns false, after
+// finalizing the connection, if the sink rejects the chunk.
+@(private)
+deliver_body_chunk :: proc(c: ^Conn, chunk: []byte) -> bool {
+    assert(c.state == .Receiving_Body, "body chunk delivered outside a body receive")
+    assert(len(chunk) > 0, "empty body chunk delivered")
+    assert(i64(len(chunk)) <= c.body_remaining, "body chunk exceeds the declared remainder")
+
+    if !c.body_on_chunk(c, c.body_user, chunk) {
+        conn_finalize(c)
+        return false
+    }
+
+    c.body_remaining -= i64(len(chunk))
+    return true
+}
+
+// The declared body has fully arrived: return to `Reading` and hand control back so
+// the completion callback can answer with `respond*`. Clears the body callbacks first
+// so the response's later finalize does not re-fire the end callback.
+@(private)
+body_complete :: proc(c: ^Conn) {
+    assert(c.state == .Receiving_Body, "body completion outside a body receive")
+    assert(c.body_remaining == 0, "body completion with bytes outstanding")
+
+    on_end := c.body_on_end
+    user := c.body_user
+    c.body_on_chunk = nil
+    c.body_on_end = nil
+    c.body_user = nil
+    c.state = .Reading
+
+    on_end(c, user, true)
+}
+
+// Head-deadline firing: respond 408 if the connection is still reading, no-op
+// once it has moved on.
+@(private)
+conn_on_head_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(op == c.timeout_op, "head timeout completion does not match stored operation")
+    c.timeout_op = nil
+
+    if c.state == .Reading {
+        log.debug("http_server: request head timed out")
+        conn_respond_error(c, .Request_Timeout, "request timed out")
+    }
+}
+
+// Send a small text/plain error response, falling back to finalize if the
+// response itself fails.
+@(private)
+conn_respond_error :: proc(c: ^Conn, status: Status, text: string) {
+    assert(c != nil && c.state == .Reading, "error response outside Reading")
+
+    if respond_text(c, status, text) != .None {
+        conn_finalize(c)
+    }
+}
+
+// Cancel the head timeout and transition `Reading` to `Responding`.
+@(private)
+conn_begin_response :: proc(c: ^Conn) {
+    assert(c.state == .Reading, "response began outside Reading")
+
+    conn_cancel_head_timeout(c)
+    c.state = .Responding
+}
+
+// Gather `resp_head` and `resp_body` (when non-empty) into `send_bufs` and arm
+// a single send.
+@(private)
+conn_send_head_and_body :: proc(c: ^Conn) {
+    assert(c.state == .Responding, "response send outside Responding")
+    assert(c.send_op == nil, "response send already armed")
+    assert(len(c.resp_head) > 0, "response head is empty")
+
+    c.send_bufs[0] = c.resp_head
+    c.send_bufs[1] = c.resp_body
+    count := 1
+    if len(c.resp_body) > 0 {
+        count = 2
+    }
+
+    c.send_op = nbio.send_poly(
+        c.socket,
+        c.send_bufs[:count],
+        c,
+        conn_on_head_sent,
+        {},
+        true,
+        c.server.request_timeout,
+        c.loop,
+    )
+}
+
+// Stat completion: emit the success or the prepared failure response.
+@(private)
+conn_on_file_stat :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Responding && c.owns_file, "file stat outside file response")
+    assert(op == c.file_op, "file stat completion does not match stored operation")
+    c.file_op = nil
+
+    if op.stat.err != nil ||
+       op.stat.type != .Regular ||
+       op.stat.size < 0 ||
+       op.stat.size > c.file_max_bytes ||
+       op.stat.size > i64(max(int)) {
+        c.resp_body = c.file_failure_body
+        c.file_failure_body = nil
+        response_head, aerr := build_response_head(
+            c.file_failure,
+            "text/plain; charset=utf-8",
+            len(c.resp_body),
+            c.resp_extra,
+            c.allocator,
+        )
+        if aerr != nil {
+            conn_finalize(c)
+            return
+        }
+
+        c.resp_head = response_head
+        conn_send_head_and_body(c)
+        return
+    }
+
+    c.file_bytes = int(op.stat.size)
+    response_head, aerr := build_response_head(
+        c.file_status,
+        c.file_content_type,
+        c.file_bytes,
+        c.resp_extra,
+        c.allocator,
+    )
+    if aerr != nil {
+        conn_finalize(c)
+        return
+    }
+
+    c.resp_head = response_head
+    conn_send_head_and_body(c)
+}
+
+// Head-send completion: proceed to `sendfile` if a non-empty owned file is
+// pending, else finalize.
+@(private)
+conn_on_head_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Responding, "response send completed outside Responding")
+    assert(op == c.send_op, "response send completion does not match stored operation")
+    c.send_op = nil
+
+    if op.send.err != nil {
+        log.warnf("http_server: response send failed: %v", op.send.err)
+        conn_finalize(c)
+        return
+    }
+
+    if !c.owns_file || len(c.resp_body) > 0 || c.file_bytes == 0 {
+        conn_finalize(c)
+        return
+    }
+
+    c.file_op = nbio.sendfile_poly(
+        c.socket,
+        c.file,
+        c,
+        conn_on_file_sent,
+        nbytes = c.file_bytes,
+        timeout = c.server.request_timeout,
+        l = c.loop,
+    )
+}
+
+// sendfile completion: finalize unconditionally; sendfile owns the lifecycle
+// for this path.
+@(private)
+conn_on_file_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Responding && c.owns_file, "file send completed outside file response")
+    assert(op == c.file_op, "file send completion does not match stored operation")
+    c.file_op = nil
+
+    if op.sendfile.err != nil {
+        log.warnf("http_server: sendfile failed: %v", op.sendfile.err)
+    }
+
+    conn_finalize(c)
+}
+
+// Cancel an armed head timeout, if any.
+@(private)
+conn_cancel_head_timeout :: proc(c: ^Conn) {
+    if c.timeout_op != nil {
+        nbio.remove(c.timeout_op)
+        c.timeout_op = nil
+    }
+}
+
+// Cancel every in-flight operation and arm close on the socket and any owned
+// file. `close_pending` counts the outstanding closes; the last one releases.
+@(private)
+conn_finalize :: proc(c: ^Conn) {
+    assert(c.state != .Hijacked, "finalizing a socket owned by the application")
+
+    if c.state == .Closed {
+        return
+    }
+
+    c.state = .Closed
+    if c.recv_op != nil {
+        nbio.remove(c.recv_op)
+        c.recv_op = nil
+    }
+    if c.send_op != nil {
+        nbio.remove(c.send_op)
+        c.send_op = nil
+    }
+    if c.timeout_op != nil {
+        nbio.remove(c.timeout_op)
+        c.timeout_op = nil
+    }
+    if c.file_op != nil {
+        nbio.remove(c.file_op)
+        c.file_op = nil
+    }
+
+    // A connection finalized mid-body still owes its handler the end notification, so
+    // it can release the resources the transfer had open. Cleared first so a re-entrant
+    // finalize cannot double-fire it.
+    if c.body_on_end != nil {
+        on_end := c.body_on_end
+        user := c.body_user
+        c.body_on_chunk = nil
+        c.body_on_end = nil
+        c.body_user = nil
+        on_end(c, user, false)
+    }
+
+    assert(c.close_pending == 0, "connection close already armed")
+    c.close_pending = 1
+    nbio.close_poly(c.socket, c, conn_on_resource_closed, c.loop)
+    if c.owns_file {
+        c.close_pending += 1
+        nbio.close_poly(c.file, c, conn_on_resource_closed, c.loop)
+    }
+}
+
+// Count down outstanding resource closes and release the connection at zero.
+@(private)
+conn_on_resource_closed :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(c.state == .Closed, "resource closed before connection teardown")
+    assert(c.close_pending > 0, "unexpected resource-close completion")
+
+    c.close_pending -= 1
+    if c.close_pending == 0 {
+        conn_release(c)
+    }
+}
+
+// Release connection-owned memory, drop the connection from the server map,
+// then free the `Conn`. Re-checks the shutdown boundary at the end.
+@(private)
+conn_release :: proc(c: ^Conn) {
+    s := c.server
+    assert(c.state == .Closed || c.state == .Hijacked, "connection released before teardown")
+    assert(c in s.conns, "releasing a connection the server does not own")
+    assert(c.close_pending == 0, "connection released with closes outstanding")
+
+    delete(c.head_buf)
+    delete(c.recv_buf, c.allocator)
+    delete(c.resp_head, c.allocator)
+    delete(c.resp_body, c.allocator)
+    delete(c.resp_extra, c.allocator)
+    delete(c.file_content_type, c.allocator)
+    delete(c.file_failure_body, c.allocator)
+
+    delete_key(&s.conns, c)
+    free(c, s.allocator)
+    assert(len(s.conns) <= s.max_connections, "connection table exceeds its cap")
+
+    maybe_finish_shutdown(s)
+}
+
+// Reserved and duplicate names are rejected so the server keeps sole ownership
+// of the framing fields it emits.
+@(private)
+serialize_extra_headers :: proc(c: ^Conn, fields: []Header) -> (out: []byte, err: Response_Error) {
+    assert(c != nil, "header serialization needs a connection")
+
+    total := 0
+    for field, i in fields {
+        if !http.field_name_valid(field.name) || !http.field_value_valid(field.value) || reserved_field(field.name) {
+            return nil, .Invalid_Header
+        }
+
+        for previous in fields[:i] {
+            if strings.equal_fold(previous.name, field.name) {
+                return nil, .Invalid_Header
+            }
+        }
+
+        field_bytes := len(field.name) + 2 + len(field.value) + 2
+        if field_bytes > c.server.max_head_bytes - total {
+            return nil, .Invalid_Header
+        }
+        total += field_bytes
+    }
+
+    if total == 0 {
+        return nil, .None
+    }
+
+    aerr: runtime.Allocator_Error
+    out, aerr = make([]byte, total, c.allocator)
+    if aerr != nil {
+        return nil, .Out_Of_Memory
+    }
+
+    at := 0
+    for field in fields {
+        at += copy(out[at:], transmute([]byte)field.name)
+        at += copy(out[at:], transmute([]byte)string(": "))
+        at += copy(out[at:], transmute([]byte)field.value)
+        at += copy(out[at:], transmute([]byte)string("\r\n"))
+    }
+    assert(at == len(out), "serialized header length mismatch")
+
+    return out, .None
+}
+
+// Field names owned by `build_response_head`; callers may not override them.
+@(private)
+reserved_field :: proc(name: string) -> bool {
+    return(
+        strings.equal_fold(name, "connection") ||
+        strings.equal_fold(name, "content-length") ||
+        strings.equal_fold(name, "content-type") ||
+        strings.equal_fold(name, "date") ||
+        strings.equal_fold(name, "transfer-encoding") \
+    )
+}
+
+// Assemble a complete response head. Every response carries `Date`,
+// `Content-Length`, and `Connection: close`; `content_type` is optional.
+@(private)
+build_response_head :: proc(
+    status: Status,
+    content_type: string,
+    body_bytes: int,
+    extra: []byte,
+    allocator: mem.Allocator,
+) -> (
+    head: []byte,
+    err: runtime.Allocator_Error,
+) #optional_allocator_error {
+    assert(body_bytes >= 0, "negative response body length")
+    assert(http.field_value_valid(content_type), "invalid response content type")
+
+    status_text := http.status_line(status)
+    content_length_buf: [32]byte
+    content_length := strconv.write_int(content_length_buf[:], i64(body_bytes), 10)
+
+    date_buf: [29]byte // 29 bytes is the exact length of the RFC 7231 IMF-fixdate format
+    date := http_date(time.now(), &date_buf)
+
+    total :=
+        len("HTTP/1.1 ") +
+        len(status_text) +
+        len("\r\n") +
+        len("Date: ") +
+        len(date) +
+        len("\r\n") +
+        len(extra) +
+        len("Content-Length: ") +
+        len(content_length) +
+        len("\r\n") +
+        len("Connection: close\r\n") +
+        len("\r\n")
+
+    if len(content_type) > 0 {
+        total += len("Content-Type: ") + len(content_type) + len("\r\n")
+    }
+
+    head = make([]byte, total, allocator) or_return
+    at := 0
+    at += copy(head[at:], transmute([]byte)string("HTTP/1.1 "))
+    at += copy(head[at:], transmute([]byte)status_text)
+    at += copy(head[at:], transmute([]byte)string("\r\nDate: "))
+    at += copy(head[at:], transmute([]byte)date)
+    at += copy(head[at:], transmute([]byte)string("\r\n"))
+    at += copy(head[at:], extra)
+    if len(content_type) > 0 {
+        at += copy(head[at:], transmute([]byte)string("Content-Type: "))
+        at += copy(head[at:], transmute([]byte)content_type)
+        at += copy(head[at:], transmute([]byte)string("\r\n"))
+    }
+    at += copy(head[at:], transmute([]byte)string("Content-Length: "))
+    at += copy(head[at:], transmute([]byte)content_length)
+    at += copy(head[at:], transmute([]byte)string("\r\nConnection: close\r\n\r\n"))
+    assert(at == len(head), "response head length mismatch")
+
+    return head, nil
+}
+
+// Format `now` as an RFC 7231 IMF-fixdate (always GMT) into a 29-byte buffer.
+@(private)
+http_date :: proc(now: time.Time, out: ^[29]byte) -> string {
+    assert(out != nil, "http_date needs an output buffer")
+
+    datetime, ok := time.time_to_datetime(now)
+    if !ok || datetime.year < 0 || datetime.year > 9999 {
+        datetime = {{1970, 1, 1}, {0, 0, 0, 0}, nil}
+    }
+
+    ordinal, date_err := dt.date_to_ordinal(datetime.date)
+    assert(date_err == .None, "time_to_datetime returned an invalid date")
+    weekday := dt.day_of_week(ordinal)
+
+    WEEKDAYS := [dt.Weekday]string {
+        .Sunday    = "Sun",
+        .Monday    = "Mon",
+        .Tuesday   = "Tue",
+        .Wednesday = "Wed",
+        .Thursday  = "Thu",
+        .Friday    = "Fri",
+        .Saturday  = "Sat",
+    }
+    MONTHS := [12]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+
+    copy(out[0:3], transmute([]byte)WEEKDAYS[weekday])
+    copy(out[3:5], transmute([]byte)string(", "))
+    write_two(out[5:7], int(datetime.day))
+    out[7] = ' '
+    copy(out[8:11], transmute([]byte)MONTHS[int(datetime.month) - 1])
+    out[11] = ' '
+    write_four(out[12:16], int(datetime.year))
+    out[16] = ' '
+    write_two(out[17:19], int(datetime.hour))
+    out[19] = ':'
+    write_two(out[20:22], int(datetime.minute))
+    out[22] = ':'
+    write_two(out[23:25], int(datetime.second))
+    copy(out[25:29], transmute([]byte)string(" GMT"))
+
+    return string(out[:])
+}
+
+// Two-digit zero-padded decimal into a 2-byte slice.
+@(private)
+write_two :: proc(out: []byte, value: int) {
+    assert(len(out) == 2 && value >= 0 && value <= 99, "two-digit value out of range")
+
+    out[0] = byte(value / 10) + '0'
+    out[1] = byte(value % 10) + '0'
+}
+
+// Four-digit zero-padded decimal into a 4-byte slice.
+@(private)
+write_four :: proc(out: []byte, value: int) {
+    assert(len(out) == 4 && value >= 0 && value <= 9999, "four-digit value out of range")
+
+    out[0] = byte(value / 1000) + '0'
+    out[1] = byte(value / 100 % 10) + '0'
+    out[2] = byte(value / 10 % 10) + '0'
+    out[3] = byte(value % 10) + '0'
+}
