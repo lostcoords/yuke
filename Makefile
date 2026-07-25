@@ -23,7 +23,7 @@ test-client:
 # Run the testsupport package tests.
 test-support:
 	@mkdir -p build
-	$(ODIN) test src/testsupport $(COLLECTION) -out:build/support_test.bin
+	$(ODIN) test libs/testsupport $(COLLECTION) -out:build/support_test.bin
 
 # Run the ui package tests.
 test-ui:

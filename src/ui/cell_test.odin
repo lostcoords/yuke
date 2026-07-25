@@ -2,7 +2,7 @@ package ui
 
 import "core:mem"
 import "core:testing"
-import ts "src:testsupport"
+import ts "libs:testsupport"
 
 @(test)
 test_glyph_inline_scalar_vs_pooled :: proc(t: ^testing.T) {

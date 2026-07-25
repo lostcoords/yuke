@@ -1,7 +1,7 @@
 package term
 
 import "core:testing"
-import ts "src:testsupport"
+import ts "libs:testsupport"
 
 // Push a string as bytes (test convenience over `reader_push`).
 push :: proc(r: ^Reader, s: string) -> Reader_Error {

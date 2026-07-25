@@ -28,7 +28,7 @@ failing_allocator_init :: proc(fa: ^Failing_Allocator, backing: mem.Allocator, f
 }
 
 failing_allocator :: proc(fa: ^Failing_Allocator) -> mem.Allocator {
-    return mem.Allocator{data = fa, procedure = _failing_allocator_procedure}
+    return {data = fa, procedure = _failing_allocator_procedure}
 }
 
 // Allocations that originate inside core's `Dynamic_Arena` implementation — both its backing

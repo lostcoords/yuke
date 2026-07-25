@@ -4,7 +4,7 @@ import "core:io"
 import "core:mem"
 import "core:strings"
 import "core:testing"
-import ts "src:testsupport"
+import ts "libs:testsupport"
 
 // A recording io.Writer with failure knobs, standing in for the real buffered terminal
 // writer in tests. It captures every byte written so ordering and content can be asserted,

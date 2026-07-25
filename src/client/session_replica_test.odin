@@ -3,7 +3,7 @@ package client
 import "core:mem"
 import "core:strings"
 import "core:testing"
-import ts "src:testsupport"
+import ts "libs:testsupport"
 import wire "src:wire"
 
 @(private = "file")
@@ -2472,7 +2472,7 @@ test_zero_length_delta_at_offset_is_changed :: proc(t: ^testing.T) {
 
 // --- allocation-failure harness ---
 
-// The fault-injecting allocator lives in `src:testsupport` (`ts.Failing_Allocator`). It fails
+// The fault-injecting allocator lives in `libs:testsupport` (`ts.Failing_Allocator`). It fails
 // every alloc/resize from the `fail_at`-th counted allocation onward and exempts arena-internal
 // allocations (which report `allocators.odin`) because `Dynamic_Arena` is not failure-safe. The
 // replica's OWN direct structural allocations — `new`, candidate spine `make`/`reserve`/`append`,
