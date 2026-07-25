@@ -182,6 +182,7 @@ Active_Info :: struct {
 // the seal boundary. `active` and `resync` are pointers (nil = none) because both are
 // mutated in place; this diverges deliberately from the Zig inline optional/union.
 Session_Replica :: struct {
+    // @private
     // Backing allocator; block allocator for every region arena.
     allocator:               mem.Allocator,
 
@@ -208,6 +209,7 @@ Session_Replica :: struct {
     // reclaimed only on snapshot install or deinit; entries are never individually evicted.
     configs:                 [dynamic]wire.Run_Config,
 
+    // @private
     // Owns `configs` strings; reset on install.
     configs_arena:           mem.Dynamic_Arena,
 
@@ -655,7 +657,7 @@ text_buffer_build :: proc(id: wire.Part_Id, text: string, allocator: mem.Allocat
         return {}, .Out_Of_Memory
     }
 
-    return Text_Buffer{id = id, bytes = bytes}, .None
+    return {id = id, bytes = bytes}, .None
 }
 
 // Build one active-draft part from a wire assistant part, shared by live part-added folding
@@ -673,12 +675,12 @@ active_part_from_wire :: proc(
     case wire.Text_Part:
         buf := text_buffer_build(v.id, v.text, allocator) or_return
 
-        return Active_Part{kind = .Text, text = buf}, .None
+        return {kind = .Text, text = buf}, .None
 
     case wire.Reasoning_Part:
         buf := text_buffer_build(v.id, v.text, allocator) or_return
 
-        return Active_Part{kind = .Reasoning, text = buf}, .None
+        return {kind = .Reasoning, text = buf}, .None
 
     case wire.Tool_Part:
         // `wire.tool_part_clone` cannot signal OOM, and the output buffer only records its
@@ -687,7 +689,7 @@ active_part_from_wire :: proc(
         buf.tool = wire.tool_part_clone(v, allocator)
         buf.output.allocator = allocator
 
-        return Active_Part{kind = .Tool, tool = buf}, .None
+        return {kind = .Tool, tool = buf}, .None
     }
 
     return {}, .None

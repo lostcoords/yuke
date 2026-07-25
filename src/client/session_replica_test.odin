@@ -320,9 +320,7 @@ test_tool_part_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
         name = strings.clone("yuke.exec", a),
         arguments = strings.clone("{\"cmd\":\"git status\"}", a),
         input_view = views,
-        state = wire.Tool_State_Waiting_Permission {
-            permission_state = wire.Permission_State{requested_at_ms = 99, options = options},
-        },
+        state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 99, options = options}},
     }
     res, err := replica_on_part_added(&r, _part_added(3, tool))
     testing.expect_value(t, err, Replica_Error.None)
@@ -413,7 +411,7 @@ test_tool_state_replacement_recursively_outlives_its_source_arena :: proc(t: ^te
                     kind = .Allow_Once,
                     label = strings.clone("Allow once", a),
                     resolved_at_ms = 2,
-                    decided_by = wire.Client{name = strings.clone("yuke-tui", a), version = strings.clone("0.1", a)},
+                    decided_by = {name = strings.clone("yuke-tui", a), version = strings.clone("0.1", a)},
                 },
             },
         },
@@ -473,9 +471,7 @@ test_tool_state_broadcasts_converge_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 9, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 9, options = options}},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -542,9 +538,7 @@ test_pending_permission_view_outlives_its_source_frames :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 9, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 9, options = options}},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -580,9 +574,7 @@ test_discard_clears_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -626,7 +618,7 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
 
     // (b) A waiting_permission with neither options nor decision has no prompt to show.
     no_options := wire.Tool_State_Waiting_Permission {
-        permission_state = wire.Permission_State{requested_at_ms = 1},
+        permission_state = {requested_at_ms = 1},
     }
     b, _ := replica_on_tool_state_changed(
         &r,
@@ -646,9 +638,7 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
         },
     )
     testing.expect_value(t, first.kind, Apply_Kind.Changed)
@@ -664,9 +654,7 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 1,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 2, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 2, options = options}},
         },
     )
     testing.expect_value(t, mismatch.kind, Apply_Kind.Gap)
@@ -829,12 +817,7 @@ _sample_assistant_content := [1]wire.Assistant_Part{wire.Text_Part{id = 0, text 
 // User message with sample content; `input_id` 1 matches the dequeue tests.
 @(private = "file")
 _user_msg :: proc(id: wire.Message_Id) -> wire.Message {
-    return wire.User_Message {
-        id = id,
-        content = _sample_user_content[:],
-        input_id = 1,
-        time = wire.Created_Time{created_at_ms = 100},
-    }
+    return wire.User_Message{id = id, content = _sample_user_content[:], input_id = 1, time = {created_at_ms = 100}}
 }
 
 // Assistant message with sample content.
@@ -847,7 +830,7 @@ _assistant_msg :: proc(id: wire.Message_Id) -> wire.Message {
         agent = "main",
         content = _sample_assistant_content[:],
         finish = wire.Stop_Reason.Stop,
-        time = wire.Message_Time{created_at_ms = 100, completed_at_ms = 200},
+        time = {created_at_ms = 100, completed_at_ms = 200},
     }
 }
 
@@ -862,7 +845,7 @@ _compaction_msg :: proc(id: wire.Message_Id) -> wire.Message {
         first_kept_id = nil,
         tokens_before = 10,
         tokens_after = 5,
-        time = wire.Created_Time{created_at_ms = 100},
+        time = {created_at_ms = 100},
     }
 }
 
@@ -881,10 +864,7 @@ _committed :: proc(seq: wire.Seq, message: wire.Message) -> wire.Message_Committ
 // Build a queued input frame.
 @(private = "file")
 _queued :: proc(input_id: wire.Input_Id) -> wire.Input_Queued_Data {
-    return {
-        session_id = _sid(),
-        input = wire.Queued_Input{input_id = input_id, content = _sample_user_content[:], queued_at_ms = 10},
-    }
+    return {session_id = _sid(), input = {input_id = input_id, content = _sample_user_content[:], queued_at_ms = 10}}
 }
 
 @(test)
@@ -1130,9 +1110,7 @@ test_commit_clears_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
         },
     )
 
@@ -1237,7 +1215,7 @@ _run_done_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, outcome: wire.Run_Outco
             seq = seq,
             run_id = run_id,
             kind = .Turn,
-            timing = wire.Run_Canceled_Timing{started_at_ms = 1, ended_at_ms = 2},
+            timing = {started_at_ms = 1, ended_at_ms = 2},
             outcome = outcome,
         },
     )
@@ -1522,7 +1500,7 @@ _assistant_msg_cfg :: proc(id: wire.Message_Id, config_rev: wire.Config_Rev) -> 
         agent = "main",
         content = _sample_assistant_content[:],
         finish = wire.Stop_Reason.Stop,
-        time = wire.Message_Time{created_at_ms = 100, completed_at_ms = 200},
+        time = {created_at_ms = 100, completed_at_ms = 200},
     }
 }
 
@@ -1541,10 +1519,7 @@ _valid_session :: proc() -> wire.Session {
 @(private = "file")
 _empty_resync :: proc(base_seq: wire.Seq) -> wire.Resync_Result {
     return wire.Resync_Result {
-        item = wire.Session_List_Item {
-            session = _valid_session(),
-            activity = wire.Session_Activity{state = wire.Activity_State_Idle{}},
-        },
+        item = wire.Session_List_Item{session = _valid_session(), activity = {state = wire.Activity_State_Idle{}}},
         base_seq = base_seq,
         highest_finalized_message_id = nil,
         messages = nil,
@@ -1574,7 +1549,7 @@ _active_draft :: proc(id: wire.Message_Id, content: []wire.Assistant_Part) -> wi
             config_rev = 1,
             agent = "main",
             content = content,
-            time = wire.Message_Time{created_at_ms = 1},
+            time = {created_at_ms = 1},
         },
     }
 }
@@ -1685,7 +1660,7 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
         agent = strings.clone("worker", a),
         content = acontent,
         finish = wire.Stop_Reason.Stop,
-        time = wire.Message_Time{created_at_ms = 1, completed_at_ms = 2},
+        time = {created_at_ms = 1, completed_at_ms = 2},
     }
 
     cfgs := make([]wire.Run_Config, 1, a)
@@ -1718,9 +1693,7 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
         id = 0,
         name = strings.clone("read", a),
         arguments = strings.clone("{}", a),
-        state = wire.Tool_State_Waiting_Permission {
-            permission_state = wire.Permission_State{requested_at_ms = 3, options = opts},
-        },
+        state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 3, options = opts}},
     }
 
     snap := _empty_resync(10)
@@ -1735,7 +1708,7 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
             config_rev = 1,
             agent = strings.clone("drafter", a),
             content = dcontent,
-            time = wire.Message_Time{created_at_ms = 9},
+            time = {created_at_ms = 9},
         },
     }
     // The waiting-permission draft demands a matching waiting-permission activity.
@@ -2310,9 +2283,7 @@ test_terminal_tool_state_ignores_backwards_transition :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 5, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 5, options = options}},
         },
     )
     testing.expect_value(t, stale.kind, Apply_Kind.Ignored)
@@ -2368,7 +2339,7 @@ test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
     bad.item.activity = wire.Session_Activity {
         state = wire.Activity_State_Running {
             run_id = 7,
-            config = wire.Run_Config{config_rev = 99, model = "model", reasoning = "high"},
+            config = {config_rev = 99, model = "model", reasoning = "high"},
             started_at_ms = 1,
         },
     }
@@ -2424,17 +2395,13 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
             id = 0,
             name = "read",
             arguments = "{}",
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
         },
         wire.Tool_Part {
             id = 1,
             name = "write",
             arguments = "{}",
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 2, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 2, options = options}},
         },
     }
 
@@ -2543,9 +2510,7 @@ _op_replace_pending_permission :: proc(alloc: mem.Allocator) -> Replica_Error {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-            },
+            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
         },
     )
     return e

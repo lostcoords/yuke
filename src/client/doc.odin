@@ -32,13 +32,13 @@ Lifetime contract:
 
 Terminal contract:
 
-  `client_destroy` is safe exactly once `client_state(c) == .Closed`. `on_close`
+  `client_destroy` is safe exactly once `c.state == .Closed`. `on_close`
   always fires at `.Closed` and is the terminal callback. A transport failure
   instead fires `on_error(.Ws_Error)` at `.Closed` (no `on_close` follows it). Every
   other `on_error` — a driver protocol error (`.Bad_Hello`/`.Bad_Frame`/
-  `.Unexpected_Hello`) or a per-frame diagnostic (`.Unknown_Response`/
-  `.Decode_Failed`) — fires while the connection is still open or closing; never
-  `client_destroy` from those.
+  `.Unexpected_Hello`/`.Out_Of_Memory`) or a per-frame diagnostic
+  (`.Unknown_Response`/`.Decode_Failed`) — fires while the connection is still
+  open or closing; never `client_destroy` from those.
 */
 
 package client

@@ -26,7 +26,7 @@ Sink :: struct {
     unknown:          int,
     last_unknown:     string,
     errors:           int,
-    last_error:       Client_Error,
+    last_error:       Protocol_Error,
     closes:           int,
     last_close_code:  ws.Close_Code,
     want_clone:       bool,
@@ -81,7 +81,7 @@ _rec_on_close :: proc(c: ^Client, code: ws.Close_Code) {
     s.last_close_code = code
 }
 
-_rec_on_error :: proc(c: ^Client, err: Client_Error) {
+_rec_on_error :: proc(c: ^Client, err: Protocol_Error) {
     s := (^Sink)(c.user_data)
     s.errors += 1
     s.last_error = err
@@ -128,6 +128,8 @@ _teardown :: proc(c: ^Client) {
 _arm_fake_open :: proc(c: ^Client) {
     c.sock.state = .Open
     c.sock.allocator = context.allocator
+    c.sock.max_frame_bytes = 1 << 20
+    c.sock.max_send_queue_bytes = 1 << 20
     c.sock.sending = true
 }
 
@@ -153,11 +155,11 @@ test_send_request_ids_increment_and_record_pending :: proc(t: ^testing.T) {
     }
 
     id1, e1 := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{})
-    testing.expect_value(t, e1, Client_Error.None)
+    testing.expect_value(t, e1, Protocol_Error.None)
     testing.expect_value(t, u64(id1), u64(1))
 
     id2, e2 := client_send_request(&c, .Session_List, wire.default_params(.Session_List).?)
-    testing.expect_value(t, e2, Client_Error.None)
+    testing.expect_value(t, e2, Protocol_Error.None)
     testing.expect_value(t, u64(id2), u64(2))
 
     testing.expect_value(t, len(c.pending), 2)
@@ -181,7 +183,7 @@ test_send_request_not_ready :: proc(t: ^testing.T) {
     defer _teardown(&c)
 
     _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{})
-    testing.expect_value(t, err, Client_Error.Not_Ready)
+    testing.expect_value(t, err, Protocol_Error.Not_Ready)
     testing.expect_value(t, len(c.pending), 0)
 }
 
@@ -194,7 +196,7 @@ test_send_request_id_exhausted :: proc(t: ^testing.T) {
     defer _teardown(&c)
 
     _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{})
-    testing.expect_value(t, err, Client_Error.Request_Id_Exhausted)
+    testing.expect_value(t, err, Protocol_Error.Request_Id_Exhausted)
 }
 
 @(test)
@@ -209,7 +211,7 @@ test_send_request_too_many_pending :: proc(t: ^testing.T) {
     }
 
     _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{})
-    testing.expect_value(t, err, Client_Error.Too_Many_Pending)
+    testing.expect_value(t, err, Protocol_Error.Too_Many_Pending)
     testing.expect_value(t, len(c.pending), MAX_PENDING_REQUESTS)
 }
 
@@ -223,7 +225,7 @@ test_handle_text_routes_typed_response :: proc(t: ^testing.T) {
 
     raw := `{"type":"response","id":3,"result":{"type":"queued","input_id":8}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, sink.responses, 1)
     testing.expect_value(t, sink.last_response_id, u64(3))
     testing.expect(t, sink.last_ok, "success response")
@@ -244,7 +246,7 @@ test_handle_text_routes_error_response :: proc(t: ^testing.T) {
 
     raw := `{"type":"error","id":4,"error":{"code":"session_busy","message":"busy"}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, sink.responses, 1)
     testing.expect_value(t, sink.last_response_id, u64(4))
     testing.expect(t, !sink.last_ok, "error response")
@@ -263,7 +265,7 @@ test_handle_text_routes_known_broadcast :: proc(t: ^testing.T) {
 
     raw := `{"type":"broadcast","name":"notice","data":{"level":"warn","source":"provider","message":"rate limited"}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, sink.broadcasts, 1)
     testing.expect_value(t, sink.last_bc_name, wire.Broadcast_Name.Notice)
     testing.expect_value(t, sink.unknown, 0)
@@ -284,7 +286,7 @@ test_handle_text_unknown_broadcast_not_materialized :: proc(t: ^testing.T) {
     // A payload that would fail to decode as any known broadcast proves it is skipped.
     raw := `{"type":"broadcast","name":"totally.unknown","data":{"whatever":{"deep":[1,2,3]}}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, sink.unknown, 1)
     testing.expect_value(t, sink.broadcasts, 0)
     testing.expect_value(t, sink.last_unknown, "totally.unknown")
@@ -299,9 +301,9 @@ test_handle_text_unknown_response_id :: proc(t: ^testing.T) {
 
     raw := `{"type":"response","id":99,"result":{"type":"queued","input_id":8}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.Unknown_Response)
+    testing.expect_value(t, err, Protocol_Error.Unknown_Response)
     testing.expect_value(t, sink.errors, 1)
-    testing.expect_value(t, sink.last_error, Client_Error.Unknown_Response)
+    testing.expect_value(t, sink.last_error, Protocol_Error.Unknown_Response)
     testing.expect_value(t, sink.responses, 0)
 }
 
@@ -316,7 +318,7 @@ test_handle_text_error_unknown_id_still_delivered :: proc(t: ^testing.T) {
     // sent — unlike a success `response`, which needs the pending method to type.
     raw := `{"type":"error","id":77,"error":{"code":"session_busy","message":"busy"}}`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect_value(t, sink.responses, 1)
     testing.expect_value(t, sink.last_response_id, u64(77))
     testing.expect(t, !sink.last_ok, "error response delivered")
@@ -332,7 +334,7 @@ test_handle_text_malformed_json :: proc(t: ^testing.T) {
     defer _teardown(&c)
 
     err := client_handle_text(&c, transmute([]byte)string("not json at all"))
-    testing.expect_value(t, err, Client_Error.Decode_Failed)
+    testing.expect_value(t, err, Protocol_Error.Decode_Failed)
 }
 
 @(test)
@@ -346,7 +348,7 @@ test_handle_text_trailing_bytes_rejected :: proc(t: ^testing.T) {
     // before `on_broadcast` fires.
     raw := `{"type":"broadcast","name":"notice","data":{"level":"info","source":"x","message":"y"}} 5`
     err := client_handle_text(&c, transmute([]byte)raw)
-    testing.expect_value(t, err, Client_Error.Decode_Failed)
+    testing.expect_value(t, err, Protocol_Error.Decode_Failed)
     testing.expect_value(t, sink.broadcasts, 0)
 }
 
@@ -358,7 +360,7 @@ test_handle_text_hello_while_ready_is_unexpected :: proc(t: ^testing.T) {
     defer _teardown(&c)
 
     err := client_handle_text(&c, transmute([]byte)string(`{"type":"hello"}`))
-    testing.expect_value(t, err, Client_Error.Unexpected_Hello)
+    testing.expect_value(t, err, Protocol_Error.Unexpected_Hello)
 }
 
 @(test)
@@ -374,13 +376,14 @@ test_handle_hello_valid_reaches_ready_and_retains :: proc(t: ^testing.T) {
     copy(buf, src)
     defer delete(buf, context.allocator)
 
-    client_handle_hello(&c, buf)
-    testing.expect_value(t, c.state, Client_State.Ready)
+    err := client_handle_hello(&c, buf)
+    testing.expect_value(t, err, Protocol_Error.None)
+    testing.expect_value(t, c.state, Protocol_State.Ready)
     testing.expect_value(t, sink.ready, 1)
-    testing.expect_value(t, client_protocol(&c), u32(1))
+    testing.expect_value(t, c.protocol, u32(1))
     testing.expect_value(t, c.session_revision, wire.Session_Revision(7))
     testing.expect_value(t, c.cron_revision, wire.Cron_Revision(9))
-    testing.expect_value(t, client_daemon_version(&c), "1.2.3")
+    testing.expect_value(t, c.daemon_version, "1.2.3")
 
     // The retained daemon version is an owned clone: clobbering the source frame
     // must not disturb it.
@@ -388,7 +391,7 @@ test_handle_hello_valid_reaches_ready_and_retains :: proc(t: ^testing.T) {
         buf[i] = 0xff
     }
 
-    testing.expect_value(t, client_daemon_version(&c), "1.2.3")
+    testing.expect_value(t, c.daemon_version, "1.2.3")
 }
 
 @(test)
@@ -400,10 +403,10 @@ test_handle_hello_malformed_is_bad_hello :: proc(t: ^testing.T) {
     defer _teardown(&c)
 
     raw := `{"type":"hello","protocol":1,"daemon":{"version":"x"`
-    client_handle_hello(&c, transmute([]byte)raw)
-    testing.expect_value(t, sink.errors, 1)
-    testing.expect_value(t, sink.last_error, Client_Error.Bad_Hello)
-    testing.expect_value(t, c.state, Client_State.Closing)
+    err := client_handle_hello(&c, transmute([]byte)raw)
+    testing.expect_value(t, err, Protocol_Error.Bad_Hello)
+    testing.expect_value(t, sink.errors, 0)
+    testing.expect_value(t, c.state, Protocol_State.Awaiting_Hello)
 }
 
 @(test)
@@ -425,7 +428,7 @@ test_broadcast_clone_survives_source_and_scratch :: proc(t: ^testing.T) {
     defer delete(buf, context.allocator)
 
     err := client_handle_text(&c, buf)
-    testing.expect_value(t, err, Client_Error.None)
+    testing.expect_value(t, err, Protocol_Error.None)
     testing.expect(t, sink.has_clone, "broadcast cloned into caller arena")
 
     // `scratch` was reclaimed by `client_handle_text`; now destroy the source too.

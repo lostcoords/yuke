@@ -10,8 +10,8 @@ import wire "src:wire"
 // peer that never answers; a send past the cap fails with `.Too_Many_Pending`.
 MAX_PENDING_REQUESTS :: 256
 
-// Driver lifecycle, distinct from the transport's `ws.Client_State`.
-Client_State :: enum {
+// Driver protocol exchange: send `client.hello`, then await the server `hello`.
+Protocol_State :: enum {
     // TCP dial and WebSocket upgrade in flight; nothing sent yet.
     Connecting,
 
@@ -21,16 +21,16 @@ Client_State :: enum {
     // `hello` accepted; requests may be sent and frames are routed.
     Ready,
 
-    // A close has been initiated; draining before the transport reports Closed.
+    // A close has been initiated; waiting for the transport's terminal callback.
     Closing,
 
     // Fully closed; the terminal callback has fired.
     Closed,
 }
 
-// Driver error surface, distinct from `ws.Client_Error`. A transport failure is
-// surfaced as `.Ws_Error`; read the underlying code with `client_ws_error`.
-Client_Error :: enum {
+// Protocol-layer error. A transport failure is surfaced as `.Ws_Error`; read the
+// underlying code with `c.ws_error`.
+Protocol_Error :: enum {
     // No error.
     None,
 
@@ -51,6 +51,9 @@ Client_Error :: enum {
 
     // A binary WebSocket frame arrived; the v1 protocol carries only text frames.
     Bad_Frame,
+
+    // Driver-owned protocol state could not be allocated.
+    Out_Of_Memory,
 
     // The request id space (`wire.MAX_REQUEST_ID`) is exhausted.
     Request_Id_Exhausted,
@@ -83,38 +86,45 @@ Client_Callbacks :: struct {
     on_close:             proc(c: ^Client, code: ws.Close_Code),
 
     // Fired on a driver or transport error; see the TERMINAL CONTRACT for which are terminal.
-    on_error:             proc(c: ^Client, err: Client_Error),
+    on_error:             proc(c: ^Client, err: Protocol_Error),
 }
 
 // One daemon connection past the transport handshake. Owns `pending`, the
 // `daemon_version` clone, `scratch`, and the outbound `hello_frame`; borrows `loop`.
 Client :: struct {
+    // @private
     // Underlying WebSocket transport, driven through `ws.client_*`. The internal
-    // transport callbacks recover this `^Client` via `ws.client_user_data`. Named
+    // transport callbacks recover this `^Client` via `wsc.user_data`. Named
     // `sock` (not `ws`) to avoid colliding with the `ws` import alias.
     sock:             ws.Client,
 
+    // @private
     // Borrowed event loop the transport submits ops to; never run here.
     loop:             ^nbio.Event_Loop,
 
+    // @private
     // Backs `pending`, the `daemon_version` clone, `scratch`, and `hello_frame`. Must
     // outlive the client.
     allocator:        mem.Allocator,
 
-    // Driver lifecycle, distinct from `ws.Client_State`.
-    state:            Client_State,
+    // Protocol exchange phase.
+    state:            Protocol_State,
 
+    // @private
     // Next client-generated request id; starts at 1, increments per accepted send.
     next_request_id:  wire.Request_Id,
 
+    // @private
     // Outstanding request method keyed by id, used to type each response result.
     // Stores only the `Method_Name` enum — no borrowed frame data.
     pending:          map[wire.Request_Id]wire.Method_Name,
 
+    // @private
     // Per-message decode scratch, `free_all`'d after each message. A frame's borrowed
     // strings and slices live here only for the callback that consumes them.
     scratch:          mem.Dynamic_Arena,
 
+    // @private
     // Owned, pre-built `client.hello` bytes; sent and freed in the transport `on_open`.
     // Nil once sent, or if the connection never opened.
     hello_frame:      []byte,
@@ -136,9 +146,10 @@ Client :: struct {
     daemon_version:   string,
 
     // Last transport error, latched before an `on_error(.Ws_Error)`; read via
-    // `client_ws_error`.
+    // `c.ws_error`.
     ws_error:         ws.Client_Error,
 
+    // @private
     // Event sink; any field may be nil.
     cbs:              Client_Callbacks,
 
@@ -161,7 +172,7 @@ client_open :: proc(
     cbs: Client_Callbacks,
     user_data: rawptr = nil,
     allocator := context.allocator,
-) -> Client_Error {
+) -> Protocol_Error {
     c^ = {}
     c.loop = loop
     c.allocator = allocator
@@ -174,7 +185,7 @@ client_open :: proc(
 
     // Build and validate the outbound hello now so a bad identity fails fast; the
     // owned bytes are sent from the transport `on_open`.
-    hello := wire.client_hello_build(wire.Client{name = name, version = version})
+    hello := wire.client_hello_build({name = name, version = version})
     if wire.client_hello_validate(hello) != .None {
         client_free_owned(c)
         return .Bad_Frame
@@ -213,7 +224,7 @@ client_send_request :: proc(
     params: wire.Request_Params,
 ) -> (
     wire.Request_Id,
-    Client_Error,
+    Protocol_Error,
 ) {
     if c.state != .Ready {
         return 0, .Not_Ready
@@ -255,7 +266,7 @@ client_send_request :: proc(
 // no transport operations and returns the outcome so the caller decides whether to
 // close. `scratch` is `free_all`'d before returning, so every value handed to a
 // callback is valid only for that callback (see LIFETIME CONTRACT).
-client_handle_text :: proc(c: ^Client, data: []byte) -> Client_Error {
+client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     sa := mem.dynamic_arena_allocator(&c.scratch)
     defer free_all(sa)
 
@@ -346,55 +357,71 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Client_Error {
 }
 
 // Decode, validate, and retain the server `hello`, then advance to Ready and fire
-// `on_ready`. Any failure is a protocol error: `on_error(.Bad_Hello)` then close.
-// Called only while Awaiting_Hello.
-client_handle_hello :: proc(c: ^Client, data: []byte) {
+// `on_ready`. The transport callback closes on any returned error. Called only
+// while Awaiting_Hello.
+client_handle_hello :: proc(c: ^Client, data: []byte) -> Protocol_Error {
+    assert(c != nil && c.state == .Awaiting_Hello, "hello handled outside Awaiting_Hello")
+
     sa := mem.dynamic_arena_allocator(&c.scratch)
     defer free_all(sa)
 
     d := wire.decoder_init(string(data), sa)
     hello, derr := wire.server_hello_from_reader(&d)
     if derr != .None {
-        client_abort(c, .Bad_Hello)
-        return
+        return .Bad_Hello
     }
 
     if wire.dec_finish(&d) != .None {
-        client_abort(c, .Bad_Hello)
-        return
+        return .Bad_Hello
     }
 
     if wire.server_hello_validate(hello) != .None {
-        client_abort(c, .Bad_Hello)
-        return
+        return .Bad_Hello
     }
 
     // Retain the scalar snapshot by value; clone the one borrowed string we keep, so
     // nothing survives the scratch `free_all` as a dangling frame borrow.
+    assert(c.daemon_version == "", "daemon version retained twice")
+    daemon_version, aerr := strings.clone(hello.daemon.version, c.allocator)
+    if aerr != nil {
+        return .Out_Of_Memory
+    }
+
     c.protocol = hello.protocol
     c.session_revision = hello.session_revision
     c.cron_revision = hello.cron_revision
     c.catalog_rev = hello.catalog_rev
-    c.daemon_version = strings.clone(hello.daemon.version, c.allocator)
+    c.daemon_version = daemon_version
     c.state = .Ready
 
     if c.cbs.on_ready != nil {
         c.cbs.on_ready(c)
     }
+
+    return .None
 }
 
 // Begin a graceful close with `code`. The terminal `on_close` fires once the close
 // completes. No-op if already closing or closed.
 client_close :: proc(c: ^Client, code := ws.Close_Code.Normal_Closure) {
+    assert(c != nil, "client_close needs a client")
+
     if c.state == .Closing || c.state == .Closed {
         return
     }
 
+    close_err := ws.client_close(&c.sock, code)
+    if close_err != .None {
+        assert(close_err != .Not_Open, "protocol and transport close states diverged")
+        c.state = .Closing
+        ws.client_abort(&c.sock, close_err)
+        return
+    }
+
     c.state = .Closing
-    ws.client_close(&c.sock, code)
 }
 
-// Release all driver-owned resources and the transport. Call once `client_state(c)`
+// Release all driver-owned resources and the transport. Call once `c.state`
 // is `.Closed` (after `on_close`, or after a transport `on_error`). Does not touch the
 // borrowed loop.
 client_destroy :: proc(c: ^Client) {
@@ -402,29 +429,10 @@ client_destroy :: proc(c: ^Client) {
     ws.client_destroy(&c.sock)
 }
 
-// Retained protocol version from the server `hello`; meaningful once Ready.
-client_protocol :: proc(c: ^Client) -> u32 {
-    return c.protocol
-}
-
-// Retained daemon version string (owned by the driver); meaningful once Ready.
-client_daemon_version :: proc(c: ^Client) -> string {
-    return c.daemon_version
-}
-
-// Current driver lifecycle state.
-client_state :: proc(c: ^Client) -> Client_State {
-    return c.state
-}
-
-// The last transport error, meaningful when an `on_error(.Ws_Error)` has fired.
-client_ws_error :: proc(c: ^Client) -> ws.Client_Error {
-    return c.ws_error
-}
 
 // Report a fatal driver error and begin a transport close. `on_error` fires now (at
 // `.Closing`); the terminal `on_close` follows when the close completes. Idempotent.
-client_abort :: proc(c: ^Client, err: Client_Error) {
+client_abort :: proc(c: ^Client, err: Protocol_Error) {
     if c.state == .Closing || c.state == .Closed {
         return
     }
@@ -435,7 +443,11 @@ client_abort :: proc(c: ^Client, err: Client_Error) {
         c.cbs.on_error(c, err)
     }
 
-    ws.client_close(&c.sock, .Protocol_Error)
+    close_err := ws.client_close(&c.sock, .Protocol_Error)
+    if close_err != .None {
+        assert(close_err != .Not_Open, "protocol and transport close states diverged")
+        ws.client_abort(&c.sock, close_err)
+    }
 }
 
 // Free the driver-owned state allocated by `client_open`. Used both to roll back a
@@ -463,19 +475,24 @@ client_free_owned :: proc(c: ^Client) {
 
 // Transport is Open: advance to Awaiting_Hello and send the pre-built `client.hello`.
 ws_on_open :: proc(wsc: ^ws.Client) {
-    c := (^Client)(ws.client_user_data(wsc))
+    assert(wsc != nil && wsc.user_data != nil, "transport open lost its protocol client")
+
+    c := (^Client)(wsc.user_data)
+    assert(&c.sock == wsc && c.state == .Connecting, "transport open crossed client ownership")
     c.state = .Awaiting_Hello
 
-    // Open guarantees the enqueue is accepted; a later write failure surfaces via
-    // `ws_on_error`, so the result is ignored here.
-    ws.client_send_text(&c.sock, c.hello_frame)
+    send_err := ws.client_send_text(&c.sock, c.hello_frame)
     delete(c.hello_frame, c.allocator)
     c.hello_frame = nil
+    if send_err != .None {
+        c.state = .Closing
+        ws.client_abort(&c.sock, send_err)
+    }
 }
 
 // One complete transport message. Only text frames carry protocol data.
 ws_on_message :: proc(wsc: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
-    c := (^Client)(ws.client_user_data(wsc))
+    c := (^Client)(wsc.user_data)
 
     // Frames only matter while awaiting the hello or routing; ignore anything that
     // arrives while connecting, closing, or closed.
@@ -486,7 +503,9 @@ ws_on_message :: proc(wsc: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
     switch kind {
     case .Text:
         if c.state == .Awaiting_Hello {
-            client_handle_hello(c, data)
+            if err := client_handle_hello(c, data); err != .None {
+                client_abort(c, err)
+            }
         } else {
             err := client_handle_text(c, data)
 
@@ -507,7 +526,7 @@ ws_on_message :: proc(wsc: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
 
 // Transport reached Closed via a graceful or peer close: fire the terminal `on_close`.
 ws_on_close :: proc(wsc: ^ws.Client, code: ws.Close_Code) {
-    c := (^Client)(ws.client_user_data(wsc))
+    c := (^Client)(wsc.user_data)
     c.state = .Closed
 
     if c.cbs.on_close != nil {
@@ -518,7 +537,7 @@ ws_on_close :: proc(wsc: ^ws.Client, code: ws.Close_Code) {
 // Transport failed terminally: latch the code and surface it as `.Ws_Error`. The
 // connection is Closed; no `on_close` follows.
 ws_on_error :: proc(wsc: ^ws.Client, err: ws.Client_Error) {
-    c := (^Client)(ws.client_user_data(wsc))
+    c := (^Client)(wsc.user_data)
     c.state = .Closed
     c.ws_error = err
 
