@@ -107,10 +107,12 @@ diff_hunk_clone :: proc(self: Diff_Hunk, allocator := context.allocator) -> Diff
 
 // One file in a diff view.
 Diff_File :: struct {
-    // New (or current) file path. @bounded 4096
+    // @bounded 4096
+    // New (or current) file path.
     path:     string,
 
-    // Path in the old tree when the file was renamed. @bounded 4096
+    // @bounded 4096
+    // Path in the old tree when the file was renamed.
     old_path: Maybe(string),
 
     // Per-file hunks in file order. At most 1024. Owner: caller/arena.
@@ -186,15 +188,17 @@ diff_file_clone :: proc(self: Diff_File, allocator := context.allocator) -> Diff
         hunks[i] = diff_hunk_clone(self.hunks[i], allocator)
     }
 
-    return Diff_File{path = strings.clone(self.path, allocator), old_path = old_path, hunks = hunks}
+    return {path = strings.clone(self.path, allocator), old_path = old_path, hunks = hunks}
 }
 
 // One field in a form view.
 Form_Field :: struct {
-    // Field key. @bounded 128
+    // @bounded 128
+    // Field key.
     name:  string,
 
-    // Human-readable label. @bounded 256
+    // @bounded 256
+    // Human-readable label.
     label: string,
 
     // Pre-filled value, if any.
@@ -270,7 +274,8 @@ View_Text :: struct {
     // UTF-8 body.
     text:     string,
 
-    // Optional language hint. @bounded 64
+    // @bounded 64
+    // Optional language hint.
     language: Maybe(string),
 }
 
@@ -303,7 +308,8 @@ View_Image :: struct {
     // Image bytes.
     source: Media_Source,
 
-    // Alternative text. @bounded 512
+    // @bounded 512
+    // Alternative text.
     alt:    Maybe(string),
 }
 

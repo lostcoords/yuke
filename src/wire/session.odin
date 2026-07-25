@@ -8,7 +8,8 @@ System_Prompt_Default :: struct {}
 // Field was explicitly `null`.
 System_Prompt_None :: struct {}
 
-// Field carried an explicit value. @unbounded
+// @unbounded
+// Field carried an explicit value.
 System_Prompt_Set :: struct {
     value: string,
 }
@@ -86,7 +87,8 @@ max_rounds_override_emit :: proc(e: ^Emitter, self: Max_Rounds_Override) {
 
 // session.create input. Non-owning.
 Create_Session :: struct {
-    // Filesystem path; omitted resolves to the home directory. @unbounded
+    // @unbounded
+    // Filesystem path; omitted resolves to the home directory.
     workspace_path: Maybe(string),
 
     // Profile name to resolve config from.
@@ -98,7 +100,8 @@ Create_Session :: struct {
     // Reasoning level override.
     reasoning:      Maybe(string),
 
-    // Omitted = resolve from config. Explicit null = force no system prompt. @unbounded
+    // @unbounded
+    // Omitted = resolve from config. Explicit null = force no system prompt.
     system_prompt:  System_Prompt_Override,
 
     // Permission mode override.
@@ -173,7 +176,8 @@ create_session_clone :: proc(self: Create_Session, allocator := context.allocato
 
 // Set an explicit prompt.
 System_Prompt_Patch_Set :: struct {
-    // New prompt. @unbounded
+    // @unbounded
+    // New prompt.
     value: string,
 }
 
@@ -516,19 +520,24 @@ session_origin_clone :: proc(self: Session_Origin, allocator := context.allocato
 
 // Daemon-owned session summary.
 Session :: struct {
-    // Session id. @fixed 16
+    // @fixed 16
+    // Session id.
     id:            Session_Id,
 
-    // Owning workspace id. @fixed 16
+    // @fixed 16
+    // Owning workspace id.
     workspace_id:  Workspace_Id,
 
-    // Profile name. @bounded 64
+    // @bounded 64
+    // Profile name.
     profile:       string,
 
-    // Future-run model id. @bounded 128
+    // @bounded 128
+    // Future-run model id.
     model:         string,
 
-    // Future-run reasoning level. @bounded 32
+    // @bounded 32
+    // Future-run reasoning level.
     reasoning:     string,
 
     // Future-run config revision.
@@ -540,7 +549,8 @@ Session :: struct {
     // Live round cap; null means unlimited.
     max_rounds:    Maybe(u64),
 
-    // Display title. @bounded 256
+    // @bounded 256
+    // Display title.
     title:         string,
 
     // Committed transcript message count.
@@ -644,10 +654,12 @@ Run_Config :: struct {
     // Config revision used by the run.
     config_rev: Config_Rev,
 
-    // Model id. @bounded 128
+    // @bounded 128
+    // Model id.
     model:      string,
 
-    // Reasoning level. @bounded 32
+    // @bounded 32
+    // Reasoning level.
     reasoning:  string,
 }
 
@@ -768,7 +780,8 @@ Session_Scope_All :: struct {}
 
 // Sessions belonging to one exact workspace.
 Session_Scope_Workspace :: struct {
-    // Workspace to match. @fixed 16
+    // @fixed 16
+    // Workspace to match.
     workspace_id: Workspace_Id,
 }
 
@@ -812,13 +825,15 @@ Session_Population_Top_Level :: struct {}
 
 // Immediate persistent children of one session.
 Session_Population_Children :: struct {
-    // Parent session to match. @fixed 16
+    // @fixed 16
+    // Parent session to match.
     parent_id: Session_Id,
 }
 
 // Sessions created by one cron job.
 Session_Population_Job_Runs :: struct {
-    // Cron job to match. @fixed 16
+    // @fixed 16
+    // Cron job to match.
     job_id: Job_Id,
 }
 
@@ -911,7 +926,8 @@ Session_List_Params :: struct {
     // Page size; omitted means daemon default.
     limit:      Maybe(u64),
 
-    // Opaque daemon-issued continuation. @bounded 256
+    // @bounded 256
+    // Opaque daemon-issued continuation.
     cursor:     Maybe(string),
 }
 
@@ -958,7 +974,8 @@ Session_List_Result :: struct {
     // Rows in final daemon-defined display order.
     items:       []Session_List_Item,
 
-    // Opaque continuation; required null on the final page. @bounded 256
+    // @bounded 256
+    // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 
     // Unique rows in the complete selected view before paging.
@@ -1063,7 +1080,8 @@ Activity_State_Waiting_Permission :: struct {
     // Tool part id.
     part_id:         Part_Id,
 
-    // Tool name. @bounded 128
+    // @bounded 128
+    // Tool name.
     tool_name:       string,
 
     // Request epoch ms.
@@ -1084,7 +1102,8 @@ Activity_State_Running_Tool :: struct {
     // Tool part id.
     part_id:       Part_Id,
 
-    // Tool name. @bounded 128
+    // @bounded 128
+    // Tool name.
     tool_name:     string,
 
     // Tool start epoch ms.
@@ -1111,7 +1130,8 @@ Activity_State_Retrying :: struct {
     // Failure code.
     code:         Run_Error_Code,
 
-    // Human-readable failure. @bounded 1024
+    // @bounded 1024
+    // Human-readable failure.
     message:      string,
 }
 
@@ -1787,7 +1807,8 @@ Config_Get_Result :: struct {
     // The requested run config.
     config:        Run_Config,
 
-    // null means no system prompt is sent to the model. @unbounded
+    // @unbounded
+    // null means no system prompt is sent to the model.
     system_prompt: Maybe(string),
 }
 

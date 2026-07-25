@@ -5,20 +5,20 @@ import "core:testing"
 
 @(test)
 test_client_hello_accepts_valid_bounds :: proc(t: ^testing.T) {
-    h := client_hello_build(Client{name = "yuke-tui", version = "0.0.1"})
+    h := client_hello_build({name = "yuke-tui", version = "0.0.1"})
     testing.expect(t, client_hello_validate(h) == .None, "valid hello should validate")
 }
 
 @(test)
 test_client_hello_rejects_bad_type :: proc(t: ^testing.T) {
-    h := client_hello_build(Client{name = "yuke-tui", version = "0.0.1"})
+    h := client_hello_build({name = "yuke-tui", version = "0.0.1"})
     h.type = "hello"
     testing.expect(t, client_hello_validate(h) == .Bad_Frame_Type, "bad type must be rejected")
 }
 
 @(test)
 test_client_hello_rejects_wrong_protocol :: proc(t: ^testing.T) {
-    h := client_hello_build(Client{name = "yuke-tui", version = "0.0.1"})
+    h := client_hello_build({name = "yuke-tui", version = "0.0.1"})
     h.protocol = 0
     testing.expect(t, client_hello_validate(h) == .Unsupported_Protocol, "wrong protocol must be rejected")
 }
@@ -29,10 +29,10 @@ test_client_hello_rejects_oversized_client_fields :: proc(t: ^testing.T) {
     long_version := strings.repeat("v", 33, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
-    bad_name := client_hello_build(Client{name = long_name, version = "0.0.1"})
+    bad_name := client_hello_build({name = long_name, version = "0.0.1"})
     testing.expect(t, client_hello_validate(bad_name) == .Overflow, "oversized name must overflow")
 
-    bad_version := client_hello_build(Client{name = "yuke-tui", version = long_version})
+    bad_version := client_hello_build({name = "yuke-tui", version = long_version})
     testing.expect(t, client_hello_validate(bad_version) == .Overflow, "oversized version must overflow")
 }
 

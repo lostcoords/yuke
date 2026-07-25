@@ -143,7 +143,7 @@ Broadcast :: struct {
 
 // Build a broadcast frame with the fixed discriminator.
 broadcast_build :: proc(name: Broadcast_Name, data: Broadcast_Data) -> Broadcast {
-    return Broadcast{type = "broadcast", name = name, data = data}
+    return {type = "broadcast", name = name, data = data}
 }
 
 // Write `type`, then `name`, then `data`.

@@ -159,7 +159,8 @@ Cron_List_Params :: struct {
     // Page size; omitted means daemon default.
     limit:  Maybe(u64),
 
-    // Opaque continuation. @bounded 256
+    // @bounded 256
+    // Opaque continuation.
     cursor: Maybe(string),
 }
 
@@ -198,7 +199,8 @@ Cron_List_Result :: struct {
     // Jobs in daemon-defined stable order.
     jobs:        []Cron_Job,
 
-    // Opaque continuation; required null on the final page. @bounded 256
+    // @bounded 256
+    // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 }
 
@@ -259,7 +261,8 @@ cron_run_now_params_validate :: proc(self: Cron_Run_Now_Params) -> Validation_Er
 
 // Result of `cron.run_now`.
 Cron_Run_Now_Result :: struct {
-    // Session created by the fire. @fixed 16
+    // @fixed 16
+    // Session created by the fire.
     session_id: Session_Id,
 
     // Run started in that session.
@@ -539,7 +542,8 @@ cron_job_spec_clone :: proc(self: Cron_Job_Spec, allocator := context.allocator)
 
 // A cron job record. Non-owning.
 Cron_Job :: struct {
-    // Job id. @fixed 16
+    // @fixed 16
+    // Job id.
     id:                Job_Id,
 
     // Job spec at last write.

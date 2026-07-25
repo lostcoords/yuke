@@ -333,7 +333,8 @@ Run_Outcome_Failed :: struct {
     // Failure category.
     code:    Run_Error_Code,
 
-    // Human-readable failure. @bounded 4096
+    // @bounded 4096
+    // Human-readable failure.
     message: string,
 }
 

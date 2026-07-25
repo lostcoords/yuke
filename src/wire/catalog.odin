@@ -4,10 +4,12 @@ import "core:math"
 import "core:strconv"
 import "core:strings"
 
-// Catalog content hash. @fixed 64
+// @fixed 64
+// Catalog content hash.
 Catalog_Rev :: distinct [64]u8
 
-// Provider model identifier string. @bounded 128
+// @bounded 128
+// Provider model identifier string.
 Model_Id :: string
 
 // United States dollars per million tokens.
@@ -41,9 +43,11 @@ Model_Info :: struct {
     id:                Model_Id,
 
     // @bounded 64
+    //
     provider:          string,
 
     // @bounded 128
+    //
     name:              string,
 
     // Max input tokens the model accepts.
@@ -56,6 +60,7 @@ Model_Info :: struct {
     reasoning_levels:  []string,
 
     // @bounded 32
+    //
     default_reasoning: string,
 
     // Whether the model accepts image input.
@@ -238,7 +243,8 @@ Catalog_Health :: struct {
     // Providers skipped by the daemon.
     skipped:    []Skipped_Provider,
 
-    // Catalog load failure, if any. @bounded 4096
+    // @bounded 4096
+    // Catalog load failure, if any.
     load_error: Maybe(string),
 }
 
@@ -296,12 +302,13 @@ catalog_health_clone :: proc(self: Catalog_Health, allocator := context.allocato
         load_error = strings.clone(msg, allocator)
     }
 
-    return Catalog_Health{skipped = skipped, load_error = load_error}
+    return {skipped = skipped, load_error = load_error}
 }
 
 // Providers skipped during catalog load. Non-owning.
 Skipped_Provider :: struct {
-    // Provider name. @bounded 64
+    // @bounded 64
+    // Provider name.
     provider: string,
 
     // Why this provider was skipped.
@@ -334,13 +341,15 @@ skipped_provider_clone :: proc(self: Skipped_Provider, allocator := context.allo
 
 // Required credential was absent.
 Skip_Reason_Missing_Credential :: struct {
-    // Environment variable name. @bounded 256
+    // @bounded 256
+    // Environment variable name.
     env: string,
 }
 
 // Provider config was invalid.
 Skip_Reason_Invalid_Config :: struct {
-    // Human-readable error. @bounded 4096
+    // @bounded 4096
+    // Human-readable error.
     message: string,
 }
 

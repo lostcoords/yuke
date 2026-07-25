@@ -37,10 +37,12 @@ Notice :: struct {
     // Severity.
     level:   Notice_Level,
 
-    // Emitting subsystem. @bounded 64
+    // @bounded 64
+    // Emitting subsystem.
     source:  string,
 
-    // Human-readable detail. @bounded 4096
+    // @bounded 4096
+    // Human-readable detail.
     message: string,
 }
 

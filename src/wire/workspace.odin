@@ -4,13 +4,16 @@ import "core:strings"
 
 // Daemon-known workspace directory. Non-owning.
 Workspace :: struct {
-    // Derived workspace id. @fixed 16
+    // @fixed 16
+    // Derived workspace id.
     id:    Workspace_Id,
 
-    // Canonical absolute path. @unbounded
+    // @unbounded
+    // Canonical absolute path.
     root:  string,
 
-    // Display title. @bounded 256
+    // @bounded 256
+    // Display title.
     title: string,
 }
 
@@ -42,6 +45,7 @@ workspace_clone :: proc(self: Workspace, allocator := context.allocator) -> Work
 // Git status for a workspace root, when it is a repo. Non-owning.
 Git_Info :: struct {
     // @bounded 256
+    //
     branch: string,
 
     // Whether the working tree has uncommitted changes.
@@ -64,6 +68,7 @@ git_info_validate :: proc(self: Git_Info) -> Validation_Error {
 // workspace.describe input. Non-owning.
 Workspace_Describe_Params :: struct {
     // @unbounded
+    //
     path: string,
 }
 
@@ -122,12 +127,14 @@ workspace_describe_result_validate :: proc(self: Workspace_Describe_Result) -> V
 // workspace.browse input. Non-owning.
 Workspace_Browse_Params :: struct {
     // @unbounded
+    //
     path:   Maybe(string),
 
     // Page size; omitted means daemon default.
     limit:  Maybe(u64),
 
-    // Opaque continuation within the same directory. @bounded 256
+    // @bounded 256
+    // Opaque continuation within the same directory.
     cursor: Maybe(string),
 }
 
@@ -162,9 +169,11 @@ workspace_browse_params_validate :: proc(self: Workspace_Browse_Params) -> Valid
 // A single filesystem entry in a browse listing. Non-owning.
 Dir_Entry :: struct {
     // @bounded 256
+    //
     name:        string,
 
     // @unbounded
+    //
     path:        string,
 
     // Whether this directory is itself a git repo.
@@ -188,6 +197,7 @@ dir_entry_validate :: proc(self: Dir_Entry) -> Validation_Error {
 // workspace.browse result. Non-owning.
 Workspace_Browse_Result :: struct {
     // @unbounded
+    //
     path:        string,
 
     // Parent directory path; null at the filesystem root.
@@ -196,7 +206,8 @@ Workspace_Browse_Result :: struct {
     // Directory contents.
     entries:     []Dir_Entry,
 
-    // Opaque continuation; required null on the final page. @bounded 256
+    // @bounded 256
+    // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 }
 
@@ -307,15 +318,18 @@ skill_scope_from_wire :: proc(s: string) -> (Skill_Scope, bool) {
 // Discovered skill metadata. Non-owning.
 Skill_Info :: struct {
     // @bounded 64
+    //
     name:          string,
 
     // @bounded 512
+    //
     description:   string,
 
     // Project- or personal-scoped.
     scope:         Skill_Scope,
 
     // @bounded 128
+    //
     argument_hint: string,
 }
 

@@ -309,7 +309,7 @@ test_activity_state_retry_bounded :: proc(t: ^testing.T) {
     at_cap := strings.repeat("x", LIMITS.max_activity_retry_message_bytes, context.temp_allocator)
     valid := Activity_State_Retrying {
         run_id = Run_Id(1),
-        config = Run_Config{config_rev = Config_Rev(1), model = "model", reasoning = "low"},
+        config = {config_rev = Config_Rev(1), model = "model", reasoning = "low"},
         attempt = 1,
         max_attempts = 2,
         next_at_ms = 3,

@@ -4,13 +4,15 @@ import "core:strings"
 
 // Fetched over HTTP by URL.
 Media_Url :: struct {
-    // Remote URL. @bounded 4096
+    // @bounded 4096
+    // Remote URL.
     url: string,
 }
 
 // Inlined as base64 bytes.
 Media_Base64 :: struct {
-    // MIME type. @bounded 256
+    // @bounded 256
+    // MIME type.
     mime: string,
 
     // Base64-encoded bytes. Decoded length <= LIMITS.max_inline_media_bytes.
@@ -19,10 +21,12 @@ Media_Base64 :: struct {
 
 // Referenced by content hash, fetched separately.
 Media_Blob :: struct {
-    // Content hash, lowercase hex. @fixed 64
+    // @fixed 64
+    // Content hash, lowercase hex.
     hash:  [64]u8,
 
-    // MIME type. @bounded 256
+    // @bounded 256
+    // MIME type.
     mime:  string,
 
     // Decoded byte length.
@@ -284,7 +288,8 @@ Content_Image :: struct {
     // Image bytes.
     source: Media_Source,
 
-    // Optional detail hint (e.g. `"low"` / `"high"`). @bounded 32
+    // @bounded 32
+    // Optional detail hint (e.g. `"low"` / `"high"`).
     detail: Maybe(string),
 }
 
@@ -293,7 +298,8 @@ Content_Audio :: struct {
     // Audio bytes.
     source: Media_Source,
 
-    // Audio container format. @bounded 64
+    // @bounded 64
+    // Audio container format.
     format: string,
 }
 
@@ -302,7 +308,8 @@ Content_File :: struct {
     // File bytes.
     source:   Media_Source,
 
-    // Original filename. @bounded 512
+    // @bounded 512
+    // Original filename.
     filename: Maybe(string),
 }
 

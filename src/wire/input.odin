@@ -10,10 +10,12 @@ Input_Content :: struct {
 
 // Skill invocation.
 Input_Skill :: struct {
-    // Skill name. @bounded 64
+    // @bounded 64
+    // Skill name.
     name:      string,
 
-    // Skill arguments. @unbounded
+    // @unbounded
+    // Skill arguments.
     arguments: string,
 }
 
@@ -135,12 +137,13 @@ queued_input_clone :: proc(self: Queued_Input, allocator := context.allocator) -
         parts[i] = content_part_clone(self.content[i], allocator)
     }
 
-    return Queued_Input{input_id = self.input_id, content = parts, queued_at_ms = self.queued_at_ms}
+    return {input_id = self.input_id, content = parts, queued_at_ms = self.queued_at_ms}
 }
 
 // Params for `session.send_input`.
 Send_Input_Params :: struct {
-    // Owning session. @fixed 16
+    // @fixed 16
+    // Owning session.
     session_id: Session_Id,
 
     // Input to enqueue or start.
@@ -204,7 +207,8 @@ send_input_result_emit :: proc(e: ^Emitter, self: Send_Input_Result) {
 
 // Params for `session.cancel_input`.
 Cancel_Input_Params :: struct {
-    // Owning session. @fixed 16
+    // @fixed 16
+    // Owning session.
     session_id: Session_Id,
 
     // Input to cancel.
@@ -239,7 +243,8 @@ cancel_input_result_emit :: proc(e: ^Emitter, self: Cancel_Input_Result) {
 
 // Params for `session.cancel_run`.
 Cancel_Run_Params :: struct {
-    // Owning session. @fixed 16
+    // @fixed 16
+    // Owning session.
     session_id:  Session_Id,
 
     // Specific run to cancel; null cancels the active run.
@@ -309,7 +314,8 @@ cancel_run_result_emit :: proc(e: ^Emitter, self: Cancel_Run_Result) {
 // Incremental text/reasoning bytes for a draft. `offset` is UTF-8 bytes already
 // present: == len appends, < len is a no-op, > len is a gap (call session.resync).
 Part_Delta :: struct {
-    // Owning session. @fixed 16
+    // @fixed 16
+    // Owning session.
     session_id: Session_Id,
 
     // Draft message id.

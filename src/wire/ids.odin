@@ -1,15 +1,19 @@
 package wire
 
-// 16 lowercase hex chars. Doubles as an on-disk directory name. @fixed 16
+// @fixed 16
+// 16 lowercase hex chars. Doubles as an on-disk directory name.
 Session_Id :: distinct [16]u8
 
-// 16 lowercase hex chars. Doubles as an on-disk directory name. @fixed 16
+// @fixed 16
+// 16 lowercase hex chars. Doubles as an on-disk directory name.
 Workspace_Id :: distinct [16]u8
 
-// 16 lowercase hex chars. Doubles as an on-disk record name. @fixed 16
+// @fixed 16
+// 16 lowercase hex chars. Doubles as an on-disk record name.
 Job_Id :: distinct [16]u8
 
-// 16 lowercase hex chars. Identifies one remembered permission rule. @fixed 16
+// @fixed 16
+// 16 lowercase hex chars. Identifies one remembered permission rule.
 Rule_Id :: distinct [16]u8
 
 // Client-generated request/response correlation id. JSON number, never a string.

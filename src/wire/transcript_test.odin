@@ -224,7 +224,7 @@ test_assistant_message_part_ordinal :: proc(t: ^testing.T) {
         agent = "main",
         content = parts,
         finish = Stop_Reason.Stop,
-        time = Message_Time{created_at_ms = 1, completed_at_ms = 2},
+        time = {created_at_ms = 1, completed_at_ms = 2},
     }
     testing.expect(t, assistant_message_validate(msg) == .Mismatched_Payload, "misordered part id must fail")
 
@@ -298,7 +298,7 @@ test_user_message_clone_preserves_absent_source :: proc(t: ^testing.T) {
         id = 1,
         input_id = 1,
         content = []Content_Part{Content_Text{text = "hi"}},
-        time = Created_Time{created_at_ms = 1},
+        time = {created_at_ms = 1},
     }
 
     cloned := user_message_clone(src, context.temp_allocator)

@@ -4,10 +4,12 @@ import "core:strings"
 
 // Connection-level client identity carried inside `client.hello`.
 Client :: struct {
-    // Client connection name (e.g. `"yuke-tui"`). @bounded 64
+    // @bounded 64
+    // Client connection name (e.g. `"yuke-tui"`).
     name:    string,
 
-    // Client build/version string. @bounded 32
+    // @bounded 32
+    // Client build/version string.
     version: string,
 }
 
@@ -63,7 +65,7 @@ client_emit :: proc(e: ^Emitter, self: Client) {
 
 // Deep-copy into `allocator`.
 client_clone :: proc(self: Client, allocator := context.allocator) -> Client {
-    return Client{name = strings.clone(self.name, allocator), version = strings.clone(self.version, allocator)}
+    return {name = strings.clone(self.name, allocator), version = strings.clone(self.version, allocator)}
 }
 
 // First client frame. Discriminator `type` must be `"client.hello"`.

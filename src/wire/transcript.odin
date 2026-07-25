@@ -39,10 +39,12 @@ created_time_emit :: proc(e: ^Emitter, self: Created_Time) {
 
 // Structured error on an assistant message with `finish: "error"`. Non-owning.
 Message_Error :: struct {
-    // Provider error category string. @bounded 128
+    // @bounded 128
+    // Provider error category string.
     type:    string,
 
-    // Human-readable error. @bounded 4096
+    // @bounded 4096
+    // Human-readable error.
     message: string,
 }
 
@@ -63,7 +65,7 @@ message_error_validate :: proc(self: Message_Error) -> Validation_Error {
 
 // Deep-copy into `allocator`.
 message_error_clone :: proc(self: Message_Error, allocator := context.allocator) -> Message_Error {
-    return Message_Error{type = strings.clone(self.type, allocator), message = strings.clone(self.message, allocator)}
+    return {type = strings.clone(self.type, allocator), message = strings.clone(self.message, allocator)}
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +77,8 @@ Text_Part :: struct {
     // Part ordinal in the message content array.
     id:   Part_Id,
 
-    // UTF-8 text. @unbounded
+    // @unbounded
+    // UTF-8 text.
     text: string,
 }
 
@@ -84,7 +87,8 @@ Reasoning_Part :: struct {
     // Part ordinal in the message content array.
     id:   Part_Id,
 
-    // UTF-8 reasoning trace. @unbounded
+    // @unbounded
+    // UTF-8 reasoning trace.
     text: string,
 }
 
@@ -96,10 +100,12 @@ Tool_Part :: struct {
     // Provider identity; never used to address the part.
     call_id:    Maybe(string),
 
-    // Tool name. @bounded 128
+    // @bounded 128
+    // Tool name.
     name:       string,
 
-    // Opaque JSON-encoded arguments. @unbounded
+    // @unbounded
+    // Opaque JSON-encoded arguments.
     arguments:  string,
 
     // Display-only input views. At most 64.
@@ -249,10 +255,11 @@ Tool_State_Running :: struct {
     // Run start epoch ms.
     started_at_ms:    u64,
 
+    // @bounded max_tool_output_stream_bytes
     // Accumulated display output streamed so far. Present in a resync
     // snapshot of a running tool, absent in the live transition into
     // `running`. Its UTF-8 byte length is the next `tool.output_delta`
-    // offset baseline. @bounded max_tool_output_stream_bytes
+    // offset baseline.
     output:           Maybe(string),
 
     // Local lifecycle data, once decided.
@@ -261,7 +268,8 @@ Tool_State_Running :: struct {
 
 // Call finished successfully.
 Tool_State_Completed :: struct {
-    // Model-facing output text. @unbounded
+    // @unbounded
+    // Model-facing output text.
     output:           string,
 
     // Display-only rendering hints.
@@ -276,7 +284,8 @@ Tool_State_Completed :: struct {
 
 // Call failed.
 Tool_State_Error :: struct {
-    // Model-facing error text. @unbounded
+    // @unbounded
+    // Model-facing error text.
     message:          string,
 
     // Display-only rendering hints.
@@ -291,7 +300,8 @@ Tool_State_Error :: struct {
 
 // Permission was denied.
 Tool_State_Denied :: struct {
-    // Model-facing reason. @unbounded
+    // @unbounded
+    // Model-facing reason.
     reason:           string,
 
     // Who denied.
@@ -574,10 +584,12 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
 
 // Message came from a slash-command/skill invocation.
 User_Message_Source_Skill :: struct {
-    // Skill name. @bounded 64
+    // @bounded 64
+    // Skill name.
     name:      string,
 
-    // Skill arguments. @unbounded
+    // @unbounded
+    // Skill arguments.
     arguments: string,
 }
 
@@ -686,7 +698,8 @@ Assistant_Message :: struct {
     // Resolves to a model string via session.config or config.changed.
     config_rev: Config_Rev,
 
-    // Agent name (`"main"` for a root session). @bounded 64
+    // @bounded 64
+    // Agent name (`"main"` for a root session).
     agent:      string,
 
     // Assistant parts in append order. At most 1024.
@@ -873,7 +886,8 @@ Compaction_Message :: struct {
     // Why compaction ran.
     reason:        Compaction_Reason,
 
-    // Model-generated summary of the dropped range. @unbounded
+    // @unbounded
+    // Model-generated summary of the dropped range.
     summary:       string,
 
     // First message id still in the provider context. Required on the wire; null means nothing was kept.

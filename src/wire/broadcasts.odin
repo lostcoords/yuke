@@ -607,7 +607,8 @@ Message_Started_Data :: struct {
     // Config revision used.
     config_rev:    Config_Rev,
 
-    // Agent name, e.g. `"main"`. @bounded 64
+    // @bounded 64
+    // Agent name, e.g. `"main"`.
     agent:         string,
 
     // Draft creation epoch ms.
