@@ -15,8 +15,6 @@ import http_server "libs:http/server"
 import ws "libs:websocket"
 import wire "src:wire"
 
-// Per-connection protocol exchange. The inverse of the client driver's: the daemon
-// waits for the client's hello, then replies with its own.
 Protocol_State :: enum {
     // Connection is Open; awaiting the client's `client.hello`.
     Awaiting_Hello,
@@ -54,7 +52,8 @@ Daemon_Options :: struct {
     // Daemon build/version string reported in `hello`. Defaults to `"0.0.0"`.
     daemon_version: string,
 
-    // Directory holding content-addressed blobs. Empty disables `/blob`.
+    // Directory holding content-addressed blobs, created if absent. Empty disables
+    // `/blob`.
     blob_dir:       string,
 
     // Required bearer token. Empty disables authorization; non-empty values use
@@ -64,8 +63,8 @@ Daemon_Options :: struct {
 
 // A listening yuke daemon on a caller-supplied nbio loop. Owns the HTTP front door
 // that binds the port, the WebSocket server it upgrades into, and its own string
-// clones; every accepted connection owns its own `Conn`. Start with `daemon_start`,
-// stop with `daemon_shutdown`, reclaim with `daemon_destroy`.
+// clones. Start with `daemon_start`, stop with `daemon_shutdown`, reclaim with
+// `daemon_destroy`.
 Daemon :: struct {
     // Front door: binds the port and routes `/ws` and `/blob/<hash>`. Its handler
     // recovers this `^Daemon` via `c.server.user_data`.
@@ -97,8 +96,7 @@ Daemon :: struct {
 }
 
 // One accepted connection past the WebSocket handshake. Allocated in the transport
-// `on_open` and freed in the terminal callback. Borrows the transport's
-// `ws.Server_Conn`; the transport owns that and frees it after the terminal.
+// `on_open` and freed in the terminal callback.
 Conn :: struct {
     // Transport connection this wraps; borrowed, owned by the WebSocket server.
     wsc:            ^ws.Server_Conn,
@@ -108,8 +106,6 @@ Conn :: struct {
 
     // Allocator backing `scratch` and the retained client identity (the daemon's).
     allocator:      mem.Allocator,
-
-    // Per-connection state machine.
     state:          Protocol_State,
 
     // Per-frame decode scratch, `free_all`'d after each inbound frame. A frame's
@@ -124,9 +120,8 @@ Conn :: struct {
     client_version: string,
 }
 
-// Begin listening: clone the identity/config, ready the WebSocket server, then bind
-// the port; the rest runs on the loop. A synchronous failure returns directly and
-// rolls back the clones.
+// Begin listening. A synchronous failure returns directly and rolls back the clones
+// and the WebSocket server; past the bind, everything runs on the loop.
 daemon_start :: proc(
     d: ^Daemon,
     loop: ^nbio.Event_Loop,
@@ -289,7 +284,7 @@ daemon_destroy :: proc(d: ^Daemon) {
     daemon_free_config(d)
 }
 
-// Free the owned configuration clones.
+// Release the owned config strings and reset them to empty.
 daemon_free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
@@ -353,15 +348,13 @@ daemon_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []b
         daemon_handle_text(conn, data)
 
     case .Binary:
-        // The v1 protocol carries only text frames.
         daemon_conn_protocol_close(conn)
 
     case .Ping, .Pong, .Close:
-    // Handled by the transport; never delivered here.
     }
 }
 
-// A connection closed gracefully: free its `Conn`.
+// Transport terminal callback on a clean close: latch Closed and free the `Conn`.
 daemon_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
     assert(wsc != nil && wsc.server != nil, "close callback needs an owned transport connection")
 
@@ -376,7 +369,7 @@ daemon_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
     daemon_conn_free(conn)
 }
 
-// A connection failed terminally: free its `Conn`.
+// Transport terminal callback on an error: latch Closed and free the `Conn`.
 daemon_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
     assert(wsc != nil && wsc.server != nil, "error callback needs an owned transport connection")
     assert(err != .None, "error callback received no error")
@@ -393,9 +386,8 @@ daemon_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
     daemon_conn_free(conn)
 }
 
-// Route one inbound text frame. A frame is exactly one JSON value: decode it, reject
-// trailing bytes, then act on its type and the connection state. Any decode/validate
-// failure or protocol-sequence violation closes the connection.
+// Handle one inbound text frame: any decode/validate failure or sequence violation
+// closes the connection.
 daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
     assert(conn != nil && conn.wsc != nil && conn.daemon != nil, "text handler needs live connection state")
     assert(conn.wsc.user_data == conn, "text handler crossed transport ownership")
@@ -426,11 +418,8 @@ daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
     }
 }
 
-// Validate and answer the client's `client.hello`. A hello outside Awaiting_Hello
-// (a second hello once Ready) is a protocol error; a bad protocol version closes
-// with `CLOSE.unsupported_protocol`; any other validation failure is a protocol
-// error. On success the daemon retains the client identity, emits its `hello`, and
-// reaches Ready.
+// Validate and answer the client's `client.hello`. On success the daemon retains the
+// client identity, emits its `hello`, and reaches Ready.
 daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
     assert(conn != nil && conn.wsc != nil, "hello handler needs connection state")
 
@@ -475,11 +464,8 @@ daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
     }
 }
 
-// Answer a request. A request before Ready is a protocol error; a malformed request
-// after Ready is a protocol error (not an error response). A well-formed request is
-// routed to its handler: the four read-only methods run real handlers, every other
-// method receives an `Unknown_Method` error. Result data is built in `sa`, the
-// per-frame arena `daemon_handle_text` reclaims after this returns.
+// Route a request to its handler. Result data is built in `sa`, the per-frame arena
+// `daemon_handle_text` reclaims after this returns.
 daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil && conn.wsc != nil, "request handler needs connection state")
 
@@ -537,9 +523,8 @@ daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     }
 }
 
-// `session.list` before any store exists: an empty page pinned to revision 0, the
-// same session revision the hello snapshot claims. Params are already validated, so
-// bounds are honored; there simply are no rows to page.
+// `session.list` before any store exists: an empty page pinned to revision 0, matching
+// the session revision the hello snapshot claims.
 daemon_method_session_list :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil && conn.state == .Ready, "session.list ran outside Ready")
     assert(req.method == .Session_List, "session.list received another method")
@@ -725,11 +710,9 @@ daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     return true
 }
 
-// Emit the coarse `hello` snapshot. This build-order step has no store, sessions,
-// or catalog, so the snapshot is empty: no workspaces or profiles, zero revisions,
-// the all-zero catalog hash, and empty health. It MUST pass `server_hello_validate`.
-// Capabilities advertise only what this build/config offers: `blob_upload` when a
-// blob directory is configured; terminal/eval/revert/fs are not built yet.
+// Emit the `hello` snapshot. This build has no store, sessions, or catalog, so the
+// snapshot is empty; capabilities advertise only what this config offers
+// (`blob_upload` when a blob directory is configured).
 daemon_send_hello :: proc(conn: ^Conn) -> bool {
     assert(conn != nil && conn.daemon != nil && conn.wsc != nil, "hello send needs connection state")
     assert(conn.state == .Awaiting_Hello, "server hello sent outside Awaiting_Hello")
@@ -864,8 +847,8 @@ daemon_workspace_id :: proc(root: string) -> wire.Workspace_Id {
 }
 
 // Display title for a workspace: the canonical root's basename, falling back to the
-// whole root when it has none (the filesystem root). Clamped to the `Workspace.title`
-// bound: some filesystems (APFS) allow names past the wire's 256-byte limit.
+// whole root when it has none (the filesystem root), clamped to the `Workspace.title`
+// bound.
 daemon_workspace_title :: proc(root: string) -> string {
     assert(len(root) > 0, "workspace title needs a canonical root")
 
@@ -917,8 +900,7 @@ daemon_git_info :: proc(root: string, allocator: mem.Allocator) -> Maybe(wire.Gi
 }
 
 // Current branch from `.git/HEAD`: the ref name for a symbolic HEAD, or "" for a
-// detached, unreadable, or non-UTF-8 HEAD. Clamped to the `Git_Info.branch` bound so
-// a pathological ref can never produce an invalid result frame.
+// detached, unreadable, or non-UTF-8 HEAD. Clamped to the `Git_Info.branch` bound.
 daemon_git_branch :: proc(root: string, allocator: mem.Allocator) -> string {
     assert(len(root) > 0, "git branch needs a canonical root")
 
@@ -1046,7 +1028,6 @@ daemon_dir_entry_less :: proc(a, b: wire.Dir_Entry) -> bool {
     return len(an) < len(bn)
 }
 
-// ASCII lowercase fold of one byte.
 daemon_ascii_lower :: proc(c: u8) -> u8 {
     if c >= 'A' && c <= 'Z' {
         return c + 32

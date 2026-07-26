@@ -33,7 +33,7 @@ BLOB_TEMP_PREFIX :: ".upload."
 UPLOAD_TEMP_GRACE :: 1 * time.Hour
 
 // Authenticate a syntactically valid request before method or route disclosure,
-// then dispatch the two supported GET routes.
+// then dispatch `GET /ws` and `GET`/`PUT` on `/blob/<hash>`.
 daemon_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
     assert(c != nil && c.server != nil, "front door request needs an owned connection")
     assert(req.head.consumed == len(req.head.bytes), "front door received an inconsistent parsed head")
@@ -194,6 +194,7 @@ daemon_route_blob :: proc(d: ^Daemon, c: ^http_server.Conn, hash: string, respon
     log.debugf("daemon: serving blob %s", hash)
 }
 
+// Respond `404 unknown blob` for a missing or malformed blob request.
 daemon_blob_not_found :: proc(c: ^http_server.Conn, response_headers: []http_server.Header) {
     assert(c != nil && c.server != nil, "blob failure needs an owned connection")
 
@@ -226,11 +227,10 @@ Blob_Upload :: struct {
     file:       ^os.File,
 }
 
-// Stream a client-supplied blob to a temp file, hashing as it writes, then verify the
-// digest against the URL hash and atomically publish it. Content-addressed: a mismatch
-// means the client lied about the address. Idempotent: an already-stored hash short-
-// circuits. Auth (already done) and the 64-lowercase-hex path check mirror GET /blob;
-// the body is bounded by `LIMITS.max_blob_bytes` and streamed, never buffered whole.
+// Stream a blob body to a temp file, verify its digest against the URL hash, and
+// atomically publish it. Content-addressed: a digest mismatch is a client lie about
+// the address. Idempotent: an already-stored hash short-circuits. The body is
+// streamed and bounded by `LIMITS.max_blob_bytes`, never buffered whole.
 daemon_route_blob_put :: proc(
     d: ^Daemon,
     c: ^http_server.Conn,
@@ -293,9 +293,9 @@ daemon_route_blob_put :: proc(
     http_server.receive_body(c, up, daemon_blob_upload_chunk, daemon_blob_upload_end)
 }
 
-// Sink one body chunk: fold it into the running digest and append it to the temp file.
-// A write error or shortfall aborts the transfer; the server then finalizes and calls
-// the end callback with `ok = false`, which deletes the partial temp file.
+// Fold one body chunk into the running digest and the temp file. A write error or
+// shortfall aborts; the server then finalizes via the end callback with `ok = false`,
+// which deletes the partial temp.
 daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
     up := (^Blob_Upload)(user_data)
     assert(up != nil && up.file != nil, "blob chunk sink needs an open upload")
@@ -391,8 +391,7 @@ daemon_blob_final_path :: proc(
     return strings.concatenate({blob_dir, "/", hash}, allocator)
 }
 
-// Build the owned final and temp paths for `hash` under `blob_dir`. The temp name
-// carries a random nonce so two concurrent uploads of the same hash never collide.
+// Build the owned final and temp paths for `hash` under `blob_dir`.
 daemon_blob_paths :: proc(
     blob_dir: string,
     hash: string,
@@ -469,7 +468,8 @@ blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) 
     return removed
 }
 
-// Free the upload's owned strings and the struct. The temp file must already be closed.
+// Release the upload's owned strings and the `Blob_Upload`; the temp file must
+// already be closed.
 daemon_blob_upload_free :: proc(up: ^Blob_Upload) {
     assert(up != nil, "blob upload free needs state")
     assert(up.file == nil, "freeing an upload with its temp file still open")
@@ -489,6 +489,7 @@ daemon_blob_upload_free :: proc(up: ^Blob_Upload) {
     free(up, up.allocator)
 }
 
+// Respond with a short text body, aborting the connection if the write fails.
 daemon_respond_text :: proc(
     c: ^http_server.Conn,
     status: http.Status,

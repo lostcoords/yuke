@@ -152,6 +152,7 @@ daemon_secret_equal :: proc(presented: string, expected: string) -> bool {
     return crypto.compare_constant_time(transmute([]byte)presented, transmute([]byte)expected) == 1
 }
 
+// Cache-private headers for a successful response to a `?token=` request; nil otherwise.
 daemon_response_headers :: proc(query_credential: bool) -> []http_server.Header {
     if query_credential {
         return AUTH_QUERY_HEADERS[:]
