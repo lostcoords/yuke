@@ -8,8 +8,9 @@ reactor driver. `package websocket`; imported via the `libs` collection as
 The **sans-IO core serves both directions**: a `Role` (`.Client` / `.Server`)
 selects the RFC 6455 §5.1 masking discipline at each surface — framing, the
 streaming decoder, and the HTTP upgrade handshake all have client and server
-halves. There are **two nbio drivers**: `client.odin` (dial) and
-`server.odin` (adopt an upgraded socket). The server-direction sans-IO primitives
+halves. There is **one nbio driver** (`conn.odin`) shared by two roles:
+`client.odin` (dial) and `server.odin` (adopt an upgraded socket); each embeds the
+driver's `Conn_Core` as its first field. The server-direction sans-IO primitives
 also stand on their own for a blocking or custom-reactor server that doesn't want
 the nbio driver.
 
@@ -34,8 +35,9 @@ with a terminal loop, timers, or a Lua VM sharing one `nbio.run`.
 
 ```
 Layer 1  frame.odin · decoder.odin · handshake.odin   pure, no net/nbio; both roles
-Layer 2  client.odin                                   nbio driver over Layer 1 (client, dial)
-Layer 2  server.odin                                   nbio driver over Layer 1 (server, adopt)
+Layer 2  conn.odin                                     nbio driver over Layer 1; both roles
+Layer 3  client.odin                                   client role (dial, upgrade request)
+Layer 3  server.odin                                   server role (adopt, 101, conn table)
 ```
 
 ## Quick start (nbio driver)
@@ -221,10 +223,10 @@ The driver is a citizen of a **borrowed** loop:
 - Writes go through an ordered send queue, so frames never interleave on the
   wire. The reactor's single thread makes a mutex unnecessary. Queued frames
   are drained into bounded vectored sends (`SEND_BATCH_BYTES` 256 KiB /
-  `SEND_BATCH_FRAMES` 512 per submission, shared by both drivers) rather than
+  `SEND_BATCH_FRAMES` 512 per submission, shared by both roles) rather than
   one syscall per frame; an oversized frame is still sent by itself.
 - The socket has `TCP_Nodelay` set (both the client's dialed socket and each
-  connection the server driver adopts), so small frames aren't held by the
+  connection the server adopts), so small frames aren't held by the
   kernel's delayed-ACK/Nagle interaction.
 - Run everything (this client, terminal input, a Lua VM) on the **same** thread as
   the loop; nothing here is thread-safe across loops.

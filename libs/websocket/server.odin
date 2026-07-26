@@ -20,22 +20,6 @@ Server_State :: enum {
     Closed,
 }
 
-// Per-connection lifecycle: Upgrading -> Open -> Closing -> Closed. A connection
-// whose 101 never lands goes Upgrading -> Closed without surfacing.
-Conn_State :: enum {
-    // The 101 response is in flight.
-    Upgrading,
-
-    // 101 written; exchanging application messages.
-    Open,
-
-    // Close handshake in progress; waiting for our Close write and the peer's Close.
-    Closing,
-
-    // Fully torn down; no further callbacks will run and the connection is freed.
-    Closed,
-}
-
 // Terminal failure reasons surfaced to `On_Server_Error`, plus the synchronous
 // `server_adopt` refusals; only a connection that reached Open (fired `on_open`)
 // surfaces a terminal callback.
@@ -195,92 +179,23 @@ Server :: struct {
 // freed on release; the application never allocates or frees it, and must not retain
 // the pointer past a terminal callback.
 Server_Conn :: struct {
+    // @private
+    // Shared connection driver. Must stay first: the driver recovers this connection
+    // from a `^Conn_Core`. Its lifecycle runs Upgrading -> Open -> Closing -> Closed;
+    // a connection whose 101 never lands goes Upgrading -> Closed without surfacing.
+    using core:   Conn_Core,
+
     // Owning server; used to remove from `conns` and free at release.
-    server:             ^Server,
-
-    // @private
-    // Borrowed event loop (the server's).
-    loop:               ^nbio.Event_Loop,
-
-    // @private
-    // Allocator backing every owned buffer below (the server's).
-    allocator:          mem.Allocator,
-
-    // @private
-    // Adopted socket.
-    socket:             net.TCP_Socket,
-
-    // @private
-    // Lifecycle state.
-    state:              Conn_State,
+    server:       ^Server,
 
     // @private
     // Whether `on_open` fired; a connection that dies while Upgrading releases
     // without a terminal callback.
-    opened:             bool,
-
-    // @private
-    // Server-role reassembler; unmasks each inbound payload in place.
-    decoder:            Decoder,
-
-    // @private
-    // Reused destination for each socket receive.
-    recv_buf:           []byte,
+    opened:       bool,
 
     // @private
     // Owned 101 response bytes, freed once its send completes.
-    response_buf:       []byte,
-
-    // @private
-    // Encoded frames waiting to be written, in order; each is owned.
-    send_queue:         [dynamic][]byte,
-
-    // @private
-    // In-flight coalesced-send frames, in order, each owned until the vectored send
-    // completes. Empty when idle; capacity is reused across sends (no allocation
-    // once warm).
-    send_batch:         [dynamic][]byte,
-
-    // @private
-    // True while a send is in flight.
-    sending:            bool,
-
-    // @private
-    // Bytes owned by `send_queue` + `send_batch`.
-    pending_send_bytes: int,
-
-    // @private
-    // Whether this endpoint's Close frame finished writing.
-    close_sent:         bool,
-
-    // @private
-    // Whether a valid peer Close frame was received.
-    close_received:     bool,
-
-    // @private
-    // Close code to report to `on_close` after teardown completes.
-    close_code:         Close_Code,
-
-    // @private
-    // Error to report via `on_error`; `.None` selects `on_close`. Ignored unless `opened`.
-    terminal_error:     Server_Error,
-
-    // @private
-    // Outstanding op handles (recv/send overlap while Open); cleared in their own
-    // callback, teardown removes the rest.
-    recv_op, send_op:   ^nbio.Operation,
-
-    // @private
-    // Closing-handshake deadline.
-    close_timeout_op:   ^nbio.Operation,
-
-    // @private
-    // Guards exactly one terminal callback.
-    terminal_fired:     bool,
-
-    // Opaque per-connection pointer, assigned directly (nil until set). The driver
-    // never touches it; free any owned state from `on_close`/`on_error`.
-    user_data:          rawptr,
+    response_buf: []byte,
 }
 
 // Ready the server to adopt connections on `loop`. Does no I/O.
@@ -396,11 +311,22 @@ server_adopt :: proc(
     }
 
     c^ = {}
+    c.role = .Server
     c.server = s
     c.loop = s.loop
     c.allocator = s.allocator
     c.socket = socket
+    c.has_socket = true
     c.state = .Upgrading
+    c.message = conn_message
+    c.terminal = conn_terminal
+    c.drained = conn_drained
+
+    // The shared driver reads its limits from the core only, so each connection
+    // snapshots the server's at adopt time.
+    c.max_frame_bytes = s.max_frame_bytes
+    c.max_send_queue_bytes = s.max_send_queue_bytes
+    c.close_timeout = s.close_timeout
 
     if decoder_init(&c.decoder, s.max_frame_bytes, s.max_message_bytes, .Server, s.allocator) != nil {
         free(c, s.allocator)
@@ -495,14 +421,15 @@ server_shutdown :: proc(s: ^Server) {
     for conn in s.conns {
         switch conn.state {
         case .Open:
-            if close_err := conn_begin_close(conn, Close_Code.Going_Away, .Going_Away); close_err != .None {
-                conn.terminal_error = close_err
-                conn_finalize(conn)
+            if close_err := conn_begin_close(&conn.core, Close_Code.Going_Away, .Going_Away); close_err != .None {
+                conn_fail(&conn.core, close_err)
             }
 
         case .Upgrading:
-            conn.close_code = .Going_Away
-            conn_finalize(conn)
+            conn_finalize_close(&conn.core, .Going_Away)
+
+        case .Idle, .Dialing:
+            unreachable()
 
         case .Closing, .Closed:
         }
@@ -523,12 +450,16 @@ server_destroy :: proc(s: ^Server) {
 
 // Queue a text message on `conn`. Fails unless the connection is Open.
 server_send_text :: proc(conn: ^Server_Conn, data: []byte) -> Server_Error {
-    return conn_send_data_frame(conn, .Text, data)
+    assert(conn != nil, "server_send_text needs a connection")
+
+    return server_error(conn_send_data_frame(&conn.core, .Text, data))
 }
 
 // Queue a binary message on `conn`. Fails unless the connection is Open.
 server_send_binary :: proc(conn: ^Server_Conn, data: []byte) -> Server_Error {
-    return conn_send_data_frame(conn, .Binary, data)
+    assert(conn != nil, "server_send_binary needs a connection")
+
+    return server_error(conn_send_data_frame(&conn.core, .Binary, data))
 }
 
 // Begin a graceful close of `conn` with `code`. Queues a close frame; the TCP
@@ -544,7 +475,7 @@ server_close :: proc(conn: ^Server_Conn, code := Close_Code.Normal_Closure) -> S
         return .Invalid_Close_Code
     }
 
-    return conn_begin_close(conn, code, code)
+    return server_error(conn_begin_close(&conn.core, code, code))
 }
 
 // Fail an adopted connection when the application cannot continue safely. This is
@@ -554,7 +485,7 @@ server_abort :: proc(conn: ^Server_Conn, err: Server_Error) {
     assert(conn != nil, "server_abort needs a connection")
     assert(err != .None && err != .Not_Open, "server_abort needs a terminal error")
 
-    conn_fail(conn, err)
+    conn_fail(&conn.core, conn_error_from_server(err))
 }
 
 // Mark shutdown complete once every connection is released. Called from
@@ -582,7 +513,7 @@ conn_on_response_sent :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
     conn.send_op = nil
 
     if op.send.err != nil {
-        conn_fail(conn, .Send_Failed)
+        conn_fail(&conn.core, .Send_Failed)
         return
     }
 
@@ -602,471 +533,61 @@ conn_on_response_sent :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
         return
     }
 
-    if !conn_drain_decoder(conn) {
+    if !conn_drain_decoder(&conn.core) {
         return
     }
 
     // `on_open` or a pipelined frame may have begun a close; only read on if Open.
     if conn.state == .Open {
-        conn_start_recv(conn)
+        conn_start_recv(&conn.core)
     } else if conn.state == .Closing {
-        conn_ensure_close_recv(conn)
+        conn_ensure_close_recv(&conn.core)
     }
 }
 
-// Submit the next steady-state receive (no timeout; the peer may idle).
+// Message dispatch adapter. `data` is borrowed for the call only; the driver frees it
+// when this returns.
 @(private)
-conn_start_recv :: proc(conn: ^Server_Conn) {
-    assert(conn.state == .Open, "steady-state recv on a connection that is not open")
-    assert(conn.recv_op == nil, "a receive is already in flight")
+conn_message :: proc(core: ^Conn_Core, kind: Message_Kind, data: []byte) {
+    #assert(offset_of(Server_Conn, core) == 0)
+    assert(core != nil && core.role == .Server, "server message dispatch on a non-server core")
 
-    conn.recv_op = nbio.recv_poly(
-        conn.socket,
-        [][]byte{conn.recv_buf},
-        conn,
-        conn_on_recv,
-        false,
-        nbio.NO_TIMEOUT,
-        conn.loop,
-    )
-}
-
-// Receive completion: feed the decoder, dispatch messages, then read again.
-@(private)
-conn_on_recv :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
-    assert(op == conn.recv_op, "receive completion does not match stored operation")
-    conn.recv_op = nil
-
-    if conn.state != .Open && conn.state != .Closing {
-        return
-    }
-
-    if op.recv.err != nil {
-        conn_fail(conn, .Recv_Failed)
-        return
-    }
-
-    if op.recv.received == 0 {
-        conn.close_code = .Abnormal_Closure
-        conn_finalize(conn)
-        return
-    }
-
-    if decoder_feed(&conn.decoder, conn.recv_buf[:op.recv.received]) != nil {
-        conn_fail(conn, .Out_Of_Memory)
-        return
-    }
-
-    if !conn_drain_decoder(conn) {
-        return
-    }
-
-    if conn.state == .Open {
-        conn_start_recv(conn)
-    } else if conn.state == .Closing {
-        conn_ensure_close_recv(conn)
+    conn := (^Server_Conn)(core)
+    if conn.server.cbs.on_message != nil {
+        conn.server.cbs.on_message(conn, kind, data)
     }
 }
 
-// Drain buffered messages, auto-answering control frames. Returns false once it
-// has terminated the connection (protocol error or close), so the caller stops.
+// Terminal dispatch adapter: the driver core hands back the connection it was given,
+// which is this one because `core` is its first field. Releases the connection after
+// the callback; the application must not retain it.
 @(private)
-conn_drain_decoder :: proc(conn: ^Server_Conn) -> bool {
-    assert(conn.state == .Open || conn.state == .Closing, "decoder drain outside active states")
+conn_terminal :: proc(core: ^Conn_Core) {
+    assert(core != nil && core.role == .Server, "server terminal dispatch on a non-server core")
 
-    for {
-        // An application message callback may shut the whole server down. Preserve
-        // graceful Closing drains, but stop immediately after hard teardown.
-        if conn.state == .Closed {
-            return false
-        }
-
-        msg, has, err := decoder_next(&conn.decoder, conn.allocator)
-        if err != .None {
-            conn_fail(conn, err == .Out_Of_Memory ? .Out_Of_Memory : .Protocol_Violation)
-            return false
-        }
-
-        if !has {
-            return true
-        }
-
-        switch msg.kind {
-        case .Text, .Binary:
-            if conn.state == .Open && conn.server.cbs.on_message != nil {
-                conn.server.cbs.on_message(conn, msg.kind, msg.data)
+    conn := (^Server_Conn)(core)
+    if conn.opened {
+        if core.terminal_error != .None {
+            if conn.server.cbs.on_error != nil {
+                conn.server.cbs.on_error(conn, server_error(core.terminal_error))
             }
-
-            delete(msg.data, conn.allocator)
-
-        case .Ping:
-            if conn.state == .Open {
-                control_err := conn_enqueue_control(conn, .Pong, msg.data)
-                if control_err != .None {
-                    delete(msg.data, conn.allocator)
-                    conn_fail(conn, control_err)
-                    return false
-                }
-            }
-            delete(msg.data, conn.allocator)
-
-        case .Pong:
-            delete(msg.data, conn.allocator)
-
-        case .Close:
-            parsed, perr := parse_close(msg.data)
-            had_body := len(msg.data) != 0
-            delete(msg.data, conn.allocator)
-            if perr != .None {
-                conn_fail(conn, .Protocol_Violation)
-                return false
-            }
-
-            // Echo the peer's code only when it sent one; an empty body must be
-            // answered with an empty-body close, never a synthesized 1005 (invalid
-            // on the wire, RFC 6455 §7.4.1). The synthesized code is still reported
-            // locally.
-            wire_code: Maybe(Close_Code)
-            if had_body {
-                wire_code = parsed.code
-            }
-
-            conn.close_received = true
-            conn.close_code = parsed.code
-            if conn.state == .Open {
-                if close_err := conn_begin_close(conn, wire_code, parsed.code); close_err != .None {
-                    conn_fail(conn, close_err)
-                }
-            } else if conn.close_sent {
-                conn_finalize(conn)
-            }
-
-            return false
+        } else if conn.server.cbs.on_close != nil {
+            conn.server.cbs.on_close(conn, core.close_code)
         }
     }
-}
 
-// Queue an unmasked close frame and enter Closing. `wire_code` is serialized into
-// the body; nil sends an empty-body close (needed when echoing a peer that sent
-// none). `report_code` is what `on_close` receives. Idempotent once closing has begun.
-@(private)
-conn_begin_close :: proc(conn: ^Server_Conn, wire_code: Maybe(Close_Code), report_code: Close_Code) -> Server_Error {
-    assert(conn != nil, "conn_begin_close needs a connection")
-
-    if conn.state == .Closing || conn.state == .Closed {
-        return .Not_Open
-    }
-
-    assert(conn.state == .Open, "close began outside Open")
-    assert(!conn.close_sent, "new close already marked sent")
-    assert(conn.close_timeout_op == nil, "new close already has a deadline")
-
-    body: []byte
-    buf: [2]byte
-    if code, ok := wire_code.?; ok {
-        buf[0] = byte(u16(code) >> 8)
-        buf[1] = byte(code)
-        body = buf[:]
-    }
-
-    frame, aerr := conn_encode(conn, .Connection_Close, body)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    conn.state = .Closing
-    conn.close_code = report_code
-    if err := conn_enqueue(conn, frame, true); err != .None {
-        conn.state = .Open
-        return err
-    }
-
-    conn.close_timeout_op = nbio.timeout_poly(conn.server.close_timeout, conn, conn_on_close_timeout, conn.loop)
-    conn_ensure_close_recv(conn)
-
-    return .None
-}
-
-// Encode and queue a data frame. Fails unless the connection is Open.
-@(private)
-conn_send_data_frame :: proc(conn: ^Server_Conn, opcode: Op_Code, data: []byte) -> Server_Error {
-    assert(conn != nil, "conn_send_data_frame needs a connection")
-    assert(opcode == .Text || opcode == .Binary, "data frame path given a control opcode")
-
-    if conn.state != .Open {
-        return .Not_Open
-    }
-
-    if len(data) > conn.server.max_frame_bytes {
-        return .Message_Too_Large
-    }
-
-    if conn.pending_send_bytes > conn.server.max_send_queue_bytes ||
-       len(data) + MAX_HEADER_BYTES > conn.server.max_send_queue_bytes - conn.pending_send_bytes {
-        return .Send_Queue_Full
-    }
-
-    frame, aerr := conn_encode(conn, opcode, data)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    if err := conn_enqueue(conn, frame, false); err != .None {
-        return err
-    }
-
-    return .None
-}
-
-// Encode one unmasked server frame (a server never masks: nil masking key).
-@(private)
-conn_encode :: proc(
-    conn: ^Server_Conn,
-    opcode: Op_Code,
-    payload: []byte,
-) -> (
-    frame: []byte,
-    err: runtime.Allocator_Error,
-) #optional_allocator_error {
-    assert(conn != nil, "conn_encode needs a connection")
-
-    return encode_frame(true, opcode, payload, nil, conn.allocator)
-}
-
-// Append an owned frame to the send queue and pump the writer.
-@(private)
-conn_enqueue :: proc(conn: ^Server_Conn, frame: []byte, control: bool) -> Server_Error {
-    assert(conn != nil, "conn_enqueue needs a connection")
-    assert(len(frame) >= 2, "queued a frame smaller than its header")
-    assert(
-        conn.pending_send_bytes == send_queue_bytes(conn.send_queue[:], conn.send_batch[:]),
-        "pending send byte mismatch",
-    )
-
-    limit := conn.server.max_send_queue_bytes
-    if control {
-        limit += SEND_CONTROL_RESERVE_BYTES
-    }
-
-    if conn.pending_send_bytes > limit - len(frame) {
-        delete(frame, conn.allocator)
-        return .Send_Queue_Full
-    }
-
-    if _, aerr := append(&conn.send_queue, frame); aerr != nil {
-        delete(frame, conn.allocator)
-        return .Out_Of_Memory
-    }
-
-    conn.pending_send_bytes += len(frame)
-    assert(
-        conn.pending_send_bytes == send_queue_bytes(conn.send_queue[:], conn.send_batch[:]),
-        "queued byte accounting mismatch",
-    )
-
-    conn_pump_send(conn)
-
-    return .None
-}
-
-@(private)
-conn_enqueue_control :: proc(conn: ^Server_Conn, opcode: Op_Code, payload: []byte) -> Server_Error {
-    assert(opcode == .Pong, "unexpected automatic control opcode")
-    assert(len(payload) <= 125, "control payload exceeds protocol maximum")
-
-    frame, aerr := conn_encode(conn, opcode, payload)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    return conn_enqueue(conn, frame, true)
-}
-
-// Coalesce queued frames into one vectored send if none is in flight (iovecs, zero
-// copy; nbio retries partial sends via `all`); finalizes the TCP close once the
-// queue empties during Closing.
-@(private)
-conn_pump_send :: proc(conn: ^Server_Conn) {
-    // Terminal failure stops the pipeline: never send on a closed socket; queue
-    // and `send_batch` are left for release.
-    if conn.state == .Closed {
-        return
-    }
-
-    if conn.sending {
-        return
-    }
-
-    if len(conn.send_queue) == 0 {
-        if conn.state == .Closing {
-            conn.close_sent = true
-            if conn.close_received {
-                conn_finalize(conn)
-            } else {
-                conn_ensure_close_recv(conn)
-            }
-        }
-
-        return
-    }
-
-    assert(len(conn.send_batch) == 0, "previous batch was not released")
-
-    if coalesce_send_batch(&conn.send_queue, &conn.send_batch) != nil {
-        conn_fail(conn, .Out_Of_Memory)
-        return
-    }
-    assert(len(conn.send_batch) > 0, "coalesced an empty batch from a non-empty queue")
-
-    conn.sending = true
-    conn.send_op = nbio.send_poly(
-        conn.socket,
-        conn.send_batch[:],
-        conn,
-        conn_on_sent,
-        {},
-        true,
-        nbio.NO_TIMEOUT,
-        conn.loop,
-    )
-}
-
-// Send completion: free every frame in the batch and continue draining the queue.
-@(private)
-conn_on_sent :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
-    assert(conn.sending, "send completed while none was in flight")
-    assert(op == conn.send_op, "send completion does not match stored operation")
-
-    conn.send_op = nil
-
-    for frame in conn.send_batch {
-        assert(len(frame) <= conn.pending_send_bytes, "send byte accounting underflow")
-        conn.pending_send_bytes -= len(frame)
-        delete(frame, conn.allocator)
-    }
-    clear(&conn.send_batch)
-    conn.sending = false
-    assert(
-        conn.pending_send_bytes == send_queue_bytes(conn.send_queue[:], conn.send_batch[:]),
-        "sent byte accounting mismatch",
-    )
-
-    if op.send.err != nil {
-        conn_fail(conn, .Send_Failed)
-        return
-    }
-
-    // Queue drained while Open: signal a streaming producer to refill. It may
-    // enqueue here, pumping the next send, so the trailing pump below is a no-op.
-    if conn.state == .Open && len(conn.send_queue) == 0 && conn.server.cbs.on_drain != nil {
-        conn.server.cbs.on_drain(conn)
-    }
-
-    conn_pump_send(conn)
-}
-
-@(private)
-conn_ensure_close_recv :: proc(conn: ^Server_Conn) {
-    assert(conn != nil && conn.state == .Closing, "closing receive outside Closing")
-
-    if conn.close_received || conn.recv_op != nil {
-        return
-    }
-
-    conn.recv_op = nbio.recv_poly(
-        conn.socket,
-        [][]byte{conn.recv_buf},
-        conn,
-        conn_on_recv,
-        false,
-        nbio.NO_TIMEOUT,
-        conn.loop,
-    )
-}
-
-@(private)
-conn_on_close_timeout :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
-    assert(conn.state == .Closing, "close deadline completed outside Closing")
-    assert(op == conn.close_timeout_op, "close deadline does not match stored operation")
-    conn.close_timeout_op = nil
-    conn.close_code = .Abnormal_Closure
-
-    conn_finalize(conn)
-}
-
-// Latch a terminal failure and tear down, reporting `err` via `on_error` (only if the
-// connection had opened).
-@(private)
-conn_fail :: proc(conn: ^Server_Conn, err: Server_Error) {
-    assert(conn != nil, "conn_fail needs a connection")
-    assert(err != .None, "conn_fail without an error")
-
-    if conn.state == .Closed {
-        return
-    }
-
-    conn.terminal_error = err
-    conn_finalize(conn)
-}
-
-// Enter Closed and tear down. Callers latch `close_code`/`terminal_error` first.
-@(private)
-conn_finalize :: proc(conn: ^Server_Conn) {
-    assert(conn != nil, "conn_finalize needs a connection")
-
-    if conn.state == .Closed {
-        return
-    }
-
-    conn.state = .Closed
-    conn_teardown(conn)
-}
-
-// Cancel outstanding ops, close the socket, and fire the terminal callback plus
-// release only once the close completes. Deferring past the close mirrors the
-// client driver: `nbio.remove` stops the callback but not an in-flight kernel
-// read/write of a buffer, so freeing inline would use-after-free.
-@(private)
-conn_teardown :: proc(conn: ^Server_Conn) {
-    assert(conn != nil && conn.state == .Closed, "teardown before Closed")
-    assert(conn in conn.server.conns, "teardown of an unowned connection")
-
-    conn_cancel_pending_ops(conn)
-
-    // An adopted connection always owns a socket.
-    nbio.close_poly(conn.socket, conn, conn_on_teardown_closed, conn.loop)
-}
-
-// Socket close completed: the kernel no longer references the canceled recv/send
-// buffers, so it is safe to fire the terminal callback and free the connection.
-@(private)
-conn_on_teardown_closed :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
-    conn_fire_terminal(conn)
     conn_release(conn)
 }
 
-// Fire exactly one terminal callback for an Open connection: `on_error` if a failure
-// was latched, else `on_close`. A connection that never opened surfaces nothing.
+// Drain adapter: the send queue emptied while Open, so a backpressure-aware producer
+// can refill from the send-completion point.
 @(private)
-conn_fire_terminal :: proc(conn: ^Server_Conn) {
-    assert(conn.state == .Closed, "terminal fired before teardown")
-    assert(!conn.terminal_fired, "terminal callback fired twice")
-    conn.terminal_fired = true
+conn_drained :: proc(core: ^Conn_Core) {
+    assert(core != nil && core.role == .Server, "server drain dispatch on a non-server core")
 
-    if !conn.opened {
-        return
-    }
-
-    if conn.terminal_error != .None {
-        if conn.server.cbs.on_error != nil {
-            conn.server.cbs.on_error(conn, conn.terminal_error)
-        }
-
-        return
-    }
-
-    if conn.server.cbs.on_close != nil {
-        conn.server.cbs.on_close(conn, conn.close_code)
+    conn := (^Server_Conn)(core)
+    if conn.server.cbs.on_drain != nil {
+        conn.server.cbs.on_drain(conn)
     }
 }
 
@@ -1104,25 +625,4 @@ conn_release :: proc(conn: ^Server_Conn) {
     assert(len(s.conns) <= s.max_connections, "connection table over its cap")
 
     maybe_finish_shutdown(s)
-}
-
-// Remove each outstanding op so no completion fires in after teardown. `nbio.remove`
-// is final and silent; an op running its own callback already cleared its handle,
-// so it's never removed here.
-@(private)
-conn_cancel_pending_ops :: proc(conn: ^Server_Conn) {
-    if conn.recv_op != nil {
-        nbio.remove(conn.recv_op)
-        conn.recv_op = nil
-    }
-
-    if conn.send_op != nil {
-        nbio.remove(conn.send_op)
-        conn.send_op = nil
-    }
-
-    if conn.close_timeout_op != nil {
-        nbio.remove(conn.close_timeout_op)
-        conn.close_timeout_op = nil
-    }
 }

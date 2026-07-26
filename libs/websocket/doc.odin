@@ -2,9 +2,9 @@
 package websocket is an RFC 6455 WebSocket implementation (ws:// only, no TLS).
 
 The sans-IO protocol layer serves both directions: `Role` selects client or server
-strictness at each surface. Two nbio reactor drivers sit on top of it: a client
-dialer (`client.odin`) and a server driver (`server.odin`) that adopts sockets an
-HTTP front door has already routed.
+strictness at each surface. One nbio reactor driver (`conn.odin`) sits on top of it,
+shared by two roles: a client dialer (`client.odin`) and a server (`server.odin`)
+that adopts sockets an HTTP front door has already routed.
 
   - `frame.odin`: the frame codec. `parse_header(buf, role)` decodes a header from a
     buffer without blocking, reporting `.Need_More` when the buffer is incomplete.
@@ -26,17 +26,19 @@ HTTP front door has already routed.
     upgrade is the front door's job. Both parsers report `.Need_More` until the full header
     block is buffered and never consume bytes past the `\r\n\r\n` terminator, leaving
     pipelined frames for the caller. `make_sec_websocket_accept` is shared.
-  - `client.odin`: the nbio reactor driver that wires the client-role codec to a
-    socket. It borrows an event loop and never runs it, so a caller can multiplex the
-    client under their own `nbio.run`. Single-threaded: writes are serialized through
-    an ordered send queue, drained in bounded vectored batches (no mutex).
-  - `server.odin`: the nbio reactor driver that wires the server-role codec to an
-    adopted socket. It owns no listener — `server_adopt` takes a socket plus the
-    `Sec-WebSocket-Key` a front door already validated, writes the 101, and runs the
-    connection from there. It owns the connection table (capped at
-    `max_connections`) and a per-connection send queue with the same bounded
-    vectored-batch draining as the client driver; auto-replies to Ping with Pong.
-    Both drivers complete the Close exchange before TCP teardown, with a bounded
-    deadline for a peer that never replies, and set `TCP_Nodelay` on their sockets.
+  - `conn.odin`: the nbio reactor driver, `Conn_Core`, embedded first in both `Client`
+    and `Server_Conn` so either converts to a `^Conn_Core`. It borrows an event loop
+    and never runs it, so a caller can multiplex a connection under their own
+    `nbio.run`. Single-threaded: writes are serialized through an ordered send queue,
+    drained in bounded vectored batches (no mutex). It auto-replies to Ping with Pong
+    and completes the Close exchange before TCP teardown, with a bounded deadline for
+    a peer that never replies. `role` selects masking on the write side; three
+    adapters (message, terminal, drain) hand an event back to the owning role.
+  - `client.odin`: the client role — dial, upgrade request, response validation, and
+    the `Callbacks` surface. Sets `TCP_Nodelay` once connected.
+  - `server.odin`: the server role. It owns no listener — `server_adopt` takes a
+    socket plus the `Sec-WebSocket-Key` a front door already validated, writes the
+    101, and runs the connection from there. It owns the connection table (capped at
+    `max_connections`), the shutdown sequence, and per-connection release.
 */
 package websocket

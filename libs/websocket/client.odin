@@ -16,26 +16,9 @@ import http "libs:http"
 // server that never sends `\r\n\r\n`.
 MAX_HANDSHAKE_RESPONSE_BYTES :: 64 << 10
 
-// Connection lifecycle: Dialing -> Upgrading -> Open -> Closing -> Closed.
-Client_State :: enum {
-    // Freshly zeroed; not yet connecting.
-    Idle,
-
-    // TCP connect in flight.
-    Dialing,
-
-    // Awaiting the 101 upgrade response.
-    Upgrading,
-
-    // Handshake complete; exchanging application messages.
-    Open,
-
-    // Close handshake in progress; waiting for our Close write and the peer's Close.
-    Closing,
-
-    // Fully torn down; no further callbacks will run.
-    Closed,
-}
+// Client lifecycle: Dialing -> Upgrading -> Open -> Closing -> Closed. The driver
+// state machine is shared with the server; see `Conn_State`.
+Client_State :: Conn_State
 
 // Terminal failure reasons surfaced to `On_Error`.
 Client_Error :: enum {
@@ -141,131 +124,41 @@ Callbacks :: struct {
 // `client_destroy` once Closed.
 Client :: struct {
     // @private
-    // Borrowed event loop; the driver submits ops to it but never runs it.
-    loop:                      ^nbio.Event_Loop,
-
-    // @private
-    // Allocator backing every owned buffer below; must outlive the client.
-    allocator:                 mem.Allocator,
-
-    // @private
-    // Connected socket; valid from the dial completion onward.
-    socket:                    net.TCP_Socket,
-
-    // @private
-    // Whether `socket` was acquired; guards teardown from `close(0)` when the
-    // dial failed before one existed.
-    has_socket:                bool,
-
-    // @private
-    // Lifecycle state.
-    state:                     Client_State,
-
-    // @private
-    // Sans-IO reassembler fed by every receive.
-    decoder:                   Decoder,
-
-    // @private
-    // Reused destination for each socket receive.
-    recv_buf:                  []byte,
+    // Shared connection driver. Must stay first: the driver recovers this client
+    // from a `^Conn_Core`.
+    using core:        Conn_Core,
 
     // @private
     // Base64 Sec-WebSocket-Key sent, checked against the response accept.
-    key_encoded:               [SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte,
+    key_encoded:       [SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte,
 
     // @private
     // Accumulates the HTTP upgrade response until its header block is complete.
-    handshake_buf:             [dynamic]byte,
+    handshake_buf:     [dynamic]byte,
 
     // @private
     // Owned upgrade-request bytes, freed once the send completes.
-    request_buf:               []byte,
+    request_buf:       []byte,
 
     // @private
     // Owned `Host:` header value (`host:port`).
-    host_header:               string,
+    host_header:       string,
 
     // @private
     // Owned request path.
-    path:                      string,
+    path:              string,
 
     // @private
     // Owned extra request headers, spliced into the upgrade request.
-    extra_headers:             string,
-
-    // @private
-    // Inbound single-frame cap (mirrors the decoder's cap for send-side checks).
-    max_frame_bytes:           int,
-
-    // @private
-    // Inbound reassembled-message cap.
-    max_message_bytes:         int,
+    extra_headers:     string,
 
     // @private
     // Timeout for the connect and handshake phases.
-    handshake_timeout:         time.Duration,
-
-    // @private
-    // Maximum application-frame bytes pending in `send_queue` + `send_batch`.
-    max_send_queue_bytes:      int,
-
-    // @private
-    // Bytes currently owned by `send_queue` + `send_batch`.
-    pending_send_bytes:        int,
-
-    // @private
-    // Overall deadline for a WebSocket closing handshake.
-    close_timeout:             time.Duration,
-
-    // @private
-    // Encoded frames waiting to be written, in order; each is owned.
-    send_queue:                [dynamic][]byte,
-
-    // @private
-    // The frames of the in-flight coalesced send, in order; each is owned until the
-    // one vectored send covering the whole batch completes. Empty when idle; the
-    // backing capacity is reused across sends (no per-send allocation once warm).
-    send_batch:                [dynamic][]byte,
-
-    // @private
-    // True while a send is in flight; gates the one-frame-at-a-time queue.
-    sending:                   bool,
-
-    // @private
-    // Whether this endpoint's Close frame finished writing.
-    close_sent:                bool,
-
-    // Whether a valid peer Close frame was received.
-    close_received:            bool,
-
-    // @private
-    // Close code to report to `On_Close` after teardown completes.
-    close_code:                Close_Code,
-
-    // @private
-    // Error to report via `On_Error`; `.None` selects `On_Close` instead. Latched
-    // before teardown so the terminal callback can fire on socket close.
-    terminal_error:            Client_Error,
-
-    // @private
-    // Outstanding op handles, one per lane (recv and send overlap while Open).
-    // Cleared at the top of their own callback; teardown removes the rest.
-    dial_op, recv_op, send_op: ^nbio.Operation,
-
-    // @private
-    // Closing-handshake deadline; independent of the steady-state receive.
-    close_timeout_op:          ^nbio.Operation,
-
-    // @private
-    // Guards exactly one terminal callback.
-    terminal_fired:            bool,
+    handshake_timeout: time.Duration,
 
     // @private
     // Application callbacks.
-    cbs:                       Callbacks,
-
-    // Opaque application pointer; a callback reaches it as `c.user_data`.
-    user_data:                 rawptr,
+    cbs:               Callbacks,
 }
 
 // Begin connecting. Resolves the endpoint and submits the TCP dial; the rest of
@@ -334,11 +227,13 @@ client_connect :: proc(
     }
 
     c^ = {}
+    c.role = .Client
     c.loop = loop
     c.allocator = allocator
     c.state = .Dialing
+    c.message = client_message
+    c.terminal = client_terminal
     c.max_frame_bytes = opts.max_frame_bytes
-    c.max_message_bytes = opts.max_message_bytes
     c.handshake_timeout = opts.handshake_timeout
     c.max_send_queue_bytes = opts.max_send_queue_bytes
     c.close_timeout = opts.close_timeout
@@ -488,12 +383,16 @@ client_destroy :: proc(c: ^Client) {
 
 // Queue a text message. Fails unless the connection is Open.
 client_send_text :: proc(c: ^Client, data: []byte) -> Client_Error {
-    return send_data_frame(c, .Text, data)
+    assert(c != nil, "client_send_text needs a client")
+
+    return client_error(conn_send_data_frame(&c.core, .Text, data))
 }
 
 // Queue a binary message. Fails unless the connection is Open.
 client_send_binary :: proc(c: ^Client, data: []byte) -> Client_Error {
-    return send_data_frame(c, .Binary, data)
+    assert(c != nil, "client_send_binary needs a client")
+
+    return client_error(conn_send_data_frame(&c.core, .Binary, data))
 }
 
 // Begin a graceful close with `code` and wait for the peer Close or deadline.
@@ -508,7 +407,7 @@ client_close :: proc(c: ^Client, code := Close_Code.Normal_Closure) -> Client_Er
         return .Invalid_Close_Code
     }
 
-    return begin_close(c, code, code)
+    return client_error(conn_begin_close(&c.core, code, code))
 }
 
 // Fail a live connection when the application cannot continue safely. This is the
@@ -518,37 +417,7 @@ client_abort :: proc(c: ^Client, err: Client_Error) {
     assert(c != nil, "client_abort needs a client")
     assert(err != .None && err != .Not_Open, "client_abort needs a terminal error")
 
-    fail(c, err)
-}
-
-// Encode and queue a data frame, masking with a fresh random key.
-@(private)
-send_data_frame :: proc(c: ^Client, opcode: Op_Code, data: []byte) -> Client_Error {
-    assert(c != nil, "send_data_frame needs a client")
-    assert(opcode == .Text || opcode == .Binary, "data frame path given a control opcode")
-
-    if c.state != .Open {
-        return .Not_Open
-    }
-
-    if len(data) > c.max_frame_bytes {
-        return .Message_Too_Large
-    }
-
-    if len(data) + MAX_HEADER_BYTES > c.max_send_queue_bytes - c.pending_send_bytes {
-        return .Send_Queue_Full
-    }
-
-    frame, aerr := encode_masked(c, opcode, data)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    if err := enqueue_frame(c, frame, false); err != .None {
-        return err
-    }
-
-    return .None
+    conn_fail(&c.core, conn_error_from_client(err))
 }
 
 // Resolve `host` to an endpoint: literal IPv4 first, else DNS. DNS is blocking,
@@ -594,9 +463,9 @@ on_dial :: proc(op: ^nbio.Operation, c: ^Client) {
     c.dial_op = nil
 
     if op.dial.err != nil {
-        // No socket was acquired; `fail` must not close a zero-value fd.
+        // No socket was acquired; teardown must not close a zero-value fd.
         log.debugf("websocket client: dial failed: %v", op.dial.err)
-        fail(c, .Dial_Failed)
+        conn_fail(&c.core, .Dial_Failed)
         return
     }
 
@@ -617,7 +486,7 @@ on_dial :: proc(op: ^nbio.Operation, c: ^Client) {
 
     request, aerr := build_upgrade_request(c.path, c.host_header, c.key_encoded[:], c.extra_headers, c.allocator)
     if aerr != nil {
-        fail(c, .Out_Of_Memory)
+        conn_fail(&c.core, .Out_Of_Memory)
         return
     }
     c.request_buf = request
@@ -641,7 +510,7 @@ on_upgrade_sent :: proc(op: ^nbio.Operation, c: ^Client) {
     c.send_op = nil
 
     if op.send.err != nil {
-        fail(c, send_timed_out(op.send.err) ? .Timed_Out : .Handshake_Failed)
+        conn_fail(&c.core, send_timed_out(op.send.err) ? .Timed_Out : .Handshake_Failed)
         return
     }
 
@@ -668,23 +537,23 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
     c.recv_op = nil
 
     if op.recv.err != nil {
-        fail(c, recv_timed_out(op.recv.err) ? .Timed_Out : .Handshake_Failed)
+        conn_fail(&c.core, recv_timed_out(op.recv.err) ? .Timed_Out : .Handshake_Failed)
         return
     }
 
     if op.recv.received == 0 {
-        fail(c, .Handshake_Failed)
+        conn_fail(&c.core, .Handshake_Failed)
         return
     }
 
     if _, aerr := append(&c.handshake_buf, ..c.recv_buf[:op.recv.received]); aerr != nil {
-        fail(c, .Out_Of_Memory)
+        conn_fail(&c.core, .Out_Of_Memory)
         return
     }
 
     // Bound the buffer against a server that never sends `\r\n\r\n`.
     if len(c.handshake_buf) > MAX_HANDSHAKE_RESPONSE_BYTES {
-        fail(c, .Handshake_Failed)
+        conn_fail(&c.core, .Handshake_Failed)
         return
     }
 
@@ -704,7 +573,7 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
     }
 
     if result != .Ok {
-        fail(c, .Handshake_Failed)
+        conn_fail(&c.core, .Handshake_Failed)
         return
     }
 
@@ -715,7 +584,7 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
     leftover := c.handshake_buf[consumed:]
     if len(leftover) > 0 {
         if decoder_feed(&c.decoder, leftover) != nil {
-            fail(c, .Out_Of_Memory)
+            conn_fail(&c.core, .Out_Of_Memory)
             return
         }
     }
@@ -724,433 +593,47 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
         c.cbs.on_open(c)
     }
 
-    if !drain_decoder(c) {
+    if !conn_drain_decoder(&c.core) {
         return
     }
 
     // `on_open` or a pipelined frame may have begun a close; only read on if Open.
     if c.state == .Open {
-        start_recv(c)
+        conn_start_recv(&c.core)
     } else if c.state == .Closing {
-        ensure_close_recv(c)
+        conn_ensure_close_recv(&c.core)
     }
 }
 
-// Submit the next steady-state receive (no timeout; the peer may idle).
+// Message dispatch adapter. `data` is borrowed for the call only; the driver frees
+// it when this returns.
 @(private)
-start_recv :: proc(c: ^Client) {
-    assert(c.state == .Open, "steady-state recv on a client that is not open")
-    assert(c.recv_op == nil, "a receive is already in flight")
+client_message :: proc(core: ^Conn_Core, kind: Message_Kind, data: []byte) {
+    #assert(offset_of(Client, core) == 0)
+    assert(core != nil && core.role == .Client, "client message dispatch on a non-client core")
 
-    c.recv_op = nbio.recv_poly(c.socket, [][]byte{c.recv_buf}, c, on_recv, false, nbio.NO_TIMEOUT, c.loop)
-}
-
-// Receive completion: feed the decoder, dispatch messages, then read again.
-@(private)
-on_recv :: proc(op: ^nbio.Operation, c: ^Client) {
-    assert(op == c.recv_op, "completion op doesn't match the stored handle")
-
-    c.recv_op = nil
-
-    if c.state != .Open && c.state != .Closing {
-        return
-    }
-
-    if op.recv.err != nil {
-        fail(c, .Recv_Failed)
-        return
-    }
-
-    if op.recv.received == 0 {
-        // Peer closed the TCP connection without a WebSocket close frame.
-        finalize_close(c, .Abnormal_Closure)
-        return
-    }
-
-    if decoder_feed(&c.decoder, c.recv_buf[:op.recv.received]) != nil {
-        fail(c, .Out_Of_Memory)
-        return
-    }
-
-    if !drain_decoder(c) {
-        return
-    }
-
-    if c.state == .Open {
-        start_recv(c)
-    } else if c.state == .Closing {
-        ensure_close_recv(c)
+    c := (^Client)(core)
+    if c.cbs.on_message != nil {
+        c.cbs.on_message(c, kind, data)
     }
 }
 
-// Drain buffered messages. Returns false once it has terminated the connection
-// (protocol error or close), so the caller stops.
+// Terminal dispatch adapter: the driver core hands back the connection it was
+// given, which is this client because `core` is its first field.
 @(private)
-drain_decoder :: proc(c: ^Client) -> bool {
-    assert(c != nil && (c.state == .Open || c.state == .Closing), "decoder drain outside active states")
+client_terminal :: proc(core: ^Conn_Core) {
+    assert(core != nil && core.role == .Client, "client terminal dispatch on a non-client core")
 
-    for {
-        if c.state == .Closed {
-            return false
-        }
-
-        msg, has, err := decoder_next(&c.decoder, c.allocator)
-        if err != .None {
-            fail(c, err == .Out_Of_Memory ? .Out_Of_Memory : .Protocol_Violation)
-            return false
-        }
-
-        if !has {
-            return true
-        }
-
-        switch msg.kind {
-        case .Text, .Binary:
-            if c.state == .Open && c.cbs.on_message != nil {
-                c.cbs.on_message(c, msg.kind, msg.data)
-            }
-
-            delete(msg.data, c.allocator)
-
-        case .Ping:
-            if c.state == .Open {
-                control_err := enqueue_control(c, .Pong, msg.data)
-                if control_err != .None {
-                    delete(msg.data, c.allocator)
-                    fail(c, control_err)
-                    return false
-                }
-            }
-            delete(msg.data, c.allocator)
-
-        case .Pong:
-            delete(msg.data, c.allocator)
-
-        case .Close:
-            parsed, perr := parse_close(msg.data)
-            had_body := len(msg.data) != 0
-            delete(msg.data, c.allocator)
-            if perr != .None {
-                fail(c, .Protocol_Violation)
-                return false
-            }
-
-            // Echo the peer's code only when it sent one; an empty body must be
-            // answered with an empty-body close, never synthesized 1005 (invalid
-            // on the wire, RFC 6455 §7.4.1). The synthesized code is still
-            // reported locally.
-            wire_code: Maybe(Close_Code)
-            if had_body {
-                wire_code = parsed.code
-            }
-
-            c.close_received = true
-            c.close_code = parsed.code
-            if c.state == .Open {
-                if close_err := begin_close(c, wire_code, parsed.code); close_err != .None {
-                    fail(c, close_err)
-                }
-            } else if c.close_sent {
-                finalize_close(c, parsed.code)
-            }
-
-            return false
-        }
-    }
-}
-
-// Queue a masked close frame and enter Closing. `wire_code` is serialized into
-// the body; nil sends an empty-body close (required when echoing a peer that sent
-// no code — 1005/1006 must never go on the wire). `report_code` is what `On_Close`
-// receives. Idempotent once closing has begun.
-@(private)
-begin_close :: proc(c: ^Client, wire_code: Maybe(Close_Code), report_code: Close_Code) -> Client_Error {
-    assert(c != nil, "begin_close needs a client")
-
-    if c.state == .Closing || c.state == .Closed {
-        return .Not_Open
-    }
-
-    assert(c.state == .Open, "close began outside Open")
-    assert(!c.close_sent, "new close already marked sent")
-    assert(c.close_timeout_op == nil, "new close already has a deadline")
-
-    body: []byte
-    buf: [2]byte
-    if code, ok := wire_code.?; ok {
-        buf[0] = byte(u16(code) >> 8)
-        buf[1] = byte(code)
-        body = buf[:]
-    }
-
-    frame, aerr := encode_masked(c, .Connection_Close, body)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    c.state = .Closing
-    c.close_code = report_code
-    if err := enqueue_frame(c, frame, true); err != .None {
-        c.state = .Open
-        return err
-    }
-
-    c.close_timeout_op = nbio.timeout_poly(c.close_timeout, c, on_close_timeout, c.loop)
-    ensure_close_recv(c)
-
-    return .None
-}
-
-// Encode one masked client frame from a fresh random masking key.
-@(private)
-encode_masked :: proc(
-    c: ^Client,
-    opcode: Op_Code,
-    payload: []byte,
-) -> (
-    frame: []byte,
-    err: runtime.Allocator_Error,
-) #optional_allocator_error {
-    assert(c != nil, "encode_masked needs a client")
-
-    key: [MASK_KEY_BYTES]byte
-    crypto.rand_bytes(key[:])
-
-    return encode_frame(true, opcode, payload, key, c.allocator)
-}
-
-// Append an owned frame to the send queue and pump the writer.
-@(private)
-enqueue_frame :: proc(c: ^Client, frame: []byte, control: bool) -> Client_Error {
-    assert(c != nil, "enqueue_frame needs a client")
-    assert(len(frame) >= 2, "queued a frame smaller than its header")
-    assert(c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]), "pending send byte mismatch")
-
-    limit := c.max_send_queue_bytes
-    if control {
-        limit += SEND_CONTROL_RESERVE_BYTES
-    }
-
-    if c.pending_send_bytes > limit - len(frame) {
-        delete(frame, c.allocator)
-        return .Send_Queue_Full
-    }
-
-    if _, aerr := append(&c.send_queue, frame); aerr != nil {
-        delete(frame, c.allocator)
-        return .Out_Of_Memory
-    }
-
-    c.pending_send_bytes += len(frame)
-    assert(
-        c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]),
-        "queued byte accounting mismatch",
-    )
-
-    pump_send(c)
-
-    return .None
-}
-
-@(private)
-enqueue_control :: proc(c: ^Client, opcode: Op_Code, payload: []byte) -> Client_Error {
-    assert(opcode == .Pong, "unexpected automatic control opcode")
-    assert(len(payload) <= 125, "control payload exceeds protocol maximum")
-
-    frame, aerr := encode_masked(c, opcode, payload)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    return enqueue_frame(c, frame, true)
-}
-
-// Coalesce the queued frames into one vectored send if none is in flight. Whole
-// frames are submitted as iovecs (zero copy); nbio owns the partial-send retry via
-// `all`. Finalizes the TCP close when the queue empties during Closing.
-@(private)
-pump_send :: proc(c: ^Client) {
-    // A terminal failure stops the pipeline: never send on a closed socket. The
-    // queue and `send_batch` are left for `client_destroy`.
-    if c.state == .Closed {
-        return
-    }
-
-    if c.sending {
-        return
-    }
-
-    if len(c.send_queue) == 0 {
-        if c.state == .Closing {
-            c.close_sent = true
-            if c.close_received {
-                finalize_close(c, c.close_code)
-            } else {
-                ensure_close_recv(c)
-            }
-        }
-
-        return
-    }
-
-    assert(len(c.send_batch) == 0, "previous batch was not released")
-
-    if coalesce_send_batch(&c.send_queue, &c.send_batch) != nil {
-        fail(c, .Out_Of_Memory)
-        return
-    }
-    assert(len(c.send_batch) > 0, "coalesced an empty batch from a non-empty queue")
-
-    c.sending = true
-    c.send_op = nbio.send_poly(c.socket, c.send_batch[:], c, on_sent, {}, true, nbio.NO_TIMEOUT, c.loop)
-}
-
-// Send completion: free every frame in the batch and continue draining the queue.
-@(private)
-on_sent :: proc(op: ^nbio.Operation, c: ^Client) {
-    assert(c.sending, "send completed while none was in flight")
-    assert(op == c.send_op, "completion op doesn't match the stored handle")
-
-    c.send_op = nil
-
-    for frame in c.send_batch {
-        assert(len(frame) <= c.pending_send_bytes, "send byte accounting underflow")
-        c.pending_send_bytes -= len(frame)
-        delete(frame, c.allocator)
-    }
-    clear(&c.send_batch)
-    c.sending = false
-    assert(c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]), "sent byte accounting mismatch")
-
-    if op.send.err != nil {
-        fail(c, .Send_Failed)
-        return
-    }
-
-    pump_send(c)
-}
-
-@(private)
-ensure_close_recv :: proc(c: ^Client) {
-    assert(c != nil && c.state == .Closing, "closing receive outside Closing")
-
-    if c.close_received || c.recv_op != nil {
-        return
-    }
-
-    c.recv_op = nbio.recv_poly(c.socket, [][]byte{c.recv_buf}, c, on_recv, false, nbio.NO_TIMEOUT, c.loop)
-}
-
-@(private)
-on_close_timeout :: proc(op: ^nbio.Operation, c: ^Client) {
-    assert(c.state == .Closing, "close deadline completed outside Closing")
-    assert(op == c.close_timeout_op, "close deadline does not match stored operation")
-    c.close_timeout_op = nil
-
-    finalize_close(c, .Abnormal_Closure)
-}
-
-// Latch a normal/abnormal close and tear down, reporting `code` via `On_Close`.
-@(private)
-finalize_close :: proc(c: ^Client, code: Close_Code) {
-    if c.state == .Closed {
-        return
-    }
-
-    c.state = .Closed
-    c.close_code = code
-    teardown(c)
-}
-
-// Latch a terminal failure and tear down, reporting `err` via `On_Error`.
-@(private)
-fail :: proc(c: ^Client, err: Client_Error) {
-    assert(err != .None, "fail without an error")
-
-    if c.state == .Closed {
-        return
-    }
-
-    log.debugf("websocket client: fail %v", err)
-
-    c.state = .Closed
-    c.terminal_error = err
-    teardown(c)
-}
-
-// Cancel outstanding ops, close the socket, and fire the terminal callback only
-// once the close completes. Deferring it lets the app free buffers from the
-// callback: by then the kernel has dropped the recv/send buffers. `nbio.remove`
-// stops the callback but not an in-flight kernel read/write of the buffer, so
-// firing inline would use-after-free.
-@(private)
-teardown :: proc(c: ^Client) {
-    assert(c != nil && c.state == .Closed, "teardown before Closed")
-    assert(c.terminal_error != .None || c.close_code != Close_Code(0), "teardown without terminal outcome")
-
-    cancel_pending_ops(c)
-
-    if c.has_socket {
-        nbio.close_poly(c.socket, c, on_teardown_closed, c.loop)
-
-        return
-    }
-
-    // Dial failed before a socket existed: nothing outstanding, nothing to close.
-    fire_terminal(c)
-}
-
-// Socket close completed: canceled recv/send buffers are no longer referenced by
-// the kernel, so it is safe to hand control back.
-@(private)
-on_teardown_closed :: proc(op: ^nbio.Operation, c: ^Client) {
-    fire_terminal(c)
-}
-
-// Fire exactly one terminal callback: `On_Error` when a failure was latched,
-// otherwise `On_Close`.
-@(private)
-fire_terminal :: proc(c: ^Client) {
-    assert(c.state == .Closed, "terminal fired before teardown")
-    assert(!c.terminal_fired, "terminal callback fired twice")
-    c.terminal_fired = true
-
-    if c.terminal_error != .None {
+    c := (^Client)(core)
+    if core.terminal_error != .None {
         if c.cbs.on_error != nil {
-            c.cbs.on_error(c, c.terminal_error)
+            c.cbs.on_error(c, client_error(core.terminal_error))
         }
 
         return
     }
 
     if c.cbs.on_close != nil {
-        c.cbs.on_close(c, c.close_code)
-    }
-}
-
-// Remove each outstanding op so no completion fires into the Client after
-// teardown. `nbio.remove` is final and silent: the callback never runs, even if
-// its completion was already queued. An op running its own callback has already
-// cleared its handle, so it is never removed here.
-@(private)
-cancel_pending_ops :: proc(c: ^Client) {
-    if c.dial_op != nil {
-        nbio.remove(c.dial_op)
-        c.dial_op = nil
-    }
-
-    if c.recv_op != nil {
-        nbio.remove(c.recv_op)
-        c.recv_op = nil
-    }
-
-    if c.send_op != nil {
-        nbio.remove(c.send_op)
-        c.send_op = nil
-    }
-
-    if c.close_timeout_op != nil {
-        nbio.remove(c.close_timeout_op)
-        c.close_timeout_op = nil
+        c.cbs.on_close(c, core.close_code)
     }
 }
