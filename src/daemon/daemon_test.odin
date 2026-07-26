@@ -94,13 +94,13 @@ cli_on_ready :: proc(c: ^client.Client) {
     if o.send_request_on_ready {
         // A method with no dispatch handler; its empty params validate, so the request
         // reaches the router and falls through to the `Unknown_Method` arm.
-        client.client_send_request(c, .Session_Create, wire.Create_Session{})
+        client.client_send_request(c, .Session_Create, wire.Create_Session{}, cli_on_response)
     } else {
         client.client_close(c)
     }
 }
 
-cli_on_response :: proc(c: ^client.Client, resp: wire.Response) {
+cli_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     o := (^Cli_Obs)(c.user_data)
     o.got_response = true
 
@@ -129,12 +129,7 @@ cli_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
 }
 
 cli_callbacks :: proc() -> client.Client_Callbacks {
-    return client.Client_Callbacks {
-        on_ready = cli_on_ready,
-        on_response = cli_on_response,
-        on_close = cli_on_close,
-        on_error = cli_on_error,
-    }
+    return client.Client_Callbacks{on_ready = cli_on_ready, on_close = cli_on_close, on_error = cli_on_error}
 }
 
 @(test)
@@ -271,10 +266,10 @@ Handler_Obs :: struct {
 
 handler_on_ready :: proc(c: ^client.Client) {
     o := (^Handler_Obs)(c.user_data)
-    client.client_send_request(c, o.method, o.params)
+    client.client_send_request(c, o.method, o.params, handler_on_response)
 }
 
-handler_on_response :: proc(c: ^client.Client, resp: wire.Response) {
+handler_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     o := (^Handler_Obs)(c.user_data)
     o.responded = true
 
@@ -307,7 +302,6 @@ handler_on_timeout :: proc(_: ^nbio.Operation, o: ^Handler_Obs) {
 handler_callbacks :: proc() -> client.Client_Callbacks {
     return client.Client_Callbacks {
         on_ready = handler_on_ready,
-        on_response = handler_on_response,
         on_close = handler_on_close,
         on_error = handler_on_error,
     }
@@ -790,6 +784,7 @@ check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handl
             c,
             .Workspace_Browse,
             wire.Workspace_Browse_Params{path = o.dir, limit = 2, cursor = cursor},
+            handler_on_response,
         )
 
         return false

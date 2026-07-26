@@ -4,7 +4,9 @@ and correlates each request with its typed response.
 
 The transport (`libs:websocket`) is a single-threaded `core:nbio` callback reactor;
 this driver never runs the loop. It sends `client.hello`, waits for the server
-`hello`, then routes each server frame (`response`/`error`/`broadcast`) to a
+`hello`, then routes each server frame: a `response`/`error` reaches the
+`Response_Proc` its request registered with `client_send_request`, while
+connection-wide events (readiness, broadcasts, termination) reach the
 `Client_Callbacks` sink. `client_handle_text` is the pure routing core and is
 unit-tested directly with no socket.
 
@@ -25,8 +27,11 @@ Lifetime contract:
     retains one MUST deep-copy it (e.g. `wire.broadcast_clone`) into its own
     allocator before returning — exactly how a `session_replica` consumer will use it.
   - The driver itself retains NO borrowed frame data: `pending` stores only the
-    `Method_Name` enum, and the sole retained hello datum, `daemon_version`, is an
-    owned `strings.clone`.
+    `Method_Name` enum and the caller's completion, and the sole retained hello datum,
+    `daemon_version`, is an owned `strings.clone`.
+  - A registered `Response_Proc` fires at most once. Requests still outstanding when
+    the connection closes or errors are dropped with `pending`, so any `user_data`
+    they own must be reclaimed from the terminal callback, not from the completion.
   - `scratch` is `free_all`'d after every message; `pending`, the `daemon_version`
     clone, and `scratch` are released by `client_destroy`.
 
