@@ -66,7 +66,7 @@ denied_by_from_wire :: proc(s: string) -> (Denied_By, bool) {
     return enum_from_wire(denied_by_wire, s)
 }
 
-// New: rule action, since rules were previously allow-only.
+// Whether a remembered permission rule allows or denies the matched call.
 Rule_Action :: enum {
     // Rule allows the matched call.
     Allow,
@@ -325,7 +325,7 @@ Permission_Rule :: struct {
     // Human-readable rule label.
     label:         string,
 
-    // Allow or deny. Existing/decoded-absent rules default to Allow.
+    // Allow or deny the matched call.
     action:        Rule_Action,
 
     // Creation epoch ms.
@@ -651,6 +651,7 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
         Id,
         Tool,
         Label,
+        Action,
         Created,
         By,
     }
@@ -680,6 +681,7 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
 
         case "action":
             rule.action = dec_enum(d, rule_action_wire) or_return
+            seen += {.Action}
 
         case "created_at_ms":
             rule.created_at_ms = dec_u64(d) or_return
@@ -694,7 +696,7 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
         }
     }
 
-    if seen != {.Id, .Tool, .Label, .Created, .By} {
+    if seen != {.Id, .Tool, .Label, .Action, .Created, .By} {
         return {}, .Mismatched_Payload
     }
 

@@ -175,15 +175,13 @@ test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_permission_rule_absent_action_defaults_to_allow :: proc(t: ^testing.T) {
-    // A rule persisted before the action field carries no "action" member.
+test_permission_rule_rejects_missing_action :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
     v := decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
-    rule, derr := permission_rule_from_reader(&v)
-    testing.expect(t, derr == .None, "decode should succeed")
-    testing.expect_value(t, rule.action, Rule_Action.Allow)
+    _, derr := permission_rule_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "missing action must be rejected")
 }
 
 @(test)
