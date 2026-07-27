@@ -8,10 +8,11 @@ therefore synchronous, and making one from a reactor callback stalls every other
 connection sharing that loop. This package is the way off the loop: a task's `work` runs
 on a worker thread, and its `done` runs on the loop thread once the work has finished.
 
-The return path is nbio's own cross-thread mechanism. A worker submits a zero-duration
-timeout against the submitting loop, which enqueues onto that loop's queue and wakes it;
-the completion then fires on the loop thread. A zero timeout is the only operation that
-carries no I/O, so it is how a worker hands back a pure continuation.
+The return path is nbio's own cross-thread mechanism. Workers publish completed tasks into
+an allocation-free intrusive queue. The first result in a batch submits one zero-duration
+timeout against the loop, which wakes it and drains the whole batch there. Coalescing is
+load-bearing: nbio's cross-thread queue is bounded, so submitting one operation per task
+could fill it and leave shutdown joining workers that are waiting for the loop.
 
 **A submitted task cannot be cancelled.** A worker already inside a syscall cannot be
 interrupted, so `done` always runs, even when whatever asked for the work is gone. Two
@@ -25,16 +26,23 @@ rules follow, and both are load-bearing:
 
 Threading:
 
+- `pool_init`, `submit`, `pool_drain`, and `pool_destroy` run on the bound loop thread.
+  Serializing submission with drain is what makes the pool's accepting state race-free.
 - `work` runs on a worker thread and may touch only the state handed to it. It must not
   log, must not allocate from a loop-thread allocator, and must not use
   `context.temp_allocator`, which is per-OS-thread and shared with anything else that
   worker runs.
 - `done` runs on the loop thread and owns the state again, including freeing it.
+- `done` must not call `pool_drain`: the current task remains outstanding until `done`
+  returns, so synchronous drain would wait for its own callback. The attempt returns
+  `Completion_In_Progress`; signal the loop's outer owner to drain after the callback
+  instead.
 
-Shutdown drains, never terminates. `pool_drain` finishes queued tasks, joins the workers,
-then ticks the loop until every `done` has run; only then may `pool_destroy` release the
-pool. Skipping the tick leaks every task whose work finished while its completion was
-still queued. `core:thread`'s `pool_shutdown` and `pool_stop_all_tasks` kill threads
+Shutdown drains, never terminates. `pool_drain` lets workers finish queued tasks while it
+ticks the loop until every `done` has run, and only then joins the workers.
+Pumping before join is essential because nbio's cross-thread queue is bounded: a worker
+may be waiting for the loop to accept its dispatcher. Only after drain may `pool_destroy`
+release the pool. `core:thread`'s `pool_shutdown` and `pool_stop_all_tasks` kill threads
 outright and are never correct here: a worker terminated mid-`rename` leaves the
 filesystem half-published.
 */

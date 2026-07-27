@@ -189,7 +189,7 @@ daemon_start :: proc(
 
         daemon_warn_exposed_blob_dir(d.blob_dir, allocator)
 
-        if perr := offload.pool_init(&d.blobs, loop, BLOB_WORKER_COUNT, allocator); perr != .None {
+        if perr := offload.pool_init(&d.blobs, loop, BLOB_WORKER_COUNT); perr != .None {
             daemon_free_config(d)
             return .Invalid_Options
         }
