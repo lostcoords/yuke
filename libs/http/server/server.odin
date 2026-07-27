@@ -48,12 +48,22 @@ Options :: struct {
 
     // Absolute request-head deadline and per-response write timeout.
     request_timeout:  time.Duration,
+
+    // Absolute deadline on a whole `receive_body` transfer. The per-recv idle timeout
+    // alone cannot bound it: one byte per interval keeps a connection slot forever.
+    body_timeout:     time.Duration,
 }
 
 // One validated request handed to `On_Request`. All fields borrow the connection
 // and remain valid only for the callback.
 Request :: struct {
     head:           http.Request_Head,
+
+    // Target up to `?`, always leading-slash origin form. Split once by the driver.
+    path:           string,
+
+    // Target after `?`, empty when absent. Still percent-encoded.
+    query:          string,
 
     // Bytes read past the head: for a bodyless route the leading pipelined/upgrade
     // bytes; for a body-bearing route the leading bytes of the request body.
@@ -62,6 +72,11 @@ Request :: struct {
     // Declared request-body length from Content-Length (0 when absent). The handler
     // enforces its own size cap on this before opting into `receive_body`.
     content_length: i64,
+
+    // Bytes arrived past the declared body: a pipelined follow-up request is waiting.
+    // A route either refuses it or lets the close discard it — except a hijacking
+    // route, which keeps them; for an upgrade they are the peer's eager first frame.
+    pipelined:      bool,
 }
 
 // Fired once per connection. The handler must respond, hijack, or opt into streaming
@@ -129,6 +144,10 @@ Server :: struct {
     request_timeout:   time.Duration,
 
     // @private
+    // Resolved whole-body transfer deadline copied from `Options` in `listen`.
+    body_timeout:      time.Duration,
+
+    // @private
     // Owned connections; the bool value is unused (set membership only).
     conns:             map[^Conn]bool,
 
@@ -186,6 +205,11 @@ Conn :: struct {
     // Bytes of `head_buf` consumed by the request head; the remainder is the leading
     // request body during a body receive.
     head_consumed:     int,
+
+    // @private
+    // Set for a HEAD request: responses carry their headers but no content
+    // (RFC 9110 §9.3.2).
+    head_request:      bool,
 
     // @private
     // Declared request-body bytes still to deliver during a body receive.
@@ -269,7 +293,7 @@ Conn :: struct {
     send_op:           ^nbio.Operation,
 
     // @private
-    // In-flight head-deadline timeout; nil when cancelled or fired.
+    // In-flight head or body deadline; nil when cancelled or fired.
     timeout_op:        ^nbio.Operation,
 
     // @private
@@ -306,13 +330,17 @@ listen :: proc(
     if opts.request_timeout == 0 {
         opts.request_timeout = 10 * time.Second
     }
+    if opts.body_timeout == 0 {
+        opts.body_timeout = 60 * time.Second
+    }
 
     if opts.port < 0 ||
        opts.port > 65535 ||
        opts.max_connections <= 0 ||
        opts.max_head_bytes < 4 ||
        opts.recv_chunk_bytes <= 0 ||
-       opts.request_timeout <= 0 {
+       opts.request_timeout <= 0 ||
+       opts.body_timeout <= 0 {
         return .Invalid_Options
     }
 
@@ -341,6 +369,7 @@ listen :: proc(
     s.max_head_bytes = opts.max_head_bytes
     s.recv_chunk_bytes = opts.recv_chunk_bytes
     s.request_timeout = opts.request_timeout
+    s.body_timeout = opts.body_timeout
     s.conns = conns
     s.on_request = on_request
     s.user_data = user_data
@@ -389,6 +418,19 @@ destroy :: proc(s: ^Server) {
     s^ = {}
 }
 
+// Address the listen socket actually bound, so callers compare against what is served
+// rather than re-deriving it from their options.
+bound_address :: proc(s: ^Server) -> (addr: net.Address, ok: bool) {
+    assert(s != nil, "bound_address needs a server")
+
+    ep, err := net.bound_endpoint(s.socket)
+    if err != nil {
+        return nil, false
+    }
+
+    return ep.address, true
+}
+
 // TCP port of the bound listen socket. Useful after `listen` with port 0.
 bound_port :: proc(s: ^Server) -> int {
     assert(s != nil, "bound_port needs a server")
@@ -417,8 +459,10 @@ respond :: proc(
         return response_err
     }
 
+    // A HEAD response advertises the length it would have sent; `conn_send_head_and_body`
+    // is what withholds the content, so this only avoids a pointless copy.
     body_copy: []byte
-    if len(body) > 0 {
+    if len(body) > 0 && !c.head_request {
         aerr: runtime.Allocator_Error
         body_copy, aerr = make([]byte, len(body), c.allocator)
         if aerr != nil {
@@ -428,7 +472,7 @@ respond :: proc(
         copy(body_copy, body)
     }
 
-    head, aerr := build_response_head(status, content_type, len(body_copy), extra, c.allocator)
+    head, aerr := build_response_head(status, content_type, len(body), extra, c.allocator)
     if aerr != nil {
         delete(extra, c.allocator)
         delete(body_copy, c.allocator)
@@ -508,7 +552,7 @@ respond_file :: proc(
 hijack :: proc(c: ^Conn) -> (socket: net.TCP_Socket, loop: ^nbio.Event_Loop) {
     assert(c != nil && c.state == .Reading, "hijack on an answered connection")
 
-    conn_cancel_head_timeout(c)
+    conn_cancel_timeout(c)
     c.state = .Hijacked
     log.debug("http_server: connection hijacked")
 
@@ -528,7 +572,11 @@ receive_body :: proc(c: ^Conn, user_data: rawptr, on_chunk: On_Body_Chunk, on_en
     assert(on_chunk != nil && on_end != nil, "receive_body needs both callbacks")
     assert(c.body_on_end == nil, "receive_body called twice on one request")
 
-    conn_cancel_head_timeout(c)
+    // Replace the head deadline with one covering the whole transfer. The per-recv
+    // idle timeout resets on every byte, so only this bounds total time.
+    conn_cancel_timeout(c)
+    c.timeout_op = nbio.timeout_poly(c.server.body_timeout, c, conn_on_timeout, c.loop)
+
     c.state = .Receiving_Body
     c.body_on_chunk = on_chunk
     c.body_on_end = on_end
@@ -676,7 +724,7 @@ conn_start :: proc(s: ^Server, socket: net.TCP_Socket) {
         return
     }
 
-    c.timeout_op = nbio.timeout_poly(s.request_timeout, c, conn_on_head_timeout, s.loop)
+    c.timeout_op = nbio.timeout_poly(s.request_timeout, c, conn_on_timeout, s.loop)
     conn_start_recv(c)
 }
 
@@ -757,13 +805,22 @@ conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
         return
     }
 
-    log.debugf("http_server: request %s %s", head.method, head.target)
+    path, query := http.split_target(head.target)
+
+    // Path only: a query can carry a credential (RFC 6750 §5.3) and logs outlive it.
+    log.debugf("http_server: request %s %s", head.method, path)
+
     c.head_consumed = consumed
+    c.head_request = head.method == "HEAD"
     c.body_remaining = body_length
+    trailing := c.head_buf[consumed:]
     request := Request {
         head           = head,
-        trailing       = c.head_buf[consumed:],
+        path           = path,
+        query          = query,
+        trailing       = trailing,
         content_length = body_length,
+        pipelined      = i64(len(trailing)) > body_length,
     }
     c.server.on_request(c, request)
 
@@ -851,6 +908,8 @@ body_complete :: proc(c: ^Conn) {
     assert(c.state == .Receiving_Body, "body completion outside a body receive")
     assert(c.body_remaining == 0, "body completion with bytes outstanding")
 
+    conn_cancel_timeout(c)
+
     on_end := c.body_on_end
     user := c.body_user
     c.body_on_chunk = nil
@@ -861,26 +920,33 @@ body_complete :: proc(c: ^Conn) {
     on_end(c, user, true)
 }
 
-// Head-deadline firing: respond 408 if the connection is still reading, no-op
-// once it has moved on.
+// Deadline firing for whichever phase armed it. Reading owes the peer a 408; a body
+// transfer that outran its budget is finalized, which fires the end callback with
+// `ok = false` so the sink releases what it opened — no response, the peer is still
+// mid-body. Any other state has already moved on.
 @(private)
-conn_on_head_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
-    assert(op == c.timeout_op, "head timeout completion does not match stored operation")
+conn_on_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
+    assert(op == c.timeout_op, "timeout completion does not match stored operation")
     c.timeout_op = nil
 
-    if c.state == .Reading {
+    #partial switch c.state {
+    case .Reading:
         log.debug("http_server: request head timed out")
         conn_respond_error(c, .Request_Timeout, "request timed out")
+
+    case .Receiving_Body:
+        log.debug("http_server: request body transfer timed out")
+        conn_finalize(c)
     }
 }
 
 // Send a small text/plain error response, falling back to finalize if the
 // response itself fails.
 @(private)
-conn_respond_error :: proc(c: ^Conn, status: Status, text: string) {
+conn_respond_error :: proc(c: ^Conn, status: Status, text: string, extra_headers: []Header = nil) {
     assert(c != nil && c.state == .Reading, "error response outside Reading")
 
-    if respond_text(c, status, text) != .None {
+    if respond_text(c, status, text, extra_headers) != .None {
         conn_finalize(c)
     }
 }
@@ -890,7 +956,7 @@ conn_respond_error :: proc(c: ^Conn, status: Status, text: string) {
 conn_begin_response :: proc(c: ^Conn) {
     assert(c.state == .Reading, "response began outside Reading")
 
-    conn_cancel_head_timeout(c)
+    conn_cancel_timeout(c)
     c.state = .Responding
 }
 
@@ -904,8 +970,11 @@ conn_send_head_and_body :: proc(c: ^Conn) {
 
     c.send_bufs[0] = c.resp_head
     c.send_bufs[1] = c.resp_body
+
+    // RFC 9110 §9.3.2: a HEAD response keeps its headers and sends no content. Decided
+    // here so every response path is covered, not each constructor separately.
     count := 1
-    if len(c.resp_body) > 0 {
+    if len(c.resp_body) > 0 && !c.head_request {
         count = 2
     }
 
@@ -983,7 +1052,7 @@ conn_on_head_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
         return
     }
 
-    if !c.owns_file || len(c.resp_body) > 0 || c.file_bytes == 0 {
+    if !c.owns_file || len(c.resp_body) > 0 || c.file_bytes == 0 || c.head_request {
         conn_finalize(c)
         return
     }
@@ -1014,9 +1083,9 @@ conn_on_file_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
     conn_finalize(c)
 }
 
-// Cancel an armed head timeout, if any.
+// Cancel the armed head or body deadline, if any.
 @(private)
-conn_cancel_head_timeout :: proc(c: ^Conn) {
+conn_cancel_timeout :: proc(c: ^Conn) {
     if c.timeout_op != nil {
         nbio.remove(c.timeout_op)
         c.timeout_op = nil

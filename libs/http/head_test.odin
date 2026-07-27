@@ -107,3 +107,46 @@ test_query_lookup_rejects_duplicates :: proc(t: ^testing.T) {
     _, lookup = query_value("token=a&token=b", "token")
     testing.expect_value(t, lookup, Lookup.Duplicate)
 }
+
+// `net.split_port` slices `[1:0]` on a value starting with `]:`, so the library owns a
+// splitter that never hands `core:net` that shape.
+@(test)
+test_http_split_host :: proc(t: ^testing.T) {
+    Case :: struct {
+        host:      string,
+        name:      string,
+        bracketed: bool,
+        ok:        bool,
+    }
+    cases := []Case {
+        {"127.0.0.1", "127.0.0.1", false, true},
+        {"127.0.0.1:8080", "127.0.0.1", false, true},
+        {"localhost", "localhost", false, true},
+        {"example.test:65535", "example.test", false, true},
+        {"host:", "host", false, true},
+        {"[::1]", "::1", true, true},
+        {"[::1]:80", "::1", true, true},
+        {"[::ffff:127.0.0.1]", "::ffff:127.0.0.1", true, true},
+        {"]:80", "", false, false},
+        {"]:", "", false, false},
+        {"]", "", false, false},
+        {"a127.0.0.1]:80", "", false, false},
+        {"[", "", true, false},
+        {"[]", "", true, false},
+        {"[::1", "", true, false},
+        {"[::1]x", "", true, false},
+        {"[::1]:80]:90", "", true, false},
+        {"127.0.0.1:notaport", "", false, false},
+        {":80", "", false, false},
+        {"", "", false, false},
+    }
+    for c in cases {
+        name, bracketed, ok := split_host(c.host)
+        testing.expectf(t, ok == c.ok, "host %q ok: got %v want %v", c.host, ok, c.ok)
+        testing.expectf(t, bracketed == c.bracketed, "host %q bracketed: got %v", c.host, bracketed)
+
+        if c.ok {
+            testing.expectf(t, name == c.name, "host %q name: got %q want %q", c.host, name, c.name)
+        }
+    }
+}
