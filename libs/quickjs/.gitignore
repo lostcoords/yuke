@@ -1,0 +1,14 @@
+# Static archives / object files (built per target by make quickjs-static).
+bin/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exp
+*.pdb
+
+# Downloaded amalgamation (fetched by make quickjs-static).
+amalgamation/quickjs-amalgam.c
+amalgamation/quickjs.h
+amalgamation/quickjs-libc.h
