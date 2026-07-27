@@ -33,7 +33,7 @@ test-client:
 	@mkdir -p build
 	$(ODIN) test src/client $(COLLECTION) -out:build/client_test.bin
 
-# Run the daemon package tests (front-door routes plus the hello exchange).
+# Run the daemon package tests (front-door routes plus the initialize exchange).
 test-daemon:
 	@mkdir -p build
 	$(ODIN) test src/daemon $(COLLECTION) -out:build/daemon_test.bin

@@ -2,6 +2,7 @@ package wire
 
 import "core:encoding/json"
 import "core:strconv"
+import "core:strings"
 
 // Streaming decode front end. A frame is decoded token-by-token straight into typed
 // structs; no intermediate `json.Value` tree is built. A multi-MB result, or an
@@ -47,6 +48,26 @@ dec_string :: proc(d: ^Decoder) -> (string, Validation_Error) {
     }
 
     return s, .None
+}
+
+// A scalar's verbatim token text, cloned into the parser allocator — quotes and
+// escapes intact. Backs values that must echo byte-identically. A container is an error.
+dec_raw_scalar :: proc(d: ^Decoder) -> (string, Validation_Error) {
+    tok := d.curr_token
+
+    #partial switch tok.kind {
+    case .String, .Integer, .Float, .Null, .True, .False:
+        json.advance_token(d)
+        text, err := strings.clone(tok.text, d.allocator)
+
+        if err != nil {
+            return "", .Mismatched_Payload
+        }
+
+        return text, .None
+    }
+
+    return "", .Mismatched_Payload
 }
 
 // A u64 in JSON's safe integer range. A non-integer, an over-range value, or a

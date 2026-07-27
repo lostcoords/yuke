@@ -1177,21 +1177,21 @@ test_clear_pending_compaction :: proc(t: ^testing.T) {
 
 // --- sequence gating / dispatch / buffering test fixtures ---
 
-// Wrap a payload in a broadcast frame.
+// Wrap a payload in a notification frame.
 @(private = "file")
-_bc :: proc(name: wire.Broadcast_Name, data: wire.Broadcast_Data) -> wire.Broadcast {
-    return wire.broadcast_build(name, data)
+_bc :: proc(name: wire.Broadcast_Name, data: wire.Broadcast_Data) -> wire.Notification {
+    return wire.notification_build(name, data)
 }
 
-// Wrap a `message.committed` payload in a broadcast.
+// Wrap a `message.committed` payload in a notification.
 @(private = "file")
-_committed_bc :: proc(seq: wire.Seq, message: wire.Message) -> wire.Broadcast {
+_committed_bc :: proc(seq: wire.Seq, message: wire.Message) -> wire.Notification {
     return _bc(.Message_Committed, _committed(seq, message))
 }
 
-// Build a `run.started` broadcast.
+// Build a `run.started` notification.
 @(private = "file")
-_run_started_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, kind: wire.Run_Kind) -> wire.Broadcast {
+_run_started_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, kind: wire.Run_Kind) -> wire.Notification {
     return _bc(
         .Run_Started,
         wire.Run_Started_Data {
@@ -1205,9 +1205,9 @@ _run_started_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, kind: wire.Run_Kind)
     )
 }
 
-// Build a `run.done` broadcast with the given terminal outcome.
+// Build a `run.done` notification with the given terminal outcome.
 @(private = "file")
-_run_done_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, outcome: wire.Run_Outcome) -> wire.Broadcast {
+_run_done_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, outcome: wire.Run_Outcome) -> wire.Notification {
     return _bc(
         .Run_Done,
         wire.Run_Done_Data {
@@ -1221,9 +1221,9 @@ _run_done_bc :: proc(seq: wire.Seq, run_id: wire.Run_Id, outcome: wire.Run_Outco
     )
 }
 
-// Build a `session.activity` broadcast advertising `pending`.
+// Build a `session.activity` notification advertising `pending`.
 @(private = "file")
-_activity_bc :: proc(pending: Maybe(wire.Run_Id)) -> wire.Broadcast {
+_activity_bc :: proc(pending: Maybe(wire.Run_Id)) -> wire.Notification {
     return _bc(
         .Session_Activity_Changed,
         wire.Session_Activity_Changed_Data {

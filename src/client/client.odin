@@ -10,15 +10,18 @@ import wire "src:wire"
 // peer that never answers; a send past the cap fails with `.Too_Many_Pending`.
 MAX_PENDING_REQUESTS :: 256
 
-// Driver protocol exchange: send `client.hello`, then await the server `hello`.
+// Id the driver's opening `initialize` request claims; the counter starts past it.
+INITIALIZE_REQUEST_ID :: 1
+
+// Driver protocol exchange: send `initialize`, then await its response.
 Protocol_State :: enum {
     // TCP dial and WebSocket upgrade in flight; nothing sent yet.
     Connecting,
 
-    // `client.hello` sent; waiting for the server `hello`.
-    Awaiting_Hello,
+    // `initialize` sent; waiting for its response.
+    Awaiting_Initialize,
 
-    // `hello` accepted; requests may be sent and frames are routed.
+    // `initialize` result accepted; requests may be sent and frames are routed.
     Ready,
 
     // A close has been initiated; waiting for the transport's terminal callback.
@@ -37,11 +40,8 @@ Protocol_Error :: enum {
     // A transport-level failure; the specific `ws.Client_Error` is on `ws_error`.
     Ws_Error,
 
-    // The server `hello` failed to decode or validate.
-    Bad_Hello,
-
-    // A `hello` frame arrived after the connection was already Ready.
-    Unexpected_Hello,
+    // The `initialize` result failed to decode or validate.
+    Bad_Initialize,
 
     // A success `response` referenced a request id that is not pending.
     Unknown_Response,
@@ -82,20 +82,20 @@ Pending_Request :: struct {
     user_data:   rawptr,
 }
 
-// Event sink for connection-wide events. Any field may be nil. The `wire.Broadcast`
-// and `name` arguments borrow frame memory valid ONLY for the call (see LIFETIME
+// Event sink for connection-wide events. Any field may be nil. The `wire.Notification`
+// and `method` arguments borrow frame memory valid ONLY for the call (see LIFETIME
 // CONTRACT). Responses are not routed here; they reach their request's `Response_Proc`.
 Client_Callbacks :: struct {
-    // Fired once the server `hello` is accepted and the driver reaches Ready.
+    // Fired once the `initialize` result is accepted and the driver reaches Ready.
     on_ready:             proc(c: ^Client),
 
     // Fired for each known broadcast. `bc` is borrowed for this call only; retain it
-    // with `wire.broadcast_clone` into your own allocator.
-    on_broadcast:         proc(c: ^Client, bc: wire.Broadcast),
+    // with `wire.notification_clone` into your own allocator.
+    on_broadcast:         proc(c: ^Client, bc: wire.Notification),
 
-    // Fired for a broadcast whose name this build does not recognize. The payload is
-    // never decoded; `name` is borrowed for this call only.
-    on_unknown_broadcast: proc(c: ^Client, name: string),
+    // Fired for a broadcast whose method this build does not recognize. The payload is
+    // never decoded; `method` is borrowed for this call only.
+    on_unknown_broadcast: proc(c: ^Client, method: string),
 
     // Fired once at `.Closed` with the reported (or synthesized) close code. Terminal.
     on_close:             proc(c: ^Client, code: ws.Close_Code),
@@ -105,7 +105,7 @@ Client_Callbacks :: struct {
 }
 
 // One daemon connection past the transport handshake. Owns `pending`, the
-// `daemon_version` clone, `scratch`, and the outbound `hello_frame`; borrows `loop`.
+// `daemon_version` clone, `scratch`, and the outbound `initialize_frame`; borrows `loop`.
 Client :: struct {
     // @private
     // Underlying WebSocket transport, driven through `ws.client_*`. The internal
@@ -118,21 +118,23 @@ Client :: struct {
     loop:             ^nbio.Event_Loop,
 
     // @private
-    // Backs `pending`, the `daemon_version` clone, `scratch`, and `hello_frame`. Must
+    // Backs `pending`, the `daemon_version` clone, `scratch`, and `initialize_frame`. Must
     // outlive the client.
     allocator:        mem.Allocator,
     state:            Protocol_State,
 
     // @private
     // Next client-generated request id; starts at 1, increments per accepted send.
-    next_request_id:  wire.Request_Id,
+    // The driver only ever originates numbers, so the counter is numeric and the
+    // wire token is formatted per send.
+    next_request_id:  u64,
 
     // @private
     // Outstanding requests keyed by id: the method that types each response result,
     // plus the completion that receives it. Entries still outstanding when the
     // connection closes or errors are dropped, never completed — the terminal
     // `on_close`/`on_error` is the one signal to reclaim their `user_data`.
-    pending:          map[wire.Request_Id]Pending_Request,
+    pending:          map[u64]Pending_Request,
 
     // @private
     // Per-message decode scratch, `free_all`'d after each message. A frame's borrowed
@@ -140,29 +142,34 @@ Client :: struct {
     scratch:          mem.Dynamic_Arena,
 
     // @private
-    // Owned, pre-built `client.hello` bytes; sent and freed in the transport `on_open`.
+    // Owned, pre-built `initialize` request bytes; sent and freed in the transport `on_open`.
     // Nil once sent, or if the connection never opened.
-    hello_frame:      []byte,
+    initialize_frame: []byte,
 
-    // Retained protocol version from the server `hello` (value copy).
+    // Retained protocol version from the `initialize` result (value copy).
     protocol:         u32,
 
-    // Retained session-index revision from the server `hello` (value copy).
+    // Retained session-index revision from the `initialize` result (value copy).
     session_revision: wire.Session_Revision,
 
-    // Retained cron-index revision from the server `hello` (value copy).
+    // Retained cron-index revision from the `initialize` result (value copy).
     cron_revision:    wire.Cron_Revision,
 
-    // Retained catalog content hash from the server `hello` (fixed array, value copy).
+    // Retained catalog content hash from the `initialize` result (fixed array, value copy).
     catalog_rev:      wire.Catalog_Rev,
 
-    // The only retained hello string: an owned `strings.clone` into `allocator`, freed
-    // by `client_destroy`. Never the borrowed frame slice.
+    // The only retained string from the `initialize` result: an owned `strings.clone`
+    // into `allocator`, freed by `client_destroy`. Never the borrowed frame slice.
     daemon_version:   string,
 
     // Last transport error, latched before an `on_error(.Ws_Error)`; read via
     // `c.ws_error`.
     ws_error:         ws.Client_Error,
+
+    // @private
+    // Outcome of the `initialize` completion, which cannot return one. Consumed by
+    // `client_handle_text` on the frame that carried it.
+    initialize_error: Protocol_Error,
 
     // @private
     cbs:              Client_Callbacks,
@@ -171,11 +178,9 @@ Client :: struct {
     user_data:        rawptr,
 }
 
-// Begin connecting on `loop`; the handshake runs asynchronously and readiness is
-// reported via `on_ready`. Only a synchronous setup failure returns directly:
-// `.Bad_Frame` for an invalid `client.hello` (name/version bounds), or `.Ws_Error`
-// for a transport setup failure (the `ws.Client_Error` is on `ws_error`). A direct
-// failure rolls back all owned state, so the caller must not `client_destroy` after one.
+// Begin connecting; readiness arrives via `on_ready`. Only setup failures return
+// directly — `.Bad_Frame` for an invalid client identity, `.Ws_Error` for the transport
+// — and each rolls back all owned state, so the caller must not `client_destroy` after one.
 client_open :: proc(
     c: ^Client,
     loop: ^nbio.Event_Loop,
@@ -190,26 +195,33 @@ client_open :: proc(
     c.loop = loop
     c.allocator = allocator
     c.state = .Connecting
-    c.next_request_id = 1
-    c.pending = make(map[wire.Request_Id]Pending_Request, allocator)
+    c.pending = make(map[u64]Pending_Request, allocator)
     mem.dynamic_arena_init(&c.scratch, allocator, allocator)
     c.cbs = cbs
     c.user_data = user_data
 
-    // Build and validate the outbound hello now so a bad identity fails fast; the
-    // owned bytes are sent from the transport `on_open`.
-    hello := wire.client_hello_build({name = name, version = version})
-    if wire.client_hello_validate(hello) != .None {
+    // Build and validate the outbound `initialize` now so a bad identity fails fast;
+    // the owned bytes are sent from the transport `on_open`. It claims id 1, so the
+    // counter starts past it.
+    id_buf: [20]u8
+    init := wire.request_build(
+        wire.request_id_from_u64(INITIALIZE_REQUEST_ID, id_buf[:]),
+        .Initialize,
+        wire.initialize_params_build({name = name, version = version}),
+    )
+    if wire.request_validate(init) != .None {
         client_free_owned(c)
         return .Bad_Frame
     }
 
+    c.next_request_id = INITIALIZE_REQUEST_ID + 1
+
     e: wire.Emitter
     wire.emitter_init(&e, allocator)
-    wire.client_hello_emit(&e, hello)
+    wire.request_emit(&e, init)
     payload := wire.to_string(&e)
-    c.hello_frame = make([]byte, len(payload), allocator)
-    copy(c.hello_frame, payload)
+    c.initialize_frame = make([]byte, len(payload), allocator)
+    copy(c.initialize_frame, payload)
     wire.emitter_destroy(&e)
 
     callbacks := ws.Callbacks {
@@ -228,11 +240,9 @@ client_open :: proc(
     return .None
 }
 
-// Send a typed request and register the completion its response is routed to.
-// Requires Ready. `on_response` fires exactly once with the matching response and may
-// be nil to discard it; the response is decoded and validated either way. `pending[id]`
-// is recorded and `next_request_id` advanced only after the transport accepts the
-// frame, so a failed send leaves no half-built state.
+// Send a typed request and register the completion its response routes to. Requires
+// Ready. `on_response` fires exactly once, or may be nil to discard the response, which
+// is decoded and validated either way. A failed send leaves no half-built state.
 client_send_request :: proc(
     c: ^Client,
     method: wire.Method_Name,
@@ -240,7 +250,7 @@ client_send_request :: proc(
     on_response: Response_Proc,
     user_data: rawptr = nil,
 ) -> (
-    wire.Request_Id,
+    u64,
     Protocol_Error,
 ) {
     assert(c != nil, "client_send_request needs a client")
@@ -249,7 +259,7 @@ client_send_request :: proc(
         return 0, .Not_Ready
     }
 
-    if u64(c.next_request_id) > wire.MAX_REQUEST_ID {
+    if c.next_request_id > wire.MAX_REQUEST_ID {
         return 0, .Request_Id_Exhausted
     }
 
@@ -258,7 +268,8 @@ client_send_request :: proc(
     }
 
     id := c.next_request_id
-    req := wire.request_build(id, method, params)
+    id_buf: [20]u8
+    req := wire.request_build(wire.request_id_from_u64(id, id_buf[:]), method, params)
     if wire.request_validate(req) != .None {
         return 0, .Bad_Frame
     }
@@ -274,7 +285,7 @@ client_send_request :: proc(
         return 0, .Ws_Error
     }
 
-    // Only now that the frame is queued: correlate the id and advance the counter.
+    // Correlate and advance only once the frame is queued.
     assert(id not_in c.pending, "request id reused while still outstanding")
     c.pending[id] = {
         method      = method,
@@ -301,12 +312,16 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     }
 
     switch header.kind {
-    case .Hello:
-        // A second hello after the connection is Ready is a protocol error.
-        return .Unexpected_Hello
-
     case .Response, .Error:
-        req, ok := c.pending[header.id]
+        // The driver only originates numeric ids, so an echo that is not one cannot
+        // correlate: the peer altered it.
+        id, numeric := wire.request_id_to_u64(header.id)
+
+        if !numeric {
+            return .Decode_Failed
+        }
+
+        req, ok := c.pending[id]
 
         // A success result needs the pending method to type it; an unknown id can't be
         // decoded. Error objects are method-agnostic, so an uncorrelated one is still
@@ -322,7 +337,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         // Consume the correlation before decoding: this response answers the request
         // exactly once, whether or not the frame turns out to be well-formed.
         if ok {
-            delete_key(&c.pending, header.id)
+            delete_key(&c.pending, id)
         }
 
         // Fresh decoder over the whole frame: `response_from_reader` opens the object
@@ -345,22 +360,35 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             req.on_response(c, resp, req.user_data)
         }
 
+        if c.initialize_error != .None {
+            err := c.initialize_error
+            c.initialize_error = .None
+
+            return err
+        }
+
         return .None
 
-    case .Broadcast:
-        name, known := wire.broadcast_name_from_wire(header.name)
+    case .Notification:
+        // Nothing is pushed before the handshake completes.
+        if c.state != .Ready {
+            return .Bad_Initialize
+        }
+
+        _, known := wire.broadcast_name_from_wire(header.method)
         if !known {
-            // Route an unknown name from the header without reading its payload; trailing
-            // bytes are therefore not rejected here as they are on the decoded paths.
+            // Route an unknown method from the header without reading its payload;
+            // trailing bytes are therefore not rejected here as they are on the
+            // decoded paths.
             if c.cbs.on_unknown_broadcast != nil {
-                c.cbs.on_unknown_broadcast(c, header.name)
+                c.cbs.on_unknown_broadcast(c, header.method)
             }
 
             return .None
         }
 
         d := wire.decoder_init(string(data), sa)
-        bc, derr := wire.broadcast_from_reader(&d)
+        bc, derr := wire.notification_from_reader(&d)
         if derr != .None {
             return .Decode_Failed
         }
@@ -369,7 +397,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             return .Decode_Failed
         }
 
-        if wire.broadcast_validate(bc) != .None {
+        if wire.notification_validate(bc) != .None {
             return .Decode_Failed
         }
 
@@ -383,26 +411,23 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     return .None
 }
 
-// Retain the server `hello` and reach Ready; the transport caller closes on any
-// returned error.
-client_handle_hello :: proc(c: ^Client, data: []byte) -> Protocol_Error {
-    assert(c != nil && c.state == .Awaiting_Hello, "hello handled outside Awaiting_Hello")
+// Reach Ready from the `initialize` response. Registered as that request's
+// completion, so decode and validation already happened on the shared path.
+client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: rawptr) {
+    assert(c != nil && c.state == .Awaiting_Initialize, "initialize completed outside Awaiting_Initialize")
 
-    sa := mem.dynamic_arena_allocator(&c.scratch)
-    defer free_all(sa)
+    ok, is_ok := resp.(wire.Response_Ok)
 
-    d := wire.decoder_init(string(data), sa)
-    hello, derr := wire.server_hello_from_reader(&d)
-    if derr != .None {
-        return .Bad_Hello
+    if !is_ok {
+        c.initialize_error = .Bad_Initialize
+        return
     }
 
-    if wire.dec_finish(&d) != .None {
-        return .Bad_Hello
-    }
+    hello, is_hello := ok.result.(wire.Initialize_Result)
 
-    if wire.server_hello_validate(hello) != .None {
-        return .Bad_Hello
+    if !is_hello {
+        c.initialize_error = .Bad_Initialize
+        return
     }
 
     // Retain the scalar snapshot by value; clone the one borrowed string we keep, so
@@ -410,7 +435,8 @@ client_handle_hello :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     assert(c.daemon_version == "", "daemon version retained twice")
     daemon_version, aerr := strings.clone(hello.daemon.version, c.allocator)
     if aerr != nil {
-        return .Out_Of_Memory
+        c.initialize_error = .Out_Of_Memory
+        return
     }
 
     c.protocol = hello.protocol
@@ -423,8 +449,6 @@ client_handle_hello :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     if c.cbs.on_ready != nil {
         c.cbs.on_ready(c)
     }
-
-    return .None
 }
 
 // Begin a graceful close with `code`. The terminal `on_close` fires once the close
@@ -482,9 +506,9 @@ client_free_owned :: proc(c: ^Client) {
     delete(c.pending)
     mem.dynamic_arena_destroy(&c.scratch)
 
-    if c.hello_frame != nil {
-        delete(c.hello_frame, c.allocator)
-        c.hello_frame = nil
+    if c.initialize_frame != nil {
+        delete(c.initialize_frame, c.allocator)
+        c.initialize_frame = nil
     }
 
     if len(c.daemon_version) > 0 {
@@ -499,20 +523,28 @@ client_free_owned :: proc(c: ^Client) {
 // cannot capture). Control frames (Ping/Pong/Close) are handled inside the transport
 // and never surface here.
 
-// Transport is Open: advance to Awaiting_Hello and send the pre-built `client.hello`.
+// Transport is Open: advance to Awaiting_Initialize and send the pre-built `initialize` request.
 ws_on_open :: proc(wsc: ^ws.Client) {
     assert(wsc != nil && wsc.user_data != nil, "transport open lost its protocol client")
 
     c := (^Client)(wsc.user_data)
     assert(&c.sock == wsc && c.state == .Connecting, "transport open crossed client ownership")
-    c.state = .Awaiting_Hello
+    c.state = .Awaiting_Initialize
 
-    send_err := ws.client_send_text(&c.sock, c.hello_frame)
-    delete(c.hello_frame, c.allocator)
-    c.hello_frame = nil
+    send_err := ws.client_send_text(&c.sock, c.initialize_frame)
+    delete(c.initialize_frame, c.allocator)
+    c.initialize_frame = nil
     if send_err != .None {
         c.state = .Closing
         ws.client_abort(&c.sock, send_err)
+        return
+    }
+
+    // Correlate only once the frame is queued, as `client_send_request` does. The
+    // handshake then routes through the one response path.
+    c.pending[INITIALIZE_REQUEST_ID] = {
+        method      = .Initialize,
+        on_response = client_on_initialize_result,
     }
 }
 
@@ -523,26 +555,20 @@ ws_on_message :: proc(wsc: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
     c := (^Client)(wsc.user_data)
     assert(&c.sock == wsc, "transport message crossed client ownership")
 
-    // Frames only matter while awaiting the hello or routing; ignore anything that
-    // arrives while connecting, closing, or closed.
-    if c.state != .Awaiting_Hello && c.state != .Ready {
+    // Frames only matter in Awaiting_Initialize (the initialize response) or Ready; ignore
+    // anything that arrives while connecting, closing, or closed.
+    if c.state != .Awaiting_Initialize && c.state != .Ready {
         return
     }
 
     switch kind {
     case .Text:
-        if c.state == .Awaiting_Hello {
-            if err := client_handle_hello(c, data); err != .None {
-                client_abort(c, err)
-            }
-        } else {
-            err := client_handle_text(c, data)
+        err := client_handle_text(c, data)
 
-            // A per-frame diagnostic keeps the connection; a protocol error closes it.
-            #partial switch err {
-            case .Unexpected_Hello, .Decode_Failed:
-                client_abort(c, err)
-            }
+        // A per-frame diagnostic keeps the connection; a protocol error closes it.
+        #partial switch err {
+        case .Decode_Failed, .Bad_Initialize, .Out_Of_Memory:
+            client_abort(c, err)
         }
 
     case .Binary:

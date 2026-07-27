@@ -635,9 +635,8 @@ user_message_source_clone :: proc(self: User_Message_Source, allocator := contex
     return nil
 }
 
-// NOTE: Compaction_Reason and its wire table live in session.zig (source of
-// truth) and are defined in session.odin; Compaction_Message references them
-// directly from this same package.
+// NOTE: Compaction_Reason and its wire table live in session.odin (source of
+// truth); Compaction_Message references them directly from this same package.
 
 // ---------------------------------------------------------------------------
 // Message: user | assistant | compaction

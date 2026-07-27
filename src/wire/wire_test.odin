@@ -4,19 +4,22 @@ import "core:testing"
 
 @(test)
 test_error_code_roundtrip :: proc(t: ^testing.T) {
-    testing.expect_value(t, error_code_to_wire(.Session_Busy), "session_busy")
+    testing.expect_value(t, error_code_to_number(.Session_Busy), i32(-31015))
 
-    code, ok := error_code_from_wire("stale_cursor")
-    testing.expect(t, ok, "known wire code should map back")
+    code, ok := error_code_from_number(-31002)
+    testing.expect(t, ok, "known wire number should map back")
     testing.expect_value(t, code, Error_Code.Stale_Cursor)
 
-    _, unknown := error_code_from_wire("not_a_real_code")
-    testing.expect(t, !unknown, "unknown wire code must not map")
+    _, unknown := error_code_from_number(-31999)
+    testing.expect(t, !unknown, "unknown wire number must not map")
 
-    overloaded, overloaded_ok := error_code_from_wire("overloaded")
-    testing.expect(t, overloaded_ok, "overloaded wire code should map back")
-    testing.expect_value(t, overloaded, Error_Code.Overloaded)
-    testing.expect_value(t, error_code_to_wire(.Overloaded), "overloaded")
+    // The four codes that carry JSON-RPC's reserved values.
+    testing.expect_value(t, error_code_to_number(.Bad_Protocol), i32(-32600))
+    testing.expect_value(t, error_code_to_number(.Unknown_Method), i32(-32601))
+    testing.expect_value(t, error_code_to_number(.Bad_Request), i32(-32602))
+    testing.expect_value(t, error_code_to_number(.Internal), i32(-32603))
+
+    testing.expect_value(t, error_code_to_name(.Overloaded), "overloaded")
 }
 
 @(test)
@@ -43,17 +46,17 @@ test_parse_rejects_trailing_bytes :: proc(t: ^testing.T) {
     // rejected rather than silently dropped (dec_finish asserts end-of-input).
     defer free_all(context.temp_allocator)
     {
-        d := decoder_init(`{"type":"request"}{"type":"request"}`, context.temp_allocator)
+        d := decoder_init(`{"jsonrpc":"2.0"}{"jsonrpc":"2.0"}`, context.temp_allocator)
         _ = dec_skip(&d)
         testing.expect(t, dec_finish(&d) == .Bad_Frame_Type, "trailing value must be rejected")
     }
     {
-        d := decoder_init(`{"type":"request"} garbage`, context.temp_allocator)
+        d := decoder_init(`{"jsonrpc":"2.0"} garbage`, context.temp_allocator)
         _ = dec_skip(&d)
         testing.expect(t, dec_finish(&d) == .Bad_Frame_Type, "trailing junk must be rejected")
     }
     {
-        d := decoder_init(`{"type":"request"}`, context.temp_allocator)
+        d := decoder_init(`{"jsonrpc":"2.0"}`, context.temp_allocator)
         testing.expect(t, dec_skip(&d) == .None, "a single well-formed value still parses")
         testing.expect(t, dec_finish(&d) == .None, "single value has no trailing bytes")
     }

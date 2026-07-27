@@ -7,18 +7,25 @@ type's `*_clone(value, allocator)` procedure. The codec is streaming and
 token-based (no intermediate value tree), and the closed sets — methods,
 broadcasts, union arms, enum values — stay closed.
 
+Framing is JSON-RPC 2.0. Requests and broadcasts share one `method` namespace;
+broadcasts are notifications (no `id`), so nothing replies to them. Batching is
+not supported, and the daemon never sends a request to the client. Everything
+JSON-RPC leaves unspecified — ordering, replay, subscription gating,
+droppability — is ours: see `Seq`, `session.resync`, and `broadcast_name_class`.
+
 The package is layered as:
 
   - `constants.odin`: `PROTOCOL_VERSION`, `LIMITS`, and `CLOSE` — the protocol
     version, shared bounds, and close codes.
   - `ids.odin`: identifier types. Global durable ids (session, workspace, job,
     rule) are fixed 16-byte lowercase hex; session-scoped ids (message, run,
-    input, …) are `u64` identity keys, not indices.
-  - `common.odin`: request-failure `Error_Code` and the `Error_Object` carried
-    by a failed response.
-  - `frames.odin`: the top-level frame shells — `Client_Frame` (`client.hello`
-    or `request`), and the server `Response` / `Broadcast` / `hello`. Each
-    shell emits its discriminator first.
+    input, …) are `u64` identity keys, not indices. `Request_Id` is the opaque
+    verbatim JSON token of a correlation id, echoed unparsed.
+  - `common.odin`: request-failure `Error_Code`, its durable JSON-RPC `code`
+    numbers, and the `Error_Object` carried by a failed response.
+  - `frames.odin`: the top-level frame shells — `Request`, `Response`
+    (`result` xor `error`), and `Notification` — plus the streaming header scan
+    that classifies a server frame by which members are present.
   - `methods.odin`: the closed `Method_Name` enum and the typed
     `Request_Params` / `Response_Result` unions keyed off it.
   - `broadcasts.odin`: the closed `Broadcast_Name` enum, the `Broadcast_Data`
@@ -31,8 +38,8 @@ The package is layered as:
     discards unknown fields or unmaterialized payloads without building a tree.
   - `validate.odin`: `Validation_Error` and the `@bounded` / `@fixed` length
     and cross-field checks shared by every `*_validate`.
-  - Domain shape files — `client_hello.odin`, `server_hello.odin`,
-    `catalog.odin`, `session.odin`, `transcript.odin`, `run.odin`,
+  - Domain shape files — `initialize.odin`, `catalog.odin`, `session.odin`,
+    `transcript.odin`, `run.odin`,
     `content.odin`, `input.odin`, `tool` state, `permission.odin`,
     `workspace.odin`, `cron.odin`, `notice.odin`, `view.odin` — each holds the
     types, `*_emit`, `*_from_reader`, `*_validate`, and `*_clone` for one area

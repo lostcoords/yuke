@@ -83,9 +83,69 @@ Error_Code :: enum {
     Overloaded,
 }
 
-// Error_Code <-> wire string, indexed by the enum so a missing mapping is visible.
+// Error_Code -> JSON-RPC `error.code`, indexed by the enum so a missing mapping is
+// visible. Numbers are durable: never renumber, append from -31022.
+//
+// Four carry JSON-RPC's reserved values, which ACP reuses unchanged. Domain codes
+// sit at -31000 and down: outside the reserved `-32768..-32000` block, clear of
+// LSP's `-32899..-32800`, and clear of ACP's own (see ACP_RESERVED), so a bridge
+// passes them through ACP's open "Other" arm rather than renumbering.
 @(rodata)
-error_code_wire := [Error_Code]string {
+error_code_number := [Error_Code]i32 {
+    .Bad_Request                = -32602,
+    .Bad_Protocol               = -32600,
+    .Unknown_Method             = -32601,
+    .Internal                   = -32603,
+    .Unknown_Session            = -31000,
+    .Unknown_Workspace          = -31001,
+    .Stale_Cursor               = -31002,
+    .Unknown_Message            = -31003,
+    .Unknown_Part               = -31004,
+    .Unknown_Input              = -31005,
+    .Unknown_Config_Rev         = -31006,
+    .Unknown_Job                = -31007,
+    .Job_Busy                   = -31008,
+    .Unknown_Skill              = -31009,
+    .Input_Already_Started      = -31010,
+    .Queue_Full                 = -31011,
+    .Run_Mismatch               = -31012,
+    .Permission_Unknown         = -31013,
+    .Permission_Already_Decided = -31014,
+    .Session_Busy               = -31015,
+    .Session_Has_Children       = -31016,
+    .Runtime_Failed             = -31017,
+    .Invalid_Patch              = -31018,
+    .Unsupported_Model          = -31019,
+    .Unsupported_Reasoning      = -31020,
+    .Overloaded                 = -31021,
+}
+
+// Codes ACP assigns beyond the JSON-RPC reserved set. This protocol defines no
+// equivalent — authorization is a front-door concern, cancellation is a method —
+// so they stay unclaimed and no code means two things across the two protocols.
+@(rodata)
+ACP_RESERVED := [?]i32{-32000, -32002, -32800}
+
+// Wire `code` number for an error code.
+error_code_to_number :: proc(c: Error_Code) -> i32 {
+    return error_code_number[c]
+}
+
+// Error code for a wire `code` number; ok is false for an unrecognized number.
+error_code_from_number :: proc(n: i32) -> (Error_Code, bool) {
+    for c in Error_Code {
+        if error_code_number[c] == n {
+            return c, true
+        }
+    }
+
+    return .Internal, false
+}
+
+// Error_Code -> diagnostic name. NOT a wire form since `code` became an integer;
+// this supplies readable logs and the default `error.message` text.
+@(rodata)
+error_code_name := [Error_Code]string {
     .Bad_Request                = "bad_request",
     .Bad_Protocol               = "bad_protocol",
     .Unknown_Method             = "unknown_method",
@@ -114,14 +174,9 @@ error_code_wire := [Error_Code]string {
     .Overloaded                 = "overloaded",
 }
 
-// Wire string for an error code.
-error_code_to_wire :: proc(c: Error_Code) -> string {
-    return error_code_wire[c]
-}
-
-// Error code for a wire string; ok is false for an unknown code.
-error_code_from_wire :: proc(s: string) -> (Error_Code, bool) {
-    return enum_from_wire(error_code_wire, s)
+// Diagnostic name for an error code.
+error_code_to_name :: proc(c: Error_Code) -> string {
+    return error_code_name[c]
 }
 
 // Request failure details. Non-owning.
@@ -155,7 +210,19 @@ error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Valida
 
         switch k {
         case "code":
-            out.code = dec_enum(d, error_code_wire) or_return
+            n := dec_i64(d) or_return
+
+            if n < i64(min(i32)) || n > i64(max(i32)) {
+                return {}, .Out_Of_Range
+            }
+
+            code, known := error_code_from_number(i32(n))
+
+            if !known {
+                return {}, .Mismatched_Payload
+            }
+
+            out.code = code
             seen += {.Code}
 
         case "message":
@@ -177,7 +244,7 @@ error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Valida
 // Write an error object.
 error_object_emit :: proc(e: ^Emitter, self: Error_Object) {
     object_begin(e)
-    field_string(e, "code", error_code_to_wire(self.code))
+    field_i64(e, "code", i64(error_code_to_number(self.code)))
     field_string(e, "message", self.message)
     object_end(e)
 }

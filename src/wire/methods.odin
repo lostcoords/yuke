@@ -2,6 +2,10 @@ package wire
 
 // Closed enum of RPC method names. Source of truth for the method set.
 Method_Name :: enum {
+    // Negotiate the protocol version and exchange identity. Must be the first
+    // request on a connection, and is the only one accepted before Ready.
+    Initialize,
+
     // Read a bounded daemon-ordered session-index page.
     Session_List,
 
@@ -94,6 +98,7 @@ Method_Name :: enum {
 // visible. The dotted wire names live only here.
 @(rodata)
 method_name_wire := [Method_Name]string {
+    .Initialize           = "initialize",
     .Session_List         = "session.list",
     .Session_Create       = "session.create",
     .Session_Patch        = "session.patch",
@@ -286,6 +291,7 @@ cron_job_result_validate :: proc(self: Cron_Job_Result) -> Validation_Error {
 
 // Runtime params payload tagged by the same enum as `Method_Name`.
 Request_Params :: union {
+    Initialize_Params,
     Session_List_Params,
     Create_Session,
     Session_Patch_Params,
@@ -319,6 +325,7 @@ Request_Params :: union {
 
 // Runtime result payload tagged by the request method that produced it.
 Response_Result :: union {
+    Initialize_Result,
     Session_List_Result,
     Session_Result,
     Session_Patch_Result,
@@ -345,6 +352,9 @@ Response_Result :: union {
 // Serialize just the params object, not the method tag.
 request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     switch p in params {
+    case Initialize_Params:
+        initialize_params_emit(e, p)
+
     case Session_List_Params:
         session_list_params_emit(e, p)
 
@@ -437,6 +447,9 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
 // Serialize just the result object, not the method tag.
 response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
     switch r in result {
+    case Initialize_Result:
+        initialize_result_emit(e, r)
+
     case Session_List_Result:
         session_list_result_emit(e, r)
 
@@ -505,6 +518,9 @@ response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
 // Validate the active params variant, if it defines `validate`.
 request_params_validate :: proc(params: Request_Params) -> Validation_Error {
     #partial switch p in params {
+    case Initialize_Params:
+        return initialize_params_validate(p)
+
     case Session_List_Params:
         return session_list_params_validate(p)
 
@@ -560,6 +576,9 @@ request_params_validate :: proc(params: Request_Params) -> Validation_Error {
 // Validate the active result variant, if it defines `validate`.
 response_result_validate :: proc(result: Response_Result) -> Validation_Error {
     #partial switch r in result {
+    case Initialize_Result:
+        return initialize_result_validate(r)
+
     case Session_List_Result:
         return session_list_result_validate(r)
 
@@ -898,6 +917,9 @@ request_params_from_reader :: proc(
     err: Validation_Error,
 ) {
     switch method {
+    case .Initialize:
+        params = initialize_params_from_reader(d) or_return
+
     case .Session_List:
         params = session_list_params_from_reader(d) or_return
 
@@ -998,6 +1020,9 @@ response_result_from_reader :: proc(
     err: Validation_Error,
 ) {
     switch method {
+    case .Initialize:
+        result = initialize_result_from_reader(d) or_return
+
     case .Session_List:
         result = session_list_result_from_reader(d) or_return
 

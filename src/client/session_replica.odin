@@ -139,7 +139,7 @@ Resync_Buffer :: struct {
     arena:    mem.Dynamic_Arena,
 
     // Captured broadcasts, arrival order; backed by `arena`.
-    events:   [dynamic]wire.Broadcast,
+    events:   [dynamic]wire.Notification,
 
     // Running total of cloned broadcast bytes; the byte-cap backstop (no single "used"
     // field on a Dynamic_Arena).
@@ -155,9 +155,9 @@ Permission_Locator :: struct {
     part_id:    wire.Part_Id,
 }
 
-// Replica-local pending-permission view. The simplified wire no longer carries a pending
-// permission in resync, so this is derived from the active draft's tool state. All
-// borrowed fields point into the draft arena and die with the draft.
+// Replica-local pending-permission view. The resync snapshot carries no pending-permission
+// field, so this is derived from the active draft's tool state. All borrowed fields point
+// into the draft arena and die with the draft.
 Pending_Permission_View :: struct {
     message_id:      wire.Message_Id,
     part_id:         wire.Part_Id,
@@ -1122,12 +1122,12 @@ evict_oldest_if_full :: proc(self: ^Session_Replica) {
 // gating or buffering, so they can neither advance the sequence nor enter the buffer.
 replica_apply_broadcast :: proc(
     self: ^Session_Replica,
-    bc: wire.Broadcast,
+    bc: wire.Notification,
 ) -> (
     res: Apply_Result,
     err: Replica_Error,
 ) {
-    sid, ok := replica_domain_session_id(bc.data)
+    sid, ok := replica_domain_session_id(bc.params)
     if !ok || sid != self.session_id {
         return {kind = .Ignored}, .None
     }
@@ -1138,7 +1138,7 @@ replica_apply_broadcast :: proc(
     }
 
     // Durable events gate on the per-session sequence; live events fold directly.
-    if seq, has_seq := wire.broadcast_data_seq(bc.data).?; has_seq {
+    if seq, has_seq := wire.broadcast_data_seq(bc.params).?; has_seq {
         if seq <= self.base_seq {
             return {kind = .Ignored}, .None // stale, already represented
         }
@@ -1164,11 +1164,11 @@ replica_apply_broadcast :: proc(
 }
 
 // Dispatch a contiguous durable broadcast to its state handler. Only the five durable-seq
-// arms reach here (the caller gated on `broadcast_data_seq`). The former
-// `run.done`/`run.canceled`/`run.failed` broadcasts are now the single `Run_Done_Data`
-// arm, which clears a pending compaction keyed by the terminal run unconditionally.
-apply_durable :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (Apply_Result, Replica_Error) {
-    #partial switch v in bc.data {
+// arms reach here (the caller gated on `broadcast_data_seq`). `Run_Done_Data` covers every
+// run outcome (completed, canceled, or failed) and clears a pending compaction keyed by the
+// terminal run unconditionally.
+apply_durable :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Result, Replica_Error) {
+    #partial switch v in bc.params {
     case wire.Message_Committed_Data:
         return replica_on_committed(self, v)
 
@@ -1196,8 +1196,8 @@ apply_durable :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (Apply_Resu
 
 // Dispatch a live broadcast to its lifecycle handler. `session.activity` replaces the
 // pending-compaction slot in place (it carries no sequence).
-apply_live :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (Apply_Result, Replica_Error) {
-    #partial switch v in bc.data {
+apply_live :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Result, Replica_Error) {
+    #partial switch v in bc.params {
     case wire.Message_Started_Data:
         return replica_on_started(self, v)
 
@@ -1332,7 +1332,7 @@ replica_restart_resync :: proc(self: ^Session_Replica) -> Replica_Error {
 }
 
 // Start a resync and capture the event that revealed the gap.
-gap_resync :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (res: Apply_Result, err: Replica_Error) {
+gap_resync :: proc(self: ^Session_Replica, bc: wire.Notification) -> (res: Apply_Result, err: Replica_Error) {
     replica_begin_resync(self) or_return
     _ = buffer_event(self, bc) or_return
 
@@ -1342,7 +1342,7 @@ gap_resync :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (res: Apply_Re
 // Capture a broadcast into the resync buffer, honoring the event-count and byte caps.
 // Crossing either cap drops the whole prefix and keeps buffering into a fresh empty arena
 // with `overflow` set, so the eventual install forces another resync.
-buffer_event :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (Apply_Result, Replica_Error) {
+buffer_event :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Result, Replica_Error) {
     buf := self.resync
 
     if buf.overflow {
@@ -1357,7 +1357,7 @@ buffer_event :: proc(self: ^Session_Replica, bc: wire.Broadcast) -> (Apply_Resul
     }
 
     arena_alloc := mem.dynamic_arena_allocator(&buf.arena)
-    cloned := wire.broadcast_clone(bc, arena_alloc)
+    cloned := wire.notification_clone(bc, arena_alloc)
 
     if _, aerr := append(&buf.events, cloned); aerr != nil {
         return {}, .Out_Of_Memory
@@ -1387,11 +1387,11 @@ resync_buffer_reset_overflow :: proc(self: ^Session_Replica, buf: ^Resync_Buffer
 }
 
 // Serialized byte size of a broadcast, used as the resync byte-cap measure.
-broadcast_size_estimate :: proc(bc: wire.Broadcast) -> int {
+broadcast_size_estimate :: proc(bc: wire.Notification) -> int {
     e: wire.Emitter
     wire.emitter_init(&e, context.allocator)
     defer wire.emitter_destroy(&e)
-    wire.broadcast_emit(&e, bc)
+    wire.notification_emit(&e, bc)
 
     return len(wire.to_string(&e))
 }
@@ -1399,10 +1399,10 @@ broadcast_size_estimate :: proc(bc: wire.Broadcast) -> int {
 // --- resync install and replay ---
 
 // Reconstruct a mid-flight draft from a resync snapshot so subsequent deltas resume at the
-// right offset. Metadata comes from the draft message itself (the simplified wire's
-// `Active_Draft` is just `{message}`), and each part is copied into the draft arena. A part
-// whose ordinal does not equal its index is a malformed snapshot. On any failure the draft
-// is fully rolled back and nil is returned.
+// right offset. Metadata comes from the draft message itself (`Active_Draft` is just
+// `{message}`), and each part is copied into the draft arena. A part whose ordinal does not
+// equal its index is a malformed snapshot. On any failure the draft is fully rolled back and
+// nil is returned.
 draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (^Draft_Replica, Replica_Error) {
     msg := src.message
 
@@ -1469,10 +1469,9 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
     return d, .None
 }
 
-// Recompute the pending-permission locator from a freshly installed draft. The simplified
-// wire no longer carries a pending permission in the resync snapshot, so it is derived from
-// the draft's own tool state: the first tool part in `Tool_State_Waiting_Permission` with
-// options present.
+// Recompute the pending-permission locator from a freshly installed draft. The resync
+// snapshot carries no pending-permission field, so it is derived from the draft's own tool
+// state: the first tool part in `Tool_State_Waiting_Permission` with options present.
 derive_pending_permission :: proc(active: ^Draft_Replica) -> Maybe(Permission_Locator) {
     if active == nil {
         return nil

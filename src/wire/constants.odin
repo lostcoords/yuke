@@ -68,10 +68,10 @@ Limits :: struct {
     // Max durable jobs accepted by one local daemon.
     max_cron_jobs:                       int,
 
-    // Max workspaces sent in hello.
+    // Max workspaces sent in the initialize result.
     max_workspaces:                      int,
 
-    // Max profiles sent in hello.
+    // Max profiles sent in the initialize result.
     max_profiles:                        int,
 
     // Max models sent in one catalog snapshot.
@@ -95,7 +95,8 @@ Limits :: struct {
     // Max rule patterns created by one permission option.
     max_permission_creates:              int,
 
-    // Bound on the client-supplied permission rejection message (§4a). Peer input is capped; the transcript-side reason stays unbounded daemon-side.
+    // Bound on the client-supplied permission rejection message. Peer input is
+    // capped; the transcript-side reason stays unbounded daemon-side.
     max_permission_reject_message_bytes: int,
 
     // Max bytes in ActivityState.retrying.message.
@@ -165,8 +166,18 @@ LIMITS :: Limits {
     dead_connection_ms                  = 90_000,
 }
 
-// Max valid request/response id. JSON numbers must stay within `2^53 - 1`
-// (safe integer range) per `specs/protocol.md`.
+// The `jsonrpc` member every frame carries. Exactly this string; anything else,
+// including absent, is a framing violation.
+JSONRPC_VERSION :: "2.0"
+
+// Max byte length of a correlation id's verbatim JSON token. A peer's id is
+// opaque to us (JSON-RPC permits string, number, or null), so only its size is
+// bounded.
+MAX_REQUEST_ID_BYTES :: 64
+
+// Ceiling on the ids this implementation *originates*. Our own ids are JSON
+// numbers, which must stay within `2^53 - 1` (safe integer range); an id a peer
+// sends us is bounded by MAX_REQUEST_ID_BYTES instead.
 MAX_REQUEST_ID :: 9007199254740991
 
 // Max value of every integer carried as a JSON number.
@@ -178,7 +189,7 @@ MAX_SESSION_REVISION :: 9007199254740991
 // Max daemon-lifetime cron-index revision. JSON safe integer range.
 MAX_CRON_REVISION :: 9007199254740991
 
-// WebSocket close codes. See protocol.md.
+// WebSocket close codes.
 Close_Codes :: struct {
     // Daemon is restarting or going down cleanly.
     shutting_down:        u16,

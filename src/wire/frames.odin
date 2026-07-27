@@ -1,13 +1,14 @@
 package wire
 
-// Client request frame with typed method params. The discriminator `type` is
-// written first, then `id`, then `method` before `params` so a streaming decoder
-// can resolve the params type before reading them.
-Request :: struct {
-    // Discriminator; must be `"request"`.
-    type:   string,
+// JSON-RPC 2.0 framing. `jsonrpc: "2.0"` is validated on decode and written from
+// `JSONRPC_VERSION` on emit, so it is never stored on a frame type. Emit order is
+// `jsonrpc`, `id`, then `method`/`result`/`error`; decoding is order-insensitive.
+// No batching (a top-level array is an Invalid Request), and no server-to-client
+// requests — server traffic is responses and notifications only.
 
-    // Client-generated correlation id.
+// Client request frame with typed method params.
+Request :: struct {
+    // Correlation id, echoed verbatim in the response.
     id:     Request_Id,
 
     // RPC method name.
@@ -17,17 +18,16 @@ Request :: struct {
     params: Request_Params,
 }
 
-// Build a typed request with the fixed discriminator.
+// Build a typed request.
 request_build :: proc(id: Request_Id, method: Method_Name, params: Request_Params) -> Request {
-    return Request{type = "request", id = id, method = method, params = params}
+    return Request{id = id, method = method, params = params}
 }
 
-// Write `type`, `id`, `method`, then `params` (omitted when the method's params
-// are all default).
+// Write a request; `params` is omitted when the method's params are all default.
 request_emit :: proc(e: ^Emitter, self: Request) {
     object_begin(e)
-    field_string(e, "type", self.type)
-    field_u64(e, "id", u64(self.id))
+    field_string(e, "jsonrpc", JSONRPC_VERSION)
+    field_request_id(e, "id", self.id)
     field_string(e, "method", method_name_to_wire(self.method))
 
     if !params_are_default(self.params) {
@@ -38,15 +38,9 @@ request_emit :: proc(e: ^Emitter, self: Request) {
     object_end(e)
 }
 
-// Verify discriminator, id range, and params bounds.
+// Verify the id shape and params bounds.
 request_validate :: proc(self: Request) -> Validation_Error {
-    if self.type != "request" {
-        return .Bad_Frame_Type
-    }
-
-    if u64(self.id) == 0 || u64(self.id) > MAX_REQUEST_ID {
-        return .Out_Of_Range
-    }
+    request_id_validate(self.id) or_return
 
     return request_params_validate(self.params)
 }
@@ -69,8 +63,8 @@ Response_Error :: struct {
     error: Error_Object,
 }
 
-// Server response frame. Success is the `"response"` frame; failure is the
-// `"error"` frame — the outcome is the frame `type`, not a boolean flag.
+// Server response frame. One frame shape carrying exactly one of `result` /
+// `error`; the outcome is which member is present.
 Response :: union {
     Response_Ok,
     Response_Error,
@@ -86,21 +80,20 @@ response_error_build :: proc(id: Request_Id, error: Error_Object) -> Response {
     return Response_Error{id = id, error = error}
 }
 
-// Write `type` first: a success frame `{"type":"response",…}` or an error frame
-// `{"type":"error",…}`.
+// Write a response: `jsonrpc`, `id`, then `result` or `error`, never both.
 response_emit :: proc(e: ^Emitter, self: Response) {
+    assert(self != nil, "a response frame carries either a result or an error")
     object_begin(e)
+    field_string(e, "jsonrpc", JSONRPC_VERSION)
 
     switch v in self {
     case Response_Ok:
-        field_string(e, "type", "response")
-        field_u64(e, "id", u64(v.id))
+        field_request_id(e, "id", v.id)
         key(e, "result")
         response_result_emit(e, v.result)
 
     case Response_Error:
-        field_string(e, "type", "error")
-        field_u64(e, "id", u64(v.id))
+        field_request_id(e, "id", v.id)
         key(e, "error")
         error_object_emit(e, v.error)
     }
@@ -108,20 +101,16 @@ response_emit :: proc(e: ^Emitter, self: Response) {
     object_end(e)
 }
 
-// Verify id range and result/error bounds.
+// Verify the id shape and result/error bounds.
 response_validate :: proc(self: Response) -> Validation_Error {
     switch v in self {
     case Response_Ok:
-        if u64(v.id) == 0 || u64(v.id) > MAX_REQUEST_ID {
-            return .Out_Of_Range
-        }
+        request_id_validate(v.id) or_return
 
         return response_result_validate(v.result)
 
     case Response_Error:
-        if u64(v.id) == 0 || u64(v.id) > MAX_REQUEST_ID {
-            return .Out_Of_Range
-        }
+        request_id_validate(v.id) or_return
 
         return error_object_validate(v.error)
     }
@@ -129,104 +118,106 @@ response_validate :: proc(self: Response) -> Validation_Error {
     return .None
 }
 
-// Server-pushed broadcast frame.
-Broadcast :: struct {
-    // Discriminator; must be `"broadcast"`.
-    type: string,
-
-    // Broadcast name.
-    name: Broadcast_Name,
+// Server-pushed notification: a request object with no `id`, so nothing replies.
+// Ordering, replay, gating, and droppability are ours — see `broadcast_name_class`,
+// `Seq`, and `session.resync`.
+Notification :: struct {
+    // Broadcast name, occupying the same `method` namespace as requests.
+    method: Broadcast_Name,
 
     // Typed broadcast payload.
-    data: Broadcast_Data,
+    params: Broadcast_Data,
 }
 
-// Build a broadcast frame with the fixed discriminator.
-broadcast_build :: proc(name: Broadcast_Name, data: Broadcast_Data) -> Broadcast {
-    return {type = "broadcast", name = name, data = data}
+// Build a notification frame.
+notification_build :: proc(method: Broadcast_Name, params: Broadcast_Data) -> Notification {
+    return {method = method, params = params}
 }
 
-// Write `type`, then `name`, then `data`.
-broadcast_emit :: proc(e: ^Emitter, self: Broadcast) {
+// Write a notification: `jsonrpc`, `method`, `params`. No `id`.
+notification_emit :: proc(e: ^Emitter, self: Notification) {
     object_begin(e)
-    field_string(e, "type", "broadcast")
-    field_string(e, "name", broadcast_name_to_wire(self.name))
-    key(e, "data")
-    broadcast_data_emit(e, self.data)
+    field_string(e, "jsonrpc", JSONRPC_VERSION)
+    field_string(e, "method", broadcast_name_to_wire(self.method))
+    key(e, "params")
+    broadcast_data_emit(e, self.params)
     object_end(e)
 }
 
-// Verify the broadcast payload bounds.
-broadcast_validate :: proc(self: Broadcast) -> Validation_Error {
-    return broadcast_data_validate(self.data)
+// Verify the notification payload bounds.
+notification_validate :: proc(self: Notification) -> Validation_Error {
+    return broadcast_data_validate(self.params)
 }
 
-// Deep-copy a broadcast frame into `allocator` to retain it past its decode arena.
-broadcast_clone :: proc(self: Broadcast, allocator := context.allocator) -> Broadcast {
-    return broadcast_build(self.name, broadcast_data_clone(self.data, allocator))
-}
-
-// First client frame on a connection, or a request.
-Client_Frame :: union {
-    Client_Hello,
-    Request,
-}
-
-// Write a client frame.
-client_frame_emit :: proc(e: ^Emitter, self: Client_Frame) {
-    switch v in self {
-    case Client_Hello:
-        client_hello_emit(e, v)
-
-    case Request:
-        request_emit(e, v)
-    }
+// Deep-copy a notification frame into `allocator` to retain it past its decode arena.
+notification_clone :: proc(self: Notification, allocator := context.allocator) -> Notification {
+    return notification_build(self.method, broadcast_data_clone(self.params, allocator))
 }
 
 // Which kind of server frame a received object is.
 Server_Frame_Kind :: enum {
-    // A `hello` snapshot.
-    Hello,
-
-    // A successful `response` frame.
+    // A response carrying `result`.
     Response,
 
-    // An `error` response frame.
+    // A response carrying `error`.
     Error,
 
-    // A `broadcast` frame.
-    Broadcast,
+    // A notification: `method` with no `id`.
+    Notification,
 }
 
 // Enough of a received server frame to dispatch it: its kind plus the id (for a
-// response/error) or the raw name (for a broadcast). The caller resolves the
-// pending request method from `id`, then types the body with response_from_value
-// / broadcast_from_value.
+// response) or the raw method name (for a notification). The caller resolves the
+// pending request method from `id`, then types the body with `response_from_reader`
+// / `notification_from_reader`, or drops an unknown notification untouched.
 Server_Frame_Header :: struct {
     // Which kind of frame this is.
-    kind: Server_Frame_Kind,
+    kind:   Server_Frame_Kind,
 
-    // Correlation id, for a response or error frame.
-    id:   Request_Id,
+    // Correlation id, for a response.
+    id:     Request_Id,
 
-    // Raw broadcast name, for a broadcast frame.
-    name: string,
+    // Raw method name, for a notification.
+    method: string,
 }
 
 // --- streaming decoders ---
 
-// Decode a request straight from the token stream. Resolve `method` with a scan first,
-// so `params` can be typed even when object members arrive in another order.
+// Consume a frame's opening `{`. A non-object root — notably a batch array — is a
+// framing violation rather than a payload mismatch.
+@(private)
+dec_frame_begin :: proc(d: ^Decoder) -> Validation_Error {
+    if dec_object_begin(d) != .None {
+        return .Bad_Frame_Type
+    }
+
+    return .None
+}
+
+// Read and verify the `jsonrpc` member's value.
+@(private)
+dec_jsonrpc :: proc(d: ^Decoder) -> Validation_Error {
+    s := dec_string(d) or_return
+
+    if s != JSONRPC_VERSION {
+        return .Bad_Frame_Type
+    }
+
+    return .None
+}
+
+// Decode a request straight from the token stream. Resolve `method` with a scan
+// first, so `params` can be typed even when object members arrive in another order.
 request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error) {
-    out.type = "request"
-    dec_object_begin(d) or_return
-    // Resolve `method` up front so `params` can be typed regardless of member order.
+    dec_frame_begin(d) or_return
     ms := dec_find_tag(d, "method") or_return
     method := enum_from_wire_checked(method_name_wire, ms) or_return
     out.method = method
 
     Field :: enum {
+        Jsonrpc,
         Id,
+        Method,
         Params,
     }
 
@@ -236,17 +227,23 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
         if done do break
 
         switch k {
-        case "type":
-            out.type = dec_string(d) or_return
+        case "jsonrpc":
+            if .Jsonrpc in seen do return {}, .Bad_Frame_Type
+            dec_jsonrpc(d) or_return
+            seen += {.Jsonrpc}
 
         case "id":
-            out.id = Request_Id(dec_u64(d) or_return)
+            if .Id in seen do return {}, .Bad_Frame_Type
+            out.id = Request_Id(dec_raw_scalar(d) or_return)
             seen += {.Id}
 
         case "method":
+            if .Method in seen do return {}, .Bad_Frame_Type
             dec_skip(d) or_return
+            seen += {.Method}
 
         case "params":
+            if .Params in seen do return {}, .Bad_Frame_Type
             out.params = request_params_from_reader(method, d) or_return
             seen += {.Params}
 
@@ -255,6 +252,12 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
         }
     }
 
+    if .Jsonrpc not_in seen {
+        return {}, .Bad_Frame_Type
+    }
+
+    // An id-less request is a notification, and this implementation defines none
+    // in the client-to-server direction.
     if .Id not_in seen {
         return {}, .Mismatched_Payload
     }
@@ -270,99 +273,19 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
     return out, .None
 }
 
-// Decode a response once the request method is known from the pending-id map. The
-// success frame is `"response"`; the failure frame is `"error"`.
+// Decode a response once the request method is known from the pending-id map.
+// Exactly one of `result` / `error` must be present.
 response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
-
-    switch tag {
-    case "response":
-        id: Request_Id
-        result: Response_Result
-
-        Field :: enum {
-            Id,
-            Result,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "id":
-                id = Request_Id(dec_u64(d) or_return)
-                seen += {.Id}
-
-            case "result":
-                result = response_result_from_reader(method, d) or_return
-                seen += {.Result}
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if seen != {.Id, .Result} {
-            return nil, .Mismatched_Payload
-        }
-
-        return Response_Ok{id = id, result = result}, .None
-
-    case "error":
-        id: Request_Id
-        eo: Error_Object
-
-        Field :: enum {
-            Id,
-            Err,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "id":
-                id = Request_Id(dec_u64(d) or_return)
-                seen += {.Id}
-
-            case "error":
-                eo = error_object_from_reader(d) or_return
-                seen += {.Err}
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if seen != {.Id, .Err} {
-            return nil, .Mismatched_Payload
-        }
-
-        return Response_Error{id = id, error = eo}, .None
-    }
-
-    return nil, .Mismatched_Payload
-}
-
-// Decode a broadcast straight from the token stream. `name` precedes `data`
-// (normative), so the typed payload is streamed once the name is known. An unknown
-// name is rejected; a receiver that skips unknown broadcasts uses
-// `server_frame_header_stream` to route before touching the payload.
-broadcast_from_reader :: proc(d: ^Decoder) -> (out: Broadcast, err: Validation_Error) {
-    out.type = "broadcast"
-    dec_object_begin(d) or_return
-    // Resolve `name` up front so `data` can be typed regardless of member order.
-    ns := dec_find_tag(d, "name") or_return
-    name := enum_from_wire_checked(broadcast_name_wire, ns) or_return
-    out.name = name
+    dec_frame_begin(d) or_return
+    id: Request_Id
+    result: Response_Result
+    eo: Error_Object
 
     Field :: enum {
-        Data,
+        Jsonrpc,
+        Id,
+        Result,
+        Err,
     }
 
     seen: bit_set[Field]
@@ -371,130 +294,110 @@ broadcast_from_reader :: proc(d: ^Decoder) -> (out: Broadcast, err: Validation_E
         if done do break
 
         switch k {
-        case "type":
-            ts := dec_string(d) or_return
+        case "jsonrpc":
+            if .Jsonrpc in seen do return nil, .Bad_Frame_Type
+            dec_jsonrpc(d) or_return
+            seen += {.Jsonrpc}
 
-            if ts != "broadcast" {
-                return {}, .Bad_Frame_Type
-            }
+        case "id":
+            if .Id in seen do return nil, .Bad_Frame_Type
+            id = Request_Id(dec_raw_scalar(d) or_return)
+            seen += {.Id}
 
-        case "name":
-            dec_skip(d) or_return
+        case "result":
+            if .Result in seen do return nil, .Bad_Frame_Type
+            result = response_result_from_reader(method, d) or_return
+            seen += {.Result}
 
-        case "data":
-            out.data = broadcast_data_from_reader(name, d) or_return
-            seen += {.Data}
+        case "error":
+            if .Err in seen do return nil, .Bad_Frame_Type
+            eo = error_object_from_reader(d) or_return
+            seen += {.Err}
 
         case:
             dec_skip(d) or_return
         }
     }
 
-    if .Data not_in seen {
+    if .Jsonrpc not_in seen {
+        return nil, .Bad_Frame_Type
+    }
+
+    if .Id not_in seen {
+        return nil, .Mismatched_Payload
+    }
+
+    switch seen & {.Result, .Err} {
+    case {.Result}:
+        return Response_Ok{id = id, result = result}, .None
+
+    case {.Err}:
+        return Response_Error{id = id, error = eo}, .None
+    }
+
+    return nil, .Mismatched_Payload
+}
+
+// Decode a notification straight from the token stream. `method` precedes `params`
+// (normative), so the typed payload is streamed once the name is known. An unknown
+// name is rejected; a receiver that skips unknown notifications uses
+// `server_frame_header_stream` to route before touching the payload.
+notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Validation_Error) {
+    dec_frame_begin(d) or_return
+    ms := dec_find_tag(d, "method") or_return
+    method := enum_from_wire_checked(broadcast_name_wire, ms) or_return
+    out.method = method
+
+    Field :: enum {
+        Jsonrpc,
+        Method,
+        Params,
+    }
+
+    seen: bit_set[Field]
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "jsonrpc":
+            if .Jsonrpc in seen do return {}, .Bad_Frame_Type
+            dec_jsonrpc(d) or_return
+            seen += {.Jsonrpc}
+
+        case "method":
+            if .Method in seen do return {}, .Bad_Frame_Type
+            dec_skip(d) or_return
+            seen += {.Method}
+
+        case "params":
+            if .Params in seen do return {}, .Bad_Frame_Type
+            out.params = broadcast_data_from_reader(method, d) or_return
+            seen += {.Params}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if .Jsonrpc not_in seen {
+        return {}, .Bad_Frame_Type
+    }
+
+    if .Params not_in seen {
         return {}, .Mismatched_Payload
     }
 
     return out, .None
 }
 
-// Decode a client frame (`client.hello` or `request`) straight from the token stream.
-client_frame_from_reader :: proc(d: ^Decoder) -> (out: Client_Frame, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
-
-    switch tag {
-    case "client.hello":
-        h: Client_Hello
-        h.type = "client.hello"
-        h.protocol = PROTOCOL_VERSION
-
-        Field :: enum {
-            Client,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "protocol":
-                h.protocol = u32(dec_u64(d) or_return)
-
-            case "client":
-                h.client = client_from_reader(d) or_return
-                seen += {.Client}
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if .Client not_in seen {
-            return nil, .Mismatched_Payload
-        }
-
-        return h, .None
-
-    case "request":
-        req: Request
-        req.type = "request"
-        // Resolve `method` up front so `params` can be typed regardless of order.
-        ms := dec_find_tag(d, "method") or_return
-        method := enum_from_wire_checked(method_name_wire, ms) or_return
-        req.method = method
-
-        Field :: enum {
-            Id,
-            Params,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "id":
-                req.id = Request_Id(dec_u64(d) or_return)
-                seen += {.Id}
-
-            case "method":
-                dec_skip(d) or_return
-
-            case "params":
-                req.params = request_params_from_reader(method, d) or_return
-                seen += {.Params}
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if .Id not_in seen {
-            return nil, .Mismatched_Payload
-        }
-
-        if .Params not_in seen {
-            if dp, has := default_params(method).?; has {
-                req.params = dp
-            } else {
-                return nil, .Mismatched_Payload
-            }
-        }
-
-        return req, .None
-    }
-
-    return nil, .Mismatched_Payload
-}
-
-// Tier-1 streaming header scan: read a server frame's kind and routing key (`id`
-// for a response/error, `name` for a broadcast) by streaming only the leading
-// keys, then STOP — the (possibly multi-MB) `result`/`data` is never materialized.
-// The caller resolves the pending method from `id`, then decodes the body with
-// `response_from_reader` / `broadcast_from_reader`, or drops an unknown broadcast
-// without ever touching its payload.
+// Tier-1 header scan: classify a server frame by which members are present and read
+// its routing key, without materializing the (possibly multi-MB) `result`/`params`.
+// The caller then resolves the pending method from `id` and decodes the body, or
+// drops an unknown notification untouched.
+//
+// Routes on member keys alone: a normative-order frame stops at `result`/`error`
+// without reading the payload. A payload-before-`id` peer costs one `dec_skip` walk.
 server_frame_header_stream :: proc(
     data: string,
     allocator := context.allocator,
@@ -503,54 +406,64 @@ server_frame_header_stream :: proc(
     err: Validation_Error,
 ) {
     d := decoder_init(data, allocator)
-    dec_object_begin(&d) or_return
-    // Frame member order is not significant; scan for `type` and the routing key so a
-    // non-first discriminator is still routed without materializing its payload.
-    // Header parsing deliberately translates a malformed/missing frame tag to the
-    // more specific public error instead of propagating Mismatched_Payload verbatim.
-    tag, terr := dec_find_tag(&d, "type")
+    dec_frame_begin(&d) or_return
+    has_id := false
+    has_jsonrpc := false
+    kind: Maybe(Server_Frame_Kind)
+    scan: for {
+        k, done := dec_key(&d) or_return
+        if done do break
 
-    if terr != .None {
+        // Skip after the exit check, so a routed payload is never walked.
+        skip_value := false
+
+        switch k {
+        case "jsonrpc":
+            dec_jsonrpc(&d) or_return
+            has_jsonrpc = true
+
+        case "id":
+            out.id = Request_Id(dec_raw_scalar(&d) or_return)
+            has_id = true
+
+        case "method":
+            out.method = dec_string(&d) or_return
+            kind = .Notification
+
+        case "result", "error":
+            kind = k == "result" ? Server_Frame_Kind.Response : Server_Frame_Kind.Error
+            skip_value = true
+
+        case:
+            skip_value = true
+        }
+
+        // A notification routes on `method` alone; a response also needs its id.
+        if seen_kind, ok := kind.?; ok && has_jsonrpc && (seen_kind == .Notification || has_id) {
+            break scan
+        }
+
+        if skip_value {
+            dec_skip(&d) or_return
+        }
+    }
+
+    if !has_jsonrpc {
         return {}, .Bad_Frame_Type
     }
 
-    switch tag {
-    case "hello":
-        out.kind = .Hello
-        return out, .None
+    resolved, ok := kind.?
 
-    case "response", "error":
-        out.kind = tag == "response" ? .Response : .Error
-        for {
-            k, kdone := dec_key(&d) or_return
-            if kdone do break
-
-            if k == "id" {
-                out.id = Request_Id(dec_u64(&d) or_return)
-                return out, .None
-            }
-
-            dec_skip(&d) or_return
-        }
-
-        return {}, .Mismatched_Payload
-
-    case "broadcast":
-        out.kind = .Broadcast
-        for {
-            k, kdone := dec_key(&d) or_return
-            if kdone do break
-
-            if k == "name" {
-                out.name = dec_string(&d) or_return
-                return out, .None
-            }
-
-            dec_skip(&d) or_return
-        }
-
-        return {}, .Mismatched_Payload
+    if !ok {
+        return {}, .Bad_Frame_Type
     }
 
-    return {}, .Bad_Frame_Type
+    // A response must correlate; a notification must not.
+    if (resolved == .Notification) == has_id {
+        return {}, .Bad_Frame_Type
+    }
+
+    out.kind = resolved
+
+    return out, .None
 }

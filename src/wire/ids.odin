@@ -1,5 +1,8 @@
 package wire
 
+import "core:strconv"
+import "core:strings"
+
 // @fixed 16
 // 16 lowercase hex chars. Doubles as an on-disk directory name.
 Session_Id :: distinct [16]u8
@@ -16,8 +19,10 @@ Job_Id :: distinct [16]u8
 // 16 lowercase hex chars. Identifies one remembered permission rule.
 Rule_Id :: distinct [16]u8
 
-// Client-generated request/response correlation id. JSON number, never a string.
-Request_Id :: distinct u64
+// @bounded MAX_REQUEST_ID_BYTES
+// Correlation id as its verbatim JSON token — `7`, `"abc"` with quotes, or `null`.
+// Opaque: JSON-RPC requires the response id to equal the request id.
+Request_Id :: distinct string
 
 // Session-scoped, daemon-minted, strictly increasing, never reused.
 Message_Id :: distinct u64
@@ -43,3 +48,61 @@ Cron_Revision :: distinct u64
 
 // Monotonic run-config revision within a session.
 Config_Rev :: distinct u64
+
+// Format an originated numeric id into `buf`, returning the token that borrows it.
+// `buf` must outlive the returned id; a 20-byte buffer holds any u64.
+request_id_from_u64 :: proc(n: u64, buf: []u8) -> Request_Id {
+    assert(len(buf) >= 20, "request id buffer must hold any u64")
+    assert(n <= MAX_REQUEST_ID, "originated request ids stay in the JSON safe integer range")
+
+    return Request_Id(strconv.write_uint(buf, n, 10))
+}
+
+// Parse an id token back to the number we originated; `ok` is false if it is not
+// a bare integer.
+request_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
+    i, parsed := strconv.parse_i64(string(id))
+
+    if !parsed || i < 0 || i > MAX_REQUEST_ID {
+        return 0, false
+    }
+
+    return u64(i), true
+}
+
+// Verify the token is one of JSON-RPC's permitted id forms and within its bound.
+request_id_validate :: proc(id: Request_Id) -> Validation_Error {
+    s := string(id)
+
+    if len(s) == 0 {
+        return .Mismatched_Payload
+    }
+
+    enforce_bounded(MAX_REQUEST_ID_BYTES, s) or_return
+
+    if s[0] == '"' {
+        if len(s) < 2 || s[len(s) - 1] != '"' {
+            return .Mismatched_Payload
+        }
+
+        return .None
+    }
+
+    if s == "null" {
+        return .None
+    }
+
+    // Must parse in full: the lexer accepts `1e`, which would echo as malformed JSON.
+    if _, ok := strconv.parse_f64(s); !ok {
+        return .Mismatched_Payload
+    }
+
+    return .None
+}
+
+// Write an id field verbatim, so the echo is byte-identical.
+field_request_id :: proc(e: ^Emitter, name: string, id: Request_Id) {
+    assert(request_id_validate(id) == .None, "emitted a correlation id that is not valid JSON")
+    key(e, name)
+    strings.write_string(&e.sb, string(id))
+}

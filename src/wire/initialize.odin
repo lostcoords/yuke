@@ -1,5 +1,138 @@
 package wire
 
+import "core:strings"
+
+// Connection-level client identity.
+Client :: struct {
+    // @bounded 64
+    // Client connection name (e.g. `"yuke-tui"`).
+    name:    string,
+
+    // @bounded 32
+    // Client build/version string.
+    version: string,
+}
+
+// Verify annotated field bounds.
+client_validate :: proc(self: Client) -> Validation_Error {
+    enforce_bounded(64, self.name) or_return
+
+    return enforce_bounded(32, self.version)
+}
+
+// Decode the client identity object straight from the token stream.
+client_from_reader :: proc(d: ^Decoder) -> (out: Client, err: Validation_Error) {
+    dec_object_begin(d) or_return
+
+    Field :: enum {
+        Name,
+        Version,
+    }
+
+    seen: bit_set[Field]
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "name":
+            out.name = dec_string(d) or_return
+            seen += {.Name}
+
+        case "version":
+            out.version = dec_string(d) or_return
+            seen += {.Version}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if seen != {.Name, .Version} {
+        return {}, .Mismatched_Payload
+    }
+
+    return out, .None
+}
+
+// Write the client identity object.
+client_emit :: proc(e: ^Emitter, self: Client) {
+    object_begin(e)
+    field_string(e, "name", self.name)
+    field_string(e, "version", self.version)
+    object_end(e)
+}
+
+// Deep-copy into `allocator`.
+client_clone :: proc(self: Client, allocator := context.allocator) -> Client {
+    return {name = strings.clone(self.name, allocator), version = strings.clone(self.version, allocator)}
+}
+
+// Params of the `initialize` request. Non-owning.
+Initialize_Params :: struct {
+    // Protocol version this client speaks. Must equal `PROTOCOL_VERSION`.
+    protocol: u32,
+
+    // Connection-level client identity.
+    client:   Client,
+}
+
+// Build initialize params at the current protocol version.
+initialize_params_build :: proc(client: Client) -> Initialize_Params {
+    return Initialize_Params{protocol = PROTOCOL_VERSION, client = client}
+}
+
+// Verify protocol and annotated field bounds.
+initialize_params_validate :: proc(self: Initialize_Params) -> Validation_Error {
+    if self.protocol != PROTOCOL_VERSION {
+        return .Unsupported_Protocol
+    }
+
+    return client_validate(self.client)
+}
+
+// Decode straight from the token stream. `protocol` defaults when absent.
+initialize_params_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Params, err: Validation_Error) {
+    out.protocol = PROTOCOL_VERSION
+
+    Field :: enum {
+        Client,
+    }
+
+    seen: bit_set[Field]
+    dec_object_begin(d) or_return
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "protocol":
+            out.protocol = u32(dec_u64(d) or_return)
+
+        case "client":
+            out.client = client_from_reader(d) or_return
+            seen += {.Client}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if .Client not_in seen {
+        return {}, .Mismatched_Payload
+    }
+
+    return out, .None
+}
+
+// Write `protocol`, then the client object.
+initialize_params_emit :: proc(e: ^Emitter, self: Initialize_Params) {
+    object_begin(e)
+    field_u64(e, "protocol", u64(self.protocol))
+    key(e, "client")
+    client_emit(e, self.client)
+    object_end(e)
+}
 
 // Daemon identity and clock. Non-owning.
 Daemon_Info :: struct {
@@ -7,7 +140,7 @@ Daemon_Info :: struct {
     // Daemon build/version string.
     version:       string,
 
-    // Daemon wall-clock epoch ms at hello send time.
+    // Daemon wall-clock epoch ms at initialize time.
     server_now_ms: u64,
 }
 
@@ -25,19 +158,19 @@ daemon_info_emit :: proc(e: ^Emitter, self: Daemon_Info) {
 // client does not know, and the client must skip it, not reject the frame. Every
 // other enum in this package hard-rejects an unknown value; this one must not.
 Capability :: enum {
-    // Interactive PTY side-channel (`GET /term/<id>`); see terminal-side-channel.
+    // Interactive PTY side-channel (`GET /term/<id>`).
     Terminal,
 
-    // `session.eval` control-plane Lua REPL (daemon-port-analysis §3.5).
+    // `session.eval` control-plane Lua REPL.
     Eval,
 
-    // `session.revert` / `session.unrevert` (revert-unrevert-design.md).
+    // `session.revert` / `session.unrevert`.
     Revert,
 
-    // Client→daemon blob upload (`PUT /blob/<hash>`, §2).
+    // Client→daemon blob upload (`PUT /blob/<hash>`).
     Blob_Upload,
 
-    // Filesystem browse/search methods + `GET /file` (§3).
+    // Filesystem browse/search methods + `GET /file`.
     Fs,
 }
 
@@ -50,11 +183,8 @@ capability_wire := [Capability]string {
     .Fs          = "fs",
 }
 
-// Coarse daemon snapshot after `client.hello`.
-Server_Hello :: struct {
-    // Discriminator; must be `"hello"`.
-    type:             string,
-
+// Result of the `initialize` request: the coarse daemon snapshot.
+Initialize_Result :: struct {
     // Protocol version the daemon speaks.
     protocol:         u32,
 
@@ -84,10 +214,9 @@ Server_Hello :: struct {
     capabilities:     bit_set[Capability],
 }
 
-// Write `type` first, then the remaining hello fields.
-server_hello_emit :: proc(e: ^Emitter, self: Server_Hello) {
+// Write the initialize result.
+initialize_result_emit :: proc(e: ^Emitter, self: Initialize_Result) {
     object_begin(e)
-    field_string(e, "type", self.type)
     field_u64(e, "protocol", u64(self.protocol))
     key(e, "daemon")
     daemon_info_emit(e, self.daemon)
@@ -125,12 +254,8 @@ server_hello_emit :: proc(e: ^Emitter, self: Server_Hello) {
     object_end(e)
 }
 
-// Verify discriminator, protocol, and annotated field bounds.
-server_hello_validate :: proc(self: Server_Hello) -> Validation_Error {
-    if self.type != "hello" {
-        return .Bad_Frame_Type
-    }
-
+// Verify protocol and annotated field bounds.
+initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error {
     if self.protocol != PROTOCOL_VERSION {
         return .Unsupported_Protocol
     }
@@ -209,12 +334,11 @@ daemon_info_from_reader :: proc(d: ^Decoder) -> (info: Daemon_Info, err: Validat
     return info, .None
 }
 
-// Decode a Server_Hello straight from the token stream.
-server_hello_from_reader :: proc(d: ^Decoder) -> (out: Server_Hello, err: Validation_Error) {
+// Decode an Initialize_Result straight from the token stream.
+initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
-        Type,
         Proto,
         Daemon,
         Ws,
@@ -231,10 +355,6 @@ server_hello_from_reader :: proc(d: ^Decoder) -> (out: Server_Hello, err: Valida
         if done do break
 
         switch k {
-        case "type":
-            out.type = dec_string(d) or_return
-            seen += {.Type}
-
         case "protocol":
             out.protocol = u32(dec_u64(d) or_return)
             seen += {.Proto}
@@ -286,7 +406,7 @@ server_hello_from_reader :: proc(d: ^Decoder) -> (out: Server_Hello, err: Valida
         }
     }
 
-    if seen != {.Type, .Proto, .Daemon, .Ws, .Profiles, .Srev, .Crev, .Catrev, .Health} {
+    if seen != {.Proto, .Daemon, .Ws, .Profiles, .Srev, .Crev, .Catrev, .Health} {
         return {}, .Mismatched_Payload
     }
 

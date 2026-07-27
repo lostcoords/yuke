@@ -14,7 +14,7 @@ test_broadcast_name_wire_roundtrip :: proc(t: ^testing.T) {
     _, bad := broadcast_name_from_wire("unknown.broadcast")
     testing.expect(t, !bad, "unknown name must be rejected")
 
-    // session.changed / run.canceled / run.failed no longer exist on the wire.
+    // session.changed / run.canceled / run.failed are not part of the closed set.
     _, c := broadcast_name_from_wire("session.changed")
     testing.expect(t, !c, "session.changed must be removed")
     _, rc := broadcast_name_from_wire("run.canceled")
@@ -313,18 +313,17 @@ test_broadcast_clone_outlives_source_delta :: proc(t: ^testing.T) {
     data, derr := broadcast_data_from_reader(.Message_Part_Delta, &d)
     testing.expect(t, derr == .None, "decode should succeed")
 
-    clone := broadcast_clone(broadcast_build(.Message_Part_Delta, data), dst)
+    clone := notification_clone(notification_build(.Message_Part_Delta, data), dst)
 
     // Drop the decode arena; the clone must remain valid.
     mem.dynamic_arena_destroy(&src_arena)
 
-    testing.expect_value(t, clone.type, "broadcast")
-    testing.expect_value(t, clone.name, Broadcast_Name.Message_Part_Delta)
+    testing.expect_value(t, clone.method, Broadcast_Name.Message_Part_Delta)
 
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    broadcast_data_emit(&e, clone.data)
+    broadcast_data_emit(&e, clone.params)
     testing.expect_value(t, to_string(&e), input)
 }
 
@@ -345,15 +344,15 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")
 
-    clone := broadcast_clone(broadcast_build(.Session_Summary_Changed, data), dst)
+    clone := notification_clone(notification_build(.Session_Summary_Changed, data), dst)
 
     mem.dynamic_arena_destroy(&src_arena)
 
-    testing.expect_value(t, clone.name, Broadcast_Name.Session_Summary_Changed)
+    testing.expect_value(t, clone.method, Broadcast_Name.Session_Summary_Changed)
 
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    broadcast_data_emit(&e, clone.data)
+    broadcast_data_emit(&e, clone.params)
     testing.expect_value(t, to_string(&e), input)
 }
