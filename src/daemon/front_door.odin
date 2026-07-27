@@ -1,11 +1,13 @@
 package daemon
 
+import "base:runtime"
 import "core:crypto"
 import "core:crypto/sha2"
 import "core:encoding/hex"
 import "core:log"
 import "core:mem"
 import "core:nbio"
+import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
@@ -18,8 +20,10 @@ import wire "src:wire"
 // WebSocket endpoint; every protocol method rides this one connection.
 WS_PATH :: "/ws"
 
-// Content-addressed media endpoint (`wire.Media_Blob.hash`).
-BLOB_PREFIX :: "/blob/"
+// Content-addressed media endpoint (`wire.Media_Blob.hash`): the hash is the `/*`
+// capture, and its grammar is the hex rendering of the digest it verifies.
+BLOB_ROUTE_PATTERN :: "/blob/*"
+BLOB_HASH_HEX_LEN :: sha2.DIGEST_SIZE_256 * 2
 
 // Blob bodies are opaque bytes; the referencing `Media_Source` carries the MIME.
 BLOB_CONTENT_TYPE :: "application/octet-stream"
@@ -32,77 +36,237 @@ BLOB_TEMP_PREFIX :: ".upload."
 // rather than a slow in-flight upload that merely looks old.
 UPLOAD_TEMP_GRACE :: 1 * time.Hour
 
-// Authenticate a syntactically valid request before method or route disclosure,
-// then dispatch `GET /ws` and `GET`/`PUT` on `/blob/<hash>`.
-daemon_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
-    assert(c != nil && c.server != nil, "front door request needs an owned connection")
-    assert(req.head.consumed == len(req.head.bytes), "front door received an inconsistent parsed head")
+// The store is private to the daemon: HTTP reads need the bearer token, a local reader
+// does not. `core:os` defaults to 0777/0666, so both modes are always passed.
+BLOB_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
+BLOB_FILE_PERMISSIONS :: os.Permissions{.Read_User, .Write_User}
 
-    d := (^Daemon)(c.server.user_data)
-    assert(d != nil, "front door request has no daemon")
+// Pre-match steps: admit, then auth. Route/method disclosure happens only after both.
+@(rodata)
+DAEMON_MIDDLEWARE := [?]http_server.Middleware{daemon_middleware_admit, daemon_middleware_auth}
 
-    path, query := http.split_target(req.head.target)
-    auth, query_credential := daemon_authenticate(d, req.head, query)
+// Front-door routes. Handlers receive `Router.user_data` as `^Daemon`.
+@(rodata)
+DAEMON_ROUTES := [?]http_server.Route {
+    {method = "GET", pattern = WS_PATH, handler = daemon_route_ws},
+    {method = "GET", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_get},
+    {method = "PUT", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_put},
+}
+
+// Build the daemon's HTTP router; `router_listen` validates it. `user_data` is this daemon; the server's
+// `user_data` is the `^Router` stored on the daemon.
+daemon_router_init :: proc(d: ^Daemon) {
+    assert(d != nil, "router init needs a daemon")
+
+    d.router = {
+        middleware            = DAEMON_MIDDLEWARE[:],
+        routes                = DAEMON_ROUTES[:],
+        user_data             = d,
+        on_not_found          = daemon_router_not_found,
+        on_method_not_allowed = daemon_router_method_not_allowed,
+    }
+
+}
+
+// Refuse browser-originated or DNS-rebound requests before any credential check.
+daemon_middleware_admit :: proc(
+    c: ^http_server.Conn,
+    req: http_server.Request,
+    user_data: rawptr,
+) -> http_server.Middleware_Result {
+    d := (^Daemon)(user_data)
+    assert(c != nil && d != nil, "admit middleware needs connection and daemon")
+
+    if !daemon_admit_request(d, req.head) {
+        log.warnf("daemon: refused browser-originated or rebound request %s %s", req.head.method, req.path)
+        daemon_respond_text(c, .Forbidden, "forbidden", daemon_query_response_headers(req.query))
+        return .Stop
+    }
+
+    return .Continue
+}
+
+// Authenticate before route or method disclosure. Missing/invalid → 401; ambiguous → 400.
+daemon_middleware_auth :: proc(
+    c: ^http_server.Conn,
+    req: http_server.Request,
+    user_data: rawptr,
+) -> http_server.Middleware_Result {
+    d := (^Daemon)(user_data)
+    assert(c != nil && d != nil, "auth middleware needs connection and daemon")
+
+    auth, query_credential := daemon_authenticate(d, req.head, req.query)
     switch auth {
-    case .Missing, .Invalid:
-        log.warnf("daemon: unauthorized %s %s", req.head.method, path)
-        daemon_respond_text(c, .Unauthorized, "unauthorized", daemon_auth_error_headers(query_credential))
-        return
+    case .Missing, .Invalid, .Unsupported_Scheme:
+        log.warnf("daemon: unauthorized %s %s", req.head.method, req.path)
+        daemon_respond_text(c, .Unauthorized, "unauthorized", daemon_auth_error_headers(auth, query_credential))
+        return .Stop
 
     case .Ambiguous:
-        log.warnf("daemon: ambiguous credentials %s %s", req.head.method, path)
-        daemon_respond_text(c, .Bad_Request, "ambiguous credentials", daemon_response_headers(query_credential))
-        return
+        log.warnf("daemon: ambiguous credentials %s %s", req.head.method, req.path)
+        daemon_respond_text(
+            c,
+            .Bad_Request,
+            "ambiguous credentials",
+            daemon_auth_error_headers(auth, query_credential),
+        )
+        return .Stop
 
     case .Disabled, .Header, .Query:
     }
 
-    response_headers := daemon_response_headers(query_credential)
-    is_blob := strings.has_prefix(path, BLOB_PREFIX)
-    method := req.head.method
+    return .Continue
+}
 
-    // GET everywhere; PUT only on `/blob` (upload). Every other method on a known route
-    // stays rejected — the method is disclosed only after authentication.
-    if method != "GET" && !(method == "PUT" && is_blob) {
-        log.debugf("daemon: method not allowed %s %s", method, path)
-        daemon_respond_text(c, .Method_Not_Allowed, "method not allowed", response_headers)
+// Unmatched path after auth.
+daemon_router_not_found :: proc(c: ^http_server.Conn, req: http_server.Request, user_data: rawptr) {
+    assert(c != nil && (^Daemon)(user_data) != nil, "not-found fallback needs connection and daemon")
+
+    headers := daemon_query_response_headers(req.query)
+    if daemon_reject_pipelined(c, req, headers) {
         return
     }
 
-    switch {
-    case path == WS_PATH:
-        daemon_route_ws(d, c, req, response_headers)
+    log.debugf("daemon: not found %s", req.path)
+    daemon_respond_text(c, .Not_Found, "not found", headers)
+}
 
-    case is_blob:
-        hash := path[len(BLOB_PREFIX):]
-        if method == "PUT" {
-            daemon_route_blob_put(d, c, req, hash, response_headers)
-        } else if len(req.trailing) > 0 {
-            log.debug("daemon: rejecting pipelined request")
-            daemon_respond_text(c, .Bad_Request, "pipelining not supported", response_headers)
-        } else {
-            daemon_route_blob(d, c, hash, response_headers)
+// Path pattern matched a registered route, but not this method. `allow` borrows router
+// scratch; the response serializes its headers before returning.
+daemon_router_method_not_allowed :: proc(
+    c: ^http_server.Conn,
+    req: http_server.Request,
+    allow: string,
+    user_data: rawptr,
+) {
+    assert(c != nil && (^Daemon)(user_data) != nil, "method-not-allowed fallback needs connection and daemon")
+
+    // Cache marker last so the slice length selects it, as in `AUTH_CHALLENGE_HEADERS`.
+    headers := [2]http_server.Header{{name = "Allow", value = allow}, {name = "Cache-Control", value = CACHE_PRIVATE}}
+    count := 1
+    if daemon_query_credential(req.query) {
+        count = 2
+    }
+
+    log.debugf("daemon: method not allowed %s %s", req.head.method, req.path)
+    daemon_respond_text(c, .Method_Not_Allowed, "method not allowed", headers[:count])
+}
+
+// Refuse a pipelined follow-up request. `/ws` is exempt: a hijacking route keeps its
+// trailing bytes as the peer's eager first frame.
+daemon_reject_pipelined :: proc(
+    c: ^http_server.Conn,
+    req: http_server.Request,
+    headers: []http_server.Header,
+) -> (
+    answered: bool,
+) {
+    if !req.pipelined {
+        return false
+    }
+
+    log.debug("daemon: rejecting pipelined request")
+    daemon_respond_text(c, .Bad_Request, "pipelining not supported", headers)
+
+    return true
+}
+
+// Recover the daemon from a front-door connection and check router ownership.
+daemon_from_http :: proc(c: ^http_server.Conn, user_data: rawptr) -> ^Daemon {
+    d := (^Daemon)(user_data)
+    assert(d != nil && c != nil && c.server != nil, "http route needs daemon and connection")
+
+    r := (^http_server.Router)(c.server.user_data)
+    assert(r == &d.router && r.user_data == d, "http route crossed daemon ownership")
+
+    return d
+}
+
+// Refuse traffic a browser can be made to send. `Origin` marks a page-driven
+// request, which CORS does not block for the WebSocket handshake; a named `Host` is
+// the DNS-rebinding shape, which needs a name resolving at the daemon.
+daemon_admit_request :: proc(d: ^Daemon, head: http.Request_Head) -> bool {
+    assert(d != nil, "admission needs a daemon")
+    assert(head.consumed == len(head.bytes), "admission received an inconsistent parsed head")
+
+    if _, lookup := http.request_header(head, "origin"); lookup != .Missing {
+        return false
+    }
+
+    host, host_lookup := http.request_header(head, "host")
+    assert(host_lookup == .One, "head parser admitted a request without exactly one Host")
+
+    return daemon_host_is_literal(d, host)
+}
+
+// Whether a `Host` addresses the daemon by IP literal rather than naming it.
+// `localhost` is the one name a browser cannot be made to resolve elsewhere.
+daemon_host_is_literal :: proc(d: ^Daemon, host: string) -> bool {
+    name, bracketed := http.split_host(host) or_return
+
+    // Brackets enclose an IP-literal only, so `[localhost]` gets no name exemption.
+    if !bracketed && strings.equal_fold(name, "localhost") {
+        return true
+    }
+
+    addr := net.parse_address(name)
+    if addr == nil {
+        return false
+    }
+
+    return daemon_address_addresses_us(d, addr)
+}
+
+// Whether `addr` is a way this daemon can legitimately be reached: loopback, or the
+// address it bound. The unspecified address is a bind wildcard, never a destination —
+// and `0.0.0.0` reaches a loopback-bound socket while escaping the browser
+// local-network gating that `127.0.0.1` receives.
+daemon_address_addresses_us :: proc(d: ^Daemon, addr: net.Address) -> bool {
+    assert(d != nil && addr != nil, "address admission needs a daemon and an address")
+
+    switch a in addr {
+    case net.IP4_Address:
+        if a == net.IP4_Any {
+            return false
         }
 
-    case len(req.trailing) > 0:
-        log.debug("daemon: rejecting pipelined request")
-        daemon_respond_text(c, .Bad_Request, "pipelining not supported", response_headers)
+        return a[0] == 127 || a == d.bind_address
 
-    case:
-        log.debugf("daemon: not found %s", path)
-        daemon_respond_text(c, .Not_Found, "not found", response_headers)
+    case net.IP6_Address:
+        if a == net.IP6_Any {
+            return false
+        }
+
+        return a == net.IP6_Loopback || daemon_ip6_maps_loopback(a)
     }
+
+    return false
 }
+
+// Whether `a` is an IPv4-mapped loopback literal (`::ffff:127.0.0.1`), which addresses
+// loopback by another spelling.
+daemon_ip6_maps_loopback :: proc(a: net.IP6_Address) -> bool {
+    for i in 0 ..< 5 {
+        if a[i] != 0 {
+            return false
+        }
+    }
+
+    return a[5] == 0xffff && u16(a[6]) >> 8 == 127
+}
+
 
 // Validate the upgrade, then transfer the socket to the WebSocket server.
 daemon_route_ws :: proc(
-    d: ^Daemon,
     c: ^http_server.Conn,
     req: http_server.Request,
-    response_headers: []http_server.Header,
+    params: http_server.Params,
+    user_data: rawptr,
 ) {
-    assert(d != nil && c != nil, "websocket route needs daemon state and a connection")
-    assert(c.server.user_data == d, "websocket route crossed daemon ownership")
+    d := daemon_from_http(c, user_data)
+    assert(len(params.path_rest) == 0, "websocket route has no path capture")
+
+    response_headers := daemon_query_response_headers(req.query)
 
     upgrade, result := ws.parse_upgrade_request_head(req.head)
     if result != .Ok {
@@ -127,11 +291,21 @@ daemon_route_ws :: proc(
 // Serve one content-addressed blob without reading it into the reactor's heap.
 // The HTTP driver stats and sends the same opened handle, so Content-Length and
 // the configured limit cannot race a path replacement after open.
-daemon_route_blob :: proc(d: ^Daemon, c: ^http_server.Conn, hash: string, response_headers: []http_server.Header) {
-    assert(d != nil && c != nil, "blob route needs daemon state and a connection")
-    assert(c.server.user_data == d, "blob route crossed daemon ownership")
+daemon_route_blob_get :: proc(
+    c: ^http_server.Conn,
+    req: http_server.Request,
+    params: http_server.Params,
+    user_data: rawptr,
+) {
+    d := daemon_from_http(c, user_data)
 
-    if d.blob_dir == "" || wire.enforce_fixed_lower_hex(64, hash) != .None {
+    response_headers := daemon_query_response_headers(req.query)
+    if daemon_reject_pipelined(c, req, response_headers) {
+        return
+    }
+
+    hash := params.path_rest
+    if d.blob_dir == "" || wire.enforce_fixed_lower_hex(BLOB_HASH_HEX_LEN, hash) != .None {
         daemon_blob_not_found(c, response_headers)
         return
     }
@@ -232,16 +406,17 @@ Blob_Upload :: struct {
 // the address. Idempotent: an already-stored hash short-circuits. The body is
 // streamed and bounded by `LIMITS.max_blob_bytes`, never buffered whole.
 daemon_route_blob_put :: proc(
-    d: ^Daemon,
     c: ^http_server.Conn,
     req: http_server.Request,
-    hash: string,
-    response_headers: []http_server.Header,
+    params: http_server.Params,
+    user_data: rawptr,
 ) {
-    assert(d != nil && c != nil, "blob upload needs daemon state and a connection")
-    assert(c.server.user_data == d, "blob upload crossed daemon ownership")
+    d := daemon_from_http(c, user_data)
 
-    if d.blob_dir == "" || wire.enforce_fixed_lower_hex(64, hash) != .None {
+    response_headers := daemon_query_response_headers(req.query)
+    hash := params.path_rest
+
+    if d.blob_dir == "" || wire.enforce_fixed_lower_hex(BLOB_HASH_HEX_LEN, hash) != .None {
         daemon_blob_not_found(c, response_headers)
         return
     }
@@ -279,7 +454,7 @@ daemon_route_blob_put :: proc(
     }
     up.claimed = claimed
 
-    file, oerr := os.open(up.temp_path, {.Write, .Create, .Excl}, os.Permissions_Read_Write_All)
+    file, oerr := os.open(up.temp_path, {.Write, .Create, .Excl}, BLOB_FILE_PERMISSIONS)
     if oerr != nil {
         log.errorf("daemon: blob temp open failed: %v", oerr)
         daemon_blob_upload_free(up)
@@ -299,7 +474,7 @@ daemon_route_blob_put :: proc(
 daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
     up := (^Blob_Upload)(user_data)
     assert(up != nil && up.file != nil, "blob chunk sink needs an open upload")
-    assert(len(up.claimed) == 64, "blob upload lost its claimed digest")
+    assert(len(up.claimed) == BLOB_HASH_HEX_LEN, "blob upload lost its claimed digest")
 
     sha2.update(&up.sha, chunk)
 
@@ -312,15 +487,24 @@ daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk:
     return true
 }
 
-// Finalize (success) or discard (failure) the upload, freeing its state either way. On
-// success the streamed digest is checked against the claimed URL hash: a mismatch, a
-// pre-existing store, and a fresh store map to 400, 200, and 201. On failure — short
-// body, reset, timeout, or a sink abort — the partial temp file is deleted. No bodies.
+// Finalize (success) or discard (failure) the upload, freeing its state either way.
+// On success the streamed digest is checked against the claimed URL hash: a mismatch,
+// a pre-existing store, and a fresh store map to 400, 200, and 201. On failure the
+// partial temp is deleted. No bodies.
 daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
     assert(up != nil, "blob end callback needs upload state")
 
+    sync_err: os.Error
     if up.file != nil {
+        // Flush before the rename publishes a content-addressed name over bytes
+        // nothing re-verifies on read. Narrows the power-loss window rather than
+        // closing it: darwin needs `F_FULLFSYNC` for a media barrier. Blocks the
+        // reactor for the flush. Directory durability is not forced.
+        if ok {
+            sync_err = os.sync(up.file)
+        }
+
         os.close(up.file)
         up.file = nil
     }
@@ -332,7 +516,14 @@ daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool
         return
     }
 
-    assert(len(up.claimed) == 64, "blob upload lost its claimed digest")
+    if sync_err != nil {
+        log.errorf("daemon: blob temp sync failed: %v", sync_err)
+        os.remove(up.temp_path)
+        daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
+        return
+    }
+
+    assert(len(up.claimed) == BLOB_HASH_HEX_LEN, "blob upload lost its claimed digest")
 
     digest: [sha2.DIGEST_SIZE_256]byte
     sha2.final(&up.sha, digest[:])
@@ -378,7 +569,7 @@ daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool
 }
 
 // Owned `<blob_dir>/<hash>` path: the content-addressed store layout shared by the
-// GET and PUT routes (and the engine-phase sweep; see docs/blob-gc-design.md).
+// GET and PUT routes and the boot-time sweep.
 daemon_blob_final_path :: proc(
     blob_dir: string,
     hash: string,
@@ -427,19 +618,40 @@ daemon_blob_paths :: proc(
     return final_path, temp_path, true
 }
 
+// `make_directory_all` leaves an existing directory's mode alone, so a store predating
+// `BLOB_DIR_PERMISSIONS` stays exposed. Reported, not tightened: narrowing an
+// operator's directory is theirs to decide.
+daemon_warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) {
+    assert(len(blob_dir) > 0, "blob dir exposure check needs a configured directory")
+
+    info, err := os.stat(blob_dir, allocator)
+    if err != nil {
+        return
+    }
+    defer os.file_info_delete(info, allocator)
+
+    if exposed := info.mode & ~BLOB_DIR_PERMISSIONS; exposed != {} {
+        log.warnf(
+            "daemon: blob dir %s is reachable beyond its owner (%v); stored blobs bypass token auth on disk",
+            blob_dir,
+            exposed,
+        )
+    }
+}
+
 // Delete upload temp files (`.upload.<hash>.<nonce>`) under `blob_dir` older than
-// `cutoff`. Published blobs (64-hex names) and any other non-temp entry are never
-// matched, and a temp at or after `cutoff` is left alone — an in-flight upload's
-// temp is always fresh. Never recurses into subdirectories.
+// `cutoff`: published blobs and other non-temp entries are never matched, and a temp
+// at or after `cutoff` is left alone (an in-flight upload's temp is always fresh).
 //
-// Temp residue only accrues on a crash: a clean shutdown always renames or removes
-// its temp (`daemon_blob_upload_end`), and a crash implies the restart that runs
-// this sweep. A boot-only pass therefore covers the threat model until the SQLite
-// engine phase adds a periodic full sweep (docs/blob-gc-design.md). A missing or
-// unreadable directory is not an error: startup must not fail because the blob
-// directory is empty or not yet created.
-blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) {
+// Temp residue only accrues on a crash — a clean shutdown always renames or removes
+// its temp — so a boot-only pass covers the threat model. Best-effort: an unreadable
+// directory is not an error.
+daemon_blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) {
     assert(len(blob_dir) > 0, "blob temp sweep needs a configured blob directory")
+
+    // The listing covers every entry in the store, so release it rather than retaining
+    // it in the temp arena for the process lifetime.
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
     infos, err := os.read_all_directory_by_path(blob_dir, context.temp_allocator)
     if err != nil {
@@ -490,11 +702,13 @@ daemon_blob_upload_free :: proc(up: ^Blob_Upload) {
 }
 
 // Respond with a short text body, aborting the connection if the write fails.
+// `response_headers` is deliberately not defaulted: every token-bearing response must
+// carry the cache-private marker, and a default let one path silently skip it.
 daemon_respond_text :: proc(
     c: ^http_server.Conn,
     status: http.Status,
     text: string,
-    response_headers: []http_server.Header = nil,
+    response_headers: []http_server.Header,
 ) {
     assert(c != nil && c.server != nil, "daemon response needs an owned connection")
     assert(c.state == .Reading, "daemon response began after the connection was answered")

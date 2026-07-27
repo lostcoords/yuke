@@ -22,10 +22,10 @@ import wire "src:wire"
 //
 // These drive the EXISTING `src/client` driver against the new `daemon` on ONE
 // shared `nbio.Event_Loop`, in-process, no worker threads — accept, upgrade, the
-// hello exchange, and request routing all interleave on a single loop. The
+// initialize exchange, and request routing all interleave on a single loop. The
 // protocol-error cases (malformed/oversequenced frames, wrong protocol version,
 // binary frame, trailing bytes) need a peer the `src/client` driver cannot be —
-// it only ever sends a well-formed `client.hello` — so those use a blocking raw
+// it only ever sends a well-formed `initialize` request — so those use a blocking raw
 // TCP peer on a worker thread while the daemon drives the loop on the main thread,
 // mirroring `libs/websocket/server_test.odin`.
 //
@@ -1124,14 +1124,15 @@ daemon_run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expec
 
 @(test)
 test_daemon_malformed_first_frame_closes :: proc(t: ^testing.T) {
-    // A text frame that is not a `client.hello` (invalid JSON) is a protocol error.
+    // A text frame that is not a valid `initialize` request (invalid JSON) is a protocol error.
     daemon_run_raw(t, .Text, "not json at all", wire.CLOSE.protocol_error)
 }
 
 @(test)
 test_daemon_wrong_protocol_closes :: proc(t: ^testing.T) {
-    // A well-formed hello with an unsupported protocol closes with the dedicated code.
-    hello := `{"type":"client.hello","protocol":2,"client":{"name":"x","version":"y"}}`
+    // A well-formed `initialize` request with an unsupported protocol closes with the
+    // dedicated code.
+    hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":2,"client":{"name":"x","version":"y"}}}`
     daemon_run_raw(t, .Text, hello, wire.CLOSE.unsupported_protocol)
 }
 
@@ -1139,23 +1140,23 @@ test_daemon_wrong_protocol_closes :: proc(t: ^testing.T) {
 test_daemon_binary_frame_closes :: proc(t: ^testing.T) {
     // The v1 protocol carries only text frames; a binary frame is a protocol error
     // regardless of content.
-    hello := `{"type":"client.hello","protocol":1,"client":{"name":"x","version":"y"}}`
+    hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}}`
     daemon_run_raw(t, .Binary, hello, wire.CLOSE.protocol_error)
 }
 
 @(test)
 test_daemon_trailing_bytes_closes :: proc(t: ^testing.T) {
-    // One JSON value per frame: a valid hello followed by a trailing token is rejected
-    // by `dec_finish` before the hello takes effect.
-    hello := `{"type":"client.hello","protocol":1,"client":{"name":"x","version":"y"}} 5`
+    // One JSON value per frame: a valid `initialize` request followed by a trailing
+    // token is rejected by `dec_finish` before it takes effect.
+    hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}} 5`
     daemon_run_raw(t, .Text, hello, wire.CLOSE.protocol_error)
 }
 
 // --- Lifecycle soak under a tracking allocator (leak hunt) --------------------
 
-// Repeated connect -> hello -> Ready -> close cycles must leave zero leaked
+// Repeated connect -> initialize -> Ready -> close cycles must leave zero leaked
 // allocations and zero bad frees: the daemon's per-connection lifecycle (accept,
-// allocate `Conn`, open, hello, retain identity, close, release) frees everything
+// allocate `Conn`, open, initialize, retain identity, close, release) frees everything
 // it allocates on every cycle, mirroring the WebSocket package's soak rigor.
 @(test)
 test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {

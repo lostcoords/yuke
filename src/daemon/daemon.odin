@@ -4,6 +4,7 @@ import "core:hash"
 import "core:log"
 import "core:mem"
 import "core:nbio"
+import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -16,10 +17,10 @@ import ws "libs:websocket"
 import wire "src:wire"
 
 Protocol_State :: enum {
-    // Connection is Open; awaiting the client's `client.hello`.
-    Awaiting_Hello,
+    // Connection is Open; awaiting the client's `initialize` request.
+    Awaiting_Initialize,
 
-    // `hello` sent; requests are routed to their handlers.
+    // `initialize` answered; requests are routed to their handlers.
     Ready,
 
     // A close has been initiated; no further frames are processed.
@@ -49,7 +50,7 @@ Daemon_Options :: struct {
     // TCP port to bind; `/ws` and `/blob/<hash>` share it.
     port:           int,
 
-    // Daemon build/version string reported in `hello`. Defaults to `"0.0.0"`.
+    // Daemon build/version string reported in `initialize`. Defaults to `"0.0.0"`.
     daemon_version: string,
 
     // Directory holding content-addressed blobs, created if absent. Empty disables
@@ -66,9 +67,12 @@ Daemon_Options :: struct {
 // clones. Start with `daemon_start`, stop with `daemon_shutdown`, reclaim with
 // `daemon_destroy`.
 Daemon :: struct {
-    // Front door: binds the port and routes `/ws` and `/blob/<hash>`. Its handler
-    // recovers this `^Daemon` via `c.server.user_data`.
+    // Front door: binds the port; `user_data` is `&router`.
     front_door:     http_server.Server,
+
+    // HTTP routes and pre-match middleware for the front door. `user_data` is
+    // this `^Daemon`. Handlers recover the daemon from that pointer.
+    router:         http_server.Router,
 
     // WebSocket server fed by `http`, driven through `ws.server_*`. Its
     // per-connection callbacks recover this `^Daemon` via `wsc.server.user_data`.
@@ -83,7 +87,7 @@ Daemon :: struct {
     allocator:      mem.Allocator,
 
     // @private
-    // Owned daemon version string, reported in every `hello`.
+    // Owned daemon version string, reported in every `initialize` result.
     daemon_version: string,
 
     // @private
@@ -93,6 +97,11 @@ Daemon :: struct {
     // @private
     // Owned bearer token; empty when authorization is disabled.
     auth_token:     string,
+
+    // @private
+    // Resolved bind address. Admission accepts a `Host` naming this or loopback, so a
+    // non-loopback deployment still reaches itself without widening the gate.
+    bind_address:   net.IP4_Address,
 }
 
 // One accepted connection past the WebSocket handshake. Allocated in the transport
@@ -112,11 +121,11 @@ Conn :: struct {
     // borrowed strings and slices live here only for the handler that consumes them.
     scratch:        mem.Dynamic_Arena,
 
-    // Retained client name from `client.hello`; an owned `strings.clone` for
+    // Retained client name from `initialize`; an owned `strings.clone` for
     // identity/logging, freed with the `Conn`. Never the borrowed frame slice.
     client_name:    string,
 
-    // Retained client version from `client.hello`; owned like `client_name`.
+    // Retained client version from `initialize`; owned like `client_name`.
     client_version: string,
 }
 
@@ -163,6 +172,17 @@ daemon_start :: proc(
         return .Out_Of_Memory
     }
 
+    // The `initialize` result advertises `blob_upload` from this field alone, so an
+    // unusable directory must fail the start rather than 500 every upload.
+    if d.blob_dir != "" {
+        if mkerr := os.make_directory_all(d.blob_dir, BLOB_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(d.blob_dir) {
+            daemon_free_config(d)
+            return .Invalid_Options
+        }
+
+        daemon_warn_exposed_blob_dir(d.blob_dir, allocator)
+    }
+
     callbacks := ws.Server_Callbacks {
         on_open    = daemon_on_open,
         on_message = daemon_on_message,
@@ -198,12 +218,13 @@ daemon_start :: proc(
         assert(false, "server_init returned a connection-only error")
     }
 
-    herr := http_server.listen(
+    daemon_router_init(d)
+
+    herr := http_server.router_listen(
         &d.front_door,
         loop,
         {host = options.host, port = options.port},
-        daemon_on_request,
-        d,
+        &d.router,
         allocator,
     )
     switch herr {
@@ -222,24 +243,30 @@ daemon_start :: proc(
         return .Out_Of_Memory
     }
 
+    // Read from the socket rather than re-deriving it: admission compares a request's
+    // `Host` against the address actually served.
+    bound, bound_ok := http_server.bound_address(&d.front_door)
+    if !bound_ok {
+        daemon_start_rollback(d)
+        return .Listen_Failed
+    }
+    d.bind_address = bound.(net.IP4_Address)
+
     assert(d.loop == loop, "daemon lost its event loop during startup")
-    assert(d.front_door.user_data == d && d.ws_server.user_data == d, "daemon servers have the wrong owner")
+    assert(d.front_door.user_data == &d.router, "front door user_data must be the daemon router")
+    assert(d.router.user_data == d && d.ws_server.user_data == d, "daemon servers have the wrong owner")
     assert(d.front_door.state == .Serving && d.ws_server.state == .Serving, "daemon start did not reach Serving")
 
     if d.blob_dir != "" {
-        removed := blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
+        removed := daemon_blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
         if removed > 0 {
             log.infof("daemon: swept %d stale upload temp file(s) from %s", removed, d.blob_dir)
         }
     }
 
-    host := options.host
-    if host == "" {
-        host = "127.0.0.1"
-    }
     log.infof(
         "daemon: listening on %s:%d version=%s auth=%v blob=%v",
-        host,
+        net.to_string(net.Address(d.bind_address), context.temp_allocator),
         http_server.bound_port(&d.front_door),
         d.daemon_version,
         d.auth_token != "",
@@ -265,7 +292,8 @@ daemon_start_rollback :: proc(d: ^Daemon) {
 // calling `daemon_destroy`.
 daemon_shutdown :: proc(d: ^Daemon) {
     assert(d != nil, "daemon_shutdown needs daemon state")
-    assert(d.front_door.user_data == d && d.ws_server.user_data == d, "daemon servers have the wrong owner")
+    assert(d.front_door.user_data == &d.router, "front door user_data must be the daemon router")
+    assert(d.router.user_data == d && d.ws_server.user_data == d, "daemon servers have the wrong owner")
 
     log.info("daemon: shutdown started")
     http_server.shutdown(&d.front_door)
@@ -302,7 +330,7 @@ daemon_free_config :: proc(d: ^Daemon) {
 // `^Conn` from the connection user data (proc literals cannot capture). Control
 // frames (Ping/Pong/Close) are handled inside the transport and never surface here.
 
-// A connection reached Open: allocate its `Conn`, enter Awaiting_Hello, and attach
+// A connection reached Open: allocate its `Conn`, enter Awaiting_Initialize, and attach
 // it to the transport connection.
 daemon_on_open :: proc(wsc: ^ws.Server_Conn) {
     assert(wsc != nil && wsc.server != nil, "open callback needs an owned transport connection")
@@ -324,12 +352,12 @@ daemon_on_open :: proc(wsc: ^ws.Server_Conn) {
     conn.wsc = wsc
     conn.daemon = d
     conn.allocator = d.allocator
-    conn.state = .Awaiting_Hello
+    conn.state = .Awaiting_Initialize
     mem.dynamic_arena_init(&conn.scratch, d.allocator, d.allocator)
 
     wsc.user_data = conn
     assert(conn.wsc.user_data == conn, "connection state was not attached to its transport")
-    log.debug("daemon: websocket connection open, awaiting hello")
+    log.debug("daemon: websocket connection open, awaiting initialize")
 }
 
 // One complete transport message. Only text frames carry protocol data; a binary
@@ -397,7 +425,7 @@ daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
     defer free_all(sa)
 
     d := wire.decoder_init(string(data), sa)
-    frame, derr := wire.client_frame_from_reader(&d)
+    req, derr := wire.request_from_reader(&d)
     if derr != .None {
         daemon_conn_protocol_close(conn)
         return
@@ -409,33 +437,20 @@ daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
         return
     }
 
-    switch f in frame {
-    case wire.Client_Hello:
-        daemon_handle_hello(conn, f)
-
-    case wire.Request:
-        daemon_handle_request(conn, f, sa)
-    }
+    daemon_handle_request(conn, req, sa)
 }
 
-// Validate and answer the client's `client.hello`. On success the daemon retains the
-// client identity, emits its `hello`, and reaches Ready.
-daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
-    assert(conn != nil && conn.wsc != nil, "hello handler needs connection state")
+// Answer `initialize`. On success the daemon retains the client identity, responds
+// with its snapshot, and reaches Ready.
+daemon_handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
+    assert(conn != nil && conn.wsc != nil, "initialize handler needs connection state")
+    assert(conn.state == .Awaiting_Initialize, "initialize ran outside Awaiting_Initialize")
 
-    if conn.state != .Awaiting_Hello {
+    // `request_validate` already checked the params, including the protocol version.
+    params, ok := req.params.(wire.Initialize_Params)
+
+    if !ok {
         daemon_conn_protocol_close(conn)
-        return
-    }
-
-    verr := wire.client_hello_validate(hello)
-    if verr != .None {
-        if verr == .Unsupported_Protocol {
-            daemon_conn_close(conn, ws.Close_Code(wire.CLOSE.unsupported_protocol))
-        } else {
-            daemon_conn_protocol_close(conn)
-        }
-
         return
     }
 
@@ -443,13 +458,13 @@ daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
     // this handler returns, so the borrowed name/version cannot be kept directly.
     assert(conn.client_name == "" && conn.client_version == "", "client identity retained twice")
 
-    client_name, aerr := strings.clone(hello.client.name, conn.allocator)
+    client_name, aerr := strings.clone(params.client.name, conn.allocator)
     if aerr != nil {
         daemon_conn_abort(conn, .Out_Of_Memory)
         return
     }
 
-    client_version, version_aerr := strings.clone(hello.client.version, conn.allocator)
+    client_version, version_aerr := strings.clone(params.client.version, conn.allocator)
     if version_aerr != nil {
         delete(client_name, conn.allocator)
         daemon_conn_abort(conn, .Out_Of_Memory)
@@ -459,7 +474,7 @@ daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
     conn.client_name = client_name
     conn.client_version = client_version
 
-    if daemon_send_hello(conn) {
+    if daemon_send_initialize_result(conn, req.id) {
         conn.state = .Ready
     }
 }
@@ -469,19 +484,30 @@ daemon_handle_hello :: proc(conn: ^Conn, hello: wire.Client_Hello) {
 daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil && conn.wsc != nil, "request handler needs connection state")
 
-    if conn.state != .Ready {
-        daemon_conn_protocol_close(conn)
+    // Validate the request (id shape, params bounds) before echoing its id back; a
+    // malformed request is a protocol error, not an error response.
+    if verr := wire.request_validate(req); verr != .None {
+        // A version mismatch gets the dedicated close code.
+        if verr == .Unsupported_Protocol {
+            daemon_conn_close(conn, ws.Close_Code(wire.CLOSE.unsupported_protocol))
+        } else {
+            daemon_conn_protocol_close(conn)
+        }
+
         return
     }
 
-    // Validate the request (id range, params bounds) before echoing its id back; a
-    // malformed request is a protocol error, not an error response.
-    if wire.request_validate(req) != .None {
+    // `initialize` is the only method accepted before Ready, and the only one refused
+    // after it.
+    if (req.method == .Initialize) != (conn.state == .Awaiting_Initialize) {
         daemon_conn_protocol_close(conn)
         return
     }
 
     switch req.method {
+    case .Initialize:
+        daemon_handle_initialize(conn, req)
+
     case .Session_List:
         daemon_method_session_list(conn, req)
 
@@ -524,7 +550,7 @@ daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
 }
 
 // `session.list` before any store exists: an empty page pinned to revision 0, matching
-// the session revision the hello snapshot claims.
+// the session revision the initialize snapshot claims.
 daemon_method_session_list :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil && conn.state == .Ready, "session.list ran outside Ready")
     assert(req.method == .Session_List, "session.list received another method")
@@ -541,7 +567,7 @@ daemon_method_session_list :: proc(conn: ^Conn, req: wire.Request) {
 
 // `catalog.list` before any catalog is loaded: `unchanged` when the client already
 // holds the empty revision, otherwise a `full` snapshot with no models and empty
-// health. Both carry the all-zero catalog hash the hello snapshot reports.
+// health. Both carry the all-zero catalog hash the initialize snapshot reports.
 daemon_method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil && conn.state == .Ready, "catalog.list ran outside Ready")
     assert(req.method == .Catalog_List, "catalog.list received another method")
@@ -672,7 +698,7 @@ daemon_method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.A
 // daemon state, so an invalid outgoing frame is our bug, not the peer's — assert
 // rather than ship it.
 daemon_send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result) {
-    assert(conn != nil && conn.state == .Ready, "result emitted outside Ready")
+    assert(conn != nil, "result send needs connection state")
     assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
     daemon_send_response(conn, wire.response_ok_build(id, result))
 }
@@ -680,7 +706,7 @@ daemon_send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Respon
 // Emit an error response naming `code`. `message` is diagnostic only; clients branch
 // on `code`.
 daemon_send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Code, message: string) {
-    assert(conn != nil && conn.state == .Ready, "error response emitted outside Ready")
+    assert(conn != nil, "error response send needs connection state")
 
     eo := wire.Error_Object {
         code    = code,
@@ -694,7 +720,8 @@ daemon_send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Cod
 // payload into an owned frame, so the emitter buffer may be released on return.
 daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     assert(conn != nil && conn.wsc != nil, "response send needs connection state")
-    assert(conn.state == .Ready, "response sent outside Ready")
+    // `initialize` is answered while still Awaiting_Initialize; every other response is Ready.
+    assert(conn.state != .Closed, "response sent after protocol close")
     assert(wire.response_validate(resp) == .None, "daemon built an invalid response frame")
 
     e: wire.Emitter
@@ -710,20 +737,19 @@ daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     return true
 }
 
-// Emit the `hello` snapshot. This build has no store, sessions, or catalog, so the
-// snapshot is empty; capabilities advertise only what this config offers
-// (`blob_upload` when a blob directory is configured).
-daemon_send_hello :: proc(conn: ^Conn) -> bool {
-    assert(conn != nil && conn.daemon != nil && conn.wsc != nil, "hello send needs connection state")
-    assert(conn.state == .Awaiting_Hello, "server hello sent outside Awaiting_Hello")
+// Answer `initialize` with the daemon snapshot. This build has no store, sessions, or
+// catalog, so the snapshot is empty; capabilities advertise only what this config
+// offers (`blob_upload` when a blob directory is configured).
+daemon_send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool {
+    assert(conn != nil && conn.daemon != nil && conn.wsc != nil, "initialize send needs connection state")
+    assert(conn.state == .Awaiting_Initialize, "initialize result sent outside Awaiting_Initialize")
 
     capabilities: bit_set[wire.Capability]
     if conn.daemon.blob_dir != "" {
         capabilities += {.Blob_Upload}
     }
 
-    hello := wire.Server_Hello {
-        type = "hello",
+    result := wire.Initialize_Result {
         protocol = wire.PROTOCOL_VERSION,
         daemon = {version = conn.daemon.daemon_version, server_now_ms = daemon_now_ms()},
         capabilities = capabilities,
@@ -734,19 +760,9 @@ daemon_send_hello :: proc(conn: ^Conn) -> bool {
         catalog_rev = daemon_empty_catalog_rev(),
         catalog_health = {skipped = nil, load_error = nil},
     }
-    assert(wire.server_hello_validate(hello) == .None, "daemon built an invalid hello frame")
+    assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
 
-    e: wire.Emitter
-    wire.emitter_init(&e, conn.allocator)
-    defer wire.emitter_destroy(&e)
-    wire.server_hello_emit(&e, hello)
-
-    if send_err := ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)); send_err != .None {
-        daemon_conn_abort(conn, send_err)
-        return false
-    }
-
-    return true
+    return daemon_send_response(conn, wire.response_ok_build(id, result))
 }
 
 // Close a connection with `CLOSE.protocol_error` for a framing/sequence violation
@@ -807,13 +823,13 @@ daemon_conn_free :: proc(conn: ^Conn) {
     free(conn, conn.allocator)
 }
 
-// Daemon wall-clock epoch milliseconds, for the `hello` clock.
+// Daemon wall-clock epoch milliseconds, for the `initialize` result's clock.
 daemon_now_ms :: proc() -> u64 {
     return u64(time.to_unix_nanoseconds(time.now()) / 1_000_000)
 }
 
 // Catalog revision emitted before any catalog is loaded: the all-zero hash, which
-// is valid lowercase hex and so passes `server_hello_validate`.
+// is valid lowercase hex and so passes `initialize_result_validate`.
 daemon_empty_catalog_rev :: proc() -> wire.Catalog_Rev {
     out: [64]u8
     for i in 0 ..< 64 {

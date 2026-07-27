@@ -346,6 +346,29 @@ test_daemon_rejects_a_non_get :: proc(t: ^testing.T) {
     got := daemon_run_http(t, "POST /ws HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 0\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "only GET is routed")
+    testing.expectf(t, strings.contains(got, "Allow: GET\r\n"), "405 must carry Allow, got %q", got)
+}
+
+// The blob routes register two methods, and a `?token=` 405 must keep both the cache
+// marker and `Allow`.
+@(test)
+test_daemon_405_on_blob_lists_both_methods :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := daemon_run_http(
+        t,
+        "DELETE /blob/" + BLOB_HASH + "?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "DELETE is not routed")
+    testing.expectf(t, strings.contains(got, "Allow: GET, PUT\r\n"), "405 must list both methods, got %q", got)
+    testing.expectf(
+        t,
+        strings.contains(got, "Cache-Control: private, no-store\r\n"),
+        "a ?token= response must stay private, got %q",
+        got,
+    )
 }
 
 @(test)
@@ -516,6 +539,26 @@ test_daemon_disabled_auth_marks_token_responses_private :: proc(t: ^testing.T) {
     testing.expect(t, !strings.contains(without, "Cache-Control:"), "a request with no token is freely cacheable")
 }
 
+// The admit refusal is the one path that answers before authentication, so it is the
+// one most easily left out of the token-bearing-response invariant.
+@(test)
+test_daemon_refusal_marks_token_responses_private :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    refused := daemon_run_http(t, "GET /nope?token=whatever HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+    testing.expect(t, strings.has_prefix(refused, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is refused")
+    testing.expectf(
+        t,
+        strings.contains(refused, "Cache-Control: private, no-store\r\n"),
+        "a token-bearing 403 must stay private, got %q",
+        refused,
+    )
+
+    without := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+    testing.expect(t, strings.has_prefix(without, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is refused")
+    testing.expect(t, !strings.contains(without, "Cache-Control:"), "a 403 with no token needs no marker")
+}
+
 // A symlink standing in for a stored blob is refused: `lstat` sees the link, not a
 // regular file, and the post-open identity re-check guards the open against a swap.
 @(test)
@@ -614,7 +657,7 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
 
 // --- Boot-time upload-temp sweep -----------------------------------------------
 //
-// `blob_sweep_temps` takes its cutoff as an explicit parameter, so staleness is
+// `daemon_blob_sweep_temps` takes its cutoff as an explicit parameter, so staleness is
 // forced by choosing a future or past cutoff rather than manipulating mtimes.
 
 @(test)
@@ -627,7 +670,7 @@ test_blob_sweep_removes_stale_temp :: proc(t: ^testing.T) {
     temp_path := daemon_test_write_temp(dir, BLOB_HASH)
 
     // A cutoff in the future: the temp's real mtime is necessarily before it.
-    removed := blob_sweep_temps(dir, time.time_add(time.now(), time.Hour))
+    removed := daemon_blob_sweep_temps(dir, time.time_add(time.now(), time.Hour))
 
     testing.expect_value(t, removed, 1)
     testing.expect(t, !os.exists(temp_path), "a stale upload temp should be removed")
@@ -644,7 +687,7 @@ test_blob_sweep_keeps_fresh_temp_and_blobs :: proc(t: ^testing.T) {
     blob_path, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
 
     // A cutoff in the past: nothing written just now can be older than it.
-    removed := blob_sweep_temps(dir, time.time_add(time.now(), -time.Hour))
+    removed := daemon_blob_sweep_temps(dir, time.time_add(time.now(), -time.Hour))
 
     testing.expect_value(t, removed, 0)
     testing.expect(t, os.exists(temp_path), "a fresh upload temp must survive the sweep")
@@ -658,6 +701,373 @@ test_blob_sweep_missing_dir_is_noop :: proc(t: ^testing.T) {
     dir := daemon_test_make_dir("yuke-blob-sweep-missing")
     os.remove_all(dir)
 
-    removed := blob_sweep_temps(dir, time.now())
+    removed := daemon_blob_sweep_temps(dir, time.now())
     testing.expect_value(t, removed, 0)
+}
+
+// --- Admission tests ----------------------------------------------------------
+//
+// The front door refuses traffic a browser can be made to send at it, before the
+// credential check. The two refusals are independent: a rebound page is same-origin
+// with the daemon and sends no `Origin` at all.
+
+@(test)
+test_daemon_refuses_a_browser_origin :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := daemon_run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n")
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"), "an Origin marks a page-driven request")
+}
+
+// Admission must precede authentication. With no credential and a token configured,
+// auth alone would answer 401, so only the ordering can produce 403.
+@(test)
+test_daemon_refuses_an_origin_before_authenticating :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := daemon_run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+        "admission must answer before auth could 401, got %q",
+        got,
+    )
+}
+
+@(test)
+test_daemon_refuses_a_named_host :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is the rebinding shape")
+}
+
+@(test)
+test_daemon_admits_literal_hosts :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    hosts := []string {
+        "127.0.0.1",
+        "127.0.0.1:65535",
+        "127.0.0.2",
+        "127.1.2.3",
+        "localhost",
+        "localhost:8080",
+        "[::1]",
+        "[::1]:8080",
+        "[::ffff:127.0.0.1]",
+    }
+    for host in hosts {
+        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        testing.expectf(
+            t,
+            strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"),
+            "host %q addresses the daemon and should reach routing, got %q",
+            host,
+            got,
+        )
+    }
+}
+
+// An IP literal is only admissible if it addresses this daemon. `0.0.0.0` is the one
+// that matters: it reaches a loopback-bound socket while escaping the browser
+// local-network gating `127.0.0.1` receives.
+@(test)
+test_daemon_refuses_literals_that_do_not_address_it :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    hosts := []string{"0.0.0.0", "0.0.0.0:8080", "[::]", "192.168.1.50", "10.0.0.1", "8.8.8.8", "[2001:db8::1]"}
+    for host in hosts {
+        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        testing.expectf(
+            t,
+            strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+            "host %q does not address a loopback-bound daemon, got %q",
+            host,
+            got,
+        )
+    }
+}
+
+// Bytes past the declared body are a pipelined follow-up request. Bytes *within* it are
+// body, which the old check conflated: `PUT /nope` with a body must 404, not 400.
+@(test)
+test_daemon_rejects_pipelining_but_not_bodies :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    unrouted := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
+    testing.expectf(
+        t,
+        strings.has_prefix(unrouted, "HTTP/1.1 400 Bad Request\r\n"),
+        "a pipelined follow-up should 400, got %q",
+        unrouted,
+    )
+
+    blob := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
+    testing.expectf(
+        t,
+        strings.has_prefix(blob, "HTTP/1.1 400 Bad Request\r\n"),
+        "a pipelined follow-up on a blob route should 400, got %q",
+        blob,
+    )
+
+    with_body := daemon_run_http(t, "PUT /nope HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 5\r\n\r\nhello")
+    testing.expectf(
+        t,
+        strings.has_prefix(with_body, "HTTP/1.1 404 Not Found\r\n"),
+        "a body on an unrouted path is not pipelining, got %q",
+        with_body,
+    )
+}
+
+// `/ws` is the one route that keeps its trailing bytes: they are the client's eager
+// first frame, handed to the WebSocket server rather than refused as pipelining.
+@(test)
+test_daemon_upgrade_keeps_trailing_bytes :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    request := fmt.tprintf("%s%s", daemon_upgrade_request("/ws"), "\x81\x00")
+    got := daemon_run_http(t, request)
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 101 Switching Protocols\r\n"),
+        "an eager first frame must not be refused as pipelining, got %q",
+        got,
+    )
+}
+
+// RFC 6750 §3.1: a rejected credential earns `invalid_token`, an unsupported scheme
+// earns no error code, and more than one credential source is `invalid_request`.
+@(test)
+test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    scheme := daemon_run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Basic abc\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+    testing.expect(t, strings.has_prefix(scheme, "HTTP/1.1 401 Unauthorized\r\n"), "another scheme should 401")
+    testing.expectf(
+        t,
+        strings.contains(scheme, "WWW-Authenticate: Bearer realm=\"yuked\"\r\n"),
+        "an unsupported scheme gets no error code, got %q",
+        scheme,
+    )
+
+    malformed := daemon_run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+    testing.expectf(
+        t,
+        strings.contains(malformed, "error=\"invalid_token\""),
+        "a malformed Bearer credential is invalid_token, got %q",
+        malformed,
+    )
+
+    ambiguous := daemon_run_http(
+        t,
+        "GET /ws?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer s3cret\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+    testing.expect(t, strings.has_prefix(ambiguous, "HTTP/1.1 400 Bad Request\r\n"), "two sources should 400")
+    testing.expectf(
+        t,
+        strings.contains(ambiguous, "error=\"invalid_request\""),
+        "two credential sources are invalid_request, got %q",
+        ambiguous,
+    )
+    testing.expectf(
+        t,
+        strings.contains(ambiguous, "Cache-Control: private, no-store\r\n"),
+        "a ?token= refusal stays private, got %q",
+        ambiguous,
+    )
+}
+
+// A HEAD on a known path is still a 405, but must carry no content.
+@(test)
+test_daemon_head_response_has_no_content :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := daemon_run_http(t, "HEAD /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "HEAD is not routed")
+    testing.expect(t, strings.contains(got, "Allow: GET\r\n"), "405 still carries Allow")
+    testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
+}
+
+// HEAD on a blob path: not routed, so a 405 — and it must carry no content either.
+@(test)
+test_daemon_head_on_blob_has_no_content :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_blob_dir("yuke-blob-head")
+    defer os.remove_all(dir)
+
+    got := daemon_run_http(t, "HEAD /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "HEAD is not routed")
+    testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
+}
+
+// The bind-address arm of admission cannot be reached by binding a non-loopback address
+// portably, so it is checked directly.
+@(test)
+test_daemon_admits_its_own_bind_address :: proc(t: ^testing.T) {
+    d := Daemon {
+        bind_address = {192, 168, 1, 50},
+    }
+
+    testing.expect(t, daemon_address_addresses_us(&d, net.IP4_Address{192, 168, 1, 50}), "its own bind address")
+    testing.expect(t, daemon_address_addresses_us(&d, net.IP4_Loopback), "loopback regardless of bind")
+    testing.expect(t, !daemon_address_addresses_us(&d, net.IP4_Address{192, 168, 1, 51}), "a neighbour")
+    testing.expect(t, !daemon_address_addresses_us(&d, net.IP4_Any), "the unspecified address")
+
+    wildcard := Daemon {
+        bind_address = net.IP4_Any,
+    }
+    testing.expect(t, !daemon_address_addresses_us(&wildcard, net.IP4_Any), "a wildcard bind admits no wildcard Host")
+    testing.expect(
+        t,
+        daemon_address_addresses_us(&wildcard, net.IP4_Loopback),
+        "a wildcard bind still admits loopback",
+    )
+}
+
+// A `Host` starting with `]:` panics `net.split_port`, pre-auth: refuse, never abort.
+@(test)
+test_daemon_refuses_a_malformed_host_without_crashing :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    hosts := []string {
+        "]:80",
+        "]:",
+        "]:abc",
+        "]",
+        "[",
+        "[]",
+        "[]:80",
+        "[::1",
+        "[::1]x",
+        "[::1]:80]:90",
+        "a127.0.0.1]:80",
+        "[localhost]",
+        "127.0.0.1:notaport",
+        ":80",
+    }
+    for host in hosts {
+        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        testing.expectf(
+            t,
+            strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+            "host %q is not a literal addressing the daemon, got %q",
+            host,
+            got,
+        )
+    }
+}
+
+@(test)
+test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    missing := daemon_run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    testing.expect(t, strings.has_prefix(missing, "HTTP/1.1 401 Unauthorized\r\n"), "an absent credential should 401")
+    testing.expect(
+        t,
+        !strings.contains(missing, "error=\"invalid_token\""),
+        "an absent credential must not be reported as a rejected one",
+    )
+
+    wrong := daemon_run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer nope\r\n\r\n",
+        {auth_token = "s3cret"},
+    )
+    testing.expect(t, strings.has_prefix(wrong, "HTTP/1.1 401 Unauthorized\r\n"), "a wrong credential should 401")
+    testing.expect(
+        t,
+        strings.contains(wrong, "error=\"invalid_token\""),
+        "a rejected credential should name the error",
+    )
+}
+
+@(test)
+test_daemon_creates_a_missing_blob_dir :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-blob-create")
+    defer os.remove_all(dir)
+
+    nested, _ := os.join_path({dir, "blobs"}, context.temp_allocator)
+
+    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
+
+    testing.expect(t, os.is_dir(nested), "a missing blob directory should be created at start")
+    testing.expect(t, strings.has_prefix(put, "HTTP/1.1 201 Created\r\n"), "an upload into it should 201")
+}
+
+// The created directory and the published blob must both be owner-only.
+@(test)
+test_daemon_blob_store_is_owner_only :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-blob-perms")
+    defer os.remove_all(dir)
+
+    nested, _ := os.join_path({dir, "blobs"}, context.temp_allocator)
+
+    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
+    testing.expect(t, strings.has_prefix(put, "HTTP/1.1 201 Created\r\n"), "the upload should store a blob")
+
+    dir_info, dir_err := os.stat(nested, context.temp_allocator)
+    testing.expect(t, dir_err == nil, "the blob directory should exist")
+    testing.expectf(
+        t,
+        dir_info.mode & ~BLOB_DIR_PERMISSIONS == {},
+        "blob dir reachable beyond its owner: %v",
+        dir_info.mode,
+    )
+
+    blob_path, _ := os.join_path({nested, BLOB_HASH}, context.temp_allocator)
+    blob_info, blob_err := os.stat(blob_path, context.temp_allocator)
+    testing.expect(t, blob_err == nil, "the published blob should exist")
+    testing.expectf(
+        t,
+        blob_info.mode & ~BLOB_FILE_PERMISSIONS == {},
+        "published blob readable beyond its owner: %v",
+        blob_info.mode,
+    )
+}
+
+@(test)
+test_daemon_rejects_an_unusable_blob_dir :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := daemon_test_make_dir("yuke-blob-unusable")
+    defer os.remove_all(dir)
+
+    // A regular file where the blob directory should be: it can never hold a blob.
+    occupied, _ := os.join_path({dir, "occupied"}, context.temp_allocator)
+    testing.expect(t, os.write_entire_file(occupied, transmute([]byte)string("x")) == nil, "test setup")
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    err := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, blob_dir = occupied})
+
+    testing.expect_value(t, err, Daemon_Error.Invalid_Options)
 }
