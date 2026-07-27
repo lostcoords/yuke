@@ -13,6 +13,7 @@ import "core:time"
 import "core:unicode/utf8"
 
 import http_server "libs:http/server"
+import "libs:offload"
 import ws "libs:websocket"
 import wire "src:wire"
 
@@ -93,6 +94,12 @@ Daemon :: struct {
     // @private
     // Owned blob directory; empty when `/blob` is disabled.
     blob_dir:       string,
+
+    // @private
+    // Workers for the blob store's blocking filesystem calls. `fsync`, `rename`, and
+    // `unlink` have no nbio operation, so publishing an upload from a reactor callback
+    // would stall every other connection. Only started when `blob_dir` is set.
+    blobs:          offload.Pool,
 
     // @private
     // Owned bearer token; empty when authorization is disabled.
@@ -181,6 +188,11 @@ daemon_start :: proc(
         }
 
         daemon_warn_exposed_blob_dir(d.blob_dir, allocator)
+
+        if perr := offload.pool_init(&d.blobs, loop, BLOB_WORKER_COUNT, allocator); perr != .None {
+            daemon_free_config(d)
+            return .Invalid_Options
+        }
     }
 
     callbacks := ws.Server_Callbacks {
@@ -200,10 +212,12 @@ daemon_start :: proc(
     case .None:
 
     case .Invalid_Options:
+        daemon_blobs_stop(d)
         daemon_free_config(d)
         return .Invalid_Options
 
     case .Out_Of_Memory:
+        daemon_blobs_stop(d)
         daemon_free_config(d)
         return .Out_Of_Memory
 
@@ -283,8 +297,27 @@ daemon_start_rollback :: proc(d: ^Daemon) {
     assert(d.front_door.state == .Idle, "failed front door retained active state")
     assert(d.ws_server.state == .Serving, "websocket server was not initialized before rollback")
 
+    daemon_blobs_stop(d)
     ws.server_destroy(&d.ws_server)
     daemon_free_config(d)
+}
+
+// Drain and release the blob workers. Idempotent, so every teardown path can call it
+// without knowing how far `daemon_start` got. Draining runs each finished task's
+// completion on this loop, which is why it must precede releasing the front door: a
+// completion resolves its connection ticket against that server.
+daemon_blobs_stop :: proc(d: ^Daemon) {
+    assert(d != nil, "blob worker teardown needs daemon state")
+
+    if !offload.pool_is_running(&d.blobs) {
+        return
+    }
+
+    if derr := offload.pool_drain(&d.blobs); derr != nil {
+        log.errorf("daemon: blob worker drain failed: %v", derr)
+    }
+
+    offload.pool_destroy(&d.blobs)
 }
 
 // Stop accepting and close every live connection. Closing is async: run the loop
@@ -307,6 +340,7 @@ daemon_destroy :: proc(d: ^Daemon) {
     assert(d.front_door.shutdown_complete, "daemon_destroy before HTTP shutdown completed")
     assert(d.ws_server.shutdown_complete, "daemon_destroy before WebSocket shutdown completed")
 
+    daemon_blobs_stop(d)
     ws.server_destroy(&d.ws_server)
     http_server.destroy(&d.front_door)
     daemon_free_config(d)

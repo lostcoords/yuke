@@ -14,6 +14,7 @@ import "core:sys/posix"
 import "core:time"
 import http "libs:http"
 import http_server "libs:http/server"
+import "libs:offload"
 import ws "libs:websocket"
 import wire "src:wire"
 
@@ -40,6 +41,11 @@ UPLOAD_TEMP_GRACE :: 1 * time.Hour
 // does not. `core:os` defaults to 0777/0666, so both modes are always passed.
 BLOB_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 BLOB_FILE_PERMISSIONS :: os.Permissions{.Read_User, .Write_User}
+
+// Workers publishing uploads. Each one spends its time inside `fsync` rather than
+// competing for a core, and concurrent publishes are already bounded by the front door's
+// connection cap, so a small count is enough.
+BLOB_WORKER_COUNT :: 2
 
 // Pre-match steps: admit, then auth. Route/method disclosure happens only after both.
 @(rodata)
@@ -375,30 +381,74 @@ daemon_blob_not_found :: proc(c: ^http_server.Conn, response_headers: []http_ser
     daemon_respond_text(c, .Not_Found, "unknown blob", response_headers)
 }
 
-// Per-request blob-upload state, owned across the async body receive and freed in
-// `daemon_blob_upload_end`. The connection outlives it; the daemon allocator backs
-// every owned string.
+// What publishing an upload decided. Recorded on a worker thread, which can neither
+// answer the request nor log, and acted on by the completion back on the loop.
+Blob_Outcome :: enum {
+    // Not yet finalized.
+    Pending,
+
+    // Body did not complete; the temp file was deleted and nobody is owed an answer.
+    Discarded,
+
+    // Published under its content-addressed name.
+    Stored,
+
+    // Another upload of the same content won the race, or it was already stored.
+    Already_Present,
+
+    // The streamed digest did not match the digest in the URL.
+    Mismatch,
+
+    // A filesystem call failed; see `err`.
+    Failed,
+}
+
+// Per-request blob-upload state. Owned across the async body receive and the offloaded
+// publish, then freed by the completion. Every field a worker thread reads is owned here
+// rather than borrowed, so the upload outlives its connection.
 Blob_Upload :: struct {
+    // Publishes off the reactor; carried here so submitting never allocates.
+    task:        offload.Task(Blob_Upload),
+
+    // Owning daemon, for the worker pool.
+    daemon:      ^Daemon,
+
+    // Connection to answer, if it is still there when the publish finishes. Zero when
+    // the body never completed and no answer is owed.
+    ticket:      http_server.Ticket,
+
+    // Whether the body completed, so the temp file should be published rather than
+    // discarded.
+    publish:     bool,
+
+    // What the publish decided, and the failure behind `.Failed`.
+    outcome:     Blob_Outcome,
+    err:         os.Error,
+
     // Allocator backing the owned strings and this struct.
-    allocator:  mem.Allocator,
+    allocator:   mem.Allocator,
 
     // Response headers to echo (rodata or nil; carries the private-cache marker).
-    headers:    []http_server.Header,
+    headers:     []http_server.Header,
 
     // Owned final content-addressed path `<blob_dir>/<hash>`.
-    final_path: string,
+    final_path:  string,
 
     // Owned temp path streamed to, then atomically renamed to `final_path`.
-    temp_path:  string,
+    temp_path:   string,
 
-    // Owned copy of the claimed 64-hex digest from the URL.
-    claimed:    string,
+    // Owned copy of the claimed 64-hex digest from the URL, for logging.
+    claimed:     string,
+
+    // The same digest decoded once on the loop, so the worker compares raw bytes instead
+    // of encoding on a thread that must not allocate.
+    claimed_raw: [sha2.DIGEST_SIZE_256]byte,
 
     // Incremental SHA-256 over the streamed body.
-    sha:        sha2.Context_256,
+    sha:         sha2.Context_256,
 
     // Open temp file; nil once closed.
-    file:       ^os.File,
+    file:        ^os.File,
 }
 
 // Stream a blob body to a temp file, verify its digest against the URL hash, and
@@ -435,6 +485,7 @@ daemon_route_blob_put :: proc(
     }
 
     up^ = {}
+    up.daemon = d
     up.allocator = d.allocator
     up.headers = response_headers
 
@@ -453,6 +504,13 @@ daemon_route_blob_put :: proc(
         return
     }
     up.claimed = claimed
+
+    // Already validated as fixed-length lower hex above, so every pair decodes.
+    for i in 0 ..< len(up.claimed_raw) {
+        b, ok := hex.decode_sequence(up.claimed[i * 2:][:2])
+        assert(ok, "validated blob hash failed to decode")
+        up.claimed_raw[i] = b
+    }
 
     file, oerr := os.open(up.temp_path, {.Write, .Create, .Excl}, BLOB_FILE_PERMISSIONS)
     if oerr != nil {
@@ -487,85 +545,134 @@ daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk:
     return true
 }
 
-// Finalize (success) or discard (failure) the upload, freeing its state either way.
-// On success the streamed digest is checked against the claimed URL hash: a mismatch,
-// a pre-existing store, and a fresh store map to 400, 200, and 201. On failure the
-// partial temp is deleted. No bodies.
+// Hand the finished (or abandoned) upload to a worker. `fsync`, `rename`, and `unlink`
+// have no nbio operation, so publishing on the reactor would stall every other
+// connection; the whole finalize runs off it instead. The upload owns every path the
+// worker reads, so it outlives this connection.
 daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
     assert(up != nil, "blob end callback needs upload state")
+    assert(up.daemon != nil, "blob upload lost its daemon")
+    assert(up.outcome == .Pending, "blob upload finalized twice")
+    assert(up.file != nil, "blob upload reached its end callback with no temp file")
 
-    sync_err: os.Error
-    if up.file != nil {
-        // Flush before the rename publishes a content-addressed name over bytes
-        // nothing re-verifies on read. Narrows the power-loss window rather than
-        // closing it: darwin needs `F_FULLFSYNC` for a media barrier. Blocks the
-        // reactor for the flush. Directory durability is not forced.
-        if ok {
-            sync_err = os.sync(up.file)
-        }
+    up.publish = ok
 
-        os.close(up.file)
-        up.file = nil
+    // Only a completed body has anyone to answer: `ok == false` also arrives from
+    // connection teardown, where there is no longer a request in flight.
+    if ok {
+        up.ticket = http_server.conn_ticket(c)
+        http_server.defer_response(c)
     }
 
-    defer daemon_blob_upload_free(up)
+    offload.submit(&up.daemon.blobs, &up.task, up, daemon_blob_publish, daemon_blob_published)
+}
 
-    if !ok {
+// Worker thread. Touches only `up`, every path of which is an owned clone. Records an
+// outcome rather than answering or logging: there may be no connection left to answer,
+// and the logger belongs to the loop thread.
+daemon_blob_publish :: proc(up: ^Blob_Upload) {
+    assert(up.file != nil, "publish needs the temp file still open")
+    assert(up.outcome == .Pending, "publish ran on a finalized upload")
+
+    up.outcome = daemon_blob_finalize(up)
+    assert(up.file == nil, "finalize left the temp file open")
+
+    // The temp survives only when the rename turned it into the blob; every other outcome
+    // leaves nothing behind for the boot sweep to find.
+    if up.outcome != .Stored {
         os.remove(up.temp_path)
-        return
+    }
+}
+
+// Close the temp file and decide the upload's fate, without touching the temp path: the
+// single caller removes it for every outcome but `.Stored`. Sets `err` on a failure.
+daemon_blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
+    // Flush before the rename publishes a content-addressed name over bytes nothing
+    // re-verifies on read. Narrows the power-loss window rather than closing it: darwin
+    // needs `F_FULLFSYNC` for a media barrier. Directory durability is not forced.
+    if up.publish {
+        up.err = os.sync(up.file)
     }
 
-    if sync_err != nil {
-        log.errorf("daemon: blob temp sync failed: %v", sync_err)
-        os.remove(up.temp_path)
-        daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
-        return
+    os.close(up.file)
+    up.file = nil
+
+    if !up.publish {
+        return .Discarded
     }
 
-    assert(len(up.claimed) == BLOB_HASH_HEX_LEN, "blob upload lost its claimed digest")
+    if up.err != nil {
+        return .Failed
+    }
 
     digest: [sha2.DIGEST_SIZE_256]byte
     sha2.final(&up.sha, digest[:])
 
-    encoded, herr := hex.encode(digest[:], up.allocator)
-    if herr != nil {
-        os.remove(up.temp_path)
-        http_server.abort(c)
-        return
-    }
-    defer delete(encoded, up.allocator)
-
-    if string(encoded) != up.claimed {
-        os.remove(up.temp_path)
-        daemon_respond_text(c, .Bad_Request, "hash mismatch", up.headers)
-        return
+    if digest != up.claimed_raw {
+        return .Mismatch
     }
 
     // Content-addressed and idempotent: an already-present store makes the upload a
     // no-op, so drop the temp and report success without replacing the file.
     if os.exists(up.final_path) {
-        os.remove(up.temp_path)
-        daemon_respond_text(c, .Ok, "", up.headers)
-        return
+        return .Already_Present
     }
 
     if rerr := os.rename(up.temp_path, up.final_path); rerr != nil {
         // A concurrent upload of the same content may have published it between the
         // existence check and the rename; a now-present target is still success.
-        os.remove(up.temp_path)
         if os.exists(up.final_path) {
-            daemon_respond_text(c, .Ok, "", up.headers)
-        } else {
-            log.errorf("daemon: blob publish rename failed: %v", rerr)
-            daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
+            return .Already_Present
         }
 
+        up.err = rerr
+        return .Failed
+    }
+
+    return .Stored
+}
+
+// Loop thread. Answers the request when the connection is still there, and frees the
+// upload either way: a publish that completed is correct whether or not anyone is left
+// to hear about it. A mismatch, an already-present store, and a fresh store map to 400,
+// 200, and 201. No bodies.
+daemon_blob_published :: proc(up: ^Blob_Upload) {
+    assert(up.outcome != .Pending, "publish completed without an outcome")
+    assert(up.file == nil, "publish left the temp file open")
+    defer daemon_blob_upload_free(up)
+
+    switch up.outcome {
+    case .Stored:
+        log.debugf("daemon: stored blob %s", up.claimed)
+
+    case .Failed:
+        log.errorf("daemon: blob publish failed: %v", up.err)
+
+    case .Pending, .Discarded, .Already_Present, .Mismatch:
+    }
+
+    c := http_server.conn_resolve(&up.daemon.front_door, up.ticket)
+    if c == nil {
         return
     }
 
-    log.debugf("daemon: stored blob %s", up.claimed)
-    daemon_respond_text(c, .Created, "", up.headers)
+    switch up.outcome {
+    case .Stored:
+        daemon_respond_text(c, .Created, "", up.headers)
+
+    case .Already_Present:
+        daemon_respond_text(c, .Ok, "", up.headers)
+
+    case .Mismatch:
+        daemon_respond_text(c, .Bad_Request, "hash mismatch", up.headers)
+
+    case .Failed:
+        daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
+
+    case .Pending, .Discarded:
+        assert(false, "an upload with no answer owed resolved a connection")
+    }
 }
 
 // Owned `<blob_dir>/<hash>` path: the content-addressed store layout shared by the
@@ -711,7 +818,7 @@ daemon_respond_text :: proc(
     response_headers: []http_server.Header,
 ) {
     assert(c != nil && c.server != nil, "daemon response needs an owned connection")
-    assert(c.state == .Reading, "daemon response began after the connection was answered")
+    assert(http_server.conn_can_respond(c), "daemon response began after the connection was answered")
 
     if http_server.respond_text(c, status, text, response_headers) != .None {
         http_server.abort(c)

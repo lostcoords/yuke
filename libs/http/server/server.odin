@@ -148,8 +148,12 @@ Server :: struct {
     body_timeout:      time.Duration,
 
     // @private
-    // Owned connections; the bool value is unused (set membership only).
-    conns:             map[^Conn]bool,
+    // Owned connections, keyed by the ticket that outlives them.
+    conns:             map[Ticket]^Conn,
+
+    // @private
+    // Monotonic ticket source; incremented before use so zero is never issued.
+    next_ticket:       Ticket,
 
     // @private
     // In-flight accept operation; nil when disarmed.
@@ -165,14 +169,24 @@ Server :: struct {
 
 // Per-connection lifecycle: Reading -> Responding -> Closed, or Reading -> Hijacked.
 // A body-bearing route may take the Reading -> Receiving_Body -> Reading -> Responding
-// path while `receive_body` streams the request body.
+// path while `receive_body` streams the request body. A handler answering from work it
+// started elsewhere inserts Reading -> Deferred -> Responding; `conn_can_respond` is the
+// one place that says which of these states still owes the peer an answer.
 Conn_State :: enum {
     Reading,
     Receiving_Body,
+    Deferred,
     Responding,
     Hijacked,
     Closed,
 }
+
+// A connection identity that outlives the connection. Handed to work that may finish
+// after the connection is gone — an offloaded filesystem task, for example — so it can
+// ask whether there is still anyone to answer instead of holding a dangling `^Conn`.
+// Never reused, so a stale ticket resolves to `nil` rather than to a later connection.
+// Zero is not a connection and always resolves to `nil`.
+Ticket :: distinct u64
 
 // One accepted connection owned by its `Server` until response or hijack.
 Conn :: struct {
@@ -184,6 +198,10 @@ Conn :: struct {
 
     // Allocator backing all owned storage.
     allocator:         mem.Allocator,
+
+    // @private
+    // Identity that outlives this connection; read through `conn_ticket`. See `Ticket`.
+    ticket:            Ticket,
 
     // @private
     // TCP socket; owned until `hijack` or finalize.
@@ -349,7 +367,7 @@ listen :: proc(
         return .Invalid_Options
     }
 
-    conns, aerr := make(map[^Conn]bool, opts.max_connections, allocator)
+    conns, aerr := make(map[Ticket]^Conn, opts.max_connections, allocator)
     if aerr != nil {
         return .Out_Of_Memory
     }
@@ -399,7 +417,7 @@ shutdown :: proc(s: ^Server) {
     }
 
     nbio.close_poly(s.socket, s, on_listen_closed, s.loop)
-    for c in s.conns {
+    for _, c in s.conns {
         if c.state != .Hijacked {
             conn_finalize(c)
         }
@@ -452,7 +470,8 @@ respond :: proc(
     body: []byte,
     extra_headers: []Header = nil,
 ) -> Response_Error {
-    assert(c != nil && c.state == .Reading, "respond on an answered connection")
+    assert(c != nil, "respond needs a connection")
+    assert(conn_can_respond(c), "respond on an answered connection")
 
     extra, response_err := serialize_extra_headers(c, extra_headers)
     if response_err != .None {
@@ -506,7 +525,8 @@ respond_file :: proc(
     failure_text: string,
     extra_headers: []Header = nil,
 ) -> Response_Error {
-    assert(c != nil && c.state == .Reading, "respond_file on an answered connection")
+    assert(c != nil, "respond_file needs a connection")
+    assert(conn_can_respond(c), "respond_file on an answered connection")
     assert(max_file_bytes >= 0, "file response needs a non-negative byte cap")
 
     if !http.field_value_valid(content_type) {
@@ -598,6 +618,84 @@ receive_body :: proc(c: ^Conn, user_data: rawptr, on_chunk: On_Body_Chunk, on_en
     }
 
     arm_body_recv(c)
+}
+
+// Whether this connection still owes the peer an answer. The single definition of that
+// question: `respond*` accept exactly these states, and `conn_resolve` hands back only a
+// connection satisfying it.
+conn_can_respond :: proc(c: ^Conn) -> bool {
+    assert(c != nil, "answerability needs a connection")
+
+    switch c.state {
+    case .Reading, .Deferred:
+        return true
+
+    case .Receiving_Body, .Responding, .Hijacked, .Closed:
+        return false
+    }
+
+    return false
+}
+
+// Declare that this request will be answered later, from work the handler has already
+// started elsewhere. Without this a handler must respond before returning, because the
+// connection is otherwise left with nothing armed and no response owed.
+//
+// The request deadline is re-armed, so a deferred answer that never arrives finalizes the
+// connection rather than holding it forever. Nothing is armed on the socket meanwhile, so
+// that deadline is also the only thing that notices a peer disconnecting mid-answer. A
+// handler that has deferred must therefore tolerate the connection being gone by the time
+// it is ready — resolve a `Ticket` rather than retaining the `^Conn`.
+//
+// A deferred request may only be answered, never hijacked and never switched to a body
+// receive: both belong to the request phase this one has already left.
+defer_response :: proc(c: ^Conn) {
+    assert(c != nil, "deferring needs a connection")
+    assert(c.state == .Reading, "response deferred outside Reading")
+
+    // Whatever deadline is armed measures the wrong thing now: a handler deferring from
+    // `on_request` still carries the head deadline, and one deferring from a body-end
+    // callback carries none. Replace it either way with a deadline on the answer.
+    conn_cancel_timeout(c)
+
+    c.state = .Deferred
+    c.timeout_op = nbio.timeout_poly(c.server.request_timeout, c, conn_on_timeout, c.loop)
+
+    assert(c.timeout_op != nil, "deferred response left no deadline armed")
+}
+
+// This connection's ticket, for work that may outlive it. See `Ticket`.
+conn_ticket :: proc(c: ^Conn) -> Ticket {
+    assert(c != nil, "ticket needs a connection")
+    assert(c.ticket != 0, "connection was never enrolled")
+    return c.ticket
+}
+
+// The connection `ticket` names if it can still be answered, otherwise `nil`. Answers the
+// only question deferred work may ask about a connection it does not own, and the only
+// safe way to ask it: the `^Conn` itself may already be freed.
+//
+// A finalized connection is deliberately a miss even though it is still in the table
+// until its closes complete — it can no longer be answered, so handing it back would only
+// invite a response onto a dead socket. Teardown during an in-flight deferral is the
+// ordinary case, not an error.
+//
+// Must be called on the server's loop thread, where releases happen.
+conn_resolve :: proc(s: ^Server, ticket: Ticket) -> ^Conn {
+    assert(s != nil, "resolve needs a server")
+
+    if ticket == 0 {
+        return nil
+    }
+
+    c := s.conns[ticket]
+    if c == nil {
+        return nil
+    }
+
+    assert(c.ticket == ticket, "connection table returned a mismatched ticket")
+
+    return conn_can_respond(c) ? c : nil
 }
 
 // Tear down a connection that cannot be answered (for example after allocation
@@ -707,15 +805,19 @@ conn_start :: proc(s: ^Server, socket: net.TCP_Socket) {
         return
     }
 
+    s.next_ticket += 1
+    assert(s.next_ticket != 0, "ticket source wrapped")
+
     c^ = {}
     c.server = s
     c.loop = s.loop
     c.allocator = s.allocator
+    c.ticket = s.next_ticket
     c.socket = socket
     c.state = .Reading
     c.head_buf = head_buf
     c.recv_buf = recv_buf
-    if map_insert(&s.conns, c, true) == nil {
+    if map_insert(&s.conns, c.ticket, c) == nil {
         log.error("http_server: out of memory inserting connection")
         delete(c.head_buf)
         delete(c.recv_buf, c.allocator)
@@ -828,10 +930,10 @@ conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
     case .Hijacked:
         conn_release(c)
 
-    case .Receiving_Body, .Responding, .Closed:
+    case .Receiving_Body, .Deferred, .Responding, .Closed:
 
     case .Reading:
-        assert(false, "request handler must respond, hijack, or receive the body")
+        assert(false, "request handler must respond, defer, hijack, or receive the body")
         conn_finalize(c)
     }
 }
@@ -937,6 +1039,13 @@ conn_on_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
     case .Receiving_Body:
         log.debug("http_server: request body transfer timed out")
         conn_finalize(c)
+
+    case .Deferred:
+        // The handler still owes an answer and may yet produce one, so there is no
+        // status to send that would not race it. Dropping the connection releases it and
+        // leaves the handler's ticket resolving to nothing.
+        log.debug("http_server: deferred response timed out")
+        conn_finalize(c)
     }
 }
 
@@ -951,10 +1060,10 @@ conn_respond_error :: proc(c: ^Conn, status: Status, text: string, extra_headers
     }
 }
 
-// Cancel the head timeout and transition `Reading` to `Responding`.
+// Cancel the pending deadline and transition `Reading` or `Deferred` to `Responding`.
 @(private)
 conn_begin_response :: proc(c: ^Conn) {
-    assert(c.state == .Reading, "response began outside Reading")
+    assert(conn_can_respond(c), "response began on a connection that cannot answer")
 
     conn_cancel_timeout(c)
     c.state = .Responding
@@ -1159,7 +1268,7 @@ conn_on_resource_closed :: proc(op: ^nbio.Operation, c: ^Conn) {
 conn_release :: proc(c: ^Conn) {
     s := c.server
     assert(c.state == .Closed || c.state == .Hijacked, "connection released before teardown")
-    assert(c in s.conns, "releasing a connection the server does not own")
+    assert(s.conns[c.ticket] == c, "releasing a connection the server does not own")
     assert(c.close_pending == 0, "connection released with closes outstanding")
 
     delete(c.head_buf)
@@ -1170,7 +1279,7 @@ conn_release :: proc(c: ^Conn) {
     delete(c.file_content_type, c.allocator)
     delete(c.file_failure_body, c.allocator)
 
-    delete_key(&s.conns, c)
+    delete_key(&s.conns, c.ticket)
     free(c, s.allocator)
     assert(len(s.conns) <= s.max_connections, "connection table exceeds its cap")
 

@@ -19,39 +19,58 @@ import ts "libs:testsupport"
 // What the handler under test should do, plus what it observed.
 Obs :: struct {
     // Hijack the socket instead of responding.
-    hijack:        bool,
+    hijack:                  bool,
 
     // Shut the front door down from inside the request callback after answering.
-    shutdown:      bool,
+    shutdown:                bool,
 
     // Number of `on_request` calls.
-    request_count: int,
+    request_count:           int,
 
     // Method and target of the most recent request.
-    method:        string,
-    target:        string,
+    method:                  string,
+    target:                  string,
 
     // Bytes the handler saw past the head.
-    body_len:      int,
+    body_len:                int,
 
     // Head-consumed byte count and raw trailing bytes, for split-terminator checks.
-    consumed:      int,
-    trailing:      string,
+    consumed:                int,
+    trailing:                string,
 
     // Stream the request body via `receive_body` instead of responding immediately.
-    receive_body:  bool,
+    receive_body:            bool,
 
     // Reject the first body chunk from the sink, exercising the abort path.
-    abort_body:    bool,
+    abort_body:              bool,
 
     // Body bytes the sink accumulated, and how many.
-    body_buf:      [256]byte,
-    body_got:      int,
+    body_buf:                [256]byte,
+    body_got:                int,
 
     // The end callback fired, and with which outcome.
-    body_ended:    bool,
-    body_ok:       bool,
+    body_ended:              bool,
+    body_ok:                 bool,
+
+    // Defer the response and answer from a later loop callback, standing in for work
+    // handed to another thread.
+    defer_later:             bool,
+
+    // Finalize the connection between the deferral and the answer.
+    finalize_while_deferred: bool,
+
+    // The deferred callback ran at all.
+    answered_late:           bool,
+
+    // What `conn_resolve` reported from the deferred callback: its own ticket resolving
+    // back to the same connection, and a never-issued ticket and zero both missing.
+    resolved_self:           bool,
+    resolved_miss:           bool,
+    resolved_zero:           bool,
 }
+
+// A ticket the server never issues, for the miss case.
+UNISSUED_TICKET :: Ticket(1 << 40)
 
 // Bytes a hijacking handler writes straight onto the taken-over socket.
 HIJACKED :: "hijacked"
@@ -75,6 +94,11 @@ test_on_request :: proc(c: ^Conn, req: Request) {
         return
     }
 
+    if o.defer_later {
+        test_defer_and_answer_later(c)
+        return
+    }
+
     if !o.hijack {
         respond_text(c, .Ok, "hello")
 
@@ -90,6 +114,36 @@ test_on_request :: proc(c: ^Conn, req: Request) {
     if o.shutdown {
         shutdown(c.server)
     }
+}
+
+// Defer, then answer from a zero-duration timeout: the same shape an offloaded task's
+// completion arrives in, without needing a worker thread to produce it.
+test_defer_and_answer_later :: proc(c: ^Conn) {
+    defer_response(c)
+    assert(c.state == .Deferred, "deferring did not reach Deferred")
+
+    if obs_of(c).finalize_while_deferred {
+        // Stand in for teardown landing between the deferral and its answer.
+        conn_finalize(c)
+    }
+
+    nbio.timeout_poly(0, c, test_answer_deferred, c.loop)
+}
+
+test_answer_deferred :: proc(op: ^nbio.Operation, c: ^Conn) {
+    o := obs_of(c)
+
+    o.resolved_self = conn_resolve(c.server, conn_ticket(c)) == c
+    o.resolved_miss = conn_resolve(c.server, UNISSUED_TICKET) == nil
+    o.resolved_zero = conn_resolve(c.server, 0) == nil
+    o.answered_late = true
+
+    // What deferred work must do: answer only what resolving still hands back.
+    if conn_resolve(c.server, conn_ticket(c)) == nil {
+        return
+    }
+
+    respond_text(c, .Ok, "deferred")
 }
 
 // Take the socket over and write `HIJACKED` straight onto it.
@@ -261,6 +315,58 @@ run_exchange_with :: proc(
     destroy(&s)
 
     return strings.clone(string(p.response[:p.length]), context.temp_allocator)
+}
+
+// A handler may answer after returning, which is what work handed to another thread
+// needs. The connection must survive the gap and the response must still arrive.
+@(test)
+test_http_defers_then_answers :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        defer_later = true,
+    }
+    got := run_exchange(t, "GET /deferred HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.request_count, 1)
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "deferred answer must reach the peer")
+    testing.expect(t, strings.has_suffix(got, "deferred"), "deferred answer must carry its body")
+}
+
+// Teardown between the deferral and the answer is ordinary, not an error: the ticket must
+// stop resolving the moment the connection can no longer be answered, even though it stays
+// in the table until its closes complete. Without that, deferred work walks into a
+// finalized connection and responds onto a dead socket.
+@(test)
+test_http_deferred_ticket_misses_after_finalize :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        defer_later             = true,
+        finalize_while_deferred = true,
+    }
+    got := run_exchange(t, "GET /deferred HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect(t, obs.answered_late, "the deferred callback must still run")
+    testing.expect(t, !obs.resolved_self, "a finalized connection must not resolve")
+    testing.expect_value(t, got, "")
+}
+
+// A ticket resolves to its own connection while it lives; a never-issued ticket and zero
+// resolve to nothing. This is the only question deferred work may ask about a connection
+// it does not own.
+@(test)
+test_http_ticket_resolves_only_live_connections :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        defer_later = true,
+    }
+    run_exchange(t, "GET /deferred HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect(t, obs.resolved_self, "a live ticket must resolve to its own connection")
+    testing.expect(t, obs.resolved_miss, "a never-issued ticket must resolve to nothing")
+    testing.expect(t, obs.resolved_zero, "the zero ticket must resolve to nothing")
 }
 
 @(test)

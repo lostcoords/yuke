@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-client test-daemon test-support test-ui test-term test-sqlite check-windows fmt clean sqlite-static
+.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-support test-ui test-term test-sqlite check-windows fmt clean sqlite-static
 
 # Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
 SQLITE_YEAR ?= 2025
@@ -27,6 +27,11 @@ test-http:
 	$(ODIN) test libs/http $(COLLECTION) -out:build/http_test.bin
 	$(ODIN) test libs/http/server $(COLLECTION) -out:build/http_server_test.bin
 
+
+# Run the worker-pool tests (blocking work off the reactor).
+test-offload:
+	@mkdir -p build
+	$(ODIN) test libs/offload $(COLLECTION) -out:build/offload_test.bin
 
 # Run the client package tests (session replica).
 test-client:
@@ -60,7 +65,7 @@ test-sqlite:
 	$(ODIN) test libs/sqlite $(COLLECTION) -out:build/sqlite_test.bin
 
 
-test: test-wire test-ws test-http test-client test-daemon test-support test-ui test-term test-sqlite
+test: test-wire test-ws test-http test-offload test-client test-daemon test-support test-ui test-term test-sqlite
 
 # Fetch the pinned amalgamation and build a static archive under libs/sqlite/bin/.
 # Required for Windows linking; optional on Unix (tests use system libsqlite3).
