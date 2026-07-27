@@ -9,9 +9,18 @@ broadcasts, union arms, enum values — stay closed.
 
 Framing is JSON-RPC 2.0. Requests and broadcasts share one `method` namespace;
 broadcasts are notifications (no `id`), so nothing replies to them. Batching is
-not supported, and the daemon never sends a request to the client. Everything
-JSON-RPC leaves unspecified — ordering, replay, subscription gating,
-droppability — is ours: see `Seq`, `session.resync`, and `broadcast_name_class`.
+not supported, and the daemon never sends a request to the client — the one
+interaction needing an answer, permission, is a notification plus a
+client-originated `permission.decide`. Everything JSON-RPC leaves unspecified —
+ordering, replay, subscription gating, droppability — is ours: see `Seq`,
+`session.resync`, and `broadcast_name_class`.
+
+Two deliberate deviations from the spec. A malformed frame closes the connection
+with `CLOSE.protocol_error` instead of drawing a `-32600` response. And a
+duplicated *envelope* member is `.Bad_Frame_Type`, where the spec is silent:
+last-wins would let a peer and an intermediary disagree about which `id` or
+`method` is authoritative. Payload readers stay last-wins, because the envelope
+is the only place that disagreement can happen.
 
 The package is layered as:
 
