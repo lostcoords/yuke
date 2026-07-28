@@ -9,7 +9,44 @@ import "libs:testsupport"
 test_libversion_is_present :: proc(t: ^testing.T) {
     ver := libversion()
     testing.expect(t, len(ver) > 0, "libversion should be non-empty")
-    testing.expect(t, libversion_number() >= 3008000, "need SQLite 3.8+ for WAL baseline")
+    testing.expect(t, libversion_number() >= 3008002, "need SQLite 3.8.2+ for WITHOUT ROWID")
+}
+
+@(test)
+test_close_reports_live_statement :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+
+    st, prep := prepare(db, "SELECT 1")
+    testing.expect_value(t, prep, Result.Ok)
+    testing.expect_value(t, close(db), Result.Busy)
+
+    testing.expect_value(t, finalize(st), Result.Ok)
+    testing.expect_value(t, close(db), Result.Ok)
+}
+
+@(test)
+test_cstring_allocation_failure_is_reported :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+
+    failing: testsupport.Failing_Allocator
+    testsupport.failing_allocator_init(&failing, context.allocator, 0)
+
+    previous := context.temp_allocator
+    context.temp_allocator = testsupport.failing_allocator(&failing)
+    st, prep := prepare(db, "SELECT 1")
+    exec_rc := exec(db, "SELECT 1")
+    opened, open_rc := open_memory()
+    context.temp_allocator = previous
+
+    testing.expect_value(t, prep, Result.Ok)
+    testing.expect_value(t, exec_rc, Result.No_Mem)
+    testing.expect_value(t, open_rc, Result.No_Mem)
+    testing.expect(t, opened == nil, "an allocation failure returns no connection")
+
+    testing.expect_value(t, finalize(st), Result.Ok)
+    testing.expect_value(t, close(db), Result.Ok)
 }
 
 @(test)
@@ -17,7 +54,7 @@ test_memory_round_trip :: proc(t: ^testing.T) {
     db, rc := open_memory()
     testing.expect_value(t, rc, Result.Ok)
     testing.expect(t, db != nil, "open_memory returned nil db")
-    defer close(db)
+    defer testing.expect_value(t, close(db), Result.Ok)
 
     testing.expect_value(t, busy_timeout(db, 1000), Result.Ok)
 
@@ -61,7 +98,7 @@ test_memory_round_trip :: proc(t: ^testing.T) {
 test_blob_and_null_bind :: proc(t: ^testing.T) {
     db, rc := open_memory()
     testing.expect_value(t, rc, Result.Ok)
-    defer close(db)
+    defer testing.expect_value(t, close(db), Result.Ok)
 
     testing.expect_value(t, exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, b BLOB, n TEXT)"), Result.Ok)
 
@@ -91,7 +128,7 @@ test_blob_and_null_bind :: proc(t: ^testing.T) {
 test_prepare_error_message :: proc(t: ^testing.T) {
     db, rc := open_memory()
     testing.expect_value(t, rc, Result.Ok)
-    defer close(db)
+    defer testing.expect_value(t, close(db), Result.Ok)
 
     stmt, prep := prepare(db, "SELECT * FROM definitely_missing")
     testing.expect(t, is_error(prep), "bad SQL should error")
@@ -106,7 +143,7 @@ test_file_wal_pragma :: proc(t: ^testing.T) {
 
     db, rc := open(path, DEFAULT_WRITER | {.Nomutex})
     testing.expect_value(t, rc, Result.Ok)
-    defer close(db)
+    defer testing.expect_value(t, close(db), Result.Ok)
 
     testing.expect_value(t, exec(db, "PRAGMA journal_mode=WAL"), Result.Ok)
     testing.expect_value(t, exec(db, "PRAGMA synchronous=NORMAL"), Result.Ok)
@@ -127,7 +164,7 @@ test_file_wal_pragma :: proc(t: ^testing.T) {
 test_extended_errcode_recovers_base_family :: proc(t: ^testing.T) {
     db, rc := open_memory()
     testing.expect_value(t, rc, Result.Ok)
-    defer close(db)
+    defer testing.expect_value(t, close(db), Result.Ok)
 
     testing.expect_value(t, exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, u TEXT UNIQUE)"), Result.Ok)
     testing.expect_value(t, exec(db, "INSERT INTO t(id, u) VALUES (1, 'a')"), Result.Ok)

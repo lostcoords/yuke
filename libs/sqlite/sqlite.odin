@@ -1,6 +1,7 @@
 package sqlite
 
 import "core:c"
+import "core:math/bits"
 import "core:strings"
 
 // Open flags as bit positions matching sqlite3.h masks (bit N → 1<<N).
@@ -46,8 +47,14 @@ libversion_number :: proc() -> int {
 
 // Open a database at `path`. On failure `db` is nil.
 open :: proc(path: string, flags: Open_Flags = DEFAULT_WRITER) -> (db: ^Conn, rc: Result) {
-    cpath := strings.clone_to_cstring(path, context.temp_allocator)
+    cpath, clone_err := strings.clone_to_cstring(path, context.temp_allocator)
+
+    if clone_err != nil {
+        return nil, .No_Mem
+    }
+
     rc = c_open_v2(cpath, &db, c.int(transmute(u32)flags), nil)
+
     if rc != .Ok {
         if db != nil {
             _ = c_close_v2(db)
@@ -63,18 +70,23 @@ open_memory :: proc(flags: Open_Flags = DEFAULT_WRITER) -> (db: ^Conn, rc: Resul
     return open(":memory:", flags)
 }
 
-// Close a connection. Safe on nil (returns `.Ok`).
+// Close a connection. Reports `.Busy` while a statement or blob still belongs to
+// it, making leaked children observable. Safe on nil (returns `.Ok`).
 close :: proc(db: ^Conn) -> Result {
     if db == nil {
         return .Ok
     }
 
-    return c_close_v2(db)
+    return c_close(db)
 }
 
 busy_timeout :: proc(db: ^Conn, ms: int) -> Result {
     assert(db != nil, "busy_timeout needs a connection")
     assert(ms >= 0, "busy_timeout ms must be non-negative")
+
+    if ms > bits.I32_MAX {
+        return .Range
+    }
 
     return c_busy_timeout(db, c.int(ms))
 }
@@ -83,9 +95,15 @@ busy_timeout :: proc(db: ^Conn, ms: int) -> Result {
 exec :: proc(db: ^Conn, sql: string) -> Result {
     assert(db != nil, "exec needs a connection")
 
-    csql := strings.clone_to_cstring(sql, context.temp_allocator)
+    csql, clone_err := strings.clone_to_cstring(sql, context.temp_allocator)
+
+    if clone_err != nil {
+        return .No_Mem
+    }
+
     err_msg: cstring
     rc := c_exec(db, csql, nil, nil, &err_msg)
+
     if err_msg != nil {
         c_free(rawptr(err_msg))
     }
@@ -98,9 +116,13 @@ prepare :: proc(db: ^Conn, sql: string) -> (stmt: ^Stmt, rc: Result) {
     assert(db != nil, "prepare needs a connection")
     assert(len(sql) > 0, "prepare needs non-empty sql")
 
-    csql := strings.clone_to_cstring(sql, context.temp_allocator)
-    // nByte includes the NUL for a small speed win per the SQLite docs.
-    rc = c_prepare_v2(db, csql, c.int(len(sql) + 1), &stmt, nil)
+    if len(sql) > bits.I32_MAX {
+        return nil, .Too_Big
+    }
+
+    // SQLite accepts a counted, non-NUL-terminated buffer when nByte is exact.
+    rc = c_prepare_v2(db, cstring(raw_data(sql)), c.int(len(sql)), &stmt, nil)
+
     if rc != .Ok {
         stmt = nil
     }
@@ -137,6 +159,10 @@ bind_i64 :: proc(stmt: ^Stmt, index: int, value: i64) -> Result {
     assert(stmt != nil, "bind_i64 needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
+    if index > bits.I32_MAX {
+        return .Range
+    }
+
     return c_bind_int64(stmt, c.int(index), value)
 }
 
@@ -144,6 +170,10 @@ bind_i64 :: proc(stmt: ^Stmt, index: int, value: i64) -> Result {
 bind_f64 :: proc(stmt: ^Stmt, index: int, value: f64) -> Result {
     assert(stmt != nil, "bind_f64 needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
+
+    if index > bits.I32_MAX {
+        return .Range
+    }
 
     return c_bind_double(stmt, c.int(index), value)
 }
@@ -153,6 +183,14 @@ bind_f64 :: proc(stmt: ^Stmt, index: int, value: f64) -> Result {
 bind_text :: proc(stmt: ^Stmt, index: int, value: string) -> Result {
     assert(stmt != nil, "bind_text needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
+
+    if index > bits.I32_MAX {
+        return .Range
+    }
+
+    if len(value) > bits.I32_MAX {
+        return .Too_Big
+    }
 
     if len(value) == 0 {
         return c_bind_text(stmt, c.int(index), "", 0, TRANSIENT)
@@ -166,6 +204,14 @@ bind_blob :: proc(stmt: ^Stmt, index: int, value: []byte) -> Result {
     assert(stmt != nil, "bind_blob needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
+    if index > bits.I32_MAX {
+        return .Range
+    }
+
+    if len(value) > bits.I32_MAX {
+        return .Too_Big
+    }
+
     if len(value) == 0 {
         return c_bind_blob(stmt, c.int(index), nil, 0, TRANSIENT)
     }
@@ -176,6 +222,10 @@ bind_blob :: proc(stmt: ^Stmt, index: int, value: []byte) -> Result {
 bind_null :: proc(stmt: ^Stmt, index: int) -> Result {
     assert(stmt != nil, "bind_null needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
+
+    if index > bits.I32_MAX {
+        return .Range
+    }
 
     return c_bind_null(stmt, c.int(index))
 }
@@ -214,11 +264,13 @@ column_text :: proc(stmt: ^Stmt, col: int) -> string {
     assert(col >= 0, "column index is 0-based")
 
     text := c_column_text(stmt, c.int(col))
+
     if text == nil {
         return ""
     }
 
     n := int(c_column_bytes(stmt, c.int(col)))
+
     if n <= 0 {
         return ""
     }
@@ -232,11 +284,13 @@ column_blob :: proc(stmt: ^Stmt, col: int) -> []byte {
     assert(col >= 0, "column index is 0-based")
 
     n := int(c_column_bytes(stmt, c.int(col)))
+
     if n <= 0 {
         return nil
     }
 
     p := c_column_blob(stmt, c.int(col))
+
     if p == nil {
         return nil
     }
@@ -252,6 +306,7 @@ errmsg :: proc(db: ^Conn) -> string {
     }
 
     msg := c_errmsg(db)
+
     if msg == nil {
         return ""
     }
@@ -291,7 +346,17 @@ last_insert_rowid :: proc(db: ^Conn) -> i64 {
     return c_last_insert_rowid(db)
 }
 
+// True when `db` is not inside an explicit transaction.
+autocommit :: proc(db: ^Conn) -> bool {
+    assert(db != nil, "autocommit needs a connection")
+
+    return c_get_autocommit(db) != 0
+}
+
 // Run a WAL checkpoint. `nlog` / `nckpt` receive SQLite's frame counts when non-nil.
+// Both are documented-undefined for a NULL `zDb` (this binding's only mode: all
+// attached databases), and are -1 until `db` has run at least one statement against
+// the schema, so a freshly opened connection needs a warm-up read first.
 wal_checkpoint :: proc(db: ^Conn, mode: Checkpoint = .Passive, nlog: ^int = nil, nckpt: ^int = nil) -> Result {
     assert(db != nil, "wal_checkpoint needs a connection")
 

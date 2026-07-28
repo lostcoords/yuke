@@ -145,6 +145,8 @@ foreign lib {
     c_changes :: proc(db: ^Conn) -> c.int ---
     @(link_name = "sqlite3_last_insert_rowid")
     c_last_insert_rowid :: proc(db: ^Conn) -> i64 ---
+    @(link_name = "sqlite3_get_autocommit")
+    c_get_autocommit :: proc(db: ^Conn) -> c.int ---
 
     @(link_name = "sqlite3_wal_checkpoint_v2")
     c_wal_checkpoint_v2 :: proc(db: ^Conn, zDb: cstring, eMode: c.int, pnLog: ^c.int, pnCkpt: ^c.int) -> Result ---

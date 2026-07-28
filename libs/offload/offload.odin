@@ -187,7 +187,7 @@ pool_is_running :: proc(p: ^Pool) -> bool {
 // once no worker can still be publishing. Must run on the pool's loop thread, since that
 // is where completions fire.
 //
-// Pumping before join is load-bearing: a worker returning through nbio may be waiting for
+// Pumping before join is required: a worker returning through nbio may be waiting for
 // space in that loop's bounded cross-thread queue.
 pool_drain :: proc(p: ^Pool) -> Drain_Error {
     assert(p != nil, "drain needs a pool")

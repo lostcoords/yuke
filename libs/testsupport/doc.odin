@@ -13,5 +13,8 @@ packages. Nothing here is linked into production builds.
     Allocations originating inside `core`'s `Dynamic_Arena` pass through
     uncounted (that arena is not failure-safe), so injection is scoped to the
     caller's own direct allocations.
+
+  - `sqlite_db.odin`: temp-directory database paths with WAL sidecar cleanup,
+    shared by the sqlite and store tests.
 */
 package testsupport

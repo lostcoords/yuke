@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-support test-ui test-term test-sqlite test-quickjs check-windows fmt clean sqlite-static quickjs-static
+.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs check-windows fmt clean sqlite-static quickjs-static
 
 # Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
 SQLITE_YEAR ?= 2025
@@ -49,6 +49,11 @@ test-daemon:
 	$(ODIN) test src/daemon $(COLLECTION) -out:build/daemon_test.bin
 
 
+# Run the event store tests (open/configure plus the migration runner).
+test-store:
+	@mkdir -p build
+	$(ODIN) test src/daemon/store $(COLLECTION) -out:build/store_test.bin
+
 # Run the testsupport package tests.
 test-support:
 	@mkdir -p build
@@ -77,7 +82,7 @@ test-quickjs:
 	$(ODIN) test libs/quickjs $(COLLECTION) -out:build/quickjs_test.bin
 
 
-test: test-wire test-ws test-http test-offload test-client test-daemon test-support test-ui test-term test-sqlite test-quickjs
+test: test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs
 
 # Fetch the pinned amalgamation and build a static archive under libs/sqlite/bin/.
 # Required for Windows linking; optional on Unix (tests use system libsqlite3).
@@ -103,6 +108,7 @@ quickjs-static:
 check-windows:
 	$(ODIN) check src/ui $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check src/term $(COLLECTION) -target:windows_amd64 -no-entry-point
+	$(ODIN) check src/daemon/store $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check libs/sqlite $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check libs/quickjs $(COLLECTION) -target:windows_amd64 -no-entry-point
 
