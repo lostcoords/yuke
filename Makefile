@@ -82,7 +82,9 @@ test-quickjs:
 	$(ODIN) test libs/quickjs $(COLLECTION) -out:build/quickjs_test.bin
 
 
-test: test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs
+test:
+	@mkdir -p build
+	$(ODIN) test tests $(COLLECTION) -all-packages -out:build/all_test.bin
 
 # Fetch the pinned amalgamation and build a static archive under libs/sqlite/bin/.
 # Required for Windows linking; optional on Unix (tests use system libsqlite3).
