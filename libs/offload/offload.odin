@@ -1,5 +1,6 @@
 package offload
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
 import "core:nbio"
@@ -47,14 +48,11 @@ Task_Base :: struct {
     completed_next: ^Task_Base,
 }
 
-// One in-flight offload. Embedded in the state it carries, so the task itself is never
+// One in-flight offload. Embedded in its state, so the task itself is never
 // allocated per submission. `core:thread` still owns the queue `submit` pushes onto, which
 // grows on demand, so submitting is cheap rather than allocation-free.
 Task :: struct($T: typeid) {
     using base: Task_Base,
-
-    // @private
-    state:      ^T,
 
     // @private
     work:       proc(state: ^T),
@@ -128,32 +126,42 @@ pool_init :: proc(p: ^Pool, loop: ^nbio.Event_Loop, worker_count: int) -> Error 
 }
 
 // Hand `state` to a worker: `work` runs there, then `done` runs on the pool's loop.
-// `task` must stay alive until `done` returns, which is why it belongs inside `state`.
+// `state` must contain a `task: Task(T)` field and stay alive until `done` returns.
 // Once submitted the task cannot be cancelled, so `done` will run even if the requester
 // is gone by then. Submission must run on the pool's loop thread, serializing it with
 // `pool_drain`.
-submit :: proc(p: ^Pool, task: ^Task($T), state: ^T, work: proc(state: ^T), done: proc(state: ^T)) {
-    assert(p != nil && task != nil && state != nil, "offload needs a pool, a task, and state")
+submit :: proc(
+    p: ^Pool,
+    state: ^$T,
+    work: proc(state: ^T),
+    done: proc(state: ^T),
+) where intrinsics.type_has_field(T, "task"),
+    intrinsics.type_field_type(T, "task") ==
+    Task(T) {
+    assert(p != nil && state != nil, "offload needs a pool and state")
     assert(work != nil && done != nil, "offload needs both a work and a done procedure")
     assert(p.loop == nbio.current_thread_event_loop(), "offload submitted off the pool's loop thread")
     assert(p.accepting, "offload submitted after the pool was drained")
+
+    task := &state.task
     assert(!task.submitted, "offload task submitted while already in flight")
     assert(task.completed_next == nil, "offload task retained a completed-queue link")
 
     task.pool = p
-    task.state = state
     task.work = work
     task.done = done
     task.submitted = true
 
     task.run = proc(base: ^Task_Base) {
         t := (^Task(T))(base)
-        t.work(t.state)
+        state := runtime.container_of(t, T, "task")
+        t.work(state)
     }
 
     task.complete = proc(base: ^Task_Base) {
         t := (^Task(T))(base)
-        t.done(t.state)
+        state := runtime.container_of(t, T, "task")
+        t.done(state)
     }
 
     sync.atomic_add(&p.outstanding, 1)

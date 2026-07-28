@@ -565,7 +565,7 @@ daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool
         http_server.defer_response(c)
     }
 
-    offload.submit(&up.daemon.blobs, &up.task, up, daemon_blob_publish, daemon_blob_published)
+    offload.submit(&up.daemon.blobs, up, daemon_blob_publish, daemon_blob_published)
 }
 
 // Worker thread. Touches only `up`, every path of which is an owned clone. Records an

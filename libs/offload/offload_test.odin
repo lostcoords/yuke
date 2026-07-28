@@ -8,10 +8,10 @@ import ts "libs:testsupport"
 
 // Offloaded state: the task rides inside it, so no task is allocated per submission.
 Job :: struct {
-    task:      Task(Job),
-
-    // Input the worker reads; owned here, never borrowed.
+    // Input the worker reads; owned here, never borrowed. Kept before `task` so these
+    // tests exercise recovery from a nonzero task offset.
     input:     int,
+    task:      Task(Job),
 
     // Filled on the worker thread.
     output:    int,
@@ -72,7 +72,7 @@ test_offload_runs_off_loop_and_completes_on_it :: proc(t: ^testing.T) {
     job := Job {
         input = 21,
     }
-    submit(&pool, &job.task, &job, job_work, job_done)
+    submit(&pool, &job, job_work, job_done)
     testing.expect_value(t, pool_outstanding(&pool), 1)
 
     if !ts.nbio_run_until(t, &job, job_completed, "offloaded job completes") {
@@ -103,7 +103,7 @@ test_offload_completes_every_task :: proc(t: ^testing.T) {
     jobs: [JOBS]Job
     for &job, i in jobs {
         job.input = i
-        submit(&pool, &job.task, &job, job_work, job_done)
+        submit(&pool, &job, job_work, job_done)
     }
 
     testing.expect_value(t, pool_outstanding(&pool), JOBS)
@@ -139,7 +139,7 @@ test_offload_drain_coalesces_completed_tasks :: proc(t: ^testing.T) {
     jobs: [JOBS]Job
     for &job, i in jobs {
         job.input = i
-        submit(&pool, &job.task, &job, job_work, job_done)
+        submit(&pool, &job, job_work, job_done)
     }
 
     // No loop tick: workers must be able to publish every result without waiting for the
@@ -182,7 +182,7 @@ test_offload_rejects_drain_from_completion :: proc(t: ^testing.T) {
     job := Nested_Drain_Job {
         pool = &pool,
     }
-    submit(&pool, &job.task, &job, nested_drain_work, nested_drain_done)
+    submit(&pool, &job, nested_drain_work, nested_drain_done)
 
     if !ts.nbio_run_until(t, &job, nested_drain_completed, "nested drain is rejected") {
         return
