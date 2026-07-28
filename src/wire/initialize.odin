@@ -158,29 +158,13 @@ daemon_info_emit :: proc(e: ^Emitter, self: Daemon_Info) {
 // client does not know, and the client must skip it, not reject the frame. Every
 // other enum in this package hard-rejects an unknown value; this one must not.
 Capability :: enum {
-    // Interactive PTY side-channel (`GET /term/<id>`).
-    Terminal,
-
-    // `session.eval` control-plane Lua REPL.
-    Eval,
-
-    // `session.revert` / `session.unrevert`.
-    Revert,
-
     // Client→daemon blob upload (`PUT /blob/<hash>`).
     Blob_Upload,
-
-    // Filesystem browse/search methods + `GET /file`.
-    Fs,
 }
 
 @(rodata)
 capability_wire := [Capability]string {
-    .Terminal    = "terminal",
-    .Eval        = "eval",
-    .Revert      = "revert",
     .Blob_Upload = "blob_upload",
-    .Fs          = "fs",
 }
 
 // Result of the `initialize` request: the coarse daemon snapshot.
@@ -196,6 +180,9 @@ Initialize_Result :: struct {
 
     // Available profile names. At most 256, each @bounded 64.
     profiles:         []string,
+
+    // Available agent names. At most 256, each @bounded 64.
+    agents:           []string,
 
     // Current compact session-index revision for this connection generation.
     session_revision: Session_Revision,
@@ -233,6 +220,14 @@ initialize_result_emit :: proc(e: ^Emitter, self: Initialize_Result) {
     for profile in self.profiles {
         elem(e)
         val_string(e, profile)
+    }
+
+    array_end(e)
+    key(e, "agents")
+    array_begin(e)
+    for agent in self.agents {
+        elem(e)
+        val_string(e, agent)
     }
 
     array_end(e)
@@ -285,6 +280,14 @@ initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error 
 
     for profile in self.profiles {
         enforce_bounded(64, profile) or_return
+    }
+
+    if len(self.agents) > LIMITS.max_agents {
+        return .Overflow
+    }
+
+    for agent in self.agents {
+        enforce_bounded(64, agent) or_return
     }
 
     catalog_health_validate(self.catalog_health) or_return
@@ -343,6 +346,7 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
         Daemon,
         Ws,
         Profiles,
+        Agents,
         Srev,
         Crev,
         Catrev,
@@ -370,6 +374,10 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
         case "profiles":
             out.profiles = dec_array(d, dec_string) or_return
             seen += {.Profiles}
+
+        case "agents":
+            out.agents = dec_array(d, dec_string) or_return
+            seen += {.Agents}
 
         case "session_revision":
             out.session_revision = Session_Revision(dec_u64(d) or_return)
@@ -406,7 +414,7 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
         }
     }
 
-    if seen != {.Proto, .Daemon, .Ws, .Profiles, .Srev, .Crev, .Catrev, .Health} {
+    if seen != {.Proto, .Daemon, .Ws, .Profiles, .Agents, .Srev, .Crev, .Catrev, .Health} {
         return {}, .Mismatched_Payload
     }
 

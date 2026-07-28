@@ -68,32 +68,6 @@ test_view_diff_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_view_form_roundtrip :: proc(t: ^testing.T) {
-    input := `{"type":"form","fields":[{"name":"email","label":"Email"},{"name":"tz","label":"Time zone","value":"UTC"}]}`
-    context.allocator = context.temp_allocator
-    defer free_all(context.temp_allocator)
-    v := decoder_init(input)
-
-    view, derr := view_from_reader(&v)
-    testing.expect(t, derr == .None, "decode should succeed")
-    form, ok := view.(View_Form)
-    testing.expect(t, ok, "should be a form view")
-    testing.expect_value(t, len(form.fields), 2)
-    testing.expect_value(t, form.fields[0].name, "email")
-    _, has0 := form.fields[0].value.?
-    testing.expect(t, !has0, "first field has no value")
-    val1, has1 := form.fields[1].value.?
-    testing.expect(t, has1, "second field has a value")
-    testing.expect_value(t, val1, "UTC")
-
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
-    view_emit(&e, view)
-    testing.expect_value(t, to_string(&e), input)
-}
-
-@(test)
 test_view_image_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"image","source":{"type":"url","url":"http://x/y.png"},"alt":"pic"}`
     v := decoder_init(input, context.temp_allocator)

@@ -237,8 +237,7 @@ test_assistant_message_part_ordinal :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_tool_state_permission_lifecycle :: proc(t: ^testing.T) {
-    // waiting_permission with a decision already recorded is invalid.
+test_tool_part_permission_lifecycle :: proc(t: ^testing.T) {
     dec: Permission_Decision = Permission_Decision_Rule {
         rule_id        = Rule_Id(
             [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'},
@@ -250,50 +249,137 @@ test_tool_state_permission_lifecycle :: proc(t: ^testing.T) {
         requested_at_ms = 1,
         decision        = dec,
     }
-    waiting: Tool_State = Tool_State_Waiting_Permission {
-        permission_state = decided,
-    }
-    testing.expect(t, tool_state_validate(waiting) == .Mismatched_Payload, "decided waiting must fail")
-
-    // running with options still offered (no decision) is invalid.
     opts := make([]Permission_Option, 0, context.temp_allocator)
     offered := Permission_State {
         requested_at_ms = 1,
         options         = opts,
     }
-    running: Tool_State = Tool_State_Running {
-        started_at_ms    = 2,
-        permission_state = offered,
+    part := Tool_Part {
+        id        = 0,
+        name      = "read",
+        arguments = "{}",
     }
-    testing.expect(t, tool_state_validate(running) == .Mismatched_Payload, "undecided running must fail")
+
+    // waiting_permission with a decision already recorded is invalid.
+    part.state = Tool_State_Waiting_Permission{}
+    part.permission_state = decided
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "decided waiting must fail")
+
+    // waiting_permission with no permission state at all is invalid.
+    part.permission_state = nil
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "waiting without permission must fail")
+
+    part.permission_state = offered
+    testing.expect(t, tool_part_validate(part) == .None, "offered waiting must validate")
+
+    // running with options still offered (no decision) is invalid.
+    part.state = Tool_State_Running {
+        started_at_ms = 2,
+    }
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "undecided running must fail")
+
+    part.permission_state = decided
+    testing.expect(t, tool_part_validate(part) == .None, "decided running must validate")
+
+    part.state = Tool_State_Completed {
+        output      = "ok",
+        duration_ms = 1,
+    }
+    part.permission_state = offered
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "undecided completed must fail")
+
+    part.permission_state = decided
+    testing.expect(t, tool_part_validate(part) == .None, "decided completed must validate")
+
+    part.state = Tool_State_Error {
+        message     = "boom",
+        duration_ms = 1,
+    }
+    part.permission_state = offered
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "undecided error must fail")
+
+    part.permission_state = decided
+    testing.expect(t, tool_part_validate(part) == .None, "decided error must validate")
+
+    // Daemon policy that denied without prompting leaves no permission state behind.
+    part.state = Tool_State_Denied {
+        reason    = "no",
+        denied_by = .Policy,
+    }
+    part.permission_state = nil
+    testing.expect(t, tool_part_validate(part) == .None, "denied without permission must validate")
+
+    part.permission_state = offered
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "undecided denied must fail")
+
+    part.permission_state = decided
+    testing.expect(t, tool_part_validate(part) == .None, "decided denied must validate")
+
+    // pending never carries a permission state.
+    part.state = Tool_State_Pending{}
+    testing.expect(t, tool_part_validate(part) == .Mismatched_Payload, "pending with permission must fail")
+
+    part.permission_state = nil
+    testing.expect(t, tool_part_validate(part) == .None, "bare pending must validate")
+
+    // canceled may carry an undecided permission state.
+    part.state = Tool_State_Canceled{}
+    part.permission_state = offered
+    testing.expect(t, tool_part_validate(part) == .None, "undecided canceled must validate")
 }
 
 @(test)
-test_tool_state_waiting_permission_roundtrip :: proc(t: ^testing.T) {
+test_tool_part_waiting_permission_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"type":"waiting_permission","permission":{"requested_at_ms":1,"options":[{"id":"o1","kind":"allow_once","label":"Allow"}]}}`
+    // `permission` arrives before `state`; emitter order is the reverse.
+    input := `{"type":"tool","id":0,"name":"read","arguments":"{}","permission":{"requested_at_ms":1,"options":[{"id":"o1","kind":"allow_once","label":"Allow"}]},"state":{"type":"waiting_permission"}}`
+    emitted := `{"type":"tool","id":0,"name":"read","arguments":"{}","state":{"type":"waiting_permission"},"permission":{"requested_at_ms":1,"options":[{"id":"o1","kind":"allow_once","label":"Allow"}]}}`
     v := decoder_init(input)
 
-    state, derr := tool_state_from_reader(&v)
+    part, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
-    waiting, ok := state.(Tool_State_Waiting_Permission)
-    testing.expect(t, ok, "should be a waiting_permission state")
-    testing.expect_value(t, waiting.permission_state.requested_at_ms, u64(1))
+    tool, ok := part.(Tool_Part)
+    testing.expect(t, ok, "should be a tool part")
+    _, is_waiting := tool.state.(Tool_State_Waiting_Permission)
+    testing.expect(t, is_waiting, "should be a waiting_permission state")
+    perm, has_perm := tool.permission_state.?
+    testing.expect(t, has_perm, "permission state should be present")
+    testing.expect_value(t, perm.requested_at_ms, u64(1))
 
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    tool_state_emit(&e, state)
-    testing.expect_value(t, to_string(&e), input)
+    assistant_part_emit(&e, part)
+    testing.expect_value(t, to_string(&e), emitted)
 }
 
-// Regression: cloning a source-less user message must keep `source` absent. Wrapping a
-// bare (nil) `User_Message_Source` union into the `Maybe` field previously marked it
-// present on cloned values.
+// `permission` is a part-level member; a tool state object must reject it.
 @(test)
-test_user_message_clone_preserves_absent_source :: proc(t: ^testing.T) {
+test_tool_state_rejects_permission_member :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    inputs := []string {
+        `{"type":"pending","permission":{"requested_at_ms":1}}`,
+        `{"type":"waiting_permission","permission":{"requested_at_ms":1}}`,
+        `{"type":"running","started_at_ms":1,"permission":{"requested_at_ms":1}}`,
+        `{"type":"completed","output":"ok","duration_ms":1,"permission":{"requested_at_ms":1}}`,
+        `{"type":"error","error":"boom","duration_ms":1,"permission":{"requested_at_ms":1}}`,
+        `{"type":"denied","reason":"no","denied_by":"policy","permission":{"requested_at_ms":1}}`,
+        `{"type":"canceled","permission":{"requested_at_ms":1}}`,
+    }
+    for input in inputs {
+        v := decoder_init(input)
+        _, derr := tool_state_from_reader(&v)
+        testing.expect(t, derr == .Mismatched_Payload, "state-level permission must be rejected")
+    }
+}
+
+// Cloning a skill-less user message must keep `skill` absent.
+@(test)
+test_user_message_clone_preserves_absent_skill :: proc(t: ^testing.T) {
     src := User_Message {
         id = 1,
         input_id = 1,
@@ -302,6 +388,6 @@ test_user_message_clone_preserves_absent_source :: proc(t: ^testing.T) {
     }
 
     cloned := user_message_clone(src, context.temp_allocator)
-    _, has_source := cloned.source.?
-    testing.expect(t, !has_source, "cloned source must stay absent")
+    _, has_skill := cloned.skill.?
+    testing.expect(t, !has_skill, "cloned skill must stay absent")
 }

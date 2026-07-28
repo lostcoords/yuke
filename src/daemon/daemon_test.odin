@@ -84,12 +84,12 @@ Cli_Obs :: struct {
     err:                   client.Protocol_Error,
 }
 
-cli_on_ready :: proc(c: ^client.Client) {
+cli_on_ready :: proc(c: ^client.Client, hello: wire.Initialize_Result) {
     o := (^Cli_Obs)(c.user_data)
     o.ready = true
-    o.protocol = c.protocol
-    o.session_revision = c.session_revision
-    o.cron_revision = c.cron_revision
+    o.protocol = hello.protocol
+    o.session_revision = hello.session_revision
+    o.cron_revision = hello.cron_revision
 
     if o.send_request_on_ready {
         // A method with no dispatch handler; its empty params validate, so the request
@@ -264,7 +264,7 @@ Handler_Obs :: struct {
     err:       client.Protocol_Error,
 }
 
-handler_on_ready :: proc(c: ^client.Client) {
+handler_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     o := (^Handler_Obs)(c.user_data)
     client.client_send_request(c, o.method, o.params, handler_on_response)
 }

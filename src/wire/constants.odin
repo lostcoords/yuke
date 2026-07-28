@@ -74,6 +74,9 @@ Limits :: struct {
     // Max profiles sent in the initialize result.
     max_profiles:                        int,
 
+    // Max agent names sent in the initialize result.
+    max_agents:                          int,
+
     // Max models sent in one catalog snapshot.
     max_catalog_models:                  int,
 
@@ -148,6 +151,7 @@ LIMITS :: Limits {
     max_cron_jobs                       = 1024,
     max_workspaces                      = 1024,
     max_profiles                        = 256,
+    max_agents                          = 256,
     max_catalog_models                  = 4096,
     max_reasoning_levels                = 32,
     max_skipped_providers               = 256,

@@ -21,9 +21,6 @@ Method_Name :: enum {
     // Fork a session from another session's transcript.
     Session_Fork,
 
-    // Re-execute runtime/profile/workspace configuration.
-    Session_Reload,
-
     // Request manual compaction of the transcript context.
     Session_Compact,
 
@@ -104,7 +101,6 @@ method_name_wire := [Method_Name]string {
     .Session_Patch        = "session.patch",
     .Session_Remove       = "session.remove",
     .Session_Fork         = "session.fork",
-    .Session_Reload       = "session.reload",
     .Session_Compact      = "session.compact",
     .Session_Rewind       = "session.rewind",
     .Session_Send_Input   = "session.send_input",
@@ -157,7 +153,7 @@ empty_result_emit :: proc(e: ^Emitter) {
     object_end(e)
 }
 
-// Result of `session.create`, `session.fork`, and `session.reload`.
+// Result of `session.create` and `session.fork`.
 Session_Result :: struct {
     // Resulting session.
     session: Session,
@@ -203,11 +199,8 @@ session_patch_params_validate :: proc(self: Session_Patch_Params) -> Validation_
 
 // Result of `session.patch`.
 Session_Patch_Result :: struct {
-    // Patched session.
+    // Patched session, carrying the resulting config_rev and permission mode.
     session: Session,
-
-    // Side effect of the patch.
-    effect:  Patch_Effect,
 }
 
 // Write a session.patch result.
@@ -215,37 +208,12 @@ session_patch_result_emit :: proc(e: ^Emitter, self: Session_Patch_Result) {
     object_begin(e)
     key(e, "session")
     session_emit(e, self.session)
-    key(e, "effect")
-    patch_effect_emit(e, self.effect)
     object_end(e)
 }
 
 // Verify annotated field bounds.
 session_patch_result_validate :: proc(self: Session_Patch_Result) -> Validation_Error {
     return session_validate(self.session)
-}
-
-// Write a Patch_Effect.
-@(private)
-patch_effect_emit :: proc(e: ^Emitter, self: Patch_Effect) {
-    object_begin(e)
-    key(e, "live")
-    array_begin(e)
-    for f in self.live {
-        elem(e)
-        val_string(e, patch_field_to_wire(f))
-    }
-
-    array_end(e)
-    key(e, "future_runs")
-    array_begin(e)
-    for f in self.future_runs {
-        elem(e)
-        val_string(e, patch_field_to_wire(f))
-    }
-
-    array_end(e)
-    object_end(e)
 }
 
 // Params for `session.remove`.
@@ -297,7 +265,6 @@ Request_Params :: union {
     Session_Patch_Params,
     Session_Remove_Params,
     Fork_Params,
-    Reload_Params,
     Compact_Params,
     Rewind_Params,
     Send_Input_Params,
@@ -369,9 +336,6 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
 
     case Fork_Params:
         fork_params_emit(e, p)
-
-    case Reload_Params:
-        reload_params_emit(e, p)
 
     case Compact_Params:
         compact_params_emit(e, p)
@@ -781,13 +745,7 @@ session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_
 // Decode a session.patch result straight from the token stream.
 session_patch_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Patch_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
-
-    Field :: enum {
-        Session,
-        Effect,
-    }
-
-    seen: bit_set[Field]
+    have := false
     for {
         k, done := dec_key(d) or_return
         if done do break
@@ -795,64 +753,18 @@ session_patch_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Patch_
         switch k {
         case "session":
             result.session = session_from_reader(d) or_return
-            seen += {.Session}
-
-        case "effect":
-            result.effect = patch_effect_from_reader(d) or_return
-            seen += {.Effect}
+            have = true
 
         case:
             dec_skip(d) or_return
         }
     }
 
-    if seen != {.Session, .Effect} {
+    if !have {
         return {}, .Mismatched_Payload
     }
 
     return result, .None
-}
-
-// One Patch_Field wire string.
-@(private)
-_patch_field_from_reader :: proc(d: ^Decoder) -> (field: Patch_Field, err: Validation_Error) {
-    return dec_enum(d, patch_field_wire)
-}
-
-// Decode a Patch_Effect straight from the token stream.
-@(private)
-patch_effect_from_reader :: proc(d: ^Decoder) -> (out: Patch_Effect, err: Validation_Error) {
-    dec_object_begin(d) or_return
-
-    Field :: enum {
-        Live,
-        Future,
-    }
-
-    seen: bit_set[Field]
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "live":
-            out.live = dec_array(d, _patch_field_from_reader) or_return
-            seen += {.Live}
-
-        case "future_runs":
-            out.future_runs = dec_array(d, _patch_field_from_reader) or_return
-            seen += {.Future}
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if seen != {.Live, .Future} {
-        return {}, .Mismatched_Payload
-    }
-
-    return out, .None
 }
 
 // Decode session.remove params straight from the token stream.
@@ -934,9 +846,6 @@ request_params_from_reader :: proc(
 
     case .Session_Fork:
         params = fork_params_from_reader(d) or_return
-
-    case .Session_Reload:
-        params = reload_params_from_reader(d) or_return
 
     case .Session_Compact:
         params = compact_params_from_reader(d) or_return
@@ -1036,9 +945,6 @@ response_result_from_reader :: proc(
         result = empty_result_from_reader(d) or_return
 
     case .Session_Fork:
-        result = session_result_from_reader(d) or_return
-
-    case .Session_Reload:
         result = session_result_from_reader(d) or_return
 
     case .Session_Compact:

@@ -31,26 +31,6 @@ test_method_name_wire_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_request_params_reload_roundtrip :: proc(t: ^testing.T) {
-    input := `{"session_id":"0123456789abcdef"}`
-    v := decoder_init(input, context.temp_allocator)
-    defer free_all(context.temp_allocator)
-
-    params, derr := request_params_from_reader(.Session_Reload, &v)
-    testing.expect(t, derr == .None, "decode should succeed")
-    rp, ok := params.(Reload_Params)
-    testing.expect(t, ok, "should be reload params")
-    sid := ([16]u8)(rp.session_id)
-    testing.expect_value(t, string(sid[:]), "0123456789abcdef")
-
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
-    request_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
-}
-
-@(test)
 test_request_params_cancel_input_roundtrip :: proc(t: ^testing.T) {
     input := `{"session_id":"0123456789abcdef","input_id":7}`
     v := decoder_init(input, context.temp_allocator)

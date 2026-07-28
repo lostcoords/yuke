@@ -33,11 +33,17 @@ Sink :: struct {
     clone_alloc:      mem.Allocator,
     cloned:           wire.Notification,
     has_clone:        bool,
+    ready_profiles:   int,
+    ready_agents:     int,
+    saw_worker_agent: bool,
 }
 
-_rec_on_ready :: proc(c: ^Client) {
+_rec_on_ready :: proc(c: ^Client, hello: wire.Initialize_Result) {
     s := (^Sink)(c.user_data)
     s.ready += 1
+    s.ready_profiles = len(hello.profiles)
+    s.ready_agents = len(hello.agents)
+    s.saw_worker_agent = len(hello.agents) == 2 && hello.agents[1] == "worker"
 }
 
 // What one request's completion observed, so concurrent requests can be told apart.
@@ -481,7 +487,7 @@ test_handle_hello_valid_reaches_ready_and_retains :: proc(t: ^testing.T) {
     c.state = .Awaiting_Initialize
     defer _teardown(&c)
 
-    src := `{"jsonrpc":"2.0","id":1,"result":{"protocol":1,"daemon":{"version":"1.2.3","server_now_ms":1720000000000},"workspaces":[],"profiles":[],"session_revision":7,"cron_revision":9,"catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","catalog_health":{"skipped":[],"load_error":null}}}`
+    src := `{"jsonrpc":"2.0","id":1,"result":{"protocol":1,"daemon":{"version":"1.2.3","server_now_ms":1720000000000},"workspaces":[],"profiles":["default"],"agents":["main","worker"],"session_revision":7,"cron_revision":9,"catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","catalog_health":{"skipped":[],"load_error":null}}}`
     buf := make([]byte, len(src), context.allocator)
     copy(buf, src)
     defer delete(buf, context.allocator)
@@ -499,6 +505,9 @@ test_handle_hello_valid_reaches_ready_and_retains :: proc(t: ^testing.T) {
     testing.expect_value(t, c.session_revision, wire.Session_Revision(7))
     testing.expect_value(t, c.cron_revision, wire.Cron_Revision(9))
     testing.expect_value(t, c.daemon_version, "1.2.3")
+    testing.expect_value(t, sink.ready_profiles, 1)
+    testing.expect_value(t, sink.ready_agents, 2)
+    testing.expect(t, sink.saw_worker_agent, "on_ready must receive the borrowed initialize snapshot")
 
     // The retained daemon version is an owned clone: clobbering the source frame
     // must not disturb it.

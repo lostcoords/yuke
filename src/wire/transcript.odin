@@ -95,27 +95,31 @@ Reasoning_Part :: struct {
 // Tool assistant part payload. Non-owning.
 Tool_Part :: struct {
     // Part ordinal in the message content array.
-    id:         Part_Id,
+    id:               Part_Id,
 
     // Provider identity; never used to address the part.
-    call_id:    Maybe(string),
+    call_id:          Maybe(string),
 
     // @bounded 128
     // Tool name.
-    name:       string,
+    name:             string,
 
     // @unbounded
     // Opaque JSON-encoded arguments.
-    arguments:  string,
+    arguments:        string,
 
     // Display-only input views. At most 64.
-    input_view: Maybe([]View),
+    input_view:       Maybe([]View),
 
     // Current tool state.
-    state:      Tool_State,
+    state:            Tool_State,
+
+    // Local permission lifecycle. Absent under `pending`; options-and-no-decision
+    // under `waiting_permission`; decided when present, except under `canceled`.
+    permission_state: Maybe(Permission_State),
 }
 
-// Verify annotated field bounds.
+// Verify annotated field bounds and the permission/state cross-field invariant.
 tool_part_validate :: proc(self: Tool_Part) -> Validation_Error {
     enforce_bounded(128, self.name) or_return
 
@@ -123,7 +127,47 @@ tool_part_validate :: proc(self: Tool_Part) -> Validation_Error {
         view_validate_slice(views) or_return
     }
 
-    return tool_state_validate(self.state)
+    tool_state_validate(self.state) or_return
+
+    return tool_permission_state_validate(self.state, self.permission_state)
+}
+
+// Enforce which permission shapes each tool state admits. Shared by the tool part and
+// the `tool.state_changed` payload, which carry the same pair.
+tool_permission_state_validate :: proc(
+    state: Tool_State,
+    permission_state: Maybe(Permission_State),
+) -> Validation_Error {
+    p, has_perm := permission_state.?
+
+    if has_perm {
+        permission_state_validate(p) or_return
+    }
+
+    _, has_dec := p.decision.?
+    _, has_opts := p.options.?
+
+    switch _ in state {
+    case Tool_State_Pending:
+        if has_perm {
+            return .Mismatched_Payload
+        }
+
+    case Tool_State_Waiting_Permission:
+        if !has_perm || !has_opts || has_dec {
+            return .Mismatched_Payload
+        }
+
+    case Tool_State_Running, Tool_State_Completed, Tool_State_Error, Tool_State_Denied:
+        if has_perm && !has_dec {
+            return .Mismatched_Payload
+        }
+
+    // Canceled while awaiting a decision leaves the permission state undecided.
+    case Tool_State_Canceled:
+    }
+
+    return .None
 }
 
 // Deep-copy into `allocator`.
@@ -140,6 +184,12 @@ tool_part_clone :: proc(self: Tool_Part, allocator := context.allocator) -> Tool
         input_view = view_clone_slice(views, allocator)
     }
 
+    permission_state: Maybe(Permission_State)
+
+    if p, ok := self.permission_state.?; ok {
+        permission_state = permission_state_clone(p, allocator)
+    }
+
     return Tool_Part {
         id = self.id,
         call_id = call_id,
@@ -147,6 +197,7 @@ tool_part_clone :: proc(self: Tool_Part, allocator := context.allocator) -> Tool
         arguments = strings.clone(self.arguments, allocator),
         input_view = input_view,
         state = tool_state_clone(self.state, allocator),
+        permission_state = permission_state,
     }
 }
 
@@ -190,6 +241,11 @@ assistant_part_emit :: proc(e: ^Emitter, self: Assistant_Part) {
 
         key(e, "state")
         tool_state_emit(e, v.state)
+
+        if p, ok := v.permission_state.?; ok {
+            key(e, "permission")
+            _permission_state_emit(e, p)
+        }
     }
 
     object_end(e)
@@ -245,79 +301,61 @@ assistant_part_id :: proc(self: Assistant_Part) -> Part_Id {
 Tool_State_Pending :: struct {}
 
 // Awaiting a permission decision.
-Tool_State_Waiting_Permission :: struct {
-    // Local lifecycle data.
-    permission_state: Permission_State,
-}
+Tool_State_Waiting_Permission :: struct {}
 
 // Call is executing.
 Tool_State_Running :: struct {
     // Run start epoch ms.
-    started_at_ms:    u64,
+    started_at_ms: u64,
 
     // @bounded max_tool_output_stream_bytes
     // Accumulated display output streamed so far. Present in a resync
     // snapshot of a running tool, absent in the live transition into
     // `running`. Its UTF-8 byte length is the next `tool.output_delta`
     // offset baseline.
-    output:           Maybe(string),
-
-    // Local lifecycle data, once decided.
-    permission_state: Maybe(Permission_State),
+    output:        Maybe(string),
 }
 
 // Call finished successfully.
 Tool_State_Completed :: struct {
     // @unbounded
     // Model-facing output text.
-    output:           string,
+    output:      string,
 
     // Display-only rendering hints.
-    view:             Maybe([]View),
+    view:        Maybe([]View),
 
     // Wall-clock duration in ms.
-    duration_ms:      u64,
-
-    // Local lifecycle data, once decided.
-    permission_state: Maybe(Permission_State),
+    duration_ms: u64,
 }
 
 // Call failed.
 Tool_State_Error :: struct {
     // @unbounded
     // Model-facing error text.
-    message:          string,
+    message:     string,
 
     // Display-only rendering hints.
-    view:             Maybe([]View),
+    view:        Maybe([]View),
 
     // Wall-clock duration in ms.
-    duration_ms:      u64,
-
-    // Local lifecycle data, once decided.
-    permission_state: Maybe(Permission_State),
+    duration_ms: u64,
 }
 
 // Permission was denied.
 Tool_State_Denied :: struct {
     // @unbounded
     // Model-facing reason.
-    reason:           string,
+    reason:    string,
 
     // Who denied.
-    denied_by:        Denied_By,
-
-    // Absent when a policy rule denied without prompting.
-    permission_state: Maybe(Permission_State),
+    denied_by: Denied_By,
 }
 
 // Call was canceled.
 Tool_State_Canceled :: struct {
     // Null when the call never started running.
-    duration_ms:      Maybe(u64),
-
-    // Present and unresolved only if canceled while awaiting a decision.
-    permission_state: Maybe(Permission_State),
+    duration_ms: Maybe(u64),
 }
 
 // Lifecycle state of a tool part. Non-owning.
@@ -341,18 +379,11 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
 
     case Tool_State_Waiting_Permission:
         field_string(e, "type", "waiting_permission")
-        key(e, "permission")
-        _permission_state_emit(e, v.permission_state)
 
     case Tool_State_Running:
         field_string(e, "type", "running")
         field_u64(e, "started_at_ms", v.started_at_ms)
         field_string_opt(e, "output", v.output)
-
-        if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
-            _permission_state_emit(e, p)
-        }
 
     case Tool_State_Completed:
         field_string(e, "type", "completed")
@@ -364,11 +395,6 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
 
         field_u64(e, "duration_ms", v.duration_ms)
 
-        if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
-            _permission_state_emit(e, p)
-        }
-
     case Tool_State_Error:
         field_string(e, "type", "error")
         field_string(e, "error", v.message)
@@ -379,20 +405,10 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
 
         field_u64(e, "duration_ms", v.duration_ms)
 
-        if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
-            _permission_state_emit(e, p)
-        }
-
     case Tool_State_Denied:
         field_string(e, "type", "denied")
         field_string(e, "reason", v.reason)
         field_string(e, "denied_by", denied_by_to_wire(v.denied_by))
-
-        if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
-            _permission_state_emit(e, p)
-        }
 
     case Tool_State_Canceled:
         field_string(e, "type", "canceled")
@@ -400,41 +416,18 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
         if d, ok := v.duration_ms.?; ok {
             field_u64(e, "duration_ms", d)
         }
-
-        if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
-            _permission_state_emit(e, p)
-        }
     }
 
     object_end(e)
 }
 
-// Verify annotated field bounds on any nested permission state.
+// Verify annotated field bounds.
 tool_state_validate :: proc(self: Tool_State) -> Validation_Error {
     switch v in self {
-    case Tool_State_Pending:
-    case Tool_State_Waiting_Permission:
-        permission_state_validate(v.permission_state) or_return
-        _, has_opts := v.permission_state.options.?
-        _, has_dec := v.permission_state.decision.?
-
-        if !has_opts || has_dec {
-            return .Mismatched_Payload
-        }
-
+    case Tool_State_Pending, Tool_State_Waiting_Permission, Tool_State_Denied, Tool_State_Canceled:
     case Tool_State_Running:
         if out, ok := v.output.?; ok {
             enforce_bounded(LIMITS.max_tool_output_stream_bytes, out) or_return
-        }
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state_validate(p) or_return
-            _, has_dec := p.decision.?
-
-            if !has_dec {
-                return .Mismatched_Payload
-            }
         }
 
     case Tool_State_Completed:
@@ -442,42 +435,9 @@ tool_state_validate :: proc(self: Tool_State) -> Validation_Error {
             view_validate_slice(views) or_return
         }
 
-        if p, ok := v.permission_state.?; ok {
-            permission_state_validate(p) or_return
-            _, has_dec := p.decision.?
-
-            if !has_dec {
-                return .Mismatched_Payload
-            }
-        }
-
     case Tool_State_Error:
         if views, ok := v.view.?; ok {
             view_validate_slice(views) or_return
-        }
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state_validate(p) or_return
-            _, has_dec := p.decision.?
-
-            if !has_dec {
-                return .Mismatched_Payload
-            }
-        }
-
-    case Tool_State_Denied:
-        if p, ok := v.permission_state.?; ok {
-            permission_state_validate(p) or_return
-            _, has_dec := p.decision.?
-
-            if !has_dec {
-                return .Mismatched_Payload
-            }
-        }
-
-    case Tool_State_Canceled:
-        if p, ok := v.permission_state.?; ok {
-            permission_state_validate(p) or_return
         }
     }
 
@@ -491,7 +451,7 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
         return Tool_State_Pending{}
 
     case Tool_State_Waiting_Permission:
-        return Tool_State_Waiting_Permission{permission_state = permission_state_clone(v.permission_state, allocator)}
+        return Tool_State_Waiting_Permission{}
 
     case Tool_State_Running:
         output: Maybe(string)
@@ -500,17 +460,7 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
             output = strings.clone(out, allocator)
         }
 
-        permission_state: Maybe(Permission_State)
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
-
-        return Tool_State_Running {
-            started_at_ms = v.started_at_ms,
-            output = output,
-            permission_state = permission_state,
-        }
+        return Tool_State_Running{started_at_ms = v.started_at_ms, output = output}
 
     case Tool_State_Completed:
         view: Maybe([]View)
@@ -519,17 +469,10 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
             view = view_clone_slice(views, allocator)
         }
 
-        permission_state: Maybe(Permission_State)
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
-
         return Tool_State_Completed {
             output = strings.clone(v.output, allocator),
             view = view,
             duration_ms = v.duration_ms,
-            permission_state = permission_state,
         }
 
     case Tool_State_Error:
@@ -539,97 +482,17 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
             view = view_clone_slice(views, allocator)
         }
 
-        permission_state: Maybe(Permission_State)
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
-
         return Tool_State_Error {
             message = strings.clone(v.message, allocator),
             view = view,
             duration_ms = v.duration_ms,
-            permission_state = permission_state,
         }
 
     case Tool_State_Denied:
-        permission_state: Maybe(Permission_State)
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
-
-        return Tool_State_Denied {
-            reason = strings.clone(v.reason, allocator),
-            denied_by = v.denied_by,
-            permission_state = permission_state,
-        }
+        return Tool_State_Denied{reason = strings.clone(v.reason, allocator), denied_by = v.denied_by}
 
     case Tool_State_Canceled:
-        permission_state: Maybe(Permission_State)
-
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
-
-        return Tool_State_Canceled{duration_ms = v.duration_ms, permission_state = permission_state}
-    }
-
-    return nil
-}
-
-// ---------------------------------------------------------------------------
-// UserMessageSource
-// ---------------------------------------------------------------------------
-
-// Message came from a slash-command/skill invocation.
-User_Message_Source_Skill :: struct {
-    // @bounded 64
-    // Skill name.
-    name:      string,
-
-    // @unbounded
-    // Skill arguments.
-    arguments: string,
-}
-
-// Optional provenance on a user message. Non-owning.
-User_Message_Source :: union {
-    User_Message_Source_Skill,
-}
-
-// Write internally-tagged JSON with `type` first.
-user_message_source_emit :: proc(e: ^Emitter, self: User_Message_Source) {
-    object_begin(e)
-
-    switch v in self {
-    case User_Message_Source_Skill:
-        field_string(e, "type", "skill")
-        field_string(e, "name", v.name)
-        field_string(e, "arguments", v.arguments)
-    }
-
-    object_end(e)
-}
-
-// Verify annotated field bounds.
-user_message_source_validate :: proc(self: User_Message_Source) -> Validation_Error {
-    switch v in self {
-    case User_Message_Source_Skill:
-        return enforce_bounded(64, v.name)
-    }
-
-    return .None
-}
-
-// Deep-copy into `allocator`.
-user_message_source_clone :: proc(self: User_Message_Source, allocator := context.allocator) -> User_Message_Source {
-    switch v in self {
-    case User_Message_Source_Skill:
-        return User_Message_Source_Skill {
-            name = strings.clone(v.name, allocator),
-            arguments = strings.clone(v.arguments, allocator),
-        }
+        return Tool_State_Canceled{duration_ms = v.duration_ms}
     }
 
     return nil
@@ -653,8 +516,8 @@ User_Message :: struct {
     // The accepted input this message came from (client- or daemon-minted).
     input_id: Input_Id,
 
-    // Optional UI/audit provenance.
-    source:   Maybe(User_Message_Source),
+    // Skill this message's rendered body came from, if any.
+    skill:    Maybe(Skill_Ref),
 
     // Creation timestamp.
     time:     Created_Time,
@@ -676,11 +539,8 @@ user_message_clone :: proc(self: User_Message, allocator := context.allocator) -
         time     = self.time,
     }
 
-    // Assign only when a source is present. Wrapping a bare (nil) `User_Message_Source`
-    // union into the `Maybe` field would spuriously mark the source present; a
-    // `Maybe(User_Message_Source)` local crashes the compiler backend.
-    if s, ok := self.source.?; ok {
-        out.source = user_message_source_clone(s, allocator)
+    if s, ok := self.skill.?; ok {
+        out.skill = skill_ref_clone(s, allocator)
     }
 
     return out
@@ -945,9 +805,9 @@ message_emit :: proc(e: ^Emitter, self: Message) {
         array_end(e)
         field_u64(e, "input_id", u64(v.input_id))
 
-        if s, ok := v.source.?; ok {
-            key(e, "source")
-            user_message_source_emit(e, s)
+        if s, ok := v.skill.?; ok {
+            key(e, "skill")
+            skill_ref_emit(e, s)
         }
 
         key(e, "time")
@@ -992,8 +852,8 @@ message_validate :: proc(self: Message) -> Validation_Error {
             content_part_validate(part) or_return
         }
 
-        if s, ok := v.source.?; ok {
-            return user_message_source_validate(s)
+        if s, ok := v.skill.?; ok {
+            return skill_ref_validate(s)
         }
 
     case Assistant_Message:
@@ -1138,6 +998,11 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
         }
 
         total += _tool_state_string_bytes(v.state)
+
+        if p, ok := v.permission_state.?; ok {
+            total += _permission_state_string_bytes(p)
+        }
+
         return total
     }
 
@@ -1147,24 +1012,15 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
 @(private)
 _tool_state_string_bytes :: proc(self: Tool_State) -> int {
     switch v in self {
-    case Tool_State_Pending:
+    case Tool_State_Pending, Tool_State_Waiting_Permission, Tool_State_Canceled:
         return 0
 
-    case Tool_State_Waiting_Permission:
-        return _permission_state_string_bytes(v.permission_state)
-
     case Tool_State_Running:
-        total := 0
-
         if out, ok := v.output.?; ok {
-            total += len(out)
+            return len(out)
         }
 
-        if p, ok := v.permission_state.?; ok {
-            total += _permission_state_string_bytes(p)
-        }
-
-        return total
+        return 0
 
     case Tool_State_Completed:
         total := len(v.output)
@@ -1173,10 +1029,6 @@ _tool_state_string_bytes :: proc(self: Tool_State) -> int {
             for view in views {
                 total += _view_string_bytes(view)
             }
-        }
-
-        if p, ok := v.permission_state.?; ok {
-            total += _permission_state_string_bytes(p)
         }
 
         return total
@@ -1190,27 +1042,10 @@ _tool_state_string_bytes :: proc(self: Tool_State) -> int {
             }
         }
 
-        if p, ok := v.permission_state.?; ok {
-            total += _permission_state_string_bytes(p)
-        }
-
         return total
 
     case Tool_State_Denied:
-        total := len(v.reason)
-
-        if p, ok := v.permission_state.?; ok {
-            total += _permission_state_string_bytes(p)
-        }
-
-        return total
-
-    case Tool_State_Canceled:
-        if p, ok := v.permission_state.?; ok {
-            return _permission_state_string_bytes(p)
-        }
-
-        return 0
+        return len(v.reason)
     }
 
     return 0
@@ -1400,7 +1235,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
                 text = dec_string(d) or_return
                 seen += {.Text}
 
-            case "call_id", "name", "arguments", "input_view", "state":
+            case "call_id", "name", "arguments", "input_view", "state", "permission":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1456,6 +1291,9 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
                 tp.state = tool_state_from_reader(d) or_return
                 seen += {.State}
 
+            case "permission":
+                tp.permission_state = _permission_state_from_reader(d) or_return
+
             case "text":
                 return nil, .Mismatched_Payload
 
@@ -1497,23 +1335,12 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
         return Tool_State_Pending{}, .None
 
     case "waiting_permission":
-        st: Tool_State_Waiting_Permission
-
-        Field :: enum {
-            Perm,
-        }
-
-        seen: bit_set[Field]
         for {
             k, kdone := dec_key(d) or_return
             if kdone do break
 
             switch k {
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-                seen += {.Perm}
-
-            case "started_at_ms", "output", "error", "view", "duration_ms", "reason", "denied_by":
+            case "started_at_ms", "permission", "output", "error", "view", "duration_ms", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1521,11 +1348,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
             }
         }
 
-        if .Perm not_in seen {
-            return nil, .Mismatched_Payload
-        }
-
-        return st, .None
+        return Tool_State_Waiting_Permission{}, .None
 
     case "running":
         st: Tool_State_Running
@@ -1547,10 +1370,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
             case "output":
                 st.output = dec_string(d) or_return
 
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-
-            case "error", "view", "duration_ms", "reason", "denied_by":
+            case "permission", "error", "view", "duration_ms", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1589,10 +1409,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
                 st.duration_ms = dec_u64(d) or_return
                 seen += {.Dur}
 
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-
-            case "started_at_ms", "error", "reason", "denied_by":
+            case "permission", "started_at_ms", "error", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1631,10 +1448,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
                 st.duration_ms = dec_u64(d) or_return
                 seen += {.Dur}
 
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-
-            case "started_at_ms", "output", "reason", "denied_by":
+            case "permission", "started_at_ms", "output", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1670,10 +1484,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
                 st.denied_by = dec_enum(d, denied_by_wire) or_return
                 seen += {.By}
 
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-
-            case "started_at_ms", "output", "error", "view", "duration_ms":
+            case "permission", "started_at_ms", "output", "error", "view", "duration_ms":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1697,10 +1508,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
             case "duration_ms":
                 st.duration_ms = dec_u64(d) or_return
 
-            case "permission":
-                st.permission_state = _permission_state_from_reader(d) or_return
-
-            case "started_at_ms", "output", "error", "view", "reason", "denied_by":
+            case "permission", "started_at_ms", "output", "error", "view", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1709,49 +1517,6 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
         }
 
         return st, .None
-    }
-
-    return nil, .Mismatched_Payload
-}
-
-// Decode internally-tagged user-message source straight from the token stream.
-user_message_source_from_reader :: proc(d: ^Decoder) -> (src: User_Message_Source, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
-
-    switch tag {
-    case "skill":
-        name, arguments: string
-
-        Field :: enum {
-            Name,
-            Args,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "name":
-                name = dec_string(d) or_return
-                seen += {.Name}
-
-            case "arguments":
-                arguments = dec_string(d) or_return
-                seen += {.Args}
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if seen != {.Name, .Args} {
-            return nil, .Mismatched_Payload
-        }
-
-        return User_Message_Source_Skill{name = name, arguments = arguments}, .None
     }
 
     return nil, .Mismatched_Payload
@@ -1810,7 +1575,7 @@ _assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Va
         case "error":
             msg.error = message_error_from_reader(d) or_return
 
-        case "input_id", "source", "reason", "summary", "first_kept_id", "tokens_before", "tokens_after":
+        case "input_id", "skill", "reason", "summary", "first_kept_id", "tokens_before", "tokens_after":
             return {}, .Mismatched_Payload
 
         case:
@@ -1865,8 +1630,8 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
             msg.input_id = Input_Id(dec_u64(d) or_return)
             seen += {.Input}
 
-        case "source":
-            msg.source = user_message_source_from_reader(d) or_return
+        case "skill":
+            msg.skill = skill_ref_from_reader(d) or_return
 
         case "time":
             mt := message_time_from_reader(d) or_return
@@ -1957,7 +1722,7 @@ _compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: 
             }
             seen += {.Time}
 
-        case "content", "input_id", "source", "config_rev", "agent", "finish", "tokens", "cost", "error":
+        case "content", "input_id", "skill", "config_rev", "agent", "finish", "tokens", "cost", "error":
             return {}, .Mismatched_Payload
 
         case:

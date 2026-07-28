@@ -21,6 +21,7 @@ empty_hello :: proc() -> Initialize_Result {
         daemon = {version = "0.0.0", server_now_ms = 1720000000000},
         workspaces = nil,
         profiles = nil,
+        agents = nil,
         session_revision = 0,
         cron_revision = 0,
         catalog_rev = sample_catalog_rev(),
@@ -142,6 +143,71 @@ test_initialize_result_rejects_cron_revision_above_max :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_initialize_result_agents_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    h := empty_hello()
+    h.agents = []string{"main", "worker"}
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    initialize_result_emit(&e, h)
+    out := to_string(&e)
+
+    v := decoder_init(out)
+    decoded, derr := initialize_result_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect_value(t, len(decoded.agents), 2)
+    testing.expect_value(t, decoded.agents[0], "main")
+    testing.expect_value(t, decoded.agents[1], "worker")
+    testing.expect(t, initialize_result_validate(decoded) == .None, "agents within bound validate")
+}
+
+@(test)
+test_initialize_result_rejects_oversized_agent_name :: proc(t: ^testing.T) {
+    long_agent := strings.repeat("a", 65, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    h := empty_hello()
+    h.agents = []string{long_agent}
+    testing.expect(t, initialize_result_validate(h) == .Overflow, "oversized agent name must overflow")
+}
+
+@(test)
+test_initialize_result_rejects_too_many_agents :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    too_many := make([]string, LIMITS.max_agents + 1, context.temp_allocator)
+    for i in 0 ..< len(too_many) {
+        too_many[i] = "agent"
+    }
+
+    h := empty_hello()
+    h.agents = too_many
+    testing.expect(t, initialize_result_validate(h) == .Overflow, "too many agents must overflow")
+}
+
+@(test)
+test_initialize_result_rejects_missing_agents :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"protocol":1,
+        "daemon":{"version":"0.0.0","server_now_ms":1},
+        "workspaces":[],"profiles":[],"session_revision":0,"cron_revision":0,
+        "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "catalog_health":{"skipped":[],"load_error":null}}`
+
+    v := decoder_init(input, context.temp_allocator)
+
+    _, derr := initialize_result_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "missing agents must be rejected, like profiles")
+}
+
+@(test)
 test_initialize_result_parses_empty_json :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
@@ -151,6 +217,7 @@ test_initialize_result_parses_empty_json :: proc(t: ^testing.T) {
         "daemon": { "version": "0.0.0", "server_now_ms": 1720000000000 },
         "workspaces": [],
         "profiles": [],
+        "agents": [],
         "session_revision": 0,
         "cron_revision": 0,
         "catalog_rev": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
@@ -174,7 +241,7 @@ test_initialize_result_capabilities_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h := empty_hello()
-    h.capabilities = {.Terminal, .Blob_Upload}
+    h.capabilities = {.Blob_Upload}
 
     e: Emitter
     emitter_init(&e)
@@ -185,7 +252,7 @@ test_initialize_result_capabilities_roundtrip :: proc(t: ^testing.T) {
     v := decoder_init(out)
     decoded, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
-    testing.expect_value(t, decoded.capabilities, bit_set[Capability]{.Terminal, .Blob_Upload})
+    testing.expect_value(t, decoded.capabilities, bit_set[Capability]{.Blob_Upload})
 }
 
 @(test)
@@ -195,16 +262,16 @@ test_initialize_result_ignores_unknown_capability :: proc(t: ^testing.T) {
 
     input := `{"protocol":1,
         "daemon":{"version":"0.0.0","server_now_ms":1},
-        "workspaces":[],"profiles":[],"session_revision":0,"cron_revision":0,
+        "workspaces":[],"profiles":[],"agents":[],"session_revision":0,"cron_revision":0,
         "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         "catalog_health":{"skipped":[],"load_error":null},
-        "capabilities":["revert","warp_drive"]}`
+        "capabilities":["blob_upload","warp_drive"]}`
 
     v := decoder_init(input)
 
     h, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "unknown capability token must be ignored")
-    testing.expect_value(t, h.capabilities, bit_set[Capability]{.Revert})
+    testing.expect_value(t, h.capabilities, bit_set[Capability]{.Blob_Upload})
 }
 
 @(test)
@@ -214,7 +281,7 @@ test_initialize_result_rejects_non_string_capability :: proc(t: ^testing.T) {
 
     input := `{"protocol":1,
         "daemon":{"version":"0.0.0","server_now_ms":1},
-        "workspaces":[],"profiles":[],"session_revision":0,"cron_revision":0,
+        "workspaces":[],"profiles":[],"agents":[],"session_revision":0,"cron_revision":0,
         "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         "catalog_health":{"skipped":[],"load_error":null},
         "capabilities":[42]}`
@@ -232,7 +299,7 @@ test_initialize_result_ignores_unknown_object_fields :: proc(t: ^testing.T) {
 
     input := `{"protocol":1,
         "daemon":{"version":"0.0.0","server_now_ms":1},
-        "workspaces":[],"profiles":[],"session_revision":0,"cron_revision":0,
+        "workspaces":[],"profiles":[],"agents":[],"session_revision":0,"cron_revision":0,
         "future_field":{"enabled":true},
         "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         "catalog_health":{"skipped":[],"load_error":null}}`

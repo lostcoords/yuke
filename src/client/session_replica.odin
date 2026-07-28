@@ -553,9 +553,11 @@ replica_on_tool_state_changed :: proc(
     // Validate the transition before mutating state.
     now_waiting := false
 
-    if waiting, is_waiting := data.state.(wire.Tool_State_Waiting_Permission); is_waiting {
+    if _, is_waiting := data.state.(wire.Tool_State_Waiting_Permission); is_waiting {
+        perm, has_perm := data.permission_state.?
+
         // A resolution must not leave the state in waiting_permission.
-        if !permission_state_is_awaiting(waiting.permission_state) {
+        if !has_perm || !permission_state_is_awaiting(perm) {
             return {kind = .Gap}, .None
         }
 
@@ -572,8 +574,16 @@ replica_on_tool_state_changed :: proc(
     // clone is not freed until draft teardown (a Dynamic_Arena has no per-object free).
     arena_alloc := mem.dynamic_arena_allocator(&draft.arena)
     part.tool.tool.state = wire.tool_state_clone(data.state, arena_alloc)
+    part.tool.tool.permission_state = nil
+
+    if p, ok := data.permission_state.?; ok {
+        part.tool.tool.permission_state = wire.permission_state_clone(p, arena_alloc)
+    }
 
     if now_waiting {
+        stored, has_stored := part.tool.tool.permission_state.?
+        assert(has_stored && permission_state_is_awaiting(stored), "cloned permission must survive as awaiting")
+
         self.pending_permission = Permission_Locator {
             message_id = data.message_id,
             part_id    = data.part_id,
@@ -750,6 +760,52 @@ part_at :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> ^Active_Part {
     return &self.active.parts[index]
 }
 
+// The draft part an activity locator names, or nil when the replica cannot compare against
+// it: no draft for that message, or an ordinal it has not folded yet.
+located_part :: proc(self: ^Session_Replica, message_id: wire.Message_Id, part_id: wire.Part_Id) -> ^Active_Part {
+    if open_draft(self, message_id) == nil {
+        return nil
+    }
+
+    part := part_at(self, part_id)
+
+    if part == nil {
+        return nil
+    }
+
+    stored_id := part.tool.tool.id if part.kind == .Tool else part.text.id
+    assert(stored_id == part_id, "draft part stored off its ordinal")
+
+    return part
+}
+
+// True when an activity's locators contradict the replica's own derived draft state.
+// Only an identity conflict at a part the replica already holds proves divergence — a
+// missing draft or unfolded ordinal means the unsequenced streams are out of step.
+activity_locators_diverge :: proc(self: ^Session_Replica, state: wire.Activity_State) -> bool {
+    // A buffering replica's draft is not the live derivation; it must never be compared.
+    assert(self.resync == nil, "locators compared while resyncing")
+
+    #partial switch v in state {
+    case wire.Activity_State_Reasoning:
+        part := located_part(self, v.message_id, v.part_id)
+
+        return part != nil && part.kind != .Reasoning
+
+    case wire.Activity_State_Waiting_Permission:
+        part := located_part(self, v.message_id, v.part_id)
+
+        return part != nil && (part.kind != .Tool || part.tool.tool.name != v.tool_name)
+
+    case wire.Activity_State_Running_Tool:
+        part := located_part(self, v.message_id, v.part_id)
+
+        return part != nil && (part.kind != .Tool || part.tool.tool.name != v.tool_name)
+    }
+
+    return false
+}
+
 // A terminal tool state never transitions back to an active state; a broadcast that would
 // regress a terminal part is stale.
 tool_state_is_terminal :: proc(state: wire.Tool_State) -> bool {
@@ -860,12 +916,16 @@ replica_pending_permission :: proc(self: ^Session_Replica) -> (Pending_Permissio
         return {}, false
     }
 
-    waiting, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission)
-    if !is_waiting {
+    if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
         return {}, false
     }
 
-    options, has_options := waiting.permission_state.options.?
+    perm, has_perm := tool.permission_state.?
+    if !has_perm {
+        return {}, false
+    }
+
+    options, has_options := perm.options.?
     if !has_options {
         return {}, false
     }
@@ -876,7 +936,7 @@ replica_pending_permission :: proc(self: ^Session_Replica) -> (Pending_Permissio
             tool_name = tool.name,
             arguments = tool.arguments,
             options = options,
-            requested_at_ms = waiting.permission_state.requested_at_ms,
+            requested_at_ms = perm.requested_at_ms,
         },
         true
 }
@@ -1195,7 +1255,8 @@ apply_durable :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_R
 }
 
 // Dispatch a live broadcast to its lifecycle handler. `session.activity` replaces the
-// pending-compaction slot in place (it carries no sequence).
+// pending-compaction slot in place (it carries no sequence) after its locators are checked
+// against the replica's own draft.
 apply_live :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Result, Replica_Error) {
     #partial switch v in bc.params {
     case wire.Message_Started_Data:
@@ -1223,6 +1284,10 @@ apply_live :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Resu
         return replica_on_input_canceled(self, v), .None
 
     case wire.Session_Activity_Changed_Data:
+        if activity_locators_diverge(self, v.activity.state) {
+            return {kind = .Gap}, .None
+        }
+
         incoming := v.activity.pending_compaction
 
         // A stale activity must not re-assert a compaction a durable `run.done` already
@@ -1482,12 +1547,12 @@ derive_pending_permission :: proc(active: ^Draft_Replica) -> Maybe(Permission_Lo
             continue
         }
 
-        waiting, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission)
-        if !is_waiting {
+        if _, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
             continue
         }
 
-        if !permission_state_is_awaiting(waiting.permission_state) {
+        perm, has_perm := part.tool.tool.permission_state.?
+        if !has_perm || !permission_state_is_awaiting(perm) {
             continue
         }
 

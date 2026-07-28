@@ -174,61 +174,20 @@ create_session_clone :: proc(self: Create_Session, allocator := context.allocato
     return out
 }
 
-// Set an explicit prompt.
-System_Prompt_Patch_Set :: struct {
-    // @unbounded
-    // New prompt.
-    value: string,
-}
-
-// Clear to no system prompt.
-System_Prompt_Patch_Clear :: struct {}
-
-// No change.
-System_Prompt_Patch_None :: struct {}
-
-// Patch operation for a session system prompt. Non-owning.
-System_Prompt_Patch :: union {
-    System_Prompt_Patch_Set,
-    System_Prompt_Patch_Clear,
-    System_Prompt_Patch_None,
-}
-
-// Write internal-tagged JSON with `type` first.
-system_prompt_patch_emit :: proc(e: ^Emitter, self: System_Prompt_Patch) {
-    object_begin(e)
-
-    switch v in self {
-    case System_Prompt_Patch_Set:
-        field_string(e, "type", "set")
-        field_string(e, "value", v.value)
-
-    case System_Prompt_Patch_Clear:
-        field_string(e, "type", "clear")
-
-    case System_Prompt_Patch_None:
-        field_string(e, "type", "none")
-    }
-
-    object_end(e)
-}
-
-// Missing field means no change. Non-owning.
+// Missing field means no change. The system prompt is snapshotted at creation
+// and is not patchable. Non-owning.
 Session_Patch :: struct {
     // New model id.
-    model:         Maybe(string),
+    model:      Maybe(string),
 
     // New reasoning level.
-    reasoning:     Maybe(string),
-
-    // System-prompt patch operation.
-    system_prompt: System_Prompt_Patch,
+    reasoning:  Maybe(string),
 
     // New permission mode.
-    permission:    Maybe(Permission_Mode),
+    permission: Maybe(Permission_Mode),
 
     // New round cap.
-    max_rounds:    Max_Rounds_Override,
+    max_rounds: Max_Rounds_Override,
 }
 
 // Write only fields present in the patch.
@@ -236,11 +195,6 @@ session_patch_emit :: proc(e: ^Emitter, self: Session_Patch) {
     object_begin(e)
     field_string_opt(e, "model", self.model)
     field_string_opt(e, "reasoning", self.reasoning)
-
-    if self.system_prompt != nil {
-        key(e, "system_prompt")
-        system_prompt_patch_emit(e, self.system_prompt)
-    }
 
     if mode, ok := self.permission.?; ok {
         field_string(e, "permission", permission_mode_to_wire(mode))
@@ -269,44 +223,6 @@ session_patch_validate :: proc(self: Session_Patch) -> Validation_Error {
     return .None
 }
 
-// Which Session_Patch fields a patch touched.
-Patch_Field :: enum {
-    Model,
-    Reasoning,
-    System_Prompt,
-    Permission,
-    Max_Rounds,
-}
-
-// Patch_Field <-> wire string, indexed by the enum so a missing mapping is visible.
-@(rodata)
-patch_field_wire := [Patch_Field]string {
-    .Model         = "model",
-    .Reasoning     = "reasoning",
-    .System_Prompt = "system_prompt",
-    .Permission    = "permission",
-    .Max_Rounds    = "max_rounds",
-}
-
-// Wire string for a patch field.
-patch_field_to_wire :: proc(f: Patch_Field) -> string {
-    return patch_field_wire[f]
-}
-
-// Patch field for a wire string; ok is false for an unknown field.
-patch_field_from_wire :: proc(s: string) -> (Patch_Field, bool) {
-    return enum_from_wire(patch_field_wire, s)
-}
-
-// Which patched fields apply now versus on future runs.
-Patch_Effect :: struct {
-    // Fields that took effect immediately.
-    live:        []Patch_Field,
-
-    // Fields that apply starting with the next run.
-    future_runs: []Patch_Field,
-}
-
 // session.fork input.
 Fork_Params :: struct {
     // Session to fork.
@@ -325,19 +241,6 @@ fork_params_emit :: proc(e: ^Emitter, self: Fork_Params) {
         field_u64(e, "before_message_id", u64(bid))
     }
 
-    object_end(e)
-}
-
-// session.reload input.
-Reload_Params :: struct {
-    // Session to reload.
-    session_id: Session_Id,
-}
-
-// Write session.reload params.
-reload_params_emit :: proc(e: ^Emitter, self: Reload_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
     object_end(e)
 }
 
@@ -447,7 +350,14 @@ Session_Origin_Root :: struct {}
 // Child of another session.
 Session_Origin_Child :: struct {
     // Parent session id.
-    parent_id: Session_Id,
+    parent_id:         Session_Id,
+
+    // Message in the parent's transcript carrying the spawning tool part.
+    parent_message_id: Message_Id,
+
+    // Tool part within that message that spawned this session; together with
+    // `parent_message_id` stays correct when one message emits multiple spawn calls.
+    parent_part_id:    Part_Id,
 }
 
 // Fork of another session.
@@ -481,6 +391,8 @@ session_origin_emit :: proc(e: ^Emitter, self: Session_Origin) {
     case Session_Origin_Child:
         field_string(e, "type", "child")
         field_id(e, "parent_id", ([16]u8)(v.parent_id))
+        field_u64(e, "parent_message_id", u64(v.parent_message_id))
+        field_u64(e, "parent_part_id", u64(v.parent_part_id))
 
     case Session_Origin_Fork:
         field_string(e, "type", "fork")
@@ -564,9 +476,15 @@ Session :: struct {
 
     // Session provenance.
     origin:        Session_Origin,
+
+    // @bounded 64
+    // Agent name, when known; omitted if unassigned. Lets a client listing children
+    // name the agent without fetching a transcript.
+    agent:         Maybe(string),
 }
 
-// Write a Session object; `created_by` and `max_rounds` are always present, null when absent.
+// Write a Session object. `created_by` and `max_rounds` are always present, null when absent;
+// `agent` is omitted when absent.
 session_emit :: proc(e: ^Emitter, self: Session) {
     object_begin(e)
     field_id(e, "id", ([16]u8)(self.id))
@@ -590,6 +508,7 @@ session_emit :: proc(e: ^Emitter, self: Session) {
 
     key(e, "origin")
     session_origin_emit(e, self.origin)
+    field_string_opt(e, "agent", self.agent)
     object_end(e)
 }
 
@@ -601,6 +520,10 @@ session_validate :: proc(self: Session) -> Validation_Error {
     enforce_bounded(128, self.model) or_return
     enforce_bounded(32, self.reasoning) or_return
     enforce_bounded(256, self.title) or_return
+
+    if agent, ok := self.agent.?; ok {
+        enforce_bounded(64, agent) or_return
+    }
 
     if cb, ok := self.created_by.?; ok {
         client_validate(cb) or_return
@@ -632,6 +555,12 @@ session_clone :: proc(self: Session, allocator := context.allocator) -> Session 
         created_by = client_clone(cb, allocator)
     }
 
+    agent: Maybe(string)
+
+    if a, ok := self.agent.?; ok {
+        agent = strings.clone(a, allocator)
+    }
+
     return Session {
         id = self.id,
         workspace_id = self.workspace_id,
@@ -646,6 +575,7 @@ session_clone :: proc(self: Session, allocator := context.allocator) -> Session 
         updated_at_ms = self.updated_at_ms,
         created_by = created_by,
         origin = session_origin_clone(self.origin, allocator),
+        agent = agent,
     }
 }
 
@@ -693,6 +623,10 @@ Session_Activity :: struct {
     // Current activity state.
     state:              Activity_State,
 
+    // Config the named run is executing under. Present exactly when `state` names a run
+    // that has one; absent under `idle` and `compacting`.
+    config:             Maybe(Run_Config),
+
     // Accepted inputs waiting to run. At most LIMITS.max_queued_inputs.
     queued:             u64,
 
@@ -703,11 +637,18 @@ Session_Activity :: struct {
     pending_compaction: Maybe(Run_Id),
 }
 
-// Write a Session_Activity object; `pending_compaction` is always present, null when absent.
+// Write a Session_Activity object; `config` is omitted when absent, while
+// `pending_compaction` is always present, null when absent.
 session_activity_emit :: proc(e: ^Emitter, self: Session_Activity) {
     object_begin(e)
     key(e, "state")
     activity_state_emit(e, self.state)
+
+    if cfg, ok := self.config.?; ok {
+        key(e, "config")
+        run_config_emit(e, cfg)
+    }
+
     field_u64(e, "queued", self.queued)
     field_u64(e, "context_tokens", self.context_tokens)
     key(e, "pending_compaction")
@@ -721,19 +662,52 @@ session_activity_emit :: proc(e: ^Emitter, self: Session_Activity) {
     object_end(e)
 }
 
-// Verify annotated field bounds.
+// Verify annotated field bounds and the state/config cross-field invariant: only `idle`
+// and `compacting` name no run whose config could be reported.
 session_activity_validate :: proc(self: Session_Activity) -> Validation_Error {
     if self.queued > u64(LIMITS.max_queued_inputs) {
         return .Overflow
     }
 
-    return activity_state_validate(self.state)
+    activity_state_validate(self.state) or_return
+
+    cfg, has_config := self.config.?
+
+    if has_config {
+        run_config_validate(cfg) or_return
+    }
+
+    switch _ in self.state {
+    case Activity_State_Idle, Activity_State_Compacting:
+        if has_config {
+            return .Mismatched_Payload
+        }
+
+    case Activity_State_Building,
+         Activity_State_Running,
+         Activity_State_Reasoning,
+         Activity_State_Waiting_Permission,
+         Activity_State_Running_Tool,
+         Activity_State_Retrying:
+        if !has_config {
+            return .Mismatched_Payload
+        }
+    }
+
+    return .None
 }
 
-// Deep-copy nested activity strings into `allocator`.
+// Deep-copy nested activity strings and the hoisted config into `allocator`.
 session_activity_clone :: proc(self: Session_Activity, allocator := context.allocator) -> Session_Activity {
+    config: Maybe(Run_Config)
+
+    if cfg, ok := self.config.?; ok {
+        config = run_config_clone(cfg, allocator)
+    }
+
     return Session_Activity {
         state = activity_state_clone(self.state, allocator),
+        config = config,
         queued = self.queued,
         context_tokens = self.context_tokens,
         pending_compaction = self.pending_compaction,
@@ -1032,9 +1006,6 @@ Activity_State_Building :: struct {
     // Active run id.
     run_id:        Run_Id,
 
-    // Active run config.
-    config:        Run_Config,
-
     // Run and build start epoch ms.
     started_at_ms: u64,
 }
@@ -1044,9 +1015,6 @@ Activity_State_Running :: struct {
     // Active run id.
     run_id:        Run_Id,
 
-    // Active run config.
-    config:        Run_Config,
-
     // Run start epoch ms.
     started_at_ms: u64,
 }
@@ -1055,9 +1023,6 @@ Activity_State_Running :: struct {
 Activity_State_Reasoning :: struct {
     // Active run id.
     run_id:     Run_Id,
-
-    // Active run config.
-    config:     Run_Config,
 
     // Draft message id.
     message_id: Message_Id,
@@ -1070,9 +1035,6 @@ Activity_State_Reasoning :: struct {
 Activity_State_Waiting_Permission :: struct {
     // Active run id.
     run_id:          Run_Id,
-
-    // Active run config.
-    config:          Run_Config,
 
     // Message containing the tool.
     message_id:      Message_Id,
@@ -1093,9 +1055,6 @@ Activity_State_Running_Tool :: struct {
     // Active run id.
     run_id:        Run_Id,
 
-    // Active run config.
-    config:        Run_Config,
-
     // Message containing the tool.
     message_id:    Message_Id,
 
@@ -1114,9 +1073,6 @@ Activity_State_Running_Tool :: struct {
 Activity_State_Retrying :: struct {
     // Active run id.
     run_id:       Run_Id,
-
-    // Active run config.
-    config:       Run_Config,
 
     // Current attempt number.
     attempt:      u64,
@@ -1147,7 +1103,8 @@ Activity_State_Compacting :: struct {
     started_at_ms: u64,
 }
 
-// Session activity variant.
+// Session activity variant. The `message_id`, `part_id`, and `tool_name` locators are
+// deliberately derivable: they are a checksum, and disagreement is a client's cue to resync.
 Activity_State :: union {
     Activity_State_Idle,
     Activity_State_Building,
@@ -1170,30 +1127,22 @@ activity_state_emit :: proc(e: ^Emitter, self: Activity_State) {
     case Activity_State_Building:
         field_string(e, "type", "building")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "started_at_ms", v.started_at_ms)
 
     case Activity_State_Running:
         field_string(e, "type", "running")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "started_at_ms", v.started_at_ms)
 
     case Activity_State_Reasoning:
         field_string(e, "type", "reasoning")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "message_id", u64(v.message_id))
         field_u64(e, "part_id", u64(v.part_id))
 
     case Activity_State_Waiting_Permission:
         field_string(e, "type", "waiting_permission")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "message_id", u64(v.message_id))
         field_u64(e, "part_id", u64(v.part_id))
         field_string(e, "tool_name", v.tool_name)
@@ -1202,8 +1151,6 @@ activity_state_emit :: proc(e: ^Emitter, self: Activity_State) {
     case Activity_State_Running_Tool:
         field_string(e, "type", "running_tool")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "message_id", u64(v.message_id))
         field_u64(e, "part_id", u64(v.part_id))
         field_string(e, "tool_name", v.tool_name)
@@ -1212,8 +1159,6 @@ activity_state_emit :: proc(e: ^Emitter, self: Activity_State) {
     case Activity_State_Retrying:
         field_string(e, "type", "retrying")
         field_u64(e, "run_id", u64(v.run_id))
-        key(e, "config")
-        run_config_emit(e, v.config)
         field_u64(e, "attempt", v.attempt)
         field_u64(e, "max_attempts", v.max_attempts)
         field_u64(e, "next_at_ms", v.next_at_ms)
@@ -1233,66 +1178,39 @@ activity_state_emit :: proc(e: ^Emitter, self: Activity_State) {
 // Verify annotated field bounds.
 activity_state_validate :: proc(self: Activity_State) -> Validation_Error {
     switch v in self {
-    case Activity_State_Idle, Activity_State_Compacting:
+    case Activity_State_Idle,
+         Activity_State_Building,
+         Activity_State_Running,
+         Activity_State_Reasoning,
+         Activity_State_Compacting:
         return .None
 
-    case Activity_State_Building:
-        return run_config_validate(v.config)
-
-    case Activity_State_Running:
-        return run_config_validate(v.config)
-
-    case Activity_State_Reasoning:
-        return run_config_validate(v.config)
-
     case Activity_State_Waiting_Permission:
-        run_config_validate(v.config) or_return
         return enforce_bounded(128, v.tool_name)
 
     case Activity_State_Running_Tool:
-        run_config_validate(v.config) or_return
         return enforce_bounded(128, v.tool_name)
 
     case Activity_State_Retrying:
-        run_config_validate(v.config) or_return
         return enforce_bounded(LIMITS.max_activity_retry_message_bytes, v.message)
     }
 
     return .None
 }
 
-// Deep-copy nested config and display strings into `allocator`.
+// Deep-copy display strings into `allocator`; arms without one are copied as-is.
 activity_state_clone :: proc(self: Activity_State, allocator := context.allocator) -> Activity_State {
     switch v in self {
-    case Activity_State_Idle:
-        return Activity_State_Idle{}
-
-    case Activity_State_Building:
-        return Activity_State_Building {
-            run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
-            started_at_ms = v.started_at_ms,
-        }
-
-    case Activity_State_Running:
-        return Activity_State_Running {
-            run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
-            started_at_ms = v.started_at_ms,
-        }
-
-    case Activity_State_Reasoning:
-        return Activity_State_Reasoning {
-            run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
-            message_id = v.message_id,
-            part_id = v.part_id,
-        }
+    case Activity_State_Idle,
+         Activity_State_Building,
+         Activity_State_Running,
+         Activity_State_Reasoning,
+         Activity_State_Compacting:
+        return self
 
     case Activity_State_Waiting_Permission:
         return Activity_State_Waiting_Permission {
             run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
             message_id = v.message_id,
             part_id = v.part_id,
             tool_name = strings.clone(v.tool_name, allocator),
@@ -1302,7 +1220,6 @@ activity_state_clone :: proc(self: Activity_State, allocator := context.allocato
     case Activity_State_Running_Tool:
         return Activity_State_Running_Tool {
             run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
             message_id = v.message_id,
             part_id = v.part_id,
             tool_name = strings.clone(v.tool_name, allocator),
@@ -1312,16 +1229,12 @@ activity_state_clone :: proc(self: Activity_State, allocator := context.allocato
     case Activity_State_Retrying:
         return Activity_State_Retrying {
             run_id = v.run_id,
-            config = run_config_clone(v.config, allocator),
             attempt = v.attempt,
             max_attempts = v.max_attempts,
             next_at_ms = v.next_at_ms,
             code = v.code,
             message = strings.clone(v.message, allocator),
         }
-
-    case Activity_State_Compacting:
-        return v
     }
 
     return nil
@@ -1395,8 +1308,14 @@ active_draft_validate :: proc(self: Active_Draft) -> Validation_Error {
 
 // Check the activity's full run config against the draft and snapshot table.
 @(private)
-_activity_config_matches_draft :: proc(config: Run_Config, message: Assistant_Message, configs: []Run_Config) -> bool {
-    if config.config_rev != message.config_rev {
+_activity_config_matches_draft :: proc(
+    activity_config: Maybe(Run_Config),
+    message: Assistant_Message,
+    configs: []Run_Config,
+) -> bool {
+    config, has_config := activity_config.?
+
+    if !has_config || config.config_rev != message.config_rev {
         return false
     }
 
@@ -1537,6 +1456,13 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
         }
     }
 
+    // The activity's hoisted config must name the draft's revision and its content.
+    if active, ok := self.active.?; ok {
+        if !_activity_config_matches_draft(self.item.activity.config, active.message, self.configs) {
+            return .Mismatched_Payload
+        }
+    }
+
     switch st in self.item.activity.state {
     case Activity_State_Idle, Activity_State_Building, Activity_State_Compacting:
         if _, ok := self.active.?; ok {
@@ -1553,8 +1479,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
         }
 
         if active, ok := self.active.?; ok {
-            if st.run_id != active.message.run_id ||
-               !_activity_config_matches_draft(st.config, active.message, self.configs) {
+            if st.run_id != active.message.run_id {
                 return .Mismatched_Payload
             }
         }
@@ -1570,9 +1495,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
             return .Mismatched_Payload
         }
 
-        if st.run_id != active.message.run_id ||
-           !_activity_config_matches_draft(st.config, active.message, self.configs) ||
-           st.message_id != active.message.id {
+        if st.run_id != active.message.run_id || st.message_id != active.message.id {
             return .Mismatched_Payload
         }
 
@@ -1602,9 +1525,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
             return .Mismatched_Payload
         }
 
-        if st.run_id != active.message.run_id ||
-           !_activity_config_matches_draft(st.config, active.message, self.configs) ||
-           st.message_id != active.message.id {
+        if st.run_id != active.message.run_id || st.message_id != active.message.id {
             return .Mismatched_Payload
         }
 
@@ -1623,16 +1544,14 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
             return .Mismatched_Payload
         }
 
-        waiting, is_waiting := tool.state.(Tool_State_Waiting_Permission)
-
-        if !is_waiting {
+        if _, is_waiting := tool.state.(Tool_State_Waiting_Permission); !is_waiting {
             return .Mismatched_Payload
         }
 
-        _, has_opts := waiting.permission_state.options.?
-        _, has_dec := waiting.permission_state.decision.?
+        // The activity's `requested_at_ms` locates the same prompt the part carries.
+        perm, has_perm := tool.permission_state.?
 
-        if waiting.permission_state.requested_at_ms != st.requested_at_ms || !has_opts || has_dec {
+        if !has_perm || perm.requested_at_ms != st.requested_at_ms {
             return .Mismatched_Payload
         }
 
@@ -1647,9 +1566,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
             return .Mismatched_Payload
         }
 
-        if st.run_id != active.message.run_id ||
-           !_activity_config_matches_draft(st.config, active.message, self.configs) ||
-           st.message_id != active.message.id {
+        if st.run_id != active.message.run_id || st.message_id != active.message.id {
             return .Mismatched_Payload
         }
 
@@ -1684,8 +1601,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
         }
 
         if active, ok := self.active.?; ok {
-            if st.run_id != active.message.run_id ||
-               !_activity_config_matches_draft(st.config, active.message, self.configs) {
+            if st.run_id != active.message.run_id {
                 return .Mismatched_Payload
             }
         }
@@ -1915,71 +1831,6 @@ create_session_from_reader :: proc(d: ^Decoder) -> (out: Create_Session, err: Va
     return out, .None
 }
 
-// Decode internally-tagged system-prompt patch straight from the token stream.
-system_prompt_patch_from_reader :: proc(d: ^Decoder) -> (patch: System_Prompt_Patch, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
-
-    switch tag {
-    case "set":
-        value: string
-        have := false
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "value":
-                value = dec_string(d) or_return
-                have = true
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if !have {
-            return nil, .Mismatched_Payload
-        }
-
-        return System_Prompt_Patch_Set{value = value}, .None
-
-    case "clear":
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "value":
-                return nil, .Mismatched_Payload
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        return System_Prompt_Patch_Clear{}, .None
-
-    case "none":
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "value":
-                return nil, .Mismatched_Payload
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        return System_Prompt_Patch_None{}, .None
-    }
-
-    return nil, .Mismatched_Payload
-}
-
 // Decode a Session_Patch straight from the token stream.
 session_patch_from_reader :: proc(d: ^Decoder) -> (patch: Session_Patch, err: Validation_Error) {
     patch.max_rounds = Max_Rounds_Default{}
@@ -1994,9 +1845,6 @@ session_patch_from_reader :: proc(d: ^Decoder) -> (patch: Session_Patch, err: Va
 
         case "reasoning":
             patch.reasoning = dec_string(d) or_return
-
-        case "system_prompt":
-            patch.system_prompt = system_prompt_patch_from_reader(d) or_return
 
         case "permission":
             patch.permission = dec_enum(d, permission_mode_wire) or_return
@@ -2046,31 +1894,6 @@ fork_params_from_reader :: proc(d: ^Decoder) -> (params: Fork_Params, err: Valid
     }
 
     if .Sid not_in seen {
-        return {}, .Mismatched_Payload
-    }
-
-    return params, .None
-}
-
-// Decode session.reload params straight from the token stream.
-reload_params_from_reader :: proc(d: ^Decoder) -> (params: Reload_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    have := false
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
-            have = true
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if !have {
         return {}, .Mismatched_Payload
     }
 
@@ -2184,7 +2007,7 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
             if kdone do break
 
             switch k {
-            case "parent_id", "source_id", "job_id":
+            case "parent_id", "parent_message_id", "parent_part_id", "source_id", "job_id":
                 return nil, .Mismatched_Payload
 
             case:
@@ -2196,7 +2019,14 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
 
     case "child":
         pid: [16]u8
-        have := false
+        mid, pt: u64
+        Field :: enum {
+            Pid,
+            Mid,
+            Pt,
+        }
+
+        seen: bit_set[Field]
         for {
             k, kdone := dec_key(d) or_return
             if kdone do break
@@ -2204,7 +2034,15 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
             switch k {
             case "parent_id":
                 pid = dec_fixed(d, 16) or_return
-                have = true
+                seen += {.Pid}
+
+            case "parent_message_id":
+                mid = dec_u64(d) or_return
+                seen += {.Mid}
+
+            case "parent_part_id":
+                pt = dec_u64(d) or_return
+                seen += {.Pt}
 
             case "source_id", "job_id":
                 return nil, .Mismatched_Payload
@@ -2214,11 +2052,16 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
             }
         }
 
-        if !have {
+        if seen != {.Pid, .Mid, .Pt} {
             return nil, .Mismatched_Payload
         }
 
-        return Session_Origin_Child{parent_id = Session_Id(pid)}, .None
+        return Session_Origin_Child {
+                parent_id = Session_Id(pid),
+                parent_message_id = Message_Id(mid),
+                parent_part_id = Part_Id(pt),
+            },
+            .None
 
     case "fork":
         sid: [16]u8
@@ -2232,7 +2075,7 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
                 sid = dec_fixed(d, 16) or_return
                 have = true
 
-            case "parent_id", "job_id":
+            case "parent_id", "parent_message_id", "parent_part_id", "job_id":
                 return nil, .Mismatched_Payload
 
             case:
@@ -2258,7 +2101,7 @@ session_origin_from_reader :: proc(d: ^Decoder) -> (origin: Session_Origin, err:
                 jid = dec_fixed(d, 16) or_return
                 have = true
 
-            case "parent_id", "source_id":
+            case "parent_id", "parent_message_id", "parent_part_id", "source_id":
                 return nil, .Mismatched_Payload
 
             case:
@@ -2360,6 +2203,9 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
             out.origin = session_origin_from_reader(d) or_return
             seen += {.Origin}
 
+        case "agent":
+            out.agent = dec_string(d) or_return
+
         case:
             dec_skip(d) or_return
         }
@@ -2433,6 +2279,9 @@ session_activity_from_reader :: proc(d: ^Decoder) -> (out: Session_Activity, err
         case "state":
             out.state = activity_state_from_reader(d) or_return
             seen += {.State}
+
+        case "config":
+            out.config = run_config_from_reader(d) or_return
 
         case "queued":
             out.queued = dec_u64(d) or_return
@@ -2757,12 +2606,10 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
 
     case "building", "running":
         st_run: Run_Id
-        st_cfg: Run_Config
         st_start: u64
 
         Field :: enum {
             Run,
-            Cfg,
             Start,
         }
 
@@ -2776,14 +2623,11 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
                 st_run = Run_Id(dec_u64(d) or_return)
                 seen += {.Run}
 
-            case "config":
-                st_cfg = run_config_from_reader(d) or_return
-                seen += {.Cfg}
-
             case "started_at_ms":
                 st_start = dec_u64(d) or_return
                 seen += {.Start}
-            case "message_id",
+            case "config",
+                 "message_id",
                  "part_id",
                  "tool_name",
                  "requested_at_ms",
@@ -2800,22 +2644,21 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             }
         }
 
-        if seen != {.Run, .Cfg, .Start} {
+        if seen != {.Run, .Start} {
             return nil, .Mismatched_Payload
         }
 
         if tag == "building" {
-            return Activity_State_Building{run_id = st_run, config = st_cfg, started_at_ms = st_start}, .None
+            return Activity_State_Building{run_id = st_run, started_at_ms = st_start}, .None
         }
 
-        return Activity_State_Running{run_id = st_run, config = st_cfg, started_at_ms = st_start}, .None
+        return Activity_State_Running{run_id = st_run, started_at_ms = st_start}, .None
 
     case "reasoning":
         st: Activity_State_Reasoning
 
         Field :: enum {
             Run,
-            Cfg,
             Mid,
             Pid,
         }
@@ -2830,10 +2673,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
                 st.run_id = Run_Id(dec_u64(d) or_return)
                 seen += {.Run}
 
-            case "config":
-                st.config = run_config_from_reader(d) or_return
-                seen += {.Cfg}
-
             case "message_id":
                 st.message_id = Message_Id(dec_u64(d) or_return)
                 seen += {.Mid}
@@ -2841,7 +2680,8 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             case "part_id":
                 st.part_id = Part_Id(dec_u64(d) or_return)
                 seen += {.Pid}
-            case "started_at_ms",
+            case "config",
+                 "started_at_ms",
                  "tool_name",
                  "requested_at_ms",
                  "attempt",
@@ -2857,7 +2697,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             }
         }
 
-        if seen != {.Run, .Cfg, .Mid, .Pid} {
+        if seen != {.Run, .Mid, .Pid} {
             return nil, .Mismatched_Payload
         }
 
@@ -2868,7 +2708,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
 
         Field :: enum {
             Run,
-            Cfg,
             Mid,
             Pid,
             Tool,
@@ -2884,10 +2723,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             case "run_id":
                 st.run_id = Run_Id(dec_u64(d) or_return)
                 seen += {.Run}
-
-            case "config":
-                st.config = run_config_from_reader(d) or_return
-                seen += {.Cfg}
 
             case "message_id":
                 st.message_id = Message_Id(dec_u64(d) or_return)
@@ -2905,7 +2740,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
                 st.requested_at_ms = dec_u64(d) or_return
                 seen += {.Req}
 
-            case "started_at_ms", "attempt", "max_attempts", "next_at_ms", "code", "message", "reason":
+            case "config", "started_at_ms", "attempt", "max_attempts", "next_at_ms", "code", "message", "reason":
                 return nil, .Mismatched_Payload
 
             case:
@@ -2913,7 +2748,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             }
         }
 
-        if seen != {.Run, .Cfg, .Mid, .Pid, .Tool, .Req} {
+        if seen != {.Run, .Mid, .Pid, .Tool, .Req} {
             return nil, .Mismatched_Payload
         }
 
@@ -2924,7 +2759,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
 
         Field :: enum {
             Run,
-            Cfg,
             Mid,
             Pid,
             Tool,
@@ -2940,10 +2774,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             case "run_id":
                 st.run_id = Run_Id(dec_u64(d) or_return)
                 seen += {.Run}
-
-            case "config":
-                st.config = run_config_from_reader(d) or_return
-                seen += {.Cfg}
 
             case "message_id":
                 st.message_id = Message_Id(dec_u64(d) or_return)
@@ -2961,7 +2791,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
                 st.started_at_ms = dec_u64(d) or_return
                 seen += {.Start}
 
-            case "requested_at_ms", "attempt", "max_attempts", "next_at_ms", "code", "message", "reason":
+            case "config", "requested_at_ms", "attempt", "max_attempts", "next_at_ms", "code", "message", "reason":
                 return nil, .Mismatched_Payload
 
             case:
@@ -2969,7 +2799,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             }
         }
 
-        if seen != {.Run, .Cfg, .Mid, .Pid, .Tool, .Start} {
+        if seen != {.Run, .Mid, .Pid, .Tool, .Start} {
             return nil, .Mismatched_Payload
         }
 
@@ -2980,7 +2810,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
 
         Field :: enum {
             Run,
-            Cfg,
             Att,
             Max,
             Next,
@@ -2997,10 +2826,6 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             case "run_id":
                 st.run_id = Run_Id(dec_u64(d) or_return)
                 seen += {.Run}
-
-            case "config":
-                st.config = run_config_from_reader(d) or_return
-                seen += {.Cfg}
 
             case "attempt":
                 st.attempt = dec_u64(d) or_return
@@ -3022,7 +2847,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
                 st.message = dec_string(d) or_return
                 seen += {.Msg}
 
-            case "started_at_ms", "message_id", "part_id", "tool_name", "requested_at_ms", "reason":
+            case "config", "started_at_ms", "message_id", "part_id", "tool_name", "requested_at_ms", "reason":
                 return nil, .Mismatched_Payload
 
             case:
@@ -3030,7 +2855,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
             }
         }
 
-        if seen != {.Run, .Cfg, .Att, .Max, .Next, .Code, .Msg} {
+        if seen != {.Run, .Att, .Max, .Next, .Code, .Msg} {
             return nil, .Mismatched_Payload
         }
 

@@ -21,14 +21,15 @@ The package is layered as:
 
 Lifetime contract:
 
-  - The `wire.Response`, `wire.Notification`, and unknown-notification `method` handed to a
-    callback borrow the transport message buffer and the per-message `scratch`
-    arena. They are valid ONLY for the duration of that callback. A consumer that
-    retains one MUST deep-copy it (e.g. `wire.notification_clone`) into its own
-    allocator before returning — exactly how a `session_replica` consumer will use it.
+  - The `wire.Initialize_Result`, `wire.Response`, `wire.Notification`, and
+    unknown-notification `method` handed to a callback borrow the transport message buffer
+    and the per-message `scratch` arena. They are valid ONLY for the duration of that
+    callback. A consumer that retains one MUST deep-copy the data it needs into its own
+    allocator before returning — exactly how a `session_replica` consumer will use a
+    notification.
   - The driver itself retains NO borrowed frame data: `pending` stores only the
-    `Method_Name` enum and the caller's completion, and the sole retained handshake
-    datum, `daemon_version`, is an owned `strings.clone`.
+    `Method_Name` enum and the caller's completion; handshake scalars are copied by value,
+    and `daemon_version` is an owned `strings.clone`.
   - A registered `Response_Proc` fires at most once. Requests still outstanding when
     the connection closes or errors are dropped with `pending`, so any `user_data`
     they own must be reclaimed from the terminal callback, not from the completion.

@@ -145,6 +145,43 @@ test_session_activity_changed_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, to_string(&e), input)
 }
 
+// The hoisted activity config is borrowed frame data; a clone must own its strings.
+@(test)
+test_session_activity_changed_config_clone_outlives_source :: proc(t: ^testing.T) {
+    src_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&src_arena, context.allocator, context.allocator)
+    src := mem.dynamic_arena_allocator(&src_arena)
+
+    dst_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&dst_arena, context.allocator, context.allocator)
+    dst := mem.dynamic_arena_allocator(&dst_arena)
+    defer mem.dynamic_arena_destroy(&dst_arena)
+
+    input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_tokens":0,"pending_compaction":null}}`
+    d := decoder_init(input, src)
+    data, derr := broadcast_data_from_reader(.Session_Activity_Changed, &d)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect(t, broadcast_data_validate(data) == .None, "running activity with config must validate")
+
+    clone := notification_clone(notification_build(.Session_Activity_Changed, data), dst)
+
+    // Drop the decode arena; the cloned config must remain valid.
+    mem.dynamic_arena_destroy(&src_arena)
+
+    changed, is_changed := clone.params.(Session_Activity_Changed_Data)
+    testing.expect(t, is_changed, "payload is session.activity_changed")
+    cfg, has_config := changed.activity.config.?
+    testing.expect(t, has_config, "cloned config is present")
+    testing.expect_value(t, cfg.model, "openai/gpt-5.5")
+    testing.expect_value(t, cfg.reasoning, "high")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    broadcast_data_emit(&e, clone.params)
+    testing.expect_value(t, to_string(&e), input)
+}
+
 @(test)
 test_session_removed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
@@ -355,4 +392,77 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
     defer emitter_destroy(&e)
     broadcast_data_emit(&e, clone.params)
     testing.expect_value(t, to_string(&e), input)
+}
+
+// The part-level permission travels with `tool.state_changed` and must survive the clone
+// that buffers a broadcast across a resync.
+@(test)
+test_tool_state_changed_permission_clone_outlives_source :: proc(t: ^testing.T) {
+    src_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&src_arena, context.allocator, context.allocator)
+    src := mem.dynamic_arena_allocator(&src_arena)
+
+    dst_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&dst_arena, context.allocator, context.allocator)
+    dst := mem.dynamic_arena_allocator(&dst_arena)
+    defer mem.dynamic_arena_destroy(&dst_arena)
+
+    input := `{"session_id":"0123456789abcdef","message_id":4,"part_id":0,"state":{"type":"waiting_permission"},"permission":{"requested_at_ms":7,"options":[{"id":"once","kind":"allow_once","label":"Allow once"}]}}`
+    d := decoder_init(input, src)
+    data, derr := broadcast_data_from_reader(.Tool_State_Changed, &d)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect(t, broadcast_data_validate(data) == .None, "offered waiting must validate")
+
+    clone := notification_clone(notification_build(.Tool_State_Changed, data), dst)
+
+    // Drop the decode arena; the cloned permission must remain valid.
+    mem.dynamic_arena_destroy(&src_arena)
+
+    changed, is_changed := clone.params.(Tool_State_Changed_Data)
+    testing.expect(t, is_changed, "payload is tool.state_changed")
+    perm, has_perm := changed.permission_state.?
+    testing.expect(t, has_perm, "cloned permission state is present")
+    opts, has_opts := perm.options.?
+    testing.expect(t, has_opts, "cloned options are present")
+    testing.expect_value(t, opts[0].label, "Allow once")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    broadcast_data_emit(&e, clone.params)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// The payload carries the same state/permission pair a tool part does, under the same
+// cross-field invariant.
+@(test)
+test_tool_state_changed_rejects_inconsistent_permission :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    offered := Permission_State {
+        requested_at_ms = 1,
+        options         = make([]Permission_Option, 0, context.temp_allocator),
+    }
+    data := Tool_State_Changed_Data {
+        session_id = Session_Id(
+            [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'},
+        ),
+        message_id = 4,
+        part_id = 0,
+        state = Tool_State_Running{started_at_ms = 2},
+        permission_state = offered,
+    }
+    testing.expect(t, tool_state_changed_data_validate(data) == .Mismatched_Payload, "undecided running must fail")
+
+    data.state = Tool_State_Waiting_Permission{}
+    data.permission_state = nil
+    testing.expect(
+        t,
+        tool_state_changed_data_validate(data) == .Mismatched_Payload,
+        "waiting without permission must fail",
+    )
+
+    data.permission_state = offered
+    testing.expect(t, tool_state_changed_data_validate(data) == .None, "offered waiting must validate")
 }

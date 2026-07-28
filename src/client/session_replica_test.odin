@@ -320,7 +320,8 @@ test_tool_part_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
         name = strings.clone("yuke.exec", a),
         arguments = strings.clone("{\"cmd\":\"git status\"}", a),
         input_view = views,
-        state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 99, options = options}},
+        state = wire.Tool_State_Waiting_Permission{},
+        permission_state = wire.Permission_State{requested_at_ms = 99, options = options},
     }
     res, err := replica_on_part_added(&r, _part_added(3, tool))
     testing.expect_value(t, err, Replica_Error.None)
@@ -344,9 +345,10 @@ test_tool_part_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
     lang, _ := view_text.language.?
     testing.expect_value(t, lang, "sh")
 
-    waiting, is_waiting := tp.state.(wire.Tool_State_Waiting_Permission)
+    _, is_waiting := tp.state.(wire.Tool_State_Waiting_Permission)
     testing.expect(t, is_waiting, "state is waiting_permission")
-    opts, _ := waiting.permission_state.options.?
+    perm, _ := tp.permission_state.?
+    opts, _ := perm.options.?
     testing.expect_value(t, opts[0].id, "always")
     testing.expect_value(t, opts[0].label, "Always allow")
     opt_creates, _ := opts[0].creates.?
@@ -400,19 +402,15 @@ test_tool_state_replacement_recursively_outlives_its_source_arena :: proc(t: ^te
         session_id = _sid(),
         message_id = 3,
         part_id = 0,
-        state = wire.Tool_State_Completed {
-            output = strings.clone("done", a),
-            view = views,
-            duration_ms = 12,
-            permission_state = wire.Permission_State {
-                requested_at_ms = 1,
-                decision = wire.Permission_Decision_User {
-                    option_id = strings.clone("once", a),
-                    kind = .Allow_Once,
-                    label = strings.clone("Allow once", a),
-                    resolved_at_ms = 2,
-                    decided_by = {name = strings.clone("yuke-tui", a), version = strings.clone("0.1", a)},
-                },
+        state = wire.Tool_State_Completed{output = strings.clone("done", a), view = views, duration_ms = 12},
+        permission_state = wire.Permission_State {
+            requested_at_ms = 1,
+            decision = wire.Permission_Decision_User {
+                option_id = strings.clone("once", a),
+                kind = .Allow_Once,
+                label = strings.clone("Allow once", a),
+                resolved_at_ms = 2,
+                decided_by = {name = strings.clone("yuke-tui", a), version = strings.clone("0.1", a)},
             },
         },
     }
@@ -434,7 +432,7 @@ test_tool_state_replacement_recursively_outlives_its_source_arena :: proc(t: ^te
     testing.expect_value(t, diff.files[0].path, "a.txt")
     testing.expect_value(t, diff.files[0].hunks[0].lines[0], "+done")
 
-    ps, _ := completed.permission_state.?
+    ps, _ := tp.permission_state.?
     dec, _ := ps.decision.?
     user, is_user := dec.(wire.Permission_Decision_User)
     testing.expect(t, is_user, "decision is user")
@@ -471,7 +469,8 @@ test_tool_state_broadcasts_converge_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 9, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 9, options = options},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -538,7 +537,8 @@ test_pending_permission_view_outlives_its_source_frames :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 9, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 9, options = options},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -574,7 +574,8 @@ test_discard_clears_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
         },
     )
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -583,7 +584,7 @@ test_discard_clears_pending_permission :: proc(t: ^testing.T) {
     testing.expect(t, set, "pending permission set")
 
     // Discarding the draft clears the pending permission it anchored.
-    disc := replica_on_discarded(&r, wire.Message_Discarded_Data{session_id = _sid(), message_id = 3, reason = .Retry})
+    disc := replica_on_discarded(&r, wire.Message_Discarded_Data{session_id = _sid(), message_id = 3})
     testing.expect_value(t, disc.kind, Apply_Kind.Discarded)
 
     _, still := replica_pending_permission(&r)
@@ -604,27 +605,46 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
 
     // (a) A waiting_permission carrying a resolved decision is malformed: a resolution
     //     must not leave the state waiting.
-    decided := wire.Tool_State_Waiting_Permission {
-        permission_state = wire.Permission_State {
-            requested_at_ms = 1,
-            decision = wire.Permission_Decision_Rule{rule_id = {}, label = "rule", resolved_at_ms = 2},
-        },
+    decided := wire.Permission_State {
+        requested_at_ms = 1,
+        decision = wire.Permission_Decision_Rule{rule_id = {}, label = "rule", resolved_at_ms = 2},
     }
     a, _ := replica_on_tool_state_changed(
         &r,
-        wire.Tool_State_Changed_Data{session_id = _sid(), message_id = 3, part_id = 0, state = decided},
+        wire.Tool_State_Changed_Data {
+            session_id = _sid(),
+            message_id = 3,
+            part_id = 0,
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = decided,
+        },
     )
     testing.expect_value(t, a.kind, Apply_Kind.Gap)
 
     // (b) A waiting_permission with neither options nor decision has no prompt to show.
-    no_options := wire.Tool_State_Waiting_Permission {
-        permission_state = {requested_at_ms = 1},
-    }
     b, _ := replica_on_tool_state_changed(
         &r,
-        wire.Tool_State_Changed_Data{session_id = _sid(), message_id = 3, part_id = 0, state = no_options},
+        wire.Tool_State_Changed_Data {
+            session_id = _sid(),
+            message_id = 3,
+            part_id = 0,
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1},
+        },
     )
     testing.expect_value(t, b.kind, Apply_Kind.Gap)
+
+    // (b2) A waiting_permission with no permission state at all is malformed.
+    b2, _ := replica_on_tool_state_changed(
+        &r,
+        wire.Tool_State_Changed_Data {
+            session_id = _sid(),
+            message_id = 3,
+            part_id = 0,
+            state = wire.Tool_State_Waiting_Permission{},
+        },
+    )
+    testing.expect_value(t, b2.kind, Apply_Kind.Gap)
 
     // None of the rejected transitions set a pending permission.
     _, set := replica_pending_permission(&r)
@@ -638,7 +658,8 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
         },
     )
     testing.expect_value(t, first.kind, Apply_Kind.Changed)
@@ -654,7 +675,8 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 1,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 2, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 2, options = options},
         },
     )
     testing.expect_value(t, mismatch.kind, Apply_Kind.Gap)
@@ -738,7 +760,6 @@ test_discard_is_idempotent_and_a_fresh_retry_id_starts_clean :: proc(t: ^testing
     discarded := wire.Message_Discarded_Data {
         session_id = _sid(),
         message_id = 3,
-        reason     = .Retry,
     }
 
     // First discard tombstones the draft; repeats and stale starts are ignored.
@@ -773,7 +794,7 @@ test_discard_for_another_message_does_not_destroy_open_draft :: proc(t: ^testing
     _open_text(t, &r, 3)
 
     // Discard tombstone for an unrelated id 9 is ignored and leaves the open draft.
-    res := replica_on_discarded(&r, wire.Message_Discarded_Data{session_id = _sid(), message_id = 9, reason = .Retry})
+    res := replica_on_discarded(&r, wire.Message_Discarded_Data{session_id = _sid(), message_id = 9})
     testing.expect_value(t, res.kind, Apply_Kind.Ignored)
 
     info, _ := replica_active_info(&r)
@@ -1110,7 +1131,8 @@ test_commit_clears_pending_permission :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
         },
     )
 
@@ -1238,6 +1260,18 @@ _activity_bc :: proc(pending: Maybe(wire.Run_Id)) -> wire.Notification {
     )
 }
 
+// Build a `session.activity` notification carrying a locator-bearing state.
+@(private = "file")
+_activity_state_bc :: proc(state: wire.Activity_State) -> wire.Notification {
+    return _bc(
+        .Session_Activity_Changed,
+        wire.Session_Activity_Changed_Data {
+            session_id = _sid(),
+            activity = wire.Session_Activity{state = state, config = _sample_configs[0]},
+        },
+    )
+}
+
 @(test)
 test_durable_events_gate_on_sequence :: proc(t: ^testing.T) {
     r: Session_Replica
@@ -1286,7 +1320,7 @@ test_live_broadcasts_route_to_their_folders :: proc(t: ^testing.T) {
 
     disc, _ := replica_apply_broadcast(
         &r,
-        _bc(.Message_Discarded, wire.Message_Discarded_Data{session_id = _sid(), message_id = 3, reason = .Retry}),
+        _bc(.Message_Discarded, wire.Message_Discarded_Data{session_id = _sid(), message_id = 3}),
     )
     testing.expect_value(t, disc.kind, Apply_Kind.Discarded)
 }
@@ -1376,6 +1410,220 @@ test_session_activity_replaces_pending_compaction :: proc(t: ^testing.T) {
     // The same value again is a no-op.
     again, _ := replica_apply_broadcast(&r, _activity_bc(wire.Run_Id(42)))
     testing.expect_value(t, again.kind, Apply_Kind.Ignored)
+}
+
+// Open draft 3 holding a reasoning part at 0 and a tool part named "read" at 1.
+@(private = "file")
+_replica_with_located_draft :: proc(r: ^Session_Replica) {
+    _, _ = replica_apply_broadcast(r, _bc(.Message_Started, _started(3)))
+    _, _ = replica_apply_broadcast(r, _bc(.Message_Part_Added, _reasoning_part(3, 0, "why")))
+    _, _ = replica_apply_broadcast(
+        r,
+        _bc(
+            .Message_Part_Added,
+            _part_added(3, wire.Tool_Part{id = 1, name = "read", arguments = "{}", state = wire.Tool_State_Pending{}}),
+        ),
+    )
+}
+
+@(test)
+test_activity_locators_matching_draft_are_a_no_op :: proc(t: ^testing.T) {
+    r: Session_Replica
+    replica_init(&r, context.allocator, _sid())
+    defer replica_deinit(&r)
+    _replica_with_located_draft(&r)
+
+    reasoning, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 0}),
+    )
+    testing.expect_value(t, reasoning.kind, Apply_Kind.Ignored)
+
+    running_tool, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(
+            wire.Activity_State_Running_Tool {
+                run_id = 7,
+                message_id = 3,
+                part_id = 1,
+                tool_name = "read",
+                started_at_ms = 4,
+            },
+        ),
+    )
+    testing.expect_value(t, running_tool.kind, Apply_Kind.Ignored)
+
+    waiting, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(
+            wire.Activity_State_Waiting_Permission {
+                run_id = 7,
+                message_id = 3,
+                part_id = 1,
+                tool_name = "read",
+                requested_at_ms = 4,
+            },
+        ),
+    )
+    testing.expect_value(t, waiting.kind, Apply_Kind.Ignored)
+    testing.expect(t, r.resync == nil, "agreeing locators never resync")
+}
+
+@(test)
+test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
+    // A different tool name at a folded ordinal cannot be an ordering artifact.
+    name: Session_Replica
+    replica_init(&name, context.allocator, _sid())
+    defer replica_deinit(&name)
+    _replica_with_located_draft(&name)
+
+    wrong_name, _ := replica_apply_broadcast(
+        &name,
+        _activity_state_bc(
+            wire.Activity_State_Running_Tool {
+                run_id = 7,
+                message_id = 3,
+                part_id = 1,
+                tool_name = "write",
+                started_at_ms = 4,
+            },
+        ),
+    )
+    testing.expect_value(t, wrong_name.kind, Apply_Kind.Gap)
+    testing.expect(t, name.resync != nil, "locator disagreement starts a resync")
+
+    // So does a part kind that contradicts the activity's own tag.
+    kind: Session_Replica
+    replica_init(&kind, context.allocator, _sid())
+    defer replica_deinit(&kind)
+    _replica_with_located_draft(&kind)
+
+    wrong_kind, _ := replica_apply_broadcast(
+        &kind,
+        _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 1}),
+    )
+    testing.expect_value(t, wrong_kind.kind, Apply_Kind.Gap)
+    testing.expect(t, kind.resync != nil, "locator disagreement starts a resync")
+
+    perm: Session_Replica
+    replica_init(&perm, context.allocator, _sid())
+    defer replica_deinit(&perm)
+    _replica_with_located_draft(&perm)
+
+    wrong_perm, _ := replica_apply_broadcast(
+        &perm,
+        _activity_state_bc(
+            wire.Activity_State_Waiting_Permission {
+                run_id = 7,
+                message_id = 3,
+                part_id = 0,
+                tool_name = "read",
+                requested_at_ms = 4,
+            },
+        ),
+    )
+    testing.expect_value(t, wrong_perm.kind, Apply_Kind.Gap)
+    testing.expect(t, perm.resync != nil, "locator disagreement starts a resync")
+}
+
+// Fold a draft for message 5 whose tool part 2 is named `tool_name`, mirroring the shape of
+// `_sample_active_content`.
+@(private = "file")
+_replica_with_draft_5 :: proc(r: ^Session_Replica, tool_name: string) {
+    _, _ = replica_apply_broadcast(r, _bc(.Message_Started, _started(5)))
+    _, _ = replica_apply_broadcast(r, _bc(.Message_Part_Added, _text_part(5, 0, "abc")))
+    _, _ = replica_apply_broadcast(r, _bc(.Message_Part_Added, _reasoning_part(5, 1, "why")))
+    _, _ = replica_apply_broadcast(
+        r,
+        _bc(
+            .Message_Part_Added,
+            _part_added(
+                5,
+                wire.Tool_Part{id = 2, name = tool_name, arguments = "{}", state = wire.Tool_State_Pending{}},
+            ),
+        ),
+    )
+}
+
+// The activity that revealed the divergence is buffered and replayed after install. It must
+// settle against the installed draft rather than re-gapping, or a replica would loop.
+@(test)
+test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
+    // The snapshot's draft names the tool the activity named all along.
+    matching: Session_Replica
+    replica_init(&matching, context.allocator, _sid())
+    defer replica_deinit(&matching)
+    _replica_with_draft_5(&matching, "write")
+
+    divergent := _activity_state_bc(
+        wire.Activity_State_Running_Tool {
+            run_id = 7,
+            message_id = 5,
+            part_id = 2,
+            tool_name = "read",
+            started_at_ms = 4,
+        },
+    )
+
+    gap, _ := replica_apply_broadcast(&matching, divergent)
+    testing.expect_value(t, gap.kind, Apply_Kind.Gap)
+    testing.expect(t, matching.resync != nil, "divergence buffered the activity")
+
+    snap := _empty_resync(0)
+    snap.active = _active_draft(5, _sample_active_content[:])
+    snap.item.activity = _running_activity()
+
+    out, err := replica_install_snapshot(&matching, snap)
+    testing.expect_value(t, err, Replica_Error.None)
+    testing.expect_value(t, out, Install_Outcome.Live)
+    testing.expect(t, matching.resync == nil, "replayed activity agreed with the installed draft")
+
+    // A snapshot that ends the draft leaves the locator unresolvable, which also settles.
+    resolved: Session_Replica
+    replica_init(&resolved, context.allocator, _sid())
+    defer replica_deinit(&resolved)
+    _replica_with_draft_5(&resolved, "write")
+
+    gap2, _ := replica_apply_broadcast(&resolved, divergent)
+    testing.expect_value(t, gap2.kind, Apply_Kind.Gap)
+
+    out2, err2 := replica_install_snapshot(&resolved, _empty_resync(0))
+    testing.expect_value(t, err2, Replica_Error.None)
+    testing.expect_value(t, out2, Install_Outcome.Live)
+    testing.expect(t, resolved.resync == nil, "replayed activity resolved to no draft")
+}
+
+// `session.activity_changed` carries no sequence, so a locator the replica cannot resolve
+// is the two streams being out of step, never divergence.
+@(test)
+test_unresolvable_activity_locators_do_not_resync :: proc(t: ^testing.T) {
+    r: Session_Replica
+    replica_init(&r, context.allocator, _sid())
+    defer replica_deinit(&r)
+
+    // No draft at all: the activity may precede `message.started`.
+    no_draft, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 0}),
+    )
+    testing.expect_value(t, no_draft.kind, Apply_Kind.Ignored)
+
+    _replica_with_located_draft(&r)
+
+    // Another message: the activity is stale or ahead of the draft the replica holds.
+    other_message, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 4, part_id = 1}),
+    )
+    testing.expect_value(t, other_message.kind, Apply_Kind.Ignored)
+
+    // An ordinal past the folded parts: `message.part_added` has not arrived yet.
+    unfolded, _ := replica_apply_broadcast(
+        &r,
+        _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 9}),
+    )
+    testing.expect_value(t, unfolded.kind, Apply_Kind.Ignored)
+    testing.expect(t, r.resync == nil, "an unresolvable locator never resyncs")
 }
 
 @(test)
@@ -1511,7 +1759,11 @@ _valid_session :: proc() -> wire.Session {
     return wire.Session {
         id = _sid(),
         workspace_id = wire.Workspace_Id(([16]u8)(_session_id("fedcba9876543210"))),
-        origin = wire.Session_Origin_Child{parent_id = _session_id("abcdef0123456789")},
+        origin = wire.Session_Origin_Child {
+            parent_id = _session_id("abcdef0123456789"),
+            parent_message_id = wire.Message_Id(1),
+            parent_part_id = wire.Part_Id(0),
+        },
     }
 }
 
@@ -1560,7 +1812,8 @@ _active_draft :: proc(id: wire.Message_Id, content: []wire.Assistant_Part) -> wi
 @(private = "file")
 _running_activity :: proc() -> wire.Session_Activity {
     return wire.Session_Activity {
-        state = wire.Activity_State_Running{run_id = 7, config = _sample_configs[0], started_at_ms = 1},
+        state = wire.Activity_State_Running{run_id = 7, started_at_ms = 1},
+        config = _sample_configs[0],
     }
 }
 
@@ -1693,7 +1946,8 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
         id = 0,
         name = strings.clone("read", a),
         arguments = strings.clone("{}", a),
-        state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 3, options = opts}},
+        state = wire.Tool_State_Waiting_Permission{},
+        permission_state = wire.Permission_State{requested_at_ms = 3, options = opts},
     }
 
     snap := _empty_resync(10)
@@ -1715,12 +1969,12 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
     snap.item.activity = wire.Session_Activity {
         state = wire.Activity_State_Waiting_Permission {
             run_id = 8,
-            config = cfgs[0],
             message_id = 5,
             part_id = 0,
             tool_name = "read",
             requested_at_ms = 3,
         },
+        config = cfgs[0],
         queued = 1,
     }
 
@@ -2283,7 +2537,8 @@ test_terminal_tool_state_ignores_backwards_transition :: proc(t: ^testing.T) {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 5, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 5, options = options},
         },
     )
     testing.expect_value(t, stale.kind, Apply_Kind.Ignored)
@@ -2337,11 +2592,8 @@ test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
     bad := _empty_resync(20)
     bad.active = draft
     bad.item.activity = wire.Session_Activity {
-        state = wire.Activity_State_Running {
-            run_id = 7,
-            config = {config_rev = 99, model = "model", reasoning = "high"},
-            started_at_ms = 1,
-        },
+        state = wire.Activity_State_Running{run_id = 7, started_at_ms = 1},
+        config = wire.Run_Config{config_rev = 99, model = "model", reasoning = "high"},
     }
     _, err := replica_install_snapshot(&r, bad)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
@@ -2395,13 +2647,15 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
             id = 0,
             name = "read",
             arguments = "{}",
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
         },
         wire.Tool_Part {
             id = 1,
             name = "write",
             arguments = "{}",
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 2, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 2, options = options},
         },
     }
 
@@ -2410,12 +2664,12 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
     snap.item.activity = wire.Session_Activity {
         state = wire.Activity_State_Waiting_Permission {
             run_id = 7,
-            config = _sample_configs[0],
             message_id = 5,
             part_id = 0,
             tool_name = "read",
             requested_at_ms = 1,
         },
+        config = _sample_configs[0],
     }
     _, err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
@@ -2510,7 +2764,8 @@ _op_replace_pending_permission :: proc(alloc: mem.Allocator) -> Replica_Error {
             session_id = _sid(),
             message_id = 3,
             part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{permission_state = {requested_at_ms = 1, options = options}},
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
         },
     )
     return e
@@ -2583,7 +2838,7 @@ test_alloc_failure_buffered_replay_is_safe :: proc(t: ^testing.T) {
 }
 
 // A tool in `waiting_permission` that already carries a resolved decision has no consistent
-// activity projection: `resync_result_validate` rejects a waiting activity whose tool
+// activity projection: the part-level cross-field check rejects a waiting part whose
 // permission state has a decision, and every other activity forbids a waiting tool. The
 // snapshot is therefore malformed and prior state is preserved — pending permission is only
 // derived (see `derive_pending_permission`) from a tool still awaiting a decision.
@@ -2598,11 +2853,10 @@ test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
             id = 0,
             name = "read",
             arguments = "{}",
-            state = wire.Tool_State_Waiting_Permission {
-                permission_state = wire.Permission_State {
-                    requested_at_ms = 1,
-                    decision = wire.Permission_Decision_Rule{rule_id = {}, label = "rule", resolved_at_ms = 2},
-                },
+            state = wire.Tool_State_Waiting_Permission{},
+            permission_state = wire.Permission_State {
+                requested_at_ms = 1,
+                decision = wire.Permission_Decision_Rule{rule_id = {}, label = "rule", resolved_at_ms = 2},
             },
         },
     }
@@ -2612,12 +2866,12 @@ test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
     snap.item.activity = wire.Session_Activity {
         state = wire.Activity_State_Waiting_Permission {
             run_id = 7,
-            config = _sample_configs[0],
             message_id = 5,
             part_id = 0,
             tool_name = "read",
             requested_at_ms = 1,
         },
+        config = _sample_configs[0],
     }
     _, err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)

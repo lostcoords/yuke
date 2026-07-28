@@ -639,9 +639,6 @@ Message_Discarded_Data :: struct {
 
     // Discarded draft id.
     message_id: Message_Id,
-
-    // Why the draft was discarded.
-    reason:     Discard_Reason,
 }
 
 // Write a message.discarded payload.
@@ -649,7 +646,6 @@ message_discarded_data_emit :: proc(e: ^Emitter, self: Message_Discarded_Data) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     field_u64(e, "message_id", u64(self.message_id))
-    field_string(e, "reason", discard_reason_to_wire(self.reason))
     object_end(e)
 }
 
@@ -693,16 +689,20 @@ Message_Part_Delta_Data :: distinct Part_Delta
 // Payload for `tool.state_changed`.
 Tool_State_Changed_Data :: struct {
     // Owning session id.
-    session_id: Session_Id,
+    session_id:       Session_Id,
 
     // Draft message id.
-    message_id: Message_Id,
+    message_id:       Message_Id,
 
     // Tool part ordinal inside the message.
-    part_id:    Part_Id,
+    part_id:          Part_Id,
 
     // New tool state.
-    state:      Tool_State,
+    state:            Tool_State,
+
+    // The part's permission lifecycle at this transition, under the same
+    // `Tool_Part` cross-field invariant. Replaces the part's copy wholesale.
+    permission_state: Maybe(Permission_State),
 }
 
 // Write a tool.state_changed payload.
@@ -713,14 +713,21 @@ tool_state_changed_data_emit :: proc(e: ^Emitter, self: Tool_State_Changed_Data)
     field_u64(e, "part_id", u64(self.part_id))
     key(e, "state")
     tool_state_emit(e, self.state)
+
+    if p, ok := self.permission_state.?; ok {
+        key(e, "permission")
+        _permission_state_emit(e, p)
+    }
+
     object_end(e)
 }
 
-// Verify the session id and nested tool state fields.
+// Verify the session id, nested tool state fields, and the permission cross-field invariant.
 tool_state_changed_data_validate :: proc(self: Tool_State_Changed_Data) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
+    tool_state_validate(self.state) or_return
 
-    return tool_state_validate(self.state)
+    return tool_permission_state_validate(self.state, self.permission_state)
 }
 
 // Payload for `tool.output_delta`: incremental display output for a running tool
@@ -1051,11 +1058,18 @@ broadcast_data_clone :: proc(self: Broadcast_Data, allocator := context.allocato
         return Message_Part_Delta_Data(part_delta_clone(Part_Delta(v), allocator))
 
     case Tool_State_Changed_Data:
+        permission_state: Maybe(Permission_State)
+
+        if p, ok := v.permission_state.?; ok {
+            permission_state = permission_state_clone(p, allocator)
+        }
+
         return Tool_State_Changed_Data {
             session_id = v.session_id,
             message_id = v.message_id,
             part_id = v.part_id,
             state = tool_state_clone(v.state, allocator),
+            permission_state = permission_state,
         }
 
     case Tool_Output_Delta_Data:
@@ -1770,7 +1784,6 @@ message_discarded_data_from_reader :: proc(d: ^Decoder) -> (out: Message_Discard
     Field :: enum {
         Sid,
         Mid,
-        Reason,
     }
 
     seen: bit_set[Field]
@@ -1787,16 +1800,12 @@ message_discarded_data_from_reader :: proc(d: ^Decoder) -> (out: Message_Discard
             out.message_id = Message_Id(dec_u64(d) or_return)
             seen += {.Mid}
 
-        case "reason":
-            out.reason = dec_enum(d, discard_reason_wire) or_return
-            seen += {.Reason}
-
         case:
             dec_skip(d) or_return
         }
     }
 
-    if seen != {.Sid, .Mid, .Reason} {
+    if seen != {.Sid, .Mid} {
         return {}, .Mismatched_Payload
     }
 
@@ -1873,6 +1882,9 @@ tool_state_changed_data_from_reader :: proc(d: ^Decoder) -> (out: Tool_State_Cha
         case "state":
             out.state = tool_state_from_reader(d) or_return
             seen += {.State}
+
+        case "permission":
+            out.permission_state = _permission_state_from_reader(d) or_return
 
         case:
             dec_skip(d) or_return

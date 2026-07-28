@@ -191,84 +191,6 @@ diff_file_clone :: proc(self: Diff_File, allocator := context.allocator) -> Diff
     return {path = strings.clone(self.path, allocator), old_path = old_path, hunks = hunks}
 }
 
-// One field in a form view.
-Form_Field :: struct {
-    // @bounded 128
-    // Field key.
-    name:  string,
-
-    // @bounded 256
-    // Human-readable label.
-    label: string,
-
-    // Pre-filled value, if any.
-    value: Maybe(string),
-}
-
-// Decode a form field straight from the token stream.
-form_field_from_reader :: proc(d: ^Decoder) -> (field: Form_Field, err: Validation_Error) {
-    dec_object_begin(d) or_return
-
-    Field :: enum {
-        Name,
-        Label,
-    }
-
-    seen: bit_set[Field]
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "name":
-            field.name = dec_string(d) or_return
-            seen += {.Name}
-
-        case "label":
-            field.label = dec_string(d) or_return
-            seen += {.Label}
-
-        case "value":
-            if !dec_is_null(d) {
-                field.value = dec_string(d) or_return
-            }
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if seen != {.Name, .Label} {
-        return {}, .Mismatched_Payload
-    }
-
-    return field, .None
-}
-
-// Write a form field as a JSON object.
-form_field_emit :: proc(e: ^Emitter, self: Form_Field) {
-    object_begin(e)
-    field_string(e, "name", self.name)
-    field_string(e, "label", self.label)
-    field_string_opt(e, "value", self.value)
-    object_end(e)
-}
-
-// Deep-copy into `allocator`.
-form_field_clone :: proc(self: Form_Field, allocator := context.allocator) -> Form_Field {
-    value: Maybe(string)
-
-    if val, ok := self.value.?; ok {
-        value = strings.clone(val, allocator)
-    }
-
-    return Form_Field {
-        name = strings.clone(self.name, allocator),
-        label = strings.clone(self.label, allocator),
-        value = value,
-    }
-}
-
 // Plain text view.
 View_Text :: struct {
     // UTF-8 body.
@@ -297,12 +219,6 @@ View_Diff :: struct {
     files: []Diff_File,
 }
 
-// Form view.
-View_Form :: struct {
-    // Form fields. At most 1024. Owner: caller/arena.
-    fields: []Form_Field,
-}
-
 // Image view.
 View_Image :: struct {
     // Image bytes.
@@ -319,7 +235,6 @@ View :: union {
     View_Markdown,
     View_Json,
     View_Diff,
-    View_Form,
     View_Image,
 }
 
@@ -352,7 +267,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                     language = dec_string(d) or_return
                 }
 
-            case "files", "fields", "source", "alt":
+            case "files", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
@@ -383,7 +298,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                 text = dec_string(d) or_return
                 seen += {.Text}
 
-            case "language", "files", "fields", "source", "alt":
+            case "language", "files", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
@@ -418,7 +333,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                 files = dec_array(d, diff_file_from_reader) or_return
                 seen += {.Files}
 
-            case "text", "language", "fields", "source", "alt":
+            case "text", "language", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
@@ -431,37 +346,6 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
         }
 
         return View_Diff{files = files}, .None
-
-    case "form":
-        fields: []Form_Field
-
-        Field :: enum {
-            Fields,
-        }
-
-        seen: bit_set[Field]
-        for {
-            k, kdone := dec_key(d) or_return
-            if kdone do break
-
-            switch k {
-            case "fields":
-                fields = dec_array(d, form_field_from_reader) or_return
-                seen += {.Fields}
-
-            case "text", "language", "files", "source", "alt":
-                return nil, .Mismatched_Payload
-
-            case:
-                dec_skip(d) or_return
-            }
-        }
-
-        if .Fields not_in seen {
-            return nil, .Mismatched_Payload
-        }
-
-        return View_Form{fields = fields}, .None
 
     case "image":
         source: Media_Source
@@ -486,7 +370,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                     alt = dec_string(d) or_return
                 }
 
-            case "text", "language", "files", "fields":
+            case "text", "language", "files":
                 return nil, .Mismatched_Payload
 
             case:
@@ -529,17 +413,6 @@ view_emit :: proc(e: ^Emitter, self: View) {
         for file in v.files {
             elem(e)
             diff_file_emit(e, file)
-        }
-
-        array_end(e)
-
-    case View_Form:
-        field_string(e, "type", "form")
-        key(e, "fields")
-        array_begin(e)
-        for ff in v.fields {
-            elem(e)
-            form_field_emit(e, ff)
         }
 
         array_end(e)
@@ -587,16 +460,6 @@ view_validate :: proc(self: View) -> Validation_Error {
             }
         }
 
-    case View_Form:
-        if len(v.fields) > LIMITS.max_view_items {
-            return .Overflow
-        }
-
-        for ff in v.fields {
-            enforce_bounded(128, ff.name) or_return
-            enforce_bounded(256, ff.label) or_return
-        }
-
     case View_Image:
         media_source_validate(v.source) or_return
 
@@ -637,14 +500,6 @@ view_clone :: proc(self: View, allocator := context.allocator) -> View {
         }
 
         return View_Diff{files = files}
-
-    case View_Form:
-        fields := make([]Form_Field, len(v.fields), allocator)
-        for i in 0 ..< len(fields) {
-            fields[i] = form_field_clone(v.fields[i], allocator)
-        }
-
-        return View_Form{fields = fields}
 
     case View_Image:
         alt: Maybe(string)
@@ -715,16 +570,6 @@ _view_string_bytes :: proc(self: View) -> int {
                 for line in hunk.lines {
                     total += len(line)
                 }
-            }
-        }
-
-    case View_Form:
-        for ff in v.fields {
-            total += len(ff.name)
-            total += len(ff.label)
-
-            if val, ok := ff.value.?; ok {
-                total += len(val)
             }
         }
 

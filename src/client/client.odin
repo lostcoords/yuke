@@ -82,12 +82,14 @@ Pending_Request :: struct {
     user_data:   rawptr,
 }
 
-// Event sink for connection-wide events. Any field may be nil. The `wire.Notification`
-// and `method` arguments borrow frame memory valid ONLY for the call (see LIFETIME
-// CONTRACT). Responses are not routed here; they reach their request's `Response_Proc`.
+// Event sink for connection-wide events. Any field may be nil. The `wire.Initialize_Result`,
+// `wire.Notification`, and `method` arguments borrow frame memory valid ONLY for the call
+// (see LIFETIME CONTRACT). Responses are not routed here; they reach their request's
+// `Response_Proc`.
 Client_Callbacks :: struct {
-    // Fired once the `initialize` result is accepted and the driver reaches Ready.
-    on_ready:             proc(c: ^Client),
+    // Fired once the `initialize` result is accepted and the driver reaches Ready. `hello`
+    // is borrowed for this call only; clone any snapshot data the application retains.
+    on_ready:             proc(c: ^Client, hello: wire.Initialize_Result),
 
     // Fired for each known broadcast. `bc` is borrowed for this call only; retain it
     // with `wire.notification_clone` into your own allocator.
@@ -447,7 +449,7 @@ client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: 
     c.state = .Ready
 
     if c.cbs.on_ready != nil {
-        c.cbs.on_ready(c)
+        c.cbs.on_ready(c, hello)
     }
 }
 

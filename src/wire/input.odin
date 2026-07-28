@@ -8,8 +8,9 @@ Input_Content :: struct {
     content: []Content_Part,
 }
 
-// Skill invocation.
-Input_Skill :: struct {
+// A named skill invocation with its rendered arguments. Shared by `Input_Skill`
+// and `User_Message.skill`.
+Skill_Ref :: struct {
     // @bounded 64
     // Skill name.
     name:      string,
@@ -17,6 +18,64 @@ Input_Skill :: struct {
     // @unbounded
     // Skill arguments.
     arguments: string,
+}
+
+// Write a skill reference.
+skill_ref_emit :: proc(e: ^Emitter, self: Skill_Ref) {
+    object_begin(e)
+    field_string(e, "name", self.name)
+    field_string(e, "arguments", self.arguments)
+    object_end(e)
+}
+
+// Verify annotated field bounds.
+skill_ref_validate :: proc(self: Skill_Ref) -> Validation_Error {
+    return enforce_bounded(64, self.name)
+}
+
+// Deep-copy into `allocator`.
+skill_ref_clone :: proc(self: Skill_Ref, allocator := context.allocator) -> Skill_Ref {
+    return Skill_Ref{name = strings.clone(self.name, allocator), arguments = strings.clone(self.arguments, allocator)}
+}
+
+// Decode a skill reference straight from the token stream.
+skill_ref_from_reader :: proc(d: ^Decoder) -> (out: Skill_Ref, err: Validation_Error) {
+    dec_object_begin(d) or_return
+
+    Field :: enum {
+        Name,
+        Args,
+    }
+
+    seen: bit_set[Field]
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "name":
+            out.name = dec_string(d) or_return
+            seen += {.Name}
+
+        case "arguments":
+            out.arguments = dec_string(d) or_return
+            seen += {.Args}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if seen != {.Name, .Args} {
+        return {}, .Mismatched_Payload
+    }
+
+    return out, .None
+}
+
+// Skill invocation.
+Input_Skill :: struct {
+    using skill: Skill_Ref,
 }
 
 // A unit of user input: either raw content or a skill invocation. Non-owning.
@@ -63,7 +122,7 @@ input_validate :: proc(self: Input) -> Validation_Error {
         }
 
     case Input_Skill:
-        return enforce_bounded(64, v.name)
+        return skill_ref_validate(v.skill)
     }
 
     return .None
@@ -81,7 +140,7 @@ input_clone :: proc(self: Input, allocator := context.allocator) -> Input {
         return Input_Content{content = parts}
 
     case Input_Skill:
-        return Input_Skill{name = strings.clone(v.name, allocator), arguments = strings.clone(v.arguments, allocator)}
+        return Input_Skill{skill = skill_ref_clone(v.skill, allocator)}
     }
 
     return nil
@@ -426,7 +485,7 @@ input_from_reader :: proc(d: ^Decoder) -> (input: Input, err: Validation_Error) 
             return nil, .Mismatched_Payload
         }
 
-        return Input_Skill{name = name, arguments = arguments}, .None
+        return Input_Skill{skill = Skill_Ref{name = name, arguments = arguments}}, .None
     }
 
     return nil, .Mismatched_Payload

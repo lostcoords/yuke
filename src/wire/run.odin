@@ -283,27 +283,6 @@ token_usage_emit :: proc(e: ^Emitter, self: Token_Usage) {
     object_end(e)
 }
 
-// Why a draft message was discarded.
-Discard_Reason :: enum {
-    // Retried after a transient failure.
-    Retry,
-}
-
-@(rodata)
-discard_reason_wire := [Discard_Reason]string {
-    .Retry = "retry",
-}
-
-// Wire string for a discard reason.
-discard_reason_to_wire :: proc(r: Discard_Reason) -> string {
-    return discard_reason_wire[r]
-}
-
-// Discard reason for a wire string; ok is false for an unknown reason.
-discard_reason_from_wire :: proc(s: string) -> (Discard_Reason, bool) {
-    return enum_from_wire(discard_reason_wire, s)
-}
-
 // A completed turn: it stopped for a stop reason after some round trips.
 Run_Outcome_Turn :: struct {
     // Why the turn stopped.
