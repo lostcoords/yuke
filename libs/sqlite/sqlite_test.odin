@@ -1,10 +1,9 @@
 package sqlite
 
-import "core:fmt"
-import "core:mem"
-import "core:os"
-import "core:path/filepath"
+import "core:c"
 import "core:testing"
+
+import "libs:testsupport"
 
 @(test)
 test_libversion_is_present :: proc(t: ^testing.T) {
@@ -102,16 +101,8 @@ test_prepare_error_message :: proc(t: ^testing.T) {
 
 @(test)
 test_file_wal_pragma :: proc(t: ^testing.T) {
-    dir, dir_err := os.temp_directory(context.temp_allocator)
-    testing.expect(t, dir_err == nil, "temp_directory failed")
-
-    path, join_err := filepath.join({dir, "yuke-sqlite-wal-test.db"}, context.temp_allocator)
-    testing.expect_value(t, join_err, mem.Allocator_Error.None)
-    wal_path := fmt.tprintf("%s-wal", path)
-    shm_path := fmt.tprintf("%s-shm", path)
-    defer os.remove(path)
-    defer os.remove(wal_path)
-    defer os.remove(shm_path)
+    path := testsupport.sqlite_db_path(t, "sqlite-wal-test")
+    defer testsupport.sqlite_db_remove(path)
 
     db, rc := open(path, DEFAULT_WRITER | {.Nomutex})
     testing.expect_value(t, rc, Result.Ok)
@@ -130,4 +121,26 @@ test_file_wal_pragma :: proc(t: ^testing.T) {
     nlog, nckpt: int
     ck := wal_checkpoint(db, .Passive, &nlog, &nckpt)
     testing.expect_value(t, ck, Result.Ok)
+}
+
+@(test)
+test_extended_errcode_recovers_base_family :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer close(db)
+
+    testing.expect_value(t, exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, u TEXT UNIQUE)"), Result.Ok)
+    testing.expect_value(t, exec(db, "INSERT INTO t(id, u) VALUES (1, 'a')"), Result.Ok)
+
+    // SQLITE_CONSTRAINT_UNIQUE and SQLITE_CONSTRAINT_PRIMARYKEY are distinct
+    // extended codes (Constraint | (subcode << 8)) that share the Constraint base.
+    unique := exec(db, "INSERT INTO t(id, u) VALUES (2, 'a')")
+    testing.expect_value(t, unique, Result.Constraint)
+    testing.expect_value(t, extended_errcode(db), c.int(Result.Constraint) | (8 << 8))
+    testing.expect_value(t, extended_result_base(extended_errcode(db)), Result.Constraint)
+
+    primarykey := exec(db, "INSERT INTO t(id, u) VALUES (1, 'b')")
+    testing.expect_value(t, primarykey, Result.Constraint)
+    testing.expect_value(t, extended_errcode(db), c.int(Result.Constraint) | (6 << 8))
+    testing.expect_value(t, extended_result_base(extended_errcode(db)), Result.Constraint)
 }

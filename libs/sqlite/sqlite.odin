@@ -265,6 +265,20 @@ errcode :: proc(db: ^Conn) -> Result {
     return c_errcode(db)
 }
 
+// Extended result code for the most recent failure on `db`, as a raw integer.
+// SQLite's set is open — newer headers add codes — so it is not modeled as a
+// closed enum. Reduce it to its base family with `extended_result_base`.
+extended_errcode :: proc(db: ^Conn) -> c.int {
+    assert(db != nil, "extended_errcode needs a connection")
+
+    return c_extended_errcode(db)
+}
+
+// Base `Result` family of an extended code: the low byte (code & 0xff).
+extended_result_base :: proc(ext: c.int) -> Result {
+    return Result(ext & 0xff)
+}
+
 changes :: proc(db: ^Conn) -> int {
     assert(db != nil, "changes needs a connection")
 
