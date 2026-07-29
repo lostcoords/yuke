@@ -70,13 +70,25 @@ dec_raw_scalar :: proc(d: ^Decoder) -> (string, Validation_Error) {
     return "", .Mismatched_Payload
 }
 
-// A u64 in JSON's safe integer range. A non-integer, an over-range value, or a
-// value that does not fit i64 (never a small coercion) is an error.
+// `parse_i64` wraps silently and still reports success, so an over-long token is
+// rejected before the parse. 17 digits cannot wrap `i64`.
+@(private)
+MAX_INTEGER_TOKEN_DIGITS :: 16
+
+#assert(MAX_WIRE_INTEGER < 10_000_000_000_000_000)
+#assert(100_000_000_000_000_000 <= max(i64))
+
+// A u64 in JSON's safe integer range. A non-integer, an over-long token, or an
+// over-range value (never a small coercion) is an error.
 dec_u64 :: proc(d: ^Decoder) -> (u64, Validation_Error) {
     tok := d.curr_token
 
     if tok.kind != .Integer {
         return 0, .Mismatched_Payload
+    }
+
+    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS {
+        return 0, .Out_Of_Range
     }
 
     json.advance_token(d)
@@ -99,6 +111,11 @@ dec_i64 :: proc(d: ^Decoder) -> (i64, Validation_Error) {
 
     if tok.kind != .Integer {
         return 0, .Mismatched_Payload
+    }
+
+    // One byte wider than `dec_u64` for a leading `-`.
+    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 {
+        return 0, .Out_Of_Range
     }
 
     json.advance_token(d)

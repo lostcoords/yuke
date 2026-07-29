@@ -184,7 +184,8 @@ MAX_REQUEST_ID_BYTES :: 64
 // sends us is bounded by MAX_REQUEST_ID_BYTES instead.
 MAX_REQUEST_ID :: 9007199254740991
 
-// Max value of every integer carried as a JSON number.
+// Max value of every integer carried as a JSON number. Enforced at the decode
+// boundary; our own counters are `u64` and cannot reach it.
 MAX_WIRE_INTEGER :: 9007199254740991
 
 // Max daemon-lifetime session-index revision. JSON safe integer range.
