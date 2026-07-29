@@ -99,7 +99,7 @@ test_replica_init_deinit :: proc(t: ^testing.T) {
 
     r: Session_Replica
     replica_init(&r, context.allocator, sid)
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, r.session_id, sid)
     testing.expect(t, r.active == nil, "no active draft")
@@ -115,7 +115,7 @@ test_replica_init_deinit :: proc(t: ^testing.T) {
 test_active_draft_retains_metadata_and_accumulates_text :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
 
@@ -144,7 +144,7 @@ test_active_draft_retains_metadata_and_accumulates_text :: proc(t: ^testing.T) {
 test_active_draft_copies_frame_owned_metadata_and_delta_bytes :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     src: mem.Dynamic_Arena
     mem.dynamic_arena_init(&src, context.allocator, context.allocator)
@@ -176,7 +176,7 @@ test_active_draft_copies_frame_owned_metadata_and_delta_bytes :: proc(t: ^testin
 test_reasoning_part_has_reasoning_kind_and_folds :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
 
@@ -198,7 +198,7 @@ test_reasoning_part_has_reasoning_kind_and_folds :: proc(t: ^testing.T) {
 test_offsets_count_utf8_bytes :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
 
@@ -220,7 +220,7 @@ test_offsets_count_utf8_bytes :: proc(t: ^testing.T) {
 test_duplicate_overlap_ignored_and_forward_offset_is_gap :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
     _, _ = replica_on_part_delta(&r, _delta(3, 0, 0, "Hello"))
@@ -244,7 +244,7 @@ test_duplicate_overlap_ignored_and_forward_offset_is_gap :: proc(t: ^testing.T) 
 test_missing_part_and_tool_target_delta_are_gaps :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
 
@@ -266,7 +266,7 @@ test_missing_part_and_tool_target_delta_are_gaps :: proc(t: ^testing.T) {
 test_part_ordinals_append_ignore_duplicates_and_detect_gaps :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
 
@@ -288,7 +288,7 @@ test_part_ordinals_append_ignore_duplicates_and_detect_gaps :: proc(t: ^testing.
 test_tool_part_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
 
@@ -359,7 +359,7 @@ test_tool_part_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
 test_tool_state_replacement_recursively_outlives_its_source_arena :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -446,7 +446,7 @@ test_tool_state_replacement_recursively_outlives_its_source_arena :: proc(t: ^te
 test_tool_state_broadcasts_converge_pending_permission :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -499,7 +499,7 @@ test_tool_state_broadcasts_converge_pending_permission :: proc(t: ^testing.T) {
 test_pending_permission_view_outlives_its_source_frames :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
 
@@ -559,7 +559,7 @@ test_pending_permission_view_outlives_its_source_frames :: proc(t: ^testing.T) {
 test_discard_clears_pending_permission :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -595,7 +595,7 @@ test_discard_clears_pending_permission :: proc(t: ^testing.T) {
 test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -691,7 +691,7 @@ test_tool_state_entering_waiting_gap_guards :: proc(t: ^testing.T) {
 test_tool_state_change_requires_an_existing_tool_part :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(&r, _text_part(3, 0, ""))
@@ -725,7 +725,7 @@ test_tool_state_change_requires_an_existing_tool_part :: proc(t: ^testing.T) {
 test_duplicate_start_preserves_content_and_conflicting_start_is_gap :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
     _, _ = replica_on_part_delta(&r, _delta(3, 0, 0, "partial"))
@@ -752,7 +752,7 @@ test_duplicate_start_preserves_content_and_conflicting_start_is_gap :: proc(t: ^
 test_discard_is_idempotent_and_a_fresh_retry_id_starts_clean :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
     _, _ = replica_on_part_delta(&r, _delta(3, 0, 0, "partial"))
@@ -789,7 +789,7 @@ test_discard_is_idempotent_and_a_fresh_retry_id_starts_clean :: proc(t: ^testing
 test_discard_for_another_message_does_not_destroy_open_draft :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
 
@@ -805,7 +805,7 @@ test_discard_for_another_message_does_not_destroy_open_draft :: proc(t: ^testing
 test_another_session_cannot_mutate_this_replica :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // A start addressed to a different session id does not open a draft.
     other_start := _started(3)
@@ -892,7 +892,7 @@ _queued :: proc(input_id: wire.Input_Id) -> wire.Input_Queued_Data {
 test_committed_window_retains_only_newest_page :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     for id in 1 ..= wire.Message_Id(MAX_RETAINED_MESSAGES + 2) {
         _, _ = replica_on_committed(&r, _committed(wire.Seq(id), _user_msg(id)))
@@ -912,7 +912,7 @@ test_committed_window_retains_only_newest_page :: proc(t: ^testing.T) {
 test_assistant_commit_replaces_partial_draft_and_seals :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 5)
     _, _ = replica_on_part_delta(&r, _delta(5, 0, 0, "partial"))
@@ -941,7 +941,7 @@ test_assistant_commit_replaces_partial_draft_and_seals :: proc(t: ^testing.T) {
 test_unrelated_commit_leaves_open_draft_intact :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 5)
     _, _ = replica_on_part_delta(&r, _delta(5, 0, 0, "partial"))
@@ -960,7 +960,7 @@ test_unrelated_commit_leaves_open_draft_intact :: proc(t: ^testing.T) {
 test_duplicate_commit_upserts_without_duplicate_row :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_committed(&r, _committed(1, _assistant_msg(3)))
     _, _ = replica_on_committed(&r, _committed(2, _assistant_msg(3)))
@@ -973,7 +973,7 @@ test_duplicate_commit_upserts_without_duplicate_row :: proc(t: ^testing.T) {
 test_committed_ids_with_gaps_stay_ordered :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_committed(&r, _committed(1, _assistant_msg(3)))
     _, _ = replica_on_committed(&r, _committed(2, _assistant_msg(7)))
@@ -992,7 +992,7 @@ test_committed_ids_with_gaps_stay_ordered :: proc(t: ^testing.T) {
 test_truncation_drops_suffix_and_is_idempotent :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_committed(&r, _committed(1, _assistant_msg(3)))
     _, _ = replica_on_committed(&r, _committed(2, _assistant_msg(5)))
@@ -1018,7 +1018,7 @@ test_truncation_drops_suffix_and_is_idempotent :: proc(t: ^testing.T) {
 test_config_revisions_immutable_and_unbounded :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     for rev in 1 ..= wire.Config_Rev(70) {
         res, err := replica_on_config_changed(
@@ -1059,7 +1059,7 @@ test_config_revisions_immutable_and_unbounded :: proc(t: ^testing.T) {
 test_input_queued_and_canceled_fold :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     res, _ := replica_on_input_queued(&r, _queued(4))
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -1082,7 +1082,7 @@ test_input_queued_and_canceled_fold :: proc(t: ^testing.T) {
 test_committed_user_message_dequeues_input :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_input_queued(&r, _queued(1))
     _, _ = replica_on_input_queued(&r, _queued(4))
@@ -1098,7 +1098,7 @@ test_committed_user_message_dequeues_input :: proc(t: ^testing.T) {
 test_assistant_and_compaction_commits_do_not_dequeue :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_input_queued(&r, _queued(1))
 
@@ -1116,7 +1116,7 @@ test_assistant_and_compaction_commits_do_not_dequeue :: proc(t: ^testing.T) {
 test_commit_clears_pending_permission :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -1149,7 +1149,7 @@ test_commit_clears_pending_permission :: proc(t: ^testing.T) {
 test_sealed_live_events_and_stale_starts_ignored :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
     _, _ = replica_on_committed(&r, _committed(1, _assistant_msg(3)))
@@ -1181,7 +1181,7 @@ test_sealed_live_events_and_stale_starts_ignored :: proc(t: ^testing.T) {
 test_clear_pending_compaction :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // A non-matching run id leaves the slot untouched.
     r.pending_compaction = wire.Run_Id(42)
@@ -1276,7 +1276,7 @@ _activity_state_bc :: proc(state: wire.Activity_State) -> wire.Notification {
 test_durable_events_gate_on_sequence :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 5
 
     // Stale (<= base_seq) is ignored.
@@ -1302,7 +1302,7 @@ test_durable_events_gate_on_sequence :: proc(t: ^testing.T) {
 test_live_broadcasts_route_to_their_folders :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     s, _ := replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
     testing.expect_value(t, s.kind, Apply_Kind.Changed)
@@ -1329,7 +1329,7 @@ test_live_broadcasts_route_to_their_folders :: proc(t: ^testing.T) {
 test_begin_resync_buffers_subsequent_events_and_coalesces :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     b1, _ := replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
@@ -1346,7 +1346,7 @@ test_begin_resync_buffers_subsequent_events_and_coalesces :: proc(t: ^testing.T)
 test_a_live_gap_starts_a_resync :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // A delta for an unseen message is a gap and enters resyncing.
     gap, _ := replica_apply_broadcast(&r, _bc(.Message_Part_Delta, _delta(3, 0, 0, "x")))
@@ -1364,7 +1364,7 @@ test_a_live_gap_starts_a_resync :: proc(t: ^testing.T) {
 test_foreign_and_non_replica_broadcasts_are_inert :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 3
 
     // A committed for a different session neither folds nor gates the sequence.
@@ -1387,7 +1387,7 @@ test_foreign_and_non_replica_broadcasts_are_inert :: proc(t: ^testing.T) {
 test_run_started_only_advances_the_sequence :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 3
 
     res, _ := replica_apply_broadcast(&r, _run_started_bc(4, 1, .Turn))
@@ -1399,7 +1399,7 @@ test_run_started_only_advances_the_sequence :: proc(t: ^testing.T) {
 test_session_activity_replaces_pending_compaction :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     res, _ := replica_apply_broadcast(&r, _activity_bc(wire.Run_Id(42)))
     testing.expect_value(t, res.kind, Apply_Kind.Changed)
@@ -1430,7 +1430,7 @@ _replica_with_located_draft :: proc(r: ^Session_Replica) {
 test_activity_locators_matching_draft_are_a_no_op :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     _replica_with_located_draft(&r)
 
     reasoning, _ := replica_apply_broadcast(
@@ -1474,7 +1474,7 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
     // A different tool name at a folded ordinal cannot be an ordering artifact.
     name: Session_Replica
     replica_init(&name, context.allocator, _sid())
-    defer replica_deinit(&name)
+    defer replica_destroy(&name)
     _replica_with_located_draft(&name)
 
     wrong_name, _ := replica_apply_broadcast(
@@ -1495,7 +1495,7 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
     // So does a part kind that contradicts the activity's own tag.
     kind: Session_Replica
     replica_init(&kind, context.allocator, _sid())
-    defer replica_deinit(&kind)
+    defer replica_destroy(&kind)
     _replica_with_located_draft(&kind)
 
     wrong_kind, _ := replica_apply_broadcast(
@@ -1507,7 +1507,7 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
 
     perm: Session_Replica
     replica_init(&perm, context.allocator, _sid())
-    defer replica_deinit(&perm)
+    defer replica_destroy(&perm)
     _replica_with_located_draft(&perm)
 
     wrong_perm, _ := replica_apply_broadcast(
@@ -1552,7 +1552,7 @@ test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
     // The snapshot's draft names the tool the activity named all along.
     matching: Session_Replica
     replica_init(&matching, context.allocator, _sid())
-    defer replica_deinit(&matching)
+    defer replica_destroy(&matching)
     _replica_with_draft_5(&matching, "write")
 
     divergent := _activity_state_bc(
@@ -1581,7 +1581,7 @@ test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
     // A snapshot that ends the draft leaves the locator unresolvable, which also settles.
     resolved: Session_Replica
     replica_init(&resolved, context.allocator, _sid())
-    defer replica_deinit(&resolved)
+    defer replica_destroy(&resolved)
     _replica_with_draft_5(&resolved, "write")
 
     gap2, _ := replica_apply_broadcast(&resolved, divergent)
@@ -1599,7 +1599,7 @@ test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
 test_unresolvable_activity_locators_do_not_resync :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // No draft at all: the activity may precede `message.started`.
     no_draft, _ := replica_apply_broadcast(
@@ -1630,7 +1630,7 @@ test_unresolvable_activity_locators_do_not_resync :: proc(t: ^testing.T) {
 test_unrelated_turn_terminal_preserves_pending_compaction :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 3
     r.pending_compaction = wire.Run_Id(42)
 
@@ -1650,7 +1650,7 @@ test_unrelated_turn_terminal_preserves_pending_compaction :: proc(t: ^testing.T)
 test_matching_run_events_clear_pending_compaction :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 3
     r.pending_compaction = wire.Run_Id(42)
 
@@ -1676,7 +1676,7 @@ test_matching_run_events_clear_pending_compaction :: proc(t: ^testing.T) {
 test_resync_event_count_overflow_resets_buffer :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     for i in 0 ..< u64(MAX_BUFFERED_EVENTS + 5) {
@@ -1694,7 +1694,7 @@ test_resync_event_count_overflow_resets_buffer :: proc(t: ^testing.T) {
 test_resync_byte_overflow_discards_the_entire_prefix :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
@@ -1719,7 +1719,7 @@ test_resync_byte_overflow_discards_the_entire_prefix :: proc(t: ^testing.T) {
 test_deinit_while_resyncing_frees_the_buffer :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
@@ -1821,7 +1821,7 @@ _running_activity :: proc() -> wire.Session_Activity {
 test_resync_installs_empty_snapshot :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     out, err := replica_install_snapshot(&r, _empty_resync(42))
     testing.expect_value(t, err, Replica_Error.None)
@@ -1836,7 +1836,7 @@ test_resync_installs_empty_snapshot :: proc(t: ^testing.T) {
 test_resync_installs_mixed_committed_window :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     msgs := []wire.Message{_user_msg(1), _assistant_msg(2), _compaction_msg(3)}
     snap := _resync_msgs(50, msgs, 3)
@@ -1862,7 +1862,7 @@ test_resync_installs_mixed_committed_window :: proc(t: ^testing.T) {
 test_resync_installs_active_draft_and_next_delta_applies :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     snap := _empty_resync(10)
     snap.active = _active_draft(5, _sample_active_content[:])
@@ -1894,7 +1894,7 @@ test_resync_installs_active_draft_and_next_delta_applies :: proc(t: ^testing.T) 
 test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     src: mem.Dynamic_Arena
     mem.dynamic_arena_init(&src, context.allocator, context.allocator)
@@ -2011,7 +2011,7 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
 test_resync_rejects_response_above_window :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     msgs := make([]wire.Message, MAX_RETAINED_MESSAGES + 1, context.allocator)
     defer delete(msgs, context.allocator)
@@ -2027,7 +2027,7 @@ test_resync_rejects_response_above_window :: proc(t: ^testing.T) {
 test_resync_rejects_session_mismatch :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     snap := _empty_resync(0)
     snap.item.session.id = _session_id("fedcba9876543210")
@@ -2039,7 +2039,7 @@ test_resync_rejects_session_mismatch :: proc(t: ^testing.T) {
 test_resync_rejects_unordered_ids :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(5), _assistant_msg(3)}
     _, err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 5))
@@ -2050,7 +2050,7 @@ test_resync_rejects_unordered_ids :: proc(t: ^testing.T) {
 test_resync_rejects_id_above_highest_finalized :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(2)}
     _, err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 1))
@@ -2061,7 +2061,7 @@ test_resync_rejects_id_above_highest_finalized :: proc(t: ^testing.T) {
 test_resync_rejects_missing_config_rev :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Assistant references config_rev 2, but the snapshot only carries rev 1.
     msgs := []wire.Message{_assistant_msg_cfg(2, 2)}
@@ -2073,7 +2073,7 @@ test_resync_rejects_missing_config_rev :: proc(t: ^testing.T) {
 test_resync_rejects_duplicate_config :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     snap := _empty_resync(0)
     snap.configs = []wire.Run_Config {
@@ -2088,7 +2088,7 @@ test_resync_rejects_duplicate_config :: proc(t: ^testing.T) {
 test_resync_rejects_duplicate_queued_input :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     snap := _empty_resync(0)
     snap.queued = []wire.Queued_Input {
@@ -2106,7 +2106,7 @@ test_resync_rejects_duplicate_queued_input :: proc(t: ^testing.T) {
 test_resync_rejects_active_draft_ordinal_hole :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // A draft part whose ordinal (1) does not match its index (0) is malformed. The
     // activity matches so the wire validator passes and the replica's own ordinal check
@@ -2123,7 +2123,7 @@ test_resync_rejects_active_draft_ordinal_hole :: proc(t: ^testing.T) {
 test_malformed_snapshot_preserves_previous_state :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     good := []wire.Message{_assistant_msg(2), _assistant_msg(4)}
     _, err := replica_install_snapshot(&r, _resync_msgs(10, good, 4))
@@ -2144,7 +2144,7 @@ test_malformed_snapshot_preserves_previous_state :: proc(t: ^testing.T) {
 test_second_resync_fully_replaces_first :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     first := []wire.Message{_user_msg(1), _assistant_msg(2)}
     _, _ = replica_install_snapshot(&r, _resync_msgs(10, first, 2))
@@ -2163,7 +2163,7 @@ test_second_resync_fully_replaces_first :: proc(t: ^testing.T) {
 test_snapshot_seal_boundary_covers_finalized_ids :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(7)))
@@ -2183,7 +2183,7 @@ test_snapshot_seal_boundary_covers_finalized_ids :: proc(t: ^testing.T) {
 test_buffered_broadcasts_replay_after_resync :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 5
 
     gap, _ := replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
@@ -2205,7 +2205,7 @@ test_buffered_broadcasts_replay_after_resync :: proc(t: ^testing.T) {
 test_buffered_events_superseded_are_skipped :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 5
 
     _, _ = replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
@@ -2223,7 +2223,7 @@ test_buffered_events_superseded_are_skipped :: proc(t: ^testing.T) {
 test_fresh_gap_during_replay_requests_another_resync :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 5
 
     _, _ = replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
@@ -2238,7 +2238,7 @@ test_fresh_gap_during_replay_requests_another_resync :: proc(t: ^testing.T) {
 test_resync_event_overflow_install_requests_resync_again :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     for i in 0 ..< u64(MAX_BUFFERED_EVENTS + 5) {
@@ -2257,7 +2257,7 @@ test_resync_event_overflow_install_requests_resync_again :: proc(t: ^testing.T) 
 test_resync_byte_overflow_install_requests_resync_again :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
@@ -2280,7 +2280,7 @@ test_resync_byte_overflow_install_requests_resync_again :: proc(t: ^testing.T) {
 test_deinit_after_install_frees_all_regions :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // A snapshot exercising every owned region: committed messages, configs, queued
     // inputs, and an active draft. The deferred deinit must free them all with no leak.
@@ -2303,7 +2303,7 @@ test_deinit_after_install_frees_all_regions :: proc(t: ^testing.T) {
 test_tool_output_streams_by_offset_while_running :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -2346,7 +2346,7 @@ test_tool_output_streams_by_offset_while_running :: proc(t: ^testing.T) {
 test_tool_output_counts_utf8_bytes :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -2380,7 +2380,7 @@ test_tool_output_counts_utf8_bytes :: proc(t: ^testing.T) {
 test_tool_output_respects_byte_cap :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -2419,7 +2419,7 @@ test_tool_output_respects_byte_cap :: proc(t: ^testing.T) {
 test_resync_seeds_running_tool_output_and_resumes :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     content := []wire.Assistant_Part {
         wire.Tool_Part {
@@ -2455,7 +2455,7 @@ test_resync_seeds_running_tool_output_and_resumes :: proc(t: ^testing.T) {
 test_restart_resync_discards_prior_connection_events :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
     r.base_seq = 5
 
     testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
@@ -2488,7 +2488,7 @@ test_restart_resync_discards_prior_connection_events :: proc(t: ^testing.T) {
 test_resync_rejects_activity_queued_mismatch :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Establish prior state.
     _, err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
@@ -2510,7 +2510,7 @@ test_resync_rejects_activity_queued_mismatch :: proc(t: ^testing.T) {
 test_terminal_tool_state_ignores_backwards_transition :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, _ = replica_on_started(&r, _started(3))
     _, _ = replica_on_part_added(
@@ -2555,7 +2555,7 @@ test_terminal_tool_state_ignores_backwards_transition :: proc(t: ^testing.T) {
 test_durable_clear_blocks_stale_activity_reassert :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Activity asserts a pending compaction run.
     a1, _ := replica_apply_broadcast(&r, _activity_bc(wire.Run_Id(42)))
@@ -2580,7 +2580,7 @@ test_durable_clear_blocks_stale_activity_reassert :: proc(t: ^testing.T) {
 test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Establish prior state.
     _, err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
@@ -2608,7 +2608,7 @@ test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
 test_committing_older_than_window_evicts_immediately :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Fill the committed window to capacity via a snapshot (ids 1..MAX).
     full := make([]wire.Message, MAX_RETAINED_MESSAGES, context.allocator)
@@ -2637,7 +2637,7 @@ test_committing_older_than_window_evicts_immediately :: proc(t: ^testing.T) {
 test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // The wire contract (`resync_result_validate`) allows at most one waiting tool, so a
     // snapshot with two is malformed rather than silently first-wins.
@@ -2679,7 +2679,7 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
 test_zero_length_delta_at_offset_is_changed :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _open_text(t, &r, 3)
 
@@ -2730,7 +2730,7 @@ _sweep_alloc_failures :: proc(t: ^testing.T, op: proc(alloc: mem.Allocator) -> R
 _op_install_snapshot :: proc(alloc: mem.Allocator) -> Replica_Error {
     r: Session_Replica
     replica_init(&r, alloc, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(1), _assistant_msg(2), _assistant_msg(3)}
     _, err := replica_install_snapshot(&r, _resync_msgs(10, msgs, 3))
@@ -2741,7 +2741,7 @@ _op_install_snapshot :: proc(alloc: mem.Allocator) -> Replica_Error {
 _op_replace_pending_permission :: proc(alloc: mem.Allocator) -> Replica_Error {
     r: Session_Replica
     replica_init(&r, alloc, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     if _, e := replica_on_started(&r, _started(3)); e != .None {
         return e
@@ -2775,7 +2775,7 @@ _op_replace_pending_permission :: proc(alloc: mem.Allocator) -> Replica_Error {
 _op_append_config :: proc(alloc: mem.Allocator) -> Replica_Error {
     r: Session_Replica
     replica_init(&r, alloc, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, e := replica_on_config_changed(
         &r,
@@ -2788,7 +2788,7 @@ _op_append_config :: proc(alloc: mem.Allocator) -> Replica_Error {
 _op_queue_input :: proc(alloc: mem.Allocator) -> Replica_Error {
     r: Session_Replica
     replica_init(&r, alloc, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     _, e := replica_on_input_queued(&r, _queued(1))
     return e
@@ -2798,7 +2798,7 @@ _op_queue_input :: proc(alloc: mem.Allocator) -> Replica_Error {
 _op_buffered_replay :: proc(alloc: mem.Allocator) -> Replica_Error {
     r: Session_Replica
     replica_init(&r, alloc, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     if e := replica_begin_resync(&r); e != .None {
         return e
@@ -2846,7 +2846,7 @@ test_alloc_failure_buffered_replay_is_safe :: proc(t: ^testing.T) {
 test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     resolved := []wire.Assistant_Part {
         wire.Tool_Part {
@@ -2888,7 +2888,7 @@ test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
 test_views_return_none_on_miss_and_borrow_on_hit :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
-    defer replica_deinit(&r)
+    defer replica_destroy(&r)
 
     // Empty replica: every view misses.
     _, has_info := replica_active_info(&r)

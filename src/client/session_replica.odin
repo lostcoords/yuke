@@ -168,7 +168,7 @@ Pending_Permission_View :: struct {
 }
 
 // Borrowed active-draft metadata. `agent` points into the draft arena and is invalidated
-// by any operation that ends or replaces the draft, or by `replica_deinit`.
+// by any operation that ends or replaces the draft, or by `replica_destroy`.
 Active_Info :: struct {
     message_id:    wire.Message_Id,
     run_id:        wire.Run_Id,
@@ -270,7 +270,7 @@ replica_free_owned :: proc(self: ^Session_Replica) {
 }
 
 // Free all owned state, including any in-flight resync buffer, and zero the replica.
-replica_deinit :: proc(self: ^Session_Replica) {
+replica_destroy :: proc(self: ^Session_Replica) {
     replica_free_owned(self)
 
     if self.resync != nil {
