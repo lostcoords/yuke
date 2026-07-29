@@ -50,8 +50,7 @@ Error :: enum {
     // A read statement failed, or a stored row is not a value this binary knows.
     Read_Failed,
 
-    // A uniqueness or column constraint rejected the write; for an append that
-    // means `(session_id, seq)` is already on the log.
+    // A uniqueness or column constraint rejected the write.
     Constraint,
 
     // The appended seq did not continue the session's high-water, so nothing was

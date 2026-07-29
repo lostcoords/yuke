@@ -24,8 +24,8 @@ STATEMENT_SQL := [Statement_Id]string {
     .Ensure_Meta  = `INSERT OR IGNORE INTO session_meta(session_id) VALUES (?1)`,
     .Append_Event = `INSERT INTO events(session_id, seq, name, payload) VALUES (?1, ?2, ?3, ?4)`,
 
-    // Contiguity lives in the update predicate: a gap matches nothing. A replay
-    // never reaches it because the events primary key rejects the row first.
+    // Contiguity lives in the update predicate: a gap or replay matches nothing.
+    // This runs before the insert so every high-water divergence is Seq_Conflict.
     .Advance_Seq  = `UPDATE session_meta SET seq_high = ?2
         WHERE session_id = ?1 AND seq_high = ?2 - 1`,
 

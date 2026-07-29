@@ -271,8 +271,10 @@ server_init :: proc(
     s.user_data = user_data
 
     assert(s.loop != nil, "server_init needs a loop")
-    assert(s.max_frame_bytes > 0 && s.max_message_bytes > 0, "frame caps must be positive")
-    assert(s.recv_chunk_bytes > 0 && s.max_connections > 0, "buffer and connection caps must be positive")
+    assert(s.max_frame_bytes > 0, "max_frame_bytes must be positive")
+    assert(s.max_message_bytes > 0, "max_message_bytes must be positive")
+    assert(s.recv_chunk_bytes > 0, "recv_chunk_bytes must be positive")
+    assert(s.max_connections > 0, "max_connections must be positive")
     assert(s.max_send_queue_bytes >= s.max_frame_bytes + MAX_HEADER_BYTES, "send queue cannot fit one frame")
 
     log.debugf("websocket server: init max_connections=%d", s.max_connections)

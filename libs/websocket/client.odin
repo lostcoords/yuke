@@ -353,7 +353,9 @@ upgrade_reserved_header :: proc(name: string) -> bool {
 client_destroy :: proc(c: ^Client) {
     assert(c != nil, "client_destroy needs a client")
     assert(c.state == .Idle || c.state == .Closed, "client_destroy while active")
-    assert(c.dial_op == nil && c.recv_op == nil && c.send_op == nil, "client_destroy with I/O outstanding")
+    assert(c.dial_op == nil, "client_destroy with dial outstanding")
+    assert(c.recv_op == nil, "client_destroy with recv outstanding")
+    assert(c.send_op == nil, "client_destroy with send outstanding")
     assert(c.close_timeout_op == nil, "client_destroy with close timeout outstanding")
     assert(c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]), "pending send byte mismatch")
 

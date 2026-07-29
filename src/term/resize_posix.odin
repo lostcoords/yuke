@@ -186,7 +186,7 @@ drain_pipe :: proc(fd: posix.FD) {
 // Order matters here and must not change: it prevents a handler from writing
 // to a pipe fd this has already closed.
 resize_notifier_destroy :: proc(n: ^Resize_Notifier) {
-    assert(!intrinsics.atomic_load(&n.waiting))
+    assert(!intrinsics.atomic_load(&n.waiting), "resize_notifier_destroy with a wait in flight")
 
     // 1. Withdraw the fd first. A handler that fires from this point on loads
     //    -1 and returns without touching the pipe.

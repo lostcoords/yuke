@@ -1,13 +1,12 @@
 /*
-package sqlite is a minimal, Odin-facing SQLite3 wrapper for the yuke daemon store.
+package sqlite is a minimal Odin wrapper around libsqlite3.
 
 Public API uses `string`, `int`, `[]byte`, and `i64` — not `cstring` / `c.int`.
-The raw C FFI lives in `c.odin` as `@(private)` `c_*` procedures; importers of
-`libs:sqlite` cannot see or call them.
+The raw C FFI lives in `c.odin` as `@(private)` `c_*` procedures; importers
+cannot see or call them.
 
-It is not a general-purpose ORM: only the surface the store needs (open,
-prepare/bind/step, exec, busy_timeout, WAL checkpoint). Schema, writer/reader
-policy, and yuke tables live in the daemon — not here.
+Batteries included: open/close, prepare/bind/step, exec, busy_timeout,
+autocommit, WAL checkpoint, extended result codes.
 
 Linking:
   - Darwin / Linux: system `libsqlite3`.

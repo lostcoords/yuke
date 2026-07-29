@@ -377,7 +377,7 @@ make_header :: proc(
 // Lengths must match. Byte i depends only on `src[i]`, so `dst` may alias `src` for
 // in-place unmasking, or be a separate buffer to leave a read-only payload untouched.
 mask_payload :: proc(dst, src: []byte, mask_key: [MASK_KEY_BYTES]byte) {
-    assert(len(dst) == len(src))
+    assert(len(dst) == len(src), "mask_payload needs dst and src of equal length")
 
     for i in 0 ..< len(src) {
         dst[i] = src[i] ~ mask_key[i % MASK_KEY_BYTES]

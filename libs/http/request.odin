@@ -137,7 +137,8 @@ host_port_valid :: proc(port: string) -> bool {
 // Parameters without `=` have an empty value and still count as present.
 query_value :: proc(query: string, name: string) -> (value: string, lookup: Lookup) {
     assert(len(name) > 0, "query_value needs a non-empty name")
-    assert(strings.index_byte(name, '&') < 0 && strings.index_byte(name, '=') < 0, "query name contains a separator")
+    assert(strings.index_byte(name, '&') < 0, "query name contains '&'")
+    assert(strings.index_byte(name, '=') < 0, "query name contains '='")
 
     rest := query
     for len(rest) > 0 {

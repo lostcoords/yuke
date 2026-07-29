@@ -119,8 +119,9 @@ pool_init :: proc(p: ^Pool, loop: ^nbio.Event_Loop, worker_count: int) -> Error 
     thread.pool_start(&p.workers)
     p.accepting = true
 
-    assert(p.accepting && p.outstanding == 0, "a fresh pool owes no completions")
-    assert(p.completed_head == nil && p.completed_tail == nil, "a fresh pool has completed tasks")
+    assert(p.accepting, "a fresh pool accepts submissions")
+    assert(p.outstanding == 0, "a fresh pool owes no completions")
+    assert(p.completed_head == nil && p.completed_tail == nil, "a fresh pool has no completed tasks")
 
     return .None
 }
@@ -253,7 +254,8 @@ pool_destroy :: proc(p: ^Pool) {
 _run :: proc(t: thread.Task) {
     base := (^Task_Base)(t.data)
     assert(base != nil && base.submitted, "worker received an idle task")
-    assert(base.run != nil && base.pool != nil, "worker received an unprepared task")
+    assert(base.run != nil, "worker received a task with no run proc")
+    assert(base.pool != nil, "worker received a task with no owning pool")
 
     context.allocator = mem.panic_allocator()
     context.temp_allocator = mem.panic_allocator()

@@ -34,7 +34,8 @@ MIGRATION_HASH_DDL :: `CREATE TABLE IF NOT EXISTS migration_hash (
 migrations_apply :: proc(db: ^sqlite.Conn, set: []Migration, application_id: i64 = 0) -> Error {
     assert(db != nil, "migrations_apply needs a connection")
     assert(len(set) > 0, "the migration set is never empty")
-    assert(application_id >= 0 && application_id <= 0x7fffffff, "application_id fits SQLite's signed header slot")
+    assert(application_id >= 0, "application_id is non-negative")
+    assert(application_id <= 0x7fffffff, "application_id fits SQLite's signed header slot")
     for m, i in set {
         assert(m.version == i + 1, "migration versions are dense and 1-based")
         assert(len(m.sql) > 0, "a migration carries statements")
@@ -75,7 +76,8 @@ migrations_apply :: proc(db: ^sqlite.Conn, set: []Migration, application_id: i64
 migration_hash_check :: proc(db: ^sqlite.Conn, set: []Migration, applied: int) -> Error {
     assert(db != nil, "migration_hash_check needs a connection")
     assert(len(set) > 0, "the migration set is never empty")
-    assert(applied >= 1 && applied <= len(set), "applied migration count is in the embedded set")
+    assert(applied >= 1, "at least one migration was applied")
+    assert(applied <= len(set), "applied migration count is in the embedded set")
 
     st, rc := sqlite.prepare(db, "SELECT version, hash FROM migration_hash ORDER BY version")
 
@@ -146,7 +148,8 @@ migration_apply :: proc(db: ^sqlite.Conn, m: Migration, application_id: i64) -> 
 @(private)
 migration_body :: proc(db: ^sqlite.Conn, m: Migration, application_id: i64) -> Error {
     assert(db != nil, "migration_body needs a connection")
-    assert(application_id >= 0 && application_id <= 0x7fffffff, "application_id fits SQLite's signed header slot")
+    assert(application_id >= 0, "application_id is non-negative")
+    assert(application_id <= 0x7fffffff, "application_id fits SQLite's signed header slot")
 
     rc := sqlite.exec(db, MIGRATION_HASH_DDL)
 

@@ -393,7 +393,8 @@ listen :: proc(
     s.user_data = user_data
 
     assert(s.max_connections > 0, "connection cap must be positive")
-    assert(s.max_head_bytes >= 4 && s.recv_chunk_bytes > 0, "buffer sizes must be positive")
+    assert(s.max_head_bytes >= 4, "max_head_bytes must fit the \\r\\n\\r\\n terminator")
+    assert(s.recv_chunk_bytes > 0, "recv_chunk_bytes must be positive")
 
     arm_accept(s)
     log.debugf("http_server: listening on %s:%d max_connections=%d", opts.host, opts.port, opts.max_connections)
@@ -934,7 +935,6 @@ conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
 
     case .Reading:
         assert(false, "request handler must respond, defer, hijack, or receive the body")
-        conn_finalize(c)
     }
 }
 
@@ -1102,7 +1102,8 @@ conn_send_head_and_body :: proc(c: ^Conn) {
 // Stat completion: emit the success or the prepared failure response.
 @(private)
 conn_on_file_stat :: proc(op: ^nbio.Operation, c: ^Conn) {
-    assert(c.state == .Responding && c.owns_file, "file stat outside file response")
+    assert(c.state == .Responding, "file stat outside Responding state")
+    assert(c.owns_file, "file stat without file ownership")
     assert(op == c.file_op, "file stat completion does not match stored operation")
     c.file_op = nil
 
@@ -1181,7 +1182,8 @@ conn_on_head_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
 // for this path.
 @(private)
 conn_on_file_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
-    assert(c.state == .Responding && c.owns_file, "file send completed outside file response")
+    assert(c.state == .Responding, "file send completed outside Responding state")
+    assert(c.owns_file, "file send completed without file ownership")
     assert(op == c.file_op, "file send completion does not match stored operation")
     c.file_op = nil
 
@@ -1453,7 +1455,8 @@ http_date :: proc(now: time.Time, out: ^[29]byte) -> string {
 // Two-digit zero-padded decimal into a 2-byte slice.
 @(private)
 write_two :: proc(out: []byte, value: int) {
-    assert(len(out) == 2 && value >= 0 && value <= 99, "two-digit value out of range")
+    assert(len(out) == 2, "two-digit output buffer must be 2 bytes")
+    assert(value >= 0 && value <= 99, "two-digit value out of range")
 
     out[0] = byte(value / 10) + '0'
     out[1] = byte(value % 10) + '0'
@@ -1462,7 +1465,8 @@ write_two :: proc(out: []byte, value: int) {
 // Four-digit zero-padded decimal into a 4-byte slice.
 @(private)
 write_four :: proc(out: []byte, value: int) {
-    assert(len(out) == 4 && value >= 0 && value <= 9999, "four-digit value out of range")
+    assert(len(out) == 4, "four-digit output buffer must be 4 bytes")
+    assert(value >= 0 && value <= 9999, "four-digit value out of range")
 
     out[0] = byte(value / 1000) + '0'
     out[1] = byte(value / 100 % 10) + '0'

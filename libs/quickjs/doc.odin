@@ -1,14 +1,13 @@
 /*
-package quickjs is a minimal, Odin-facing QuickJS-NG wrapper for the yuke daemon's
-scripting tier.
+package quickjs is a minimal, Odin-facing QuickJS-NG wrapper.
 
 Public API uses `string`, `int`, and `bool` — not `cstring` / `c.int`. The raw C
 FFI lives in `c.odin` as `@(private)` `c_*` procedures; importers of
 `libs:quickjs` cannot see or call them.
 
-It is not a general-purpose JS host: only the surface the daemon needs (runtime
-and context lifetime, eval/call, host procedures, property access, promises,
-and the three resource controls below). Module loaders, classes, typed arrays,
+It is not a general-purpose JS host: a focused surface built around runtime and
+context lifetime, eval/call, host procedures, property access, and promises,
+plus the three resource controls below. Module loaders, classes, typed arrays,
 and bytecode serialization are deliberately absent.
 
 QuickJS declares 34 of its API entry points as `static inline`, so they have no
