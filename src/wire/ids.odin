@@ -58,9 +58,13 @@ request_id_from_u64 :: proc(n: u64, buf: []u8) -> Request_Id {
     return Request_Id(strconv.write_uint(buf, n, 10))
 }
 
-// Parse an id token back to the number we originated; `ok` is false if it is not
-// a bare integer.
+// Parse an id token back to the number we originated; `ok` is false if it is not a
+// bare integer we could have issued. An over-long token would wrap `parse_i64`.
 request_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
+    if len(id) > MAX_INTEGER_TOKEN_DIGITS {
+        return 0, false
+    }
+
     i, parsed := strconv.parse_i64(string(id))
 
     if !parsed || i < 0 || i > MAX_REQUEST_ID {

@@ -139,6 +139,10 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Validation_Error) {
 
     #partial switch tok.kind {
     case .Integer:
+        if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 {
+            return 0, .Out_Of_Range
+        }
+
         json.advance_token(d)
         i, ok := strconv.parse_i64(tok.text)
 
