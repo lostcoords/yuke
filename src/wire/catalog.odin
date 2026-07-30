@@ -43,11 +43,9 @@ Model_Info :: struct {
     id:                Model_Id,
 
     // @bounded 64
-    //
     provider:          string,
 
     // @bounded 128
-    //
     name:              string,
 
     // Max input tokens the model accepts.
@@ -61,7 +59,6 @@ Model_Info :: struct {
     reasoning_levels:  []string,
 
     // @bounded 32
-    //
     default_reasoning: string,
 
     // Whether the model accepts image input.

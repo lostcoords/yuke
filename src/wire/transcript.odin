@@ -683,7 +683,7 @@ Assistant_Message :: struct {
     // Agent name (`"main"` for a root session).
     agent:      string,
 
-    // @bounded LIMITS.max_active_draft_parts
+    // @bounded LIMITS.max_message_parts
     // Assistant parts in append order.
     content:    []Assistant_Part,
 
@@ -710,7 +710,7 @@ Assistant_Message :: struct {
 assistant_message_validate :: proc(self: Assistant_Message) -> Validation_Error {
     enforce_bounded(64, self.agent) or_return
 
-    if len(self.content) > LIMITS.max_active_draft_parts {
+    if len(self.content) > LIMITS.max_message_parts {
         return .Overflow
     }
 
@@ -732,6 +732,12 @@ assistant_message_validate :: proc(self: Assistant_Message) -> Validation_Error 
         turn_provenance_validate(prov) or_return
     }
 
+    // Bounds the message so one always fits in a frame. A page of messages is the
+    // sender's problem, not this bound's.
+    if _assistant_message_string_bytes(self) > LIMITS.max_message_string_bytes {
+        return .Overflow
+    }
+
     return .None
 }
 
@@ -746,10 +752,6 @@ assistant_message_validate_draft :: proc(self: Assistant_Message) -> Validation_
 
     if has_finish || has_tokens || has_cost || has_completed || has_error {
         return .Mismatched_Payload
-    }
-
-    if _assistant_message_string_bytes(self) > LIMITS.max_active_draft_string_bytes {
-        return .Overflow
     }
 
     return .None

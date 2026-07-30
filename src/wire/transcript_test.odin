@@ -478,11 +478,39 @@ test_reasoning_part_clone_copies_signature :: proc(t: ^testing.T) {
     )
 }
 
-// The signature is unbounded payload the draft cap has to see.
+// The signature is unbounded payload the message cap has to see.
 @(test)
 test_reasoning_signature_counts_toward_string_bytes :: proc(t: ^testing.T) {
     part := Assistant_Part(Reasoning_Part{id = 0, text = "hm", signature = "abcd"})
     testing.expect_value(t, _assistant_part_string_bytes(part), 6)
+}
+
+// The aggregate cap bounds a message on both paths, so one message always fits in a
+// frame. `text` is @unbounded, so nothing else stops a single part from growing.
+@(test)
+test_message_string_bytes_cap_applies_to_draft_and_committed :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    oversized := strings.repeat("x", LIMITS.max_message_string_bytes + 1, context.temp_allocator)
+    content := []Assistant_Part{Text_Part{id = 0, text = oversized}}
+
+    draft := Assistant_Message {
+        id = 1,
+        run_id = 1,
+        agent = "main",
+        content = content,
+        time = {created_at_ms = 1},
+    }
+    testing.expect_value(t, assistant_message_validate_draft(draft), Validation_Error.Overflow)
+
+    committed := draft
+    committed.finish = Stop_Reason.Stop
+    committed.time = {
+        created_at_ms   = 1,
+        completed_at_ms = 2,
+    }
+    testing.expect_value(t, assistant_message_validate_committed(committed), Validation_Error.Overflow)
 }
 
 // Provenance is written in the one encoding, so the log and a client see the same bytes.

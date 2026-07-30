@@ -112,14 +112,16 @@ Limits :: struct {
     // Max accepted inputs waiting behind a run.
     max_queued_inputs:                   int,
 
-    // Max parts in one assistant message, including an active draft.
-    max_active_draft_parts:              int,
+    // Max parts in one assistant message, draft or committed.
+    max_message_parts:                   int,
 
     // Max run-config records carried by one transcript snapshot.
     max_snapshot_configs:                int,
 
-    // Max aggregate raw string bytes retained by one active draft.
-    max_active_draft_string_bytes:       int,
+    // Max aggregate raw string bytes in one assistant message, draft or committed.
+    // Bounds the message so one always fits in a frame; paging still has to bound
+    // the page.
+    max_message_string_bytes:            int,
 
     // Max human-readable request error bytes.
     max_error_message_bytes:             int,
@@ -167,9 +169,9 @@ LIMITS :: Limits {
     max_permission_reject_message_bytes = 4096,
     max_activity_retry_message_bytes    = 1024,
     max_queued_inputs                   = 128,
-    max_active_draft_parts              = 1024,
+    max_message_parts                   = 1024,
     max_snapshot_configs                = 501,
-    max_active_draft_string_bytes       = 1024 * 1024,
+    max_message_string_bytes            = 1024 * 1024,
     max_error_message_bytes             = 4096,
     ping_interval_ms                    = 30_000,
     dead_connection_ms                  = 90_000,
