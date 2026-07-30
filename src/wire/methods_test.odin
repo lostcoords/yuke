@@ -38,7 +38,7 @@ test_request_params_cancel_input_roundtrip :: proc(t: ^testing.T) {
 
     params, derr := request_params_from_reader(.Session_Cancel_Input, &v)
     testing.expect(t, derr == .None, "decode should succeed")
-    cp, ok := params.(Cancel_Input_Params)
+    cp, ok := params.(Session_Cancel_Input_Params)
     testing.expect(t, ok, "should be cancel_input params")
     testing.expect_value(t, u64(cp.input_id), u64(7))
     testing.expect(t, request_params_validate(params) == .None, "valid params")
@@ -58,7 +58,7 @@ test_request_params_catalog_refresh_empty :: proc(t: ^testing.T) {
 
     params, derr := request_params_from_reader(.Catalog_Refresh, &v)
     testing.expect(t, derr == .None, "decode should succeed")
-    _, ok := params.(Empty_Params)
+    _, ok := params.(Empty)
     testing.expect(t, ok, "should be empty params")
     testing.expect(t, params_are_default(params), "empty params are the default")
 
@@ -77,7 +77,7 @@ test_response_result_remove_empty :: proc(t: ^testing.T) {
 
     result, derr := response_result_from_reader(.Session_Remove, &v)
     testing.expect(t, derr == .None, "decode should succeed")
-    _, ok := result.(Empty_Result)
+    _, ok := result.(Empty)
     testing.expect(t, ok, "should be empty result")
 
     e: Emitter
@@ -95,9 +95,9 @@ test_response_result_send_input_queued_roundtrip :: proc(t: ^testing.T) {
 
     result, derr := response_result_from_reader(.Session_Send_Input, &v)
     testing.expect(t, derr == .None, "decode should succeed")
-    sr, ok := result.(Send_Input_Result)
+    sr, ok := result.(Session_Send_Input_Result)
     testing.expect(t, ok, "should be a send_input result")
-    queued, is_queued := sr.(Send_Input_Result_Queued)
+    queued, is_queued := sr.(Session_Send_Input_Result_Queued)
     testing.expect(t, is_queued, "should be queued")
     testing.expect_value(t, u64(queued.input_id), u64(8))
 

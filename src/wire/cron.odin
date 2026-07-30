@@ -4,6 +4,7 @@ import "core:strings"
 
 // Optional-field patch applied to an existing cron job.
 Cron_Patch :: struct {
+    // @bounded 128
     // New display name, if changing.
     name:             Maybe(string),
 
@@ -159,7 +160,7 @@ Cron_List_Params :: struct {
     // Page size; omitted means daemon default.
     limit:  Maybe(u64),
 
-    // @bounded 256
+    // @bounded LIMITS.max_cron_list_cursor_bytes
     // Opaque continuation.
     cursor: Maybe(string),
 }
@@ -196,10 +197,11 @@ Cron_List_Result :: struct {
     // Cron-index revision represented by every job in this page.
     revision:    Cron_Revision,
 
+    // @bounded LIMITS.max_cron_list_page_size
     // Jobs in daemon-defined stable order.
     jobs:        []Cron_Job,
 
-    // @bounded 256
+    // @bounded LIMITS.max_cron_list_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 }
@@ -404,6 +406,7 @@ Cron_Schedule_Every :: struct {
 }
 
 Cron_Schedule_Cron :: struct {
+    // @unbounded
     // Cron expression (UTC unless `utc_offset_minutes` overrides).
     expr:               string,
 
@@ -467,6 +470,7 @@ cron_schedule_clone :: proc(self: Cron_Schedule, allocator := context.allocator)
 
 // Full spec for a cron job.
 Cron_Job_Spec :: struct {
+    // @bounded 128
     // Display name for the job.
     name:             Maybe(string),
 

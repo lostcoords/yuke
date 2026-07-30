@@ -90,6 +90,7 @@ Workspace_Describe_Result :: struct {
     // Last filesystem modification epoch ms.
     last_modified_ms: u64,
 
+    // @unbounded
     // Last model used in this workspace; null if never run.
     last_used_model:  Maybe(string),
 }
@@ -133,7 +134,7 @@ Workspace_Browse_Params :: struct {
     // Page size; omitted means daemon default.
     limit:  Maybe(u64),
 
-    // @bounded 256
+    // @bounded LIMITS.max_workspace_browse_cursor_bytes
     // Opaque continuation within the same directory.
     cursor: Maybe(string),
 }
@@ -200,13 +201,15 @@ Workspace_Browse_Result :: struct {
     //
     path:        string,
 
+    // @unbounded
     // Parent directory path; null at the filesystem root.
     parent:      Maybe(string),
 
+    // @bounded LIMITS.max_workspace_browse_page_size
     // Directory contents.
     entries:     []Dir_Entry,
 
-    // @bounded 256
+    // @bounded LIMITS.max_workspace_browse_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 }
@@ -261,6 +264,7 @@ workspace_remove_params_emit :: proc(e: ^Emitter, self: Workspace_Remove_Params)
 
 // workspace.remove result. Non-owning.
 Workspace_Remove_Result :: struct {
+    // @bounded LIMITS.max_cron_jobs
     // Cron jobs that referenced the removed workspace.
     related_job_ids: []Job_Id,
 }
@@ -352,26 +356,27 @@ skill_info_validate :: proc(self: Skill_Info) -> Validation_Error {
 }
 
 // workspace.skills.list input.
-Skill_List_Params :: struct {
+Workspace_Skills_Params :: struct {
     // Workspace to list skills for.
     workspace_id: Workspace_Id,
 }
 
 // Write workspace.skills.list params.
-skill_list_params_emit :: proc(e: ^Emitter, self: Skill_List_Params) {
+workspace_skills_params_emit :: proc(e: ^Emitter, self: Workspace_Skills_Params) {
     object_begin(e)
     field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
     object_end(e)
 }
 
 // workspace.skills.list result. Non-owning.
-Skill_List_Result :: struct {
-    // Discovered skills. At most 1024.
+Workspace_Skills_Result :: struct {
+    // @bounded LIMITS.max_skills
+    // Discovered skills.
     skills: []Skill_Info,
 }
 
 // Write a workspace.skills.list result.
-skill_list_result_emit :: proc(e: ^Emitter, self: Skill_List_Result) {
+workspace_skills_result_emit :: proc(e: ^Emitter, self: Workspace_Skills_Result) {
     object_begin(e)
     key(e, "skills")
     array_begin(e)
@@ -385,7 +390,7 @@ skill_list_result_emit :: proc(e: ^Emitter, self: Skill_List_Result) {
 }
 
 // Verify annotated field bounds.
-skill_list_result_validate :: proc(self: Skill_List_Result) -> Validation_Error {
+workspace_skills_result_validate :: proc(self: Workspace_Skills_Result) -> Validation_Error {
     if len(self.skills) > LIMITS.max_skills {
         return .Overflow
     }
@@ -749,7 +754,7 @@ _job_id_from_reader :: proc(d: ^Decoder) -> (out: Job_Id, err: Validation_Error)
 }
 
 // Decode workspace.skills params straight from the token stream.
-skill_list_params_from_reader :: proc(d: ^Decoder) -> (params: Skill_List_Params, err: Validation_Error) {
+workspace_skills_params_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Skills_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -774,7 +779,7 @@ skill_list_params_from_reader :: proc(d: ^Decoder) -> (params: Skill_List_Params
 }
 
 // Decode a workspace.skills result straight from the token stream.
-skill_list_result_from_reader :: proc(d: ^Decoder) -> (result: Skill_List_Result, err: Validation_Error) {
+workspace_skills_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_Skills_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {

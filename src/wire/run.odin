@@ -97,58 +97,6 @@ stop_reason_from_wire :: proc(s: string) -> (Stop_Reason, bool) {
     return enum_from_wire(stop_reason_wire, s)
 }
 
-// A time interval for a run that started.
-Time_Span :: struct {
-    // Start epoch ms.
-    started_at_ms: u64,
-
-    // End epoch ms.
-    ended_at_ms:   u64,
-}
-
-// Decode a time span straight from the token stream.
-time_span_from_reader :: proc(d: ^Decoder) -> (span: Time_Span, err: Validation_Error) {
-    dec_object_begin(d) or_return
-
-    Field :: enum {
-        Start,
-        End,
-    }
-
-    seen: bit_set[Field]
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "started_at_ms":
-            span.started_at_ms = dec_u64(d) or_return
-            seen += {.Start}
-
-        case "ended_at_ms":
-            span.ended_at_ms = dec_u64(d) or_return
-            seen += {.End}
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if seen != {.Start, .End} {
-        return {}, .Mismatched_Payload
-    }
-
-    return span, .None
-}
-
-// Write a time span.
-time_span_emit :: proc(e: ^Emitter, self: Time_Span) {
-    object_begin(e)
-    field_u64(e, "started_at_ms", self.started_at_ms)
-    field_u64(e, "ended_at_ms", self.ended_at_ms)
-    object_end(e)
-}
-
 // Cancellation timing; an accepted queued run may never start.
 Run_Canceled_Timing :: struct {
     // Start epoch ms, or null when canceled before starting.
@@ -312,7 +260,7 @@ Run_Outcome_Failed :: struct {
     // Failure category.
     code:    Run_Error_Code,
 
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Human-readable failure.
     message: string,
 }

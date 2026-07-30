@@ -1753,7 +1753,7 @@ _assistant_msg_cfg :: proc(id: wire.Message_Id, config_rev: wire.Config_Rev) -> 
 }
 
 // A fully wire-valid session-index row for the shared test session, so
-// `resync_result_validate` accepts the snapshots built on top of it.
+// `session_resync_result_validate` accepts the snapshots built on top of it.
 @(private = "file")
 _valid_session :: proc() -> wire.Session {
     return wire.Session {
@@ -1769,8 +1769,8 @@ _valid_session :: proc() -> wire.Session {
 
 // Empty resync snapshot at `base_seq`, carrying one config (rev 1).
 @(private = "file")
-_empty_resync :: proc(base_seq: wire.Seq) -> wire.Resync_Result {
-    return wire.Resync_Result {
+_empty_resync :: proc(base_seq: wire.Seq) -> wire.Session_Resync_Result {
+    return wire.Session_Resync_Result {
         item = wire.Session_List_Item{session = _valid_session(), activity = {state = wire.Activity_State_Idle{}}},
         base_seq = base_seq,
         highest_finalized_message_id = nil,
@@ -1784,7 +1784,11 @@ _empty_resync :: proc(base_seq: wire.Seq) -> wire.Resync_Result {
 
 // Snapshot carrying `msgs` finalized up to `highest`.
 @(private = "file")
-_resync_msgs :: proc(base_seq: wire.Seq, msgs: []wire.Message, highest: wire.Message_Id) -> wire.Resync_Result {
+_resync_msgs :: proc(
+    base_seq: wire.Seq,
+    msgs: []wire.Message,
+    highest: wire.Message_Id,
+) -> wire.Session_Resync_Result {
     r := _empty_resync(base_seq)
     r.messages = msgs
     r.highest_finalized_message_id = highest
@@ -2639,7 +2643,7 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    // The wire contract (`resync_result_validate`) allows at most one waiting tool, so a
+    // The wire contract (`session_resync_result_validate`) allows at most one waiting tool, so a
     // snapshot with two is malformed rather than silently first-wins.
     options := []wire.Permission_Option{{id = "once", kind = .Allow_Once, label = "Allow"}}
     two := []wire.Assistant_Part {

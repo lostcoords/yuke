@@ -1,5 +1,6 @@
 package wire
 
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -390,4 +391,217 @@ test_user_message_clone_preserves_absent_skill :: proc(t: ^testing.T) {
     cloned := user_message_clone(src, context.temp_allocator)
     _, has_skill := cloned.skill.?
     testing.expect(t, !has_skill, "cloned skill must stay absent")
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning signatures and turn provenance
+// ---------------------------------------------------------------------------
+
+// A signed reasoning part carries its signature in the one encoding, so the log and a
+// client see the same bytes.
+@(test)
+test_reasoning_signature_emitted :: proc(t: ^testing.T) {
+    part := Assistant_Part(Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"})
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_part_emit(&e, part)
+    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":0,"text":"hm","signature":"ErUBCkYIB"}`)
+}
+
+// An unsigned reasoning part must not write an empty `signature`, so a provider that
+// issues none produces exactly the pre-signature encoding.
+@(test)
+test_reasoning_signature_omitted_when_empty :: proc(t: ^testing.T) {
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_part_emit(&e, Reasoning_Part{id = 1, text = "hm"})
+    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":1,"text":"hm"}`)
+}
+
+// Rows written before the field existed decode unchanged, with no signature.
+@(test)
+test_reasoning_part_without_signature_decodes :: proc(t: ^testing.T) {
+    v := decoder_init(`{"type":"reasoning","id":0,"text":"hm"}`, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+
+    part, derr := assistant_part_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    reasoning, ok := part.(Reasoning_Part)
+    testing.expect(t, ok, "should be a reasoning part")
+    testing.expect_value(t, reasoning.signature, "")
+}
+
+// A signed row round-trips byte-for-byte through the persisted encoding.
+@(test)
+test_reasoning_signature_persisted_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"type":"reasoning","id":2,"text":"hm","signature":"ErUBCkYIB"}`
+    v := decoder_init(input)
+
+    part, derr := assistant_part_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    reasoning, ok := part.(Reasoning_Part)
+    testing.expect(t, ok, "should be a reasoning part")
+    testing.expect_value(t, reasoning.signature, "ErUBCkYIB")
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_part_emit(&e, part)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// `signature` belongs to the reasoning arm alone; the text arm rejects it.
+@(test)
+test_text_part_rejects_signature :: proc(t: ^testing.T) {
+    v := decoder_init(`{"type":"text","id":0,"text":"hi","signature":"ErUBCkYIB"}`, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+    _, derr := assistant_part_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "signature on a text part must be rejected")
+}
+
+// The signature is borrowed like `text`, so a clone must own its own copy.
+@(test)
+test_reasoning_part_clone_copies_signature :: proc(t: ^testing.T) {
+    src := Assistant_Part(Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"})
+    cloned := assistant_part_clone(src, context.temp_allocator).(Reasoning_Part)
+    testing.expect_value(t, cloned.signature, "ErUBCkYIB")
+    testing.expect(
+        t,
+        raw_data(cloned.signature) != raw_data(src.(Reasoning_Part).signature),
+        "clone must not alias the source signature",
+    )
+}
+
+// The signature is unbounded payload the draft cap has to see.
+@(test)
+test_reasoning_signature_counts_toward_string_bytes :: proc(t: ^testing.T) {
+    part := Assistant_Part(Reasoning_Part{id = 0, text = "hm", signature = "abcd"})
+    testing.expect_value(t, _assistant_part_string_bytes(part), 6)
+}
+
+// Provenance is written in the one encoding, so the log and a client see the same bytes.
+@(test)
+test_turn_provenance_emitted :: proc(t: ^testing.T) {
+    msg := Assistant_Message {
+        id = 1,
+        run_id = 1,
+        config_rev = 1,
+        agent = "main",
+        content = []Assistant_Part{},
+        finish = Stop_Reason.Stop,
+        time = {created_at_ms = 1, completed_at_ms = 2},
+        provenance = Turn_Provenance{protocol = .Anthropic_Messages, model = "claude-sonnet-4-5"},
+    }
+    testing.expect(t, assistant_message_validate(msg) == .None, "provenance should validate")
+
+    tail := `,"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2}`
+    head := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[]`
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_message_emit(&e, msg)
+    expected := strings.concatenate(
+        {head, tail, `,"provenance":{"protocol":"anthropic-messages","model":"claude-sonnet-4-5"}}`},
+        context.temp_allocator,
+    )
+    testing.expect_value(t, to_string(&e), expected)
+}
+
+// Assistant messages logged before the field existed decode with no provenance.
+@(test)
+test_assistant_message_without_provenance_decodes :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[],"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2}}`
+    v := decoder_init(input)
+
+    msg, derr := assistant_message_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    _, has_prov := msg.provenance.?
+    testing.expect(t, !has_prov, "provenance must stay absent")
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_message_emit(&e, msg)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// A logged provenance round-trips byte-for-byte.
+@(test)
+test_turn_provenance_persisted_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[],"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2},"provenance":{"protocol":"openai-completions","model":"gpt-5"}}`
+    v := decoder_init(input)
+
+    msg, derr := assistant_message_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    prov, has_prov := msg.provenance.?
+    testing.expect(t, has_prov, "provenance should be present")
+    testing.expect_value(t, prov.protocol, Provider_Protocol.Openai_Chat)
+    testing.expect_value(t, prov.model, "gpt-5")
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_message_emit(&e, msg)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// The protocol set is closed; an unknown name is not silently kept.
+@(test)
+test_turn_provenance_rejects_unknown_protocol :: proc(t: ^testing.T) {
+    v := decoder_init(`{"protocol":"gemini","model":"x"}`, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+    _, derr := turn_provenance_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "unknown protocol must be rejected")
+}
+
+// Both members are required once the object is present.
+@(test)
+test_turn_provenance_requires_both_members :: proc(t: ^testing.T) {
+    v := decoder_init(`{"protocol":"anthropic-messages"}`, context.temp_allocator)
+    defer free_all(context.temp_allocator)
+    _, derr := turn_provenance_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "provenance without a model must be rejected")
+}
+
+// Provenance is assistant-only; the sibling message arms reject it.
+@(test)
+test_provenance_rejected_on_sibling_messages :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    inputs := []string {
+        `{"type":"user","id":1,"input_id":1,"content":[],"time":{"created_at_ms":1},"provenance":{"protocol":"anthropic-messages","model":"m"}}`,
+        `{"type":"compaction","id":1,"run_id":1,"reason":"auto","summary":"s","first_kept_id":null,"tokens_before":1,"tokens_after":1,"time":{"created_at_ms":1},"provenance":{"protocol":"anthropic-messages","model":"m"}}`,
+    }
+    for input in inputs {
+        v := decoder_init(input)
+        _, derr := message_from_reader(&v)
+        testing.expect(t, derr == .Mismatched_Payload, "provenance on a non-assistant message must be rejected")
+    }
+}
+
+// The clone owns its model string, like every other borrowed member.
+@(test)
+test_turn_provenance_clone_copies_model :: proc(t: ^testing.T) {
+    src := Turn_Provenance {
+        protocol = .Anthropic_Messages,
+        model    = "claude-sonnet-4-5",
+    }
+    cloned := turn_provenance_clone(src, context.temp_allocator)
+    testing.expect_value(t, cloned.protocol, Provider_Protocol.Anthropic_Messages)
+    testing.expect_value(t, cloned.model, "claude-sonnet-4-5")
+    testing.expect(t, raw_data(cloned.model) != raw_data(src.model), "clone must not alias the source model")
 }

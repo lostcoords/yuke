@@ -11,6 +11,7 @@ System_Prompt_None :: struct {}
 // @unbounded
 // Field carried an explicit value.
 System_Prompt_Set :: struct {
+    // @unbounded
     value: string,
 }
 
@@ -91,12 +92,15 @@ Create_Session :: struct {
     // Filesystem path; omitted resolves to the home directory.
     workspace_path: Maybe(string),
 
+    // @unbounded
     // Profile name to resolve config from.
     profile:        Maybe(string),
 
+    // @unbounded
     // Model id override.
     model:          Maybe(string),
 
+    // @unbounded
     // Reasoning level override.
     reasoning:      Maybe(string),
 
@@ -177,9 +181,11 @@ create_session_clone :: proc(self: Create_Session, allocator := context.allocato
 // Missing field means no change. The system prompt is snapshotted at creation
 // and is not patchable. Non-owning.
 Session_Patch :: struct {
+    // @bounded 128
     // New model id.
     model:      Maybe(string),
 
+    // @bounded 32
     // New reasoning level.
     reasoning:  Maybe(string),
 
@@ -224,7 +230,7 @@ session_patch_validate :: proc(self: Session_Patch) -> Validation_Error {
 }
 
 // session.fork input.
-Fork_Params :: struct {
+Session_Fork_Params :: struct {
     // Session to fork.
     session_id:        Session_Id,
 
@@ -233,7 +239,7 @@ Fork_Params :: struct {
 }
 
 // Write session.fork params.
-fork_params_emit :: proc(e: ^Emitter, self: Fork_Params) {
+session_fork_params_emit :: proc(e: ^Emitter, self: Session_Fork_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
 
@@ -245,13 +251,13 @@ fork_params_emit :: proc(e: ^Emitter, self: Fork_Params) {
 }
 
 // session.compact input.
-Compact_Params :: struct {
+Session_Compact_Params :: struct {
     // Session to compact.
     session_id: Session_Id,
 }
 
 // Write session.compact params.
-compact_params_emit :: proc(e: ^Emitter, self: Compact_Params) {
+session_compact_params_emit :: proc(e: ^Emitter, self: Session_Compact_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     object_end(e)
@@ -281,7 +287,7 @@ compact_status_from_wire :: proc(s: string) -> (Compact_Status, bool) {
 }
 
 // session.compact result.
-Compact_Result :: struct {
+Session_Compact_Result :: struct {
     // Whether compaction started or was queued.
     status: Compact_Status,
 
@@ -290,7 +296,7 @@ Compact_Result :: struct {
 }
 
 // Write fields as JSON.
-compact_result_emit :: proc(e: ^Emitter, self: Compact_Result) {
+session_compact_result_emit :: proc(e: ^Emitter, self: Session_Compact_Result) {
     object_begin(e)
     field_string(e, "status", compact_status_to_wire(self.status))
     field_u64(e, "run_id", u64(self.run_id))
@@ -298,7 +304,7 @@ compact_result_emit :: proc(e: ^Emitter, self: Compact_Result) {
 }
 
 // session.rewind input.
-Rewind_Params :: struct {
+Session_Rewind_Params :: struct {
     // Session to rewind.
     session_id:        Session_Id,
 
@@ -307,7 +313,7 @@ Rewind_Params :: struct {
 }
 
 // Write session.rewind params.
-rewind_params_emit :: proc(e: ^Emitter, self: Rewind_Params) {
+session_rewind_params_emit :: proc(e: ^Emitter, self: Session_Rewind_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     field_u64(e, "before_message_id", u64(self.before_message_id))
@@ -651,14 +657,7 @@ session_activity_emit :: proc(e: ^Emitter, self: Session_Activity) {
 
     field_u64(e, "queued", self.queued)
     field_u64(e, "context_tokens", self.context_tokens)
-    key(e, "pending_compaction")
-
-    if pc, ok := self.pending_compaction.?; ok {
-        val_u64(e, u64(pc))
-    } else {
-        val_null(e)
-    }
-
+    field_required_null_u64(e, "pending_compaction", self.pending_compaction)
     object_end(e)
 }
 
@@ -900,7 +899,7 @@ Session_List_Params :: struct {
     // Page size; omitted means daemon default.
     limit:      Maybe(u64),
 
-    // @bounded 256
+    // @bounded LIMITS.max_session_list_cursor_bytes
     // Opaque daemon-issued continuation.
     cursor:     Maybe(string),
 }
@@ -945,10 +944,11 @@ Session_List_Result :: struct {
     // Compact-index revision represented by every field in this result.
     revision:    Session_Revision,
 
+    // @bounded LIMITS.max_session_list_page_size
     // Rows in final daemon-defined display order.
     items:       []Session_List_Item,
 
-    // @bounded 256
+    // @bounded LIMITS.max_session_list_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
 
@@ -1086,7 +1086,7 @@ Activity_State_Retrying :: struct {
     // Failure code.
     code:         Run_Error_Code,
 
-    // @bounded 1024
+    // @bounded LIMITS.max_activity_retry_message_bytes
     // Human-readable failure.
     message:      string,
 }
@@ -1267,7 +1267,7 @@ compaction_reason_from_wire :: proc(s: string) -> (Compaction_Reason, bool) {
 }
 
 // session.resync input.
-Resync_Params :: struct {
+Session_Resync_Params :: struct {
     // Session to resync.
     session_id: Session_Id,
 
@@ -1276,7 +1276,7 @@ Resync_Params :: struct {
 }
 
 // Write session.resync params.
-resync_params_emit :: proc(e: ^Emitter, self: Resync_Params) {
+session_resync_params_emit :: proc(e: ^Emitter, self: Session_Resync_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
 
@@ -1285,6 +1285,19 @@ resync_params_emit :: proc(e: ^Emitter, self: Resync_Params) {
     }
 
     object_end(e)
+}
+
+// Verify the session id and optional page-size bound.
+session_resync_params_validate :: proc(self: Session_Resync_Params) -> Validation_Error {
+    enforce_id(([16]u8)(self.session_id)) or_return
+
+    if limit, ok := self.limit.?; ok {
+        if limit == 0 || limit > u64(LIMITS.max_page_size) {
+            return .Out_Of_Range
+        }
+    }
+
+    return .None
 }
 
 // In-flight assistant draft, resent on resync. Non-owning.
@@ -1331,7 +1344,7 @@ _activity_config_matches_draft :: proc(
 }
 
 // Full session snapshot for reconnection. Non-owning.
-Resync_Result :: struct {
+Session_Resync_Result :: struct {
     // Current compact session-index row at this snapshot cut.
     item:                         Session_List_Item,
 
@@ -1342,37 +1355,33 @@ Resync_Result :: struct {
     // Required on the wire; null when no message has finalized.
     highest_finalized_message_id: Maybe(Message_Id),
 
+    // @bounded LIMITS.max_page_size
     // Recent transcript messages.
     messages:                     []Message,
 
     // Whether older messages exist beyond `messages`.
     has_more:                     bool,
 
-    // Configs referenced by `messages` and `active`. At most 501.
+    // @bounded LIMITS.max_snapshot_configs
+    // Configs referenced by `messages` and `active`.
     configs:                      []Run_Config,
 
     // In-flight draft, if any.
     active:                       Maybe(Active_Draft),
 
-    // Inputs queued behind the active turn. At most 128.
+    // @bounded LIMITS.max_queued_inputs
+    // Inputs queued behind the active turn.
     queued:                       []Queued_Input,
 }
 
 // Write a session.resync result; `highest_finalized_message_id` is always present,
 // null when no message has finalized.
-resync_result_emit :: proc(e: ^Emitter, self: Resync_Result) {
+session_resync_result_emit :: proc(e: ^Emitter, self: Session_Resync_Result) {
     object_begin(e)
     key(e, "item")
     session_list_item_emit(e, self.item)
     field_u64(e, "base_seq", u64(self.base_seq))
-    key(e, "highest_finalized_message_id")
-
-    if hf, ok := self.highest_finalized_message_id.?; ok {
-        val_u64(e, u64(hf))
-    } else {
-        val_null(e)
-    }
-
+    field_required_null_u64(e, "highest_finalized_message_id", self.highest_finalized_message_id)
     key(e, "messages")
     array_begin(e)
     for message in self.messages {
@@ -1408,7 +1417,7 @@ resync_result_emit :: proc(e: ^Emitter, self: Resync_Result) {
 }
 
 // Verify annotated field bounds.
-resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
+session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validation_Error {
     session_list_item_validate(self.item) or_return
 
     if len(self.messages) > LIMITS.max_page_size {
@@ -1611,7 +1620,7 @@ resync_result_validate :: proc(self: Resync_Result) -> Validation_Error {
 }
 
 // session.history input.
-History_Params :: struct {
+Session_History_Params :: struct {
     // Session to page through.
     session_id:        Session_Id,
 
@@ -1623,7 +1632,7 @@ History_Params :: struct {
 }
 
 // Write session.history params.
-history_params_emit :: proc(e: ^Emitter, self: History_Params) {
+session_history_params_emit :: proc(e: ^Emitter, self: Session_History_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     field_u64(e, "before_message_id", u64(self.before_message_id))
@@ -1636,14 +1645,16 @@ history_params_emit :: proc(e: ^Emitter, self: History_Params) {
 }
 
 // session.history result.
-History_Result :: struct {
+Session_History_Result :: struct {
     // Session the page belongs to.
     session_id: Session_Id,
 
+    // @bounded LIMITS.max_page_size
     // Page of transcript messages.
     messages:   []Message,
 
-    // Configs referenced by `messages`. At most 501.
+    // @bounded LIMITS.max_snapshot_configs
+    // Configs referenced by `messages`.
     configs:    []Run_Config,
 
     // Whether older messages exist beyond this page.
@@ -1651,7 +1662,7 @@ History_Result :: struct {
 }
 
 // Write a session.history result.
-history_result_emit :: proc(e: ^Emitter, self: History_Result) {
+session_history_result_emit :: proc(e: ^Emitter, self: Session_History_Result) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     key(e, "messages")
@@ -1675,7 +1686,7 @@ history_result_emit :: proc(e: ^Emitter, self: History_Result) {
 }
 
 // Verify annotated field bounds.
-history_result_validate :: proc(self: History_Result) -> Validation_Error {
+session_history_result_validate :: proc(self: Session_History_Result) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
 
     if len(self.messages) > LIMITS.max_page_size {
@@ -1698,7 +1709,7 @@ history_result_validate :: proc(self: History_Result) -> Validation_Error {
 }
 
 // session.config.get input.
-Config_Get_Params :: struct {
+Session_Config_Params :: struct {
     // Session to read config for.
     session_id: Session_Id,
 
@@ -1707,7 +1718,7 @@ Config_Get_Params :: struct {
 }
 
 // Write session.config.get params.
-config_get_params_emit :: proc(e: ^Emitter, self: Config_Get_Params) {
+session_config_params_emit :: proc(e: ^Emitter, self: Session_Config_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
 
@@ -1719,7 +1730,7 @@ config_get_params_emit :: proc(e: ^Emitter, self: Config_Get_Params) {
 }
 
 // session.config.get result.
-Config_Get_Result :: struct {
+Session_Config_Result :: struct {
     // The requested run config.
     config:        Run_Config,
 
@@ -1730,7 +1741,7 @@ Config_Get_Result :: struct {
 
 // Write a session.config.get result; `system_prompt` is always present, null when
 // no system prompt is sent to the model.
-config_get_result_emit :: proc(e: ^Emitter, self: Config_Get_Result) {
+session_config_result_emit :: proc(e: ^Emitter, self: Session_Config_Result) {
     object_begin(e)
     key(e, "config")
     run_config_emit(e, self.config)
@@ -1739,12 +1750,13 @@ config_get_result_emit :: proc(e: ^Emitter, self: Config_Get_Result) {
 }
 
 // Verify annotated field bounds.
-config_get_result_validate :: proc(self: Config_Get_Result) -> Validation_Error {
+session_config_result_validate :: proc(self: Session_Config_Result) -> Validation_Error {
     return run_config_validate(self.config)
 }
 
 // session.subscription.set input.
 Subscription_Set_Params :: struct {
+    // @bounded LIMITS.max_subscriptions
     // Sessions to subscribe to; replaces the prior set.
     sessions: []Session_Id,
 }
@@ -1868,7 +1880,7 @@ session_patch_from_reader :: proc(d: ^Decoder) -> (patch: Session_Patch, err: Va
 }
 
 // Decode session.fork params straight from the token stream.
-fork_params_from_reader :: proc(d: ^Decoder) -> (params: Fork_Params, err: Validation_Error) {
+session_fork_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Fork_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -1901,7 +1913,7 @@ fork_params_from_reader :: proc(d: ^Decoder) -> (params: Fork_Params, err: Valid
 }
 
 // Decode session.compact params straight from the token stream.
-compact_params_from_reader :: proc(d: ^Decoder) -> (params: Compact_Params, err: Validation_Error) {
+session_compact_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Compact_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -1926,7 +1938,7 @@ compact_params_from_reader :: proc(d: ^Decoder) -> (params: Compact_Params, err:
 }
 
 // Decode a session.compact result straight from the token stream.
-compact_result_from_reader :: proc(d: ^Decoder) -> (result: Compact_Result, err: Validation_Error) {
+session_compact_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Compact_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -1961,7 +1973,7 @@ compact_result_from_reader :: proc(d: ^Decoder) -> (result: Compact_Result, err:
 }
 
 // Decode session.rewind params straight from the token stream.
-rewind_params_from_reader :: proc(d: ^Decoder) -> (params: Rewind_Params, err: Validation_Error) {
+session_rewind_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Rewind_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -2915,7 +2927,7 @@ activity_state_from_reader :: proc(d: ^Decoder) -> (state: Activity_State, err: 
 }
 
 // Decode session.resync params straight from the token stream.
-resync_params_from_reader :: proc(d: ^Decoder) -> (params: Resync_Params, err: Validation_Error) {
+session_resync_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Resync_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -2968,7 +2980,7 @@ active_draft_from_reader :: proc(d: ^Decoder) -> (draft: Active_Draft, err: Vali
 }
 
 // Decode a session.resync result straight from the token stream.
-resync_result_from_reader :: proc(d: ^Decoder) -> (result: Resync_Result, err: Validation_Error) {
+session_resync_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Resync_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -3015,9 +3027,7 @@ resync_result_from_reader :: proc(d: ^Decoder) -> (result: Resync_Result, err: V
             seen += {.Cfgs}
 
         case "active":
-            if !dec_is_null(d) {
-                result.active = active_draft_from_reader(d) or_return
-            }
+            result.active = active_draft_from_reader(d) or_return
 
         case "queued":
             result.queued = dec_array(d, queued_input_from_reader) or_return
@@ -3036,7 +3046,7 @@ resync_result_from_reader :: proc(d: ^Decoder) -> (result: Resync_Result, err: V
 }
 
 // Decode session.history params straight from the token stream.
-history_params_from_reader :: proc(d: ^Decoder) -> (params: History_Params, err: Validation_Error) {
+session_history_params_from_reader :: proc(d: ^Decoder) -> (params: Session_History_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -3074,7 +3084,7 @@ history_params_from_reader :: proc(d: ^Decoder) -> (params: History_Params, err:
 }
 
 // Decode a session.history result straight from the token stream.
-history_result_from_reader :: proc(d: ^Decoder) -> (result: History_Result, err: Validation_Error) {
+session_history_result_from_reader :: proc(d: ^Decoder) -> (result: Session_History_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -3119,7 +3129,7 @@ history_result_from_reader :: proc(d: ^Decoder) -> (result: History_Result, err:
 }
 
 // Decode session.config.get params straight from the token stream.
-config_get_params_from_reader :: proc(d: ^Decoder) -> (params: Config_Get_Params, err: Validation_Error) {
+session_config_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Config_Params, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -3147,7 +3157,7 @@ config_get_params_from_reader :: proc(d: ^Decoder) -> (params: Config_Get_Params
 }
 
 // Decode a session.config.get result straight from the token stream.
-config_get_result_from_reader :: proc(d: ^Decoder) -> (result: Config_Get_Result, err: Validation_Error) {
+session_config_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Config_Result, err: Validation_Error) {
     dec_object_begin(d) or_return
 
     Field :: enum {

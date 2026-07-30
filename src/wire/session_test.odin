@@ -271,6 +271,26 @@ test_session_list_params_defaults :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_resync_params_limit_is_strict :: proc(t: ^testing.T) {
+    valid := Session_Resync_Params {
+        session_id = Session_Id(_fixed16("0123456789abcdef")),
+    }
+    testing.expect_value(t, session_resync_params_validate(valid), Validation_Error.None)
+
+    valid.limit = u64(1)
+    testing.expect_value(t, session_resync_params_validate(valid), Validation_Error.None)
+    valid.limit = u64(LIMITS.max_page_size)
+    testing.expect_value(t, session_resync_params_validate(valid), Validation_Error.None)
+
+    invalid := valid
+    invalid.limit = u64(0)
+    testing.expect_value(t, session_resync_params_validate(invalid), Validation_Error.Out_Of_Range)
+    testing.expect_value(t, request_params_validate(Request_Params(invalid)), Validation_Error.Out_Of_Range)
+    invalid.limit = u64(LIMITS.max_page_size) + 1
+    testing.expect_value(t, session_resync_params_validate(invalid), Validation_Error.Out_Of_Range)
+}
+
+@(test)
 test_session_list_result_validate :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
@@ -611,7 +631,7 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
 
     input := `{"status":"queued","run_id":3}`
     v := decoder_init(input, context.temp_allocator)
-    result, derr := compact_result_from_reader(&v)
+    result, derr := session_compact_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, result.status, Compact_Status.Queued)
     testing.expect_value(t, u64(result.run_id), u64(3))
@@ -619,7 +639,7 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    compact_result_emit(&e, result)
+    session_compact_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), input)
 }
 

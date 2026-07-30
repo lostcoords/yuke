@@ -51,9 +51,9 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
         v := decoder_init(src, context.temp_allocator)
         defer free_all(context.temp_allocator)
 
-        result, derr := send_input_result_from_reader(&v)
+        result, derr := session_send_input_result_from_reader(&v)
         testing.expect(t, derr == .None, "decode should succeed")
-        started, ok := result.(Send_Input_Result_Started)
+        started, ok := result.(Session_Send_Input_Result_Started)
         testing.expect(t, ok, "should be started")
         testing.expect_value(t, started.input_id, Input_Id(1))
         testing.expect_value(t, started.run_id, Run_Id(2))
@@ -61,7 +61,7 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
         e: Emitter
         emitter_init(&e)
         defer emitter_destroy(&e)
-        send_input_result_emit(&e, result)
+        session_send_input_result_emit(&e, result)
         testing.expect_value(t, to_string(&e), src)
     }
     // Queued omits run_id.
@@ -70,23 +70,23 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
         v := decoder_init(src, context.temp_allocator)
         defer free_all(context.temp_allocator)
 
-        result, derr := send_input_result_from_reader(&v)
+        result, derr := session_send_input_result_from_reader(&v)
         testing.expect(t, derr == .None, "decode should succeed")
-        queued, ok := result.(Send_Input_Result_Queued)
+        queued, ok := result.(Session_Send_Input_Result_Queued)
         testing.expect(t, ok, "should be queued")
         testing.expect_value(t, queued.input_id, Input_Id(3))
 
         e: Emitter
         emitter_init(&e)
         defer emitter_destroy(&e)
-        send_input_result_emit(&e, result)
+        session_send_input_result_emit(&e, result)
         testing.expect_value(t, to_string(&e), src)
     }
     // A sibling variant's run_id under `queued` is rejected.
     {
         v := decoder_init(`{"type":"queued","input_id":3,"run_id":4}`, context.temp_allocator)
         defer free_all(context.temp_allocator)
-        _, derr := send_input_result_from_reader(&v)
+        _, derr := session_send_input_result_from_reader(&v)
         testing.expect(t, derr == .Mismatched_Payload, "sibling key must be rejected")
     }
 }
@@ -116,14 +116,14 @@ test_cancel_input_result_roundtrip :: proc(t: ^testing.T) {
     v := decoder_init(src, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
-    result, derr := cancel_input_result_from_reader(&v)
+    result, derr := session_cancel_input_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, result.canceled_input, Input_Id(7))
 
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    cancel_input_result_emit(&e, result)
+    session_cancel_input_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), src)
 }
 
@@ -135,7 +135,7 @@ test_cancel_run_result_roundtrip :: proc(t: ^testing.T) {
     src := `{"canceled_run":2,"cleared_inputs":[3,4],"cleared_compaction":5}`
     v := decoder_init(src, context.temp_allocator)
 
-    result, derr := cancel_run_result_from_reader(&v)
+    result, derr := session_cancel_run_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     run, ok := result.canceled_run.?
     testing.expect(t, ok, "canceled_run present")
@@ -146,7 +146,7 @@ test_cancel_run_result_roundtrip :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    cancel_run_result_emit(&e, result)
+    session_cancel_run_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), src)
 }
 
@@ -158,7 +158,7 @@ test_cancel_run_result_omits_absent :: proc(t: ^testing.T) {
     src := `{"cleared_inputs":[]}`
     v := decoder_init(src, context.temp_allocator)
 
-    result, derr := cancel_run_result_from_reader(&v)
+    result, derr := session_cancel_run_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     _, has_run := result.canceled_run.?
     testing.expect(t, !has_run, "canceled_run absent")
@@ -166,6 +166,6 @@ test_cancel_run_result_omits_absent :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    cancel_run_result_emit(&e, result)
+    session_cancel_run_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), src)
 }

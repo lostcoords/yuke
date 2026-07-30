@@ -2,9 +2,10 @@ package wire
 
 import "core:strings"
 
-// Raw content parts. At most LIMITS.max_input_parts.
+// Raw content parts.
 Input_Content :: struct {
-    // Raw content parts. At most LIMITS.max_input_parts.
+    // @bounded LIMITS.max_input_parts
+    // Raw content parts.
     content: []Content_Part,
 }
 
@@ -151,7 +152,8 @@ Queued_Input :: struct {
     // Daemon-minted input id.
     input_id:     Input_Id,
 
-    // Content parts awaiting execution. At most LIMITS.max_input_parts.
+    // @bounded LIMITS.max_input_parts
+    // Content parts awaiting execution.
     content:      []Content_Part,
 
     // Enqueue time, epoch ms.
@@ -200,7 +202,7 @@ queued_input_clone :: proc(self: Queued_Input, allocator := context.allocator) -
 }
 
 // Params for `session.send_input`.
-Send_Input_Params :: struct {
+Session_Send_Input_Params :: struct {
     // @fixed 16
     // Owning session.
     session_id: Session_Id,
@@ -210,7 +212,7 @@ Send_Input_Params :: struct {
 }
 
 // Write session.send_input params.
-send_input_params_emit :: proc(e: ^Emitter, self: Send_Input_Params) {
+session_send_input_params_emit :: proc(e: ^Emitter, self: Session_Send_Input_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     key(e, "input")
@@ -219,14 +221,14 @@ send_input_params_emit :: proc(e: ^Emitter, self: Send_Input_Params) {
 }
 
 // Verify annotated field bounds.
-send_input_params_validate :: proc(self: Send_Input_Params) -> Validation_Error {
+session_send_input_params_validate :: proc(self: Session_Send_Input_Params) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
 
     return input_validate(self.input)
 }
 
 // Started immediately.
-Send_Input_Result_Started :: struct {
+Session_Send_Input_Result_Started :: struct {
     // Daemon-minted input id.
     input_id: Input_Id,
 
@@ -235,28 +237,28 @@ Send_Input_Result_Started :: struct {
 }
 
 // Queued behind an active turn.
-Send_Input_Result_Queued :: struct {
+Session_Send_Input_Result_Queued :: struct {
     // Daemon-minted input id.
     input_id: Input_Id,
 }
 
 // Result of `session.send_input`: started immediately or queued behind an active turn.
-Send_Input_Result :: union {
-    Send_Input_Result_Started,
-    Send_Input_Result_Queued,
+Session_Send_Input_Result :: union {
+    Session_Send_Input_Result_Started,
+    Session_Send_Input_Result_Queued,
 }
 
 // Write internally-tagged JSON with `type` first.
-send_input_result_emit :: proc(e: ^Emitter, self: Send_Input_Result) {
+session_send_input_result_emit :: proc(e: ^Emitter, self: Session_Send_Input_Result) {
     object_begin(e)
 
     switch v in self {
-    case Send_Input_Result_Started:
+    case Session_Send_Input_Result_Started:
         field_string(e, "type", "started")
         field_u64(e, "input_id", u64(v.input_id))
         field_u64(e, "run_id", u64(v.run_id))
 
-    case Send_Input_Result_Queued:
+    case Session_Send_Input_Result_Queued:
         field_string(e, "type", "queued")
         field_u64(e, "input_id", u64(v.input_id))
     }
@@ -265,7 +267,7 @@ send_input_result_emit :: proc(e: ^Emitter, self: Send_Input_Result) {
 }
 
 // Params for `session.cancel_input`.
-Cancel_Input_Params :: struct {
+Session_Cancel_Input_Params :: struct {
     // @fixed 16
     // Owning session.
     session_id: Session_Id,
@@ -275,7 +277,7 @@ Cancel_Input_Params :: struct {
 }
 
 // Write session.cancel_input params.
-cancel_input_params_emit :: proc(e: ^Emitter, self: Cancel_Input_Params) {
+session_cancel_input_params_emit :: proc(e: ^Emitter, self: Session_Cancel_Input_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
     field_u64(e, "input_id", u64(self.input_id))
@@ -283,25 +285,25 @@ cancel_input_params_emit :: proc(e: ^Emitter, self: Cancel_Input_Params) {
 }
 
 // Verify annotated field bounds.
-cancel_input_params_validate :: proc(self: Cancel_Input_Params) -> Validation_Error {
+session_cancel_input_params_validate :: proc(self: Session_Cancel_Input_Params) -> Validation_Error {
     return enforce_id(([16]u8)(self.session_id))
 }
 
 // Result of `session.cancel_input`.
-Cancel_Input_Result :: struct {
+Session_Cancel_Input_Result :: struct {
     // Id of the canceled input.
     canceled_input: Input_Id,
 }
 
 // Write a session.cancel_input result.
-cancel_input_result_emit :: proc(e: ^Emitter, self: Cancel_Input_Result) {
+session_cancel_input_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Input_Result) {
     object_begin(e)
     field_u64(e, "canceled_input", u64(self.canceled_input))
     object_end(e)
 }
 
 // Params for `session.cancel_run`.
-Cancel_Run_Params :: struct {
+Session_Cancel_Run_Params :: struct {
     // @fixed 16
     // Owning session.
     session_id:  Session_Id,
@@ -314,7 +316,7 @@ Cancel_Run_Params :: struct {
 }
 
 // Write session.cancel_run params, omitting absent optionals.
-cancel_run_params_emit :: proc(e: ^Emitter, self: Cancel_Run_Params) {
+session_cancel_run_params_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Params) {
     object_begin(e)
     field_id(e, "session_id", ([16]u8)(self.session_id))
 
@@ -330,15 +332,16 @@ cancel_run_params_emit :: proc(e: ^Emitter, self: Cancel_Run_Params) {
 }
 
 // Verify annotated field bounds.
-cancel_run_params_validate :: proc(self: Cancel_Run_Params) -> Validation_Error {
+session_cancel_run_params_validate :: proc(self: Session_Cancel_Run_Params) -> Validation_Error {
     return enforce_id(([16]u8)(self.session_id))
 }
 
 // Result of `session.cancel_run`.
-Cancel_Run_Result :: struct {
+Session_Cancel_Run_Result :: struct {
     // Run that was canceled; null if none was active.
     canceled_run:       Maybe(Run_Id),
 
+    // @unbounded
     // Queued inputs dropped by `clear_queue`.
     cleared_inputs:     []Input_Id,
 
@@ -347,7 +350,7 @@ Cancel_Run_Result :: struct {
 }
 
 // Write a session.cancel_run result, omitting absent optionals.
-cancel_run_result_emit :: proc(e: ^Emitter, self: Cancel_Run_Result) {
+session_cancel_run_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Result) {
     object_begin(e)
 
     if id, ok := self.canceled_run.?; ok {
@@ -383,6 +386,7 @@ Part_Delta :: struct {
     // Target part ordinal in `content[]`.
     part_id:    Part_Id,
 
+    // @unbounded
     // UTF-8 bytes to fold at `offset`.
     delta:      string,
 
@@ -532,7 +536,12 @@ queued_input_from_reader :: proc(d: ^Decoder) -> (item: Queued_Input, err: Valid
 }
 
 // Decode session.send_input params straight from the token stream.
-send_input_params_from_reader :: proc(d: ^Decoder) -> (params: Send_Input_Params, err: Validation_Error) {
+session_send_input_params_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    params: Session_Send_Input_Params,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -567,7 +576,12 @@ send_input_params_from_reader :: proc(d: ^Decoder) -> (params: Send_Input_Params
 }
 
 // Decode internally-tagged send-input result straight from the token stream.
-send_input_result_from_reader :: proc(d: ^Decoder) -> (result: Send_Input_Result, err: Validation_Error) {
+session_send_input_result_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    result: Session_Send_Input_Result,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
     tag := dec_find_tag(d, "type") or_return
 
@@ -603,7 +617,7 @@ send_input_result_from_reader :: proc(d: ^Decoder) -> (result: Send_Input_Result
             return nil, .Mismatched_Payload
         }
 
-        return Send_Input_Result_Started{input_id = Input_Id(input_id), run_id = Run_Id(run_id)}, .None
+        return Session_Send_Input_Result_Started{input_id = Input_Id(input_id), run_id = Run_Id(run_id)}, .None
 
     case "queued":
         input_id: u64
@@ -634,14 +648,19 @@ send_input_result_from_reader :: proc(d: ^Decoder) -> (result: Send_Input_Result
             return nil, .Mismatched_Payload
         }
 
-        return Send_Input_Result_Queued{input_id = Input_Id(input_id)}, .None
+        return Session_Send_Input_Result_Queued{input_id = Input_Id(input_id)}, .None
     }
 
     return nil, .Mismatched_Payload
 }
 
 // Decode session.cancel_input params straight from the token stream.
-cancel_input_params_from_reader :: proc(d: ^Decoder) -> (params: Cancel_Input_Params, err: Validation_Error) {
+session_cancel_input_params_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    params: Session_Cancel_Input_Params,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -676,7 +695,12 @@ cancel_input_params_from_reader :: proc(d: ^Decoder) -> (params: Cancel_Input_Pa
 }
 
 // Decode a session.cancel_input result straight from the token stream.
-cancel_input_result_from_reader :: proc(d: ^Decoder) -> (result: Cancel_Input_Result, err: Validation_Error) {
+session_cancel_input_result_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    result: Session_Cancel_Input_Result,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -701,7 +725,12 @@ cancel_input_result_from_reader :: proc(d: ^Decoder) -> (result: Cancel_Input_Re
 }
 
 // Decode session.cancel_run params straight from the token stream.
-cancel_run_params_from_reader :: proc(d: ^Decoder) -> (params: Cancel_Run_Params, err: Validation_Error) {
+session_cancel_run_params_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    params: Session_Cancel_Run_Params,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
 
     Field :: enum {
@@ -737,7 +766,12 @@ cancel_run_params_from_reader :: proc(d: ^Decoder) -> (params: Cancel_Run_Params
 }
 
 // Decode a session.cancel_run result straight from the token stream.
-cancel_run_result_from_reader :: proc(d: ^Decoder) -> (result: Cancel_Run_Result, err: Validation_Error) {
+session_cancel_run_result_from_reader :: proc(
+    d: ^Decoder,
+) -> (
+    result: Session_Cancel_Run_Result,
+    err: Validation_Error,
+) {
     dec_object_begin(d) or_return
 
     Field :: enum {

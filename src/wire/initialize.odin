@@ -175,13 +175,16 @@ Initialize_Result :: struct {
     // Daemon identity and clock.
     daemon:           Daemon_Info,
 
-    // Known workspaces. At most 1024.
+    // @bounded LIMITS.max_workspaces
+    // Known workspaces.
     workspaces:       []Workspace,
 
-    // Available profile names. At most 256, each @bounded 64.
+    // @bounded LIMITS.max_profiles
+    // Available profile names; each element @bounded 64.
     profiles:         []string,
 
-    // Available agent names. At most 256, each @bounded 64.
+    // @bounded LIMITS.max_agents
+    // Available agent names; each element @bounded 64.
     agents:           []string,
 
     // Current compact session-index revision for this connection generation.

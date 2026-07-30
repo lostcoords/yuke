@@ -56,7 +56,8 @@ Model_Info :: struct {
     // Max output tokens the model can produce.
     max_output_tokens: u64,
 
-    // Supported reasoning effort levels. At most 32, each @bounded 32.
+    // @bounded LIMITS.max_reasoning_levels
+    // Supported reasoning effort levels; each element @bounded 32.
     reasoning_levels:  []string,
 
     // @bounded 32
@@ -150,6 +151,7 @@ Catalog_List_Result_Full :: struct {
     // Current catalog revision.
     catalog_rev: Catalog_Rev,
 
+    // @bounded LIMITS.max_catalog_models
     // All available models.
     models:      []Model_Info,
 
@@ -240,10 +242,11 @@ catalog_refresh_result_validate :: proc(self: Catalog_Refresh_Result) -> Validat
 
 // Catalog load health.
 Catalog_Health :: struct {
+    // @bounded LIMITS.max_skipped_providers
     // Providers skipped by the daemon.
     skipped:    []Skipped_Provider,
 
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Catalog load failure, if any.
     load_error: Maybe(string),
 }
@@ -259,14 +262,7 @@ catalog_health_emit :: proc(e: ^Emitter, self: Catalog_Health) {
     }
 
     array_end(e)
-    key(e, "load_error")
-
-    if msg, ok := self.load_error.?; ok {
-        val_string(e, msg)
-    } else {
-        val_null(e)
-    }
-
+    field_required_null_string(e, "load_error", self.load_error)
     object_end(e)
 }
 
@@ -348,7 +344,7 @@ Skip_Reason_Missing_Credential :: struct {
 
 // Provider config was invalid.
 Skip_Reason_Invalid_Config :: struct {
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Human-readable error.
     message: string,
 }
@@ -553,9 +549,7 @@ catalog_list_params_from_reader :: proc(d: ^Decoder) -> (params: Catalog_List_Pa
 
         switch k {
         case "since_rev":
-            if !dec_is_null(d) {
-                params.since_rev = Catalog_Rev(dec_fixed(d, 64) or_return)
-            }
+            params.since_rev = Catalog_Rev(dec_fixed(d, 64) or_return)
 
         case:
             dec_skip(d) or_return

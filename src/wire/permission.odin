@@ -94,16 +94,19 @@ rule_action_from_wire :: proc(s: string) -> (Rule_Action, bool) {
 
 // One option the daemon proposes for a permission request.
 Permission_Option :: struct {
+    // @bounded 32
     // Stable option key clients echo back.
     id:      string,
 
     // Pre-computed classification of this option.
     kind:    Permission_Option_Kind,
 
+    // @bounded 256
     // Human-readable label.
     label:   string,
 
-    // Rule shapes produced when chosen (for `allow_always`). At most 32, each @bounded 512.
+    // @bounded LIMITS.max_permission_creates
+    // Rule shapes produced when chosen (for `allow_always`); each element @bounded 512.
     creates: Maybe([]string),
 }
 
@@ -148,12 +151,14 @@ permission_option_clone :: proc(self: Permission_Option, allocator := context.al
 
 // Decided by a user selecting an option.
 Permission_Decision_User :: struct {
+    // @bounded 32
     // Selected option id.
     option_id:      string,
 
     // Pre-computed classification of the option.
     kind:           Permission_Option_Kind,
 
+    // @bounded 256
     // Human-readable option label.
     label:          string,
 
@@ -169,6 +174,7 @@ Permission_Decision_Rule :: struct {
     // Rule that matched.
     rule_id:        Rule_Id,
 
+    // @bounded 256
     // Rule label.
     label:          string,
 
@@ -250,6 +256,7 @@ Permission_State :: struct {
     // When the daemon issued the prompt.
     requested_at_ms: u64,
 
+    // @bounded LIMITS.max_permission_options
     // Options offered to the user. Absent for rule-resolved decisions; at most 32.
     options:         Maybe([]Permission_Option),
 
@@ -395,7 +402,7 @@ Permission_Decide_Params :: struct {
     //
     option_id:  string,
 
-    // @bounded max_permission_reject_message_bytes
+    // @bounded LIMITS.max_permission_reject_message_bytes
     // Client-supplied reason, meaningful only when option_id resolves to a reject
     // kind; the daemon routes it into Tool_State_Denied.reason.
     message:    Maybe(string),
@@ -439,7 +446,8 @@ permission_rules_params_emit :: proc(e: ^Emitter, self: Permission_Rules_Params)
 
 // Result of permission.rules.
 Permission_Rules_Result :: struct {
-    // Remembered rules for the requested workspace. At most 4096.
+    // @bounded LIMITS.max_permission_rules
+    // Remembered rules for the requested workspace.
     rules: []Permission_Rule,
 }
 
@@ -525,9 +533,7 @@ permission_option_from_reader :: proc(d: ^Decoder) -> (opt: Permission_Option, e
             seen += {.Label}
 
         case "creates":
-            if !dec_is_null(d) {
-                opt.creates = dec_array(d, dec_string) or_return
-            }
+            opt.creates = dec_array(d, dec_string) or_return
 
         case:
             dec_skip(d) or_return
@@ -667,9 +673,7 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
             seen += {.Id}
 
         case "session_id":
-            if !dec_is_null(d) {
-                rule.session_id = Session_Id(dec_fixed(d, 16) or_return)
-            }
+            rule.session_id = Session_Id(dec_fixed(d, 16) or_return)
 
         case "tool":
             rule.tool = dec_string(d) or_return
@@ -742,9 +746,7 @@ permission_decide_params_from_reader :: proc(
             seen += {.Oid}
 
         case "message":
-            if !dec_is_null(d) {
-                params.message = dec_string(d) or_return
-            }
+            params.message = dec_string(d) or_return
 
         case:
             dec_skip(d) or_return

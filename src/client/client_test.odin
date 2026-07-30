@@ -189,7 +189,7 @@ test_send_request_ids_increment_and_record_pending :: proc(t: ^testing.T) {
     own1: Completion
     own2: Completion
 
-    id1, e1 := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{}, _rec_on_response, &own1)
+    id1, e1 := client_send_request(&c, .Catalog_Refresh, wire.Empty{}, _rec_on_response, &own1)
     testing.expect_value(t, e1, Protocol_Error.None)
     testing.expect_value(t, u64(id1), u64(1))
 
@@ -227,7 +227,7 @@ test_two_in_flight_requests_reach_their_own_completion :: proc(t: ^testing.T) {
     refresh: Completion
     list: Completion
 
-    id_refresh, e1 := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{}, _rec_on_response, &refresh)
+    id_refresh, e1 := client_send_request(&c, .Catalog_Refresh, wire.Empty{}, _rec_on_response, &refresh)
     testing.expect_value(t, e1, Protocol_Error.None)
 
     id_list, e2 := client_send_request(
@@ -289,7 +289,7 @@ test_send_request_not_ready :: proc(t: ^testing.T) {
     c.state = .Awaiting_Initialize
     defer _teardown(&c)
 
-    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{}, _rec_on_response)
+    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty{}, _rec_on_response)
     testing.expect_value(t, err, Protocol_Error.Not_Ready)
     testing.expect_value(t, len(c.pending), 0)
 }
@@ -302,7 +302,7 @@ test_send_request_id_exhausted :: proc(t: ^testing.T) {
     c.next_request_id = wire.MAX_REQUEST_ID + 1
     defer _teardown(&c)
 
-    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{}, _rec_on_response)
+    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty{}, _rec_on_response)
     testing.expect_value(t, err, Protocol_Error.Request_Id_Exhausted)
 }
 
@@ -317,7 +317,7 @@ test_send_request_too_many_pending :: proc(t: ^testing.T) {
         _expect_response(&c, u64(i), .Catalog_Refresh)
     }
 
-    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty_Params{}, _rec_on_response)
+    _, err := client_send_request(&c, .Catalog_Refresh, wire.Empty{}, _rec_on_response)
     testing.expect_value(t, err, Protocol_Error.Too_Many_Pending)
     testing.expect_value(t, len(c.pending), MAX_PENDING_REQUESTS)
 }
@@ -337,7 +337,7 @@ test_handle_text_routes_typed_response :: proc(t: ^testing.T) {
     testing.expect_value(t, sink.last_response_id, u64(3))
     testing.expect(t, sink.last_ok, "success response")
     // Result type comes from the pending method, not the payload.
-    testing.expect_value(t, sink.last_result_type, typeid_of(wire.Send_Input_Result))
+    testing.expect_value(t, sink.last_result_type, typeid_of(wire.Session_Send_Input_Result))
 
     _, still := c.pending[u64(3)]
     testing.expect(t, !still, "pending id cleared after response")

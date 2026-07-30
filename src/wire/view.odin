@@ -16,7 +16,8 @@ Diff_Hunk :: struct {
     // Line count in new file.
     new_lines: u64,
 
-    // Hunk body, one line per element (no trailing newlines). At most 1024.
+    // @bounded LIMITS.max_view_items
+    // Hunk body, one line per element (no trailing newlines).
     // Owner: caller/arena.
     lines:     []string,
 }
@@ -115,7 +116,8 @@ Diff_File :: struct {
     // Path in the old tree when the file was renamed.
     old_path: Maybe(string),
 
-    // Per-file hunks in file order. At most 1024. Owner: caller/arena.
+    // @bounded LIMITS.max_view_items
+    // Per-file hunks in file order. Owner: caller/arena.
     hunks:    []Diff_Hunk,
 }
 
@@ -139,9 +141,7 @@ diff_file_from_reader :: proc(d: ^Decoder) -> (file: Diff_File, err: Validation_
             seen += {.Path}
 
         case "old_path":
-            if !dec_is_null(d) {
-                file.old_path = dec_string(d) or_return
-            }
+            file.old_path = dec_string(d) or_return
 
         case "hunks":
             file.hunks = dec_array(d, diff_hunk_from_reader) or_return
@@ -193,6 +193,7 @@ diff_file_clone :: proc(self: Diff_File, allocator := context.allocator) -> Diff
 
 // Plain text view.
 View_Text :: struct {
+    // @unbounded
     // UTF-8 body.
     text:     string,
 
@@ -203,19 +204,22 @@ View_Text :: struct {
 
 // Markdown view.
 View_Markdown :: struct {
+    // @unbounded
     // Markdown source.
     text: string,
 }
 
 // JSON view.
 View_Json :: struct {
+    // @unbounded
     // JSON source.
     text: string,
 }
 
 // Unified diff view.
 View_Diff :: struct {
-    // Files in the diff. At most 1024. Owner: caller/arena.
+    // @bounded LIMITS.max_view_items
+    // Files in the diff. Owner: caller/arena.
     files: []Diff_File,
 }
 
@@ -263,9 +267,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                 seen += {.Text}
 
             case "language":
-                if !dec_is_null(d) {
-                    language = dec_string(d) or_return
-                }
+                language = dec_string(d) or_return
 
             case "files", "source", "alt":
                 return nil, .Mismatched_Payload
@@ -366,9 +368,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                 seen += {.Source}
 
             case "alt":
-                if !dec_is_null(d) {
-                    alt = dec_string(d) or_return
-                }
+                alt = dec_string(d) or_return
 
             case "text", "language", "files":
                 return nil, .Mismatched_Payload

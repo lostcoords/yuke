@@ -162,7 +162,7 @@ broadcast_name_class :: proc(name: Broadcast_Name) -> Broadcast_Class {
         return .Ungated
     }
 
-    return .Ungated
+    unreachable()
 }
 
 // Typed broadcast payloads. One struct per broadcast name; a broadcast frame's data
@@ -288,6 +288,7 @@ Permission_Rules_Changed_Data :: struct {
     // Owning workspace id.
     workspace_id: Workspace_Id,
 
+    // @bounded LIMITS.max_permission_rules
     // Current rule set.
     rules:        []Permission_Rule,
 }
@@ -1083,6 +1084,86 @@ broadcast_data_clone :: proc(self: Broadcast_Data, allocator := context.allocato
     }
 
     return nil
+}
+
+// Broadcast name determined by this payload's active arm; ok is false for an empty
+// payload. The pairing is one-to-one.
+broadcast_data_name :: proc(self: Broadcast_Data) -> (Broadcast_Name, bool) {
+    switch v in self {
+    case Session_Summary_Changed_Data:
+        return .Session_Summary_Changed, true
+
+    case Session_Activity_Changed_Data:
+        return .Session_Activity_Changed, true
+
+    case Session_Removed_Data:
+        return .Session_Removed, true
+
+    case Workspace_Created_Data:
+        return .Workspace_Created, true
+
+    case Workspace_Removed_Data:
+        return .Workspace_Removed, true
+
+    case Permission_Rules_Changed_Data:
+        return .Permission_Rules_Changed, true
+
+    case Catalog_Changed_Data:
+        return .Catalog_Changed, true
+
+    case Cron_Created_Data:
+        return .Cron_Created, true
+
+    case Cron_Updated_Data:
+        return .Cron_Updated, true
+
+    case Cron_Removed_Data:
+        return .Cron_Removed, true
+
+    case Notice:
+        return .Notice, true
+
+    case Message_Committed_Data:
+        return .Message_Committed, true
+
+    case Run_Started_Data:
+        return .Run_Started, true
+
+    case Run_Done_Data:
+        return .Run_Done, true
+
+    case Config_Changed_Data:
+        return .Config_Changed, true
+
+    case Transcript_Truncated_Data:
+        return .Transcript_Truncated, true
+
+    case Message_Started_Data:
+        return .Message_Started, true
+
+    case Message_Discarded_Data:
+        return .Message_Discarded, true
+
+    case Message_Part_Added_Data:
+        return .Message_Part_Added, true
+
+    case Message_Part_Delta_Data:
+        return .Message_Part_Delta, true
+
+    case Tool_State_Changed_Data:
+        return .Tool_State_Changed, true
+
+    case Tool_Output_Delta_Data:
+        return .Tool_Output_Delta, true
+
+    case Input_Queued_Data:
+        return .Input_Queued, true
+
+    case Input_Canceled_Data:
+        return .Input_Canceled, true
+    }
+
+    return {}, false
 }
 
 // Durable sequence number, or none for a non-durable broadcast.

@@ -41,7 +41,7 @@ Notice :: struct {
     // Emitting subsystem.
     source:  string,
 
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Human-readable detail.
     message: string,
 }

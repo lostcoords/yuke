@@ -43,7 +43,7 @@ Message_Error :: struct {
     // Provider error category string.
     type:    string,
 
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Human-readable error.
     message: string,
 }
@@ -85,11 +85,20 @@ Text_Part :: struct {
 // Reasoning assistant part payload. Non-owning.
 Reasoning_Part :: struct {
     // Part ordinal in the message content array.
-    id:   Part_Id,
+    id:        Part_Id,
 
     // @unbounded
     // UTF-8 reasoning trace.
-    text: string,
+    text:      string,
+
+    // @unbounded
+    // Opaque provider data: Anthropic's extended-thinking block signature,
+    // delivered by `signature_delta`. Empty when the provider issued none.
+    // Persisted verbatim and replayed verbatim on the next request of a
+    // tool-use conversation; never interpreted. A part carrying one must never
+    // be collapsed or reordered by a normalization pass, even when `text` is
+    // empty: the signature covers the block at its position.
+    signature: string,
 }
 
 // Tool assistant part payload. Non-owning.
@@ -97,6 +106,7 @@ Tool_Part :: struct {
     // Part ordinal in the message content array.
     id:               Part_Id,
 
+    // @unbounded
     // Provider identity; never used to address the part.
     call_id:          Maybe(string),
 
@@ -108,7 +118,8 @@ Tool_Part :: struct {
     // Opaque JSON-encoded arguments.
     arguments:        string,
 
-    // Display-only input views. At most 64.
+    // @bounded LIMITS.max_views_per_tool
+    // Display-only input views.
     input_view:       Maybe([]View),
 
     // Current tool state.
@@ -228,6 +239,10 @@ assistant_part_emit :: proc(e: ^Emitter, self: Assistant_Part) {
         field_u64(e, "id", u64(v.id))
         field_string(e, "text", v.text)
 
+        if v.signature != "" {
+            field_string(e, "signature", v.signature)
+        }
+
     case Tool_Part:
         field_string(e, "type", "tool")
         field_u64(e, "id", u64(v.id))
@@ -268,7 +283,11 @@ assistant_part_clone :: proc(self: Assistant_Part, allocator := context.allocato
         return Text_Part{id = v.id, text = strings.clone(v.text, allocator)}
 
     case Reasoning_Part:
-        return Reasoning_Part{id = v.id, text = strings.clone(v.text, allocator)}
+        return Reasoning_Part {
+            id = v.id,
+            text = strings.clone(v.text, allocator),
+            signature = strings.clone(v.signature, allocator),
+        }
 
     case Tool_Part:
         return tool_part_clone(v, allocator)
@@ -308,7 +327,7 @@ Tool_State_Running :: struct {
     // Run start epoch ms.
     started_at_ms: u64,
 
-    // @bounded max_tool_output_stream_bytes
+    // @bounded LIMITS.max_tool_output_stream_bytes
     // Accumulated display output streamed so far. Present in a resync
     // snapshot of a running tool, absent in the live transition into
     // `running`. Its UTF-8 byte length is the next `tool.output_delta`
@@ -322,6 +341,7 @@ Tool_State_Completed :: struct {
     // Model-facing output text.
     output:      string,
 
+    // @bounded LIMITS.max_views_per_tool
     // Display-only rendering hints.
     view:        Maybe([]View),
 
@@ -335,6 +355,7 @@ Tool_State_Error :: struct {
     // Model-facing error text.
     message:     string,
 
+    // @bounded LIMITS.max_views_per_tool
     // Display-only rendering hints.
     view:        Maybe([]View),
 
@@ -510,6 +531,7 @@ User_Message :: struct {
     // Message id.
     id:       Message_Id,
 
+    // @bounded LIMITS.max_input_parts
     // Content parts in rendered order.
     content:  []Content_Part,
 
@@ -546,6 +568,106 @@ user_message_clone :: proc(self: User_Message, allocator := context.allocator) -
     return out
 }
 
+// Provider request/response protocol a turn was produced under. Closed set; the
+// transport picks a decoder from it, and persisted provenance names it so a later
+// replay can tell whether opaque provider data still applies.
+Provider_Protocol :: enum {
+    // Anthropic Messages.
+    Anthropic_Messages,
+
+    // OpenAI Chat Completions.
+    Openai_Chat,
+
+    // OpenAI Responses.
+    Openai_Responses,
+}
+
+// Provider_Protocol <-> wire string, indexed by the enum so a missing mapping is visible.
+@(rodata)
+provider_protocol_wire := [Provider_Protocol]string {
+    .Anthropic_Messages = "anthropic-messages",
+    .Openai_Chat        = "openai-completions",
+    .Openai_Responses   = "openai-responses",
+}
+
+// Wire string for a provider protocol.
+provider_protocol_to_wire :: proc(p: Provider_Protocol) -> string {
+    return provider_protocol_wire[p]
+}
+
+// Provider protocol for a wire string; ok is false for an unknown protocol.
+provider_protocol_from_wire :: proc(s: string) -> (Provider_Protocol, bool) {
+    return enum_from_wire(provider_protocol_wire, s)
+}
+
+// Which provider actually produced one assistant turn. Absent on a turn the daemon
+// built before the field existed. `Assistant_Message.config_rev` records the
+// configuration a turn was *requested* under and can be resolved away by a later
+// config change; this records what answered, which is what makes provider-scoped
+// opaque data (a reasoning part's signature) safe to replay: replay it only when
+// the next request goes to the same protocol and model. Non-owning.
+Turn_Provenance :: struct {
+    // Protocol the turn was produced under.
+    protocol: Provider_Protocol,
+
+    // @bounded 128
+    // Model id that produced the turn, resolved at request time.
+    model:    string,
+}
+
+// Write a turn provenance object.
+turn_provenance_emit :: proc(e: ^Emitter, self: Turn_Provenance) {
+    object_begin(e)
+    field_string(e, "protocol", provider_protocol_to_wire(self.protocol))
+    field_string(e, "model", self.model)
+    object_end(e)
+}
+
+// Verify annotated field bounds.
+turn_provenance_validate :: proc(self: Turn_Provenance) -> Validation_Error {
+    return enforce_bounded(128, self.model)
+}
+
+// Deep-copy into `allocator`.
+turn_provenance_clone :: proc(self: Turn_Provenance, allocator := context.allocator) -> Turn_Provenance {
+    return Turn_Provenance{protocol = self.protocol, model = strings.clone(self.model, allocator)}
+}
+
+// Decode a turn provenance object straight from the token stream.
+turn_provenance_from_reader :: proc(d: ^Decoder) -> (out: Turn_Provenance, err: Validation_Error) {
+    dec_object_begin(d) or_return
+
+    Field :: enum {
+        Protocol,
+        Model,
+    }
+
+    seen: bit_set[Field]
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "protocol":
+            out.protocol = dec_enum(d, provider_protocol_wire) or_return
+            seen += {.Protocol}
+
+        case "model":
+            out.model = dec_string(d) or_return
+            seen += {.Model}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if seen != {.Protocol, .Model} {
+        return {}, .Mismatched_Payload
+    }
+
+    return out, .None
+}
+
 // Assistant transcript message payload. Non-owning.
 Assistant_Message :: struct {
     // Message id.
@@ -561,7 +683,8 @@ Assistant_Message :: struct {
     // Agent name (`"main"` for a root session).
     agent:      string,
 
-    // Assistant parts in append order. At most 1024.
+    // @bounded LIMITS.max_active_draft_parts
+    // Assistant parts in append order.
     content:    []Assistant_Part,
 
     // Present on every committed message; absent on a draft.
@@ -578,6 +701,9 @@ Assistant_Message :: struct {
 
     // Present exactly when `finish` is `"error"`.
     error:      Maybe(Message_Error),
+
+    // Provider that produced this turn; absent on turns older than the field.
+    provenance: Maybe(Turn_Provenance),
 }
 
 // Verify annotated field bounds.
@@ -602,6 +728,10 @@ assistant_message_validate :: proc(self: Assistant_Message) -> Validation_Error 
         }
     }
 
+    if prov, ok := self.provenance.?; ok {
+        turn_provenance_validate(prov) or_return
+    }
+
     return .None
 }
 
@@ -617,10 +747,7 @@ assistant_message_validate_draft :: proc(self: Assistant_Message) -> Validation_
     if has_finish || has_tokens || has_cost || has_completed || has_error {
         return .Mismatched_Payload
     }
-    // NOTE: replaces Zig's reflection-based aggregateStringBytes with an explicit
-    // walk over the message's payload strings (agent + content parts + nested
-    // views/permission). Safe-integer enforcement is handled at parse time by the
-    // get_u64 range checks, replacing enforceSafeIntegers.
+
     if _assistant_message_string_bytes(self) > LIMITS.max_active_draft_string_bytes {
         return .Overflow
     }
@@ -704,6 +831,11 @@ assistant_message_emit :: proc(e: ^Emitter, self: Assistant_Message) {
         message_error_emit(e, me)
     }
 
+    if prov, ok := self.provenance.?; ok {
+        key(e, "provenance")
+        turn_provenance_emit(e, prov)
+    }
+
     object_end(e)
 }
 
@@ -720,6 +852,12 @@ assistant_message_clone :: proc(self: Assistant_Message, allocator := context.al
         error = message_error_clone(me, allocator)
     }
 
+    provenance: Maybe(Turn_Provenance)
+
+    if prov, ok := self.provenance.?; ok {
+        provenance = turn_provenance_clone(prov, allocator)
+    }
+
     return Assistant_Message {
         id = self.id,
         run_id = self.run_id,
@@ -731,6 +869,7 @@ assistant_message_clone :: proc(self: Assistant_Message, allocator := context.al
         cost = self.cost,
         time = self.time,
         error = error,
+        provenance = provenance,
     }
 }
 
@@ -824,14 +963,7 @@ message_emit :: proc(e: ^Emitter, self: Message) {
         field_u64(e, "run_id", u64(v.run_id))
         field_string(e, "reason", compaction_reason_to_wire(v.reason))
         field_string(e, "summary", v.summary)
-        key(e, "first_kept_id")
-
-        if k, ok := v.first_kept_id.?; ok {
-            val_u64(e, u64(k))
-        } else {
-            val_null(e)
-        }
-
+        field_required_null_u64(e, "first_kept_id", v.first_kept_id)
         field_u64(e, "tokens_before", v.tokens_before)
         field_u64(e, "tokens_after", v.tokens_after)
         key(e, "time")
@@ -982,7 +1114,7 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
         return len(v.text)
 
     case Reasoning_Part:
-        return len(v.text)
+        return len(v.text) + len(v.signature)
 
     case Tool_Part:
         total := len(v.name) + len(v.arguments)
@@ -1123,6 +1255,9 @@ created_time_from_reader :: proc(d: ^Decoder) -> (time: Created_Time, err: Valid
             time.created_at_ms = dec_u64(d) or_return
             have = true
 
+        case "completed_at_ms":
+            return {}, .Mismatched_Payload
+
         case:
             dec_skip(d) or_return
         }
@@ -1212,7 +1347,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
     tag := dec_find_tag(d, "type") or_return
 
     switch tag {
-    case "text", "reasoning":
+    case "text":
         id: u64
         text: string
 
@@ -1235,6 +1370,48 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
                 text = dec_string(d) or_return
                 seen += {.Text}
 
+            case "call_id", "name", "arguments", "input_view", "state", "permission", "signature":
+                return nil, .Mismatched_Payload
+
+            case:
+                dec_skip(d) or_return
+            }
+        }
+
+        if seen != {.Id, .Text} {
+            return nil, .Mismatched_Payload
+        }
+
+        return Text_Part{id = Part_Id(id), text = text}, .None
+
+    case "reasoning":
+        id: u64
+        text: string
+        signature: string
+
+        Field :: enum {
+            Id,
+            Text,
+        }
+
+        seen: bit_set[Field]
+        for {
+            k, kdone := dec_key(d) or_return
+            if kdone do break
+
+            switch k {
+            case "id":
+                id = dec_u64(d) or_return
+                seen += {.Id}
+
+            case "text":
+                text = dec_string(d) or_return
+                seen += {.Text}
+
+            // Optional: rows written before the field existed carry no signature.
+            case "signature":
+                signature = dec_string(d) or_return
+
             case "call_id", "name", "arguments", "input_view", "state", "permission":
                 return nil, .Mismatched_Payload
 
@@ -1247,11 +1424,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
             return nil, .Mismatched_Payload
         }
 
-        if tag == "text" {
-            return Text_Part{id = Part_Id(id), text = text}, .None
-        }
-
-        return Reasoning_Part{id = Part_Id(id), text = text}, .None
+        return Reasoning_Part{id = Part_Id(id), text = text, signature = signature}, .None
 
     case "tool":
         tp: Tool_Part
@@ -1575,6 +1748,11 @@ _assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Va
         case "error":
             msg.error = message_error_from_reader(d) or_return
 
+        // Persisted-only and optional: rows written before the field existed, and
+        // every message a client ever sees, carry no provenance.
+        case "provenance":
+            msg.provenance = turn_provenance_from_reader(d) or_return
+
         case "input_id", "skill", "reason", "summary", "first_kept_id", "tokens_before", "tokens_after":
             return {}, .Mismatched_Payload
 
@@ -1634,11 +1812,9 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
             msg.skill = skill_ref_from_reader(d) or_return
 
         case "time":
-            mt := message_time_from_reader(d) or_return
-            msg.time = Created_Time {
-                created_at_ms = mt.created_at_ms,
-            }
+            msg.time = created_time_from_reader(d) or_return
             seen += {.Time}
+
         case "run_id",
              "config_rev",
              "agent",
@@ -1650,7 +1826,8 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
              "first_kept_id",
              "tokens_before",
              "tokens_after",
-             "error":
+             "error",
+             "provenance":
             return {}, .Mismatched_Payload
 
         case:
@@ -1716,13 +1893,10 @@ _compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: 
             seen += {.Ta}
 
         case "time":
-            mt := message_time_from_reader(d) or_return
-            msg.time = Created_Time {
-                created_at_ms = mt.created_at_ms,
-            }
+            msg.time = created_time_from_reader(d) or_return
             seen += {.Time}
 
-        case "content", "input_id", "skill", "config_rev", "agent", "finish", "tokens", "cost", "error":
+        case "content", "input_id", "skill", "config_rev", "agent", "finish", "tokens", "cost", "error", "provenance":
             return {}, .Mismatched_Payload
 
         case:

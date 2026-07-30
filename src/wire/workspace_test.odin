@@ -179,18 +179,18 @@ test_skill_list_result_roundtrip :: proc(t: ^testing.T) {
     input := `{"skills":[{"name":"deploy","description":"Deploy the app","scope":"project","argument_hint":"env"}]}`
     v := decoder_init(input)
 
-    result, derr := skill_list_result_from_reader(&v)
+    result, derr := workspace_skills_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, len(result.skills), 1)
     testing.expect_value(t, result.skills[0].name, "deploy")
     testing.expect_value(t, result.skills[0].scope, Skill_Scope.Project)
     testing.expect_value(t, result.skills[0].argument_hint, "env")
-    testing.expect(t, skill_list_result_validate(result) == .None, "validate should pass")
+    testing.expect(t, workspace_skills_result_validate(result) == .None, "validate should pass")
 
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    skill_list_result_emit(&e, result)
+    workspace_skills_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), input)
 }
 
@@ -200,7 +200,7 @@ test_skill_list_params_roundtrip :: proc(t: ^testing.T) {
     v := decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
-    params, derr := skill_list_params_from_reader(&v)
+    params, derr := workspace_skills_params_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     wid := ([16]u8)(params.workspace_id)
     testing.expect_value(t, string(wid[:]), "0123456789abcdef")
@@ -208,7 +208,7 @@ test_skill_list_params_roundtrip :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    skill_list_params_emit(&e, params)
+    workspace_skills_params_emit(&e, params)
     testing.expect_value(t, to_string(&e), input)
 }
 

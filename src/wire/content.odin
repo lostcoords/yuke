@@ -15,7 +15,9 @@ Media_Base64 :: struct {
     // MIME type.
     mime: string,
 
-    // Base64-encoded bytes. Decoded length <= LIMITS.max_inline_media_bytes.
+    // @bounded LIMITS.max_inline_media_base64_bytes
+    // Base64-encoded bytes. The decoded length is the tighter rule:
+    // <= LIMITS.max_inline_media_bytes.
     data: string,
 }
 
@@ -231,6 +233,8 @@ media_source_clone :: proc(self: Media_Source, allocator := context.allocator) -
 // Reject inline base64 that is malformed or would decode past the inline cap.
 @(private)
 _validate_base64_inline :: proc(data: string) -> Validation_Error {
+    enforce_bounded(LIMITS.max_inline_media_base64_bytes, data) or_return
+
     if len(data) % 4 != 0 {
         return .Mismatched_Payload
     }
@@ -279,6 +283,7 @@ _is_base64_char :: proc(c: u8) -> bool {
 
 // Plain UTF-8 text.
 Content_Text :: struct {
+    // @unbounded
     // UTF-8 text.
     text: string,
 }
@@ -377,9 +382,7 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
                 seen += {.Source}
 
             case "detail":
-                if !dec_is_null(d) {
-                    detail = dec_string(d) or_return
-                }
+                detail = dec_string(d) or_return
 
             case "text", "format", "filename":
                 return nil, .Mismatched_Payload
@@ -451,9 +454,7 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
                 seen += {.Source}
 
             case "filename":
-                if !dec_is_null(d) {
-                    filename = dec_string(d) or_return
-                }
+                filename = dec_string(d) or_return
 
             case "text", "detail", "format":
                 return nil, .Mismatched_Payload

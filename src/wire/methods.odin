@@ -136,24 +136,18 @@ method_name_from_wire :: proc(s: string) -> (Method_Name, bool) {
     return enum_from_wire(method_name_wire, s)
 }
 
-// Empty params/result object (`{}`) for methods whose registry entry uses `{}`.
-Empty_Params :: struct {}
-// Empty result payload.
-Empty_Result :: struct {}
+// Empty params/result object (`{}`) for methods whose registry entry uses `{}`. One
+// type for both directions: an empty object carries no direction-specific meaning.
+Empty :: struct {}
 
-// Write an empty params object.
-empty_params_emit :: proc(e: ^Emitter) {
+// Write an empty params/result object.
+empty_emit :: proc(e: ^Emitter) {
     object_begin(e)
     object_end(e)
 }
 
-// Write an empty result object.
-empty_result_emit :: proc(e: ^Emitter) {
-    object_begin(e)
-    object_end(e)
-}
-
-// Result of `session.create` and `session.fork`.
+// Result of `session.create`, `session.fork`, and `session.patch`. The returned session
+// carries the resulting config_rev and permission mode.
 Session_Result :: struct {
     // Resulting session.
     session: Session,
@@ -195,25 +189,6 @@ session_patch_params_validate :: proc(self: Session_Patch_Params) -> Validation_
     enforce_id(([16]u8)(self.session_id)) or_return
 
     return session_patch_validate(self.patch)
-}
-
-// Result of `session.patch`.
-Session_Patch_Result :: struct {
-    // Patched session, carrying the resulting config_rev and permission mode.
-    session: Session,
-}
-
-// Write a session.patch result.
-session_patch_result_emit :: proc(e: ^Emitter, self: Session_Patch_Result) {
-    object_begin(e)
-    key(e, "session")
-    session_emit(e, self.session)
-    object_end(e)
-}
-
-// Verify annotated field bounds.
-session_patch_result_validate :: proc(self: Session_Patch_Result) -> Validation_Error {
-    return session_validate(self.session)
 }
 
 // Params for `session.remove`.
@@ -264,23 +239,23 @@ Request_Params :: union {
     Create_Session,
     Session_Patch_Params,
     Session_Remove_Params,
-    Fork_Params,
-    Compact_Params,
-    Rewind_Params,
-    Send_Input_Params,
-    Cancel_Input_Params,
-    Cancel_Run_Params,
-    Resync_Params,
-    History_Params,
+    Session_Fork_Params,
+    Session_Compact_Params,
+    Session_Rewind_Params,
+    Session_Send_Input_Params,
+    Session_Cancel_Input_Params,
+    Session_Cancel_Run_Params,
+    Session_Resync_Params,
+    Session_History_Params,
     Permission_Decide_Params,
-    Config_Get_Params,
+    Session_Config_Params,
     Subscription_Set_Params,
     Catalog_List_Params,
-    Empty_Params,
+    Empty,
     Workspace_Describe_Params,
     Workspace_Browse_Params,
     Workspace_Remove_Params,
-    Skill_List_Params,
+    Workspace_Skills_Params,
     Permission_Rules_Params,
     Permission_Forget_Params,
     Cron_Create_Params,
@@ -295,21 +270,20 @@ Response_Result :: union {
     Initialize_Result,
     Session_List_Result,
     Session_Result,
-    Session_Patch_Result,
-    Empty_Result,
-    Compact_Result,
-    Send_Input_Result,
-    Cancel_Input_Result,
-    Cancel_Run_Result,
-    Resync_Result,
-    History_Result,
-    Config_Get_Result,
+    Empty,
+    Session_Compact_Result,
+    Session_Send_Input_Result,
+    Session_Cancel_Input_Result,
+    Session_Cancel_Run_Result,
+    Session_Resync_Result,
+    Session_History_Result,
+    Session_Config_Result,
     Catalog_List_Result,
     Catalog_Refresh_Result,
     Workspace_Describe_Result,
     Workspace_Browse_Result,
     Workspace_Remove_Result,
-    Skill_List_Result,
+    Workspace_Skills_Result,
     Permission_Rules_Result,
     Cron_Job_Result,
     Cron_List_Result,
@@ -334,35 +308,35 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     case Session_Remove_Params:
         session_remove_params_emit(e, p)
 
-    case Fork_Params:
-        fork_params_emit(e, p)
+    case Session_Fork_Params:
+        session_fork_params_emit(e, p)
 
-    case Compact_Params:
-        compact_params_emit(e, p)
+    case Session_Compact_Params:
+        session_compact_params_emit(e, p)
 
-    case Rewind_Params:
-        rewind_params_emit(e, p)
+    case Session_Rewind_Params:
+        session_rewind_params_emit(e, p)
 
-    case Send_Input_Params:
-        send_input_params_emit(e, p)
+    case Session_Send_Input_Params:
+        session_send_input_params_emit(e, p)
 
-    case Cancel_Input_Params:
-        cancel_input_params_emit(e, p)
+    case Session_Cancel_Input_Params:
+        session_cancel_input_params_emit(e, p)
 
-    case Cancel_Run_Params:
-        cancel_run_params_emit(e, p)
+    case Session_Cancel_Run_Params:
+        session_cancel_run_params_emit(e, p)
 
-    case Resync_Params:
-        resync_params_emit(e, p)
+    case Session_Resync_Params:
+        session_resync_params_emit(e, p)
 
-    case History_Params:
-        history_params_emit(e, p)
+    case Session_History_Params:
+        session_history_params_emit(e, p)
 
     case Permission_Decide_Params:
         permission_decide_params_emit(e, p)
 
-    case Config_Get_Params:
-        config_get_params_emit(e, p)
+    case Session_Config_Params:
+        session_config_params_emit(e, p)
 
     case Subscription_Set_Params:
         subscription_set_params_emit(e, p)
@@ -370,8 +344,8 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     case Catalog_List_Params:
         catalog_list_params_emit(e, p)
 
-    case Empty_Params:
-        empty_params_emit(e)
+    case Empty:
+        empty_emit(e)
 
     case Workspace_Describe_Params:
         workspace_describe_params_emit(e, p)
@@ -382,8 +356,8 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     case Workspace_Remove_Params:
         workspace_remove_params_emit(e, p)
 
-    case Skill_List_Params:
-        skill_list_params_emit(e, p)
+    case Workspace_Skills_Params:
+        workspace_skills_params_emit(e, p)
 
     case Permission_Rules_Params:
         permission_rules_params_emit(e, p)
@@ -420,32 +394,29 @@ response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
     case Session_Result:
         session_result_emit(e, r)
 
-    case Session_Patch_Result:
-        session_patch_result_emit(e, r)
+    case Empty:
+        empty_emit(e)
 
-    case Empty_Result:
-        empty_result_emit(e)
+    case Session_Compact_Result:
+        session_compact_result_emit(e, r)
 
-    case Compact_Result:
-        compact_result_emit(e, r)
+    case Session_Send_Input_Result:
+        session_send_input_result_emit(e, r)
 
-    case Send_Input_Result:
-        send_input_result_emit(e, r)
+    case Session_Cancel_Input_Result:
+        session_cancel_input_result_emit(e, r)
 
-    case Cancel_Input_Result:
-        cancel_input_result_emit(e, r)
+    case Session_Cancel_Run_Result:
+        session_cancel_run_result_emit(e, r)
 
-    case Cancel_Run_Result:
-        cancel_run_result_emit(e, r)
+    case Session_Resync_Result:
+        session_resync_result_emit(e, r)
 
-    case Resync_Result:
-        resync_result_emit(e, r)
+    case Session_History_Result:
+        session_history_result_emit(e, r)
 
-    case History_Result:
-        history_result_emit(e, r)
-
-    case Config_Get_Result:
-        config_get_result_emit(e, r)
+    case Session_Config_Result:
+        session_config_result_emit(e, r)
 
     case Catalog_List_Result:
         catalog_list_result_emit(e, r)
@@ -462,8 +433,8 @@ response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
     case Workspace_Remove_Result:
         workspace_remove_result_emit(e, r)
 
-    case Skill_List_Result:
-        skill_list_result_emit(e, r)
+    case Workspace_Skills_Result:
+        workspace_skills_result_emit(e, r)
 
     case Permission_Rules_Result:
         permission_rules_result_emit(e, r)
@@ -497,14 +468,17 @@ request_params_validate :: proc(params: Request_Params) -> Validation_Error {
     case Session_Remove_Params:
         return session_remove_params_validate(p)
 
-    case Send_Input_Params:
-        return send_input_params_validate(p)
+    case Session_Send_Input_Params:
+        return session_send_input_params_validate(p)
 
-    case Cancel_Input_Params:
-        return cancel_input_params_validate(p)
+    case Session_Cancel_Input_Params:
+        return session_cancel_input_params_validate(p)
 
-    case Cancel_Run_Params:
-        return cancel_run_params_validate(p)
+    case Session_Cancel_Run_Params:
+        return session_cancel_run_params_validate(p)
+
+    case Session_Resync_Params:
+        return session_resync_params_validate(p)
 
     case Permission_Decide_Params:
         return permission_decide_params_validate(p)
@@ -549,17 +523,14 @@ response_result_validate :: proc(result: Response_Result) -> Validation_Error {
     case Session_Result:
         return session_result_validate(r)
 
-    case Session_Patch_Result:
-        return session_patch_result_validate(r)
+    case Session_Resync_Result:
+        return session_resync_result_validate(r)
 
-    case Resync_Result:
-        return resync_result_validate(r)
+    case Session_History_Result:
+        return session_history_result_validate(r)
 
-    case History_Result:
-        return history_result_validate(r)
-
-    case Config_Get_Result:
-        return config_get_result_validate(r)
+    case Session_Config_Result:
+        return session_config_result_validate(r)
 
     case Catalog_List_Result:
         return catalog_list_result_validate(r)
@@ -576,8 +547,8 @@ response_result_validate :: proc(result: Response_Result) -> Validation_Error {
     case Workspace_Remove_Result:
         return workspace_remove_result_validate(r)
 
-    case Skill_List_Result:
-        return skill_list_result_validate(r)
+    case Workspace_Skills_Result:
+        return workspace_skills_result_validate(r)
 
     case Permission_Rules_Result:
         return permission_rules_result_validate(r)
@@ -612,7 +583,7 @@ params_are_default :: proc(params: Request_Params) -> bool {
     case Catalog_List_Params:
         return p.since_rev == nil
 
-    case Empty_Params:
+    case Empty:
         return true
 
     case Workspace_Browse_Params:
@@ -641,7 +612,7 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
         params = Catalog_List_Params{}
 
     case .Catalog_Refresh:
-        params = Empty_Params{}
+        params = Empty{}
 
     case .Workspace_Browse:
         params = Workspace_Browse_Params{}
@@ -658,20 +629,8 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
 
 // --- streaming decoders ---
 
-// Read an empty params object; extra fields are ignored.
-empty_params_from_reader :: proc(d: ^Decoder) -> (out: Empty_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    for {
-        _, done := dec_key(d) or_return
-        if done do break
-        dec_skip(d) or_return
-    }
-
-    return {}, .None
-}
-
-// Read an empty result object; extra fields are ignored.
-empty_result_from_reader :: proc(d: ^Decoder) -> (out: Empty_Result, err: Validation_Error) {
+// Read an empty params/result object; extra fields are ignored.
+empty_from_reader :: proc(d: ^Decoder) -> (out: Empty, err: Validation_Error) {
     dec_object_begin(d) or_return
     for {
         _, done := dec_key(d) or_return
@@ -740,31 +699,6 @@ session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_
     }
 
     return params, .None
-}
-
-// Decode a session.patch result straight from the token stream.
-session_patch_result_from_reader :: proc(d: ^Decoder) -> (result: Session_Patch_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    have := false
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "session":
-            result.session = session_from_reader(d) or_return
-            have = true
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if !have {
-        return {}, .Mismatched_Payload
-    }
-
-    return result, .None
 }
 
 // Decode session.remove params straight from the token stream.
@@ -845,34 +779,34 @@ request_params_from_reader :: proc(
         params = session_remove_params_from_reader(d) or_return
 
     case .Session_Fork:
-        params = fork_params_from_reader(d) or_return
+        params = session_fork_params_from_reader(d) or_return
 
     case .Session_Compact:
-        params = compact_params_from_reader(d) or_return
+        params = session_compact_params_from_reader(d) or_return
 
     case .Session_Rewind:
-        params = rewind_params_from_reader(d) or_return
+        params = session_rewind_params_from_reader(d) or_return
 
     case .Session_Send_Input:
-        params = send_input_params_from_reader(d) or_return
+        params = session_send_input_params_from_reader(d) or_return
 
     case .Session_Cancel_Input:
-        params = cancel_input_params_from_reader(d) or_return
+        params = session_cancel_input_params_from_reader(d) or_return
 
     case .Session_Cancel_Run:
-        params = cancel_run_params_from_reader(d) or_return
+        params = session_cancel_run_params_from_reader(d) or_return
 
     case .Session_Resync:
-        params = resync_params_from_reader(d) or_return
+        params = session_resync_params_from_reader(d) or_return
 
     case .Session_History:
-        params = history_params_from_reader(d) or_return
+        params = session_history_params_from_reader(d) or_return
 
     case .Permission_Decide:
         params = permission_decide_params_from_reader(d) or_return
 
     case .Session_Config:
-        params = config_get_params_from_reader(d) or_return
+        params = session_config_params_from_reader(d) or_return
 
     case .Subscription_Set:
         params = subscription_set_params_from_reader(d) or_return
@@ -881,7 +815,7 @@ request_params_from_reader :: proc(
         params = catalog_list_params_from_reader(d) or_return
 
     case .Catalog_Refresh:
-        params = empty_params_from_reader(d) or_return
+        params = empty_from_reader(d) or_return
 
     case .Workspace_Describe:
         params = workspace_describe_params_from_reader(d) or_return
@@ -893,7 +827,7 @@ request_params_from_reader :: proc(
         params = workspace_remove_params_from_reader(d) or_return
 
     case .Workspace_Skills:
-        params = skill_list_params_from_reader(d) or_return
+        params = workspace_skills_params_from_reader(d) or_return
 
     case .Permission_Rules:
         params = permission_rules_params_from_reader(d) or_return
@@ -939,43 +873,43 @@ response_result_from_reader :: proc(
         result = session_result_from_reader(d) or_return
 
     case .Session_Patch:
-        result = session_patch_result_from_reader(d) or_return
+        result = session_result_from_reader(d) or_return
 
     case .Session_Remove:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Session_Fork:
         result = session_result_from_reader(d) or_return
 
     case .Session_Compact:
-        result = compact_result_from_reader(d) or_return
+        result = session_compact_result_from_reader(d) or_return
 
     case .Session_Rewind:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Session_Send_Input:
-        result = send_input_result_from_reader(d) or_return
+        result = session_send_input_result_from_reader(d) or_return
 
     case .Session_Cancel_Input:
-        result = cancel_input_result_from_reader(d) or_return
+        result = session_cancel_input_result_from_reader(d) or_return
 
     case .Session_Cancel_Run:
-        result = cancel_run_result_from_reader(d) or_return
+        result = session_cancel_run_result_from_reader(d) or_return
 
     case .Session_Resync:
-        result = resync_result_from_reader(d) or_return
+        result = session_resync_result_from_reader(d) or_return
 
     case .Session_History:
-        result = history_result_from_reader(d) or_return
+        result = session_history_result_from_reader(d) or_return
 
     case .Permission_Decide:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Session_Config:
-        result = config_get_result_from_reader(d) or_return
+        result = session_config_result_from_reader(d) or_return
 
     case .Subscription_Set:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Catalog_List:
         result = catalog_list_result_from_reader(d) or_return
@@ -993,13 +927,13 @@ response_result_from_reader :: proc(
         result = workspace_remove_result_from_reader(d) or_return
 
     case .Workspace_Skills:
-        result = skill_list_result_from_reader(d) or_return
+        result = workspace_skills_result_from_reader(d) or_return
 
     case .Permission_Rules:
         result = permission_rules_result_from_reader(d) or_return
 
     case .Permission_Forget:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Cron_Create:
         result = cron_job_result_from_reader(d) or_return
@@ -1008,7 +942,7 @@ response_result_from_reader :: proc(
         result = cron_job_result_from_reader(d) or_return
 
     case .Cron_Remove:
-        result = empty_result_from_reader(d) or_return
+        result = empty_from_reader(d) or_return
 
     case .Cron_List:
         result = cron_list_result_from_reader(d) or_return

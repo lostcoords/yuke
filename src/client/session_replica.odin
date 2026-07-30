@@ -1568,14 +1568,14 @@ derive_pending_permission :: proc(active: ^Draft_Replica) -> Maybe(Permission_Lo
 // tears down every candidate on any early return before the commit.
 replica_install_snapshot :: proc(
     self: ^Session_Replica,
-    r: wire.Resync_Result,
+    r: wire.Session_Resync_Result,
 ) -> (
     outcome: Install_Outcome,
     err: Replica_Error,
 ) {
     // The wire validator is stronger than the replica's inline checks (activity/queued and
     // activity/waiting-tool cross-checks); its failure is a malformed snapshot.
-    if wire.resync_result_validate(r) != .None {
+    if wire.session_resync_result_validate(r) != .None {
         return .Live, .Malformed_Snapshot
     }
 

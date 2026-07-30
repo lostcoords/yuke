@@ -11,6 +11,10 @@ Limits :: struct {
     // Decoded inline media above this must use MediaSource.blob.
     max_inline_media_bytes:              int,
 
+    // Encoded length of the largest permitted inline base64 payload. Derived from
+    // `max_inline_media_bytes`; the decoded cap is the tighter rule.
+    max_inline_media_base64_bytes:       int,
+
     // Max aggregate raw string bytes in one display-only tool view.
     max_view_bytes:                      int,
 
@@ -130,6 +134,7 @@ Limits :: struct {
 LIMITS :: Limits {
     max_frame_bytes                     = 8 * 1024 * 1024,
     max_inline_media_bytes              = 256 * 1024,
+    max_inline_media_base64_bytes       = ((256 * 1024 + 2) / 3) * 4,
     max_view_bytes                      = 1024 * 1024,
     max_tool_output_stream_bytes        = 1024 * 1024,
     max_blob_bytes                      = 64 * 1024 * 1024,

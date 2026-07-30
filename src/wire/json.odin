@@ -1,14 +1,17 @@
 package wire
 
+import "base:intrinsics"
 import "core:strconv"
 import "core:strings"
 
-// Emit a required-but-nullable u64 field: always writes the key, null when absent.
-field_required_null_u64 :: proc(e: ^Emitter, name: string, m: Maybe(u64)) {
+// Emit a required-but-nullable JSON-number field: always writes the key, null when
+// absent. Parapoly over the `distinct u64` id types so a `Maybe(Message_Id)` needs no
+// cast at the call site.
+field_required_null_u64 :: proc(e: ^Emitter, name: string, m: Maybe($T)) where intrinsics.type_is_integer(T) {
     key(e, name)
 
     if v, ok := m.?; ok {
-        val_u64(e, v)
+        val_u64(e, u64(v))
     } else {
         val_null(e)
     }

@@ -36,6 +36,29 @@ test_broadcast_name_class :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_broadcast_data_name :: proc(t: ^testing.T) {
+    committed, ok := broadcast_data_name(Message_Committed_Data{})
+    testing.expect(t, ok, "a payload arm names its broadcast")
+    testing.expect_value(t, committed, Broadcast_Name.Message_Committed)
+
+    // The two delta arms are distinct types over the same struct, so they must not
+    // collapse onto one name.
+    part, part_ok := broadcast_data_name(Message_Part_Delta_Data{})
+    testing.expect(t, part_ok, "message.part_delta names its broadcast")
+    testing.expect_value(t, part, Broadcast_Name.Message_Part_Delta)
+    tool, tool_ok := broadcast_data_name(Tool_Output_Delta_Data{})
+    testing.expect(t, tool_ok, "tool.output_delta names its broadcast")
+    testing.expect_value(t, tool, Broadcast_Name.Tool_Output_Delta)
+
+    notice, notice_ok := broadcast_data_name(Notice{})
+    testing.expect(t, notice_ok, "notice names its broadcast")
+    testing.expect_value(t, notice, Broadcast_Name.Notice)
+
+    _, empty := broadcast_data_name(nil)
+    testing.expect(t, !empty, "an empty payload names nothing")
+}
+
+@(test)
 test_run_done_turn_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)

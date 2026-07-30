@@ -184,7 +184,7 @@ Error_Object :: struct {
     // Machine-readable error category.
     code:    Error_Code,
 
-    // @bounded 4096
+    // @bounded LIMITS.max_error_message_bytes
     // Human-readable. Clients branch on `code`, never on this.
     message: string,
 }
