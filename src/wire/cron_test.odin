@@ -269,17 +269,17 @@ test_cron_run_now_result_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_cron_run_now_params_rejects_bad_id :: proc(t: ^testing.T) {
+test_cron_job_ref_rejects_bad_id :: proc(t: ^testing.T) {
     bad: [16]u8
     s := "g123456789abcdef"
     for i in 0 ..< 16 {
         bad[i] = s[i]
     }
 
-    params := Cron_Run_Now_Params {
+    params := Cron_Job_Ref {
         job_id = Job_Id(bad),
     }
-    testing.expect(t, cron_run_now_params_validate(params) == .Invalid_Hex, "non-hex id must be rejected")
+    testing.expect(t, cron_job_ref_validate(params) == .Invalid_Hex, "non-hex id must be rejected")
 }
 
 @(test)

@@ -254,15 +254,12 @@ Request_Params :: union {
     Empty,
     Workspace_Describe_Params,
     Workspace_Browse_Params,
-    Workspace_Remove_Params,
-    Workspace_Skills_Params,
-    Permission_Rules_Params,
+    Workspace_Ref,
     Permission_Forget_Params,
     Cron_Create_Params,
     Cron_Patch_Params,
-    Cron_Remove_Params,
+    Cron_Job_Ref,
     Cron_List_Params,
-    Cron_Run_Now_Params,
 }
 
 // Runtime result payload tagged by the request method that produced it.
@@ -353,14 +350,8 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     case Workspace_Browse_Params:
         workspace_browse_params_emit(e, p)
 
-    case Workspace_Remove_Params:
-        workspace_remove_params_emit(e, p)
-
-    case Workspace_Skills_Params:
-        workspace_skills_params_emit(e, p)
-
-    case Permission_Rules_Params:
-        permission_rules_params_emit(e, p)
+    case Workspace_Ref:
+        workspace_ref_emit(e, p)
 
     case Permission_Forget_Params:
         permission_forget_params_emit(e, p)
@@ -371,14 +362,11 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
     case Cron_Patch_Params:
         cron_patch_params_emit(e, p)
 
-    case Cron_Remove_Params:
-        cron_remove_params_emit(e, p)
+    case Cron_Job_Ref:
+        cron_job_ref_emit(e, p)
 
     case Cron_List_Params:
         cron_list_params_emit(e, p)
-
-    case Cron_Run_Now_Params:
-        cron_run_now_params_emit(e, p)
     }
 }
 
@@ -498,14 +486,14 @@ request_params_validate :: proc(params: Request_Params) -> Validation_Error {
     case Cron_Patch_Params:
         return cron_patch_params_validate(p)
 
-    case Cron_Remove_Params:
-        return cron_remove_params_validate(p)
+    case Workspace_Ref:
+        return workspace_ref_validate(p)
+
+    case Cron_Job_Ref:
+        return cron_job_ref_validate(p)
 
     case Cron_List_Params:
         return cron_list_params_validate(p)
-
-    case Cron_Run_Now_Params:
-        return cron_run_now_params_validate(p)
     }
 
     return .None
@@ -824,13 +812,13 @@ request_params_from_reader :: proc(
         params = workspace_browse_params_from_reader(d) or_return
 
     case .Workspace_Remove:
-        params = workspace_remove_params_from_reader(d) or_return
+        params = workspace_ref_from_reader(d) or_return
 
     case .Workspace_Skills:
-        params = workspace_skills_params_from_reader(d) or_return
+        params = workspace_ref_from_reader(d) or_return
 
     case .Permission_Rules:
-        params = permission_rules_params_from_reader(d) or_return
+        params = workspace_ref_from_reader(d) or_return
 
     case .Permission_Forget:
         params = permission_forget_params_from_reader(d) or_return
@@ -842,13 +830,13 @@ request_params_from_reader :: proc(
         params = cron_patch_params_from_reader(d) or_return
 
     case .Cron_Remove:
-        params = cron_remove_params_from_reader(d) or_return
+        params = cron_job_ref_from_reader(d) or_return
 
     case .Cron_List:
         params = cron_list_params_from_reader(d) or_return
 
     case .Cron_Run_Now:
-        params = cron_run_now_params_from_reader(d) or_return
+        params = cron_job_ref_from_reader(d) or_return
     }
 
     return

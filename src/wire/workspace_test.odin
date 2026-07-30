@@ -195,12 +195,12 @@ test_skill_list_result_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_skill_list_params_roundtrip :: proc(t: ^testing.T) {
+test_workspace_ref_roundtrip :: proc(t: ^testing.T) {
     input := `{"workspace_id":"0123456789abcdef"}`
     v := decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
-    params, derr := workspace_skills_params_from_reader(&v)
+    params, derr := workspace_ref_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     wid := ([16]u8)(params.workspace_id)
     testing.expect_value(t, string(wid[:]), "0123456789abcdef")
@@ -208,7 +208,7 @@ test_skill_list_params_roundtrip :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e)
     defer emitter_destroy(&e)
-    workspace_skills_params_emit(&e, params)
+    workspace_ref_emit(&e, params)
     testing.expect_value(t, to_string(&e), input)
 }
 

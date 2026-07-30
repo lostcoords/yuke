@@ -431,19 +431,6 @@ permission_decide_params_validate :: proc(self: Permission_Decide_Params) -> Val
     return .None
 }
 
-// Params for permission.rules.
-Permission_Rules_Params :: struct {
-    // Workspace to list rules for.
-    workspace_id: Workspace_Id,
-}
-
-// Write permission.rules params.
-permission_rules_params_emit :: proc(e: ^Emitter, self: Permission_Rules_Params) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    object_end(e)
-}
-
 // Result of permission.rules.
 Permission_Rules_Result :: struct {
     // @bounded LIMITS.max_permission_rules
@@ -754,31 +741,6 @@ permission_decide_params_from_reader :: proc(
     }
 
     if seen != {.Sid, .Mid, .Pid, .Oid} {
-        return {}, .Mismatched_Payload
-    }
-
-    return params, .None
-}
-
-// Decode permission.rules params straight from the token stream.
-permission_rules_params_from_reader :: proc(d: ^Decoder) -> (params: Permission_Rules_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    have := false
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "workspace_id":
-            params.workspace_id = Workspace_Id(dec_fixed(d, 16) or_return)
-            have = true
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if !have {
         return {}, .Mismatched_Payload
     }
 

@@ -249,17 +249,25 @@ workspace_browse_result_validate :: proc(self: Workspace_Browse_Result) -> Valid
     return .None
 }
 
-// workspace.remove input.
-Workspace_Remove_Params :: struct {
-    // Workspace to remove.
+// Params naming a workspace and nothing else. Shared by `workspace.remove`,
+// `workspace.skills`, and `permission.rules`; split it the moment one of them needs a
+// field of its own.
+Workspace_Ref :: struct {
+    // @fixed 16
+    // Workspace the request targets.
     workspace_id: Workspace_Id,
 }
 
-// Write workspace.remove params.
-workspace_remove_params_emit :: proc(e: ^Emitter, self: Workspace_Remove_Params) {
+// Write a workspace reference.
+workspace_ref_emit :: proc(e: ^Emitter, self: Workspace_Ref) {
     object_begin(e)
     field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
     object_end(e)
+}
+
+// Verify the target id.
+workspace_ref_validate :: proc(self: Workspace_Ref) -> Validation_Error {
+    return enforce_id(([16]u8)(self.workspace_id))
 }
 
 // workspace.remove result. Non-owning.
@@ -353,19 +361,6 @@ skill_info_validate :: proc(self: Skill_Info) -> Validation_Error {
     enforce_bounded(512, self.description) or_return
 
     return enforce_bounded(128, self.argument_hint)
-}
-
-// workspace.skills.list input.
-Workspace_Skills_Params :: struct {
-    // Workspace to list skills for.
-    workspace_id: Workspace_Id,
-}
-
-// Write workspace.skills.list params.
-workspace_skills_params_emit :: proc(e: ^Emitter, self: Workspace_Skills_Params) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    object_end(e)
 }
 
 // workspace.skills.list result. Non-owning.
@@ -696,8 +691,8 @@ workspace_browse_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_B
     return result, .None
 }
 
-// Decode workspace.remove params straight from the token stream.
-workspace_remove_params_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Remove_Params, err: Validation_Error) {
+// Decode a workspace reference straight from the token stream.
+workspace_ref_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Ref, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -751,31 +746,6 @@ _job_id_from_reader :: proc(d: ^Decoder) -> (out: Job_Id, err: Validation_Error)
     out = Job_Id(dec_fixed(d, 16) or_return)
 
     return out, .None
-}
-
-// Decode workspace.skills params straight from the token stream.
-workspace_skills_params_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Skills_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    have := false
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "workspace_id":
-            params.workspace_id = Workspace_Id(dec_fixed(d, 16) or_return)
-            have = true
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if !have {
-        return {}, .Mismatched_Payload
-    }
-
-    return params, .None
 }
 
 // Decode a workspace.skills result straight from the token stream.

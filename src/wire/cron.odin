@@ -137,21 +137,23 @@ cron_patch_params_validate :: proc(self: Cron_Patch_Params) -> Validation_Error 
     return cron_patch_validate(self.patch)
 }
 
-// Params for `cron.remove`.
-Cron_Remove_Params :: struct {
-    // Job to remove.
+// Params naming a cron job and nothing else. Shared by `cron.remove` and
+// `cron.run_now`; split it the moment one of them needs a field of its own.
+Cron_Job_Ref :: struct {
+    // @fixed 16
+    // Job the request targets.
     job_id: Job_Id,
 }
 
-// Write cron.remove params.
-cron_remove_params_emit :: proc(e: ^Emitter, self: Cron_Remove_Params) {
+// Write a cron job reference.
+cron_job_ref_emit :: proc(e: ^Emitter, self: Cron_Job_Ref) {
     object_begin(e)
     field_id(e, "job_id", ([16]u8)(self.job_id))
     object_end(e)
 }
 
 // Verify the target id.
-cron_remove_params_validate :: proc(self: Cron_Remove_Params) -> Validation_Error {
+cron_job_ref_validate :: proc(self: Cron_Job_Ref) -> Validation_Error {
     return enforce_id(([16]u8)(self.job_id))
 }
 
@@ -241,24 +243,6 @@ cron_list_result_validate :: proc(self: Cron_List_Result) -> Validation_Error {
     }
 
     return .None
-}
-
-// Params for `cron.run_now`.
-Cron_Run_Now_Params :: struct {
-    // Job to fire immediately.
-    job_id: Job_Id,
-}
-
-// Write cron.run_now params.
-cron_run_now_params_emit :: proc(e: ^Emitter, self: Cron_Run_Now_Params) {
-    object_begin(e)
-    field_id(e, "job_id", ([16]u8)(self.job_id))
-    object_end(e)
-}
-
-// Verify the target id.
-cron_run_now_params_validate :: proc(self: Cron_Run_Now_Params) -> Validation_Error {
-    return enforce_id(([16]u8)(self.job_id))
 }
 
 // Result of `cron.run_now`.
@@ -1017,8 +1001,8 @@ cron_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Patch_Params
     return params, .None
 }
 
-// Decode cron.remove params straight from the token stream.
-cron_remove_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Remove_Params, err: Validation_Error) {
+// Decode a cron job reference straight from the token stream.
+cron_job_ref_from_reader :: proc(d: ^Decoder) -> (params: Cron_Job_Ref, err: Validation_Error) {
     dec_object_begin(d) or_return
     have := false
     for {
@@ -1105,31 +1089,6 @@ cron_list_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_List_Result, 
     }
 
     return result, .None
-}
-
-// Decode cron.run_now params straight from the token stream.
-cron_run_now_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Run_Now_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    have := false
-    for {
-        k, done := dec_key(d) or_return
-        if done do break
-
-        switch k {
-        case "job_id":
-            params.job_id = Job_Id(dec_fixed(d, 16) or_return)
-            have = true
-
-        case:
-            dec_skip(d) or_return
-        }
-    }
-
-    if !have {
-        return {}, .Mismatched_Payload
-    }
-
-    return params, .None
 }
 
 // Decode a cron.run_now result straight from the token stream.
