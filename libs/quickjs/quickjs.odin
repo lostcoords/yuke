@@ -19,10 +19,9 @@ Eval_Flag :: enum {
 
 Eval_Flags :: bit_set[Eval_Flag;c.int]
 
-// Create an engine instance. Pass `alloc` to bind this runtime to a caller-owned
-// allocator (the per-session arena); `user` is handed back to every hook. With
-// `alloc` nil the engine uses its own malloc and `runtime_free` will not return
-// pages to the OS on its own.
+// Pass `alloc` to bind the runtime to a caller-owned allocator; `user` is
+// handed back to every hook. With `alloc` nil the engine uses its own malloc
+// and `runtime_free` will not return pages to the OS.
 runtime_new :: proc(alloc: ^Alloc_Functions = nil, user: rawptr = nil) -> ^Runtime {
     if alloc == nil {
         return c_new_runtime()
@@ -43,8 +42,8 @@ runtime_free :: proc(rt: ^Runtime) {
     c_free_runtime(rt)
 }
 
-// Hard ceiling on engine allocation. Exceeding it fails the running script with
-// an out-of-memory exception rather than aborting the daemon.
+// Exceeding the limit fails the running script with an out-of-memory
+// exception rather than aborting the daemon.
 set_memory_limit :: proc(rt: ^Runtime, bytes: int) {
     assert(rt != nil, "set_memory_limit needs a runtime")
     assert(bytes > 0, "memory limit must be positive")
@@ -81,15 +80,16 @@ memory_usage :: proc(rt: ^Runtime) -> (usage: Memory_Usage) {
     return
 }
 
-// Install the CPU budget hook. `cb` runs at interpreter checkpoints; returning
-// non-zero aborts the script with a catchable exception. It cannot interrupt a
-// single long-running engine builtin.
+// `cb` runs at interpreter checkpoints; returning non-zero aborts the script
+// with a catchable exception. It cannot interrupt a single long-running engine
+// builtin.
 set_interrupt_handler :: proc(rt: ^Runtime, cb: Interrupt_Handler, user: rawptr = nil) {
     assert(rt != nil, "set_interrupt_handler needs a runtime")
 
     c_set_interrupt_handler(rt, cb, user)
 }
 
+// True when a microtask is queued and `run_pending_jobs` has work to do.
 job_pending :: proc(rt: ^Runtime) -> bool {
     assert(rt != nil, "job_pending needs a runtime")
 
@@ -97,8 +97,8 @@ job_pending :: proc(rt: ^Runtime) -> bool {
 }
 
 // Drain the microtask queue. This is what resumes `await` after the host has
-// settled a promise, so the event loop calls it once per turn of the reactor.
-// `failed` reports that a job raised; the exception is left on its context.
+// settled a promise. `failed` reports that a job raised; the exception is left
+// on its context.
 run_pending_jobs :: proc(rt: ^Runtime) -> (executed: int, failed: bool) {
     assert(rt != nil, "run_pending_jobs needs a runtime")
 
@@ -118,12 +118,15 @@ run_pending_jobs :: proc(rt: ^Runtime) -> (executed: int, failed: bool) {
     return
 }
 
+// Create an execution context on `rt`. Several contexts may share one runtime
+// and its GC.
 context_new :: proc(rt: ^Runtime) -> ^Context {
     assert(rt != nil, "context_new needs a runtime")
 
     return c_new_context(rt)
 }
 
+// Destroy a context. Its runtime and any sibling contexts stay alive.
 context_free :: proc(ctx: ^Context) {
     if ctx == nil {
         return
@@ -154,22 +157,22 @@ dup_value :: proc(ctx: ^Context, v: Value) -> Value {
     return c_dup_value(ctx, v)
 }
 
-// Compile and run `src`. `filename` appears in stack traces. On failure the
-// result satisfies `is_exception` and the detail is available via
-// `exception_text`. Caller owns the result.
+// Compile and run `src`, which is `src_len` bytes long. `filename` appears in stack
+// traces. Both must be nul-terminated. On failure the result satisfies `is_exception`
+// and the detail is available via `exception_text`. Caller owns the result.
 eval :: proc(
     ctx: ^Context,
-    src: string,
-    filename: string = "<eval>",
+    src: cstring,
+    src_len: int,
+    filename: cstring = "<eval>",
     kind: Eval_Kind = .Global,
     flags: Eval_Flags = {},
 ) -> Value {
     assert(ctx != nil, "eval needs a context")
+    assert(src != nil, "eval needs source")
+    assert(src_len >= 0, "source length must be non-negative")
 
-    csrc := strings.clone_to_cstring(src, context.temp_allocator)
-    cname := strings.clone_to_cstring(filename, context.temp_allocator)
-
-    return c_eval(ctx, csrc, c.size_t(len(src)), cname, c.int(kind) | transmute(c.int)flags)
+    return c_eval(ctx, src, c.size_t(src_len), filename, c.int(kind) | transmute(c.int)flags)
 }
 
 // Invoke `fn` with `this` and `args`. Caller owns the result; `args` stay owned
@@ -198,9 +201,14 @@ new_array :: proc(ctx: ^Context) -> Value {
 get_property :: proc(ctx: ^Context, obj: Value, name: string) -> Value {
     assert(ctx != nil, "get_property needs a context")
 
-    cname := strings.clone_to_cstring(name, context.temp_allocator)
+    atom := c_new_atom_len(ctx, cstring(raw_data(name)), c.size_t(len(name)))
 
-    return c_get_property_str(ctx, obj, cname)
+    if atom == ATOM_NULL {
+        return exception()
+    }
+    defer c_free_atom(ctx, atom)
+
+    return c_get_property(ctx, obj, atom)
 }
 
 // **Consumes `val`** — the engine takes the reference whether or not the store
@@ -208,9 +216,17 @@ get_property :: proc(ctx: ^Context, obj: Value, name: string) -> Value {
 set_property :: proc(ctx: ^Context, obj: Value, name: string, val: Value) -> bool {
     assert(ctx != nil, "set_property needs a context")
 
-    cname := strings.clone_to_cstring(name, context.temp_allocator)
+    atom := c_new_atom_len(ctx, cstring(raw_data(name)), c.size_t(len(name)))
 
-    return c_set_property_str(ctx, obj, cname, val) >= 0
+    // Interning fails before the engine takes the reference, so honor the consume
+    // contract here.
+    if atom == ATOM_NULL {
+        c_free_value(ctx, val)
+        return false
+    }
+    defer c_free_atom(ctx, atom)
+
+    return c_set_property(ctx, obj, atom, val) >= 0
 }
 
 // Caller owns the result.
@@ -227,18 +243,18 @@ set_index :: proc(ctx: ^Context, obj: Value, idx: u32, val: Value) -> bool {
     return c_set_property_u32(ctx, obj, idx, val) >= 0
 }
 
-// Expose an Odin procedure to JavaScript. `arity` is the advertised
-// `Function.length`, not a limit on the arguments actually passed.
-new_function :: proc(ctx: ^Context, fn: C_Function, name: string, arity: int = 0) -> Value {
+// `arity` is the advertised `Function.length`, not a limit on the arguments
+// actually passed. `name` must be nul-terminated.
+new_function :: proc(ctx: ^Context, fn: C_Function, name: cstring, arity: int = 0) -> Value {
     assert(ctx != nil, "new_function needs a context")
     assert(fn != nil, "new_function needs a procedure")
+    assert(name != nil, "new_function needs a name")
     assert(arity >= 0, "arity must be non-negative")
 
-    cname := strings.clone_to_cstring(name, context.temp_allocator)
-
-    return c_new_cfunction2(ctx, fn, cname, c.int(arity), .Generic, 0)
+    return c_new_cfunction2(ctx, fn, name, c.int(arity), .Generic, 0)
 }
 
+// True when ctx has a pending exception, without consuming it.
 has_exception :: proc(ctx: ^Context) -> bool {
     assert(ctx != nil, "has_exception needs a context")
 
@@ -311,6 +327,7 @@ exception_text :: proc(ctx: ^Context, allocator := context.allocator) -> string 
     return strings.to_string(b)
 }
 
+// ToBoolean semantics. `ok` is false only when coercion itself threw.
 to_bool :: proc(ctx: ^Context, v: Value) -> (value: bool, ok: bool) {
     assert(ctx != nil, "to_bool needs a context")
 
@@ -322,8 +339,8 @@ to_bool :: proc(ctx: ^Context, v: Value) -> (value: bool, ok: bool) {
     return rc != 0, true
 }
 
-// The conversion must run before the named result is read; returning it in the
-// same expression as the call would copy the value out first.
+// ToInt32 semantics: wraps, does not range-check. `ok` is false on a thrown
+// coercion (e.g. from a Symbol).
 to_i32 :: proc(ctx: ^Context, v: Value) -> (value: i32, ok: bool) {
     assert(ctx != nil, "to_i32 needs a context")
 
@@ -332,6 +349,7 @@ to_i32 :: proc(ctx: ^Context, v: Value) -> (value: i32, ok: bool) {
     return
 }
 
+// ToInt64 semantics. `ok` is false on a thrown coercion.
 to_i64 :: proc(ctx: ^Context, v: Value) -> (value: i64, ok: bool) {
     assert(ctx != nil, "to_i64 needs a context")
 
@@ -340,6 +358,7 @@ to_i64 :: proc(ctx: ^Context, v: Value) -> (value: i64, ok: bool) {
     return
 }
 
+// ToNumber semantics. `ok` is false on a thrown coercion.
 to_f64 :: proc(ctx: ^Context, v: Value) -> (value: f64, ok: bool) {
     assert(ctx != nil, "to_f64 needs a context")
 
@@ -348,10 +367,10 @@ to_f64 :: proc(ctx: ^Context, v: Value) -> (value: f64, ok: bool) {
     return
 }
 
-// Create a pending promise plus its settle functions. This is the yield point
-// for host IO: return `promise` to the script, park the task, then `call`
-// `resolve` or `reject` from the completion callback and drain the job queue
-// with `run_pending_jobs`. Caller owns all three values.
+// Create a pending promise plus its settle functions. The yield point for
+// host IO: return `promise` to the script, park the task, then `call` `resolve`
+// or `reject` and drain the job queue with `run_pending_jobs`. Caller owns all
+// three values.
 new_promise :: proc(ctx: ^Context) -> (promise: Value, resolve: Value, reject: Value) {
     assert(ctx != nil, "new_promise needs a context")
 

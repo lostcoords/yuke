@@ -22,12 +22,17 @@ free_vm :: proc(rt: ^Runtime, ctx: ^Context) {
     runtime_free(rt)
 }
 
+@(private = "file")
+eval_source :: proc(ctx: ^Context, src: string, filename: cstring = "<eval>") -> Value {
+    return eval(ctx, strings.clone_to_cstring(src, context.temp_allocator), len(src), filename)
+}
+
 @(test)
 test_eval_round_trip :: proc(t: ^testing.T) {
     rt, ctx := new_vm(t)
     defer free_vm(rt, ctx)
 
-    v := eval(ctx, "1 + 2")
+    v := eval_source(ctx, "1 + 2")
     defer free_value(ctx, v)
     testing.expect(t, !is_exception(v), "eval raised")
     testing.expect(t, is_number(v), "1 + 2 should be a number")
@@ -42,7 +47,7 @@ test_string_round_trip :: proc(t: ^testing.T) {
     rt, ctx := new_vm(t)
     defer free_vm(rt, ctx)
 
-    v := eval(ctx, "'yuke' + '-' + 'odin'")
+    v := eval_source(ctx, "'yuke' + '-' + 'odin'")
     defer free_value(ctx, v)
     testing.expect(t, is_string(v), "expected a string value")
 
@@ -103,6 +108,34 @@ test_object_properties :: proc(t: ^testing.T) {
     testing.expect(t, fok && fv == 11, "get_index round trip")
 }
 
+@(test)
+test_empty_names_and_strings_are_accepted :: proc(t: ^testing.T) {
+    rt, ctx := new_vm(t)
+    defer free_vm(rt, ctx)
+
+    // `raw_data` of an empty Odin string is nil, so every counted entry point below
+    // hands the engine a nil pointer with a zero length.
+    empty := new_string(ctx, "")
+    defer free_value(ctx, empty)
+    testing.expect(t, is_string(empty), "empty string is a string")
+
+    s, ok := to_string(ctx, empty)
+    testing.expect(t, ok, "to_string on the empty string")
+    defer free_string(ctx, s)
+    testing.expect_value(t, s, "")
+
+    obj := new_object(ctx)
+    defer free_value(ctx, obj)
+
+    testing.expect(t, set_property(ctx, obj, "", new_i32(4)), "set_property with an empty name")
+
+    got := get_property(ctx, obj, "")
+    defer free_value(ctx, got)
+    n, nok := to_i32(ctx, got)
+    testing.expect(t, nok, "to_i32 on the empty-named property")
+    testing.expect_value(t, n, i32(4))
+}
+
 @(private = "file")
 host_calls: int
 
@@ -127,7 +160,7 @@ test_host_function :: proc(t: ^testing.T) {
     defer free_value(ctx, global)
     testing.expect(t, set_property(ctx, global, "echo", new_function(ctx, host_echo, "echo", 1)), "install echo")
 
-    v := eval(ctx, "echo('from js')")
+    v := eval_source(ctx, "echo('from js')")
     defer free_value(ctx, v)
     testing.expect(t, !is_exception(v), "echo call raised")
     testing.expect_value(t, host_calls, 1)
@@ -143,7 +176,7 @@ test_exception_text_includes_stack :: proc(t: ^testing.T) {
     rt, ctx := new_vm(t)
     defer free_vm(rt, ctx)
 
-    v := eval(ctx, "function boom() { throw new Error('kaboom'); }\nboom();", "boom.js")
+    v := eval_source(ctx, "function boom() { throw new Error('kaboom'); }\nboom();", "boom.js")
     defer free_value(ctx, v)
     testing.expect(t, is_exception(v), "expected an exception value")
     testing.expect(t, has_exception(ctx), "exception should be pending")
@@ -164,7 +197,7 @@ test_memory_limit_is_enforced :: proc(t: ^testing.T) {
     defer free_vm(rt, ctx)
 
     // A runaway allocation must fail the script, not the process.
-    v := eval(ctx, "const a = []; for (;;) { a.push('x'.repeat(4096)); } a.length")
+    v := eval_source(ctx, "const a = []; for (;;) { a.push('x'.repeat(4096)); } a.length")
     defer free_value(ctx, v)
     testing.expect(t, is_exception(v), "allocation past the cap should raise")
 
@@ -196,14 +229,14 @@ test_interrupt_handler_stops_runaway_script :: proc(t: ^testing.T) {
     }
     set_interrupt_handler(rt, budget_interrupt, &b)
 
-    v := eval(ctx, "let x = 0; while (true) { x++; } x")
+    v := eval_source(ctx, "let x = 0; while (true) { x++; } x")
     defer free_value(ctx, v)
     testing.expect(t, is_exception(v), "runaway loop should be interrupted")
     testing.expect(t, b.ticks > b.limit, "interrupt handler should have fired")
 
     // The runtime must remain usable for the next turn.
     _ = get_exception(ctx)
-    ok := eval(ctx, "40 + 2")
+    ok := eval_source(ctx, "40 + 2")
     defer free_value(ctx, ok)
     n, got := to_i32(ctx, ok)
     testing.expect(t, got && n == 42, "runtime should survive an interrupt")
@@ -238,7 +271,7 @@ test_await_resumes_from_host_promise :: proc(t: ^testing.T) {
     defer free_value(ctx, global)
     testing.expect(t, set_property(ctx, global, "hostIO", new_function(ctx, host_io, "hostIO", 0)), "install hostIO")
 
-    v := eval(
+    v := eval_source(
         ctx,
         `globalThis.trace = [];
          (async () => {
@@ -263,7 +296,7 @@ test_await_resumes_from_host_promise :: proc(t: ^testing.T) {
     testing.expect(t, !failed, "draining jobs should not raise")
     testing.expect(t, executed > 0, "resolving should have queued a job")
 
-    trace := eval(ctx, "trace.join('|')")
+    trace := eval_source(ctx, "trace.join('|')")
     defer free_value(ctx, trace)
     s, ok := to_string(ctx, trace)
     testing.expect(t, ok, "trace to_string")
@@ -381,7 +414,7 @@ test_runtime_on_caller_owned_heap :: proc(t: ^testing.T) {
     ctx := context_new(rt)
     testing.expect(t, ctx != nil, "context_new on a custom heap")
 
-    v := eval(ctx, "const t = []; for (let i = 0; i < 500; i++) t.push('part_' + i); t.length")
+    v := eval_source(ctx, "const t = []; for (let i = 0; i < 500; i++) t.push('part_' + i); t.length")
     n, ok := to_i32(ctx, v)
     testing.expect(t, ok && n == 500, "script should run on the caller's heap")
     free_value(ctx, v)
