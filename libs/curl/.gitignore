@@ -1,0 +1,13 @@
+# Static archive / object files (Windows build via build_static.bat).
+bin/*
+!bin/README.md
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exp
+*.pdb
+
+# Upstream release tarball and tree (fetched by build_static.bat).
+upstream/
