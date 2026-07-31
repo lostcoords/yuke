@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs check-windows fmt clean sqlite-static quickjs-static
+.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
 
 # Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
 SQLITE_YEAR ?= 2025
@@ -31,6 +31,13 @@ test-http:
 	@mkdir -p build
 	$(ODIN) test libs/http $(COLLECTION) -out:build/http_test.bin
 	$(ODIN) test libs/http/server $(COLLECTION) -out:build/http_server_test.bin
+
+# Run the libcurl binding and the multi-on-nbio driver tests. Needs the libcurl
+# development package (Unix links `system:curl`); the integration tests stream
+# from `libs/http/server` over 127.0.0.1, so nothing reaches the network.
+test-curl:
+	@mkdir -p build
+	$(ODIN) test libs/curl $(COLLECTION) -out:build/curl_test.bin
 
 
 # Run the worker-pool tests (blocking work off the reactor).
@@ -113,6 +120,7 @@ check-windows:
 	$(ODIN) check src/daemon/store $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check libs/sqlite $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check libs/quickjs $(COLLECTION) -target:windows_amd64 -no-entry-point
+	$(ODIN) check libs/curl $(COLLECTION) -target:windows_amd64 -no-entry-point
 
 # Format all Odin sources in place (config in odinfmt.json).
 fmt:

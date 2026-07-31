@@ -7,6 +7,7 @@ import _ "src:term"
 import _ "src:ui"
 import _ "src:wire"
 
+import _ "libs:curl"
 import _ "libs:http"
 import _ "libs:http/server"
 import _ "libs:offload"
