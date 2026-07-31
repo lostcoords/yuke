@@ -1,5 +1,6 @@
 package websocket
 
+import "core:log"
 import "core:mem"
 import "core:nbio"
 import "core:net"
@@ -11,7 +12,7 @@ import "core:time"
 
 // Shared state between the loopback server thread and the client test.
 Loopback_Args :: struct {
-    // Port the server binds on loopback.
+    // Loopback port the OS assigned, published before `listening`.
     port:      int,
 
     // Set true (atomically) once the server is accepting, so the client waits.
@@ -24,7 +25,7 @@ Loopback_Args :: struct {
 loopback_server :: proc(args: ^Loopback_Args) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(args.port, &args.listening)
+    listener, conn, ok := srv_accept(&args.port, &args.listening)
     if !ok {
         return
     }
@@ -53,7 +54,7 @@ loopback_server :: proc(args: ^Loopback_Args) {
 
 // Fields a server variant records for the test to assert after `thread.join`.
 Srv :: struct {
-    // Port to bind on loopback.
+    // Loopback port the OS assigned, published before `listening`.
     port:           int,
 
     // Published (atomically) once accepting, so the client waits to connect.
@@ -89,28 +90,52 @@ Srv_Text :: struct {
     len: int,
 }
 
-// Bind loopback:port, publish `listening`, and accept one connection. The caller
-// closes both returned sockets.
-srv_accept :: proc(port: int, listening: ^bool) -> (listener: net.TCP_Socket, conn: net.TCP_Socket, ok: bool) {
-    endpoint := net.Endpoint {
-        address = net.IP4_Loopback,
-        port    = port,
-    }
-
-    l, lerr := net.listen_tcp(endpoint)
+// Bind an OS-assigned loopback port, publish it through `port` before raising
+// `listening`, and accept one connection. The port is never fixed: a hardcoded one
+// collides with any other listener on the machine — a second test run, a parallel CI
+// job, an orphaned process — and fails the bind rather than the assertion under test.
+// The caller closes both returned sockets.
+srv_accept :: proc(port: ^int, listening: ^bool) -> (listener: net.TCP_Socket, conn: net.TCP_Socket, ok: bool) {
+    l, lerr := net.listen_tcp(net.Endpoint{address = net.IP4_Loopback, port = 0})
     if lerr != nil {
+        log.errorf("srv_accept: listen failed: %v", lerr)
         return {}, {}, false
     }
 
+    bound, berr := net.bound_endpoint(l)
+    if berr != nil {
+        log.errorf("srv_accept: bound_endpoint failed: %v", berr)
+        net.close(l)
+        return {}, {}, false
+    }
+
+    // Ordered against the client's `listening` load, so it never reads port 0.
+    sync.atomic_store(port, bound.port)
     sync.atomic_store(listening, true)
 
     c, _, aerr := net.accept_tcp(l)
     if aerr != nil {
+        log.errorf("srv_accept: accept on %d failed: %v", bound.port, aerr)
         net.close(l)
         return {}, {}, false
     }
 
     return l, c, true
+}
+
+// A loopback port with nothing listening: bind one, read it back, release it. Beats a
+// fixed port, which fails the moment anything happens to be listening there.
+srv_dead_port :: proc(t: ^testing.T) -> int {
+    l, lerr := net.listen_tcp(net.Endpoint{address = net.IP4_Loopback, port = 0})
+    if !testing.expect(t, lerr == nil, "should be able to reserve a port") {
+        return 0
+    }
+    defer net.close(l)
+
+    bound, berr := net.bound_endpoint(l)
+    testing.expect(t, berr == nil, "reserved port should be readable")
+
+    return bound.port
 }
 
 // Read the client's upgrade request through the `\r\n\r\n` terminator into `buf`.
@@ -361,9 +386,7 @@ Loopback_Result :: struct {
 test_client_loopback :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    args := Loopback_Args {
-        port = 47821,
-    }
+    args := Loopback_Args{}
     server := thread.create_and_start_with_poly_data(&args, loopback_server)
     defer {
         thread.join(server)
@@ -438,7 +461,7 @@ test_client_loopback :: proc(t: ^testing.T) {
 srv_regression :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -480,9 +503,7 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
     defer mem.tracking_allocator_destroy(&track)
     tracked := mem.tracking_allocator(&track)
 
-    s := Srv {
-        port = 47831,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_regression)
     defer {
         thread.join(server)
@@ -564,11 +585,11 @@ test_client_dial_failure :: proc(t: ^testing.T) {
     }
 
     c: Client
-    // 47832 has no listener; loopback refuses the connect immediately.
+    // Nothing listens on a just-released port, so loopback refuses immediately.
     cerr := client_connect(
         &c,
         loop,
-        {host = "127.0.0.1", port = 47832, path = "/ws", handshake_timeout = 2 * time.Second},
+        {host = "127.0.0.1", port = srv_dead_port(t), path = "/ws", handshake_timeout = 2 * time.Second},
         callbacks,
         &obs,
     )
@@ -589,7 +610,7 @@ test_client_dial_failure :: proc(t: ^testing.T) {
 srv_bad_status :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -610,9 +631,7 @@ srv_bad_status :: proc(s: ^Srv) {
 test_client_handshake_bad_status :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47833,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_bad_status)
     defer {
         thread.join(server)
@@ -656,7 +675,7 @@ test_client_handshake_bad_status :: proc(t: ^testing.T) {
 srv_handshake_flood :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -690,9 +709,7 @@ srv_handshake_flood :: proc(s: ^Srv) {
 test_client_handshake_cap :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47834,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_handshake_flood)
     defer {
         thread.join(server)
@@ -736,7 +753,7 @@ test_client_handshake_cap :: proc(t: ^testing.T) {
 srv_pipelined :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -772,9 +789,7 @@ srv_pipelined :: proc(s: ^Srv) {
 test_client_pipelined_first_frame :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47835,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_pipelined)
     defer {
         thread.join(server)
@@ -826,7 +841,7 @@ test_client_pipelined_first_frame :: proc(t: ^testing.T) {
 srv_ping :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -861,9 +876,7 @@ srv_ping :: proc(s: ^Srv) {
 test_client_ping_pong :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47836,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_ping)
     defer {
         thread.join(server)
@@ -910,7 +923,7 @@ test_client_ping_pong :: proc(t: ^testing.T) {
 srv_close_with_code :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -949,9 +962,7 @@ srv_close_with_code :: proc(s: ^Srv) {
 test_client_peer_close_with_code :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47837,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_close_with_code)
     defer {
         thread.join(server)
@@ -997,7 +1008,7 @@ test_client_peer_close_with_code :: proc(t: ^testing.T) {
 srv_close_empty :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -1028,9 +1039,7 @@ srv_close_empty :: proc(s: ^Srv) {
 test_client_peer_close_empty :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47838,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_close_empty)
     defer {
         thread.join(server)
@@ -1075,7 +1084,7 @@ test_client_peer_close_empty :: proc(t: ^testing.T) {
 srv_abrupt :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -1096,9 +1105,7 @@ srv_abrupt :: proc(s: ^Srv) {
 test_client_abrupt_close :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47839,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_abrupt)
     defer {
         thread.join(server)
@@ -1142,7 +1149,7 @@ test_client_abrupt_close :: proc(t: ^testing.T) {
 srv_fragmented :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -1178,9 +1185,7 @@ srv_fragmented :: proc(s: ^Srv) {
 test_client_fragmented_message :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47840,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_fragmented)
     defer {
         thread.join(server)
@@ -1231,7 +1236,7 @@ test_client_fragmented_message :: proc(t: ^testing.T) {
 srv_recv_order :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -1266,9 +1271,7 @@ srv_recv_order :: proc(s: ^Srv) {
 test_client_send_serialization :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47841,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_recv_order)
     defer {
         thread.join(server)
@@ -1321,7 +1324,7 @@ test_client_send_serialization :: proc(t: ^testing.T) {
 srv_await_close :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
-    listener, conn, ok := srv_accept(s.port, &s.listening)
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
     if !ok {
         return
     }
@@ -1344,9 +1347,7 @@ srv_await_close :: proc(s: ^Srv) {
 test_client_send_after_close :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    s := Srv {
-        port = 47842,
-    }
+    s := Srv{}
     server := thread.create_and_start_with_poly_data(&s, srv_await_close)
     defer {
         thread.join(server)
