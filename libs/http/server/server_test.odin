@@ -67,6 +67,12 @@ Obs :: struct {
     resolved_self:           bool,
     resolved_miss:           bool,
     resolved_zero:           bool,
+
+    // Answer with `respond_redirect`, recording what it returned.
+    redirect:                bool,
+    redirect_to:             string,
+    redirect_extra:          []Header,
+    redirect_err:            Response_Error,
 }
 
 // A ticket the server never issues, for the miss case.
@@ -96,6 +102,17 @@ test_on_request :: proc(c: ^Conn, req: Request) {
 
     if o.defer_later {
         test_defer_and_answer_later(c)
+        return
+    }
+
+    if o.redirect {
+        o.redirect_err = respond_redirect(c, .Found, o.redirect_to, o.redirect_extra)
+
+        // Nothing was answered; the connection contract still stands.
+        if o.redirect_err != .None {
+            respond_text(c, .Internal_Server_Error, "redirect rejected")
+        }
+
         return
     }
 
@@ -522,6 +539,80 @@ test_http_rejects_an_oversized_head :: proc(t: ^testing.T) {
 
     testing.expect_value(t, obs.request_count, 0)
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 431 Request Header Fields Too Large\r\n"), "should answer 431")
+}
+
+@(test)
+test_http_redirect_sets_location_and_sends_no_body :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        redirect    = true,
+        redirect_to = "/elsewhere",
+    }
+    got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.redirect_err, Response_Error.None)
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 302 Found\r\n"), "should answer 302")
+    testing.expectf(t, strings.contains(got, "Location: /elsewhere\r\n"), "should carry the target, got %q", got)
+    testing.expectf(t, strings.contains(got, "Content-Length: 0\r\n"), "a redirect has no body, got %q", got)
+    testing.expectf(t, !strings.contains(got, "Content-Type:"), "an empty body needs no type, got %q", got)
+}
+
+@(test)
+test_http_redirect_passes_extra_headers_through :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    extra := [1]Header{{name = "Cache-Control", value = "no-store"}}
+    obs := Obs {
+        redirect       = true,
+        redirect_to    = "https://example.test/next",
+        redirect_extra = extra[:],
+    }
+    got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.redirect_err, Response_Error.None)
+    testing.expectf(t, strings.contains(got, "Location: https://example.test/next\r\n"), "target, got %q", got)
+    testing.expectf(t, strings.contains(got, "Cache-Control: no-store\r\n"), "extra header, got %q", got)
+}
+
+// Two `Location` fields would be ambiguous, so the caller's is refused.
+@(test)
+test_http_redirect_rejects_a_caller_supplied_location :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    extra := [1]Header{{name = "location", value = "/sneaky"}}
+    obs := Obs {
+        redirect       = true,
+        redirect_to    = "/elsewhere",
+        redirect_extra = extra[:],
+    }
+    got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.redirect_err, Response_Error.Invalid_Header)
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 500 Internal Server Error\r\n"), "should not redirect")
+    testing.expectf(t, !strings.contains(got, "/sneaky"), "the refused target must not ship, got %q", got)
+}
+
+@(test)
+test_http_redirect_rejects_an_unusable_target :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    empty := Obs {
+        redirect    = true,
+        redirect_to = "",
+    }
+    run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &empty)
+    testing.expect_value(t, empty.redirect_err, Response_Error.Invalid_Header)
+
+    // A bare CR cannot appear in a field value; it would split the head.
+    injected := Obs {
+        redirect    = true,
+        redirect_to = "/ok\r\nx-injected: 1",
+    }
+    got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &injected)
+
+    testing.expect_value(t, injected.redirect_err, Response_Error.Invalid_Header)
+    testing.expectf(t, !strings.contains(got, "x-injected"), "injection must not ship, got %q", got)
 }
 
 @(test)

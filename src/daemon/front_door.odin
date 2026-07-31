@@ -18,16 +18,8 @@ import "libs:offload"
 import ws "libs:websocket"
 import wire "src:wire"
 
-// WebSocket endpoint; every protocol method rides this one connection.
-WS_PATH :: "/ws"
-
-// Content-addressed media endpoint (`wire.Media_Blob.hash`): the hash is the `/*`
-// capture, and its grammar is the hex rendering of the digest it verifies.
-BLOB_ROUTE_PATTERN :: "/blob/*"
+// Hex length of the `/blob/*` capture, which renders a `wire.Media_Blob.hash` digest.
 BLOB_HASH_HEX_LEN :: sha2.DIGEST_SIZE_256 * 2
-
-// Blob bodies are opaque bytes; the referencing `Media_Source` carries the MIME.
-BLOB_CONTENT_TYPE :: "application/octet-stream"
 
 // Temp-name prefix for an in-flight blob upload under `<blob_dir>`. A per-request
 // random nonce follows so concurrent uploads of the same hash never share a temp file.
@@ -61,9 +53,9 @@ DAEMON_MIDDLEWARE := [?]Http_Middleware{{daemon_middleware_admit}, {daemon_middl
 // Front-door routes.
 @(rodata)
 DAEMON_ROUTES := [?]Http_Route {
-    {method = "GET", pattern = WS_PATH, handler = daemon_route_ws},
-    {method = "GET", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_get},
-    {method = "PUT", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_put},
+    {method = "GET", pattern = "/ws", handler = daemon_route_ws},
+    {method = "GET", pattern = "/blob/*", handler = daemon_route_blob_get},
+    {method = "PUT", pattern = "/blob/*", handler = daemon_route_blob_put},
 }
 
 // Build the daemon's HTTP router; `router_listen` validates it and derives the server's
@@ -91,7 +83,11 @@ daemon_middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Re
             ctx.request.head.method,
             ctx.request.path,
         )
-        daemon_respond_text(ctx.conn, .Forbidden, "forbidden", daemon_query_response_headers(ctx.request.query))
+        headers := daemon_query_response_headers(ctx.request.query)
+        if http_server.respond_text(ctx.conn, .Forbidden, "forbidden", headers) != .None {
+            http_server.abort(ctx.conn)
+        }
+
         return .Stop
     }
 
@@ -106,17 +102,20 @@ daemon_middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Res
     switch auth {
     case .Missing, .Invalid, .Unsupported_Scheme:
         log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
-        daemon_respond_text(ctx.conn, .Unauthorized, "unauthorized", daemon_auth_error_headers(auth, query_credential))
+        headers := daemon_auth_error_headers(auth, query_credential)
+        if http_server.respond_text(ctx.conn, .Unauthorized, "unauthorized", headers) != .None {
+            http_server.abort(ctx.conn)
+        }
+
         return .Stop
 
     case .Ambiguous:
         log.warnf("daemon: ambiguous credentials %s %s", ctx.request.head.method, ctx.request.path)
-        daemon_respond_text(
-            ctx.conn,
-            .Bad_Request,
-            "ambiguous credentials",
-            daemon_auth_error_headers(auth, query_credential),
-        )
+        headers := daemon_auth_error_headers(auth, query_credential)
+        if http_server.respond_text(ctx.conn, .Bad_Request, "ambiguous credentials", headers) != .None {
+            http_server.abort(ctx.conn)
+        }
+
         return .Stop
 
     case .Disabled, .Header, .Query:
@@ -133,7 +132,9 @@ daemon_router_not_found :: proc(ctx: ^Http_Context) {
     }
 
     log.debugf("daemon: not found %s", ctx.request.path)
-    daemon_respond_text(ctx.conn, .Not_Found, "not found", headers)
+    if http_server.respond_text(ctx.conn, .Not_Found, "not found", headers) != .None {
+        http_server.abort(ctx.conn)
+    }
 }
 
 // Path pattern matched a registered route, but not this method. `ctx.allow` borrows
@@ -150,7 +151,9 @@ daemon_router_method_not_allowed :: proc(ctx: ^Http_Context) {
     }
 
     log.debugf("daemon: method not allowed %s %s", ctx.request.head.method, ctx.request.path)
-    daemon_respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed", headers[:count])
+    if http_server.respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed", headers[:count]) != .None {
+        http_server.abort(ctx.conn)
+    }
 }
 
 // Refuse a pipelined follow-up request. `/ws` is exempt: a hijacking route keeps its
@@ -161,7 +164,9 @@ daemon_reject_pipelined :: proc(ctx: ^Http_Context, headers: []http_server.Heade
     }
 
     log.debug("daemon: rejecting pipelined request")
-    daemon_respond_text(ctx.conn, .Bad_Request, "pipelining not supported", headers)
+    if http_server.respond_text(ctx.conn, .Bad_Request, "pipelining not supported", headers) != .None {
+        http_server.abort(ctx.conn)
+    }
 
     return true
 }
@@ -250,13 +255,20 @@ daemon_route_ws :: proc(ctx: ^Http_Context) {
     upgrade, result := ws.parse_upgrade_request_head(ctx.request.head)
     if result != .Ok {
         log.debugf("daemon: bad websocket upgrade: %v", result)
-        daemon_respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade", response_headers)
+        if http_server.respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade", response_headers) !=
+           .None {
+            http_server.abort(ctx.conn)
+        }
+
         return
     }
 
     if !ws.server_can_adopt(&d.ws_server) {
         log.warn("daemon: websocket at capacity")
-        daemon_respond_text(ctx.conn, .Service_Unavailable, "at capacity", response_headers)
+        if http_server.respond_text(ctx.conn, .Service_Unavailable, "at capacity", response_headers) != .None {
+            http_server.abort(ctx.conn)
+        }
+
         return
     }
 
@@ -286,7 +298,7 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
         return
     }
 
-    path, aerr := daemon_blob_final_path(d.blob_dir, hash, c.allocator)
+    path, aerr := strings.concatenate({d.blob_dir, "/", hash}, c.allocator)
     if aerr != nil {
         http_server.abort(c)
         return
@@ -324,10 +336,11 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
         return
     }
 
+    // Blob bodies are opaque bytes; the referencing `Media_Source` carries the MIME.
     response_err := http_server.respond_file(
         c,
         .Ok,
-        BLOB_CONTENT_TYPE,
+        "application/octet-stream",
         file,
         i64(wire.LIMITS.max_blob_bytes),
         .Not_Found,
@@ -348,7 +361,9 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
 daemon_blob_not_found :: proc(c: ^http_server.Conn, response_headers: []http_server.Header) {
     assert(c != nil && c.server != nil, "blob failure needs an owned connection")
 
-    daemon_respond_text(c, .Not_Found, "unknown blob", response_headers)
+    if http_server.respond_text(c, .Not_Found, "unknown blob", response_headers) != .None {
+        http_server.abort(c)
+    }
 }
 
 // What publishing an upload decided. Recorded on a worker thread, which can neither
@@ -440,7 +455,10 @@ daemon_route_blob_put :: proc(ctx: ^Http_Context) {
     // Reject an over-cap upload up front on its declared length, before opening a temp
     // file or reading a byte of the body.
     if ctx.request.content_length > i64(wire.LIMITS.max_blob_bytes) {
-        daemon_respond_text(c, .Payload_Too_Large, "blob too large", response_headers)
+        if http_server.respond_text(c, .Content_Too_Large, "blob too large", response_headers) != .None {
+            http_server.abort(c)
+        }
+
         return
     }
 
@@ -482,7 +500,10 @@ daemon_route_blob_put :: proc(ctx: ^Http_Context) {
     if oerr != nil {
         log.errorf("daemon: blob temp open failed: %v", oerr)
         daemon_blob_upload_free(up)
-        daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", response_headers)
+        if http_server.respond_text(c, .Internal_Server_Error, "cannot store blob", response_headers) != .None {
+            http_server.abort(c)
+        }
+
         return
     }
 
@@ -623,36 +644,27 @@ daemon_blob_published :: proc(up: ^Blob_Upload) {
         return
     }
 
+    answered: http_server.Response_Error
     switch up.outcome {
     case .Stored:
-        daemon_respond_text(c, .Created, "", up.headers)
+        answered = http_server.respond_text(c, .Created, "", up.headers)
 
     case .Already_Present:
-        daemon_respond_text(c, .Ok, "", up.headers)
+        answered = http_server.respond_text(c, .Ok, "", up.headers)
 
     case .Mismatch:
-        daemon_respond_text(c, .Bad_Request, "hash mismatch", up.headers)
+        answered = http_server.respond_text(c, .Bad_Request, "hash mismatch", up.headers)
 
     case .Failed:
-        daemon_respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
+        answered = http_server.respond_text(c, .Internal_Server_Error, "cannot store blob", up.headers)
 
     case .Pending, .Discarded:
         assert(false, "an upload with no answer owed resolved a connection")
     }
-}
 
-// Owned `<blob_dir>/<hash>` path: the content-addressed store layout shared by the
-// GET and PUT routes and the boot-time sweep.
-daemon_blob_final_path :: proc(
-    blob_dir: string,
-    hash: string,
-    allocator: mem.Allocator,
-) -> (
-    string,
-    mem.Allocator_Error,
-) {
-    assert(len(blob_dir) > 0 && len(hash) == 64, "blob path needs a directory and a 64-hex name")
-    return strings.concatenate({blob_dir, "/", hash}, allocator)
+    if answered != .None {
+        http_server.abort(c)
+    }
 }
 
 // Build the owned final and temp paths for `hash` under `blob_dir`.
@@ -676,7 +688,7 @@ daemon_blob_paths :: proc(
     defer delete(nonce, allocator)
 
     ferr: mem.Allocator_Error
-    final_path, ferr = daemon_blob_final_path(blob_dir, hash, allocator)
+    final_path, ferr = strings.concatenate({blob_dir, "/", hash}, allocator)
     if ferr != nil {
         return "", "", false
     }
@@ -759,34 +771,10 @@ daemon_blob_upload_free :: proc(up: ^Blob_Upload) {
     assert(up != nil, "blob upload free needs state")
     assert(up.file == nil, "freeing an upload with its temp file still open")
 
-    if len(up.final_path) > 0 {
-        delete(up.final_path, up.allocator)
-    }
-
-    if len(up.temp_path) > 0 {
-        delete(up.temp_path, up.allocator)
-    }
-
-    if len(up.claimed) > 0 {
-        delete(up.claimed, up.allocator)
-    }
+    // Each is either the zero value or an owned clone, and `delete` no-ops on nil.
+    delete(up.final_path, up.allocator)
+    delete(up.temp_path, up.allocator)
+    delete(up.claimed, up.allocator)
 
     free(up, up.allocator)
-}
-
-// Respond with a short text body, aborting the connection if the write fails.
-// `response_headers` is deliberately not defaulted: every token-bearing response must
-// carry the cache-private marker, and a default let one path silently skip it.
-daemon_respond_text :: proc(
-    c: ^http_server.Conn,
-    status: http.Status,
-    text: string,
-    response_headers: []http_server.Header,
-) {
-    assert(c != nil && c.server != nil, "daemon response needs an owned connection")
-    assert(http_server.conn_can_respond(c), "daemon response began after the connection was answered")
-
-    if http_server.respond_text(c, status, text, response_headers) != .None {
-        http_server.abort(c)
-    }
 }

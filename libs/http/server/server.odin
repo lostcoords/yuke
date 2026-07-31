@@ -513,6 +513,39 @@ respond_text :: proc(c: ^Conn, status: Status, text: string, extra_headers: []He
     return respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text, extra_headers)
 }
 
+// Redirect to `location` with an empty body. `status` must carry a target (RFC 9110
+// §15.4); a caller may not supply its own `Location`, since two would be ambiguous.
+respond_redirect :: proc(c: ^Conn, status: Status, location: string, extra_headers: []Header = nil) -> Response_Error {
+    assert(c != nil, "respond_redirect needs a connection")
+    assert(conn_can_respond(c), "respond_redirect on an answered connection")
+    assert(http.status_is_redirect(status), "respond_redirect needs a redirect that carries a target")
+
+    if len(location) == 0 || !http.field_value_valid(location) {
+        return .Invalid_Header
+    }
+
+    for field in extra_headers {
+        if strings.equal_fold(field.name, "location") {
+            return .Invalid_Header
+        }
+    }
+
+    // `respond` serializes headers before returning, so this outlives the only use.
+    headers, aerr := make([]Header, len(extra_headers) + 1, c.allocator)
+    if aerr != nil {
+        return .Out_Of_Memory
+    }
+    defer delete(headers, c.allocator)
+
+    headers[0] = Header {
+        name  = "Location",
+        value = location,
+    }
+    copy(headers[1:], extra_headers)
+
+    return respond(c, status, "", nil, headers)
+}
+
 // Ownership of `file` transfers only on `.None`; the post-transfer stat keeps
 // `Content-Length` and `max_file_bytes` describing the same open file. An invalid,
 // unavailable, or oversized file receives the supplied small failure response.

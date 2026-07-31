@@ -253,7 +253,7 @@ test_daemon_rejects_oversized_upload :: proc(t: ^testing.T) {
 
     over := int(wire.LIMITS.max_blob_bytes) + 1
     put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, "x", content_length = over), {blob_dir = dir})
-    testing.expect(t, strings.has_prefix(put, "HTTP/1.1 413 Payload Too Large\r\n"), "an over-cap upload should 413")
+    testing.expect(t, strings.has_prefix(put, "HTTP/1.1 413 Content Too Large\r\n"), "an over-cap upload should 413")
 
     testing.expect_value(t, daemon_blob_dir_count(dir), 0)
     testing.expect(t, !daemon_blob_dir_has_temp(dir), "a rejected upload opens no temp")
