@@ -99,6 +99,7 @@ stop_reason_from_wire :: proc(s: string) -> (Stop_Reason, bool) {
 
 // Cancellation timing; an accepted queued run may never start.
 Run_Canceled_Timing :: struct {
+    // @required-nullable
     // Start epoch ms, or null when canceled before starting.
     started_at_ms: Maybe(u64),
 

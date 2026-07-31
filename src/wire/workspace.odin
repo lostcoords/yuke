@@ -84,12 +84,14 @@ Workspace_Describe_Result :: struct {
     // Resolved workspace.
     workspace:        Workspace,
 
+    // @required-nullable
     // Git status; null when the root is not a repo.
     git:              Maybe(Git_Info),
 
     // Last filesystem modification epoch ms.
     last_modified_ms: u64,
 
+    // @required-nullable
     // @unbounded
     // Last model used in this workspace; null if never run.
     last_used_model:  Maybe(string),
@@ -201,6 +203,7 @@ Workspace_Browse_Result :: struct {
     //
     path:        string,
 
+    // @required-nullable
     // @unbounded
     // Parent directory path; null at the filesystem root.
     parent:      Maybe(string),
@@ -209,6 +212,7 @@ Workspace_Browse_Result :: struct {
     // Directory contents.
     entries:     []Dir_Entry,
 
+    // @required-nullable
     // @bounded LIMITS.max_workspace_browse_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),

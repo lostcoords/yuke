@@ -151,11 +151,11 @@ test_cancel_run_result_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_cancel_run_result_omits_absent :: proc(t: ^testing.T) {
+test_cancel_run_result_writes_absent_as_null :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    src := `{"cleared_inputs":[]}`
+    src := `{"canceled_run":null,"cleared_inputs":[],"cleared_compaction":null}`
     v := decoder_init(src, context.temp_allocator)
 
     result, derr := session_cancel_run_result_from_reader(&v)
@@ -168,4 +168,20 @@ test_cancel_run_result_omits_absent :: proc(t: ^testing.T) {
     defer emitter_destroy(&e)
     session_cancel_run_result_emit(&e, result)
     testing.expect_value(t, to_string(&e), src)
+}
+
+@(test)
+test_cancel_run_rejects_wrong_presence :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    // run_id is optional, not nullable.
+    v := decoder_init(`{"session_id":"0123456789abcdef","run_id":null}`)
+    _, derr := session_cancel_run_params_from_reader(&v)
+    testing.expect(t, derr != .None, "explicit null run_id must fail")
+
+    // Both absent results are required members whose value may be null.
+    v = decoder_init(`{"cleared_inputs":[]}`)
+    _, derr = session_cancel_run_result_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "omitted nullable result members must fail")
 }

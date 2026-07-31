@@ -196,6 +196,7 @@ Session_Remove_Params :: struct {
     // Session to remove.
     session_id:       Session_Id,
 
+    // @default false
     // Recursively remove persistent child sessions.
     cascade_children: bool,
 }

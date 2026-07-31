@@ -70,6 +70,8 @@ client_clone :: proc(self: Client, allocator := context.allocator) -> Client {
 
 // Params of the `initialize` request. Non-owning.
 Initialize_Params :: struct {
+    // @default PROTOCOL_VERSION
+    // @const PROTOCOL_VERSION
     // Protocol version this client speaks. Must equal `PROTOCOL_VERSION`.
     protocol: u32,
 
@@ -169,6 +171,7 @@ capability_wire := [Capability]string {
 
 // Result of the `initialize` request: the coarse daemon snapshot.
 Initialize_Result :: struct {
+    // @const PROTOCOL_VERSION
     // Protocol version the daemon speaks.
     protocol:         u32,
 

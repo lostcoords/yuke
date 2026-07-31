@@ -308,7 +308,8 @@ Session_Cancel_Run_Params :: struct {
     // Owning session.
     session_id:  Session_Id,
 
-    // Specific run to cancel; null cancels the active run.
+    // @optional
+    // Specific run to cancel; omit to cancel the active run.
     run_id:      Maybe(Run_Id),
 
     // Also drop any queued inputs.
@@ -338,6 +339,7 @@ session_cancel_run_params_validate :: proc(self: Session_Cancel_Run_Params) -> V
 
 // Result of `session.cancel_run`.
 Session_Cancel_Run_Result :: struct {
+    // @required-nullable
     // Run that was canceled; null if none was active.
     canceled_run:       Maybe(Run_Id),
 
@@ -345,17 +347,15 @@ Session_Cancel_Run_Result :: struct {
     // Queued inputs dropped by `clear_queue`.
     cleared_inputs:     []Input_Id,
 
-    // Compaction run canceled alongside, if any.
+    // @required-nullable
+    // Compaction run canceled alongside; null if none was active.
     cleared_compaction: Maybe(Run_Id),
 }
 
-// Write a session.cancel_run result, omitting absent optionals.
+// Write a session.cancel_run result with explicit nulls for absent runs.
 session_cancel_run_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Result) {
     object_begin(e)
-
-    if id, ok := self.canceled_run.?; ok {
-        field_u64(e, "canceled_run", u64(id))
-    }
+    field_required_null_u64(e, "canceled_run", self.canceled_run)
 
     key(e, "cleared_inputs")
     array_begin(e)
@@ -366,9 +366,7 @@ session_cancel_run_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Res
 
     array_end(e)
 
-    if id, ok := self.cleared_compaction.?; ok {
-        field_u64(e, "cleared_compaction", u64(id))
-    }
+    field_required_null_u64(e, "cleared_compaction", self.cleared_compaction)
 
     object_end(e)
 }
@@ -376,20 +374,25 @@ session_cancel_run_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Res
 // Incremental text/reasoning bytes for a draft. `offset` is UTF-8 bytes already
 // present: == len appends, < len is a no-op, > len is a gap (call session.resync).
 Part_Delta :: struct {
+    // @delivery session
     // @fixed 16
     // Owning session.
     session_id: Session_Id,
 
+    // @delivery draft
     // Draft message id.
     message_id: Message_Id,
 
+    // @delivery part
     // Target part ordinal in `content[]`.
     part_id:    Part_Id,
 
+    // @delivery chunk
     // @unbounded
     // UTF-8 bytes to fold at `offset`.
     delta:      string,
 
+    // @delivery offset
     // UTF-8 bytes already applied on the receiver.
     offset:     u64,
 }
@@ -775,7 +778,9 @@ session_cancel_run_result_from_reader :: proc(
     dec_object_begin(d) or_return
 
     Field :: enum {
+        Run,
         Inputs,
+        Compaction,
     }
 
     seen: bit_set[Field]
@@ -785,21 +790,29 @@ session_cancel_run_result_from_reader :: proc(
 
         switch k {
         case "canceled_run":
-            result.canceled_run = Run_Id(dec_u64(d) or_return)
+            seen += {.Run}
+
+            if !dec_is_null(d) {
+                result.canceled_run = Run_Id(dec_u64(d) or_return)
+            }
 
         case "cleared_inputs":
             result.cleared_inputs = dec_array(d, _input_id_from_reader) or_return
             seen += {.Inputs}
 
         case "cleared_compaction":
-            result.cleared_compaction = Run_Id(dec_u64(d) or_return)
+            seen += {.Compaction}
+
+            if !dec_is_null(d) {
+                result.cleared_compaction = Run_Id(dec_u64(d) or_return)
+            }
 
         case:
             dec_skip(d) or_return
         }
     }
 
-    if .Inputs not_in seen {
+    if seen != {.Run, .Inputs, .Compaction} {
         return {}, .Mismatched_Payload
     }
 

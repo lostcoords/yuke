@@ -104,6 +104,7 @@ Create_Session :: struct {
     // Reasoning level override.
     reasoning:      Maybe(string),
 
+    // @tristate
     // @unbounded
     // Omitted = resolve from config. Explicit null = force no system prompt.
     system_prompt:  System_Prompt_Override,
@@ -111,6 +112,7 @@ Create_Session :: struct {
     // Permission mode override.
     permission:     Maybe(Permission_Mode),
 
+    // @tristate
     // Round-cap override.
     max_rounds:     Max_Rounds_Override,
 }
@@ -192,6 +194,7 @@ Session_Patch :: struct {
     // New permission mode.
     permission: Maybe(Permission_Mode),
 
+    // @tristate
     // New round cap.
     max_rounds: Max_Rounds_Override,
 }
@@ -464,6 +467,7 @@ Session :: struct {
     // Live permission mode.
     permission:    Permission_Mode,
 
+    // @required-nullable
     // Live round cap; null means unlimited.
     max_rounds:    Maybe(u64),
 
@@ -477,6 +481,7 @@ Session :: struct {
     // Last update epoch ms.
     updated_at_ms: u64,
 
+    // @required-nullable
     // Client that created the session; null for daemon-created child/cron sessions.
     created_by:    Maybe(Client),
 
@@ -639,6 +644,7 @@ Session_Activity :: struct {
     // Provider context token count.
     context_tokens:     u64,
 
+    // @required-nullable
     // Pending manual compaction run id.
     pending_compaction: Maybe(Run_Id),
 }
@@ -887,12 +893,15 @@ session_view_from_wire :: proc(s: string) -> (Session_View, bool) {
 
 // session.list input. Non-owning.
 Session_List_Params :: struct {
+    // @default Session_Scope_All{}
     // Workspace scope; omitted means no workspace restriction.
     scope:      Session_Scope,
 
+    // @default Session_Population_Top_Level{}
     // Relationship population; omitted means user-facing top-level sessions.
     population: Session_Population,
 
+    // @default .Active_Recent
     // Membership and ordering; omitted means active_recent.
     view:       Session_View,
 
@@ -948,6 +957,7 @@ Session_List_Result :: struct {
     // Rows in final daemon-defined display order.
     items:       []Session_List_Item,
 
+    // @required-nullable
     // @bounded LIMITS.max_session_list_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
@@ -1351,6 +1361,7 @@ Session_Resync_Result :: struct {
     // Sequence number to resume the durable stream from.
     base_seq:                     Seq,
 
+    // @required-nullable
     // Highest message id already committed or discarded at the snapshot cut.
     // Required on the wire; null when no message has finalized.
     highest_finalized_message_id: Maybe(Message_Id),
@@ -1734,6 +1745,7 @@ Session_Config_Result :: struct {
     // The requested run config.
     config:        Run_Config,
 
+    // @required-nullable
     // @unbounded
     // null means no system prompt is sent to the model.
     system_prompt: Maybe(string),

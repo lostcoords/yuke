@@ -203,6 +203,7 @@ Cron_List_Result :: struct {
     // Jobs in daemon-defined stable order.
     jobs:        []Cron_Job,
 
+    // @required-nullable
     // @bounded LIMITS.max_cron_list_cursor_bytes
     // Opaque continuation; required null on the final page.
     next_cursor: Maybe(string),
@@ -543,15 +544,19 @@ Cron_Job :: struct {
     // Creation epoch ms.
     created_at_ms:     u64,
 
+    // @required-nullable
     // Next scheduled fire epoch ms; null when paused or done.
     next_run_ms:       Maybe(u64),
 
+    // @required-nullable
     // Last fire epoch ms; null when none yet.
     last_run_ms:       Maybe(u64),
 
+    // @required-nullable
     // Id of the session produced by the last fire.
     last_session_id:   Maybe(Session_Id),
 
+    // @required-nullable
     // Outcome of the last fire.
     last_outcome:      Maybe(Cron_Run_Outcome),
 

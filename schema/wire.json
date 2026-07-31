@@ -1,0 +1,6860 @@
+{
+  "protocolVersion": 1,
+  "limits": {
+    "dead_connection_ms": 90000,
+    "default_cron_list_page_size": 25,
+    "default_page_size": 50,
+    "default_session_list_page_size": 25,
+    "default_workspace_browse_page_size": 100,
+    "max_activity_retry_message_bytes": 1024,
+    "max_agents": 256,
+    "max_blob_bytes": 67108864,
+    "max_catalog_models": 4096,
+    "max_cron_jobs": 1024,
+    "max_cron_list_cursor_bytes": 256,
+    "max_cron_list_page_size": 100,
+    "max_error_message_bytes": 4096,
+    "max_frame_bytes": 8388608,
+    "max_inline_media_base64_bytes": 349528,
+    "max_inline_media_bytes": 262144,
+    "max_input_parts": 256,
+    "max_message_parts": 1024,
+    "max_message_string_bytes": 1048576,
+    "max_page_size": 500,
+    "max_permission_creates": 32,
+    "max_permission_options": 32,
+    "max_permission_reject_message_bytes": 4096,
+    "max_permission_rules": 4096,
+    "max_profiles": 256,
+    "max_queued_inputs": 128,
+    "max_reasoning_levels": 32,
+    "max_session_list_cursor_bytes": 256,
+    "max_session_list_page_size": 100,
+    "max_skills": 1024,
+    "max_skipped_providers": 256,
+    "max_snapshot_configs": 501,
+    "max_subscriptions": 64,
+    "max_tool_output_stream_bytes": 1048576,
+    "max_view_bytes": 1048576,
+    "max_view_items": 1024,
+    "max_views_per_tool": 64,
+    "max_workspace_browse_cursor_bytes": 256,
+    "max_workspace_browse_page_size": 500,
+    "max_workspaces": 1024,
+    "ping_interval_ms": 30000
+  },
+  "constants": {
+    "MAX_CRON_REVISION": 9007199254740991,
+    "MAX_INTEGER_TOKEN_DIGITS": 16,
+    "MAX_REQUEST_ID": 9007199254740991,
+    "MAX_REQUEST_ID_BYTES": 64,
+    "MAX_SESSION_REVISION": 9007199254740991,
+    "MAX_WIRE_INTEGER": 9007199254740991,
+    "PROTOCOL_VERSION": 1
+  },
+  "stringConstants": {
+    "JSONRPC_VERSION": "2.0"
+  },
+  "closeCodes": {
+    "internal_error": 1011,
+    "message_too_big": 1009,
+    "protocol_error": 1002,
+    "send_queue_overflow": 1013,
+    "shutting_down": 1012,
+    "unsupported_protocol": 1002
+  },
+  "methods": [
+    {
+      "name": "initialize",
+      "odinName": "Initialize",
+      "direction": "clientToServer",
+      "doc": "Negotiate the protocol version and exchange identity. Must be the first request on a connection, and is the only one accepted before Ready.",
+      "params": "Initialize_Params",
+      "result": "Initialize_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.list",
+      "odinName": "Session_List",
+      "direction": "clientToServer",
+      "doc": "Read a bounded daemon-ordered session-index page.",
+      "params": "Session_List_Params",
+      "result": "Session_List_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "session.create",
+      "odinName": "Session_Create",
+      "direction": "clientToServer",
+      "doc": "Create a new session.",
+      "params": "Create_Session",
+      "result": "Session_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.patch",
+      "odinName": "Session_Patch",
+      "direction": "clientToServer",
+      "doc": "Patch session settings.",
+      "params": "Session_Patch_Params",
+      "result": "Session_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.remove",
+      "odinName": "Session_Remove",
+      "direction": "clientToServer",
+      "doc": "Remove a session and its data.",
+      "params": "Session_Remove_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.fork",
+      "odinName": "Session_Fork",
+      "direction": "clientToServer",
+      "doc": "Fork a session from another session's transcript.",
+      "params": "Session_Fork_Params",
+      "result": "Session_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.compact",
+      "odinName": "Session_Compact",
+      "direction": "clientToServer",
+      "doc": "Request manual compaction of the transcript context.",
+      "params": "Session_Compact_Params",
+      "result": "Session_Compact_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.rewind",
+      "odinName": "Session_Rewind",
+      "direction": "clientToServer",
+      "doc": "Truncate the transcript at a user message.",
+      "params": "Session_Rewind_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.send_input",
+      "odinName": "Session_Send_Input",
+      "direction": "clientToServer",
+      "doc": "Send user input to a session.",
+      "params": "Session_Send_Input_Params",
+      "result": "Session_Send_Input_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.cancel_input",
+      "odinName": "Session_Cancel_Input",
+      "direction": "clientToServer",
+      "doc": "Cancel a queued input that has not started.",
+      "params": "Session_Cancel_Input_Params",
+      "result": "Session_Cancel_Input_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.cancel_run",
+      "odinName": "Session_Cancel_Run",
+      "direction": "clientToServer",
+      "doc": "Cancel the active run, optionally clearing queue and pending compaction.",
+      "params": "Session_Cancel_Run_Params",
+      "result": "Session_Cancel_Run_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.resync",
+      "odinName": "Session_Resync",
+      "direction": "clientToServer",
+      "doc": "Resync a session with a windowed transcript snapshot.",
+      "params": "Session_Resync_Params",
+      "result": "Session_Resync_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.history",
+      "odinName": "Session_History",
+      "direction": "clientToServer",
+      "doc": "Read older committed history beyond the resync window.",
+      "params": "Session_History_Params",
+      "result": "Session_History_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "permission.decide",
+      "odinName": "Permission_Decide",
+      "direction": "clientToServer",
+      "doc": "Answer a pending permission request.",
+      "params": "Permission_Decide_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "session.config",
+      "odinName": "Session_Config",
+      "direction": "clientToServer",
+      "doc": "Fetch a session's run config and system prompt by config_rev.",
+      "params": "Session_Config_Params",
+      "result": "Session_Config_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "subscription.set",
+      "odinName": "Subscription_Set",
+      "direction": "clientToServer",
+      "doc": "Replace the subscription set.",
+      "params": "Subscription_Set_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "catalog.list",
+      "odinName": "Catalog_List",
+      "direction": "clientToServer",
+      "doc": "Fetch the model catalog, with optional `since_rev`.",
+      "params": "Catalog_List_Params",
+      "result": "Catalog_List_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "catalog.refresh",
+      "odinName": "Catalog_Refresh",
+      "direction": "clientToServer",
+      "doc": "Re-read provider and credential configuration from disk.",
+      "params": "Empty",
+      "result": "Catalog_Refresh_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "workspace.describe",
+      "odinName": "Workspace_Describe",
+      "direction": "clientToServer",
+      "doc": "Describe an arbitrary path as a workspace.",
+      "params": "Workspace_Describe_Params",
+      "result": "Workspace_Describe_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "workspace.browse",
+      "odinName": "Workspace_Browse",
+      "direction": "clientToServer",
+      "doc": "List directories on the daemon host.",
+      "params": "Workspace_Browse_Params",
+      "result": "Workspace_Browse_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "workspace.remove",
+      "odinName": "Workspace_Remove",
+      "direction": "clientToServer",
+      "doc": "Remove a workspace and its sessions.",
+      "params": "Workspace_Ref",
+      "result": "Workspace_Remove_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "workspace.skills",
+      "odinName": "Workspace_Skills",
+      "direction": "clientToServer",
+      "doc": "List skills available in a workspace.",
+      "params": "Workspace_Ref",
+      "result": "Workspace_Skills_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "permission.rules",
+      "odinName": "Permission_Rules",
+      "direction": "clientToServer",
+      "doc": "List remembered permission rules for a workspace.",
+      "params": "Workspace_Ref",
+      "result": "Permission_Rules_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "permission.forget",
+      "odinName": "Permission_Forget",
+      "direction": "clientToServer",
+      "doc": "Forget a remembered permission rule.",
+      "params": "Permission_Forget_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "cron.create",
+      "odinName": "Cron_Create",
+      "direction": "clientToServer",
+      "doc": "Create a cron job.",
+      "params": "Cron_Create_Params",
+      "result": "Cron_Job_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "cron.patch",
+      "odinName": "Cron_Patch",
+      "direction": "clientToServer",
+      "doc": "Patch a cron job.",
+      "params": "Cron_Patch_Params",
+      "result": "Cron_Job_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "cron.remove",
+      "odinName": "Cron_Remove",
+      "direction": "clientToServer",
+      "doc": "Remove a cron job.",
+      "params": "Cron_Job_Ref",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "cron.list",
+      "odinName": "Cron_List",
+      "direction": "clientToServer",
+      "doc": "List cron jobs.",
+      "params": "Cron_List_Params",
+      "result": "Cron_List_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "cron.run_now",
+      "odinName": "Cron_Run_Now",
+      "direction": "clientToServer",
+      "doc": "Fire a cron job immediately.",
+      "params": "Cron_Job_Ref",
+      "result": "Cron_Run_Now_Result",
+      "paramsOptional": false
+    }
+  ],
+  "broadcasts": [
+    {
+      "name": "session.summary_changed",
+      "odinName": "Session_Summary_Changed",
+      "direction": "serverToClient",
+      "doc": "Durable session summary changed.",
+      "params": "Session_Summary_Changed_Data",
+      "class": "ungated",
+      "sessionField": "id"
+    },
+    {
+      "name": "session.activity_changed",
+      "odinName": "Session_Activity_Changed",
+      "direction": "serverToClient",
+      "doc": "Volatile session activity changed.",
+      "params": "Session_Activity_Changed_Data",
+      "class": "ungated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "session.removed",
+      "odinName": "Session_Removed",
+      "direction": "serverToClient",
+      "doc": "Session was removed.",
+      "params": "Session_Removed_Data",
+      "class": "ungated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "workspace.created",
+      "odinName": "Workspace_Created",
+      "direction": "serverToClient",
+      "doc": "Workspace became known to the daemon.",
+      "params": "Workspace_Created_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "workspace.removed",
+      "odinName": "Workspace_Removed",
+      "direction": "serverToClient",
+      "doc": "Workspace was removed.",
+      "params": "Workspace_Removed_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "permission.rules_changed",
+      "odinName": "Permission_Rules_Changed",
+      "direction": "serverToClient",
+      "doc": "Permission rules for a workspace changed.",
+      "params": "Permission_Rules_Changed_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "catalog.changed",
+      "odinName": "Catalog_Changed",
+      "direction": "serverToClient",
+      "doc": "Catalog content hash or health changed.",
+      "params": "Catalog_Changed_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "cron.created",
+      "odinName": "Cron_Created",
+      "direction": "serverToClient",
+      "doc": "Cron job was created.",
+      "params": "Cron_Created_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "cron.updated",
+      "odinName": "Cron_Updated",
+      "direction": "serverToClient",
+      "doc": "Cron job was updated.",
+      "params": "Cron_Updated_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "cron.removed",
+      "odinName": "Cron_Removed",
+      "direction": "serverToClient",
+      "doc": "Cron job was removed.",
+      "params": "Cron_Removed_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "notice",
+      "odinName": "Notice",
+      "direction": "serverToClient",
+      "doc": "Daemon diagnostic notice.",
+      "params": "Notice",
+      "class": "ungated"
+    },
+    {
+      "name": "message.committed",
+      "odinName": "Message_Committed",
+      "direction": "serverToClient",
+      "doc": "Committed transcript message; durable.",
+      "params": "Message_Committed_Data",
+      "class": "durable_gated",
+      "seqField": "seq",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "run.started",
+      "odinName": "Run_Started",
+      "direction": "serverToClient",
+      "doc": "Run started; durable.",
+      "params": "Run_Started_Data",
+      "class": "durable_gated",
+      "seqField": "seq",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "run.done",
+      "odinName": "Run_Done",
+      "direction": "serverToClient",
+      "doc": "Run reached a terminal outcome; durable.",
+      "params": "Run_Done_Data",
+      "class": "durable_gated",
+      "seqField": "seq",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "config.changed",
+      "odinName": "Config_Changed",
+      "direction": "serverToClient",
+      "doc": "Run config changed; durable.",
+      "params": "Config_Changed_Data",
+      "class": "durable_gated",
+      "seqField": "seq",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "transcript.truncated",
+      "odinName": "Transcript_Truncated",
+      "direction": "serverToClient",
+      "doc": "Transcript was truncated; durable.",
+      "params": "Transcript_Truncated_Data",
+      "class": "durable_gated",
+      "seqField": "seq",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "message.started",
+      "odinName": "Message_Started",
+      "direction": "serverToClient",
+      "doc": "Assistant message draft started.",
+      "params": "Message_Started_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "message.discarded",
+      "odinName": "Message_Discarded",
+      "direction": "serverToClient",
+      "doc": "Assistant message draft was discarded (e.g. retry).",
+      "params": "Message_Discarded_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "message.part_added",
+      "odinName": "Message_Part_Added",
+      "direction": "serverToClient",
+      "doc": "A new part was appended to a draft.",
+      "params": "Message_Part_Added_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "message.part_delta",
+      "odinName": "Message_Part_Delta",
+      "direction": "serverToClient",
+      "doc": "Incremental text/reasoning bytes for a draft.",
+      "params": "Message_Part_Delta_Data",
+      "class": "live_droppable",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "tool.state_changed",
+      "odinName": "Tool_State_Changed",
+      "direction": "serverToClient",
+      "doc": "Tool part state changed.",
+      "params": "Tool_State_Changed_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "tool.output_delta",
+      "odinName": "Tool_Output_Delta",
+      "direction": "serverToClient",
+      "doc": "Incremental display output for a running tool part.",
+      "params": "Tool_Output_Delta_Data",
+      "class": "live_droppable",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "input.queued",
+      "odinName": "Input_Queued",
+      "direction": "serverToClient",
+      "doc": "Input was queued behind the active turn.",
+      "params": "Input_Queued_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    },
+    {
+      "name": "input.canceled",
+      "odinName": "Input_Canceled",
+      "direction": "serverToClient",
+      "doc": "Queued input was canceled before starting.",
+      "params": "Input_Canceled_Data",
+      "class": "live_gated",
+      "sessionField": "session_id"
+    }
+  ],
+  "deliveryClasses": [
+    {
+      "name": "ungated",
+      "gated": false,
+      "droppable": false,
+      "sequenced": false
+    },
+    {
+      "name": "durable_gated",
+      "gated": true,
+      "droppable": false,
+      "sequenced": true
+    },
+    {
+      "name": "live_gated",
+      "gated": true,
+      "droppable": false,
+      "sequenced": false
+    },
+    {
+      "name": "live_droppable",
+      "gated": true,
+      "droppable": true,
+      "sequenced": false
+    }
+  ],
+  "errors": [
+    {
+      "odinName": "Bad_Request",
+      "code": -32602,
+      "doc": "Request was syntactically or semantically invalid."
+    },
+    {
+      "odinName": "Bad_Protocol",
+      "code": -32600,
+      "doc": "Wire-level framing / version violation."
+    },
+    {
+      "odinName": "Unknown_Method",
+      "code": -32601,
+      "doc": "Unknown RPC method name."
+    },
+    {
+      "odinName": "Unknown_Session",
+      "code": -31000,
+      "doc": "Session id does not exist."
+    },
+    {
+      "odinName": "Unknown_Workspace",
+      "code": -31001,
+      "doc": "Workspace id does not exist."
+    },
+    {
+      "odinName": "Stale_Cursor",
+      "code": -31002,
+      "doc": "A paged-query cursor names an invalidated result generation."
+    },
+    {
+      "odinName": "Unknown_Message",
+      "code": -31003,
+      "doc": "Message id does not exist in this session."
+    },
+    {
+      "odinName": "Unknown_Part",
+      "code": -31004,
+      "doc": "Part index is out of range for the parent message."
+    },
+    {
+      "odinName": "Unknown_Input",
+      "code": -31005,
+      "doc": "Input id does not exist or was already consumed."
+    },
+    {
+      "odinName": "Unknown_Config_Rev",
+      "code": -31006,
+      "doc": "`config_rev` is not the session's current revision."
+    },
+    {
+      "odinName": "Unknown_Job",
+      "code": -31007,
+      "doc": "Job id does not exist."
+    },
+    {
+      "odinName": "Job_Busy",
+      "code": -31008,
+      "doc": "A run is already active on the target job."
+    },
+    {
+      "odinName": "Unknown_Skill",
+      "code": -31009,
+      "doc": "Skill name is unknown to this daemon."
+    },
+    {
+      "odinName": "Input_Already_Started",
+      "code": -31010,
+      "doc": "Input was already started and cannot be re-entered."
+    },
+    {
+      "odinName": "Queue_Full",
+      "code": -31011,
+      "doc": "Session input queue reached its protocol cap."
+    },
+    {
+      "odinName": "Run_Mismatch",
+      "code": -31012,
+      "doc": "The run the request targets is not the current run."
+    },
+    {
+      "odinName": "Permission_Unknown",
+      "code": -31013,
+      "doc": "Permission descriptor or prompt id is unknown."
+    },
+    {
+      "odinName": "Permission_Already_Decided",
+      "code": -31014,
+      "doc": "Permission for this prompt was already decided."
+    },
+    {
+      "odinName": "Session_Busy",
+      "code": -31015,
+      "doc": "Session is busy and cannot accept the request right now."
+    },
+    {
+      "odinName": "Session_Has_Children",
+      "code": -31016,
+      "doc": "Session has persistent children and removal did not request a cascade."
+    },
+    {
+      "odinName": "Runtime_Failed",
+      "code": -31017,
+      "doc": "Underlying runtime (model / tool) failed."
+    },
+    {
+      "odinName": "Invalid_Patch",
+      "code": -31018,
+      "doc": "Patch failed structural or content validation."
+    },
+    {
+      "odinName": "Unsupported_Model",
+      "code": -31019,
+      "doc": "Model id is not supported by this daemon."
+    },
+    {
+      "odinName": "Unsupported_Reasoning",
+      "code": -31020,
+      "doc": "Reasoning effort is not supported by the selected model."
+    },
+    {
+      "odinName": "Internal",
+      "code": -32603,
+      "doc": "Catch-all for unspecified internal errors."
+    },
+    {
+      "odinName": "Overloaded",
+      "code": -31021,
+      "doc": "Retry this request after backoff; the connection stays up, only this request was shed. Client behavior: exponential-backoff re-send of the same request."
+    }
+  ],
+  "structures": [
+    {
+      "name": "Session_Summary_Changed_Data",
+      "doc": "Typed broadcast payloads. One struct per broadcast name; a broadcast frame's data is always exactly one of these. Payload for `session.summary_changed`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Session_Revision",
+          "doc": "Daemon-lifetime compact-index revision.",
+          "presence": "required"
+        },
+        {
+          "name": "session",
+          "type": "Session",
+          "doc": "Current durable session summary.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Activity_Changed_Data",
+      "doc": "Payload for `session.activity_changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "activity",
+          "type": "Session_Activity",
+          "doc": "Current coarse activity.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Removed_Data",
+      "doc": "Payload for `session.removed`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Session_Revision",
+          "doc": "Daemon-lifetime compact-index revision.",
+          "presence": "required"
+        },
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Id of the removed session.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Created_Data",
+      "doc": "Payload for `workspace.created`.",
+      "fields": [
+        {
+          "name": "workspace",
+          "type": "Workspace",
+          "doc": "The newly known workspace.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Removed_Data",
+      "doc": "Payload for `workspace.removed`.",
+      "fields": [
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Id of the removed workspace.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Permission_Rules_Changed_Data",
+      "doc": "Payload for `permission.rules_changed`.",
+      "fields": [
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Owning workspace id.",
+          "presence": "required"
+        },
+        {
+          "name": "rules",
+          "type": "[]Permission_Rule",
+          "doc": "Current rule set.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_permission_rules",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalog_Changed_Data",
+      "doc": "Payload for `catalog.changed`.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "Catalog_Rev",
+          "doc": "New catalog content hash.",
+          "presence": "required"
+        },
+        {
+          "name": "health",
+          "type": "Catalog_Health",
+          "doc": "Updated load health.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Created_Data",
+      "doc": "Payload for `cron.created`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Cron_Revision",
+          "doc": "Daemon-lifetime cron-index revision.",
+          "presence": "required"
+        },
+        {
+          "name": "job",
+          "type": "Cron_Job",
+          "doc": "The newly created job.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Updated_Data",
+      "doc": "Payload for `cron.updated`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Cron_Revision",
+          "doc": "Daemon-lifetime cron-index revision.",
+          "presence": "required"
+        },
+        {
+          "name": "job",
+          "type": "Cron_Job",
+          "doc": "Updated job record.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Removed_Data",
+      "doc": "Payload for `cron.removed`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Cron_Revision",
+          "doc": "Daemon-lifetime cron-index revision.",
+          "presence": "required"
+        },
+        {
+          "name": "job_id",
+          "type": "Job_Id",
+          "doc": "Id of the removed job.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Message_Committed_Data",
+      "doc": "Payload for `message.committed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "doc": "Sequence number on the durable stream.",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "Message",
+          "doc": "The committed message.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Started_Data",
+      "doc": "Payload for `run.started`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "doc": "Sequence number on the durable stream.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "New run id.",
+          "presence": "required"
+        },
+        {
+          "name": "kind",
+          "type": "Run_Kind",
+          "doc": "What kind of run started.",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "Config_Rev",
+          "doc": "Config revision used by the run.",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Start epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Done_Data",
+      "doc": "Payload for `run.done`. One terminal event for a run: `outcome` carries the terminal arm (turn, compacted, skipped, canceled, or failed) and `timing` covers every terminal, including a queued run canceled before it started.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "doc": "Sequence number on the durable stream.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Run id (terminal).",
+          "presence": "required"
+        },
+        {
+          "name": "kind",
+          "type": "Run_Kind",
+          "doc": "What kind of run terminated.",
+          "presence": "required"
+        },
+        {
+          "name": "timing",
+          "type": "Run_Canceled_Timing",
+          "doc": "Terminal timing; `started_at_ms` is null when canceled while queued.",
+          "presence": "required"
+        },
+        {
+          "name": "outcome",
+          "type": "Run_Outcome",
+          "doc": "Terminal outcome.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Config_Changed_Data",
+      "doc": "Payload for `config.changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "doc": "Sequence number on the durable stream.",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "Run_Config",
+          "doc": "New active run config.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Transcript_Truncated_Data",
+      "doc": "Payload for `transcript.truncated`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
+          "doc": "Sequence number on the durable stream.",
+          "presence": "required"
+        },
+        {
+          "name": "first_removed_id",
+          "type": "Message_Id",
+          "doc": "First removed message id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Message_Started_Data",
+      "doc": "Payload for `message.started` (draft opened).",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Draft message id.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Owning run id.",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "Config_Rev",
+          "doc": "Config revision used.",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "string",
+          "doc": "Agent name, e.g. `\"main\"`.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Draft creation epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Message_Discarded_Data",
+      "doc": "Payload for `message.discarded`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Discarded draft id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Message_Part_Added_Data",
+      "doc": "Payload for `message.part_added`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Draft message id.",
+          "presence": "required"
+        },
+        {
+          "name": "part",
+          "type": "Assistant_Part",
+          "doc": "Newly appended part.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Changed_Data",
+      "doc": "Payload for `tool.state_changed`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Draft message id.",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Tool part ordinal inside the message.",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "Tool_State",
+          "doc": "New tool state.",
+          "presence": "required"
+        },
+        {
+          "name": "permission_state",
+          "type": "Maybe(Permission_State)",
+          "doc": "The part's permission lifecycle at this transition, under the same `Tool_Part` cross-field invariant. Replaces the part's copy wholesale.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Input_Queued_Data",
+      "doc": "Payload for `input.queued`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "input",
+          "type": "Queued_Input",
+          "doc": "The queued input.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Input_Canceled_Data",
+      "doc": "Payload for `input.canceled`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "Id of the canceled input.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Model_Cost",
+      "doc": "United States dollars per million tokens.",
+      "fields": [
+        {
+          "name": "input",
+          "type": "f64",
+          "doc": "Cost per million input tokens.",
+          "presence": "required"
+        },
+        {
+          "name": "output",
+          "type": "f64",
+          "doc": "Cost per million output tokens.",
+          "presence": "required"
+        },
+        {
+          "name": "cache_read",
+          "type": "f64",
+          "doc": "Cost per million cache-read tokens.",
+          "presence": "required"
+        },
+        {
+          "name": "cache_write",
+          "type": "f64",
+          "doc": "Cost per million cache-write tokens.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Model_Info",
+      "doc": "Closed projection of a provider model record. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Model_Id",
+          "doc": "Model identifier.",
+          "presence": "required"
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "context_window",
+          "type": "u64",
+          "doc": "Max input tokens the model accepts.",
+          "presence": "required"
+        },
+        {
+          "name": "max_output_tokens",
+          "type": "u64",
+          "doc": "Max output tokens the model can produce.",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning_levels",
+          "type": "[]string",
+          "doc": "Supported reasoning effort levels; each element @bounded 32.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_reasoning_levels",
+            "value": 32
+          }
+        },
+        {
+          "name": "default_reasoning",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "supports_vision",
+          "type": "bool",
+          "doc": "Whether the model accepts image input.",
+          "presence": "required"
+        },
+        {
+          "name": "supports_tools",
+          "type": "bool",
+          "doc": "Whether the model supports tool calling.",
+          "presence": "required"
+        },
+        {
+          "name": "cost",
+          "type": "Model_Cost",
+          "doc": "Per-token pricing.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_List_Params",
+      "doc": "Params for catalog.list.",
+      "fields": [
+        {
+          "name": "since_rev",
+          "type": "Maybe(Catalog_Rev)",
+          "doc": "Client's last known catalog revision; omit to force a full response.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_List_Result_Unchanged",
+      "doc": "Client's revision is current; no catalog data included.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "Catalog_Rev",
+          "doc": "Current catalog revision.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_List_Result_Full",
+      "doc": "Client's revision was stale or absent; full catalog included.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "Catalog_Rev",
+          "doc": "Current catalog revision.",
+          "presence": "required"
+        },
+        {
+          "name": "models",
+          "type": "[]Model_Info",
+          "doc": "All available models.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_catalog_models",
+            "value": 4096
+          }
+        },
+        {
+          "name": "health",
+          "type": "Catalog_Health",
+          "doc": "Catalog load health.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_Refresh_Result",
+      "doc": "Result of catalog.refresh.",
+      "fields": [
+        {
+          "name": "catalog_rev",
+          "type": "Catalog_Rev",
+          "doc": "New catalog revision after refresh.",
+          "presence": "required"
+        },
+        {
+          "name": "health",
+          "type": "Catalog_Health",
+          "doc": "Catalog load health.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_Health",
+      "doc": "Catalog load health.",
+      "fields": [
+        {
+          "name": "skipped",
+          "type": "[]Skipped_Provider",
+          "doc": "Providers skipped by the daemon.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_skipped_providers",
+            "value": 256
+          }
+        },
+        {
+          "name": "load_error",
+          "type": "Maybe(string)",
+          "doc": "Catalog load failure, if any.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Skipped_Provider",
+      "doc": "Providers skipped during catalog load. Non-owning.",
+      "fields": [
+        {
+          "name": "provider",
+          "type": "string",
+          "doc": "Provider name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "reason",
+          "type": "Skip_Reason",
+          "doc": "Why this provider was skipped.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Skip_Reason_Missing_Credential",
+      "doc": "Required credential was absent.",
+      "fields": [
+        {
+          "name": "env",
+          "type": "string",
+          "doc": "Environment variable name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Skip_Reason_Invalid_Config",
+      "doc": "Provider config was invalid.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable error.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error_Object",
+      "doc": "Request failure details. Non-owning.",
+      "fields": [
+        {
+          "name": "code",
+          "type": "Error_Code",
+          "doc": "Machine-readable error category.",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable. Clients branch on `code`, never on this.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media_Url",
+      "doc": "Fetched over HTTP by URL.",
+      "fields": [
+        {
+          "name": "url",
+          "type": "string",
+          "doc": "Remote URL.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "4096",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media_Base64",
+      "doc": "Inlined as base64 bytes.",
+      "fields": [
+        {
+          "name": "mime",
+          "type": "string",
+          "doc": "MIME type.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "data",
+          "type": "string",
+          "doc": "Base64-encoded bytes. The decoded length is the tighter rule: <= LIMITS.max_inline_media_bytes.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_inline_media_base64_bytes",
+            "value": 349528
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media_Blob",
+      "doc": "Referenced by content hash, fetched separately.",
+      "fields": [
+        {
+          "name": "hash",
+          "type": "[64]u8",
+          "doc": "Content hash, lowercase hex.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "mime",
+          "type": "string",
+          "doc": "MIME type.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "bytes",
+          "type": "u64",
+          "doc": "Decoded byte length.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Content_Text",
+      "doc": "Plain UTF-8 text.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "UTF-8 text.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content_Image",
+      "doc": "Image content.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "Media_Source",
+          "doc": "Image bytes.",
+          "presence": "required"
+        },
+        {
+          "name": "detail",
+          "type": "Maybe(string)",
+          "doc": "Optional detail hint (e.g. `\"low\"` / `\"high\"`).",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content_Audio",
+      "doc": "Audio content.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "Media_Source",
+          "doc": "Audio bytes.",
+          "presence": "required"
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "doc": "Audio container format.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content_File",
+      "doc": "Arbitrary file content.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "Media_Source",
+          "doc": "File bytes.",
+          "presence": "required"
+        },
+        {
+          "name": "filename",
+          "type": "Maybe(string)",
+          "doc": "Original filename.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "512",
+            "value": 512
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cron_Patch",
+      "doc": "Optional-field patch applied to an existing cron job.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "Maybe(string)",
+          "doc": "New display name, if changing.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "schedule",
+          "type": "Cron_Schedule",
+          "doc": "New fire schedule, if changing.",
+          "presence": "required"
+        },
+        {
+          "name": "session",
+          "type": "Maybe(Create_Session)",
+          "doc": "New session template, if changing.",
+          "presence": "optional"
+        },
+        {
+          "name": "retain",
+          "type": "Maybe(Cron_Retain)",
+          "doc": "New retention policy, if changing.",
+          "presence": "optional"
+        },
+        {
+          "name": "input",
+          "type": "Input",
+          "doc": "New fire input, if changing.",
+          "presence": "required"
+        },
+        {
+          "name": "on_missed",
+          "type": "Maybe(Cron_Missed_Policy)",
+          "doc": "New missed-fire policy, if changing.",
+          "presence": "optional"
+        },
+        {
+          "name": "overlap",
+          "type": "Maybe(Cron_Overlap)",
+          "doc": "New overlap policy, if changing.",
+          "presence": "optional"
+        },
+        {
+          "name": "delete_after_run",
+          "type": "Maybe(bool)",
+          "doc": "New auto-delete-after-run flag, if changing.",
+          "presence": "optional"
+        },
+        {
+          "name": "enabled",
+          "type": "Maybe(bool)",
+          "doc": "New enabled state, if changing.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Create_Params",
+      "doc": "Params for `cron.create`.",
+      "fields": [
+        {
+          "name": "spec",
+          "type": "Cron_Job_Spec",
+          "doc": "Full spec for the new job.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Patch_Params",
+      "doc": "Params for `cron.patch`.",
+      "fields": [
+        {
+          "name": "job_id",
+          "type": "Job_Id",
+          "doc": "Job to patch.",
+          "presence": "required"
+        },
+        {
+          "name": "patch",
+          "type": "Cron_Patch",
+          "doc": "Fields to change.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Job_Ref",
+      "doc": "Params naming a cron job and nothing else. Shared by `cron.remove` and `cron.run_now`; split it the moment one of them needs a field of its own.",
+      "fields": [
+        {
+          "name": "job_id",
+          "type": "Job_Id",
+          "doc": "Job the request targets.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cron_List_Params",
+      "doc": "Params for `cron.list`.",
+      "fields": [
+        {
+          "name": "limit",
+          "type": "Maybe(u64)",
+          "doc": "Page size; omitted means daemon default.",
+          "presence": "optional"
+        },
+        {
+          "name": "cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque continuation.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_cron_list_cursor_bytes",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cron_List_Result",
+      "doc": "Result of `cron.list`.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Cron_Revision",
+          "doc": "Cron-index revision represented by every job in this page.",
+          "presence": "required"
+        },
+        {
+          "name": "jobs",
+          "type": "[]Cron_Job",
+          "doc": "Jobs in daemon-defined stable order.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_cron_list_page_size",
+            "value": 100
+          }
+        },
+        {
+          "name": "next_cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque continuation; required null on the final page.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_cron_list_cursor_bytes",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cron_Run_Now_Result",
+      "doc": "Result of `cron.run_now`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session created by the fire.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Run started in that session.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Schedule_Every",
+      "doc": "",
+      "fields": [
+        {
+          "name": "interval_ms",
+          "type": "u64",
+          "doc": "Interval in ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Schedule_Cron",
+      "doc": "",
+      "fields": [
+        {
+          "name": "expr",
+          "type": "string",
+          "doc": "Cron expression (UTC unless `utc_offset_minutes` overrides).",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "utc_offset_minutes",
+          "type": "i64",
+          "doc": "Local-zone offset in minutes; 0 means UTC.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Schedule_At",
+      "doc": "",
+      "fields": [
+        {
+          "name": "at_ms",
+          "type": "u64",
+          "doc": "Fire at this absolute epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Schedule_After",
+      "doc": "",
+      "fields": [
+        {
+          "name": "delay_ms",
+          "type": "u64",
+          "doc": "Delay in ms after the trigger.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Job_Spec",
+      "doc": "Full spec for a cron job.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "Maybe(string)",
+          "doc": "Display name for the job.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "schedule",
+          "type": "Cron_Schedule",
+          "doc": "When to fire.",
+          "presence": "required"
+        },
+        {
+          "name": "session",
+          "type": "Create_Session",
+          "doc": "Session template applied to each fire.",
+          "presence": "required"
+        },
+        {
+          "name": "retain",
+          "type": "Cron_Retain",
+          "doc": "Whether to retain fired sessions.",
+          "presence": "required"
+        },
+        {
+          "name": "input",
+          "type": "Input",
+          "doc": "Input to deliver on each fire.",
+          "presence": "required"
+        },
+        {
+          "name": "on_missed",
+          "type": "Cron_Missed_Policy",
+          "doc": "Policy when a fire is missed.",
+          "presence": "required"
+        },
+        {
+          "name": "overlap",
+          "type": "Cron_Overlap",
+          "doc": "Policy when a new fire overlaps an active one.",
+          "presence": "required"
+        },
+        {
+          "name": "delete_after_run",
+          "type": "bool",
+          "doc": "Auto-delete the job after a successful run.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Job",
+      "doc": "A cron job record. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Job_Id",
+          "doc": "Job id.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "spec",
+          "type": "Cron_Job_Spec",
+          "doc": "Job spec at last write.",
+          "presence": "required"
+        },
+        {
+          "name": "enabled",
+          "type": "bool",
+          "doc": "Whether fires are active.",
+          "presence": "required"
+        },
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Creation epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "next_run_ms",
+          "type": "Maybe(u64)",
+          "doc": "Next scheduled fire epoch ms; null when paused or done.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "last_run_ms",
+          "type": "Maybe(u64)",
+          "doc": "Last fire epoch ms; null when none yet.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "last_session_id",
+          "type": "Maybe(Session_Id)",
+          "doc": "Id of the session produced by the last fire.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "last_outcome",
+          "type": "Maybe(Cron_Run_Outcome)",
+          "doc": "Outcome of the last fire.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "run_count",
+          "type": "u64",
+          "doc": "Total successful fires since creation.",
+          "presence": "required"
+        },
+        {
+          "name": "dispatch_failures",
+          "type": "u64",
+          "doc": "Total dispatch failures since creation.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Request",
+      "doc": "JSON-RPC 2.0 framing. `jsonrpc: \"2.0\"` is validated on decode and written from `JSONRPC_VERSION` on emit, so it is never stored on a frame type. Emit order is `jsonrpc`, `id`, then `method`/`result`/`error`; decoding is order-insensitive. No batching (a top-level array is an Invalid Request), and no server-to-client requests \u2014 server traffic is responses and notifications only. Client request frame with typed method params.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Request_Id",
+          "doc": "Correlation id, echoed verbatim in the response.",
+          "presence": "required"
+        },
+        {
+          "name": "method",
+          "type": "Method_Name",
+          "doc": "RPC method name.",
+          "presence": "required"
+        },
+        {
+          "name": "params",
+          "type": "Request_Params",
+          "doc": "Method params typed by `method`.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Response_Ok",
+      "doc": "Successful server response; carries the typed method result.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Request_Id",
+          "doc": "Correlation id copied from the request.",
+          "presence": "required"
+        },
+        {
+          "name": "result",
+          "type": "Response_Result",
+          "doc": "Method result, tagged by the request method that produced it.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Response_Error",
+      "doc": "Failed server response; carries a method-agnostic error object.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Request_Id",
+          "doc": "Correlation id copied from the request.",
+          "presence": "required"
+        },
+        {
+          "name": "error",
+          "type": "Error_Object",
+          "doc": "Request failure details.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Notification",
+      "doc": "Server-pushed notification: a request object with no `id`, so nothing replies. Ordering, replay, gating, and droppability are ours \u2014 see `broadcast_name_class`, `Seq`, and `session.resync`.",
+      "fields": [
+        {
+          "name": "method",
+          "type": "Broadcast_Name",
+          "doc": "Broadcast name, occupying the same `method` namespace as requests.",
+          "presence": "required"
+        },
+        {
+          "name": "params",
+          "type": "Broadcast_Data",
+          "doc": "Typed broadcast payload.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Client",
+      "doc": "Connection-level client identity.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "Client connection name (e.g. `\"yuke-tui\"`).",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "doc": "Client build/version string.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        }
+      ]
+    },
+    {
+      "name": "Initialize_Params",
+      "doc": "Params of the `initialize` request. Non-owning.",
+      "fields": [
+        {
+          "name": "protocol",
+          "type": "u32",
+          "doc": "Protocol version this client speaks. Must equal `PROTOCOL_VERSION`.",
+          "presence": "defaulted",
+          "defaultExpr": "PROTOCOL_VERSION",
+          "constExpr": "PROTOCOL_VERSION",
+          "constValue": 1
+        },
+        {
+          "name": "client",
+          "type": "Client",
+          "doc": "Connection-level client identity.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Daemon_Info",
+      "doc": "Daemon identity and clock. Non-owning.",
+      "fields": [
+        {
+          "name": "version",
+          "type": "string",
+          "doc": "Daemon build/version string.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "server_now_ms",
+          "type": "u64",
+          "doc": "Daemon wall-clock epoch ms at initialize time.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Initialize_Result",
+      "doc": "Result of the `initialize` request: the coarse daemon snapshot.",
+      "fields": [
+        {
+          "name": "protocol",
+          "type": "u32",
+          "doc": "Protocol version the daemon speaks.",
+          "presence": "required",
+          "constExpr": "PROTOCOL_VERSION",
+          "constValue": 1
+        },
+        {
+          "name": "daemon",
+          "type": "Daemon_Info",
+          "doc": "Daemon identity and clock.",
+          "presence": "required"
+        },
+        {
+          "name": "workspaces",
+          "type": "[]Workspace",
+          "doc": "Known workspaces.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_workspaces",
+            "value": 1024
+          }
+        },
+        {
+          "name": "profiles",
+          "type": "[]string",
+          "doc": "Available profile names; each element @bounded 64.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_profiles",
+            "value": 256
+          }
+        },
+        {
+          "name": "agents",
+          "type": "[]string",
+          "doc": "Available agent names; each element @bounded 64.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_agents",
+            "value": 256
+          }
+        },
+        {
+          "name": "session_revision",
+          "type": "Session_Revision",
+          "doc": "Current compact session-index revision for this connection generation.",
+          "presence": "required"
+        },
+        {
+          "name": "cron_revision",
+          "type": "Cron_Revision",
+          "doc": "Current cron-index revision for this connection generation.",
+          "presence": "required"
+        },
+        {
+          "name": "catalog_rev",
+          "type": "Catalog_Rev",
+          "doc": "Catalog content hash.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "catalog_health",
+          "type": "Catalog_Health",
+          "doc": "Catalog load health.",
+          "presence": "required"
+        },
+        {
+          "name": "capabilities",
+          "type": "[]Capability",
+          "doc": "Optional daemon surfaces this build/config advertises; see `Capability`.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Input_Content",
+      "doc": "Raw content parts.",
+      "fields": [
+        {
+          "name": "content",
+          "type": "[]Content_Part",
+          "doc": "Raw content parts.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_input_parts",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Skill_Ref",
+      "doc": "A named skill invocation with its rendered arguments. Shared by `Input_Skill` and `User_Message.skill`.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "Skill name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "arguments",
+          "type": "string",
+          "doc": "Skill arguments.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Input_Skill",
+      "doc": "Skill invocation.",
+      "fields": [
+        {
+          "name": "skill",
+          "type": "Skill_Ref",
+          "doc": "",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Queued_Input",
+      "doc": "A queued input waiting behind an active turn.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "Daemon-minted input id.",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "type": "[]Content_Part",
+          "doc": "Content parts awaiting execution.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_input_parts",
+            "value": 256
+          }
+        },
+        {
+          "name": "queued_at_ms",
+          "type": "u64",
+          "doc": "Enqueue time, epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Send_Input_Params",
+      "doc": "Params for `session.send_input`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "input",
+          "type": "Input",
+          "doc": "Input to enqueue or start.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Send_Input_Result_Started",
+      "doc": "Started immediately.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "Daemon-minted input id.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Run started to handle this input.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Send_Input_Result_Queued",
+      "doc": "Queued behind an active turn.",
+      "fields": [
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "Daemon-minted input id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Cancel_Input_Params",
+      "doc": "Params for `session.cancel_input`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "Input to cancel.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Cancel_Input_Result",
+      "doc": "Result of `session.cancel_input`.",
+      "fields": [
+        {
+          "name": "canceled_input",
+          "type": "Input_Id",
+          "doc": "Id of the canceled input.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Cancel_Run_Params",
+      "doc": "Params for `session.cancel_run`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "run_id",
+          "type": "Maybe(Run_Id)",
+          "doc": "Specific run to cancel; omit to cancel the active run.",
+          "presence": "optional"
+        },
+        {
+          "name": "clear_queue",
+          "type": "Maybe(bool)",
+          "doc": "Also drop any queued inputs.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Session_Cancel_Run_Result",
+      "doc": "Result of `session.cancel_run`.",
+      "fields": [
+        {
+          "name": "canceled_run",
+          "type": "Maybe(Run_Id)",
+          "doc": "Run that was canceled; null if none was active.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "cleared_inputs",
+          "type": "[]Input_Id",
+          "doc": "Queued inputs dropped by `clear_queue`.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "cleared_compaction",
+          "type": "Maybe(Run_Id)",
+          "doc": "Compaction run canceled alongside; null if none was active.",
+          "presence": "requiredNullable"
+        }
+      ]
+    },
+    {
+      "name": "Part_Delta",
+      "doc": "Incremental text/reasoning bytes for a draft. `offset` is UTF-8 bytes already present: == len appends, < len is a no-op, > len is a gap (call session.resync).",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session.",
+          "presence": "required",
+          "deliveryRole": "session",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Draft message id.",
+          "presence": "required",
+          "deliveryRole": "draft"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Target part ordinal in `content[]`.",
+          "presence": "required",
+          "deliveryRole": "part"
+        },
+        {
+          "name": "delta",
+          "type": "string",
+          "doc": "UTF-8 bytes to fold at `offset`.",
+          "presence": "required",
+          "deliveryRole": "chunk",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "offset",
+          "type": "u64",
+          "doc": "UTF-8 bytes already applied on the receiver.",
+          "presence": "required",
+          "deliveryRole": "offset"
+        }
+      ]
+    },
+    {
+      "name": "Empty",
+      "doc": "Empty params/result object (`{}`) for methods whose registry entry uses `{}`. One type for both directions: an empty object carries no direction-specific meaning.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Session_Result",
+      "doc": "Result of `session.create`, `session.fork`, and `session.patch`. The returned session carries the resulting config_rev and permission mode.",
+      "fields": [
+        {
+          "name": "session",
+          "type": "Session",
+          "doc": "Resulting session.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Patch_Params",
+      "doc": "Params for `session.patch`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to patch.",
+          "presence": "required"
+        },
+        {
+          "name": "patch",
+          "type": "Session_Patch",
+          "doc": "Patch to apply.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Remove_Params",
+      "doc": "Params for `session.remove`.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to remove.",
+          "presence": "required"
+        },
+        {
+          "name": "cascade_children",
+          "type": "bool",
+          "doc": "Recursively remove persistent child sessions.",
+          "presence": "defaulted",
+          "defaultExpr": "false"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Job_Result",
+      "doc": "Result of `cron.create` and `cron.patch`.",
+      "fields": [
+        {
+          "name": "job",
+          "type": "Cron_Job",
+          "doc": "The cron job.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Notice",
+      "doc": "Daemon diagnostic notice broadcast to all connections. Non-owning.",
+      "fields": [
+        {
+          "name": "level",
+          "type": "Notice_Level",
+          "doc": "Severity.",
+          "presence": "required"
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "doc": "Emitting subsystem.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable detail.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permission_Option",
+      "doc": "One option the daemon proposes for a permission request.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "doc": "Stable option key clients echo back.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "kind",
+          "type": "Permission_Option_Kind",
+          "doc": "Pre-computed classification of this option.",
+          "presence": "required"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "doc": "Human-readable label.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "creates",
+          "type": "Maybe([]string)",
+          "doc": "Rule shapes produced when chosen (for `allow_always`); each element @bounded 512.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_permission_creates",
+            "value": 32
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permission_Decision_User",
+      "doc": "Decided by a user selecting an option.",
+      "fields": [
+        {
+          "name": "option_id",
+          "type": "string",
+          "doc": "Selected option id.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "kind",
+          "type": "Permission_Option_Kind",
+          "doc": "Pre-computed classification of the option.",
+          "presence": "required"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "doc": "Human-readable option label.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "resolved_at_ms",
+          "type": "u64",
+          "doc": "Decision epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "decided_by",
+          "type": "Client",
+          "doc": "Client that decided.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Permission_Decision_Rule",
+      "doc": "Decided by a matched persisted rule.",
+      "fields": [
+        {
+          "name": "rule_id",
+          "type": "Rule_Id",
+          "doc": "Rule that matched.",
+          "presence": "required"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "doc": "Rule label.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "resolved_at_ms",
+          "type": "u64",
+          "doc": "Decision epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Permission_State",
+      "doc": "Local-only lifecycle data folded into tool state. Never a broadcast.",
+      "fields": [
+        {
+          "name": "requested_at_ms",
+          "type": "u64",
+          "doc": "When the daemon issued the prompt.",
+          "presence": "required"
+        },
+        {
+          "name": "options",
+          "type": "Maybe([]Permission_Option)",
+          "doc": "Options offered to the user. Absent for rule-resolved decisions; at most 32.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_permission_options",
+            "value": 32
+          }
+        },
+        {
+          "name": "decision",
+          "type": "Maybe(Permission_Decision)",
+          "doc": "Once resolved, the recorded decision.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Permission_Rule",
+      "doc": "A remembered \"allow always\" answer, scoped to a workspace.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Rule_Id",
+          "doc": "Rule id.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "session_id",
+          "type": "Maybe(Session_Id)",
+          "doc": "If non-null, rule is scoped to one session.",
+          "presence": "optional"
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "doc": "Tool name this rule applies to.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "doc": "Human-readable rule label.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "action",
+          "type": "Rule_Action",
+          "doc": "Allow or deny the matched call.",
+          "presence": "required"
+        },
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Creation epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "created_by",
+          "type": "Client",
+          "doc": "Client that created the rule.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Permission_Decide_Params",
+      "doc": "Params for permission.decide.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Message the permission prompt belongs to.",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Part the permission prompt belongs to.",
+          "presence": "required"
+        },
+        {
+          "name": "option_id",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "message",
+          "type": "Maybe(string)",
+          "doc": "Client-supplied reason, meaningful only when option_id resolves to a reject kind; the daemon routes it into Tool_State_Denied.reason.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_permission_reject_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permission_Rules_Result",
+      "doc": "Result of permission.rules.",
+      "fields": [
+        {
+          "name": "rules",
+          "type": "[]Permission_Rule",
+          "doc": "Remembered rules for the requested workspace.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_permission_rules",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permission_Forget_Params",
+      "doc": "Params for permission.forget.",
+      "fields": [
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Workspace the rule belongs to.",
+          "presence": "required"
+        },
+        {
+          "name": "rule_id",
+          "type": "Rule_Id",
+          "doc": "Rule to forget.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Canceled_Timing",
+      "doc": "Cancellation timing; an accepted queued run may never start.",
+      "fields": [
+        {
+          "name": "started_at_ms",
+          "type": "Maybe(u64)",
+          "doc": "Start epoch ms, or null when canceled before starting.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "ended_at_ms",
+          "type": "u64",
+          "doc": "Cancellation epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Token_Usage",
+      "doc": "Token accounting for one assistant message.",
+      "fields": [
+        {
+          "name": "input",
+          "type": "u64",
+          "doc": "Input tokens billed.",
+          "presence": "required"
+        },
+        {
+          "name": "output",
+          "type": "u64",
+          "doc": "Output tokens billed.",
+          "presence": "required"
+        },
+        {
+          "name": "reasoning",
+          "type": "u64",
+          "doc": "Output tokens used by reasoning.",
+          "presence": "required"
+        },
+        {
+          "name": "cache_read",
+          "type": "u64",
+          "doc": "Tokens read from prompt cache.",
+          "presence": "required"
+        },
+        {
+          "name": "cache_write",
+          "type": "u64",
+          "doc": "Tokens written to prompt cache.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Outcome_Turn",
+      "doc": "A completed turn: it stopped for a stop reason after some round trips.",
+      "fields": [
+        {
+          "name": "finish",
+          "type": "Stop_Reason",
+          "doc": "Why the turn stopped.",
+          "presence": "required"
+        },
+        {
+          "name": "rounds",
+          "type": "u64",
+          "doc": "Number of model/tool round trips used.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Outcome_Compacted",
+      "doc": "A manual compaction that produced a summary.",
+      "fields": [
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "New compaction message id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Outcome_Skipped",
+      "doc": "A manual compaction that did nothing.",
+      "fields": [
+        {
+          "name": "reason",
+          "type": "Compact_Skip_Reason",
+          "doc": "Why nothing was compacted.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Run_Outcome_Canceled",
+      "doc": "A run canceled by the user or daemon. Its timing rides the terminal envelope.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Run_Outcome_Failed",
+      "doc": "A run that failed after daemon retry policy was exhausted.",
+      "fields": [
+        {
+          "name": "code",
+          "type": "Run_Error_Code",
+          "doc": "Failure category.",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable failure.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "System_Prompt_Default",
+      "doc": "Request-time system prompt override; the default arm means the field was omitted.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "System_Prompt_None",
+      "doc": "Field was explicitly `null`.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "System_Prompt_Set",
+      "doc": "@unbounded Field carried an explicit value.",
+      "fields": [
+        {
+          "name": "value",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Max_Rounds_Default",
+      "doc": "Request-time max-rounds override; the default arm means the field was omitted.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Max_Rounds_Unlimited",
+      "doc": "Field was explicitly `null`.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Max_Rounds_Set",
+      "doc": "Field carried an explicit value.",
+      "fields": [
+        {
+          "name": "value",
+          "type": "u64",
+          "doc": "",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Create_Session",
+      "doc": "session.create input. Non-owning.",
+      "fields": [
+        {
+          "name": "workspace_path",
+          "type": "Maybe(string)",
+          "doc": "Filesystem path; omitted resolves to the home directory.",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "profile",
+          "type": "Maybe(string)",
+          "doc": "Profile name to resolve config from.",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "model",
+          "type": "Maybe(string)",
+          "doc": "Model id override.",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "reasoning",
+          "type": "Maybe(string)",
+          "doc": "Reasoning level override.",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "system_prompt",
+          "type": "System_Prompt_Override",
+          "doc": "Omitted = resolve from config. Explicit null = force no system prompt.",
+          "presence": "tristate",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "permission",
+          "type": "Maybe(Permission_Mode)",
+          "doc": "Permission mode override.",
+          "presence": "optional"
+        },
+        {
+          "name": "max_rounds",
+          "type": "Max_Rounds_Override",
+          "doc": "Round-cap override.",
+          "presence": "tristate"
+        }
+      ]
+    },
+    {
+      "name": "Session_Patch",
+      "doc": "Missing field means no change. The system prompt is snapshotted at creation and is not patchable. Non-owning.",
+      "fields": [
+        {
+          "name": "model",
+          "type": "Maybe(string)",
+          "doc": "New model id.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "reasoning",
+          "type": "Maybe(string)",
+          "doc": "New reasoning level.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "permission",
+          "type": "Maybe(Permission_Mode)",
+          "doc": "New permission mode.",
+          "presence": "optional"
+        },
+        {
+          "name": "max_rounds",
+          "type": "Max_Rounds_Override",
+          "doc": "New round cap.",
+          "presence": "tristate"
+        }
+      ]
+    },
+    {
+      "name": "Session_Fork_Params",
+      "doc": "session.fork input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to fork.",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "Maybe(Message_Id)",
+          "doc": "Fork up to (exclusive); omit to fork the full transcript.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Session_Compact_Params",
+      "doc": "session.compact input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to compact.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Compact_Result",
+      "doc": "session.compact result.",
+      "fields": [
+        {
+          "name": "status",
+          "type": "Compact_Status",
+          "doc": "Whether compaction started or was queued.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Id of the compaction run.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Rewind_Params",
+      "doc": "session.rewind input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to rewind.",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "Message_Id",
+          "doc": "Rewind up to (exclusive).",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Origin_Root",
+      "doc": "User-created root session.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Session_Origin_Child",
+      "doc": "Child of another session.",
+      "fields": [
+        {
+          "name": "parent_id",
+          "type": "Session_Id",
+          "doc": "Parent session id.",
+          "presence": "required"
+        },
+        {
+          "name": "parent_message_id",
+          "type": "Message_Id",
+          "doc": "Message in the parent's transcript carrying the spawning tool part.",
+          "presence": "required"
+        },
+        {
+          "name": "parent_part_id",
+          "type": "Part_Id",
+          "doc": "Tool part within that message that spawned this session; together with `parent_message_id` stays correct when one message emits multiple spawn calls.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Origin_Fork",
+      "doc": "Fork of another session.",
+      "fields": [
+        {
+          "name": "source_id",
+          "type": "Session_Id",
+          "doc": "Source session id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Origin_Cron",
+      "doc": "Created by a cron job.",
+      "fields": [
+        {
+          "name": "job_id",
+          "type": "Job_Id",
+          "doc": "Owning cron job id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "doc": "Daemon-owned session summary.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Session_Id",
+          "doc": "Session id.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Owning workspace id.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "profile",
+          "type": "string",
+          "doc": "Profile name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "doc": "Future-run model id.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "doc": "Future-run reasoning level.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        },
+        {
+          "name": "config_rev",
+          "type": "Config_Rev",
+          "doc": "Future-run config revision.",
+          "presence": "required"
+        },
+        {
+          "name": "permission",
+          "type": "Permission_Mode",
+          "doc": "Live permission mode.",
+          "presence": "required"
+        },
+        {
+          "name": "max_rounds",
+          "type": "Maybe(u64)",
+          "doc": "Live round cap; null means unlimited.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "doc": "Display title.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "message_count",
+          "type": "u64",
+          "doc": "Committed transcript message count.",
+          "presence": "required"
+        },
+        {
+          "name": "updated_at_ms",
+          "type": "u64",
+          "doc": "Last update epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "created_by",
+          "type": "Maybe(Client)",
+          "doc": "Client that created the session; null for daemon-created child/cron sessions.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "origin",
+          "type": "Session_Origin",
+          "doc": "Session provenance.",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "Maybe(string)",
+          "doc": "Agent name, when known; omitted if unassigned. Lets a client listing children name the agent without fetching a transcript.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        }
+      ]
+    },
+    {
+      "name": "Run_Config",
+      "doc": "Run settings captured at start.",
+      "fields": [
+        {
+          "name": "config_rev",
+          "type": "Config_Rev",
+          "doc": "Config revision used by the run.",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "doc": "Model id.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "doc": "Reasoning level.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_Activity",
+      "doc": "Coarse live session state.",
+      "fields": [
+        {
+          "name": "state",
+          "type": "Activity_State",
+          "doc": "Current activity state.",
+          "presence": "required"
+        },
+        {
+          "name": "config",
+          "type": "Maybe(Run_Config)",
+          "doc": "Config the named run is executing under. Present exactly when `state` names a run that has one; absent under `idle` and `compacting`.",
+          "presence": "optional"
+        },
+        {
+          "name": "queued",
+          "type": "u64",
+          "doc": "Accepted inputs waiting to run. At most LIMITS.max_queued_inputs.",
+          "presence": "required"
+        },
+        {
+          "name": "context_tokens",
+          "type": "u64",
+          "doc": "Provider context token count.",
+          "presence": "required"
+        },
+        {
+          "name": "pending_compaction",
+          "type": "Maybe(Run_Id)",
+          "doc": "Pending manual compaction run id.",
+          "presence": "requiredNullable"
+        }
+      ]
+    },
+    {
+      "name": "Session_List_Item",
+      "doc": "Full compact row returned by session.list and session-index broadcasts. Non-owning; nested slices share the containing frame arena.",
+      "fields": [
+        {
+          "name": "session",
+          "type": "Session",
+          "doc": "Durable session summary.",
+          "presence": "required"
+        },
+        {
+          "name": "activity",
+          "type": "Session_Activity",
+          "doc": "Current coarse activity; idle is explicit.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Scope_All",
+      "doc": "No workspace restriction.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Session_Scope_Workspace",
+      "doc": "Sessions belonging to one exact workspace.",
+      "fields": [
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Workspace to match.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_Population_Top_Level",
+      "doc": "User-facing conversations: root sessions and forks.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Session_Population_Children",
+      "doc": "Immediate persistent children of one session.",
+      "fields": [
+        {
+          "name": "parent_id",
+          "type": "Session_Id",
+          "doc": "Parent session to match.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_Population_Job_Runs",
+      "doc": "Sessions created by one cron job.",
+      "fields": [
+        {
+          "name": "job_id",
+          "type": "Job_Id",
+          "doc": "Cron job to match.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_Population_All",
+      "doc": "Every session regardless of origin.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Session_List_Params",
+      "doc": "session.list input. Non-owning.",
+      "fields": [
+        {
+          "name": "scope",
+          "type": "Session_Scope",
+          "doc": "Workspace scope; omitted means no workspace restriction.",
+          "presence": "defaulted",
+          "defaultExpr": "Session_Scope_All{}"
+        },
+        {
+          "name": "population",
+          "type": "Session_Population",
+          "doc": "Relationship population; omitted means user-facing top-level sessions.",
+          "presence": "defaulted",
+          "defaultExpr": "Session_Population_Top_Level{}"
+        },
+        {
+          "name": "view",
+          "type": "Session_View",
+          "doc": "Membership and ordering; omitted means active_recent.",
+          "presence": "defaulted",
+          "defaultExpr": ".Active_Recent"
+        },
+        {
+          "name": "limit",
+          "type": "Maybe(u64)",
+          "doc": "Page size; omitted means daemon default.",
+          "presence": "optional"
+        },
+        {
+          "name": "cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque daemon-issued continuation.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_session_list_cursor_bytes",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_List_Result",
+      "doc": "One bounded session.list page. Non-owning.",
+      "fields": [
+        {
+          "name": "revision",
+          "type": "Session_Revision",
+          "doc": "Compact-index revision represented by every field in this result.",
+          "presence": "required"
+        },
+        {
+          "name": "items",
+          "type": "[]Session_List_Item",
+          "doc": "Rows in final daemon-defined display order.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_session_list_page_size",
+            "value": 100
+          }
+        },
+        {
+          "name": "next_cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque continuation; required null on the final page.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_session_list_cursor_bytes",
+            "value": 256
+          }
+        },
+        {
+          "name": "total",
+          "type": "u64",
+          "doc": "Unique rows in the complete selected view before paging.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Idle",
+      "doc": "No active work.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Activity_State_Building",
+      "doc": "Runtime is being built as the first phase of a run.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Run and build start epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Running",
+      "doc": "Run is active.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Run start epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Reasoning",
+      "doc": "Model is producing reasoning.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Draft message id.",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Reasoning part id.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Waiting_Permission",
+      "doc": "Tool call awaits permission.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Message containing the tool.",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Tool part id.",
+          "presence": "required"
+        },
+        {
+          "name": "tool_name",
+          "type": "string",
+          "doc": "Tool name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "requested_at_ms",
+          "type": "u64",
+          "doc": "Request epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Running_Tool",
+      "doc": "Tool call is running.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "Message_Id",
+          "doc": "Message containing the tool.",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "Part_Id",
+          "doc": "Tool part id.",
+          "presence": "required"
+        },
+        {
+          "name": "tool_name",
+          "type": "string",
+          "doc": "Tool name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Tool start epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Retrying",
+      "doc": "Run is waiting to retry.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "attempt",
+          "type": "u64",
+          "doc": "Current attempt number.",
+          "presence": "required"
+        },
+        {
+          "name": "max_attempts",
+          "type": "u64",
+          "doc": "Maximum attempts.",
+          "presence": "required"
+        },
+        {
+          "name": "next_at_ms",
+          "type": "u64",
+          "doc": "Next retry epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "code",
+          "type": "Run_Error_Code",
+          "doc": "Failure code.",
+          "presence": "required"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable failure.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_activity_retry_message_bytes",
+            "value": 1024
+          }
+        }
+      ]
+    },
+    {
+      "name": "Activity_State_Compacting",
+      "doc": "Compaction model call is active.",
+      "fields": [
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Active run id.",
+          "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "Compaction_Reason",
+          "doc": "Why compaction is running.",
+          "presence": "required"
+        },
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Compaction start epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Resync_Params",
+      "doc": "session.resync input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to resync.",
+          "presence": "required"
+        },
+        {
+          "name": "limit",
+          "type": "Maybe(u64)",
+          "doc": "Max messages to return; omit for daemon default.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Active_Draft",
+      "doc": "In-flight assistant draft, resent on resync. Non-owning.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "Assistant_Message",
+          "doc": "Draft message so far.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Resync_Result",
+      "doc": "Full session snapshot for reconnection. Non-owning.",
+      "fields": [
+        {
+          "name": "item",
+          "type": "Session_List_Item",
+          "doc": "Current compact session-index row at this snapshot cut.",
+          "presence": "required"
+        },
+        {
+          "name": "base_seq",
+          "type": "Seq",
+          "doc": "Sequence number to resume the durable stream from.",
+          "presence": "required"
+        },
+        {
+          "name": "highest_finalized_message_id",
+          "type": "Maybe(Message_Id)",
+          "doc": "Highest message id already committed or discarded at the snapshot cut. Required on the wire; null when no message has finalized.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "messages",
+          "type": "[]Message",
+          "doc": "Recent transcript messages.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_page_size",
+            "value": 500
+          }
+        },
+        {
+          "name": "has_more",
+          "type": "bool",
+          "doc": "Whether older messages exist beyond `messages`.",
+          "presence": "required"
+        },
+        {
+          "name": "configs",
+          "type": "[]Run_Config",
+          "doc": "Configs referenced by `messages` and `active`.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_snapshot_configs",
+            "value": 501
+          }
+        },
+        {
+          "name": "active",
+          "type": "Maybe(Active_Draft)",
+          "doc": "In-flight draft, if any.",
+          "presence": "optional"
+        },
+        {
+          "name": "queued",
+          "type": "[]Queued_Input",
+          "doc": "Inputs queued behind the active turn.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_queued_inputs",
+            "value": 128
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session_History_Params",
+      "doc": "session.history input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to page through.",
+          "presence": "required"
+        },
+        {
+          "name": "before_message_id",
+          "type": "Message_Id",
+          "doc": "Page ends before this message (exclusive).",
+          "presence": "required"
+        },
+        {
+          "name": "limit",
+          "type": "Maybe(u64)",
+          "doc": "Max messages to return; omit for daemon default.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Session_History_Result",
+      "doc": "session.history result.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session the page belongs to.",
+          "presence": "required"
+        },
+        {
+          "name": "messages",
+          "type": "[]Message",
+          "doc": "Page of transcript messages.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_page_size",
+            "value": 500
+          }
+        },
+        {
+          "name": "configs",
+          "type": "[]Run_Config",
+          "doc": "Configs referenced by `messages`.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_snapshot_configs",
+            "value": 501
+          }
+        },
+        {
+          "name": "has_more",
+          "type": "bool",
+          "doc": "Whether older messages exist beyond this page.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Config_Params",
+      "doc": "session.config.get input.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Session to read config for.",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "Maybe(Config_Rev)",
+          "doc": "Specific revision to fetch; omit for the live config.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Session_Config_Result",
+      "doc": "session.config.get result.",
+      "fields": [
+        {
+          "name": "config",
+          "type": "Run_Config",
+          "doc": "The requested run config.",
+          "presence": "required"
+        },
+        {
+          "name": "system_prompt",
+          "type": "Maybe(string)",
+          "doc": "null means no system prompt is sent to the model.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subscription_Set_Params",
+      "doc": "session.subscription.set input.",
+      "fields": [
+        {
+          "name": "sessions",
+          "type": "[]Session_Id",
+          "doc": "Sessions to subscribe to; replaces the prior set.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_subscriptions",
+            "value": 64
+          }
+        }
+      ]
+    },
+    {
+      "name": "Message_Time",
+      "doc": "Creation/completion timestamps on an assistant message.",
+      "fields": [
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Creation epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "completed_at_ms",
+          "type": "Maybe(u64)",
+          "doc": "Completion epoch ms; null while still in flight.",
+          "presence": "requiredNullable"
+        }
+      ]
+    },
+    {
+      "name": "Created_Time",
+      "doc": "Creation timestamp on a user or compaction message. These message kinds carry `{ created_at_ms }` only \u2014 no `completed_at_ms` (that is assistant-only).",
+      "fields": [
+        {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Creation epoch ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Message_Error",
+      "doc": "Structured error on an assistant message with `finish: \"error\"`. Non-owning.",
+      "fields": [
+        {
+          "name": "type",
+          "type": "string",
+          "doc": "Provider error category string.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable error.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Text_Part",
+      "doc": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Part_Id",
+          "doc": "Part ordinal in the message content array.",
+          "presence": "required"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "UTF-8 text.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reasoning_Part",
+      "doc": "Reasoning assistant part payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Part_Id",
+          "doc": "Part ordinal in the message content array.",
+          "presence": "required"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "UTF-8 reasoning trace.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "signature",
+          "type": "string",
+          "doc": "Opaque provider data: Anthropic's extended-thinking block signature, delivered by `signature_delta`. Empty when the provider issued none. Persisted verbatim and replayed verbatim on the next request of a tool-use conversation; never interpreted. A part carrying one must never be collapsed or reordered by a normalization pass, even when `text` is empty: the signature covers the block at its position.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tool_Part",
+      "doc": "Tool assistant part payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Part_Id",
+          "doc": "Part ordinal in the message content array.",
+          "presence": "required"
+        },
+        {
+          "name": "call_id",
+          "type": "Maybe(string)",
+          "doc": "Provider identity; never used to address the part.",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "Tool name.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        },
+        {
+          "name": "arguments",
+          "type": "string",
+          "doc": "Opaque JSON-encoded arguments.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "input_view",
+          "type": "Maybe([]View)",
+          "doc": "Display-only input views.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_views_per_tool",
+            "value": 64
+          }
+        },
+        {
+          "name": "state",
+          "type": "Tool_State",
+          "doc": "Current tool state.",
+          "presence": "required"
+        },
+        {
+          "name": "permission_state",
+          "type": "Maybe(Permission_State)",
+          "doc": "Local permission lifecycle. Absent under `pending`; options-and-no-decision under `waiting_permission`; decided when present, except under `canceled`.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Pending",
+      "doc": "--------------------------------------------------------------------------- ToolState: pending | waiting_permission | running | completed | error | denied | canceled --------------------------------------------------------------------------- Not yet started.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Tool_State_Waiting_Permission",
+      "doc": "Awaiting a permission decision.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Tool_State_Running",
+      "doc": "Call is executing.",
+      "fields": [
+        {
+          "name": "started_at_ms",
+          "type": "u64",
+          "doc": "Run start epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "output",
+          "type": "Maybe(string)",
+          "doc": "Accumulated display output streamed so far. Present in a resync snapshot of a running tool, absent in the live transition into `running`. Its UTF-8 byte length is the next `tool.output_delta` offset baseline.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_tool_output_stream_bytes",
+            "value": 1048576
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Completed",
+      "doc": "Call finished successfully.",
+      "fields": [
+        {
+          "name": "output",
+          "type": "string",
+          "doc": "Model-facing output text.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "view",
+          "type": "Maybe([]View)",
+          "doc": "Display-only rendering hints.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_views_per_tool",
+            "value": 64
+          }
+        },
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "doc": "Wall-clock duration in ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Error",
+      "doc": "Call failed.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Model-facing error text.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "view",
+          "type": "Maybe([]View)",
+          "doc": "Display-only rendering hints.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_views_per_tool",
+            "value": 64
+          }
+        },
+        {
+          "name": "duration_ms",
+          "type": "u64",
+          "doc": "Wall-clock duration in ms.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Denied",
+      "doc": "Permission was denied.",
+      "fields": [
+        {
+          "name": "reason",
+          "type": "string",
+          "doc": "Model-facing reason.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "denied_by",
+          "type": "Denied_By",
+          "doc": "Who denied.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State_Canceled",
+      "doc": "Call was canceled.",
+      "fields": [
+        {
+          "name": "duration_ms",
+          "type": "Maybe(u64)",
+          "doc": "Null when the call never started running.",
+          "presence": "requiredNullable"
+        }
+      ]
+    },
+    {
+      "name": "User_Message",
+      "doc": "NOTE: Compaction_Reason and its wire table live in session.odin (source of truth); Compaction_Message references them directly from this same package. --------------------------------------------------------------------------- Message: user | assistant | compaction --------------------------------------------------------------------------- User transcript message payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Message_Id",
+          "doc": "Message id.",
+          "presence": "required"
+        },
+        {
+          "name": "content",
+          "type": "[]Content_Part",
+          "doc": "Content parts in rendered order.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_input_parts",
+            "value": 256
+          }
+        },
+        {
+          "name": "input_id",
+          "type": "Input_Id",
+          "doc": "The accepted input this message came from (client- or daemon-minted).",
+          "presence": "required"
+        },
+        {
+          "name": "skill",
+          "type": "Maybe(Skill_Ref)",
+          "doc": "Skill this message's rendered body came from, if any.",
+          "presence": "optional"
+        },
+        {
+          "name": "time",
+          "type": "Created_Time",
+          "doc": "Creation timestamp.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Turn_Provenance",
+      "doc": "Which provider actually produced one assistant turn. Absent on a turn the daemon built before the field existed. `Assistant_Message.config_rev` records the configuration a turn was *requested* under and can be resolved away by a later config change; this records what answered, which is what makes provider-scoped opaque data (a reasoning part's signature) safe to replay: replay it only when the next request goes to the same protocol and model. Non-owning.",
+      "fields": [
+        {
+          "name": "protocol",
+          "type": "Provider_Protocol",
+          "doc": "Protocol the turn was produced under.",
+          "presence": "required"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "doc": "Model id that produced the turn, resolved at request time.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        }
+      ]
+    },
+    {
+      "name": "Assistant_Message",
+      "doc": "Assistant transcript message payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Message_Id",
+          "doc": "Message id.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Owning run id.",
+          "presence": "required"
+        },
+        {
+          "name": "config_rev",
+          "type": "Config_Rev",
+          "doc": "Resolves to a model string via session.config or config.changed.",
+          "presence": "required"
+        },
+        {
+          "name": "agent",
+          "type": "string",
+          "doc": "Agent name (`\"main\"` for a root session).",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "content",
+          "type": "[]Assistant_Part",
+          "doc": "Assistant parts in append order.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_message_parts",
+            "value": 1024
+          }
+        },
+        {
+          "name": "finish",
+          "type": "Maybe(Stop_Reason)",
+          "doc": "Present on every committed message; absent on a draft.",
+          "presence": "optional"
+        },
+        {
+          "name": "tokens",
+          "type": "Maybe(Token_Usage)",
+          "doc": "Token accounting.",
+          "presence": "optional"
+        },
+        {
+          "name": "cost",
+          "type": "Maybe(f64)",
+          "doc": "Estimated United States dollars.",
+          "presence": "optional"
+        },
+        {
+          "name": "time",
+          "type": "Message_Time",
+          "doc": "Creation/completion timestamps.",
+          "presence": "required"
+        },
+        {
+          "name": "error",
+          "type": "Maybe(Message_Error)",
+          "doc": "Present exactly when `finish` is `\"error\"`.",
+          "presence": "optional"
+        },
+        {
+          "name": "provenance",
+          "type": "Maybe(Turn_Provenance)",
+          "doc": "Provider that produced this turn; absent on turns older than the field.",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "Compaction_Message",
+      "doc": "Compaction transcript message payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Message_Id",
+          "doc": "Message id.",
+          "presence": "required"
+        },
+        {
+          "name": "run_id",
+          "type": "Run_Id",
+          "doc": "Owning run id.",
+          "presence": "required"
+        },
+        {
+          "name": "reason",
+          "type": "Compaction_Reason",
+          "doc": "Why compaction ran.",
+          "presence": "required"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "doc": "Model-generated summary of the dropped range.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "first_kept_id",
+          "type": "Maybe(Message_Id)",
+          "doc": "First message id still in the provider context. Null means nothing was kept.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "tokens_before",
+          "type": "u64",
+          "doc": "Tokens before compaction.",
+          "presence": "required"
+        },
+        {
+          "name": "tokens_after",
+          "type": "u64",
+          "doc": "Tokens after compaction.",
+          "presence": "required"
+        },
+        {
+          "name": "time",
+          "type": "Created_Time",
+          "doc": "Creation timestamp.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Diff_Hunk",
+      "doc": "One hunk of a unified diff.",
+      "fields": [
+        {
+          "name": "old_start",
+          "type": "u64",
+          "doc": "1-based start line in old file.",
+          "presence": "required"
+        },
+        {
+          "name": "old_lines",
+          "type": "u64",
+          "doc": "Line count in old file.",
+          "presence": "required"
+        },
+        {
+          "name": "new_start",
+          "type": "u64",
+          "doc": "1-based start line in new file.",
+          "presence": "required"
+        },
+        {
+          "name": "new_lines",
+          "type": "u64",
+          "doc": "Line count in new file.",
+          "presence": "required"
+        },
+        {
+          "name": "lines",
+          "type": "[]string",
+          "doc": "Hunk body, one line per element (no trailing newlines). Owner: caller/arena.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_view_items",
+            "value": 1024
+          }
+        }
+      ]
+    },
+    {
+      "name": "Diff_File",
+      "doc": "One file in a diff view.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "doc": "New (or current) file path.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "4096",
+            "value": 4096
+          }
+        },
+        {
+          "name": "old_path",
+          "type": "Maybe(string)",
+          "doc": "Path in the old tree when the file was renamed.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "4096",
+            "value": 4096
+          }
+        },
+        {
+          "name": "hunks",
+          "type": "[]Diff_Hunk",
+          "doc": "Per-file hunks in file order. Owner: caller/arena.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_view_items",
+            "value": 1024
+          }
+        }
+      ]
+    },
+    {
+      "name": "View_Text",
+      "doc": "Plain text view.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "UTF-8 body.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "language",
+          "type": "Maybe(string)",
+          "doc": "Optional language hint.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        }
+      ]
+    },
+    {
+      "name": "View_Markdown",
+      "doc": "Markdown view.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "Markdown source.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "View_Json",
+      "doc": "JSON view.",
+      "fields": [
+        {
+          "name": "text",
+          "type": "string",
+          "doc": "JSON source.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "View_Diff",
+      "doc": "Unified diff view.",
+      "fields": [
+        {
+          "name": "files",
+          "type": "[]Diff_File",
+          "doc": "Files in the diff. Owner: caller/arena.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_view_items",
+            "value": 1024
+          }
+        }
+      ]
+    },
+    {
+      "name": "View_Image",
+      "doc": "Image view.",
+      "fields": [
+        {
+          "name": "source",
+          "type": "Media_Source",
+          "doc": "Image bytes.",
+          "presence": "required"
+        },
+        {
+          "name": "alt",
+          "type": "Maybe(string)",
+          "doc": "Alternative text.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "512",
+            "value": 512
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace",
+      "doc": "Daemon-known workspace directory. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Workspace_Id",
+          "doc": "Derived workspace id.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        },
+        {
+          "name": "root",
+          "type": "string",
+          "doc": "Canonical absolute path.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "doc": "Display title.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Git_Info",
+      "doc": "Git status for a workspace root, when it is a repo. Non-owning.",
+      "fields": [
+        {
+          "name": "branch",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "dirty",
+          "type": "bool",
+          "doc": "Whether the working tree has uncommitted changes.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Describe_Params",
+      "doc": "workspace.describe input. Non-owning.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Describe_Result",
+      "doc": "workspace.describe result. Non-owning.",
+      "fields": [
+        {
+          "name": "workspace",
+          "type": "Workspace",
+          "doc": "Resolved workspace.",
+          "presence": "required"
+        },
+        {
+          "name": "git",
+          "type": "Maybe(Git_Info)",
+          "doc": "Git status; null when the root is not a repo.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "last_modified_ms",
+          "type": "u64",
+          "doc": "Last filesystem modification epoch ms.",
+          "presence": "required"
+        },
+        {
+          "name": "last_used_model",
+          "type": "Maybe(string)",
+          "doc": "Last model used in this workspace; null if never run.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Browse_Params",
+      "doc": "workspace.browse input. Non-owning.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "Maybe(string)",
+          "doc": "",
+          "presence": "optional",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "limit",
+          "type": "Maybe(u64)",
+          "doc": "Page size; omitted means daemon default.",
+          "presence": "optional"
+        },
+        {
+          "name": "cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque continuation within the same directory.",
+          "presence": "optional",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_workspace_browse_cursor_bytes",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dir_Entry",
+      "doc": "A single filesystem entry in a browse listing. Non-owning.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "256",
+            "value": 256
+          }
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "is_git_repo",
+          "type": "bool",
+          "doc": "Whether this directory is itself a git repo.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Browse_Result",
+      "doc": "workspace.browse result. Non-owning.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "parent",
+          "type": "Maybe(string)",
+          "doc": "Parent directory path; null at the filesystem root.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        },
+        {
+          "name": "entries",
+          "type": "[]Dir_Entry",
+          "doc": "Directory contents.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_workspace_browse_page_size",
+            "value": 500
+          }
+        },
+        {
+          "name": "next_cursor",
+          "type": "Maybe(string)",
+          "doc": "Opaque continuation; required null on the final page.",
+          "presence": "requiredNullable",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_workspace_browse_cursor_bytes",
+            "value": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Ref",
+      "doc": "Params naming a workspace and nothing else. Shared by `workspace.remove`, `workspace.skills`, and `permission.rules`; split it the moment one of them needs a field of its own.",
+      "fields": [
+        {
+          "name": "workspace_id",
+          "type": "Workspace_Id",
+          "doc": "Workspace the request targets.",
+          "presence": "required",
+          "bound": {
+            "kind": "fixed",
+            "expr": "16",
+            "value": 16
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Remove_Result",
+      "doc": "workspace.remove result. Non-owning.",
+      "fields": [
+        {
+          "name": "related_job_ids",
+          "type": "[]Job_Id",
+          "doc": "Cron jobs that referenced the removed workspace.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_cron_jobs",
+            "value": 1024
+          }
+        }
+      ]
+    },
+    {
+      "name": "Skill_Info",
+      "doc": "Discovered skill metadata. Non-owning.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
+          }
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "512",
+            "value": 512
+          }
+        },
+        {
+          "name": "scope",
+          "type": "Skill_Scope",
+          "doc": "Project- or personal-scoped.",
+          "presence": "required"
+        },
+        {
+          "name": "argument_hint",
+          "type": "string",
+          "doc": "",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workspace_Skills_Result",
+      "doc": "workspace.skills.list result. Non-owning.",
+      "fields": [
+        {
+          "name": "skills",
+          "type": "[]Skill_Info",
+          "doc": "Discovered skills.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_skills",
+            "value": 1024
+          }
+        }
+      ]
+    }
+  ],
+  "unions": [
+    {
+      "name": "Broadcast_Data",
+      "doc": "Typed broadcast payload, tagged by broadcast name on the frame. A broadcast frame's data is always exactly one of these variants.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "Session_Summary_Changed_Data"
+        },
+        {
+          "type": "Session_Activity_Changed_Data"
+        },
+        {
+          "type": "Session_Removed_Data"
+        },
+        {
+          "type": "Workspace_Created_Data"
+        },
+        {
+          "type": "Workspace_Removed_Data"
+        },
+        {
+          "type": "Permission_Rules_Changed_Data"
+        },
+        {
+          "type": "Catalog_Changed_Data"
+        },
+        {
+          "type": "Cron_Created_Data"
+        },
+        {
+          "type": "Cron_Updated_Data"
+        },
+        {
+          "type": "Cron_Removed_Data"
+        },
+        {
+          "type": "Notice"
+        },
+        {
+          "type": "Message_Committed_Data"
+        },
+        {
+          "type": "Run_Started_Data"
+        },
+        {
+          "type": "Run_Done_Data"
+        },
+        {
+          "type": "Config_Changed_Data"
+        },
+        {
+          "type": "Transcript_Truncated_Data"
+        },
+        {
+          "type": "Message_Started_Data"
+        },
+        {
+          "type": "Message_Discarded_Data"
+        },
+        {
+          "type": "Message_Part_Added_Data"
+        },
+        {
+          "type": "Message_Part_Delta_Data"
+        },
+        {
+          "type": "Tool_State_Changed_Data"
+        },
+        {
+          "type": "Tool_Output_Delta_Data"
+        },
+        {
+          "type": "Input_Queued_Data"
+        },
+        {
+          "type": "Input_Canceled_Data"
+        }
+      ]
+    },
+    {
+      "name": "Catalog_List_Result",
+      "doc": "Result of catalog.list: unchanged since `since_rev`, or a full catalog snapshot.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Catalog_List_Result_Unchanged",
+          "tag": "unchanged"
+        },
+        {
+          "type": "Catalog_List_Result_Full",
+          "tag": "full"
+        }
+      ]
+    },
+    {
+      "name": "Skip_Reason",
+      "doc": "Reason a provider was skipped.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Skip_Reason_Missing_Credential",
+          "tag": "missing_credential"
+        },
+        {
+          "type": "Skip_Reason_Invalid_Config",
+          "tag": "invalid_config"
+        }
+      ]
+    },
+    {
+      "name": "Media_Source",
+      "doc": "Where media bytes live. Inline (base64) capped at LIMITS.max_inline_media_bytes; blob is a content hash fetched over HTTP.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Media_Url",
+          "tag": "url"
+        },
+        {
+          "type": "Media_Base64",
+          "tag": "base64"
+        },
+        {
+          "type": "Media_Blob",
+          "tag": "blob"
+        }
+      ]
+    },
+    {
+      "name": "Content_Part",
+      "doc": "One piece of user or model content. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Content_Text",
+          "tag": "text"
+        },
+        {
+          "type": "Content_Image",
+          "tag": "image"
+        },
+        {
+          "type": "Content_Audio",
+          "tag": "audio"
+        },
+        {
+          "type": "Content_File",
+          "tag": "file"
+        }
+      ]
+    },
+    {
+      "name": "Cron_Schedule",
+      "doc": "A cron schedule: recurring or one-shot. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Cron_Schedule_Every",
+          "tag": "every"
+        },
+        {
+          "type": "Cron_Schedule_Cron",
+          "tag": "cron"
+        },
+        {
+          "type": "Cron_Schedule_At",
+          "tag": "at"
+        },
+        {
+          "type": "Cron_Schedule_After",
+          "tag": "after"
+        }
+      ]
+    },
+    {
+      "name": "Response",
+      "doc": "Server response frame. One frame shape carrying exactly one of `result` / `error`; the outcome is which member is present.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "Response_Ok"
+        },
+        {
+          "type": "Response_Error"
+        }
+      ]
+    },
+    {
+      "name": "Input",
+      "doc": "A unit of user input: either raw content or a skill invocation. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Input_Content",
+          "tag": "content"
+        },
+        {
+          "type": "Input_Skill",
+          "tag": "skill"
+        }
+      ]
+    },
+    {
+      "name": "Session_Send_Input_Result",
+      "doc": "Result of `session.send_input`: started immediately or queued behind an active turn.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Session_Send_Input_Result_Started",
+          "tag": "started"
+        },
+        {
+          "type": "Session_Send_Input_Result_Queued",
+          "tag": "queued"
+        }
+      ]
+    },
+    {
+      "name": "Request_Params",
+      "doc": "Runtime params payload tagged by the same enum as `Method_Name`.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "Initialize_Params"
+        },
+        {
+          "type": "Session_List_Params"
+        },
+        {
+          "type": "Create_Session"
+        },
+        {
+          "type": "Session_Patch_Params"
+        },
+        {
+          "type": "Session_Remove_Params"
+        },
+        {
+          "type": "Session_Fork_Params"
+        },
+        {
+          "type": "Session_Compact_Params"
+        },
+        {
+          "type": "Session_Rewind_Params"
+        },
+        {
+          "type": "Session_Send_Input_Params"
+        },
+        {
+          "type": "Session_Cancel_Input_Params"
+        },
+        {
+          "type": "Session_Cancel_Run_Params"
+        },
+        {
+          "type": "Session_Resync_Params"
+        },
+        {
+          "type": "Session_History_Params"
+        },
+        {
+          "type": "Permission_Decide_Params"
+        },
+        {
+          "type": "Session_Config_Params"
+        },
+        {
+          "type": "Subscription_Set_Params"
+        },
+        {
+          "type": "Catalog_List_Params"
+        },
+        {
+          "type": "Empty"
+        },
+        {
+          "type": "Workspace_Describe_Params"
+        },
+        {
+          "type": "Workspace_Browse_Params"
+        },
+        {
+          "type": "Workspace_Ref"
+        },
+        {
+          "type": "Permission_Forget_Params"
+        },
+        {
+          "type": "Cron_Create_Params"
+        },
+        {
+          "type": "Cron_Patch_Params"
+        },
+        {
+          "type": "Cron_Job_Ref"
+        },
+        {
+          "type": "Cron_List_Params"
+        }
+      ]
+    },
+    {
+      "name": "Response_Result",
+      "doc": "Runtime result payload tagged by the request method that produced it.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "Initialize_Result"
+        },
+        {
+          "type": "Session_List_Result"
+        },
+        {
+          "type": "Session_Result"
+        },
+        {
+          "type": "Empty"
+        },
+        {
+          "type": "Session_Compact_Result"
+        },
+        {
+          "type": "Session_Send_Input_Result"
+        },
+        {
+          "type": "Session_Cancel_Input_Result"
+        },
+        {
+          "type": "Session_Cancel_Run_Result"
+        },
+        {
+          "type": "Session_Resync_Result"
+        },
+        {
+          "type": "Session_History_Result"
+        },
+        {
+          "type": "Session_Config_Result"
+        },
+        {
+          "type": "Catalog_List_Result"
+        },
+        {
+          "type": "Catalog_Refresh_Result"
+        },
+        {
+          "type": "Workspace_Describe_Result"
+        },
+        {
+          "type": "Workspace_Browse_Result"
+        },
+        {
+          "type": "Workspace_Remove_Result"
+        },
+        {
+          "type": "Workspace_Skills_Result"
+        },
+        {
+          "type": "Permission_Rules_Result"
+        },
+        {
+          "type": "Cron_Job_Result"
+        },
+        {
+          "type": "Cron_List_Result"
+        },
+        {
+          "type": "Cron_Run_Now_Result"
+        }
+      ]
+    },
+    {
+      "name": "Permission_Decision",
+      "doc": "Who answered a permission request, and how. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Permission_Decision_User",
+          "tag": "user"
+        },
+        {
+          "type": "Permission_Decision_Rule",
+          "tag": "rule"
+        }
+      ]
+    },
+    {
+      "name": "Run_Outcome",
+      "doc": "A run's terminal outcome, discriminated by `type`. Cancellation and failure are terminal outcomes here (folded in from the former run.canceled / run.failed).",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Run_Outcome_Turn",
+          "tag": "turn"
+        },
+        {
+          "type": "Run_Outcome_Compacted",
+          "tag": "compacted"
+        },
+        {
+          "type": "Run_Outcome_Skipped",
+          "tag": "skipped"
+        },
+        {
+          "type": "Run_Outcome_Canceled",
+          "tag": "canceled"
+        },
+        {
+          "type": "Run_Outcome_Failed",
+          "tag": "failed"
+        }
+      ]
+    },
+    {
+      "name": "System_Prompt_Override",
+      "doc": "Request-time system prompt override. `default` means the field was omitted.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "System_Prompt_Default",
+          "form": "absent"
+        },
+        {
+          "type": "System_Prompt_None",
+          "form": "null"
+        },
+        {
+          "type": "System_Prompt_Set",
+          "form": "value",
+          "wireType": "string"
+        }
+      ]
+    },
+    {
+      "name": "Max_Rounds_Override",
+      "doc": "Request-time max-rounds override. `default` means the field was omitted.",
+      "discriminator": "",
+      "arms": [
+        {
+          "type": "Max_Rounds_Default",
+          "form": "absent"
+        },
+        {
+          "type": "Max_Rounds_Unlimited",
+          "form": "null"
+        },
+        {
+          "type": "Max_Rounds_Set",
+          "form": "value",
+          "wireType": "u64"
+        }
+      ]
+    },
+    {
+      "name": "Session_Origin",
+      "doc": "How a session was created.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Session_Origin_Root",
+          "tag": "root"
+        },
+        {
+          "type": "Session_Origin_Child",
+          "tag": "child"
+        },
+        {
+          "type": "Session_Origin_Fork",
+          "tag": "fork"
+        },
+        {
+          "type": "Session_Origin_Cron",
+          "tag": "cron"
+        }
+      ]
+    },
+    {
+      "name": "Session_Scope",
+      "doc": "Workspace scope searched by session.list.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Session_Scope_All",
+          "tag": "all"
+        },
+        {
+          "type": "Session_Scope_Workspace",
+          "tag": "workspace"
+        }
+      ]
+    },
+    {
+      "name": "Session_Population",
+      "doc": "Session relationship population searched by session.list.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Session_Population_Top_Level",
+          "tag": "top_level"
+        },
+        {
+          "type": "Session_Population_Children",
+          "tag": "children"
+        },
+        {
+          "type": "Session_Population_Job_Runs",
+          "tag": "job_runs"
+        },
+        {
+          "type": "Session_Population_All",
+          "tag": "all"
+        }
+      ]
+    },
+    {
+      "name": "Activity_State",
+      "doc": "Session activity variant. The `message_id`, `part_id`, and `tool_name` locators are deliberately derivable: they are a checksum, and disagreement is a client's cue to resync.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Activity_State_Idle",
+          "tag": "idle"
+        },
+        {
+          "type": "Activity_State_Building",
+          "tag": "building"
+        },
+        {
+          "type": "Activity_State_Running",
+          "tag": "running"
+        },
+        {
+          "type": "Activity_State_Reasoning",
+          "tag": "reasoning"
+        },
+        {
+          "type": "Activity_State_Waiting_Permission",
+          "tag": "waiting_permission"
+        },
+        {
+          "type": "Activity_State_Running_Tool",
+          "tag": "running_tool"
+        },
+        {
+          "type": "Activity_State_Retrying",
+          "tag": "retrying"
+        },
+        {
+          "type": "Activity_State_Compacting",
+          "tag": "compacting"
+        }
+      ]
+    },
+    {
+      "name": "Assistant_Part",
+      "doc": "One element of an assistant message `content[]`. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Text_Part",
+          "tag": "text"
+        },
+        {
+          "type": "Reasoning_Part",
+          "tag": "reasoning"
+        },
+        {
+          "type": "Tool_Part",
+          "tag": "tool"
+        }
+      ]
+    },
+    {
+      "name": "Tool_State",
+      "doc": "Lifecycle state of a tool part. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Tool_State_Pending",
+          "tag": "pending"
+        },
+        {
+          "type": "Tool_State_Waiting_Permission",
+          "tag": "waiting_permission"
+        },
+        {
+          "type": "Tool_State_Running",
+          "tag": "running"
+        },
+        {
+          "type": "Tool_State_Completed",
+          "tag": "completed"
+        },
+        {
+          "type": "Tool_State_Error",
+          "tag": "error"
+        },
+        {
+          "type": "Tool_State_Denied",
+          "tag": "denied"
+        },
+        {
+          "type": "Tool_State_Canceled",
+          "tag": "canceled"
+        }
+      ]
+    },
+    {
+      "name": "Message",
+      "doc": "A transcript message. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "User_Message",
+          "tag": "user"
+        },
+        {
+          "type": "Assistant_Message",
+          "tag": "assistant"
+        },
+        {
+          "type": "Compaction_Message",
+          "tag": "compaction"
+        }
+      ]
+    },
+    {
+      "name": "View",
+      "doc": "Display-only rendering hint. Frontends may render natively or ignore. Non-owning.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "View_Text",
+          "tag": "text"
+        },
+        {
+          "type": "View_Markdown",
+          "tag": "markdown"
+        },
+        {
+          "type": "View_Json",
+          "tag": "json"
+        },
+        {
+          "type": "View_Diff",
+          "tag": "diff"
+        },
+        {
+          "type": "View_Image",
+          "tag": "image"
+        }
+      ]
+    }
+  ],
+  "enumerations": [
+    {
+      "name": "Broadcast_Name",
+      "doc": "Closed enum of broadcast names. Source of truth for the broadcast set.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Session_Summary_Changed",
+          "wire": "session.summary_changed",
+          "doc": "Durable session summary changed."
+        },
+        {
+          "name": "Session_Activity_Changed",
+          "wire": "session.activity_changed",
+          "doc": "Volatile session activity changed."
+        },
+        {
+          "name": "Session_Removed",
+          "wire": "session.removed",
+          "doc": "Session was removed."
+        },
+        {
+          "name": "Workspace_Created",
+          "wire": "workspace.created",
+          "doc": "Workspace became known to the daemon."
+        },
+        {
+          "name": "Workspace_Removed",
+          "wire": "workspace.removed",
+          "doc": "Workspace was removed."
+        },
+        {
+          "name": "Permission_Rules_Changed",
+          "wire": "permission.rules_changed",
+          "doc": "Permission rules for a workspace changed."
+        },
+        {
+          "name": "Catalog_Changed",
+          "wire": "catalog.changed",
+          "doc": "Catalog content hash or health changed."
+        },
+        {
+          "name": "Cron_Created",
+          "wire": "cron.created",
+          "doc": "Cron job was created."
+        },
+        {
+          "name": "Cron_Updated",
+          "wire": "cron.updated",
+          "doc": "Cron job was updated."
+        },
+        {
+          "name": "Cron_Removed",
+          "wire": "cron.removed",
+          "doc": "Cron job was removed."
+        },
+        {
+          "name": "Notice",
+          "wire": "notice",
+          "doc": "Daemon diagnostic notice."
+        },
+        {
+          "name": "Message_Committed",
+          "wire": "message.committed",
+          "doc": "Committed transcript message; durable."
+        },
+        {
+          "name": "Run_Started",
+          "wire": "run.started",
+          "doc": "Run started; durable."
+        },
+        {
+          "name": "Run_Done",
+          "wire": "run.done",
+          "doc": "Run reached a terminal outcome; durable."
+        },
+        {
+          "name": "Config_Changed",
+          "wire": "config.changed",
+          "doc": "Run config changed; durable."
+        },
+        {
+          "name": "Transcript_Truncated",
+          "wire": "transcript.truncated",
+          "doc": "Transcript was truncated; durable."
+        },
+        {
+          "name": "Message_Started",
+          "wire": "message.started",
+          "doc": "Assistant message draft started."
+        },
+        {
+          "name": "Message_Discarded",
+          "wire": "message.discarded",
+          "doc": "Assistant message draft was discarded (e.g. retry)."
+        },
+        {
+          "name": "Message_Part_Added",
+          "wire": "message.part_added",
+          "doc": "A new part was appended to a draft."
+        },
+        {
+          "name": "Message_Part_Delta",
+          "wire": "message.part_delta",
+          "doc": "Incremental text/reasoning bytes for a draft."
+        },
+        {
+          "name": "Tool_State_Changed",
+          "wire": "tool.state_changed",
+          "doc": "Tool part state changed."
+        },
+        {
+          "name": "Tool_Output_Delta",
+          "wire": "tool.output_delta",
+          "doc": "Incremental display output for a running tool part."
+        },
+        {
+          "name": "Input_Queued",
+          "wire": "input.queued",
+          "doc": "Input was queued behind the active turn."
+        },
+        {
+          "name": "Input_Canceled",
+          "wire": "input.canceled",
+          "doc": "Queued input was canceled before starting."
+        }
+      ]
+    },
+    {
+      "name": "Error_Code",
+      "doc": "Why a request failed. Distinct from run failures (RunErrorCode).",
+      "numeric": true,
+      "values": [
+        {
+          "name": "Bad_Request",
+          "wire": "-32602",
+          "doc": "Request was syntactically or semantically invalid."
+        },
+        {
+          "name": "Bad_Protocol",
+          "wire": "-32600",
+          "doc": "Wire-level framing / version violation."
+        },
+        {
+          "name": "Unknown_Method",
+          "wire": "-32601",
+          "doc": "Unknown RPC method name."
+        },
+        {
+          "name": "Unknown_Session",
+          "wire": "-31000",
+          "doc": "Session id does not exist."
+        },
+        {
+          "name": "Unknown_Workspace",
+          "wire": "-31001",
+          "doc": "Workspace id does not exist."
+        },
+        {
+          "name": "Stale_Cursor",
+          "wire": "-31002",
+          "doc": "A paged-query cursor names an invalidated result generation."
+        },
+        {
+          "name": "Unknown_Message",
+          "wire": "-31003",
+          "doc": "Message id does not exist in this session."
+        },
+        {
+          "name": "Unknown_Part",
+          "wire": "-31004",
+          "doc": "Part index is out of range for the parent message."
+        },
+        {
+          "name": "Unknown_Input",
+          "wire": "-31005",
+          "doc": "Input id does not exist or was already consumed."
+        },
+        {
+          "name": "Unknown_Config_Rev",
+          "wire": "-31006",
+          "doc": "`config_rev` is not the session's current revision."
+        },
+        {
+          "name": "Unknown_Job",
+          "wire": "-31007",
+          "doc": "Job id does not exist."
+        },
+        {
+          "name": "Job_Busy",
+          "wire": "-31008",
+          "doc": "A run is already active on the target job."
+        },
+        {
+          "name": "Unknown_Skill",
+          "wire": "-31009",
+          "doc": "Skill name is unknown to this daemon."
+        },
+        {
+          "name": "Input_Already_Started",
+          "wire": "-31010",
+          "doc": "Input was already started and cannot be re-entered."
+        },
+        {
+          "name": "Queue_Full",
+          "wire": "-31011",
+          "doc": "Session input queue reached its protocol cap."
+        },
+        {
+          "name": "Run_Mismatch",
+          "wire": "-31012",
+          "doc": "The run the request targets is not the current run."
+        },
+        {
+          "name": "Permission_Unknown",
+          "wire": "-31013",
+          "doc": "Permission descriptor or prompt id is unknown."
+        },
+        {
+          "name": "Permission_Already_Decided",
+          "wire": "-31014",
+          "doc": "Permission for this prompt was already decided."
+        },
+        {
+          "name": "Session_Busy",
+          "wire": "-31015",
+          "doc": "Session is busy and cannot accept the request right now."
+        },
+        {
+          "name": "Session_Has_Children",
+          "wire": "-31016",
+          "doc": "Session has persistent children and removal did not request a cascade."
+        },
+        {
+          "name": "Runtime_Failed",
+          "wire": "-31017",
+          "doc": "Underlying runtime (model / tool) failed."
+        },
+        {
+          "name": "Invalid_Patch",
+          "wire": "-31018",
+          "doc": "Patch failed structural or content validation."
+        },
+        {
+          "name": "Unsupported_Model",
+          "wire": "-31019",
+          "doc": "Model id is not supported by this daemon."
+        },
+        {
+          "name": "Unsupported_Reasoning",
+          "wire": "-31020",
+          "doc": "Reasoning effort is not supported by the selected model."
+        },
+        {
+          "name": "Internal",
+          "wire": "-32603",
+          "doc": "Catch-all for unspecified internal errors."
+        },
+        {
+          "name": "Overloaded",
+          "wire": "-31021",
+          "doc": "Retry this request after backoff; the connection stays up, only this request was shed. Client behavior: exponential-backoff re-send of the same request."
+        }
+      ]
+    },
+    {
+      "name": "Run_Error_Code",
+      "doc": "Why a run failed after daemon retry policy was exhausted.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Provider",
+          "wire": "provider",
+          "doc": "Provider rejected or failed the request."
+        },
+        {
+          "name": "Protocol",
+          "wire": "protocol",
+          "doc": "Provider stream could not be parsed."
+        },
+        {
+          "name": "Network",
+          "wire": "network",
+          "doc": "Network request failed."
+        },
+        {
+          "name": "Timeout",
+          "wire": "timeout",
+          "doc": "Provider request timed out."
+        },
+        {
+          "name": "Rate_Limited",
+          "wire": "rate_limited",
+          "doc": "Provider rate limit was hit."
+        },
+        {
+          "name": "Quota_Exhausted",
+          "wire": "quota_exhausted",
+          "doc": "Plan, quota, or budget exhausted."
+        },
+        {
+          "name": "Auth",
+          "wire": "auth",
+          "doc": "Provider authentication failed."
+        },
+        {
+          "name": "Unknown_Model",
+          "wire": "unknown_model",
+          "doc": "Model id is unknown."
+        },
+        {
+          "name": "Unsupported_Reasoning",
+          "wire": "unsupported_reasoning",
+          "doc": "Reasoning setting is unsupported."
+        },
+        {
+          "name": "Max_Rounds",
+          "wire": "max_rounds",
+          "doc": "Tool-call round cap was hit."
+        },
+        {
+          "name": "Context_Overflow",
+          "wire": "context_overflow",
+          "doc": "Conversation did not fit."
+        },
+        {
+          "name": "Runtime",
+          "wire": "runtime",
+          "doc": "Runtime environment failed."
+        },
+        {
+          "name": "Internal",
+          "wire": "internal",
+          "doc": "Unspecified daemon failure."
+        }
+      ]
+    },
+    {
+      "name": "Cron_Retain",
+      "doc": "Whether a fired session should be retained after the run ends.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Always",
+          "wire": "always",
+          "doc": "Always keep."
+        },
+        {
+          "name": "On_Failure",
+          "wire": "on_failure",
+          "doc": "Keep only if the run failed."
+        },
+        {
+          "name": "Never",
+          "wire": "never",
+          "doc": "Always prune after the run."
+        }
+      ]
+    },
+    {
+      "name": "Cron_Overlap",
+      "doc": "Behavior when a new fire overlaps an active run.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Skip",
+          "wire": "skip",
+          "doc": "Skip the new fire."
+        },
+        {
+          "name": "Parallel",
+          "wire": "parallel",
+          "doc": "Run them in parallel."
+        }
+      ]
+    },
+    {
+      "name": "Cron_Missed_Policy",
+      "doc": "What to do with a fire missed while offline / behind.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Skip",
+          "wire": "skip",
+          "doc": "Drop missed fires."
+        },
+        {
+          "name": "Run_Once",
+          "wire": "run_once",
+          "doc": "Run once immediately on recovery, then resume the schedule."
+        }
+      ]
+    },
+    {
+      "name": "Cron_Run_Outcome",
+      "doc": "Outcome tag for a single cron fire.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Completed",
+          "wire": "completed",
+          "doc": "Run finished normally."
+        },
+        {
+          "name": "Canceled",
+          "wire": "canceled",
+          "doc": "Run was canceled mid-flight."
+        },
+        {
+          "name": "Failed",
+          "wire": "failed",
+          "doc": "Run returned an error."
+        },
+        {
+          "name": "Dispatch_Failed",
+          "wire": "dispatch_failed",
+          "doc": "Daemon could not dispatch the fire (e.g. workspace busy)."
+        }
+      ]
+    },
+    {
+      "name": "Capability",
+      "doc": "Optional daemon surface a client may probe for. This is the ONE enum decoded tolerantly: an unknown capability string is IGNORED, never a Validation_Error. Tolerant decode is the whole point \u2014 a newer daemon advertises a token an older client does not know, and the client must skip it, not reject the frame. Every other enum in this package hard-rejects an unknown value; this one must not.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Blob_Upload",
+          "wire": "blob_upload",
+          "doc": "Client\u2192daemon blob upload (`PUT /blob/<hash>`)."
+        }
+      ]
+    },
+    {
+      "name": "Method_Name",
+      "doc": "Closed enum of RPC method names. Source of truth for the method set.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Initialize",
+          "wire": "initialize",
+          "doc": "Negotiate the protocol version and exchange identity. Must be the first request on a connection, and is the only one accepted before Ready."
+        },
+        {
+          "name": "Session_List",
+          "wire": "session.list",
+          "doc": "Read a bounded daemon-ordered session-index page."
+        },
+        {
+          "name": "Session_Create",
+          "wire": "session.create",
+          "doc": "Create a new session."
+        },
+        {
+          "name": "Session_Patch",
+          "wire": "session.patch",
+          "doc": "Patch session settings."
+        },
+        {
+          "name": "Session_Remove",
+          "wire": "session.remove",
+          "doc": "Remove a session and its data."
+        },
+        {
+          "name": "Session_Fork",
+          "wire": "session.fork",
+          "doc": "Fork a session from another session's transcript."
+        },
+        {
+          "name": "Session_Compact",
+          "wire": "session.compact",
+          "doc": "Request manual compaction of the transcript context."
+        },
+        {
+          "name": "Session_Rewind",
+          "wire": "session.rewind",
+          "doc": "Truncate the transcript at a user message."
+        },
+        {
+          "name": "Session_Send_Input",
+          "wire": "session.send_input",
+          "doc": "Send user input to a session."
+        },
+        {
+          "name": "Session_Cancel_Input",
+          "wire": "session.cancel_input",
+          "doc": "Cancel a queued input that has not started."
+        },
+        {
+          "name": "Session_Cancel_Run",
+          "wire": "session.cancel_run",
+          "doc": "Cancel the active run, optionally clearing queue and pending compaction."
+        },
+        {
+          "name": "Session_Resync",
+          "wire": "session.resync",
+          "doc": "Resync a session with a windowed transcript snapshot."
+        },
+        {
+          "name": "Session_History",
+          "wire": "session.history",
+          "doc": "Read older committed history beyond the resync window."
+        },
+        {
+          "name": "Permission_Decide",
+          "wire": "permission.decide",
+          "doc": "Answer a pending permission request."
+        },
+        {
+          "name": "Session_Config",
+          "wire": "session.config",
+          "doc": "Fetch a session's run config and system prompt by config_rev."
+        },
+        {
+          "name": "Subscription_Set",
+          "wire": "subscription.set",
+          "doc": "Replace the subscription set."
+        },
+        {
+          "name": "Catalog_List",
+          "wire": "catalog.list",
+          "doc": "Fetch the model catalog, with optional `since_rev`."
+        },
+        {
+          "name": "Catalog_Refresh",
+          "wire": "catalog.refresh",
+          "doc": "Re-read provider and credential configuration from disk."
+        },
+        {
+          "name": "Workspace_Describe",
+          "wire": "workspace.describe",
+          "doc": "Describe an arbitrary path as a workspace."
+        },
+        {
+          "name": "Workspace_Browse",
+          "wire": "workspace.browse",
+          "doc": "List directories on the daemon host."
+        },
+        {
+          "name": "Workspace_Remove",
+          "wire": "workspace.remove",
+          "doc": "Remove a workspace and its sessions."
+        },
+        {
+          "name": "Workspace_Skills",
+          "wire": "workspace.skills",
+          "doc": "List skills available in a workspace."
+        },
+        {
+          "name": "Permission_Rules",
+          "wire": "permission.rules",
+          "doc": "List remembered permission rules for a workspace."
+        },
+        {
+          "name": "Permission_Forget",
+          "wire": "permission.forget",
+          "doc": "Forget a remembered permission rule."
+        },
+        {
+          "name": "Cron_Create",
+          "wire": "cron.create",
+          "doc": "Create a cron job."
+        },
+        {
+          "name": "Cron_Patch",
+          "wire": "cron.patch",
+          "doc": "Patch a cron job."
+        },
+        {
+          "name": "Cron_Remove",
+          "wire": "cron.remove",
+          "doc": "Remove a cron job."
+        },
+        {
+          "name": "Cron_List",
+          "wire": "cron.list",
+          "doc": "List cron jobs."
+        },
+        {
+          "name": "Cron_Run_Now",
+          "wire": "cron.run_now",
+          "doc": "Fire a cron job immediately."
+        }
+      ]
+    },
+    {
+      "name": "Notice_Level",
+      "doc": "Severity of a daemon diagnostic notice.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Info",
+          "wire": "info",
+          "doc": "Informational."
+        },
+        {
+          "name": "Warn",
+          "wire": "warn",
+          "doc": "Warning; recoverable."
+        },
+        {
+          "name": "Error",
+          "wire": "error",
+          "doc": "Daemon-side error."
+        }
+      ]
+    },
+    {
+      "name": "Permission_Option_Kind",
+      "doc": "Kinds of options the daemon may propose on a permission prompt.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Allow_Once",
+          "wire": "allow_once",
+          "doc": "Allow once for this call only."
+        },
+        {
+          "name": "Allow_Session",
+          "wire": "allow_session",
+          "doc": "Allow for the rest of the session."
+        },
+        {
+          "name": "Allow_Always",
+          "wire": "allow_always",
+          "doc": "Persist as a workspace rule and allow."
+        },
+        {
+          "name": "Reject_Once",
+          "wire": "reject_once",
+          "doc": "Reject this call only."
+        },
+        {
+          "name": "Reject_Always",
+          "wire": "reject_always",
+          "doc": "Persist a deny rule and reject; its `creates` patterns produce deny rules (mirror of Allow_Always)."
+        }
+      ]
+    },
+    {
+      "name": "Denied_By",
+      "doc": "Who or what denied a tool call.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "User",
+          "wire": "user",
+          "doc": "A user selected a reject option."
+        },
+        {
+          "name": "Policy",
+          "wire": "policy",
+          "doc": "Daemon policy rejected the call without prompting."
+        }
+      ]
+    },
+    {
+      "name": "Rule_Action",
+      "doc": "Whether a remembered permission rule allows or denies the matched call.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Allow",
+          "wire": "allow",
+          "doc": "Rule allows the matched call."
+        },
+        {
+          "name": "Deny",
+          "wire": "deny",
+          "doc": "Rule denies the matched call."
+        }
+      ]
+    },
+    {
+      "name": "Run_Kind",
+      "doc": "What kind of run occupies a session.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Turn",
+          "wire": "turn",
+          "doc": "User-driven round of model + tool calls."
+        },
+        {
+          "name": "Compaction",
+          "wire": "compaction",
+          "doc": "Background context compaction."
+        }
+      ]
+    },
+    {
+      "name": "Compact_Skip_Reason",
+      "doc": "Why a manual compaction did nothing.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Nothing_To_Summarize",
+          "wire": "nothing_to_summarize",
+          "doc": "Transcript already fits the context."
+        },
+        {
+          "name": "Too_Few_Messages",
+          "wire": "too_few_messages",
+          "doc": "Too few messages to summarize meaningfully."
+        }
+      ]
+    },
+    {
+      "name": "Stop_Reason",
+      "doc": "Why a message stopped.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Stop",
+          "wire": "stop",
+          "doc": "Natural stop."
+        },
+        {
+          "name": "Length",
+          "wire": "length",
+          "doc": "Hit the model's max-output token limit."
+        },
+        {
+          "name": "Content_Filter",
+          "wire": "content_filter",
+          "doc": "Provider content filter triggered."
+        },
+        {
+          "name": "Tool_Calls",
+          "wire": "tool_calls",
+          "doc": "Stopped to run one or more tool calls."
+        },
+        {
+          "name": "Canceled",
+          "wire": "canceled",
+          "doc": "User or daemon canceled."
+        },
+        {
+          "name": "Error",
+          "wire": "error",
+          "doc": "Provider or runtime error."
+        },
+        {
+          "name": "Unknown",
+          "wire": "unknown",
+          "doc": "Stop reason did not map to a known value."
+        }
+      ]
+    },
+    {
+      "name": "Compact_Status",
+      "doc": "Whether compaction started immediately or was queued.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Started",
+          "wire": "started",
+          "doc": ""
+        },
+        {
+          "name": "Queued",
+          "wire": "queued",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "Permission_Mode",
+      "doc": "Permission policy for future tool calls.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Strict",
+          "wire": "strict",
+          "doc": "Ask before sensitive actions."
+        },
+        {
+          "name": "Normal",
+          "wire": "normal",
+          "doc": "Use daemon defaults."
+        },
+        {
+          "name": "Yolo",
+          "wire": "yolo",
+          "doc": "Allow without prompting."
+        }
+      ]
+    },
+    {
+      "name": "Session_View",
+      "doc": "Closed daemon-defined session-list ordering.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Active",
+          "wire": "active",
+          "doc": ""
+        },
+        {
+          "name": "Recent",
+          "wire": "recent",
+          "doc": ""
+        },
+        {
+          "name": "Active_Recent",
+          "wire": "active_recent",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "Compaction_Reason",
+      "doc": "Why compaction is running.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Auto",
+          "wire": "auto",
+          "doc": "Daemon-triggered compaction."
+        },
+        {
+          "name": "Manual",
+          "wire": "manual",
+          "doc": "User-requested compaction."
+        }
+      ]
+    },
+    {
+      "name": "Provider_Protocol",
+      "doc": "Provider request/response protocol a turn was produced under. Closed set; the transport picks a decoder from it, and persisted provenance names it so a later replay can tell whether opaque provider data still applies.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Anthropic_Messages",
+          "wire": "anthropic-messages",
+          "doc": "Anthropic Messages."
+        },
+        {
+          "name": "Openai_Chat",
+          "wire": "openai-completions",
+          "doc": "OpenAI Chat Completions."
+        },
+        {
+          "name": "Openai_Responses",
+          "wire": "openai-responses",
+          "doc": "OpenAI Responses."
+        }
+      ]
+    },
+    {
+      "name": "Skill_Scope",
+      "doc": "Where a skill definition was loaded from.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Project",
+          "wire": "project",
+          "doc": ""
+        },
+        {
+          "name": "Personal",
+          "wire": "personal",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "name": "Message_Part_Delta_Data",
+      "base": "Part_Delta",
+      "doc": "Payload for `message.part_delta`: incremental draft bytes folded by UTF-8 offset."
+    },
+    {
+      "name": "Tool_Output_Delta_Data",
+      "base": "Part_Delta",
+      "doc": "Payload for `tool.output_delta`: incremental display output for a running tool part, offset-folded like `message.part_delta` but targeting the tool output stream."
+    },
+    {
+      "name": "Catalog_Rev",
+      "base": "[64]u8",
+      "doc": "Catalog content hash.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "64",
+        "value": 64
+      }
+    },
+    {
+      "name": "Model_Id",
+      "base": "string",
+      "doc": "Provider model identifier string.",
+      "bound": {
+        "kind": "bounded",
+        "expr": "128",
+        "value": 128
+      }
+    },
+    {
+      "name": "Session_Id",
+      "base": "[16]u8",
+      "doc": "16 lowercase hex chars. Doubles as an on-disk directory name.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "16",
+        "value": 16
+      }
+    },
+    {
+      "name": "Workspace_Id",
+      "base": "[16]u8",
+      "doc": "16 lowercase hex chars. Doubles as an on-disk directory name.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "16",
+        "value": 16
+      }
+    },
+    {
+      "name": "Job_Id",
+      "base": "[16]u8",
+      "doc": "16 lowercase hex chars. Doubles as an on-disk record name.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "16",
+        "value": 16
+      }
+    },
+    {
+      "name": "Rule_Id",
+      "base": "[16]u8",
+      "doc": "16 lowercase hex chars. Identifies one remembered permission rule.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "16",
+        "value": 16
+      }
+    },
+    {
+      "name": "Request_Id",
+      "base": "string",
+      "doc": "Correlation id as its verbatim JSON token \u2014 `7`, `\"abc\"` with quotes, or `null`. Opaque: JSON-RPC requires the response id to equal the request id.",
+      "bound": {
+        "kind": "bounded",
+        "expr": "MAX_REQUEST_ID_BYTES",
+        "value": 64
+      }
+    },
+    {
+      "name": "Message_Id",
+      "base": "u64",
+      "doc": "Session-scoped, daemon-minted, strictly increasing, never reused."
+    },
+    {
+      "name": "Run_Id",
+      "base": "u64",
+      "doc": "Session-scoped, daemon-minted, strictly increasing, never reused."
+    },
+    {
+      "name": "Input_Id",
+      "base": "u64",
+      "doc": "Session-scoped, daemon-minted, strictly increasing, never reused."
+    },
+    {
+      "name": "Part_Id",
+      "base": "u64",
+      "doc": "Part ordinal in message.content[], from 0. JSON number on the wire, like the other session-scoped ids."
+    },
+    {
+      "name": "Seq",
+      "base": "u64",
+      "doc": "Per-session monotonic sequence number on durable broadcasts."
+    },
+    {
+      "name": "Session_Revision",
+      "base": "u64",
+      "doc": "Monotonic compact-session-index revision within one daemon lifetime."
+    },
+    {
+      "name": "Cron_Revision",
+      "base": "u64",
+      "doc": "Monotonic cron-index revision within one daemon lifetime."
+    },
+    {
+      "name": "Config_Rev",
+      "base": "u64",
+      "doc": "Monotonic run-config revision within a session."
+    }
+  ]
+}

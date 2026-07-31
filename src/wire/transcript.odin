@@ -7,19 +7,16 @@ Message_Time :: struct {
     // Creation epoch ms.
     created_at_ms:   u64,
 
+    // @required-nullable
     // Completion epoch ms; null while still in flight.
     completed_at_ms: Maybe(u64),
 }
 
-// Write creation/completion timestamps, omitting `completed_at_ms` when absent.
+// Write creation/completion timestamps with an explicit null while still in flight.
 message_time_emit :: proc(e: ^Emitter, self: Message_Time) {
     object_begin(e)
     field_u64(e, "created_at_ms", self.created_at_ms)
-
-    if completed, ok := self.completed_at_ms.?; ok {
-        field_u64(e, "completed_at_ms", completed)
-    }
-
+    field_required_null_u64(e, "completed_at_ms", self.completed_at_ms)
     object_end(e)
 }
 
@@ -375,6 +372,7 @@ Tool_State_Denied :: struct {
 
 // Call was canceled.
 Tool_State_Canceled :: struct {
+    // @required-nullable
     // Null when the call never started running.
     duration_ms: Maybe(u64),
 }
@@ -433,10 +431,7 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
 
     case Tool_State_Canceled:
         field_string(e, "type", "canceled")
-
-        if d, ok := v.duration_ms.?; ok {
-            field_u64(e, "duration_ms", d)
-        }
+        field_required_null_u64(e, "duration_ms", v.duration_ms)
     }
 
     object_end(e)
@@ -890,7 +885,8 @@ Compaction_Message :: struct {
     // Model-generated summary of the dropped range.
     summary:       string,
 
-    // First message id still in the provider context. Required on the wire; null means nothing was kept.
+    // @required-nullable
+    // First message id still in the provider context. Null means nothing was kept.
     first_kept_id: Maybe(Message_Id),
 
     // Tokens before compaction.
@@ -1219,7 +1215,13 @@ _permission_state_string_bytes :: proc(self: Permission_State) -> int {
 // Decode creation/completion timestamps straight from the token stream.
 message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Validation_Error) {
     dec_object_begin(d) or_return
-    have := false
+
+    Field :: enum {
+        Created,
+        Completed,
+    }
+
+    seen: bit_set[Field]
     for {
         k, done := dec_key(d) or_return
         if done do break
@@ -1227,17 +1229,21 @@ message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Valid
         switch k {
         case "created_at_ms":
             time.created_at_ms = dec_u64(d) or_return
-            have = true
+            seen += {.Created}
 
         case "completed_at_ms":
-            time.completed_at_ms = dec_u64(d) or_return
+            seen += {.Completed}
+
+            if !dec_is_null(d) {
+                time.completed_at_ms = dec_u64(d) or_return
+            }
 
         case:
             dec_skip(d) or_return
         }
     }
 
-    if !have {
+    if seen != {.Created, .Completed} {
         return {}, .Mismatched_Payload
     }
 
@@ -1675,13 +1681,18 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
     case "canceled":
         st: Tool_State_Canceled
+        have := false
         for {
             k, kdone := dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "duration_ms":
-                st.duration_ms = dec_u64(d) or_return
+                have = true
+
+                if !dec_is_null(d) {
+                    st.duration_ms = dec_u64(d) or_return
+                }
 
             case "permission", "started_at_ms", "output", "error", "view", "reason", "denied_by":
                 return nil, .Mismatched_Payload
@@ -1689,6 +1700,10 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
             case:
                 dec_skip(d) or_return
             }
+        }
+
+        if !have {
+            return nil, .Mismatched_Payload
         }
 
         return st, .None

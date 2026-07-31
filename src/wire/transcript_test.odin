@@ -28,6 +28,22 @@ test_tool_state_parses_completed :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_tool_state_canceled_requires_nullable_duration :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    v := decoder_init(`{"type":"canceled","duration_ms":null}`)
+    state, derr := tool_state_from_reader(&v)
+    testing.expect(t, derr == .None, "null duration should decode")
+    _, ok := state.(Tool_State_Canceled)
+    testing.expect(t, ok, "should be a canceled state")
+
+    v = decoder_init(`{"type":"canceled"}`)
+    _, derr = tool_state_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "omitted duration must fail")
+}
+
+@(test)
 test_tool_state_running_output_present_and_absent :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
@@ -100,7 +116,7 @@ test_message_assistant_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"type":"assistant","id":2,"run_id":1,"config_rev":0,"agent":"main","content":[{"type":"text","id":0,"text":"hello"}],"finish":"stop","time":{"created_at_ms":1700000000000}}`
+    input := `{"type":"assistant","id":2,"run_id":1,"config_rev":0,"agent":"main","content":[{"type":"text","id":0,"text":"hello"}],"finish":"stop","time":{"created_at_ms":1700000000000,"completed_at_ms":null}}`
     v := decoder_init(input)
 
     msg, derr := message_from_reader(&v)

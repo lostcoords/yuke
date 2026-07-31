@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
+.PHONY: schema schema-check schema-test test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
 
 # Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
 SQLITE_YEAR ?= 2025
@@ -127,10 +127,33 @@ check-windows:
 	$(ODIN) check libs/quickjs $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check libs/curl $(COLLECTION) -target:windows_amd64 -no-entry-point
 
+# Regenerate both artifacts from src/wire: schema/wire.json (the meta-model SDK generators
+# read) and schema/wire.schema.json (JSON Schema 2020-12, for validators and docs). The
+# generator cross-checks every bounds marker against the validator that enforces it, so a
+# protocol discrepancy exits non-zero before anything is written.
+schema:
+	@mkdir -p build schema
+	$(ODIN) build tools/schema $(COLLECTION) -out:build/schema.bin
+	./build/schema.bin
+
+# Verify the committed artifacts still describe src/wire. Regeneration is a pure function of
+# the wire sources, so a mismatch means they were not regenerated after a protocol change.
+# Keep this out of `make test`: it gates the artifacts, not the code.
+schema-check:
+	@mkdir -p build
+	$(ODIN) build tools/schema $(COLLECTION) -out:build/schema.bin
+	./build/schema.bin --check --quiet
+	$(MAKE) schema-test
+
+schema-test:
+	@mkdir -p build
+	$(ODIN) test tools/schema $(COLLECTION) -out:build/schema_test.bin
+
 # Format all Odin sources in place (config in odinfmt.json).
 fmt:
 	$(ODINFMT) -w src
 	$(ODINFMT) -w libs
+	$(ODINFMT) -w tools
 
 clean:
 	rm -rf build

@@ -243,6 +243,7 @@ Catalog_Health :: struct {
     // Providers skipped by the daemon.
     skipped:    []Skipped_Provider,
 
+    // @required-nullable
     // @bounded LIMITS.max_error_message_bytes
     // Catalog load failure, if any.
     load_error: Maybe(string),
