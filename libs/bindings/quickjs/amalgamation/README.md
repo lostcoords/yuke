@@ -30,7 +30,7 @@ On Windows with MSVC (x64 Native Tools shell):
 
 ```bat
 make deps
-rem or: libs\quickjs\build_static.bat
+rem or: libs\bindings\quickjs\build_static.bat
 ```
 
 `build_static.bat` needs the MSVC environment; outside an x64 Native Tools shell,

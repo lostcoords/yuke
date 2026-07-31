@@ -17,7 +17,7 @@ On Windows with MSVC (x64 Native Tools shell):
 
 ```bat
 make deps
-rem or: libs\sqlite\build_static.bat
+rem or: libs\bindings\sqlite\build_static.bat
 ```
 
 Artifacts land in `libs/bindings/sqlite/bin/` and are gitignored.

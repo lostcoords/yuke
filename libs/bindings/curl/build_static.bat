@@ -1,5 +1,5 @@
 @echo off
-REM Build libs\curl\bin\curl.lib: a static, Schannel-backed, HTTP(S)-only libcurl.
+REM Build libs\bindings\curl\bin\curl.lib: a static, Schannel-backed, HTTP(S)-only libcurl.
 REM Run from an "x64 Native Tools Command Prompt for VS". Requires cmake on PATH.
 setlocal EnableExtensions
 

@@ -1,2 +1,9 @@
 # Build artifacts (see Makefile)
 build/
+
+# Upstream C fetched and built by `make deps`; never tracked, at any path.
+libs/**/amalgamation/*
+!libs/**/amalgamation/README.md
+libs/**/bin/*
+!libs/**/bin/README.md
+libs/**/upstream/

@@ -1,5 +1,5 @@
 @echo off
-REM Build libs\sqlite\bin\sqlite3.lib from the official amalgamation (MSVC).
+REM Build libs\bindings\sqlite\bin\sqlite3.lib from the official amalgamation (MSVC).
 REM Run from an "x64 Native Tools Command Prompt for VS".
 setlocal EnableExtensions
 

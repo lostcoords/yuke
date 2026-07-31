@@ -11,7 +11,7 @@ carry itself: `ws2_32`, `crypt32`, `secur32`, `bcrypt`, `advapi32`.
 From an "x64 Native Tools Command Prompt for VS", with `cmake` on PATH:
 
 ```bat
-libs\curl\build_static.bat
+libs\bindings\curl\build_static.bat
 ```
 
 The script fetches the pinned tarball, verifies its SHA256, and configures a

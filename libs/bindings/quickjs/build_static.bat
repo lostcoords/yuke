@@ -1,5 +1,5 @@
 @echo off
-REM Build libs\quickjs\bin\windows_amd64\quickjs.lib from the QuickJS-NG amalgamation (MSVC).
+REM Build libs\bindings\quickjs\bin\windows_amd64\quickjs.lib from the QuickJS-NG amalgamation (MSVC).
 REM Run from an "x64 Native Tools Command Prompt for VS".
 setlocal EnableExtensions
 
