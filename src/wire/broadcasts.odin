@@ -126,7 +126,7 @@ Broadcast_Class :: enum {
     Live_Gated,
 
     // Offset-checked live delta the daemon may drop; a drop shows as an offset gap
-    // so the receiver resyncs rather than corrupting.
+    // so the receiver resyncs rather than corrupting. Subscription-gated.
     Live_Droppable,
 
     // Delivered regardless of subscription.
@@ -160,6 +160,34 @@ broadcast_name_class :: proc(name: Broadcast_Name) -> Broadcast_Class {
          .Cron_Removed,
          .Notice:
         return .Ungated
+    }
+
+    unreachable()
+}
+
+// Whether a class is delivered only to connections subscribed to the payload's session. The
+// send path consults this; a gated broadcast without a session id is a bug, not a wide send.
+broadcast_class_gated :: proc(class: Broadcast_Class) -> bool {
+    switch class {
+    case .Durable_Gated, .Live_Gated, .Live_Droppable:
+        return true
+
+    case .Ungated:
+        return false
+    }
+
+    unreachable()
+}
+
+// Whether the send path may shed a frame of this class under backpressure. The receiver detects
+// the loss by offset and resyncs; no other class may skip a frame.
+broadcast_class_droppable :: proc(class: Broadcast_Class) -> bool {
+    switch class {
+    case .Live_Droppable:
+        return true
+
+    case .Durable_Gated, .Live_Gated, .Ungated:
+        return false
     }
 
     unreachable()
