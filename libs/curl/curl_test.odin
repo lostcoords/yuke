@@ -77,7 +77,7 @@ Fake :: struct {
 
 fake_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
     f := (^Fake)(c.server.user_data)
-    f.socket, f.loop = http_server.hijack(c)
+    f.socket, f.loop, _ = http_server.hijack(c)
     f.taken = true
 
     fake_send_next(f)

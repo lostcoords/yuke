@@ -51,56 +51,32 @@ BEARER_CHALLENGE_INVALID_TOKEN :: "Bearer realm=\"yuked\", error=\"invalid_token
 BEARER_CHALLENGE_INVALID_REQUEST :: "Bearer realm=\"yuked\", error=\"invalid_request\""
 CACHE_PRIVATE :: "private, no-store"
 
-// Refusal headers per challenge. The cache marker is last so `[:1]` is the challenge
-// alone and `[:2]` adds the marker a `?token=` request needs (RFC 6750 §2.3).
+// `WWW-Authenticate` value per refusal (RFC 6750 §3.1).
 @(rodata)
-AUTH_CHALLENGE_HEADERS := [Auth_Challenge][2]http_server.Header {
-    .None            = {
-        {name = "WWW-Authenticate", value = BEARER_CHALLENGE},
-        {name = "Cache-Control", value = CACHE_PRIVATE},
-    },
-    .Invalid_Token   = {
-        {name = "WWW-Authenticate", value = BEARER_CHALLENGE_INVALID_TOKEN},
-        {name = "Cache-Control", value = CACHE_PRIVATE},
-    },
-    .Invalid_Request = {
-        {name = "WWW-Authenticate", value = BEARER_CHALLENGE_INVALID_REQUEST},
-        {name = "Cache-Control", value = CACHE_PRIVATE},
-    },
+AUTH_CHALLENGES := [Auth_Challenge]string {
+    .None            = BEARER_CHALLENGE,
+    .Invalid_Token   = BEARER_CHALLENGE_INVALID_TOKEN,
+    .Invalid_Request = BEARER_CHALLENGE_INVALID_REQUEST,
 }
-
-@(rodata)
-AUTH_QUERY_HEADERS := [1]http_server.Header{{name = "Cache-Control", value = CACHE_PRIVATE}}
 
 // Authenticate a request. Exactly one credential source is accepted; duplicate
 // headers, duplicate query parameters, and header+query combinations are rejected as
-// ambiguous rather than resolved by precedence. `query_credential` reports whether the
-// request carried a `token` query parameter (present even when duplicate); it is
-// computed on every path, including when auth is disabled, so the caller can mark
-// every token-bearing response private.
-daemon_authenticate :: proc(
-    d: ^Daemon,
-    head: http.Request_Head,
-    query: string,
-) -> (
-    result: Auth_Result,
-    query_credential: bool,
-) {
+// ambiguous rather than resolved by precedence.
+daemon_authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth_Result {
     assert(d != nil, "authentication needs a daemon")
 
-    query_token, query_lookup := http.query_value(query, "token")
-    query_credential = query_lookup != .Missing
-
     if d.auth_token == "" {
-        return .Disabled, query_credential
+        return .Disabled
     }
 
     assert(daemon_auth_token_valid(d.auth_token), "daemon retained an invalid auth token")
     assert(head.consumed == len(head.bytes), "authentication received an inconsistent parsed head")
 
+    query_token, query_lookup := http.query_value(query, "token")
+
     authorization, header_lookup := http.request_header(head, "authorization")
     if header_lookup == .Duplicate || query_lookup == .Duplicate || header_lookup == .One && query_lookup == .One {
-        return .Ambiguous, query_credential
+        return .Ambiguous
     }
 
     switch header_lookup {
@@ -108,41 +84,41 @@ daemon_authenticate :: proc(
         presented, parse := daemon_bearer_token(authorization)
         switch parse {
         case .Other_Scheme:
-            return .Unsupported_Scheme, query_credential
+            return .Unsupported_Scheme
 
         case .Malformed:
-            return .Invalid, query_credential
+            return .Invalid
 
         case .Ok:
             if !daemon_secret_equal(presented, d.auth_token) {
-                return .Invalid, query_credential
+                return .Invalid
             }
         }
 
-        return .Header, query_credential
+        return .Header
 
     case .Missing:
 
     case .Duplicate:
-        return .Ambiguous, query_credential
+        return .Ambiguous
     }
 
     switch query_lookup {
     case .One:
         if !daemon_secret_equal(query_token, d.auth_token) {
-            return .Invalid, query_credential
+            return .Invalid
         }
 
-        return .Query, query_credential
+        return .Query
 
     case .Missing:
-        return .Missing, query_credential
+        return .Missing
 
     case .Duplicate:
-        return .Ambiguous, query_credential
+        return .Ambiguous
     }
 
-    return .Missing, query_credential
+    return .Missing
 }
 
 // Outcome of parsing an `Authorization` value. A different scheme and a malformed
@@ -229,18 +205,8 @@ daemon_query_credential :: proc(query: string) -> bool {
     return lookup != .Missing
 }
 
-// Cache-private headers when the request carried a `?token=` credential; nil otherwise.
-daemon_query_response_headers :: proc(query: string) -> []http_server.Header {
-    if daemon_query_credential(query) {
-        return AUTH_QUERY_HEADERS[:]
-    }
-
-    return nil
-}
-
-// Challenge headers for a refused request, with the cache-private marker when a
-// `?token=` credential was used.
-daemon_auth_error_headers :: proc(result: Auth_Result, query_credential: bool) -> []http_server.Header {
+// `WWW-Authenticate` value for a refused request.
+daemon_auth_challenge :: proc(result: Auth_Result) -> string {
     challenge: Auth_Challenge
     switch result {
     case .Missing, .Unsupported_Scheme:
@@ -256,8 +222,5 @@ daemon_auth_error_headers :: proc(result: Auth_Result, query_credential: bool) -
         assert(false, "auth challenge built for a result that is not a refusal")
     }
 
-    row := &AUTH_CHALLENGE_HEADERS[challenge]
-    assert(row[1].name == "Cache-Control", "the cache marker must stay last for the slice to select it")
-
-    return row[:query_credential ? 2 : 1]
+    return AUTH_CHALLENGES[challenge]
 }

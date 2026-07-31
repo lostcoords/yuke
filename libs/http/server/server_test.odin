@@ -3,6 +3,7 @@ package http_server
 import "core:log"
 import "core:nbio"
 import "core:net"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -68,12 +69,26 @@ Obs :: struct {
     resolved_miss:           bool,
     resolved_zero:           bool,
 
-    // Answer with `respond_redirect`, recording what it returned.
+    // Answer with `respond_redirect` instead of a body.
     redirect:                bool,
     redirect_to:             string,
-    redirect_extra:          []Header,
-    redirect_err:            Response_Error,
+
+    // Answer from this staged file, exercising `respond_file`'s own head build.
+    file_path:               string,
+
+    // What the answering call returned. Exactly one answer path runs per exchange.
+    answer_err:              Response_Error,
+
+    // Headers added via `conn_add_header` before answering, and what each add returned.
+    add_headers:             []Header,
+    add_errs:                [2]Response_Error,
+
+    // Pending header `hijack` handed back, cloned out before the connection is released.
+    hijacked_count:          int,
+    hijacked:                Header,
 }
+
+FILE_BODY :: "file-body"
 
 // A ticket the server never issues, for the miss case.
 UNISSUED_TICKET :: Ticket(1 << 40)
@@ -95,6 +110,11 @@ test_on_request :: proc(c: ^Conn, req: Request) {
     o.consumed = req.head.consumed
     o.trailing = strings.clone(string(req.trailing), context.temp_allocator)
 
+    assert(len(o.add_headers) <= len(o.add_errs), "test add_errs is too small for its add_headers")
+    for field, i in o.add_headers {
+        o.add_errs[i] = conn_add_header(c, field.name, field.value)
+    }
+
     if o.receive_body {
         receive_body(c, o, test_body_chunk, test_body_end)
         return
@@ -106,18 +126,19 @@ test_on_request :: proc(c: ^Conn, req: Request) {
     }
 
     if o.redirect {
-        o.redirect_err = respond_redirect(c, .Found, o.redirect_to, o.redirect_extra)
+        o.answer_err = respond_redirect(c, .Found, o.redirect_to)
+        test_answer_fallback(c, o)
+        return
+    }
 
-        // Nothing was answered; the connection contract still stands.
-        if o.redirect_err != .None {
-            respond_text(c, .Internal_Server_Error, "redirect rejected")
-        }
-
+    if o.file_path != "" {
+        test_respond_from_file(c, o)
         return
     }
 
     if !o.hijack {
-        respond_text(c, .Ok, "hello")
+        o.answer_err = respond_text(c, .Ok, "hello")
+        test_answer_fallback(c, o)
 
         if o.shutdown {
             shutdown(c.server)
@@ -163,9 +184,20 @@ test_answer_deferred :: proc(op: ^nbio.Operation, c: ^Conn) {
     respond_text(c, .Ok, "deferred")
 }
 
-// Take the socket over and write `HIJACKED` straight onto it.
+// Take the socket over and write `HIJACKED` straight onto it. The returned headers borrow
+// the connection, so they are cloned before it is released.
 test_hijack_and_greet :: proc(c: ^Conn) {
-    socket, loop := hijack(c)
+    o := obs_of(c)
+    socket, loop, headers := hijack(c)
+
+    o.hijacked_count = len(headers)
+    if len(headers) > 0 {
+        o.hijacked = {
+            name  = strings.clone(headers[0].name, context.temp_allocator),
+            value = strings.clone(headers[0].value, context.temp_allocator),
+        }
+    }
+
     nbio.send_poly(
         socket,
         [][]byte{transmute([]byte)string(HIJACKED)},
@@ -178,6 +210,50 @@ test_hijack_and_greet :: proc(c: ^Conn) {
         nbio.NO_TIMEOUT,
         loop,
     )
+}
+
+// Write the file a `respond_file` exchange serves, off the reactor thread. Empty on
+// failure, which the test expects against.
+test_stage_file :: proc() -> string {
+    base, has := os.lookup_env("TMPDIR", context.temp_allocator)
+    if !has {
+        base = "/tmp"
+    }
+
+    path, _ := os.join_path({base, "http_server_pending_headers"}, context.temp_allocator)
+    if os.write_entire_file(path, transmute([]byte)string(FILE_BODY)) != nil {
+        return ""
+    }
+
+    return path
+}
+
+// Answer from the staged file, covering `respond_file`'s own head build.
+test_respond_from_file :: proc(c: ^Conn, o: ^Obs) {
+    file, oerr := nbio.open_sync(o.file_path, l = c.loop)
+    if oerr != nil {
+        respond_text(c, .Internal_Server_Error, "cannot open the file")
+        return
+    }
+
+    o.answer_err = respond_file(c, .Ok, "text/plain", file, 1 << 20, .Not_Found, "missing")
+    if o.answer_err != .None {
+        nbio.close(file, l = c.loop)
+    }
+
+    test_answer_fallback(c, o)
+}
+
+// The answering call refused, so nothing was sent and the connection contract still
+// stands. An oversized pending header poisons every response, so abort is the last resort.
+test_answer_fallback :: proc(c: ^Conn, o: ^Obs) {
+    if o.answer_err == .None {
+        return
+    }
+
+    if respond_text(c, .Internal_Server_Error, "answer rejected") != .None {
+        abort(c)
+    }
 }
 
 // Body sink under test: accumulate the chunk, or reject it to drive the abort path.
@@ -551,7 +627,7 @@ test_http_redirect_sets_location_and_sends_no_body :: proc(t: ^testing.T) {
     }
     got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
 
-    testing.expect_value(t, obs.redirect_err, Response_Error.None)
+    testing.expect_value(t, obs.answer_err, Response_Error.None)
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 302 Found\r\n"), "should answer 302")
     testing.expectf(t, strings.contains(got, "Location: /elsewhere\r\n"), "should carry the target, got %q", got)
     testing.expectf(t, strings.contains(got, "Content-Length: 0\r\n"), "a redirect has no body, got %q", got)
@@ -559,38 +635,40 @@ test_http_redirect_sets_location_and_sends_no_body :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_http_redirect_passes_extra_headers_through :: proc(t: ^testing.T) {
+test_http_redirect_carries_pending_headers :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    extra := [1]Header{{name = "Cache-Control", value = "no-store"}}
+    add := [1]Header{{name = "Cache-Control", value = "no-store"}}
     obs := Obs {
-        redirect       = true,
-        redirect_to    = "https://example.test/next",
-        redirect_extra = extra[:],
+        redirect    = true,
+        redirect_to = "https://example.test/next",
+        add_headers = add[:],
     }
     got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
 
-    testing.expect_value(t, obs.redirect_err, Response_Error.None)
+    testing.expect_value(t, obs.answer_err, Response_Error.None)
     testing.expectf(t, strings.contains(got, "Location: https://example.test/next\r\n"), "target, got %q", got)
-    testing.expectf(t, strings.contains(got, "Cache-Control: no-store\r\n"), "extra header, got %q", got)
+    testing.expectf(t, strings.contains(got, "Cache-Control: no-store\r\n"), "pending header, got %q", got)
 }
 
-// Two `Location` fields would be ambiguous, so the caller's is refused.
+// Two `Location` fields would be ambiguous, so `respond_redirect` owns the name outright
+// and refuses a target that is already pending.
 @(test)
-test_http_redirect_rejects_a_caller_supplied_location :: proc(t: ^testing.T) {
+test_http_redirect_rejects_a_pending_location :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    extra := [1]Header{{name = "location", value = "/sneaky"}}
+    add := [1]Header{{name = "location", value = "/sneaky"}}
     obs := Obs {
-        redirect       = true,
-        redirect_to    = "/elsewhere",
-        redirect_extra = extra[:],
+        redirect    = true,
+        redirect_to = "/elsewhere",
+        add_headers = add[:],
     }
     got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
 
-    testing.expect_value(t, obs.redirect_err, Response_Error.Invalid_Header)
+    testing.expect_value(t, obs.add_errs[0], Response_Error.None)
+    testing.expect_value(t, obs.answer_err, Response_Error.Invalid_Header)
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 500 Internal Server Error\r\n"), "should not redirect")
-    testing.expectf(t, !strings.contains(got, "/sneaky"), "the refused target must not ship, got %q", got)
+    testing.expectf(t, !strings.contains(got, "/elsewhere"), "the refused target must not ship, got %q", got)
 }
 
 @(test)
@@ -602,7 +680,7 @@ test_http_redirect_rejects_an_unusable_target :: proc(t: ^testing.T) {
         redirect_to = "",
     }
     run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &empty)
-    testing.expect_value(t, empty.redirect_err, Response_Error.Invalid_Header)
+    testing.expect_value(t, empty.answer_err, Response_Error.Invalid_Header)
 
     // A bare CR cannot appear in a field value; it would split the head.
     injected := Obs {
@@ -611,7 +689,7 @@ test_http_redirect_rejects_an_unusable_target :: proc(t: ^testing.T) {
     }
     got := run_exchange(t, "GET / HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &injected)
 
-    testing.expect_value(t, injected.redirect_err, Response_Error.Invalid_Header)
+    testing.expect_value(t, injected.answer_err, Response_Error.Invalid_Header)
     testing.expectf(t, !strings.contains(got, "x-injected"), "injection must not ship, got %q", got)
 }
 
@@ -629,6 +707,133 @@ test_http_hijack_hands_over_the_socket :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.request_count, 1)
     testing.expect_value(t, obs.body_len, 1)
     testing.expect_value(t, got, HIJACKED)
+}
+
+// --- Pending response headers -------------------------------------------------
+//
+// A pre-match step marks the connection once and every response it can reach carries the
+// header, instead of each response site repeating it.
+
+@(test)
+test_http_pending_header_reaches_the_response :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "Cache-Control", value = "private, no-store"}}
+    obs := Obs {
+        add_headers = add[:],
+    }
+    got := run_exchange(t, "GET /thing HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.add_errs[0], Response_Error.None)
+    testing.expect_value(t, obs.answer_err, Response_Error.None)
+    testing.expectf(t, strings.contains(got, "Cache-Control: private, no-store\r\n"), "pending header, got %q", got)
+    testing.expectf(t, strings.has_suffix(got, "hello"), "the body must still arrive, got %q", got)
+}
+
+// `respond_file` builds its head on its own path, so it needs its own proof.
+@(test)
+test_http_pending_header_reaches_a_file_response :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "Cache-Control", value = "private, no-store"}}
+    obs := Obs {
+        file_path   = test_stage_file(),
+        add_headers = add[:],
+    }
+    testing.expect(t, obs.file_path != "", "the served file must stage")
+    got := run_exchange(t, "GET /file HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.answer_err, Response_Error.None)
+    testing.expectf(t, strings.contains(got, "Cache-Control: private, no-store\r\n"), "pending header, got %q", got)
+    testing.expectf(t, strings.has_suffix(got, FILE_BODY), "the file body must still arrive, got %q", got)
+}
+
+// The answer may outlive the request frame. `pending` lives on the connection, so an
+// answer resolved by ticket long after the handler returned still carries it.
+@(test)
+test_http_pending_header_survives_a_deferred_answer :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "Cache-Control", value = "private, no-store"}}
+    obs := Obs {
+        defer_later = true,
+        add_headers = add[:],
+    }
+    got := run_exchange(t, "GET /deferred HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expectf(t, strings.contains(got, "Cache-Control: private, no-store\r\n"), "pending header, got %q", got)
+    testing.expectf(t, strings.has_suffix(got, "deferred"), "the deferred body must still arrive, got %q", got)
+}
+
+// `hijack` hands its pending headers back for the adopting protocol to emit.
+@(test)
+test_http_hijack_returns_pending_headers :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "Cache-Control", value = "private, no-store"}}
+    obs := Obs {
+        hijack      = true,
+        add_headers = add[:],
+    }
+    run_exchange(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.hijacked_count, 1)
+    testing.expect_value(t, obs.hijacked.name, "Cache-Control")
+    testing.expect_value(t, obs.hijacked.value, "private, no-store")
+}
+
+// One field name, one value: a second add of the same name is refused rather than
+// emitting two fields or silently replacing the first. Matched case-insensitively.
+@(test)
+test_http_pending_header_rejects_a_duplicate_add :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [2]Header {
+        {name = "Cache-Control", value = "private, no-store"},
+        {name = "cache-control", value = "no-cache"},
+    }
+    obs := Obs {
+        add_headers = add[:],
+    }
+    got := run_exchange(t, "GET /thing HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.add_errs[0], Response_Error.None)
+    testing.expect_value(t, obs.add_errs[1], Response_Error.Invalid_Header)
+    testing.expectf(t, !strings.contains(got, "no-cache"), "the refused value must not ship, got %q", got)
+}
+
+// The framing fields the server owns are refused, and a refused add leaves the response
+// itself untouched.
+@(test)
+test_http_pending_header_rejects_a_reserved_name :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "Content-Length", value = "7"}}
+    obs := Obs {
+        add_headers = add[:],
+    }
+    got := run_exchange(t, "GET /thing HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.add_errs[0], Response_Error.Invalid_Header)
+    testing.expect_value(t, obs.answer_err, Response_Error.None)
+    testing.expectf(t, strings.has_suffix(got, "hello"), "a refused add must not stop the response, got %q", got)
+}
+
+
+// Pending headers are charged against the same head budget as caller headers, so a
+// pre-match step cannot overrun the response head.
+@(test)
+test_http_pending_header_counts_against_the_head_budget :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    add := [1]Header{{name = "X-Big", value = strings.repeat("v", 512, context.temp_allocator)}}
+    obs := Obs {
+        add_headers = add[:],
+    }
+    run_exchange(t, "GET /thing HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs, {max_head_bytes = 256})
+
+    testing.expect_value(t, obs.add_errs[0], Response_Error.None)
+    testing.expect_value(t, obs.answer_err, Response_Error.Invalid_Header)
 }
 
 @(test)

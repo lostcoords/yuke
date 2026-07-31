@@ -251,6 +251,11 @@ Conn :: struct {
     recv_buf:          []byte,
 
     // @private
+    // Headers for whatever response eventually goes out, including a router fallback, a
+    // deferred answer, and the `hijack` handoff. Names and values are owned clones.
+    pending:           [dynamic]Header,
+
+    // @private
     // Owned serialized response head.
     resp_head:         []byte,
 
@@ -462,19 +467,13 @@ bound_port :: proc(s: ^Server) -> int {
     return ep.port
 }
 
-// Custom headers are serialized and `body` is copied, so caller-supplied response
-// bytes need not outlive this call.
-respond :: proc(
-    c: ^Conn,
-    status: Status,
-    content_type: string,
-    body: []byte,
-    extra_headers: []Header = nil,
-) -> Response_Error {
+// `body` is copied, so caller-supplied response bytes need not outlive this call. Any
+// header beyond the framing fields comes from `conn_add_header`.
+respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte) -> Response_Error {
     assert(c != nil, "respond needs a connection")
     assert(conn_can_respond(c), "respond on an answered connection")
 
-    extra, response_err := serialize_extra_headers(c, extra_headers)
+    extra, response_err := serialize_pending_headers(c)
     if response_err != .None {
         return response_err
     }
@@ -509,13 +508,14 @@ respond :: proc(
 }
 
 // `respond` with a `text/plain` body.
-respond_text :: proc(c: ^Conn, status: Status, text: string, extra_headers: []Header = nil) -> Response_Error {
-    return respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text, extra_headers)
+respond_text :: proc(c: ^Conn, status: Status, text: string) -> Response_Error {
+    return respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text)
 }
 
 // Redirect to `location` with an empty body. `status` must carry a target (RFC 9110
-// §15.4); a caller may not supply its own `Location`, since two would be ambiguous.
-respond_redirect :: proc(c: ^Conn, status: Status, location: string, extra_headers: []Header = nil) -> Response_Error {
+// §15.4); the target may not also be pending, since two `Location` fields would be
+// ambiguous.
+respond_redirect :: proc(c: ^Conn, status: Status, location: string) -> Response_Error {
     assert(c != nil, "respond_redirect needs a connection")
     assert(conn_can_respond(c), "respond_redirect on an answered connection")
     assert(http.status_is_redirect(status), "respond_redirect needs a redirect that carries a target")
@@ -524,26 +524,13 @@ respond_redirect :: proc(c: ^Conn, status: Status, location: string, extra_heade
         return .Invalid_Header
     }
 
-    for field in extra_headers {
-        if strings.equal_fold(field.name, "location") {
-            return .Invalid_Header
-        }
+    if header_present(c.pending[:], "location") {
+        return .Invalid_Header
     }
 
-    // `respond` serializes headers before returning, so this outlives the only use.
-    headers, aerr := make([]Header, len(extra_headers) + 1, c.allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
-    defer delete(headers, c.allocator)
+    conn_add_header(c, "Location", location) or_return
 
-    headers[0] = Header {
-        name  = "Location",
-        value = location,
-    }
-    copy(headers[1:], extra_headers)
-
-    return respond(c, status, "", nil, headers)
+    return respond(c, status, "", nil)
 }
 
 // Ownership of `file` transfers only on `.None`; the post-transfer stat keeps
@@ -557,7 +544,6 @@ respond_file :: proc(
     max_file_bytes: i64,
     failure_status: Status,
     failure_text: string,
-    extra_headers: []Header = nil,
 ) -> Response_Error {
     assert(c != nil, "respond_file needs a connection")
     assert(conn_can_respond(c), "respond_file on an answered connection")
@@ -567,7 +553,7 @@ respond_file :: proc(
         return .Invalid_Header
     }
 
-    extra, response_err := serialize_extra_headers(c, extra_headers)
+    extra, response_err := serialize_pending_headers(c)
     if response_err != .None {
         return response_err
     }
@@ -601,16 +587,18 @@ respond_file :: proc(
     return .None
 }
 
-// Hand the socket to another protocol. The caller becomes responsible for closing
-// it; returned trailing bytes remain valid only until the handler returns.
-hijack :: proc(c: ^Conn) -> (socket: net.TCP_Socket, loop: ^nbio.Event_Loop) {
+// Hand the socket to another protocol. The caller becomes responsible for closing it,
+// and for emitting `headers` itself — nothing in the `respond*` path runs for a hijacked
+// connection. `headers` borrows the connection, as the returned trailing bytes do, and is
+// valid only until the handler returns.
+hijack :: proc(c: ^Conn) -> (socket: net.TCP_Socket, loop: ^nbio.Event_Loop, headers: []Header) {
     assert(c != nil && c.state == .Reading, "hijack on an answered connection")
 
     conn_cancel_timeout(c)
     c.state = .Hijacked
     log.debug("http_server: connection hijacked")
 
-    return c.socket, c.loop
+    return c.socket, c.loop, c.pending[:]
 }
 
 // Stream the request body to the handler instead of responding immediately. Called
@@ -669,6 +657,60 @@ conn_can_respond :: proc(c: ^Conn) -> bool {
     }
 
     return false
+}
+
+// Whether `pending` will still be read, which is the whole request phase: a body receive
+// accumulates headers just as the handler does. Wider than `conn_can_respond` on purpose.
+// A hijacked connection already handed its headers to the adopting protocol.
+@(private)
+conn_can_add_header :: proc(c: ^Conn) -> bool {
+    assert(c != nil, "header legality needs a connection")
+
+    switch c.state {
+    case .Reading, .Receiving_Body, .Deferred:
+        return true
+
+    case .Responding, .Hijacked, .Closed:
+        return false
+    }
+
+    return false
+}
+
+// Add a header to whatever response this connection eventually sends, so a pre-match step
+// can mark every downstream response without every response site repeating it. `name` and
+// `value` are cloned, so neither need outlive this call.
+conn_add_header :: proc(c: ^Conn, name: string, value: string) -> Response_Error {
+    assert(c != nil, "adding a header needs a connection")
+    assert(conn_can_add_header(c), "response header added after the head was built")
+
+    if !http.field_name_valid(name) || !http.field_value_valid(value) || reserved_field(name) {
+        return .Invalid_Header
+    }
+
+    if header_present(c.pending[:], name) {
+        return .Invalid_Header
+    }
+
+    owned_name, aerr := strings.clone(name, c.allocator)
+    if aerr != nil {
+        return .Out_Of_Memory
+    }
+
+    owned_value: string
+    owned_value, aerr = strings.clone(value, c.allocator)
+    if aerr != nil {
+        delete(owned_name, c.allocator)
+        return .Out_Of_Memory
+    }
+
+    if _, aerr = append(&c.pending, Header{name = owned_name, value = owned_value}); aerr != nil {
+        delete(owned_name, c.allocator)
+        delete(owned_value, c.allocator)
+        return .Out_Of_Memory
+    }
+
+    return .None
 }
 
 // Declare that this request will be answered later, from work the handler has already
@@ -851,6 +893,10 @@ conn_start :: proc(s: ^Server, socket: net.TCP_Socket) {
     c.state = .Reading
     c.head_buf = head_buf
     c.recv_buf = recv_buf
+
+    // Most connections never add a header, so record the allocator without allocating.
+    c.pending.allocator = c.allocator
+
     if map_insert(&s.conns, c.ticket, c) == nil {
         log.error("http_server: out of memory inserting connection")
         delete(c.head_buf)
@@ -1085,10 +1131,10 @@ conn_on_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
 // Send a small text/plain error response, falling back to finalize if the
 // response itself fails.
 @(private)
-conn_respond_error :: proc(c: ^Conn, status: Status, text: string, extra_headers: []Header = nil) {
+conn_respond_error :: proc(c: ^Conn, status: Status, text: string) {
     assert(c != nil && c.state == .Reading, "error response outside Reading")
 
-    if respond_text(c, status, text, extra_headers) != .None {
+    if respond_text(c, status, text) != .None {
         conn_finalize(c)
     }
 }
@@ -1311,6 +1357,11 @@ conn_release :: proc(c: ^Conn) {
     delete(c.resp_head, c.allocator)
     delete(c.resp_body, c.allocator)
     delete(c.resp_extra, c.allocator)
+    for field in c.pending {
+        delete(field.name, c.allocator)
+        delete(field.value, c.allocator)
+    }
+    delete(c.pending)
     delete(c.file_content_type, c.allocator)
     delete(c.file_failure_body, c.allocator)
 
@@ -1321,24 +1372,15 @@ conn_release :: proc(c: ^Conn) {
     maybe_finish_shutdown(s)
 }
 
-// Reserved and duplicate names are rejected so the server keeps sole ownership
-// of the framing fields it emits.
+// Render the pending headers into the block `build_response_head` splices in.
+// `conn_add_header` validated each field as it arrived, so only the head budget is
+// enforced here, where the whole set is known.
 @(private)
-serialize_extra_headers :: proc(c: ^Conn, fields: []Header) -> (out: []byte, err: Response_Error) {
+serialize_pending_headers :: proc(c: ^Conn) -> (out: []byte, err: Response_Error) {
     assert(c != nil, "header serialization needs a connection")
 
     total := 0
-    for field, i in fields {
-        if !http.field_name_valid(field.name) || !http.field_value_valid(field.value) || reserved_field(field.name) {
-            return nil, .Invalid_Header
-        }
-
-        for previous in fields[:i] {
-            if strings.equal_fold(previous.name, field.name) {
-                return nil, .Invalid_Header
-            }
-        }
-
+    for field in c.pending {
         field_bytes := len(field.name) + 2 + len(field.value) + 2
         if field_bytes > c.server.max_head_bytes - total {
             return nil, .Invalid_Header
@@ -1357,7 +1399,7 @@ serialize_extra_headers :: proc(c: ^Conn, fields: []Header) -> (out: []byte, err
     }
 
     at := 0
-    for field in fields {
+    for field in c.pending {
         at += copy(out[at:], transmute([]byte)field.name)
         at += copy(out[at:], transmute([]byte)string(": "))
         at += copy(out[at:], transmute([]byte)field.value)
@@ -1366,6 +1408,19 @@ serialize_extra_headers :: proc(c: ^Conn, fields: []Header) -> (out: []byte, err
     assert(at == len(out), "serialized header length mismatch")
 
     return out, .None
+}
+
+// Whether `name` already appears among `fields`, compared case-insensitively as HTTP
+// field names are.
+@(private)
+header_present :: proc(fields: []Header, name: string) -> bool {
+    for field in fields {
+        if strings.equal_fold(field.name, name) {
+            return true
+        }
+    }
+
+    return false
 }
 
 // Field names owned by `build_response_head`; callers may not override them.

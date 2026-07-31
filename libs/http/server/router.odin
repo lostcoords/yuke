@@ -232,10 +232,17 @@ router_dispatch :: proc(r: ^Router($T), c: ^Conn, req: Request) {
         log.debugf("http_server: method not allowed %s %s", method, path)
         if r.on_method_not_allowed != nil {
             r.on_method_not_allowed(&ctx)
-        } else {
-            headers := [1]Header{{name = "Allow", value = ctx.allow}}
-            conn_respond_error(c, .Method_Not_Allowed, "method not allowed", headers[:])
+            return
         }
+
+        // RFC 9110 §15.5.6: a 405 names the methods the path does route, so one that
+        // cannot carry `Allow` is torn down rather than sent without it.
+        if conn_add_header(c, "Allow", ctx.allow) != .None {
+            conn_finalize(c)
+            return
+        }
+
+        conn_respond_error(c, .Method_Not_Allowed, "method not allowed")
 
         return
     }

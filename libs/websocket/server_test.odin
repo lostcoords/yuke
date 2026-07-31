@@ -135,7 +135,7 @@ srv_on_request :: proc(c: ^http.Conn, req: http.Request) {
         return
     }
 
-    socket, loop := http.hijack(c)
+    socket, loop, _ := http.hijack(c)
     if _, err := server_adopt(s, socket, ureq.key, req.trailing); err != .None {
         nbio.close(socket, l = loop)
     }
