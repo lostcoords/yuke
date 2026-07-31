@@ -1,16 +1,48 @@
 #!/usr/bin/env bash
-# Build libs/quickjs/bin/<os>_<arch>/quickjs.{a,lib} from the QuickJS-NG
+# Build libs/bindings/quickjs/bin/<os>_<arch>/quickjs.{a,lib} from the QuickJS-NG
 # amalgamation. Required on every platform: unlike SQLite there is no system
-# libquickjs to link against anywhere.
+# libquickjs to link against anywhere. Re-running is a no-op once the archive
+# exists; FORCE=1 rebuilds.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 AMAL_DIR="$ROOT/amalgamation"
-# QuickJS-NG v0.15.1 — keep in sync with Makefile QUICKJS_VER / QUICKJS_SHA256.
 VER="${QUICKJS_VER:-v0.15.1}"
 SHA256="${QUICKJS_SHA256:-d4dbf9cbf7a855c790d3c4c468ac45b00371d56fd8ae26e1aaa1d336efc589d8}"
 
-mkdir -p "$AMAL_DIR"
+# Target directory must match the foreign import ladder in c.odin.
+case "$(uname -m)" in
+  x86_64 | amd64) ARCH="amd64" ;;
+  aarch64 | arm64) ARCH="arm64" ;;
+  *)
+    echo "error: unsupported arch $(uname -m); quickjs bindings are 64-bit only" >&2
+    exit 1
+    ;;
+esac
+
+case "$(uname -s)" in
+  Linux) OS="linux" ;;
+  Darwin) OS="darwin" ;;
+  MINGW* | MSYS* | CYGWIN* | Windows_NT) OS="windows" ;;
+  *)
+    echo "error: unsupported OS $(uname -s)" >&2
+    exit 1
+    ;;
+esac
+
+BIN_DIR="$ROOT/bin/${OS}_${ARCH}"
+if [[ "$OS" == "windows" ]]; then
+  LIB="$BIN_DIR/quickjs.lib"
+else
+  LIB="$BIN_DIR/quickjs.a"
+fi
+
+if [[ -f "$LIB" && -z "${FORCE:-}" ]]; then
+  echo "quickjs: bin/${OS}_${ARCH}/$(basename "$LIB") is up to date"
+  exit 0
+fi
+
+mkdir -p "$AMAL_DIR" "$BIN_DIR"
 
 # Skip the fetch when the amalgamation is already present, so vendoring it into
 # the tree later is a drop-in with no change to this script.
@@ -60,29 +92,6 @@ if [[ -z "$CC" ]]; then
 fi
 
 AR="${AR:-ar}"
-
-# Target directory must match the foreign import ladder in c.odin.
-case "$(uname -m)" in
-  x86_64 | amd64) ARCH="amd64" ;;
-  aarch64 | arm64) ARCH="arm64" ;;
-  *)
-    echo "error: unsupported arch $(uname -m); quickjs bindings are 64-bit only" >&2
-    exit 1
-    ;;
-esac
-
-case "$(uname -s)" in
-  Linux) OS="linux" ;;
-  Darwin) OS="darwin" ;;
-  MINGW* | MSYS* | CYGWIN* | Windows_NT) OS="windows" ;;
-  *)
-    echo "error: unsupported OS $(uname -s)" >&2
-    exit 1
-    ;;
-esac
-
-BIN_DIR="$ROOT/bin/${OS}_${ARCH}"
-mkdir -p "$BIN_DIR"
 
 if [[ "$OS" == "windows" ]]; then
   # Prefer MSVC; fall back to clang/gcc producing an archive lld-link accepts.

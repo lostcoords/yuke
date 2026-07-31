@@ -1,6 +1,6 @@
 package store
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 import "src:wire"
 
 // Session-scoped ids. Zero means no bump: the store keeps the larger of the

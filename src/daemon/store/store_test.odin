@@ -6,7 +6,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 import "libs:testsupport"
 
 @(test)

@@ -45,7 +45,7 @@ and tearing it down would break a second client living in the same process.
 
 Linking:
   - Darwin / Linux: system `libcurl`.
-  - Windows: a static Schannel build at `libs/curl/bin/curl.lib`. See
-    `libs/curl/build_static.bat`.
+  - Windows: a static Schannel build at `libs/bindings/curl/bin/curl.lib`. See
+    `libs/bindings/curl/build_static.bat`.
 */
 package curl

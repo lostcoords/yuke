@@ -53,7 +53,7 @@ Type :: enum c.int {
     Null    = 5,
 }
 
-// Private C FFI. Importers of `libs:sqlite` cannot see these symbols.
+// Private C FFI. Importers of `libs:bindings/sqlite` cannot see these symbols.
 // Public wrappers in sqlite.odin own the Odin-facing names (bind_text, close, …).
 
 @(private)
@@ -67,7 +67,7 @@ TRANSIENT :: Destructor(~uintptr(0))
 
 // foreign import itself cannot be @(private); the c_* decls below are.
 when ODIN_OS == .Windows {
-    // Built from amalgamation via `make sqlite-static` → libs/sqlite/bin/.
+    // Built from amalgamation via `make deps` → libs/bindings/sqlite/bin/.
     foreign import lib "bin/sqlite3.lib"
 } else {
     foreign import lib "system:sqlite3"

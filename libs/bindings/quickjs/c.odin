@@ -483,7 +483,7 @@ when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {
 } else when ODIN_OS == .Darwin && ODIN_ARCH == .amd64 {
     foreign import lib "bin/darwin_amd64/quickjs.a"
 } else {
-    #panic("libs:quickjs has no archive for this target; see libs/quickjs/amalgamation/README.md")
+    #panic("libs:bindings/quickjs has no archive for this target; see libs/bindings/quickjs/amalgamation/README.md")
 }
 
 // Not bound: `js_std_cmd` and `js_string_codePointRange`. The first is the

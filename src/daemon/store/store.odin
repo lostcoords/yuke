@@ -3,7 +3,7 @@ package store
 import "core:mem"
 import "core:strings"
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 
 // Lock wait for external inspectors; the daemon itself keeps a single writer.
 BUSY_TIMEOUT_MS :: 5000

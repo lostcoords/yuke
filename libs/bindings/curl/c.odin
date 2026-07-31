@@ -230,7 +230,7 @@ GLOBAL_DEFAULT :: 1 | 2
 
 // foreign import itself cannot be @(private); the c_* decls below are.
 when ODIN_OS == .Windows {
-    // Static libcurl built with Schannel by `libs/curl/build_static.bat`. A static
+    // Static libcurl built with Schannel by `libs/bindings/curl/build_static.bat`. A static
     // archive carries no import records, so its system dependencies — sockets,
     // the certificate store, and the crypto providers — are named here.
     foreign import lib {"bin/curl.lib", "system:ws2_32.lib", "system:crypt32.lib", "system:secur32.lib", "system:bcrypt.lib", "system:advapi32.lib"}

@@ -1,8 +1,8 @@
 # libcurl (Windows static link)
 
 Unix builds link the system `libcurl`. Windows builds link a **static**
-`libs/curl/bin/curl.lib`, built on a Windows host from a pinned upstream
-release. The foreign import lives in `libs/curl/c.odin` as `@(private)`
+`libs/bindings/curl/bin/curl.lib`, built on a Windows host from a pinned upstream
+release. The foreign import lives in `libs/bindings/curl/c.odin` as `@(private)`
 (`bin/curl.lib`), together with the system libraries a static archive cannot
 carry itself: `ws2_32`, `crypt32`, `secur32`, `bcrypt`, `advapi32`.
 
@@ -17,7 +17,7 @@ libs\curl\build_static.bat
 The script fetches the pinned tarball, verifies its SHA256, and configures a
 HTTP(S)-only build: TLS through **Schannel** (system trust store, no bundled CA
 bundle, no OpenSSL to track), and every other protocol libcurl can speak
-compiled out. Artifacts land in `libs/curl/bin/` and `libs/curl/upstream/`, both gitignored —
+compiled out. Artifacts land in `libs/bindings/curl/bin/` and `libs/bindings/curl/upstream/`, both gitignored —
 the `.lib` is never checked in.
 
 `CURL_STATICLIB` is a C-header concern only (it turns off `__declspec(dllimport)`);

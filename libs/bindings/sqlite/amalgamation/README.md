@@ -1,8 +1,8 @@
 # SQLite amalgamation (Windows static link)
 
 Unix builds link the system `libsqlite3`. Windows builds link a **static**
-`libs/sqlite/bin/sqlite3.lib` produced from the official amalgamation.
-The foreign import lives in `libs/sqlite/c.odin` as `@(private)` (`bin/sqlite3.lib`).
+`libs/bindings/sqlite/bin/sqlite3.lib` produced from the official amalgamation.
+The foreign import lives in `libs/bindings/sqlite/c.odin` as `@(private)` (`bin/sqlite3.lib`).
 
 ## Fetch + build
 
@@ -10,17 +10,17 @@ From the repo root (requires network once, then a C toolchain):
 
 ```bash
 # Downloads a pinned amalgamation into this directory, then builds the static lib.
-make sqlite-static
+make deps
 ```
 
 On Windows with MSVC (x64 Native Tools shell):
 
 ```bat
-make sqlite-static
+make deps
 rem or: libs\sqlite\build_static.bat
 ```
 
-Artifacts land in `libs/sqlite/bin/` and are gitignored.
+Artifacts land in `libs/bindings/sqlite/bin/` and are gitignored.
 
 ## Pin
 

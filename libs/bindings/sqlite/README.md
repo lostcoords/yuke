@@ -1,4 +1,4 @@
-# libs/sqlite
+# libs/bindings/sqlite
 
 A thin Odin binding to libsqlite3. Most procs are one-line wrappers around
 `sqlite3_*`.

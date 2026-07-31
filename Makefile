@@ -3,17 +3,12 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: schema schema-check schema-test test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
+.PHONY: schema schema-check schema-test test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-provider test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean deps deps-rebuild
 
-# Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
-SQLITE_YEAR ?= 2025
-SQLITE_VER ?= 3490100
-SQLITE_SHA256 ?= 6cebd1d8403fc58c30e93939b246f3e6e58d0765a5cd50546f16c00fd805d2c3
-
-# Pinned QuickJS-NG amalgamation (static link on every platform — there is no
-# system libquickjs anywhere). Keep in sync with libs/quickjs/build_static.sh.
-QUICKJS_VER ?= v0.15.1
-QUICKJS_SHA256 ?= d4dbf9cbf7a855c790d3c4c468ac45b00371d56fd8ae26e1aaa1d336efc589d8
+# Each binding owns its Makefile and version pin. `static` is a no-op once the
+# archive exists, so test targets can depend on it.
+QUICKJS := $(MAKE) -C libs/bindings/quickjs
+SQLITE := $(MAKE) -C libs/bindings/sqlite
 
 
 # Run all wire package tests.
@@ -42,7 +37,7 @@ test-sse:
 # from `libs/http/server` over 127.0.0.1, so nothing reaches the network.
 test-curl:
 	@mkdir -p build
-	$(ODIN) test libs/curl $(COLLECTION) -out:build/curl_test.bin
+	$(ODIN) test libs/bindings/curl $(COLLECTION) -out:build/curl_test.bin
 
 
 # Run the worker-pool tests (blocking work off the reactor).
@@ -66,6 +61,11 @@ test-store:
 	@mkdir -p build
 	$(ODIN) test src/daemon/store $(COLLECTION) -out:build/store_test.bin
 
+# Run the provider package tests (auth headers, error mapping, retry policy).
+test-provider:
+	@mkdir -p build
+	$(ODIN) test src/provider $(COLLECTION) -out:build/provider_test.bin
+
 # Run the testsupport package tests.
 test-support:
 	@mkdir -p build
@@ -84,31 +84,33 @@ test-term:
 # Run the minimal SQLite binding tests (system libsqlite3 on Darwin/Linux).
 test-sqlite:
 	@mkdir -p build
-	$(ODIN) test libs/sqlite $(COLLECTION) -out:build/sqlite_test.bin
+	$(ODIN) test libs/bindings/sqlite $(COLLECTION) -out:build/sqlite_test.bin
 
 
-# Run the QuickJS binding tests. Unlike SQLite there is no system library, so
-# `make quickjs-static` must have produced the host archive first.
+# Run the QuickJS binding tests. Unlike SQLite there is no system library, so the
+# host archive is built first if it is missing.
 test-quickjs:
 	@mkdir -p build
-	$(ODIN) test libs/quickjs $(COLLECTION) -out:build/quickjs_test.bin
+	$(QUICKJS) static
+	$(ODIN) test libs/bindings/quickjs $(COLLECTION) -out:build/quickjs_test.bin
 
 
+# `tests` imports libs:bindings/quickjs, so the host archive must exist.
 test:
 	@mkdir -p build
+	$(QUICKJS) static
 	$(ODIN) test tests $(COLLECTION) -all-packages -out:build/all_test.bin
 
-# Fetch the pinned amalgamation and build a static archive under libs/sqlite/bin/.
-# Required for Windows linking; optional on Unix (tests use system libsqlite3).
-sqlite-static:
-	SQLITE_YEAR=$(SQLITE_YEAR) SQLITE_VER=$(SQLITE_VER) SQLITE_SHA256=$(SQLITE_SHA256) \
-	bash libs/sqlite/build_static.sh
+# QuickJS everywhere, SQLite for Windows linking. libcurl has no build here — it
+# links system:curl on Unix and its Windows archive comes from build_static.bat.
+deps:
+	$(QUICKJS) static
+	$(SQLITE) static
 
-# Fetch the pinned amalgamation and build libs/quickjs/bin/<os>_<arch>/quickjs.{a,lib}.
-# Required on every platform before libs/quickjs will link. Each host builds its own.
-quickjs-static:
-	QUICKJS_VER=$(QUICKJS_VER) QUICKJS_SHA256=$(QUICKJS_SHA256) \
-	bash libs/quickjs/build_static.sh
+# Refetch and recompile both, ignoring what is already built.
+deps-rebuild:
+	$(QUICKJS) rebuild
+	$(SQLITE) rebuild
 
 
 # Cross-compile type-check of the Windows arms from the host (no Windows machine
@@ -116,16 +118,16 @@ quickjs-static:
 # required for these library packages; it also compiles *_test.odin, so POSIX-only
 # test files must carry `#+build` tags. This is a compile gate, not a test run;
 # kept out of `make test` deliberately.
-# libs/sqlite's Windows arm foreign-imports bin/sqlite3.lib (built via
-# `make sqlite-static` on a Windows host); check does not link, so the archive
+# libs/bindings/sqlite's Windows arm foreign-imports bin/sqlite3.lib (built via
+# `make deps` on a Windows host); check does not link, so the archive
 # need not exist for this gate.
 check-windows:
 	$(ODIN) check src/ui $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check src/term $(COLLECTION) -target:windows_amd64 -no-entry-point
 	$(ODIN) check src/daemon/store $(COLLECTION) -target:windows_amd64 -no-entry-point
-	$(ODIN) check libs/sqlite $(COLLECTION) -target:windows_amd64 -no-entry-point
-	$(ODIN) check libs/quickjs $(COLLECTION) -target:windows_amd64 -no-entry-point
-	$(ODIN) check libs/curl $(COLLECTION) -target:windows_amd64 -no-entry-point
+	$(ODIN) check libs/bindings/sqlite $(COLLECTION) -target:windows_amd64 -no-entry-point
+	$(ODIN) check libs/bindings/quickjs $(COLLECTION) -target:windows_amd64 -no-entry-point
+	$(ODIN) check libs/bindings/curl $(COLLECTION) -target:windows_amd64 -no-entry-point
 
 # Regenerate both artifacts from src/wire: schema/wire.json (the meta-model SDK generators
 # read) and schema/wire.schema.json (JSON Schema 2020-12, for validators and docs). The

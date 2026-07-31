@@ -2,7 +2,7 @@ package store
 
 import "core:mem"
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 
 // The store's closed set of hot statements. Adding one requires adding its SQL;
 // the enum-indexed tables make partial prepare/finalize lists impossible.

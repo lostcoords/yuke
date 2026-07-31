@@ -1,12 +1,12 @@
 # QuickJS-NG amalgamation (static link, every platform)
 
-Unlike `libs/sqlite`, there is **no system library fallback**. QuickJS is not
+Unlike `libs/bindings/sqlite`, there is **no system library fallback**. QuickJS is not
 shipped by macOS, is packaged inconsistently and without headers on Linux, and
 upstream publishes no prebuilt libraries — only `qjs`/`qjsc` executables. Every
 target therefore links a static archive built here from the official
 [amalgamated build](https://quickjs-ng.github.io/quickjs/building#amalgamated-builds).
 
-The foreign import ladder lives in `libs/quickjs/c.odin` and expects:
+The foreign import ladder lives in `libs/bindings/quickjs/c.odin` and expects:
 
 ```
 bin/linux_amd64/quickjs.a
@@ -23,13 +23,13 @@ From the repo root (requires network once, then a C toolchain):
 ```bash
 # Downloads the pinned amalgamation into this directory, then builds the
 # archive for the host target.
-make quickjs-static
+make deps
 ```
 
 On Windows with MSVC (x64 Native Tools shell):
 
 ```bat
-make quickjs-static
+make deps
 rem or: libs\quickjs\build_static.bat
 ```
 
@@ -38,7 +38,7 @@ rem or: libs\quickjs\build_static.bat
 warnings (upstream returns a value from `void` in the `JS_FreeCString*` wrappers);
 they are not errors.
 
-Artifacts land in `libs/quickjs/bin/<os>_<arch>/` and are gitignored. Each host
+Artifacts land in `libs/bindings/quickjs/bin/<os>_<arch>/` and are gitignored. Each host
 builds its own; cross-compiling the C is out of scope for these scripts.
 
 Windows is verified, not assumed: `bin/windows_amd64/quickjs.lib` built with

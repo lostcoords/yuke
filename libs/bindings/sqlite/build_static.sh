@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
-# Build libs/sqlite/bin/sqlite3.{a,lib} from the official amalgamation.
+# Build libs/bindings/sqlite/bin/sqlite3.{a,lib} from the official amalgamation.
 # Used on Windows (required) and available on Unix if you want a static archive.
+# Re-running is a no-op once the archive exists; FORCE=1 rebuilds.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 AMAL_DIR="$ROOT/amalgamation"
 BIN_DIR="$ROOT/bin"
-# SQLite 3.49.1 — keep in sync with Makefile SQLITE_YEAR / SQLITE_VER / SQLITE_SHA256.
 YEAR="${SQLITE_YEAR:-2025}"
 VER="${SQLITE_VER:-3490100}"
 SHA256="${SQLITE_SHA256:-6cebd1d8403fc58c30e93939b246f3e6e58d0765a5cd50546f16c00fd805d2c3}"
+
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN* | Windows_NT) LIB="$BIN_DIR/sqlite3.lib" ;;
+  *) LIB="$BIN_DIR/sqlite3.a" ;;
+esac
+
+if [[ -f "$LIB" && -z "${FORCE:-}" ]]; then
+  echo "sqlite: bin/$(basename "$LIB") is up to date"
+  exit 0
+fi
 
 mkdir -p "$AMAL_DIR" "$BIN_DIR"
 

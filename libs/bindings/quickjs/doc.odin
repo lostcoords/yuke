@@ -4,10 +4,10 @@ package quickjs is a minimal, Odin-facing QuickJS-NG wrapper.
 Public API uses `string`, `int`, and `bool` — not `cstring` / `c.int`. The exceptions
 are `eval` and the function constructors, whose `cstring` arguments must be
 nul-terminated. The raw C FFI lives in `c.odin` as `@(private)` `c_*` procedures;
-importers of `libs:quickjs` cannot see or call them.
+importers of `libs:bindings/quickjs` cannot see or call them.
 
 Linking: every target needs a static archive built from the pinned
-amalgamation (`bin/<os>_<arch>/quickjs.{a,lib}`). Unlike `libs:sqlite` there
+amalgamation (`bin/<os>_<arch>/quickjs.{a,lib}`). Unlike `libs:bindings/sqlite` there
 is no system library to fall back on for any platform.
 
 Three controls make a runtime safe to host untrusted script per session:

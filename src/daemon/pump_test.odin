@@ -11,7 +11,7 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 import "libs:testsupport"
 import ws "libs:websocket"
 import client "src:client"

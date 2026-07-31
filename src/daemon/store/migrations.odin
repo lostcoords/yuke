@@ -3,7 +3,7 @@ package store
 import "core:fmt"
 import "core:hash"
 
-import "libs:sqlite"
+import "libs:bindings/sqlite"
 
 // One forward-only schema step. `version` is what `user_version` becomes when it
 // commits; `sql` is immutable once the step has shipped.

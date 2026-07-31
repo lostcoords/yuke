@@ -49,7 +49,7 @@ Ownership: `Store` owns its writer connection, its prepared statements, and thei
 scan mappings, and is freed by `close`. The mappings resolve columns of those
 statements, so `close` destroys them first. Statements are prepared once after
 migrations and left clean by `reset_and_clear` or `execute`, on failing paths as
-well as succeeding ones. Column borrows from `libs:sqlite` never outlive the
+well as succeeding ones. Column borrows from `libs:bindings/sqlite` never outlive the
 statement that produced them. Tagged row scans require every high-water column and
 clone event text before the next step. `events_visit_after` transfers each owned
 payload directly to its visitor; `events_after` collects the same rows into an
