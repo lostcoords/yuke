@@ -47,20 +47,27 @@ BLOB_FILE_PERMISSIONS :: os.Permissions{.Read_User, .Write_User}
 // connection cap, so a small count is enough.
 BLOB_WORKER_COUNT :: 2
 
+// The front door's router types bound to this daemon, so the application type is
+// spelled once rather than at every table and callback.
+Http_Context :: http_server.Context(Daemon)
+Http_Router :: http_server.Router(Daemon)
+Http_Middleware :: http_server.Middleware(Daemon)
+Http_Route :: http_server.Route(Daemon)
+
 // Pre-match steps: admit, then auth. Route/method disclosure happens only after both.
 @(rodata)
-DAEMON_MIDDLEWARE := [?]http_server.Middleware{daemon_middleware_admit, daemon_middleware_auth}
+DAEMON_MIDDLEWARE := [?]Http_Middleware{{daemon_middleware_admit}, {daemon_middleware_auth}}
 
-// Front-door routes. Handlers receive `Router.user_data` as `^Daemon`.
+// Front-door routes.
 @(rodata)
-DAEMON_ROUTES := [?]http_server.Route {
+DAEMON_ROUTES := [?]Http_Route {
     {method = "GET", pattern = WS_PATH, handler = daemon_route_ws},
     {method = "GET", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_get},
     {method = "PUT", pattern = BLOB_ROUTE_PATTERN, handler = daemon_route_blob_put},
 }
 
-// Build the daemon's HTTP router; `router_listen` validates it. `user_data` is this daemon; the server's
-// `user_data` is the `^Router` stored on the daemon.
+// Build the daemon's HTTP router; `router_listen` validates it and derives the server's
+// `user_data` from it, so no callback can be paired with the wrong daemon.
 daemon_router_init :: proc(d: ^Daemon) {
     assert(d != nil, "router init needs a daemon")
 
@@ -75,17 +82,16 @@ daemon_router_init :: proc(d: ^Daemon) {
 }
 
 // Refuse browser-originated or DNS-rebound requests before any credential check.
-daemon_middleware_admit :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    user_data: rawptr,
-) -> http_server.Middleware_Result {
-    d := (^Daemon)(user_data)
-    assert(c != nil && d != nil, "admit middleware needs connection and daemon")
+daemon_middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
+    d := ctx.user_data
 
-    if !daemon_admit_request(d, req.head) {
-        log.warnf("daemon: refused browser-originated or rebound request %s %s", req.head.method, req.path)
-        daemon_respond_text(c, .Forbidden, "forbidden", daemon_query_response_headers(req.query))
+    if !daemon_admit_request(d, ctx.request.head) {
+        log.warnf(
+            "daemon: refused browser-originated or rebound request %s %s",
+            ctx.request.head.method,
+            ctx.request.path,
+        )
+        daemon_respond_text(ctx.conn, .Forbidden, "forbidden", daemon_query_response_headers(ctx.request.query))
         return .Stop
     }
 
@@ -93,25 +99,20 @@ daemon_middleware_admit :: proc(
 }
 
 // Authenticate before route or method disclosure. Missing/invalid → 401; ambiguous → 400.
-daemon_middleware_auth :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    user_data: rawptr,
-) -> http_server.Middleware_Result {
-    d := (^Daemon)(user_data)
-    assert(c != nil && d != nil, "auth middleware needs connection and daemon")
+daemon_middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
+    d := ctx.user_data
 
-    auth, query_credential := daemon_authenticate(d, req.head, req.query)
+    auth, query_credential := daemon_authenticate(d, ctx.request.head, ctx.request.query)
     switch auth {
     case .Missing, .Invalid, .Unsupported_Scheme:
-        log.warnf("daemon: unauthorized %s %s", req.head.method, req.path)
-        daemon_respond_text(c, .Unauthorized, "unauthorized", daemon_auth_error_headers(auth, query_credential))
+        log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
+        daemon_respond_text(ctx.conn, .Unauthorized, "unauthorized", daemon_auth_error_headers(auth, query_credential))
         return .Stop
 
     case .Ambiguous:
-        log.warnf("daemon: ambiguous credentials %s %s", req.head.method, req.path)
+        log.warnf("daemon: ambiguous credentials %s %s", ctx.request.head.method, ctx.request.path)
         daemon_respond_text(
-            c,
+            ctx.conn,
             .Bad_Request,
             "ambiguous credentials",
             daemon_auth_error_headers(auth, query_credential),
@@ -125,67 +126,44 @@ daemon_middleware_auth :: proc(
 }
 
 // Unmatched path after auth.
-daemon_router_not_found :: proc(c: ^http_server.Conn, req: http_server.Request, user_data: rawptr) {
-    assert(c != nil && (^Daemon)(user_data) != nil, "not-found fallback needs connection and daemon")
-
-    headers := daemon_query_response_headers(req.query)
-    if daemon_reject_pipelined(c, req, headers) {
+daemon_router_not_found :: proc(ctx: ^Http_Context) {
+    headers := daemon_query_response_headers(ctx.request.query)
+    if daemon_reject_pipelined(ctx, headers) {
         return
     }
 
-    log.debugf("daemon: not found %s", req.path)
-    daemon_respond_text(c, .Not_Found, "not found", headers)
+    log.debugf("daemon: not found %s", ctx.request.path)
+    daemon_respond_text(ctx.conn, .Not_Found, "not found", headers)
 }
 
-// Path pattern matched a registered route, but not this method. `allow` borrows router
-// scratch; the response serializes its headers before returning.
-daemon_router_method_not_allowed :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    allow: string,
-    user_data: rawptr,
-) {
-    assert(c != nil && (^Daemon)(user_data) != nil, "method-not-allowed fallback needs connection and daemon")
-
+// Path pattern matched a registered route, but not this method. `ctx.allow` borrows
+// router scratch; the response serializes its headers before returning.
+daemon_router_method_not_allowed :: proc(ctx: ^Http_Context) {
     // Cache marker last so the slice length selects it, as in `AUTH_CHALLENGE_HEADERS`.
-    headers := [2]http_server.Header{{name = "Allow", value = allow}, {name = "Cache-Control", value = CACHE_PRIVATE}}
+    headers := [2]http_server.Header {
+        {name = "Allow", value = ctx.allow},
+        {name = "Cache-Control", value = CACHE_PRIVATE},
+    }
     count := 1
-    if daemon_query_credential(req.query) {
+    if daemon_query_credential(ctx.request.query) {
         count = 2
     }
 
-    log.debugf("daemon: method not allowed %s %s", req.head.method, req.path)
-    daemon_respond_text(c, .Method_Not_Allowed, "method not allowed", headers[:count])
+    log.debugf("daemon: method not allowed %s %s", ctx.request.head.method, ctx.request.path)
+    daemon_respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed", headers[:count])
 }
 
 // Refuse a pipelined follow-up request. `/ws` is exempt: a hijacking route keeps its
 // trailing bytes as the peer's eager first frame.
-daemon_reject_pipelined :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    headers: []http_server.Header,
-) -> (
-    answered: bool,
-) {
-    if !req.pipelined {
+daemon_reject_pipelined :: proc(ctx: ^Http_Context, headers: []http_server.Header) -> (answered: bool) {
+    if !ctx.request.pipelined {
         return false
     }
 
     log.debug("daemon: rejecting pipelined request")
-    daemon_respond_text(c, .Bad_Request, "pipelining not supported", headers)
+    daemon_respond_text(ctx.conn, .Bad_Request, "pipelining not supported", headers)
 
     return true
-}
-
-// Recover the daemon from a front-door connection and check router ownership.
-daemon_from_http :: proc(c: ^http_server.Conn, user_data: rawptr) -> ^Daemon {
-    d := (^Daemon)(user_data)
-    assert(d != nil && c != nil && c.server != nil, "http route needs daemon and connection")
-
-    r := (^http_server.Router)(c.server.user_data)
-    assert(r == &d.router && r.user_data == d, "http route crossed daemon ownership")
-
-    return d
 }
 
 // Refuse traffic a browser can be made to send. `Origin` marks a page-driven
@@ -263,32 +241,28 @@ daemon_ip6_maps_loopback :: proc(a: net.IP6_Address) -> bool {
 
 
 // Validate the upgrade, then transfer the socket to the WebSocket server.
-daemon_route_ws :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    params: http_server.Params,
-    user_data: rawptr,
-) {
-    d := daemon_from_http(c, user_data)
-    assert(len(params.path_rest) == 0, "websocket route has no path capture")
+daemon_route_ws :: proc(ctx: ^Http_Context) {
+    d := ctx.user_data
+    assert(len(ctx.params.path_rest) == 0, "websocket route has no path capture")
 
-    response_headers := daemon_query_response_headers(req.query)
+    response_headers := daemon_query_response_headers(ctx.request.query)
 
-    upgrade, result := ws.parse_upgrade_request_head(req.head)
+    upgrade, result := ws.parse_upgrade_request_head(ctx.request.head)
     if result != .Ok {
         log.debugf("daemon: bad websocket upgrade: %v", result)
-        daemon_respond_text(c, .Bad_Request, "expected a websocket upgrade", response_headers)
+        daemon_respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade", response_headers)
         return
     }
 
     if !ws.server_can_adopt(&d.ws_server) {
         log.warn("daemon: websocket at capacity")
-        daemon_respond_text(c, .Service_Unavailable, "at capacity", response_headers)
+        daemon_respond_text(ctx.conn, .Service_Unavailable, "at capacity", response_headers)
         return
     }
 
-    socket, loop := http_server.hijack(c)
-    if _, err := ws.server_adopt(&d.ws_server, socket, upgrade.key, req.trailing, response_headers); err != .None {
+    socket, loop := http_server.hijack(ctx.conn)
+    if _, err := ws.server_adopt(&d.ws_server, socket, upgrade.key, ctx.request.trailing, response_headers);
+       err != .None {
         log.errorf("daemon: server_adopt failed: %v", err)
         nbio.close(socket, l = loop)
     }
@@ -297,20 +271,16 @@ daemon_route_ws :: proc(
 // Serve one content-addressed blob without reading it into the reactor's heap.
 // The HTTP driver stats and sends the same opened handle, so Content-Length and
 // the configured limit cannot race a path replacement after open.
-daemon_route_blob_get :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    params: http_server.Params,
-    user_data: rawptr,
-) {
-    d := daemon_from_http(c, user_data)
+daemon_route_blob_get :: proc(ctx: ^Http_Context) {
+    d := ctx.user_data
+    c := ctx.conn
 
-    response_headers := daemon_query_response_headers(req.query)
-    if daemon_reject_pipelined(c, req, response_headers) {
+    response_headers := daemon_query_response_headers(ctx.request.query)
+    if daemon_reject_pipelined(ctx, response_headers) {
         return
     }
 
-    hash := params.path_rest
+    hash := ctx.params.path_rest
     if d.blob_dir == "" || wire.enforce_fixed_lower_hex(BLOB_HASH_HEX_LEN, hash) != .None {
         daemon_blob_not_found(c, response_headers)
         return
@@ -455,16 +425,12 @@ Blob_Upload :: struct {
 // atomically publish it. Content-addressed: a digest mismatch is a client lie about
 // the address. Idempotent: an already-stored hash short-circuits. The body is
 // streamed and bounded by `LIMITS.max_blob_bytes`, never buffered whole.
-daemon_route_blob_put :: proc(
-    c: ^http_server.Conn,
-    req: http_server.Request,
-    params: http_server.Params,
-    user_data: rawptr,
-) {
-    d := daemon_from_http(c, user_data)
+daemon_route_blob_put :: proc(ctx: ^Http_Context) {
+    d := ctx.user_data
+    c := ctx.conn
 
-    response_headers := daemon_query_response_headers(req.query)
-    hash := params.path_rest
+    response_headers := daemon_query_response_headers(ctx.request.query)
+    hash := ctx.params.path_rest
 
     if d.blob_dir == "" || wire.enforce_fixed_lower_hex(BLOB_HASH_HEX_LEN, hash) != .None {
         daemon_blob_not_found(c, response_headers)
@@ -473,7 +439,7 @@ daemon_route_blob_put :: proc(
 
     // Reject an over-cap upload up front on its declared length, before opening a temp
     // file or reading a byte of the body.
-    if req.content_length > i64(wire.LIMITS.max_blob_bytes) {
+    if ctx.request.content_length > i64(wire.LIMITS.max_blob_bytes) {
         daemon_respond_text(c, .Payload_Too_Large, "blob too large", response_headers)
         return
     }

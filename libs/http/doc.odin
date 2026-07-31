@@ -15,8 +15,10 @@ socket to another protocol (`hijack`). Reading is bounded on both phases:
 `request_timeout` is the head deadline and per-write timeout, `body_timeout` the
 absolute ceiling on a whole body transfer.
 
-Optional routing (`Router`, `router_on_request`) adds pre-handler middleware and a
-small method+path table. Middleware always runs before match so applications can
+Optional routing (`Router(T)`, bound with `router_listen`) adds pre-handler middleware
+and a small method+path table, both parameterized on the application type so every
+callback receives it typed as `Context(T).user_data`. Middleware always runs before
+match so applications can
 authenticate before disclosing routes or methods. Path patterns are exact (`/ws`)
 or a single star prefix capture (`/blob/<rest>` via a trailing star segment). A 405
 carries `Allow` for the matched pattern. There is no post-handler middleware chain,

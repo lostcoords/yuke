@@ -80,9 +80,9 @@ Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
     front_door:     http_server.Server,
 
-    // HTTP routes and pre-match middleware for the front door. `user_data` is
-    // this `^Daemon`. Handlers recover the daemon from that pointer.
-    router:         http_server.Router,
+    // HTTP routes and pre-match middleware for the front door. `user_data` is this
+    // `^Daemon`, and every callback receives it typed as `Http_Context.user_data`.
+    router:         Http_Router,
 
     // WebSocket server fed by `http`, driven through `ws.server_*`. Its
     // per-connection callbacks recover this `^Daemon` via `wsc.server.user_data`.

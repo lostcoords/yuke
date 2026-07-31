@@ -27,32 +27,54 @@ Params :: struct {
     path_rest: string,
 }
 
-// Pre-handler step. Runs in registration order before any route match. Returning
-// `.Stop` means the middleware already responded, hijacked, or began a body receive.
-// Returning `.Continue` requires the connection still be `Reading`.
-Middleware :: #type proc(c: ^Conn, req: Request, user_data: rawptr) -> Middleware_Result
+// Per-request state handed to every middleware, handler, and fallback.
+//
+// Each callback must respond, hijack, or `receive_body` before returning — the same
+// connection contract `On_Request` carries.
+//
+// Owned by `router_dispatch`'s frame and valid only for that call: never store or
+// capture a `^Context`. Work that answers later keeps a `^Conn` or a `Ticket`
+// instead, which is why the `respond*` helpers take a connection rather than a
+// context.
+//
+// `request` is read-only. The router matched on the target and asserts it is
+// unchanged once middleware has run.
+Context :: struct($T: typeid) {
+    // Connection to answer. Never nil: dispatch owns it before building a context.
+    conn:      ^Conn,
 
-// Matched route entry point. Must respond, hijack, or receive_body before return,
-// same contract as `On_Request`. `params` borrows as documented on `Params`.
-Handler :: #type proc(c: ^Conn, req: Request, params: Params, user_data: rawptr)
+    // Validated request. Every field borrows the connection head buffer and is valid
+    // only for the call.
+    request:   Request,
+
+    // Path captures; meaningful only inside a matched route's handler, zero in
+    // middleware and in both fallbacks.
+    params:    Params,
+
+    // Comma-joined method list for the matched pattern, which RFC 9110 §15.5.6
+    // requires a 405 to carry as `Allow`. Set only for `on_method_not_allowed` and
+    // empty everywhere else; borrows dispatch scratch, so it too lasts only the call.
+    allow:     string,
+
+    // The application, as `Router.user_data`. Never nil: `router_validate` proves it.
+    user_data: ^T,
+}
+
+// Pre-handler step. Runs in registration order before any route match, so auth can
+// precede route and method disclosure. Returning `.Stop` means it already responded,
+// hijacked, or began a body receive; `.Continue` requires the connection still be
+// `Reading`.
+Middleware :: struct($T: typeid) {
+    run: proc(ctx: ^Context(T)) -> Middleware_Result,
+}
 
 // One method + path pattern → handler. `pattern` is an exact path (`/ws`) or a
 // single prefix capture ending in `/*` (`/blob/*`).
-Route :: struct {
+Route :: struct($T: typeid) {
     method:  string,
     pattern: string,
-    handler: Handler,
+    handler: proc(ctx: ^Context(T)),
 }
-
-// Unmatched path. Must respond, hijack, or receive_body before return—same connection
-// contract as `Handler`. When nil on the router, the default emits plain text.
-Not_Found_Handler :: #type proc(c: ^Conn, req: Request, user_data: rawptr)
-
-// Path pattern known, method not. `allow` is the comma-joined method list registered
-// for the matched pattern, which RFC 9110 §15.5.6 requires a 405 to carry as `Allow`;
-// it borrows router scratch and is valid only for the call. Same connection contract
-// as `Handler`. When nil on the router, the default emits plain text plus `Allow`.
-Method_Not_Allowed_Handler :: #type proc(c: ^Conn, req: Request, allow: string, user_data: rawptr)
 
 // Ceiling on a rendered `Allow` value. `router_validate` proves the table fits, so the
 // render itself cannot truncate — a configuration bug is caught at wiring time, where
@@ -60,38 +82,39 @@ Method_Not_Allowed_Handler :: #type proc(c: ^Conn, req: Request, allow: string, 
 @(private)
 ROUTER_ALLOW_MAX :: 256
 
-// Application route table used as `Server.user_data` with `router_on_request`.
+// Application route table, stored as `Server.user_data` by `router_listen`.
 // Middleware always runs before match so auth can precede route/method disclosure.
 //
 // `middleware` and `routes` are borrowed; the `Router` value (and those slices)
-// must outlive every connection still served by the owning `Server`. Pass it through
-// `router_validate` once before serving.
-Router :: struct {
+// must outlive every connection still served by the owning `Server`. `router_listen`
+// validates it once before serving.
+Router :: struct($T: typeid) {
     // Pre-match steps; may be empty.
-    middleware:            []Middleware,
+    middleware:            []Middleware(T),
 
     // Registered routes; first method+pattern match wins.
-    routes:                []Route,
+    routes:                []Route(T),
 
-    // Passed to every middleware, handler, and fallback.
-    user_data:             rawptr,
+    // The application, reaching every callback as `Context.user_data`.
+    user_data:             ^T,
 
     // Unmatched path after middleware; nil → default `"not found"`.
-    on_not_found:          Not_Found_Handler,
+    on_not_found:          proc(ctx: ^Context(T)),
 
     // Path matched a registered pattern but not this method; nil → default
-    // `"method not allowed"` with `Allow`.
-    on_method_not_allowed: Method_Not_Allowed_Handler,
+    // `"method not allowed"` with `Allow`. Reads `Context.allow`.
+    on_method_not_allowed: proc(ctx: ^Context(T)),
 }
 
 // Check a route table once, before serving. A violation is a wiring bug in the
 // application, not anything a request can reach, so these are assertions: without them
 // a malformed pattern silently never matches and the route is dead with no diagnostic.
-router_validate :: proc(r: ^Router) {
+router_validate :: proc(r: ^Router($T)) {
     assert(r != nil, "router_validate needs a router")
+    assert(r.user_data != nil, "router needs its application; every callback dereferences it")
 
     for mw in r.middleware {
-        assert(mw != nil, "router middleware slot is nil")
+        assert(mw.run != nil, "router middleware slot is nil")
     }
 
     // Every method could share one pattern, so the widest `Allow` is the whole table.
@@ -116,34 +139,54 @@ router_validate :: proc(r: ^Router) {
     assert(allow_width <= ROUTER_ALLOW_MAX, "ROUTER_ALLOW_MAX too small for this route table")
 }
 
-// Bind a server that dispatches through `r`. Validates the table, then listens — so no
-// caller has to remember `router_validate`.
+// Bind a server that dispatches through `r`. Deriving both the stored pointer and the
+// request callback from one `T` is what makes a mismatched pair unrepresentable, so
+// this is the only way to bind a router.
 router_listen :: proc(
     s: ^Server,
     loop: ^nbio.Event_Loop,
     options: Options,
-    r: ^Router,
+    r: ^Router($T),
     allocator := context.allocator,
 ) -> Error {
     assert(r != nil, "router_listen needs a router")
 
     router_validate(r)
 
-    return listen(s, loop, options, router_on_request, r, allocator)
+    return listen(s, loop, options, router_on_request(T), r, allocator)
 }
 
-// `On_Request` entry for a `Server` whose `user_data` is a `^Router`.
-router_on_request :: proc(c: ^Conn, req: Request) {
-    assert(c != nil && c.server != nil, "router needs an owned connection")
+// `On_Request` entry for a `Server` whose `user_data` is a `^Router(T)`, monomorphized
+// per `T`. The one unsafe load the router needs, generated inside the library.
+@(private)
+router_on_request :: proc($T: typeid) -> On_Request {
+    return proc(c: ^Conn, req: Request) {
+            assert(c != nil && c.server != nil, "router needs an owned connection")
+
+            router_dispatch((^Router(T))(c.server.user_data), c, req)
+        }
+}
+
+// Middleware, then first method+pattern match, then a fallback. `req` stays the
+// pristine copy the driver parsed, so it is what the post-middleware assertions
+// compare against.
+@(private)
+router_dispatch :: proc(r: ^Router($T), c: ^Conn, req: Request) {
+    assert(r != nil, "dispatch needs Server.user_data as ^Router(T)")
+    assert(r.user_data != nil, "router_validate should have rejected a router with no application")
     assert(req.head.consumed == len(req.head.bytes), "router received an inconsistent parsed head")
 
-    r := (^Router)(c.server.user_data)
-    assert(r != nil, "router_on_request needs Server.user_data as ^Router")
-
     path := req.path
+    method := req.head.method
+
+    ctx := Context(T) {
+        conn      = c,
+        request   = req,
+        user_data = r.user_data,
+    }
 
     for mw in r.middleware {
-        switch mw(c, req, r.user_data) {
+        switch mw.run(&ctx) {
         case .Stop:
             assert(c.state != .Reading, "middleware returned Stop without answering the connection")
             return
@@ -153,7 +196,10 @@ router_on_request :: proc(c: ^Conn, req: Request) {
         }
     }
 
-    method := req.head.method
+    // `^Context` makes the request mutable where the old by-value argument did not,
+    // and these two fields are what dispatch matches on.
+    assert(ctx.request.path == path, "middleware must not rewrite the request path")
+    assert(ctx.request.head.method == method, "middleware must not rewrite the request method")
 
     path_matched := false
     for route in r.routes {
@@ -167,20 +213,27 @@ router_on_request :: proc(c: ^Conn, req: Request) {
             continue
         }
 
-        route.handler(c, req, Params{path_rest = rest}, r.user_data)
+        assert(ctx.allow == "", "`allow` belongs to the 405 fallback alone")
+
+        ctx.params = Params {
+            path_rest = rest,
+        }
+        route.handler(&ctx)
 
         return
     }
 
+    assert(ctx.params == {}, "no route matched, so nothing may have captured params")
+
     if path_matched {
         allow_buf: [ROUTER_ALLOW_MAX]byte
-        allow := router_allow_value(r, path, allow_buf[:])
+        ctx.allow = router_allow_value(r, path, allow_buf[:])
 
         log.debugf("http_server: method not allowed %s %s", method, path)
         if r.on_method_not_allowed != nil {
-            r.on_method_not_allowed(c, req, allow, r.user_data)
+            r.on_method_not_allowed(&ctx)
         } else {
-            headers := [1]Header{{name = "Allow", value = allow}}
+            headers := [1]Header{{name = "Allow", value = ctx.allow}}
             conn_respond_error(c, .Method_Not_Allowed, "method not allowed", headers[:])
         }
 
@@ -189,7 +242,7 @@ router_on_request :: proc(c: ^Conn, req: Request) {
 
     log.debugf("http_server: not found %s", path)
     if r.on_not_found != nil {
-        r.on_not_found(c, req, r.user_data)
+        r.on_not_found(&ctx)
     } else {
         conn_respond_error(c, .Not_Found, "not found")
     }
@@ -222,7 +275,7 @@ match_route_path :: proc(pattern: string, path: string) -> (rest: string, ok: bo
 // into `buf` as an `Allow` value. Only called once a pattern has matched, so the result
 // is never empty, and `router_validate` proves `buf` fits and that no method repeats.
 @(private)
-router_allow_value :: proc(r: ^Router, path: string, buf: []byte) -> string {
+router_allow_value :: proc(r: ^Router($T), path: string, buf: []byte) -> string {
     assert(r != nil && len(buf) > 0, "Allow rendering needs a router and a buffer")
 
     n := 0

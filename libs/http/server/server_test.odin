@@ -253,10 +253,10 @@ run_exchange :: proc(t: ^testing.T, request: string, obs: ^Obs, options: Options
 }
 
 // Serve one request against a `Router` and return the peer's response bytes.
-run_router_exchange :: proc(t: ^testing.T, request: string, router: ^Router, split_at := 0) -> string {
+run_router_exchange :: proc(t: ^testing.T, request: string, router: ^Router(Router_Obs), split_at := 0) -> string {
     router_validate(router)
 
-    return run_exchange_with(t, request, router_on_request, router, {}, split_at)
+    return run_exchange_with(t, request, router_on_request(Router_Obs), router, {}, split_at)
 }
 
 // The shared choreography: bind, run a blocking peer on a worker thread, drain the
@@ -629,25 +629,25 @@ Router_Stop_Mode :: enum {
     Receive_Body,
 }
 
-router_mw_count :: proc(c: ^Conn, req: Request, user_data: rawptr) -> Middleware_Result {
-    o := (^Router_Obs)(user_data)
+router_mw_count :: proc(ctx: ^Context(Router_Obs)) -> Middleware_Result {
+    o := ctx.user_data
     o.middleware_hits += 1
-    o.mw_path = strings.clone(req.path, context.temp_allocator)
-    o.mw_query = strings.clone(req.query, context.temp_allocator)
+    o.mw_path = strings.clone(ctx.request.path, context.temp_allocator)
+    o.mw_query = strings.clone(ctx.request.query, context.temp_allocator)
 
     switch o.stop_mode {
     case .None:
 
     case .Respond:
-        respond_text(c, .Unauthorized, "unauthorized")
+        respond_text(ctx.conn, .Unauthorized, "unauthorized")
         return .Stop
 
     case .Hijack:
-        test_hijack_and_greet(c)
+        test_hijack_and_greet(ctx.conn)
         return .Stop
 
     case .Receive_Body:
-        receive_body(c, o, router_mw_body_chunk, router_mw_body_end)
+        receive_body(ctx.conn, o, router_mw_body_chunk, router_mw_body_end)
         return .Stop
     }
 
@@ -672,17 +672,17 @@ router_mw_body_end :: proc(c: ^Conn, user_data: rawptr, ok: bool) {
     }
 }
 
-router_mw_count2 :: proc(c: ^Conn, req: Request, user_data: rawptr) -> Middleware_Result {
-    o := (^Router_Obs)(user_data)
+router_mw_count2 :: proc(ctx: ^Context(Router_Obs)) -> Middleware_Result {
+    o := ctx.user_data
     o.middleware2_hits += 1
     return .Continue
 }
 
-router_handle_ok :: proc(c: ^Conn, req: Request, params: Params, user_data: rawptr) {
-    o := (^Router_Obs)(user_data)
+router_handle_ok :: proc(ctx: ^Context(Router_Obs)) {
+    o := ctx.user_data
     o.handler_hits += 1
-    o.last_rest = strings.clone(params.path_rest, context.temp_allocator)
-    respond_text(c, .Ok, "routed")
+    o.last_rest = strings.clone(ctx.params.path_rest, context.temp_allocator)
+    respond_text(ctx.conn, .Ok, "routed")
 }
 
 @(test)
@@ -714,9 +714,9 @@ test_router_dispatches_and_captures :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    middleware := [?]Middleware{router_mw_count}
-    routes := [?]Route{{method = "GET", pattern = "/blob/*", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}}
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/blob/*", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -738,9 +738,9 @@ test_router_middleware_runs_before_match_and_can_stop :: proc(t: ^testing.T) {
     obs := Router_Obs {
         stop_mode = .Respond,
     }
-    middleware := [?]Middleware{router_mw_count, router_mw_count2}
-    routes := [?]Route{{method = "GET", pattern = "/ws", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}, {router_mw_count2}}
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/ws", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -759,12 +759,12 @@ test_router_not_found_and_method_not_allowed :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    middleware := [?]Middleware{router_mw_count}
-    routes := [?]Route {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}}
+    routes := [?]Route(Router_Obs) {
         {method = "GET", pattern = "/ws", handler = router_handle_ok},
         {method = "PUT", pattern = "/blob/*", handler = router_handle_ok},
     }
-    router := Router {
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -803,9 +803,9 @@ test_router_middleware_continue_chain_reaches_handler :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    middleware := [?]Middleware{router_mw_count, router_mw_count2}
-    routes := [?]Route{{method = "GET", pattern = "/ws", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}, {router_mw_count2}}
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/ws", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -819,17 +819,17 @@ test_router_middleware_continue_chain_reaches_handler :: proc(t: ^testing.T) {
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "Continue chain should reach the handler")
 }
 
-router_fallback_not_found :: proc(c: ^Conn, req: Request, user_data: rawptr) {
-    o := (^Router_Obs)(user_data)
+router_fallback_not_found :: proc(ctx: ^Context(Router_Obs)) {
+    o := ctx.user_data
     o.handler_hits += 1
-    respond_text(c, .Not_Found, "custom-missing")
+    respond_text(ctx.conn, .Not_Found, "custom-missing")
 }
 
-router_fallback_method :: proc(c: ^Conn, req: Request, allow: string, user_data: rawptr) {
-    o := (^Router_Obs)(user_data)
+router_fallback_method :: proc(ctx: ^Context(Router_Obs)) {
+    o := ctx.user_data
     o.handler_hits += 1
-    o.allow = strings.clone(allow, context.temp_allocator)
-    respond_text(c, .Method_Not_Allowed, "custom-method")
+    o.allow = strings.clone(ctx.allow, context.temp_allocator)
+    respond_text(ctx.conn, .Method_Not_Allowed, "custom-method")
 }
 
 @(test)
@@ -837,8 +837,8 @@ test_router_custom_fallbacks :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    routes := [?]Route{{method = "GET", pattern = "/ws", handler = router_handle_ok}}
-    router := Router {
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/ws", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         routes                = routes[:],
         user_data             = &obs,
         on_not_found          = router_fallback_not_found,
@@ -867,9 +867,9 @@ test_router_middleware_can_stop_by_hijacking :: proc(t: ^testing.T) {
     obs := Router_Obs {
         stop_mode = .Hijack,
     }
-    middleware := [?]Middleware{router_mw_count}
-    routes := [?]Route{{method = "GET", pattern = "/ws", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}}
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/ws", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -888,9 +888,9 @@ test_router_middleware_can_stop_by_receiving_body :: proc(t: ^testing.T) {
     obs := Router_Obs {
         stop_mode = .Receive_Body,
     }
-    middleware := [?]Middleware{router_mw_count}
-    routes := [?]Route{{method = "PUT", pattern = "/up", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}}
+    routes := [?]Route(Router_Obs){{method = "PUT", pattern = "/up", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -910,9 +910,9 @@ test_router_middleware_sees_path_and_query :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    middleware := [?]Middleware{router_mw_count}
-    routes := [?]Route{{method = "GET", pattern = "/ws", handler = router_handle_ok}}
-    router := Router {
+    middleware := [?]Middleware(Router_Obs){{router_mw_count}}
+    routes := [?]Route(Router_Obs){{method = "GET", pattern = "/ws", handler = router_handle_ok}}
+    router := Router(Router_Obs) {
         middleware = middleware[:],
         routes     = routes[:],
         user_data  = &obs,
@@ -930,11 +930,11 @@ test_router_405_carries_allow :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     obs: Router_Obs
-    routes := [?]Route {
+    routes := [?]Route(Router_Obs) {
         {method = "GET", pattern = "/blob/*", handler = router_handle_ok},
         {method = "PUT", pattern = "/blob/*", handler = router_handle_ok},
     }
-    router := Router {
+    router := Router(Router_Obs) {
         routes    = routes[:],
         user_data = &obs,
     }
