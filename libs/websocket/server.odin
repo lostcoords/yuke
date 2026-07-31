@@ -608,9 +608,7 @@ conn_release :: proc(conn: ^Server_Conn) {
     decoder_destroy(&conn.decoder)
     delete(conn.recv_buf, conn.allocator)
 
-    if conn.response_buf != nil {
-        delete(conn.response_buf, conn.allocator)
-    }
+    delete(conn.response_buf, conn.allocator)
 
     for frame in conn.send_queue {
         delete(frame, conn.allocator)

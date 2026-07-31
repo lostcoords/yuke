@@ -149,9 +149,7 @@ _teardown :: proc(c: ^Client) {
     delete(c.pending)
     mem.dynamic_arena_destroy(&c.scratch)
 
-    if len(c.daemon_version) > 0 {
-        delete(c.daemon_version, c.allocator)
-    }
+    delete(c.daemon_version, c.allocator)
 }
 
 // Make `ws.client_send_text` accept a frame into the transport's send queue without

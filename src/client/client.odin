@@ -508,15 +508,11 @@ client_free_owned :: proc(c: ^Client) {
     delete(c.pending)
     mem.dynamic_arena_destroy(&c.scratch)
 
-    if c.initialize_frame != nil {
-        delete(c.initialize_frame, c.allocator)
-        c.initialize_frame = nil
-    }
+    delete(c.initialize_frame, c.allocator)
+    c.initialize_frame = nil
 
-    if len(c.daemon_version) > 0 {
-        delete(c.daemon_version, c.allocator)
-        c.daemon_version = ""
-    }
+    delete(c.daemon_version, c.allocator)
+    c.daemon_version = ""
 }
 
 // --- internal transport callbacks ---

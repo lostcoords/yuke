@@ -957,13 +957,8 @@ daemon_conn_free :: proc(conn: ^Conn) {
     conn.wsc.user_data = nil
     mem.dynamic_arena_destroy(&conn.scratch)
 
-    if len(conn.client_name) > 0 {
-        delete(conn.client_name, conn.allocator)
-    }
-
-    if len(conn.client_version) > 0 {
-        delete(conn.client_version, conn.allocator)
-    }
+    delete(conn.client_name, conn.allocator)
+    delete(conn.client_version, conn.allocator)
 
     free(conn, conn.allocator)
 }
