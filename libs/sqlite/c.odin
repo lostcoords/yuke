@@ -97,6 +97,8 @@ foreign lib {
 
     @(link_name = "sqlite3_step")
     c_step :: proc(stmt: ^Stmt) -> Result ---
+    @(link_name = "sqlite3_stmt_busy")
+    c_stmt_busy :: proc(stmt: ^Stmt) -> c.int ---
     @(link_name = "sqlite3_reset")
     c_reset :: proc(stmt: ^Stmt) -> Result ---
     @(link_name = "sqlite3_finalize")
@@ -114,6 +116,13 @@ foreign lib {
     c_bind_blob :: proc(stmt: ^Stmt, index: c.int, value: rawptr, n: c.int, destructor: Destructor) -> Result ---
     @(link_name = "sqlite3_bind_null")
     c_bind_null :: proc(stmt: ^Stmt, index: c.int) -> Result ---
+
+    @(link_name = "sqlite3_bind_parameter_count")
+    c_bind_parameter_count :: proc(stmt: ^Stmt) -> c.int ---
+    @(link_name = "sqlite3_bind_parameter_name")
+    c_bind_parameter_name :: proc(stmt: ^Stmt, index: c.int) -> cstring ---
+    @(link_name = "sqlite3_bind_parameter_index")
+    c_bind_parameter_index :: proc(stmt: ^Stmt, zName: cstring) -> c.int ---
 
     @(link_name = "sqlite3_column_count")
     c_column_count :: proc(stmt: ^Stmt) -> c.int ---

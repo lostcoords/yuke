@@ -1,5 +1,7 @@
 package store
 
+import "core:mem"
+
 import "libs:sqlite"
 
 // The store's closed set of hot statements. Adding one requires adding its SQL;
@@ -18,132 +20,121 @@ Statement_Id :: enum {
 Statements :: distinct [Statement_Id]^sqlite.Stmt
 
 // SQL remains concrete and visible; this is statement ownership, not a query
-// builder or ORM.
+// builder or ORM. Parameters are named rather than ordinal so a marker binds to
+// the field that shares its name and reordering the SQL cannot silently rebind.
 @(private, rodata)
 STATEMENT_SQL := [Statement_Id]string {
-    .Ensure_Meta  = `INSERT OR IGNORE INTO session_meta(session_id) VALUES (?1)`,
-    .Append_Event = `INSERT INTO events(session_id, seq, name, payload) VALUES (?1, ?2, ?3, ?4)`,
+    .Ensure_Meta  = `INSERT OR IGNORE INTO session_meta(session_id) VALUES (:session_id)`,
+    .Append_Event = `INSERT INTO events(session_id, seq, name, payload)
+        VALUES (:session_id, :seq, :name, :payload)`,
 
     // Contiguity lives in the update predicate: a gap or replay matches nothing.
     // This runs before the insert so every high-water divergence is Seq_Conflict.
-    .Advance_Seq  = `UPDATE session_meta SET seq_high = ?2
-        WHERE session_id = ?1 AND seq_high = ?2 - 1`,
+    // One `:seq` feeds both sides, so the two can never drift apart.
+    .Advance_Seq  = `UPDATE session_meta SET seq_high = :seq
+        WHERE session_id = :session_id AND seq_high = :seq - 1`,
 
     // Marks only rise; a stale bump is a no-op rather than a rewind.
     .Bump_Ids     = `UPDATE session_meta SET
-        message_id_high = MAX(message_id_high, ?2),
-        run_id_high     = MAX(run_id_high, ?3),
-        input_id_high   = MAX(input_id_high, ?4),
-        config_rev_high = MAX(config_rev_high, ?5)
-        WHERE session_id = ?1`,
+        message_id_high = MAX(message_id_high, :message_id_high),
+        run_id_high     = MAX(run_id_high, :run_id_high),
+        input_id_high   = MAX(input_id_high, :input_id_high),
+        config_rev_high = MAX(config_rev_high, :config_rev_high)
+        WHERE session_id = :session_id`,
     .Read_High    = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
-        FROM session_meta WHERE session_id = ?1`,
+        FROM session_meta WHERE session_id = :session_id`,
 
     // The composite primary key is this read's index; no extra index exists.
     .Events_After = `SELECT seq, name, payload FROM events
-        WHERE session_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3`,
+        WHERE session_id = :session_id AND seq > :seq ORDER BY seq LIMIT :limit`,
 }
 
-// Prepare the whole set or none of it: a failure part-way finalizes what it
-// already prepared, so the connection is never left holding statements it cannot
-// be closed with.
+// The row shapes the two reading statements are scanned through. Resolving a shape
+// costs one reflection walk and one column-name search per field, so it happens once
+// per statement rather than once per row; a mapping belongs to its statement and is
+// released just before it is finalized.
 @(private)
-statements_prepare :: proc(db: ^sqlite.Conn, set: ^Statements) -> (err: Error) {
-    assert(db != nil, "statements_prepare needs a connection")
-    assert(set != nil, "statements_prepare needs a set to fill")
-    assert(set^ == (Statements{}), "the statement set is prepared once")
-
-    defer if err != .None {
-        statements_finalize(set)
-    }
-
-    for sql, i in STATEMENT_SQL {
-        id := Statement_Id(i)
-        set[id] = statement_prepare(db, sql) or_return
-    }
-
-    return .None
+Mappings :: struct {
+    read_high:    sqlite.Scan_Mapping(High_Water),
+    events_after: sqlite.Scan_Mapping(Event_Row),
 }
 
-// Finalize whatever is prepared and blank the set; safe on a partial set.
+// The parameter shapes every statement is bound through. Resolved once against the
+// statement's named markers, so a struct that no longer matches its SQL fails at
+// open instead of writing a wrong column. These own no memory and need no teardown.
 @(private)
-statements_finalize :: proc(set: ^Statements) {
-    assert(set != nil, "statements_finalize needs a set")
-
-    for st in set {
-        if st != nil {
-            _ = sqlite.finalize(st)
-        }
-    }
-
-    set^ = {}
+Binds :: struct {
+    ensure_meta:  sqlite.Bind_Mapping(Session_Params),
+    append_event: sqlite.Bind_Mapping(Append_Event_Params),
+    advance_seq:  sqlite.Bind_Mapping(Advance_Seq_Params),
+    bump_ids:     sqlite.Bind_Mapping(Bump_Ids_Params),
+    read_high:    sqlite.Bind_Mapping(Session_Params),
+    events_after: sqlite.Bind_Mapping(Events_After_Params),
 }
 
+// Resolve both read shapes. The SQL and the destination structs are both ours and
+// compiled in, so a mismatch between them is a programmer error and asserts; only
+// allocation can fail here at runtime. Should be called once.
 @(private)
-statement_prepare :: proc(db: ^sqlite.Conn, sql: string) -> (st: ^sqlite.Stmt, err: Error) {
-    assert(db != nil, "statement_prepare needs a connection")
-    assert(len(sql) > 0, "statement_prepare needs SQL")
+mappings_prepare :: proc(set: Statements, mappings: ^Mappings, allocator: mem.Allocator) -> (err: Error) {
+    assert(mappings != nil, "mappings_prepare needs a set to fill")
+    assert(mappings.read_high.statement == nil, "the mapping set is prepared once")
+    assert(mappings.events_after.statement == nil, "the mapping set is prepared once")
+    assert(set[.Read_High] != nil, "mappings_prepare runs after the statements are prepared")
+    assert(set[.Events_After] != nil, "mappings_prepare runs after the statements are prepared")
 
-    prepared, rc := sqlite.prepare(db, sql)
-
-    if rc != .Ok {
-        return nil, error_from(db, rc, .Open_Failed)
+    high, high_err := sqlite.scan_prepare(set[.Read_High], High_Water, allocator)
+    if high_err == .Out_Of_Memory {
+        return high_err
     }
 
-    assert(prepared != nil, "a successful prepare yields a statement")
+    assert(high_err == .None, "the recovery read matches High_Water")
+    mappings.read_high = high
 
-    return prepared, .None
+    events, events_err := sqlite.scan_prepare(set[.Events_After], Event_Row, allocator)
+    if events_err == .Out_Of_Memory {
+        return events_err
+    }
+
+    assert(events_err == .None, "the tail read matches Event_Row")
+    mappings.events_after = events
+
+    return nil
 }
 
-// Step a bound statement to completion, then reset and clear it for reuse.
-// `reset` reports the preceding step's failure, so both codes are consulted.
+// Release whatever is resolved and blank the set; safe on a partial set.
 @(private)
-stmt_exec :: proc(db: ^sqlite.Conn, st: ^sqlite.Stmt, fallback: Error) -> Error {
-    assert(db != nil, "stmt_exec needs a connection")
-    assert(st != nil, "stmt_exec needs a prepared statement")
-    assert(fallback != .None, "a failure never classifies as None")
+mappings_destroy :: proc(mappings: ^Mappings, allocator: mem.Allocator) {
+    assert(mappings != nil, "mappings_destroy needs a set")
 
-    step := sqlite.step(st)
-    step_err := Error.None
-
-    if sqlite.is_error(step) {
-        step_err = error_from(db, step, fallback)
-    }
-
-    reset := sqlite.reset(st)
-    cleared := sqlite.clear_bindings(st)
-
-    if step_err != .None {
-        return step_err
-    }
-
-    assert(step == .Done, "the store's write statements return no rows")
-
-    if reset != .Ok {
-        return error_from(db, reset, fallback)
-    }
-
-    if cleared != .Ok {
-        return error_from(db, cleared, fallback)
-    }
-
-    return .None
+    sqlite.scan_mapping_destroy(&mappings.read_high, allocator)
+    sqlite.scan_mapping_destroy(&mappings.events_after, allocator)
 }
 
-// A failed bind clears every parameter already copied into this statement. RANGE
-// is our SQL/call-site mismatch; allocation and size failures are operating errors.
+// Resolve every parameter shape. Both sides are compiled in, and a bind mapping
+// allocates nothing, so there is no runtime failure to report: a statement that
+// stopped matching its struct is a programmer error. Should be called once.
 @(private)
-stmt_bind :: proc(db: ^sqlite.Conn, st: ^sqlite.Stmt, rc: sqlite.Result, fallback: Error) -> Error {
-    assert(db != nil, "stmt_bind needs a connection")
-    assert(st != nil, "stmt_bind needs a prepared statement")
-    assert(rc != .Range, "bound a parameter the statement does not have")
+binds_prepare :: proc(set: Statements, binds: ^Binds) {
+    assert(binds != nil, "binds_prepare needs a set to fill")
+    assert(binds^ == Binds{}, "the bind set is prepared once")
 
-    if rc == .Ok {
-        return .None
-    }
+    binds.ensure_meta = bind_expect(set, .Ensure_Meta, Session_Params)
+    binds.append_event = bind_expect(set, .Append_Event, Append_Event_Params)
+    binds.advance_seq = bind_expect(set, .Advance_Seq, Advance_Seq_Params)
+    binds.bump_ids = bind_expect(set, .Bump_Ids, Bump_Ids_Params)
+    binds.read_high = bind_expect(set, .Read_High, Session_Params)
+    binds.events_after = bind_expect(set, .Events_After, Events_After_Params)
+}
 
-    _ = sqlite.reset(st)
-    _ = sqlite.clear_bindings(st)
+// `loc` is the caller's line, so a drifted statement names itself rather than
+// pointing every failure at this helper.
+@(private)
+bind_expect :: proc(set: Statements, id: Statement_Id, $P: typeid, loc := #caller_location) -> sqlite.Bind_Mapping(P) {
+    assert(set[id] != nil, "binds_prepare runs after the statements are prepared", loc)
 
-    return error_from(db, rc, fallback)
+    mapping, err := sqlite.bind_prepare(set[id], P)
+    assert(err == .None, "a statement matches its parameter struct", loc)
+
+    return mapping
 }

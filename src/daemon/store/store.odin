@@ -8,34 +8,31 @@ import "libs:sqlite"
 // Lock wait for external inspectors; the daemon itself keeps a single writer.
 BUSY_TIMEOUT_MS :: 5000
 
-// `PRAGMA synchronous` reports its mode as an integer; NORMAL is 1.
-@(private)
-SYNCHRONOUS_NORMAL :: 1
-
 // SQLite header identity: ASCII "YUKE". A zero application_id is accepted only
-// for an empty database or the exact v1 store that predates this header marker.
+// for a freshly created database; every other non-matching header is refused.
 APPLICATION_ID :: 0x59554b45
 
-// Store-open and migration failures. SQLite results collapse into these: each
-// name is a distinction the caller can act on.
-Error :: enum {
-    // No error.
+// Outcomes the store decides for itself. Anything SQLite or a row scan decides
+// keeps its own code in `Error` instead of being collapsed into a name here.
+Store_Error :: enum {
+    // The union's nil; never returned as a value.
     None,
 
-    // The file could not be opened or configured as a WAL database.
-    Open_Failed,
+    // The file could not be configured with the WAL + NORMAL durability contract
+    // the store requires; some filesystems refuse WAL.
+    Durability_Unavailable,
 
-    // Not a database, or `quick_check` reported damage.
-    Corrupt,
+    // The appended seq did not continue the session's high-water, so nothing was
+    // written. The pump is the sole seq authority and mints `seq_high + 1`.
+    Seq_Conflict,
 
-    // Another writer held the lock past `busy_timeout`.
-    Busy,
+    // A stored row is well-formed SQLite but not a value this binary accepts:
+    // an unknown or live-only broadcast name, an out-of-order seq, an empty payload.
+    Invalid_Row,
 
-    // Disk I/O failed.
-    Io,
-
-    // A migration statement or its transaction failed.
-    Migration_Failed,
+    // `quick_check` reported damage. A file SQLite refuses outright arrives as its
+    // own `.Corrupt` / `.Not_A_Db` instead.
+    Integrity_Failed,
 
     // Applied migration_hash rows are missing, extra, malformed, or do not
     // match the immutable embedded step text.
@@ -44,25 +41,21 @@ Error :: enum {
     // A valid SQLite database belongs to another application.
     Foreign_Database,
 
-    // A write statement or its transaction failed.
-    Write_Failed,
-
-    // A read statement failed, or a stored row is not a value this binary knows.
-    Read_Failed,
-
-    // A uniqueness or column constraint rejected the write.
-    Constraint,
-
-    // The appended seq did not continue the session's high-water, so nothing was
-    // written. The pump is the sole seq authority and mints `seq_high + 1`.
-    Seq_Conflict,
-
     // `user_version` names a schema this binary does not know; a newer daemon
     // wrote this database.
     Version_Unsupported,
 
-    // Allocation failed, SQLite's or ours.
-    Out_Of_Memory,
+    // One of our own allocations failed; SQLite's arrive as `.No_Mem` and a row
+    // scan's as `Scan_Error.Out_Of_Memory`.
+    Alloc_Failed,
+}
+
+// What a store call can fail with. The two lower layers keep their own vocabulary
+// rather than collapsing into a name the caller would have to un-map.
+Error :: union #shared_nil {
+    Store_Error,
+    sqlite.Result,
+    sqlite.Scan_Error,
 }
 
 // The daemon's event store. Owns the writer connection, which the writer
@@ -70,6 +63,8 @@ Error :: enum {
 Store :: struct {
     writer:    ^sqlite.Conn,
     stmts:     Statements,
+    mappings:  Mappings,
+    binds:     Binds,
     allocator: mem.Allocator,
 }
 
@@ -78,51 +73,58 @@ Store :: struct {
 open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: Error) {
     assert(len(path) > 0, "open needs a path")
 
-    db, rc := sqlite.open(path, {.Readwrite, .Create, .Nomutex})
-
-    if rc != .Ok {
-        // A failed open closes and clears the connection, so there is nothing
-        // left to interrogate for a finer code.
-        assert(db == nil, "a failed open must not leak a connection")
-
-        return nil, .Out_Of_Memory if rc == .No_Mem else .Open_Failed
+    cpath, clone_err := strings.clone_to_cstring(path, allocator)
+    if clone_err != nil {
+        return nil, Store_Error.Alloc_Failed
     }
+    defer delete(cpath, allocator)
 
-    defer if err != .None {
+    db := sqlite.open(cpath, {.Readwrite, .Create, .Nomutex}) or_return
+    defer if err != nil {
         close_rc := sqlite.close(db)
         assert(close_rc == .Ok, "failed open leaves no SQLite child alive")
     }
 
-    if rc = sqlite.busy_timeout(db, BUSY_TIMEOUT_MS); rc != .Ok {
-        return nil, error_from(db, rc, .Open_Failed)
-    }
+    sqlite.busy_timeout(db, BUSY_TIMEOUT_MS) or_return
 
     store_check_integrity(db) or_return
-    store_check_identity(db) or_return
+    version := store_check_identity(db) or_return
     store_configure(db) or_return
-    migrations_apply(db, MIGRATIONS[:], APPLICATION_ID) or_return
+    migrations_apply(db, MIGRATIONS[:], APPLICATION_ID, version) or_return
 
     stmts: Statements
+    mappings: Mappings
+    binds: Binds
+    defer if err != nil {
+        // Mappings resolve columns of these statements, so they die first.
+        mappings_destroy(&mappings, allocator)
 
-    defer if err != .None {
-        statements_finalize(&stmts)
+        // Unprepared slots are still nil, which `finalize` accepts.
+        for st in stmts {
+            sqlite.finalize(st)
+        }
     }
 
-    statements_prepare(db, &stmts) or_return
+    for sql, id in STATEMENT_SQL {
+        stmts[id] = sqlite.prepare(db, sql) or_return
+    }
 
+    mappings_prepare(stmts, &mappings, allocator) or_return
+    binds_prepare(stmts, &binds)
     opened, aerr := new(Store, allocator)
-
     if aerr != nil {
-        return nil, .Out_Of_Memory
+        return nil, Store_Error.Alloc_Failed
     }
 
     opened^ = Store {
         writer    = db,
         stmts     = stmts,
+        mappings  = mappings,
+        binds     = binds,
         allocator = allocator,
     }
 
-    return opened, .None
+    return opened, nil
 }
 
 // Close the writer and free the handle; it is dead afterwards.
@@ -130,7 +132,12 @@ close :: proc(s: ^Store) {
     assert(s != nil, "close needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    statements_finalize(&s.stmts)
+    // Mappings resolve columns of these statements, so they die first.
+    mappings_destroy(&s.mappings, s.allocator)
+
+    for st in s.stmts {
+        sqlite.finalize(st)
+    }
 
     rc := sqlite.close(s.writer)
     assert(rc == .Ok, "a SQLite child outlived the store it belongs to")
@@ -145,35 +152,25 @@ close :: proc(s: ^Store) {
 store_configure :: proc(db: ^sqlite.Conn) -> Error {
     assert(db != nil, "store_configure needs a connection")
 
-    rc := sqlite.exec(db, "PRAGMA journal_mode=WAL")
-
-    if rc != .Ok {
-        return error_from(db, rc, .Open_Failed)
-    }
-
     // WAL is refused on some filesystems, and the pragma reports the mode it
     // settled on rather than failing.
-    mode := query_one_text(db, "PRAGMA journal_mode") or_return
+    journaled := sqlite.journal_mode_set(db, .Wal) or_return
 
-    if mode != "wal" {
-        return .Open_Failed
+    if !journaled {
+        return .Durability_Unavailable
     }
 
-    rc = sqlite.exec(db, "PRAGMA synchronous=NORMAL")
-
-    if rc != .Ok {
-        return error_from(db, rc, .Open_Failed)
-    }
+    sqlite.synchronous_set(db, .Normal) or_return
 
     // Read back like journal_mode: half the durability contract is worthless if
     // the other half silently settled somewhere else.
-    sync := query_one_i64(db, "PRAGMA synchronous") or_return
+    level := sqlite.synchronous(db) or_return
 
-    if sync != SYNCHRONOUS_NORMAL {
-        return .Open_Failed
+    if level != .Normal {
+        return .Durability_Unavailable
     }
 
-    return .None
+    return nil
 }
 
 // Cheap startup sanity. Damage is a store-open error, never a crash.
@@ -182,217 +179,42 @@ store_check_integrity :: proc(db: ^sqlite.Conn) -> Error {
     assert(db != nil, "store_check_integrity needs a connection")
 
     // The argument caps reporting at the first fault; we only branch on "ok".
-    report := query_one_text(db, "PRAGMA quick_check(1)") or_return
-
-    if report != "ok" {
-        return .Corrupt
+    healthy := sqlite.query_one_text_equal(db, "PRAGMA quick_check(1)", "ok") or_return
+    if !healthy {
+        return .Integrity_Failed
     }
 
-    return .None
+    return nil
 }
 
-// Refuse to adopt a valid but unrelated SQLite database. Identity and version
-// checks happen before journal configuration or migration can write anything.
+// Refuse to adopt a valid but unrelated SQLite database, and report the applied
+// version so the migration runner does not re-derive it. Runs before any write.
 @(private)
-store_check_identity :: proc(db: ^sqlite.Conn) -> Error {
+store_check_identity :: proc(db: ^sqlite.Conn) -> (version: int, err: Error) {
     assert(db != nil, "store_check_identity needs a connection")
 
-    application_id := query_one_i64(db, "PRAGMA application_id") or_return
-    version := query_one_i64(db, "PRAGMA user_version") or_return
+    application_id := sqlite.query_one_i64(db, "PRAGMA application_id") or_return
+    stored := sqlite.query_one_i64(db, "PRAGMA user_version") or_return
 
     if application_id == APPLICATION_ID {
-        if version < 1 || version > i64(len(MIGRATIONS)) {
-            return .Version_Unsupported
+        if stored < 1 || stored > i64(len(MIGRATIONS)) {
+            return 0, .Version_Unsupported
         }
 
-        return migration_hash_check(db, MIGRATIONS[:], int(version))
+        migration_hash_check(db, MIGRATIONS[:], int(stored)) or_return
+
+        return int(stored), nil
     }
 
-    if application_id != 0 {
-        return .Foreign_Database
+    if application_id != 0 || stored != 0 {
+        return 0, .Foreign_Database
     }
 
-    objects := query_one_i64(db, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") or_return
+    objects := sqlite.query_one_i64(db, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") or_return
 
-    if version == 0 {
-        return .None if objects == 0 else .Foreign_Database
+    if objects != 0 {
+        return 0, .Foreign_Database
     }
 
-    // Commit 1501c4a1 shipped schema v1 before application_id was assigned. Its
-    // three exact tables plus immutable migration hash are sufficient identity;
-    // migration 2 claims the header in the same transaction as its upgrade.
-    if version == 1 && objects == 3 {
-        expected := query_one_i64(
-            db,
-            `SELECT count(*) FROM sqlite_master
-                WHERE type = 'table' AND name IN ('events', 'session_meta', 'migration_hash')`,
-        ) or_return
-
-        if expected == 3 {
-            hash_err := migration_hash_check(db, MIGRATIONS[:1], 1)
-
-            if hash_err == .None {
-                return .None
-            }
-
-            if hash_err != .Migration_Drift {
-                return hash_err
-            }
-        }
-    }
-
-    return .Foreign_Database
-}
-
-// Read exactly one row and one integer column from internal SQL.
-@(private)
-query_one_i64 :: proc(db: ^sqlite.Conn, sql: string, fallback := Error.Open_Failed) -> (value: i64, err: Error) {
-    assert(db != nil, "query_one_i64 needs a connection")
-    assert(len(sql) > 0, "query_one_i64 needs a statement")
-
-    st, rc := sqlite.prepare(db, sql)
-
-    if rc != .Ok {
-        return 0, error_from(db, rc, fallback)
-    }
-    defer sqlite.finalize(st)
-    assert(sqlite.column_count(st) == 1, "query_one_i64 SQL returns one column")
-
-    rc = sqlite.step(st)
-
-    if rc != .Row {
-        return 0, error_from(db, rc, fallback) if sqlite.is_error(rc) else fallback
-    }
-
-    if sqlite.column_type(st, 0) != .Integer {
-        return 0, fallback
-    }
-
-    value = sqlite.column_i64(st, 0)
-
-    rc = sqlite.step(st)
-
-    if rc != .Done {
-        return 0, error_from(db, rc, fallback) if sqlite.is_error(rc) else fallback
-    }
-
-    return value, .None
-}
-
-// Read exactly one row and one text column. The result is temp-allocated because
-// the SQLite column borrow dies with the statement.
-@(private)
-query_one_text :: proc(db: ^sqlite.Conn, sql: string, fallback := Error.Open_Failed) -> (value: string, err: Error) {
-    assert(db != nil, "query_one_text needs a connection")
-    assert(len(sql) > 0, "query_one_text needs a statement")
-
-    st, rc := sqlite.prepare(db, sql)
-
-    if rc != .Ok {
-        return "", error_from(db, rc, fallback)
-    }
-    defer sqlite.finalize(st)
-    assert(sqlite.column_count(st) == 1, "query_one_text SQL returns one column")
-
-    rc = sqlite.step(st)
-
-    if rc != .Row {
-        return "", error_from(db, rc, fallback) if sqlite.is_error(rc) else fallback
-    }
-
-    if sqlite.column_type(st, 0) != .Text {
-        return "", fallback
-    }
-
-    cloned, clone_err := strings.clone(sqlite.column_text(st, 0), context.temp_allocator)
-
-    if clone_err != nil {
-        return "", .Out_Of_Memory
-    }
-
-    value = cloned
-
-    rc = sqlite.step(st)
-
-    if rc != .Done {
-        return "", error_from(db, rc, fallback) if sqlite.is_error(rc) else fallback
-    }
-
-    return value, .None
-}
-
-// Classify a failing SQLite result. `rc` is the failure at hand; the connection's
-// extended code only refines it, and is consulted only when it describes that same
-// failure — a bind never sets it, so a stale code must not classify this call.
-@(private)
-error_from :: proc(db: ^sqlite.Conn, rc: sqlite.Result, fallback: Error) -> Error {
-    assert(db != nil, "error_from needs a connection")
-    assert(sqlite.is_error(rc), "error_from classifies failures only")
-    assert(fallback != .None, "a failure never classifies as None")
-
-    ext := sqlite.extended_result_base(sqlite.extended_errcode(db))
-    base := ext if ext == rc else rc
-
-    #partial switch base {
-    case .Corrupt, .Not_A_Db:
-        return .Corrupt
-
-    case .Busy, .Locked:
-        return .Busy
-
-    case .Constraint:
-        return .Constraint
-
-    case .Io_Err, .Full:
-        return .Io
-
-    case .No_Mem:
-        return .Out_Of_Memory
-
-    case .Cant_Open:
-        return .Open_Failed
-
-    case .Perm, .Read_Only:
-        return .Open_Failed if fallback == .Open_Failed else fallback
-    }
-
-    return fallback
-}
-
-// BEGIN IMMEDIATE, never DEFERRED: a deferred lock upgrade returns BUSY without
-// consulting busy_timeout.
-@(private)
-txn_begin :: proc(db: ^sqlite.Conn, fallback: Error) -> Error {
-    assert(db != nil, "txn_begin needs a connection")
-    assert(fallback != .None, "a failure never classifies as None")
-    assert(sqlite.autocommit(db), "the store never nests transactions")
-
-    rc := sqlite.exec(db, "BEGIN IMMEDIATE")
-
-    if rc != .Ok {
-        return error_from(db, rc, fallback)
-    }
-
-    assert(!sqlite.autocommit(db), "BEGIN IMMEDIATE starts a transaction")
-
-    return .None
-}
-
-// COMMIT only. The transaction owner has a single deferred rollback path for
-// both body and commit failures.
-@(private)
-txn_commit :: proc(db: ^sqlite.Conn, fallback: Error) -> Error {
-    assert(db != nil, "txn_commit needs a connection")
-    assert(fallback != .None, "a failure never classifies as None")
-    assert(!sqlite.autocommit(db), "COMMIT requires an active transaction")
-
-    rc := sqlite.exec(db, "COMMIT")
-
-    if rc != .Ok {
-        return error_from(db, rc, fallback)
-    }
-
-    assert(sqlite.autocommit(db), "a successful COMMIT ends the transaction")
-
-    return .None
+    return 0, nil
 }

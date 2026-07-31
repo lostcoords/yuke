@@ -15,24 +15,29 @@ test_open_creates_schema_at_latest_version :: proc(t: ^testing.T) {
     defer testsupport.sqlite_db_remove(path)
 
     s, err := open(path)
-    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, err, nil)
     testing.expect(t, s != nil, "a successful open returns a store")
     defer close(s)
 
-    version, verr := query_one_i64(s.writer, "PRAGMA user_version")
-    testing.expect_value(t, verr, Error.None)
+    version, verr := sqlite.query_one_i64(s.writer, "PRAGMA user_version")
+    testing.expect_value(t, verr, sqlite.Result.Ok)
     testing.expect_value(t, version, i64(len(MIGRATIONS)))
 
-    application_id, aerr := query_one_i64(s.writer, "PRAGMA application_id")
-    testing.expect_value(t, aerr, Error.None)
+    application_id, aerr := sqlite.query_one_i64(s.writer, "PRAGMA application_id")
+    testing.expect_value(t, aerr, sqlite.Result.Ok)
     testing.expect_value(t, application_id, i64(APPLICATION_ID))
 
     testing.expect(t, table_exists(s.writer, "events"), "0001 creates events")
     testing.expect(t, table_exists(s.writer, "session_meta"), "0001 creates session_meta")
 
-    mode, merr := query_one_text(s.writer, "PRAGMA journal_mode")
-    testing.expect_value(t, merr, Error.None)
+    mode, merr := sqlite.query_one_text(s.writer, "PRAGMA journal_mode")
+    defer delete(mode)
+    testing.expect_value(t, merr, sqlite.Result.Ok)
     testing.expect_value(t, mode, "wal")
+
+    level, level_rc := sqlite.synchronous(s.writer)
+    testing.expect_value(t, level_rc, sqlite.Result.Ok)
+    testing.expect_value(t, level, sqlite.Synchronous.Normal)
 }
 
 @(test)
@@ -41,21 +46,21 @@ test_reopen_applies_nothing :: proc(t: ^testing.T) {
     defer testsupport.sqlite_db_remove(path)
 
     first, err := open(path)
-    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, err, nil)
     close(first)
 
     again, reopen_err := open(path)
-    testing.expect_value(t, reopen_err, Error.None)
+    testing.expect_value(t, reopen_err, nil)
     defer close(again)
 
-    version, verr := query_one_i64(again.writer, "PRAGMA user_version")
-    testing.expect_value(t, verr, Error.None)
+    version, verr := sqlite.query_one_i64(again.writer, "PRAGMA user_version")
+    testing.expect_value(t, verr, sqlite.Result.Ok)
     testing.expect_value(t, version, i64(len(MIGRATIONS)))
 
     // Re-running 0001 would fail on the existing tables; one hash row per step
     // is the second witness that nothing was applied twice.
-    rows, rerr := query_one_i64(again.writer, "SELECT count(*) FROM migration_hash")
-    testing.expect_value(t, rerr, Error.None)
+    rows, rerr := sqlite.query_one_i64(again.writer, "SELECT count(*) FROM migration_hash")
+    testing.expect_value(t, rerr, sqlite.Result.Ok)
     testing.expect_value(t, rows, i64(len(MIGRATIONS)))
 }
 
@@ -66,17 +71,17 @@ test_pending_step_applies_only_the_new_one :: proc(t: ^testing.T) {
     defer testing.expect_value(t, sqlite.close(db), sqlite.Result.Ok)
 
     probes := probe_migrations()
-    testing.expect_value(t, migrations_apply(db, probes[:1]), Error.None)
+    testing.expect_value(t, migrations_apply(db, probes[:1], 0, 0), nil)
     testing.expect(t, table_exists(db, "probe_one"), "step 1 ran")
     testing.expect(t, !table_exists(db, "probe_two"), "step 2 is not in the set yet")
 
     // Step 1 re-run would fail on the existing table, so success here is proof
     // the runner skipped it.
-    testing.expect_value(t, migrations_apply(db, probes[:]), Error.None)
+    testing.expect_value(t, migrations_apply(db, probes[:], 0, 1), nil)
     testing.expect(t, table_exists(db, "probe_two"), "step 2 ran")
 
-    version, verr := query_one_i64(db, "PRAGMA user_version")
-    testing.expect_value(t, verr, Error.None)
+    version, verr := sqlite.query_one_i64(db, "PRAGMA user_version")
+    testing.expect_value(t, verr, sqlite.Result.Ok)
     testing.expect_value(t, version, i64(2))
 }
 
@@ -87,44 +92,17 @@ test_failed_first_migration_claims_nothing :: proc(t: ^testing.T) {
     defer testing.expect_value(t, sqlite.close(db), sqlite.Result.Ok)
 
     broken := [?]Migration{{version = 1, sql = "CREATE TABLE probe(a INTEGER); CREATE TABLE probe(a INTEGER);"}}
-    testing.expect_value(t, migrations_apply(db, broken[:], APPLICATION_ID), Error.Migration_Failed)
+    testing.expect_value(t, migrations_apply(db, broken[:], APPLICATION_ID, 0), sqlite.Result.Error)
 
-    version, version_err := query_one_i64(db, "PRAGMA user_version")
-    testing.expect_value(t, version_err, Error.None)
+    version, version_err := sqlite.query_one_i64(db, "PRAGMA user_version")
+    testing.expect_value(t, version_err, sqlite.Result.Ok)
     testing.expect_value(t, version, i64(0))
 
-    application_id, app_err := query_one_i64(db, "PRAGMA application_id")
-    testing.expect_value(t, app_err, Error.None)
+    application_id, app_err := sqlite.query_one_i64(db, "PRAGMA application_id")
+    testing.expect_value(t, app_err, sqlite.Result.Ok)
     testing.expect_value(t, application_id, i64(0))
     testing.expect(t, !table_exists(db, "probe"), "failed migration rolled back its schema")
     testing.expect(t, !table_exists(db, "migration_hash"), "failed migration rolled back runner bookkeeping")
-}
-
-@(test)
-test_open_upgrades_the_real_previous_schema :: proc(t: ^testing.T) {
-    path := testsupport.sqlite_db_path(t, "upgrade")
-    defer testsupport.sqlite_db_remove(path)
-
-    db, rc := sqlite.open(path)
-    testing.expect_value(t, rc, sqlite.Result.Ok)
-    testing.expect_value(t, migrations_apply(db, MIGRATIONS[:1]), Error.None)
-    testing.expect_value(t, sqlite.close(db), sqlite.Result.Ok)
-
-    s, err := open(path)
-    testing.expect_value(t, err, Error.None)
-    defer close(s)
-
-    version, version_err := query_one_i64(s.writer, "PRAGMA user_version")
-    testing.expect_value(t, version_err, Error.None)
-    testing.expect_value(t, version, i64(len(MIGRATIONS)))
-
-    application_id, app_err := query_one_i64(s.writer, "PRAGMA application_id")
-    testing.expect_value(t, app_err, Error.None)
-    testing.expect_value(t, application_id, i64(APPLICATION_ID))
-
-    ddl, ddl_err := query_one_text(s.writer, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")
-    testing.expect_value(t, ddl_err, Error.None)
-    testing.expect(t, strings.contains(ddl, "typeof(seq)"), "migration 2 installed the numeric storage check")
 }
 
 @(test)
@@ -133,10 +111,10 @@ test_future_user_version_is_refused :: proc(t: ^testing.T) {
     defer testsupport.sqlite_db_remove(path)
 
     s, err := open(path)
-    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, err, nil)
     close(s)
 
-    raw, rc := sqlite.open(path)
+    raw, rc := sqlite.open(strings.clone_to_cstring(path, context.temp_allocator))
     testing.expect_value(t, rc, sqlite.Result.Ok)
     testing.expect_value(t, sqlite.exec(raw, "PRAGMA user_version = 99"), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.close(raw), sqlite.Result.Ok)
@@ -145,7 +123,7 @@ test_future_user_version_is_refused :: proc(t: ^testing.T) {
     testing.expect(t, before_err == nil, "could not snapshot the future database")
 
     ahead, ahead_err := open(path)
-    testing.expect_value(t, ahead_err, Error.Version_Unsupported)
+    testing.expect_value(t, ahead_err, Store_Error.Version_Unsupported)
     testing.expect(t, ahead == nil, "a refused open returns no store")
 
     after, after_err := os.read_entire_file(path, context.temp_allocator)
@@ -159,18 +137,18 @@ test_negative_user_version_is_refused :: proc(t: ^testing.T) {
     defer testsupport.sqlite_db_remove(path)
 
     s, err := open(path)
-    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, err, nil)
     close(s)
 
     // `user_version` is a signed 32-bit slot; a negative value names no step, so
     // it is as unrunnable as one past the end.
-    raw, rc := sqlite.open(path)
+    raw, rc := sqlite.open(strings.clone_to_cstring(path, context.temp_allocator))
     testing.expect_value(t, rc, sqlite.Result.Ok)
     testing.expect_value(t, sqlite.exec(raw, "PRAGMA user_version = -1"), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.close(raw), sqlite.Result.Ok)
 
     behind, behind_err := open(path)
-    testing.expect_value(t, behind_err, Error.Version_Unsupported)
+    testing.expect_value(t, behind_err, Store_Error.Version_Unsupported)
     testing.expect(t, behind == nil, "a refused open returns no store")
 }
 
@@ -180,10 +158,10 @@ test_reopen_after_missing_migration_hash_is_refused :: proc(t: ^testing.T) {
     defer testsupport.sqlite_db_remove(path)
 
     s, err := open(path)
-    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, err, nil)
     close(s)
 
-    raw, rc := sqlite.open(path)
+    raw, rc := sqlite.open(strings.clone_to_cstring(path, context.temp_allocator))
     testing.expect_value(t, rc, sqlite.Result.Ok)
     testing.expect_value(t, sqlite.exec(raw, "DELETE FROM migration_hash WHERE version = 2"), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.close(raw), sqlite.Result.Ok)
@@ -192,7 +170,7 @@ test_reopen_after_missing_migration_hash_is_refused :: proc(t: ^testing.T) {
     testing.expect(t, before_err == nil, "could not snapshot the drifted database")
 
     drifted, drift_err := open(path)
-    testing.expect_value(t, drift_err, Error.Migration_Drift)
+    testing.expect_value(t, drift_err, Store_Error.Migration_Drift)
     testing.expect(t, drifted == nil, "a refused open returns no store")
 
     after, after_err := os.read_entire_file(path, context.temp_allocator)
@@ -205,7 +183,7 @@ test_valid_foreign_database_is_refused_unchanged :: proc(t: ^testing.T) {
     path := testsupport.sqlite_db_path(t, "foreign")
     defer testsupport.sqlite_db_remove(path)
 
-    db, rc := sqlite.open(path)
+    db, rc := sqlite.open(strings.clone_to_cstring(path, context.temp_allocator))
     testing.expect_value(t, rc, sqlite.Result.Ok)
     testing.expect_value(t, sqlite.exec(db, "PRAGMA application_id = 42"), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.exec(db, "CREATE TABLE foreign_data(value TEXT NOT NULL)"), sqlite.Result.Ok)
@@ -216,7 +194,7 @@ test_valid_foreign_database_is_refused_unchanged :: proc(t: ^testing.T) {
     testing.expect(t, before_err == nil, "could not snapshot the foreign database")
 
     s, err := open(path)
-    testing.expect_value(t, err, Error.Foreign_Database)
+    testing.expect_value(t, err, Store_Error.Foreign_Database)
     testing.expect(t, s == nil, "a refused open returns no store")
 
     after, after_err := os.read_entire_file(path, context.temp_allocator)
@@ -225,7 +203,7 @@ test_valid_foreign_database_is_refused_unchanged :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_non_database_file_is_corrupt :: proc(t: ^testing.T) {
+test_non_database_file_is_refused :: proc(t: ^testing.T) {
     path := testsupport.sqlite_db_path(t, "garbage")
     defer testsupport.sqlite_db_remove(path)
 
@@ -235,8 +213,10 @@ test_non_database_file_is_corrupt :: proc(t: ^testing.T) {
     }
     testing.expect(t, os.write_entire_file(path, junk) == nil, "could not seed the garbage file")
 
+    // SQLite refuses the header itself, so its own code travels up rather than being
+    // collapsed; `Integrity_Failed` is reserved for a quick_check that reports damage.
     s, err := open(path)
-    testing.expect_value(t, err, Error.Corrupt)
+    testing.expect_value(t, err, sqlite.Result.Not_A_Db)
     testing.expect(t, s == nil, "a refused open returns no store")
 }
 
@@ -247,35 +227,33 @@ test_migration_hash_rows_are_dense_and_immutable :: proc(t: ^testing.T) {
     defer testing.expect_value(t, sqlite.close(db), sqlite.Result.Ok)
 
     applied := probe_migrations()
-    testing.expect_value(t, migrations_apply(db, applied[:]), Error.None)
-    testing.expect_value(t, migration_hash_check(db, applied[:], len(applied)), Error.None)
+    testing.expect_value(t, migrations_apply(db, applied[:], 0, 0), nil)
+    testing.expect_value(t, migration_hash_check(db, applied[:], len(applied)), nil)
 
     edited := probe_migrations()
     edited[1].sql = "CREATE TABLE probe_two(b INTEGER);"
-    testing.expect_value(t, migration_hash_check(db, edited[:], len(edited)), Error.Migration_Drift)
+    testing.expect_value(t, migration_hash_check(db, edited[:], len(edited)), Store_Error.Migration_Drift)
 }
 
 @(test)
-test_partial_statement_prepare_finalizes_itself :: proc(t: ^testing.T) {
-    db, rc := sqlite.open_memory()
-    testing.expect_value(t, rc, sqlite.Result.Ok)
+test_open_releases_a_partial_statement_set :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "partial-prepare")
+    defer testsupport.sqlite_db_remove(path)
 
-    // session_meta exists but events does not, so the set fails part-way and has
-    // to unwind the statements it already prepared.
-    ddl := `CREATE TABLE session_meta (
-        session_id      BLOB PRIMARY KEY,
-        seq_high        INTEGER NOT NULL DEFAULT 0,
-        message_id_high INTEGER NOT NULL DEFAULT 0,
-        run_id_high     INTEGER NOT NULL DEFAULT 0,
-        input_id_high   INTEGER NOT NULL DEFAULT 0,
-        config_rev_high INTEGER NOT NULL DEFAULT 0
-    )`
-    testing.expect_value(t, sqlite.exec(db, ddl), sqlite.Result.Ok)
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    testing.expect(t, s != nil, "a successful open returns a store")
 
-    set: Statements
-    testing.expect(t, statements_prepare(db, &set) != .None, "the set cannot be prepared without events")
-    testing.expect(t, set == (Statements{}), "a failed prepare leaves no statement behind")
-    testing.expect_value(t, sqlite.close(db), sqlite.Result.Ok)
+    // Identity, version, and hash rows survive the drop, so the reopen below
+    // skips migrations and stops part-way through preparing the set.
+    testing.expect_value(t, sqlite.exec(s.writer, "DROP TABLE events"), sqlite.Result.Ok)
+    close(s)
+
+    // A statement left alive would hold the connection open and trip the
+    // "failed open leaves no SQLite child alive" assertion inside `open`.
+    again, reopen_err := open(path)
+    testing.expect_value(t, reopen_err, sqlite.Result.Error)
+    testing.expect(t, again == nil, "a refused open returns no store")
 }
 
 @(private = "file")
@@ -288,10 +266,10 @@ probe_migrations :: proc() -> [2]Migration {
 
 @(private = "file")
 table_exists :: proc(db: ^sqlite.Conn, name: string) -> bool {
-    count, err := query_one_i64(
+    count, err := sqlite.query_one_i64(
         db,
         fmt.tprintf("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='%s'", name),
     )
 
-    return err == .None && count == 1
+    return err == .Ok && count == 1
 }
