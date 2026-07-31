@@ -226,19 +226,12 @@ daemon_secret_equal :: proc(presented: string, expected: string) -> bool {
 // Whether the request carried a `token` query parameter, present even when duplicated.
 daemon_query_credential :: proc(query: string) -> bool {
     _, lookup := http.query_value(query, "token")
-
     return lookup != .Missing
 }
 
 // Cache-private headers when the request carried a `?token=` credential; nil otherwise.
 daemon_query_response_headers :: proc(query: string) -> []http_server.Header {
-    return daemon_response_headers(daemon_query_credential(query))
-}
-
-// Cache-private headers for a successful response to a `?token=` request; nil otherwise.
-@(private)
-daemon_response_headers :: proc(query_credential: bool) -> []http_server.Header {
-    if query_credential {
+    if daemon_query_credential(query) {
         return AUTH_QUERY_HEADERS[:]
     }
 
