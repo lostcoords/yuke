@@ -9,6 +9,7 @@ Odin implementation of the yuke wire protocol (and, later, client/daemon).
 
 ```sh
 mise install          # once, to fetch the pinned Odin
+make setup            # once, to install the pre-commit schema-check hook
 make test             # build + run wire tests
 make fmt              # format sources
 ```

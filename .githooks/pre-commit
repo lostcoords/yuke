@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# Blocks commits with a stale schema. Installed via `make setup`.
+set -e
+
+if git diff --cached --name-only | grep -qE '^(src/wire/|schema/)'; then
+	if ! make schema-check; then
+		echo "error: schema/wire.schema.json is stale or schema-test failed." >&2
+		echo "       run 'make schema' and stage the result, then commit again." >&2
+		exit 1
+	fi
+fi

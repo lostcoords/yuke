@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: schema schema-check schema-test test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-provider test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean deps deps-rebuild
+.PHONY: schema schema-check schema-test setup test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-provider test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean deps deps-rebuild
 
 # Each binding owns its Makefile and version pin. `static` is a no-op once the
 # archive exists, so test targets can depend on it.
@@ -150,6 +150,10 @@ schema-check:
 schema-test:
 	@mkdir -p build
 	$(ODIN) test tools/schema $(COLLECTION) -out:build/schema_test.bin
+
+# One-time setup for a fresh clone: point git at the tracked hooks in .githooks.
+setup:
+	git config core.hooksPath .githooks
 
 # Format all Odin sources in place (config in odinfmt.json).
 fmt:
