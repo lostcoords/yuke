@@ -3,7 +3,7 @@ ODIN ?= mise exec -- odin
 ODINFMT ?= odinfmt
 COLLECTION := -collection:src=src -collection:libs=libs
 
-.PHONY: test test-wire test-ws test-http test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
+.PHONY: test test-wire test-ws test-http test-sse test-offload test-client test-daemon test-store test-support test-ui test-term test-sqlite test-quickjs test-curl check-windows fmt clean sqlite-static quickjs-static
 
 # Pinned SQLite amalgamation (Windows static link). Keep in sync with build_static.sh.
 SQLITE_YEAR ?= 2025
@@ -31,6 +31,11 @@ test-http:
 	@mkdir -p build
 	$(ODIN) test libs/http $(COLLECTION) -out:build/http_test.bin
 	$(ODIN) test libs/http/server $(COLLECTION) -out:build/http_server_test.bin
+
+# Run the sans-I/O SSE parser tests.
+test-sse:
+	@mkdir -p build
+	$(ODIN) test libs/http/sse $(COLLECTION) -out:build/http_sse_test.bin
 
 # Run the libcurl binding and the multi-on-nbio driver tests. Needs the libcurl
 # development package (Unix links `system:curl`); the integration tests stream

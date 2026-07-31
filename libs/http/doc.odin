@@ -21,5 +21,7 @@ authenticate before disclosing routes or methods. Path patterns are exact (`/ws`
 or a single star prefix capture (`/blob/<rest>` via a trailing star segment). A 405
 carries `Allow` for the matched pattern. There is no post-handler middleware chain,
 keep-alive, transfer codings, ranges, compression, proxy-form targets, or TLS.
+
+The `libs:http/sse` subpackage is a sans-I/O `text/event-stream` parser.
 */
 package http
