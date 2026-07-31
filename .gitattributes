@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Generated from src/wire by `make schema`; never hand-edited.
+# Conflicts are resolved by regenerating, not by merging hunks.
+schema/*.json linguist-generated=true
+schema/*.json -merge
+
+# Windows build scripts.
+*.bat text eol=crlf
