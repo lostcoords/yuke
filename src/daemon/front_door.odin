@@ -153,7 +153,8 @@ daemon_router_not_found :: proc(ctx: ^Http_Context) {
 }
 
 // Path pattern matched a registered route, but not this method. `ctx.allow` borrows router
-// scratch, which `conn_add_header` clones.
+// scratch, which `conn_add_header` clones. Pipelining is not refused here: `Allow` says
+// more than a 400 would.
 daemon_router_method_not_allowed :: proc(ctx: ^Http_Context) {
     if !http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) {
         return
@@ -351,6 +352,7 @@ Blob_Upload :: struct {
 // atomically publish it. Content-addressed: a digest mismatch is a client lie about
 // the address. Idempotent: an already-stored hash short-circuits. The body is
 // streamed and bounded by `LIMITS.max_blob_bytes`, never buffered whole.
+// No pipelining check: `pipelined` cannot see past a streamed body.
 daemon_route_blob_put :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     c := ctx.conn

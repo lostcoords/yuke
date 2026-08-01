@@ -73,9 +73,8 @@ Request :: struct {
     // enforces its own size cap on this before opting into `receive_body`.
     content_length: i64,
 
-    // Bytes arrived past the declared body: a pipelined follow-up request is waiting.
-    // A route either refuses it or lets the close discard it — except a hijacking
-    // route, which keeps them; for an upgrade they are the peer's eager first frame.
+    // Bytes past the declared body in the read that carried the head; a follow-up behind
+    // a streamed body is never seen. A hijacking route keeps them as the peer's first frame.
     pipelined:      bool,
 }
 
