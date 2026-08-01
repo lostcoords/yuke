@@ -15,7 +15,7 @@ import wire "src:wire"
 // proving the store, pump, and resync work together end to end rather than piecemeal: a
 // durable broadcast reaches a subscribed client and survives a daemon restart.
 // Reuses `Pump_Obs`/`pump_client_arm` from pump_test.odin, `resync_config`/
-// `resync_user`/`resync_assistant` from resync_test.odin, and `daemon_test_teardown`.
+// `resync_user`/`resync_assistant` from resync_test.odin, and `test_teardown`.
 
 // Observations for the post-restart client, reached through `user_data`. Chains
 // `subscription.set` then `session.resync`, installs the snapshot into a real
@@ -134,12 +134,8 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     other := pump_test_session('b')
 
     first: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
-    port := daemon_bound_port(&first)
+    testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    port := bound_port(&first)
 
     subscribed: Pump_Obs
     pump_obs_init(&subscribed, {session})
@@ -152,8 +148,8 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     pump_client_arm(t, &other_client, loop, port, &other_obs)
 
     // Append: the pump is the sole seq authority, and seqs are contiguous per session.
-    testing.expect_value(t, daemon_broadcast(&first, resync_config(session, 1, "m1")), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, resync_assistant(session, 1, 1)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_config(session, 1, "m1")), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_assistant(session, 1, 1)), Pump_Error.None)
     pump_settle()
 
     if testing.expect_value(t, len(subscribed.names), 2) {
@@ -174,15 +170,11 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     testing.expect(t, pump_tick_until(&other_obs.done), "the other client should close cleanly")
     client.client_destroy(&sub_client)
     client.client_destroy(&other_client)
-    daemon_test_teardown(&first)
+    test_teardown(&first)
 
     // Full teardown, then restart against the same db path.
     second: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
+    testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     // High-water recovery: the mark survived the restart instead of resetting.
     hw, herr := store.high_water(second.store, session)
@@ -199,7 +191,7 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&second), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&second), path = "/ws"},
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks {
@@ -229,7 +221,7 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
 
     // Emit one more durable broadcast; its seq must continue from the recovered high
     // water, never reuse or gap.
-    testing.expect_value(t, daemon_broadcast(&second, resync_assistant(session, 2, 1)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&second, resync_assistant(session, 2, 1)), Pump_Error.None)
     pump_settle()
 
     hw2, herr2 := store.high_water(second.store, session)
@@ -246,5 +238,5 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
     client.client_destroy(&c)
-    daemon_test_teardown(&second)
+    test_teardown(&second)
 }

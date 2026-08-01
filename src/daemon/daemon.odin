@@ -27,8 +27,8 @@ Protocol_State :: enum {
     Closed,
 }
 
-// Synchronous `daemon_start` failures.
-Daemon_Error :: enum {
+// Synchronous `start` failures.
+Error :: enum {
     // No error.
     None,
 
@@ -46,8 +46,8 @@ Daemon_Error :: enum {
     Store_Failed,
 }
 
-// Listen and identity options. Zero-valued fields default in `daemon_start`.
-Daemon_Options :: struct {
+// Listen and identity options. Zero-valued fields default in `start`.
+Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:           string,
 
@@ -72,8 +72,8 @@ Daemon_Options :: struct {
 
 // A listening yuke daemon on a caller-supplied nbio loop. Owns the HTTP front door
 // that binds the port, the WebSocket server it upgrades into, and its own string
-// clones. Start with `daemon_start`, stop with `daemon_shutdown`, reclaim with
-// `daemon_destroy`.
+// clones. Start with `start`, stop with `shutdown`, reclaim with
+// `destroy`.
 Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
     front_door:     http_server.Server,
@@ -124,7 +124,7 @@ Daemon :: struct {
 }
 
 // One accepted connection past the WebSocket handshake. Allocated in the transport
-// `on_open` and freed in the terminal callback.
+// `ws_on_open` and freed in the terminal callback.
 Conn :: struct {
     // Transport connection this wraps; borrowed, owned by the WebSocket server.
     wsc:                ^ws.Server_Conn,
@@ -158,17 +158,12 @@ Conn :: struct {
 
 // Begin listening. A synchronous failure returns directly and rolls back the clones
 // and the WebSocket server; past the bind, everything runs on the loop.
-daemon_start :: proc(
-    d: ^Daemon,
-    loop: ^nbio.Event_Loop,
-    options: Daemon_Options,
-    allocator := context.allocator,
-) -> Daemon_Error {
+start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator := context.allocator) -> Error {
     if d == nil || loop == nil {
         return .Invalid_Options
     }
 
-    if !daemon_auth_token_valid(options.auth_token) {
+    if !auth_token_valid(options.auth_token) {
         return .Invalid_Options
     }
 
@@ -189,13 +184,13 @@ daemon_start :: proc(
 
     d.blob_dir, aerr = strings.clone(options.blob_dir, allocator)
     if aerr != nil {
-        daemon_free_config(d)
+        free_config(d)
         return .Out_Of_Memory
     }
 
     d.auth_token, aerr = strings.clone(options.auth_token, allocator)
     if aerr != nil {
-        daemon_free_config(d)
+        free_config(d)
         return .Out_Of_Memory
     }
 
@@ -203,14 +198,14 @@ daemon_start :: proc(
     // unusable directory must fail the start rather than 500 every upload.
     if d.blob_dir != "" {
         if mkerr := os.make_directory_all(d.blob_dir, BLOB_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(d.blob_dir) {
-            daemon_free_config(d)
+            free_config(d)
             return .Invalid_Options
         }
 
-        daemon_warn_exposed_blob_dir(d.blob_dir, allocator)
+        warn_exposed_blob_dir(d.blob_dir, allocator)
 
         if perr := offload.pool_init(&d.blobs, loop, BLOB_WORKER_COUNT); perr != .None {
-            daemon_free_config(d)
+            free_config(d)
             return .Invalid_Options
         }
     }
@@ -221,16 +216,16 @@ daemon_start :: proc(
         opened, serr := store.open(options.db_path, allocator)
         if serr != nil {
             log.errorf("daemon: event store unavailable at %s: %v", options.db_path, serr)
-            daemon_blobs_stop(d)
-            daemon_free_config(d)
+            blobs_stop(d)
+            free_config(d)
             return .Store_Failed
         }
 
         marks, merr := make(map[wire.Session_Id]wire.Seq, 16, allocator)
         if merr != nil {
             store.close(opened)
-            daemon_blobs_stop(d)
-            daemon_free_config(d)
+            blobs_stop(d)
+            free_config(d)
             return .Out_Of_Memory
         }
 
@@ -239,10 +234,10 @@ daemon_start :: proc(
     }
 
     callbacks := ws.Server_Callbacks {
-        on_open    = daemon_on_open,
-        on_message = daemon_on_message,
-        on_close   = daemon_on_close,
-        on_error   = daemon_on_error,
+        on_open    = ws_on_open,
+        on_message = ws_on_message,
+        on_close   = ws_on_close,
+        on_error   = ws_on_error,
     }
     server_options := ws.Server_Options {
         // A yuke frame carries exactly one JSON value; cap frame and message at the
@@ -255,15 +250,15 @@ daemon_start :: proc(
     case .None:
 
     case .Invalid_Options:
-        daemon_blobs_stop(d)
-        daemon_store_close(d)
-        daemon_free_config(d)
+        blobs_stop(d)
+        store_close(d)
+        free_config(d)
         return .Invalid_Options
 
     case .Out_Of_Memory:
-        daemon_blobs_stop(d)
-        daemon_store_close(d)
-        daemon_free_config(d)
+        blobs_stop(d)
+        store_close(d)
+        free_config(d)
         return .Out_Of_Memory
 
     case .Too_Many_Connections,
@@ -277,12 +272,12 @@ daemon_start :: proc(
         assert(false, "server_init returned a connection-only error")
     }
 
-    daemon_router_init(d)
+    router_init(d)
 
     herr := http_server.router_listen(
         &d.front_door,
         loop,
-        {host = options.host, port = options.port},
+        {host = options.host, port = options.port, max_body_bytes = i64(wire.LIMITS.max_blob_bytes)},
         &d.router,
         allocator,
     )
@@ -290,15 +285,15 @@ daemon_start :: proc(
     case .None:
 
     case .Invalid_Options:
-        daemon_start_rollback(d)
+        start_rollback(d)
         return .Invalid_Options
 
     case .Listen_Failed:
-        daemon_start_rollback(d)
+        start_rollback(d)
         return .Listen_Failed
 
     case .Out_Of_Memory:
-        daemon_start_rollback(d)
+        start_rollback(d)
         return .Out_Of_Memory
     }
 
@@ -311,7 +306,7 @@ daemon_start :: proc(
     assert((d.store != nil) == (options.db_path != ""), "the store is open exactly when a database is configured")
 
     if d.blob_dir != "" {
-        removed := daemon_blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
+        removed := blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
         if removed > 0 {
             log.infof("daemon: swept %d stale upload temp file(s) from %s", removed, d.blob_dir)
         }
@@ -330,24 +325,24 @@ daemon_start :: proc(
     return .None
 }
 
-// Undo what `daemon_start` built before the bind failed — nothing was ever adopted,
+// Undo what `start` built before the bind failed — nothing was ever adopted,
 // so the WebSocket server needs no shutdown pass.
-daemon_start_rollback :: proc(d: ^Daemon) {
+start_rollback :: proc(d: ^Daemon) {
     assert(d != nil, "daemon rollback needs daemon state")
     assert(d.front_door.state == .Idle, "failed front door retained active state")
     assert(d.ws_server.state == .Serving, "websocket server was not initialized before rollback")
 
-    daemon_blobs_stop(d)
-    daemon_store_close(d)
+    blobs_stop(d)
+    store_close(d)
     ws.server_destroy(&d.ws_server)
-    daemon_free_config(d)
+    free_config(d)
 }
 
 // Drain and release the blob workers. Idempotent, so every teardown path can call it
-// without knowing how far `daemon_start` got. Draining runs each finished task's
+// without knowing how far `start` got. Draining runs each finished task's
 // completion on this loop, which is why it must precede releasing the front door: a
 // completion resolves its connection ticket against that server.
-daemon_blobs_stop :: proc(d: ^Daemon) {
+blobs_stop :: proc(d: ^Daemon) {
     assert(d != nil, "blob worker teardown needs daemon state")
 
     if !offload.pool_is_running(&d.blobs) {
@@ -363,9 +358,9 @@ daemon_blobs_stop :: proc(d: ^Daemon) {
 
 // Stop accepting and close every live connection. Closing is async: run the loop
 // until both halves report `shutdown_complete` before
-// calling `daemon_destroy`.
-daemon_shutdown :: proc(d: ^Daemon) {
-    assert(d != nil, "daemon_shutdown needs daemon state")
+// calling `destroy`.
+shutdown :: proc(d: ^Daemon) {
+    assert(d != nil, "shutdown needs daemon state")
     assert(d.front_door.user_data == &d.router, "front door user_data must be the daemon router")
     assert(d.router.user_data == d, "router has the wrong owner")
     assert(d.ws_server.user_data == d, "websocket server has the wrong owner")
@@ -377,22 +372,22 @@ daemon_shutdown :: proc(d: ^Daemon) {
 
 // Release both connection sets and the owned clones. Call only once both halves
 // report `shutdown_complete`; every connection must already be released.
-daemon_destroy :: proc(d: ^Daemon) {
-    assert(d != nil, "daemon_destroy needs daemon state")
-    assert(d.front_door.shutdown_complete, "daemon_destroy before HTTP shutdown completed")
-    assert(d.ws_server.shutdown_complete, "daemon_destroy before WebSocket shutdown completed")
+destroy :: proc(d: ^Daemon) {
+    assert(d != nil, "destroy needs daemon state")
+    assert(d.front_door.shutdown_complete, "destroy before HTTP shutdown completed")
+    assert(d.ws_server.shutdown_complete, "destroy before WebSocket shutdown completed")
 
-    daemon_blobs_stop(d)
+    blobs_stop(d)
     ws.server_destroy(&d.ws_server)
     http_server.destroy(&d.front_door)
 
-    daemon_store_close(d)
-    daemon_free_config(d)
+    store_close(d)
+    free_config(d)
 }
 
 // Close the event store and drop the pump's tracked marks. Idempotent, so every
-// teardown path can call it without knowing how far `daemon_start` got.
-daemon_store_close :: proc(d: ^Daemon) {
+// teardown path can call it without knowing how far `start` got.
+store_close :: proc(d: ^Daemon) {
     assert(d != nil, "store teardown needs daemon state")
 
     if d.store == nil {
@@ -407,7 +402,7 @@ daemon_store_close :: proc(d: ^Daemon) {
 }
 
 // Release the owned config strings and reset them to empty.
-daemon_free_config :: proc(d: ^Daemon) {
+free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
     delete(d.daemon_version, d.allocator)
@@ -426,7 +421,7 @@ daemon_free_config :: proc(d: ^Daemon) {
 
 // A connection reached Open: allocate its `Conn`, enter Awaiting_Initialize, and attach
 // it to the transport connection.
-daemon_on_open :: proc(wsc: ^ws.Server_Conn) {
+ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     assert(wsc != nil, "open callback needs a transport connection")
     assert(wsc.server != nil, "open callback needs an owning server")
     assert(wsc.user_data == nil, "open callback found preexisting application state")
@@ -458,7 +453,7 @@ daemon_on_open :: proc(wsc: ^ws.Server_Conn) {
 
 // One complete transport message. Only text frames carry protocol data; a binary
 // frame is a v1 protocol error.
-daemon_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []byte) {
+ws_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []byte) {
     assert(wsc != nil, "message callback needs a transport connection")
     assert(wsc.server != nil, "message callback needs an owning server")
 
@@ -471,17 +466,17 @@ daemon_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []b
 
     switch kind {
     case .Text:
-        daemon_handle_text(conn, data)
+        handle_text(conn, data)
 
     case .Binary:
-        daemon_conn_protocol_close(conn)
+        conn_protocol_close(conn)
 
     case .Ping, .Pong, .Close:
     }
 }
 
 // Transport terminal callback on a clean close: latch Closed and free the `Conn`.
-daemon_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
+ws_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
     assert(wsc != nil, "close callback needs a transport connection")
     assert(wsc.server != nil, "close callback needs an owning server")
 
@@ -493,11 +488,11 @@ daemon_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
     assert(conn.wsc == wsc, "close callback crossed connection ownership")
     log.debugf("daemon: websocket closed code=%v client=%s", code, conn.client_name)
     conn.state = .Closed
-    daemon_conn_free(conn)
+    conn_free(conn)
 }
 
 // Transport terminal callback on an error: latch Closed and free the `Conn`.
-daemon_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
+ws_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
     assert(wsc != nil, "error callback needs a transport connection")
     assert(wsc.server != nil, "error callback needs an owning server")
     assert(err != .None, "error callback received no error")
@@ -511,12 +506,12 @@ daemon_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
     assert(conn.wsc == wsc, "error callback crossed connection ownership")
     log.warnf("daemon: websocket error %v client=%s", err, conn.client_name)
     conn.state = .Closed
-    daemon_conn_free(conn)
+    conn_free(conn)
 }
 
 // Handle one inbound text frame: any decode/validate failure or sequence violation
 // closes the connection.
-daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
+handle_text :: proc(conn: ^Conn, data: []byte) {
     assert(conn != nil, "text handler needs connection state")
     assert(conn.wsc != nil, "text handler needs transport state")
     assert(conn.daemon != nil, "text handler needs daemon state")
@@ -529,22 +524,22 @@ daemon_handle_text :: proc(conn: ^Conn, data: []byte) {
     d := wire.decoder_init(string(data), sa)
     req, derr := wire.request_from_reader(&d)
     if derr != .None {
-        daemon_conn_protocol_close(conn)
+        conn_protocol_close(conn)
         return
     }
 
     // One JSON value per frame: trailing bytes after the root are a protocol error.
     if wire.dec_finish(&d) != .None {
-        daemon_conn_protocol_close(conn)
+        conn_protocol_close(conn)
         return
     }
 
-    daemon_handle_request(conn, req, sa)
+    handle_request(conn, req, sa)
 }
 
 // Answer `initialize`. On success the daemon retains the client identity, responds
 // with its snapshot, and reaches Ready.
-daemon_handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
+handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "initialize handler needs connection state")
     assert(conn.wsc != nil, "initialize handler needs transport state")
     assert(conn.state == .Awaiting_Initialize, "initialize ran outside Awaiting_Initialize")
@@ -553,7 +548,7 @@ daemon_handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
     params, ok := req.params.(wire.Initialize_Params)
 
     if !ok {
-        daemon_conn_protocol_close(conn)
+        conn_protocol_close(conn)
         return
     }
 
@@ -564,28 +559,28 @@ daemon_handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
 
     client_name, aerr := strings.clone(params.client.name, conn.allocator)
     if aerr != nil {
-        daemon_conn_abort(conn, .Out_Of_Memory)
+        conn_abort(conn, .Out_Of_Memory)
         return
     }
 
     client_version, version_aerr := strings.clone(params.client.version, conn.allocator)
     if version_aerr != nil {
         delete(client_name, conn.allocator)
-        daemon_conn_abort(conn, .Out_Of_Memory)
+        conn_abort(conn, .Out_Of_Memory)
         return
     }
 
     conn.client_name = client_name
     conn.client_version = client_version
 
-    if daemon_send_initialize_result(conn, req.id) {
+    if send_initialize_result(conn, req.id) {
         conn.state = .Ready
     }
 }
 
 // Route a request to its handler. Result data is built in `sa`, the per-frame arena
-// `daemon_handle_text` reclaims after this returns.
-daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+// `handle_text` reclaims after this returns.
+handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "request handler needs connection state")
     assert(conn.wsc != nil, "request handler needs transport state")
 
@@ -594,9 +589,9 @@ daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     if verr := wire.request_validate(req); verr != .None {
         // A version mismatch gets the dedicated close code.
         if verr == .Unsupported_Protocol {
-            daemon_conn_close(conn, ws.Close_Code(wire.CLOSE.unsupported_protocol))
+            conn_close(conn, ws.Close_Code(wire.CLOSE.unsupported_protocol))
         } else {
-            daemon_conn_protocol_close(conn)
+            conn_protocol_close(conn)
         }
 
         return
@@ -605,31 +600,31 @@ daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     // `initialize` is the only method accepted before Ready, and the only one refused
     // after it.
     if (req.method == .Initialize) != (conn.state == .Awaiting_Initialize) {
-        daemon_conn_protocol_close(conn)
+        conn_protocol_close(conn)
         return
     }
 
     switch req.method {
     case .Initialize:
-        daemon_handle_initialize(conn, req)
+        handle_initialize(conn, req)
 
     case .Session_List:
-        daemon_method_session_list(conn, req)
+        method_session_list(conn, req)
 
     case .Catalog_List:
-        daemon_method_catalog_list(conn, req)
+        method_catalog_list(conn, req)
 
     case .Workspace_Describe:
-        daemon_method_workspace_describe(conn, req, sa)
+        method_workspace_describe(conn, req, sa)
 
     case .Workspace_Browse:
-        daemon_method_workspace_browse(conn, req, sa)
+        method_workspace_browse(conn, req, sa)
 
     case .Subscription_Set:
-        daemon_method_subscription_set(conn, req)
+        method_subscription_set(conn, req)
 
     case .Session_Resync:
-        daemon_method_session_resync(conn, req, sa)
+        method_session_resync(conn, req, sa)
 
     case .Session_Create,
          .Session_Patch,
@@ -653,13 +648,13 @@ daemon_handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
          .Cron_Remove,
          .Cron_List,
          .Cron_Run_Now:
-        daemon_send_error(conn, req.id, .Unknown_Method, "method not implemented")
+        send_error(conn, req.id, .Unknown_Method, "method not implemented")
     }
 }
 
 // `session.list` before the session engine exists: an empty page pinned to revision 0,
 // matching the session revision the initialize snapshot claims.
-daemon_method_session_list :: proc(conn: ^Conn, req: wire.Request) {
+method_session_list :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "session.list needs connection state")
     assert(conn.state == .Ready, "session.list ran outside Ready")
     assert(req.method == .Session_List, "session.list received another method")
@@ -671,19 +666,19 @@ daemon_method_session_list :: proc(conn: ^Conn, req: wire.Request) {
         total       = 0,
     }
 
-    daemon_send_result(conn, req.id, result)
+    send_result(conn, req.id, result)
 }
 
 // `catalog.list` before any catalog is loaded: `unchanged` when the client already
 // holds the empty revision, otherwise a `full` snapshot with no models and empty
 // health. Both carry the all-zero catalog hash the initialize snapshot reports.
-daemon_method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
+method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "catalog.list needs connection state")
     assert(conn.state == .Ready, "catalog.list ran outside Ready")
     assert(req.method == .Catalog_List, "catalog.list received another method")
 
     params := req.params.(wire.Catalog_List_Params)
-    empty := daemon_empty_catalog_rev()
+    empty := empty_catalog_rev()
 
     result: wire.Catalog_List_Result
     if since, ok := params.since_rev.?; ok && since == empty {
@@ -698,13 +693,13 @@ daemon_method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
         }
     }
 
-    daemon_send_result(conn, req.id, result)
+    send_result(conn, req.id, result)
 }
 
 // `workspace.describe` on a real path: canonicalize it (a missing path or a
 // non-directory is `Bad_Request`), then report the derived id, basename title, git
 // branch, and directory mtime. With no session engine yet, there is no `last_used_model`.
-daemon_method_workspace_describe :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+method_workspace_describe :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "workspace.describe needs connection state")
     assert(conn.state == .Ready, "workspace.describe ran outside Ready")
     assert(req.method == .Workspace_Describe, "workspace.describe received another method")
@@ -713,27 +708,23 @@ daemon_method_workspace_describe :: proc(conn: ^Conn, req: wire.Request, sa: mem
 
     canonical, cerr := os.get_absolute_path(params.path, sa)
     if cerr != nil {
-        daemon_send_error(conn, req.id, .Bad_Request, "invalid workspace path")
+        send_error(conn, req.id, .Bad_Request, "invalid workspace path")
         return
     }
 
     if !os.is_dir(canonical) {
-        daemon_send_error(conn, req.id, .Bad_Request, "workspace path is not a directory")
+        send_error(conn, req.id, .Bad_Request, "workspace path is not a directory")
         return
     }
 
     result := wire.Workspace_Describe_Result {
-        workspace = wire.Workspace {
-            id = daemon_workspace_id(canonical),
-            root = canonical,
-            title = daemon_workspace_title(canonical),
-        },
-        git = daemon_git_info(canonical, sa),
-        last_modified_ms = daemon_path_mtime_ms(canonical, sa),
+        workspace = wire.Workspace{id = workspace_id(canonical), root = canonical, title = workspace_title(canonical)},
+        git = git_info(canonical, sa),
+        last_modified_ms = path_mtime_ms(canonical, sa),
         last_used_model = nil,
     }
 
-    daemon_send_result(conn, req.id, result)
+    send_result(conn, req.id, result)
 }
 
 // Longest browse cursor we could have minted. `strconv.parse_int` wraps silently
@@ -745,7 +736,7 @@ MAX_BROWSE_CURSOR_DIGITS :: 16
 // never `.git`), sorted case-insensitively, paginated by an opaque decimal-offset
 // cursor. A missing path defaults to the daemon user's home. Path and cursor faults
 // are `Bad_Request`; a weird path never crashes the daemon.
-daemon_method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "workspace.browse needs connection state")
     assert(conn.state == .Ready, "workspace.browse ran outside Ready")
     assert(req.method == .Workspace_Browse, "workspace.browse received another method")
@@ -763,26 +754,26 @@ daemon_method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.A
 
     dir, derr := os.get_absolute_path(target, sa)
     if derr != nil {
-        daemon_send_error(conn, req.id, .Bad_Request, "cannot open path")
+        send_error(conn, req.id, .Bad_Request, "cannot open path")
         return
     }
 
-    entries, lerr := daemon_browse_entries(dir, sa)
+    entries, lerr := browse_entries(dir, sa)
     if lerr != nil {
-        daemon_send_error(conn, req.id, .Bad_Request, "cannot list path")
+        send_error(conn, req.id, .Bad_Request, "cannot list path")
         return
     }
 
     offset := 0
     if cursor, ok := params.cursor.?; ok {
         if len(cursor) > MAX_BROWSE_CURSOR_DIGITS {
-            daemon_send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
+            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
             return
         }
 
         n, valid := strconv.parse_int(cursor, 10)
         if !valid || n < 0 {
-            daemon_send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
+            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
             return
         }
 
@@ -808,26 +799,26 @@ daemon_method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.A
 
     result := wire.Workspace_Browse_Result {
         path        = dir,
-        parent      = daemon_parent_dir(dir),
+        parent      = parent_dir(dir),
         entries     = page,
         next_cursor = next_cursor,
     }
 
-    daemon_send_result(conn, req.id, result)
+    send_result(conn, req.id, result)
 }
 
 // Validate and emit a successful response. The result is built from already-trusted
 // daemon state, so an invalid outgoing frame is our bug, not the peer's — assert
 // rather than ship it.
-daemon_send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result) {
+send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result) {
     assert(conn != nil, "result send needs connection state")
     assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
-    daemon_send_response(conn, wire.response_ok_build(id, result))
+    send_response(conn, wire.response_ok_build(id, result))
 }
 
 // Emit an error response naming `code`. `message` is diagnostic only; clients branch
 // on `code`.
-daemon_send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Code, message: string) {
+send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Code, message: string) {
     assert(conn != nil, "error response send needs connection state")
 
     eo := wire.Error_Object {
@@ -835,12 +826,12 @@ daemon_send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Cod
         message = message,
     }
 
-    daemon_send_response(conn, wire.response_error_build(id, eo))
+    send_response(conn, wire.response_error_build(id, eo))
 }
 
 // Serialize a response and hand it to the transport. `server_send_text` copies the
 // payload into an owned frame, so the emitter buffer may be released on return.
-daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
+send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     assert(conn != nil, "response send needs connection state")
     assert(conn.wsc != nil, "response send needs transport state")
     // `initialize` is answered while still Awaiting_Initialize; every other response is Ready.
@@ -853,7 +844,7 @@ daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     wire.response_emit(&e, resp)
 
     if send_err := ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)); send_err != .None {
-        daemon_conn_abort(conn, send_err)
+        conn_abort(conn, send_err)
         return false
     }
 
@@ -863,7 +854,7 @@ daemon_send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
 // Answer `initialize` with the daemon snapshot. No session engine or catalog exists yet,
 // so the snapshot is empty; capabilities advertise only what this config
 // offers (`blob_upload` when a blob directory is configured).
-daemon_send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool {
+send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool {
     assert(conn != nil, "initialize send needs connection state")
     assert(conn.daemon != nil, "initialize send needs daemon state")
     assert(conn.wsc != nil, "initialize send needs transport state")
@@ -876,32 +867,32 @@ daemon_send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool 
 
     result := wire.Initialize_Result {
         protocol = wire.PROTOCOL_VERSION,
-        daemon = {version = conn.daemon.daemon_version, server_now_ms = daemon_now_ms()},
+        daemon = {version = conn.daemon.daemon_version, server_now_ms = now_ms()},
         capabilities = capabilities,
         workspaces = nil,
         profiles = nil,
         agents = nil,
         session_revision = 0,
         cron_revision = 0,
-        catalog_rev = daemon_empty_catalog_rev(),
+        catalog_rev = empty_catalog_rev(),
         catalog_health = {skipped = nil, load_error = nil},
     }
     assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
 
-    return daemon_send_response(conn, wire.response_ok_build(id, result))
+    return send_response(conn, wire.response_ok_build(id, result))
 }
 
 // Close a connection with `CLOSE.protocol_error` for a framing/sequence violation
 // on unparseable or out-of-sequence input.
-daemon_conn_protocol_close :: proc(conn: ^Conn) {
+conn_protocol_close :: proc(conn: ^Conn) {
     assert(conn != nil, "protocol close needs connection state")
-    daemon_conn_close(conn, ws.Close_Code(wire.CLOSE.protocol_error))
+    conn_close(conn, ws.Close_Code(wire.CLOSE.protocol_error))
 }
 
 // Begin a transport close with `code` and latch the local Closed state so any
 // further buffered frames on this connection are ignored. The `Conn` is freed later,
 // from the transport terminal callback. Idempotent.
-daemon_conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
+conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
     assert(conn != nil, "connection close needs connection state")
     assert(conn.wsc != nil, "connection close needs transport state")
 
@@ -916,7 +907,7 @@ daemon_conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
 }
 
 // Hard-fail the transport after an internal error made a correct frame impossible.
-daemon_conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
+conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     assert(conn != nil, "connection abort needs connection state")
     assert(conn.wsc != nil, "connection abort needs transport state")
     assert(err != .None, "connection abort needs an error")
@@ -932,7 +923,7 @@ daemon_conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
 
 // Free the connection's owned state and the `Conn` itself. Called once from the
 // transport terminal callback, after which the transport frees `wsc`.
-daemon_conn_free :: proc(conn: ^Conn) {
+conn_free :: proc(conn: ^Conn) {
     assert(conn != nil, "connection cleanup needs connection state")
     assert(conn.wsc != nil, "connection cleanup needs transport state")
     assert(conn.state == .Closed, "connection cleanup before Closed")
@@ -948,13 +939,13 @@ daemon_conn_free :: proc(conn: ^Conn) {
 }
 
 // Daemon wall-clock epoch milliseconds, for the `initialize` result's clock.
-daemon_now_ms :: proc() -> u64 {
+now_ms :: proc() -> u64 {
     return u64(time.to_unix_nanoseconds(time.now()) / 1_000_000)
 }
 
 // Catalog revision emitted before any catalog is loaded: the all-zero hash, which
 // is valid lowercase hex and so passes `initialize_result_validate`.
-daemon_empty_catalog_rev :: proc() -> wire.Catalog_Rev {
+empty_catalog_rev :: proc() -> wire.Catalog_Rev {
     out: [64]u8
     for i in 0 ..< 64 {
         out[i] = '0'

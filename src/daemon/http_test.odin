@@ -45,8 +45,8 @@ Http_Peer :: struct {
     ok:       bool,
 }
 
-daemon_http_peer :: proc(p: ^Http_Peer) {
-    sock, ok := daemon_raw_dial(p.port)
+http_peer :: proc(p: ^Http_Peer) {
+    sock, ok := raw_dial(p.port)
     if !ok {
         return
     }
@@ -77,7 +77,7 @@ daemon_http_peer :: proc(p: ^Http_Peer) {
 
 // Serve one raw HTTP request against a daemon started with `options`, returning
 // what the peer read back. Binds an OS-assigned ephemeral port.
-daemon_run_http :: proc(t: ^testing.T, request: string, options: Daemon_Options = {}) -> string {
+run_http :: proc(t: ^testing.T, request: string, options: Options = {}) -> string {
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
@@ -87,13 +87,13 @@ daemon_run_http :: proc(t: ^testing.T, request: string, options: Daemon_Options 
     opts.port = 0
 
     d: Daemon
-    testing.expect_value(t, daemon_start(&d, loop, opts), Daemon_Error.None)
+    testing.expect_value(t, start(&d, loop, opts), Error.None)
 
     p := Http_Peer {
-        port    = daemon_bound_port(&d),
+        port    = bound_port(&d),
         request = request,
     }
-    peer := thread.create_and_start_with_poly_data(&p, daemon_http_peer)
+    peer := thread.create_and_start_with_poly_data(&p, http_peer)
     defer {
         thread.join(peer)
         thread.destroy(peer)
@@ -107,13 +107,13 @@ daemon_run_http :: proc(t: ^testing.T, request: string, options: Daemon_Options 
     }
 
     thread.join(peer)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 
     return strings.clone(string(p.response[:p.length]), context.temp_allocator)
 }
 
 // A well-formed upgrade request for `target`, with optional extra headers.
-daemon_upgrade_request :: proc(target: string, extra_headers := "") -> string {
+upgrade_request :: proc(target: string, extra_headers := "") -> string {
     key_raw: [ws.SEC_WEBSOCKET_KEY_BYTES]byte
     crypto.rand_bytes(key_raw[:])
     key_encoded: [ws.SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte
@@ -125,8 +125,8 @@ daemon_upgrade_request :: proc(target: string, extra_headers := "") -> string {
 }
 
 // A blob directory holding `BLOB_HASH`.
-daemon_test_make_blob_dir :: proc(name: string) -> string {
-    dir := daemon_test_make_dir(name)
+test_make_blob_dir :: proc(name: string) -> string {
+    dir := test_make_dir(name)
     path, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
     werr := os.write_entire_file(path, transmute([]byte)string(BLOB_BODY))
     assert(werr == nil, "test blob should be writable")
@@ -135,7 +135,7 @@ daemon_test_make_blob_dir :: proc(name: string) -> string {
 }
 
 // Count directory entries, or -1 if the directory cannot be read.
-daemon_blob_dir_count :: proc(dir: string) -> int {
+blob_dir_count :: proc(dir: string) -> int {
     infos, err := os.read_all_directory_by_path(dir, context.temp_allocator)
     if err != nil {
         return -1
@@ -145,7 +145,7 @@ daemon_blob_dir_count :: proc(dir: string) -> int {
 }
 
 // Whether any in-flight upload temp file was left behind under `dir`.
-daemon_blob_dir_has_temp :: proc(dir: string) -> bool {
+blob_dir_has_temp :: proc(dir: string) -> bool {
     infos, err := os.read_all_directory_by_path(dir, context.temp_allocator)
     if err != nil {
         return false
@@ -161,7 +161,7 @@ daemon_blob_dir_has_temp :: proc(dir: string) -> bool {
 }
 
 // Write an empty in-flight upload temp file under `dir` for `hash`, returning its path.
-daemon_test_write_temp :: proc(dir: string, hash: string) -> string {
+test_write_temp :: proc(dir: string, hash: string) -> string {
     name := strings.concatenate({BLOB_TEMP_PREFIX, hash, ".nonce"}, context.temp_allocator)
     path, _ := os.join_path({dir, name}, context.temp_allocator)
     werr := os.write_entire_file(path, transmute([]byte)string("partial"))
@@ -172,7 +172,7 @@ daemon_test_write_temp :: proc(dir: string, hash: string) -> string {
 
 // A PUT request to `PUT /blob/<hash>` carrying `body`, with an optional extra header
 // block (for auth) and an override for the declared Content-Length.
-daemon_blob_put_request :: proc(hash: string, body: string, extra := "", content_length := -1) -> string {
+blob_put_request :: proc(hash: string, body: string, extra := "", content_length := -1) -> string {
     length := content_length
     if length < 0 {
         length = len(body)
@@ -191,16 +191,16 @@ daemon_blob_put_request :: proc(hash: string, body: string, extra := "", content
 test_daemon_stores_an_uploaded_blob :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload")
+    dir := test_make_dir("yuke-blob-upload")
     defer os.remove_all(dir)
 
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
+    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 201 Created\r\n"), "a fresh, verified blob should 201")
 
-    testing.expect_value(t, daemon_blob_dir_count(dir), 1)
-    testing.expect(t, !daemon_blob_dir_has_temp(dir), "no upload temp should remain")
+    testing.expect_value(t, blob_dir_count(dir), 1)
+    testing.expect(t, !blob_dir_has_temp(dir), "no upload temp should remain")
 
-    get := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    get := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
     testing.expect(t, strings.has_prefix(get, "HTTP/1.1 200 OK\r\n"), "the stored blob should be served")
     testing.expect(t, strings.has_suffix(get, UPLOAD_BODY), "the served body should be the uploaded bytes")
 }
@@ -209,19 +209,19 @@ test_daemon_stores_an_uploaded_blob :: proc(t: ^testing.T) {
 test_daemon_upload_is_idempotent :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload-idempotent")
+    dir := test_make_dir("yuke-blob-upload-idempotent")
     defer os.remove_all(dir)
 
-    first := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
+    first := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
     testing.expect(t, strings.has_prefix(first, "HTTP/1.1 201 Created\r\n"), "the first store should 201")
 
-    second := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
+    second := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
     testing.expect(t, strings.has_prefix(second, "HTTP/1.1 200 OK\r\n"), "a repeat store should 200")
 
-    testing.expect_value(t, daemon_blob_dir_count(dir), 1)
-    testing.expect(t, !daemon_blob_dir_has_temp(dir), "an idempotent store leaves no temp")
+    testing.expect_value(t, blob_dir_count(dir), 1)
+    testing.expect(t, !blob_dir_has_temp(dir), "an idempotent store leaves no temp")
 
-    get := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    get := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
     testing.expect(t, strings.has_suffix(get, UPLOAD_BODY), "the stored content should be intact")
 }
 
@@ -229,17 +229,17 @@ test_daemon_upload_is_idempotent :: proc(t: ^testing.T) {
 test_daemon_rejects_upload_hash_mismatch :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload-mismatch")
+    dir := test_make_dir("yuke-blob-upload-mismatch")
     defer os.remove_all(dir)
 
     // Bytes that are not `UPLOAD_BODY`, so their digest cannot equal `BLOB_HASH`.
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, "world"), {blob_dir = dir})
+    put := run_http(t, blob_put_request(BLOB_HASH, "world"), {blob_dir = dir})
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 400 Bad Request\r\n"), "a lied-about address should 400")
 
     stored, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
     testing.expect(t, !os.exists(stored), "a mismatched blob must not be stored under its claimed hash")
-    testing.expect_value(t, daemon_blob_dir_count(dir), 0)
-    testing.expect(t, !daemon_blob_dir_has_temp(dir), "a rejected upload must delete its temp")
+    testing.expect_value(t, blob_dir_count(dir), 0)
+    testing.expect(t, !blob_dir_has_temp(dir), "a rejected upload must delete its temp")
 }
 
 // Drives the cap on the declared Content-Length: it advertises one byte over
@@ -248,56 +248,78 @@ test_daemon_rejects_upload_hash_mismatch :: proc(t: ^testing.T) {
 test_daemon_rejects_oversized_upload :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload-oversized")
+    dir := test_make_dir("yuke-blob-upload-oversized")
     defer os.remove_all(dir)
 
     over := int(wire.LIMITS.max_blob_bytes) + 1
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, "x", content_length = over), {blob_dir = dir})
+    put := run_http(t, blob_put_request(BLOB_HASH, "x", content_length = over), {blob_dir = dir})
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 413 Content Too Large\r\n"), "an over-cap upload should 413")
 
-    testing.expect_value(t, daemon_blob_dir_count(dir), 0)
-    testing.expect(t, !daemon_blob_dir_has_temp(dir), "a rejected upload opens no temp")
+    testing.expect_value(t, blob_dir_count(dir), 0)
+    testing.expect(t, !blob_dir_has_temp(dir), "a rejected upload opens no temp")
+}
+
+// The front door raises the driver's 1 MiB default to `max_blob_bytes`. Without that,
+// uploads between the two would 413 and every other blob test would still pass.
+@(test)
+test_daemon_upload_over_the_driver_default_is_read :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-blob-upload-over-default")
+    defer os.remove_all(dir)
+
+    body := strings.repeat("x", 1 << 20 + 1, context.temp_allocator)
+    put := run_http(t, blob_put_request(BLOB_HASH, body), {blob_dir = dir})
+
+    // The digest will not match `BLOB_HASH`; the point is that the body was read at all
+    // rather than refused on its declared length.
+    testing.expectf(
+        t,
+        strings.has_prefix(put, "HTTP/1.1 400 Bad Request\r\n"),
+        "a body over the driver default must be read, not refused on max_body_bytes; got %q",
+        put,
+    )
 }
 
 @(test)
 test_daemon_rejects_unauthorized_upload :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload-unauth")
+    dir := test_make_dir("yuke-blob-upload-unauth")
     defer os.remove_all(dir)
 
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir, auth_token = "s3cret"})
+    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir, auth_token = "s3cret"})
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 401 Unauthorized\r\n"), "an unauthenticated upload must 401")
 
-    testing.expect_value(t, daemon_blob_dir_count(dir), 0)
+    testing.expect_value(t, blob_dir_count(dir), 0)
 }
 
 @(test)
 test_daemon_rejects_a_traversing_upload_path :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-upload-traversal")
+    dir := test_make_dir("yuke-blob-upload-traversal")
     defer os.remove_all(dir)
 
-    put := daemon_run_http(t, daemon_blob_put_request("../../etc/passwd", UPLOAD_BODY), {blob_dir = dir})
+    put := run_http(t, blob_put_request("../../etc/passwd", UPLOAD_BODY), {blob_dir = dir})
     testing.expect(
         t,
         strings.has_prefix(put, "HTTP/1.1 404 Not Found\r\n"),
         "a non-hash upload path must never resolve",
     )
 
-    testing.expect_value(t, daemon_blob_dir_count(dir), 0)
-    testing.expect(t, !daemon_blob_dir_has_temp(dir), "a rejected path opens no temp")
+    testing.expect_value(t, blob_dir_count(dir), 0)
+    testing.expect(t, !blob_dir_has_temp(dir), "a rejected path opens no temp")
 }
 
 @(test)
 test_daemon_serves_a_blob :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-serve")
+    dir := test_make_blob_dir("yuke-blob-serve")
     defer os.remove_all(dir)
 
-    got := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    got := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "a stored blob should be served")
     testing.expect(t, strings.contains(got, "Content-Type: application/octet-stream\r\n"), "blobs are opaque bytes")
@@ -308,12 +330,12 @@ test_daemon_serves_a_blob :: proc(t: ^testing.T) {
 test_daemon_unknown_blob_is_not_found :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-unknown")
+    dir := test_make_blob_dir("yuke-blob-unknown")
     defer os.remove_all(dir)
 
     // Well-formed hash, nothing stored under it.
     MISSING :: "0000000000000000000000000000000000000000000000000000000000000000"
-    got := daemon_run_http(t, "GET /blob/" + MISSING + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    got := run_http(t, "GET /blob/" + MISSING + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"), "an unknown blob should 404")
 }
@@ -322,10 +344,10 @@ test_daemon_unknown_blob_is_not_found :: proc(t: ^testing.T) {
 test_daemon_rejects_a_traversing_blob_path :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-traversal")
+    dir := test_make_blob_dir("yuke-blob-traversal")
     defer os.remove_all(dir)
 
-    got := daemon_run_http(t, "GET /blob/../../etc/passwd HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    got := run_http(t, "GET /blob/../../etc/passwd HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"), "a non-hash path must never resolve")
 }
@@ -334,7 +356,7 @@ test_daemon_rejects_a_traversing_blob_path :: proc(t: ^testing.T) {
 test_daemon_unknown_route_is_not_found :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+    got := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"), "an unrouted path should 404")
 }
@@ -343,7 +365,7 @@ test_daemon_unknown_route_is_not_found :: proc(t: ^testing.T) {
 test_daemon_rejects_a_non_get :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "POST /ws HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 0\r\n\r\n")
+    got := run_http(t, "POST /ws HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 0\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "only GET is routed")
     testing.expectf(t, strings.contains(got, "Allow: GET\r\n"), "405 must carry Allow, got %q", got)
@@ -355,7 +377,7 @@ test_daemon_rejects_a_non_get :: proc(t: ^testing.T) {
 test_daemon_405_on_blob_lists_both_methods :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(
+    got := run_http(
         t,
         "DELETE /blob/" + BLOB_HASH + "?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
         {auth_token = "s3cret"},
@@ -375,7 +397,7 @@ test_daemon_405_on_blob_lists_both_methods :: proc(t: ^testing.T) {
 test_daemon_rejects_a_non_upgrade_on_ws :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+    got := run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 400 Bad Request\r\n"), "a bare GET /ws is not an upgrade")
 }
@@ -384,7 +406,7 @@ test_daemon_rejects_a_non_upgrade_on_ws :: proc(t: ^testing.T) {
 test_daemon_upgrades_without_auth :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, daemon_upgrade_request("/ws"))
+    got := run_http(t, upgrade_request("/ws"))
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 101 Switching Protocols\r\n"), "a valid upgrade should 101")
 }
@@ -393,7 +415,7 @@ test_daemon_upgrades_without_auth :: proc(t: ^testing.T) {
 test_daemon_requires_the_auth_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, daemon_upgrade_request("/ws"), {auth_token = "s3cret"})
+    got := run_http(t, upgrade_request("/ws"), {auth_token = "s3cret"})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"), "an unauthorized upgrade should 401")
     testing.expect(
@@ -407,11 +429,7 @@ test_daemon_requires_the_auth_token :: proc(t: ^testing.T) {
 test_daemon_rejects_a_wrong_auth_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(
-        t,
-        daemon_upgrade_request("/ws", "Authorization: Bearer wrong1\r\n"),
-        {auth_token = "s3cret"},
-    )
+    got := run_http(t, upgrade_request("/ws", "Authorization: Bearer wrong1\r\n"), {auth_token = "s3cret"})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"), "a wrong token should 401")
 }
@@ -420,7 +438,7 @@ test_daemon_rejects_a_wrong_auth_token :: proc(t: ^testing.T) {
 test_daemon_accepts_a_query_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, daemon_upgrade_request("/ws?token=s3cret"), {auth_token = "s3cret"})
+    got := run_http(t, upgrade_request("/ws?token=s3cret"), {auth_token = "s3cret"})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 101 Switching Protocols\r\n"), "?token= should authorize")
     testing.expect(
@@ -434,21 +452,17 @@ test_daemon_accepts_a_query_token :: proc(t: ^testing.T) {
 test_daemon_auth_gate_covers_blob_and_unknown_routes :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    blob := daemon_run_http(
-        t,
-        "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
-        {auth_token = "s3cret"},
-    )
+    blob := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
     testing.expect(t, strings.has_prefix(blob, "HTTP/1.1 401 Unauthorized\r\n"), "blob access must be authenticated")
 
-    unknown := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    unknown := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
     testing.expect(
         t,
         strings.has_prefix(unknown, "HTTP/1.1 401 Unauthorized\r\n"),
         "auth must precede route disclosure",
     )
 
-    non_get := daemon_run_http(
+    non_get := run_http(
         t,
         "POST /ws HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 0\r\n\r\n",
         {auth_token = "s3cret"},
@@ -464,10 +478,10 @@ test_daemon_auth_gate_covers_blob_and_unknown_routes :: proc(t: ^testing.T) {
 test_daemon_accepts_case_insensitive_bearer_for_blob :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-auth")
+    dir := test_make_blob_dir("yuke-blob-auth")
     defer os.remove_all(dir)
 
-    got := daemon_run_http(
+    got := run_http(
         t,
         "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: bEaReR  s3cret\r\n\r\n",
         {blob_dir = dir, auth_token = "s3cret"},
@@ -481,9 +495,9 @@ test_daemon_accepts_case_insensitive_bearer_for_blob :: proc(t: ^testing.T) {
 test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    both := daemon_run_http(
+    both := run_http(
         t,
-        daemon_upgrade_request("/ws?token=s3cret", "Authorization: Bearer s3cret\r\n"),
+        upgrade_request("/ws?token=s3cret", "Authorization: Bearer s3cret\r\n"),
         {auth_token = "s3cret"},
     )
     testing.expect(
@@ -492,9 +506,9 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
         "header plus query credentials are ambiguous",
     )
 
-    duplicate_header := daemon_run_http(
+    duplicate_header := run_http(
         t,
-        daemon_upgrade_request("/ws", "Authorization: Bearer s3cret\r\nAuthorization: Bearer s3cret\r\n"),
+        upgrade_request("/ws", "Authorization: Bearer s3cret\r\nAuthorization: Bearer s3cret\r\n"),
         {auth_token = "s3cret"},
     )
     testing.expect(
@@ -503,11 +517,7 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
         "duplicate authorization fields are ambiguous",
     )
 
-    duplicate_query := daemon_run_http(
-        t,
-        daemon_upgrade_request("/ws?token=s3cret&token=s3cret"),
-        {auth_token = "s3cret"},
-    )
+    duplicate_query := run_http(t, upgrade_request("/ws?token=s3cret&token=s3cret"), {auth_token = "s3cret"})
     testing.expect(
         t,
         strings.has_prefix(duplicate_query, "HTTP/1.1 400 Bad Request\r\n"),
@@ -528,7 +538,7 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
 test_daemon_disabled_auth_marks_token_responses_private :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    with_token := daemon_run_http(t, "GET /nope?token=whatever HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+    with_token := run_http(t, "GET /nope?token=whatever HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
     testing.expect(
         t,
         strings.has_prefix(with_token, "HTTP/1.1 404 Not Found\r\n"),
@@ -540,7 +550,7 @@ test_daemon_disabled_auth_marks_token_responses_private :: proc(t: ^testing.T) {
         "a token-bearing request is private even when auth is disabled",
     )
 
-    without := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+    without := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
     testing.expect(t, strings.has_prefix(without, "HTTP/1.1 404 Not Found\r\n"), "an unrouted path 404s")
     testing.expect(t, !strings.contains(without, "Cache-Control:"), "a request with no token is freely cacheable")
 }
@@ -551,7 +561,7 @@ test_daemon_disabled_auth_marks_token_responses_private :: proc(t: ^testing.T) {
 test_daemon_refusal_marks_token_responses_private :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    refused := daemon_run_http(t, "GET /nope?token=whatever HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+    refused := run_http(t, "GET /nope?token=whatever HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
     testing.expect(t, strings.has_prefix(refused, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is refused")
     testing.expectf(
         t,
@@ -560,7 +570,7 @@ test_daemon_refusal_marks_token_responses_private :: proc(t: ^testing.T) {
         refused,
     )
 
-    without := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+    without := run_http(t, "GET /nope HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
     testing.expect(t, strings.has_prefix(without, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is refused")
     testing.expect(t, !strings.contains(without, "Cache-Control:"), "a 403 with no token needs no marker")
 }
@@ -571,7 +581,7 @@ test_daemon_refusal_marks_token_responses_private :: proc(t: ^testing.T) {
 test_daemon_rejects_a_symlinked_blob :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-symlink")
+    dir := test_make_blob_dir("yuke-blob-symlink")
     defer os.remove_all(dir)
 
     SYMHASH :: "1111111111111111111111111111111111111111111111111111111111111111"
@@ -583,7 +593,7 @@ test_daemon_rejects_a_symlinked_blob :: proc(t: ^testing.T) {
     }
     defer os.remove_all(link)
 
-    got := daemon_run_http(t, "GET /blob/" + SYMHASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    got := run_http(t, "GET /blob/" + SYMHASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"), "a symlinked blob path must be refused")
 }
@@ -592,10 +602,10 @@ test_daemon_rejects_a_symlinked_blob :: proc(t: ^testing.T) {
 test_daemon_query_authenticated_blob_is_not_cacheable :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-query-auth")
+    dir := test_make_blob_dir("yuke-blob-query-auth")
     defer os.remove_all(dir)
 
-    got := daemon_run_http(
+    got := run_http(
         t,
         "GET /blob/" + BLOB_HASH + "?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
         {blob_dir = dir, auth_token = "s3cret"},
@@ -611,9 +621,9 @@ test_daemon_query_authenticated_blob_is_not_cacheable :: proc(t: ^testing.T) {
 
 @(test)
 test_daemon_auth_token_uses_url_safe_grammar :: proc(t: ^testing.T) {
-    testing.expect(t, daemon_auth_token_valid("AZaz09-._~"), "the unreserved alphabet should be accepted")
-    testing.expect(t, !daemon_auth_token_valid("has space"), "spaces require URL encoding and should be rejected")
-    testing.expect(t, !daemon_auth_token_valid("has/slash"), "reserved query bytes should be rejected")
+    testing.expect(t, auth_token_valid("AZaz09-._~"), "the unreserved alphabet should be accepted")
+    testing.expect(t, !auth_token_valid("has space"), "spaces require URL encoding and should be rejected")
+    testing.expect(t, !auth_token_valid("has/slash"), "reserved query bytes should be rejected")
 }
 
 // End to end: the real client driver reaches Ready through the token gate, carrying
@@ -627,11 +637,7 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "s3cret"}),
-        Daemon_Error.None,
-    )
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "s3cret"}), Error.None)
 
     obs: Cli_Obs
     c: client.Client
@@ -640,7 +646,7 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
         loop,
         ws.Options {
             host = "127.0.0.1",
-            port = daemon_bound_port(&d),
+            port = bound_port(&d),
             path = "/ws",
             extra_headers = "Authorization: Bearer s3cret\r\n",
         },
@@ -658,25 +664,25 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.err, client.Protocol_Error.None)
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // --- Boot-time upload-temp sweep -----------------------------------------------
 //
-// `daemon_blob_sweep_temps` takes its cutoff as an explicit parameter, so staleness is
+// `blob_sweep_temps` takes its cutoff as an explicit parameter, so staleness is
 // forced by choosing a future or past cutoff rather than manipulating mtimes.
 
 @(test)
 test_blob_sweep_removes_stale_temp :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-sweep-stale")
+    dir := test_make_dir("yuke-blob-sweep-stale")
     defer os.remove_all(dir)
 
-    temp_path := daemon_test_write_temp(dir, BLOB_HASH)
+    temp_path := test_write_temp(dir, BLOB_HASH)
 
     // A cutoff in the future: the temp's real mtime is necessarily before it.
-    removed := daemon_blob_sweep_temps(dir, time.time_add(time.now(), time.Hour))
+    removed := blob_sweep_temps(dir, time.time_add(time.now(), time.Hour))
 
     testing.expect_value(t, removed, 1)
     testing.expect(t, !os.exists(temp_path), "a stale upload temp should be removed")
@@ -686,14 +692,14 @@ test_blob_sweep_removes_stale_temp :: proc(t: ^testing.T) {
 test_blob_sweep_keeps_fresh_temp_and_blobs :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-sweep-fresh")
+    dir := test_make_blob_dir("yuke-blob-sweep-fresh")
     defer os.remove_all(dir)
 
-    temp_path := daemon_test_write_temp(dir, BLOB_HASH)
+    temp_path := test_write_temp(dir, BLOB_HASH)
     blob_path, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
 
     // A cutoff in the past: nothing written just now can be older than it.
-    removed := daemon_blob_sweep_temps(dir, time.time_add(time.now(), -time.Hour))
+    removed := blob_sweep_temps(dir, time.time_add(time.now(), -time.Hour))
 
     testing.expect_value(t, removed, 0)
     testing.expect(t, os.exists(temp_path), "a fresh upload temp must survive the sweep")
@@ -704,10 +710,10 @@ test_blob_sweep_keeps_fresh_temp_and_blobs :: proc(t: ^testing.T) {
 test_blob_sweep_missing_dir_is_noop :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-sweep-missing")
+    dir := test_make_dir("yuke-blob-sweep-missing")
     os.remove_all(dir)
 
-    removed := daemon_blob_sweep_temps(dir, time.now())
+    removed := blob_sweep_temps(dir, time.now())
     testing.expect_value(t, removed, 0)
 }
 
@@ -721,7 +727,7 @@ test_blob_sweep_missing_dir_is_noop :: proc(t: ^testing.T) {
 test_daemon_refuses_a_browser_origin :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n")
+    got := run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"), "an Origin marks a page-driven request")
 }
@@ -732,7 +738,7 @@ test_daemon_refuses_a_browser_origin :: proc(t: ^testing.T) {
 test_daemon_refuses_an_origin_before_authenticating :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(
+    got := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n",
         {auth_token = "s3cret"},
@@ -750,7 +756,7 @@ test_daemon_refuses_an_origin_before_authenticating :: proc(t: ^testing.T) {
 test_daemon_refuses_a_named_host :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
+    got := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: rebind.example\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"), "a named Host is the rebinding shape")
 }
@@ -771,7 +777,7 @@ test_daemon_admits_literal_hosts :: proc(t: ^testing.T) {
         "[::ffff:127.0.0.1]",
     }
     for host in hosts {
-        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        got := run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
         testing.expectf(
             t,
             strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"),
@@ -791,7 +797,7 @@ test_daemon_refuses_literals_that_do_not_address_it :: proc(t: ^testing.T) {
 
     hosts := []string{"0.0.0.0", "0.0.0.0:8080", "[::]", "192.168.1.50", "10.0.0.1", "8.8.8.8", "[2001:db8::1]"}
     for host in hosts {
-        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        got := run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
         testing.expectf(
             t,
             strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
@@ -808,7 +814,7 @@ test_daemon_refuses_literals_that_do_not_address_it :: proc(t: ^testing.T) {
 test_daemon_rejects_pipelining_but_not_bodies :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    unrouted := daemon_run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
+    unrouted := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
     testing.expectf(
         t,
         strings.has_prefix(unrouted, "HTTP/1.1 400 Bad Request\r\n"),
@@ -816,7 +822,7 @@ test_daemon_rejects_pipelining_but_not_bodies :: proc(t: ^testing.T) {
         unrouted,
     )
 
-    blob := daemon_run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
+    blob := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\nGET /x HTTP/1.1\r\n")
     testing.expectf(
         t,
         strings.has_prefix(blob, "HTTP/1.1 400 Bad Request\r\n"),
@@ -824,7 +830,7 @@ test_daemon_rejects_pipelining_but_not_bodies :: proc(t: ^testing.T) {
         blob,
     )
 
-    with_body := daemon_run_http(t, "PUT /nope HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 5\r\n\r\nhello")
+    with_body := run_http(t, "PUT /nope HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 5\r\n\r\nhello")
     testing.expectf(
         t,
         strings.has_prefix(with_body, "HTTP/1.1 404 Not Found\r\n"),
@@ -839,8 +845,8 @@ test_daemon_rejects_pipelining_but_not_bodies :: proc(t: ^testing.T) {
 test_daemon_upgrade_keeps_trailing_bytes :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    request := fmt.tprintf("%s%s", daemon_upgrade_request("/ws"), "\x81\x00")
-    got := daemon_run_http(t, request)
+    request := fmt.tprintf("%s%s", upgrade_request("/ws"), "\x81\x00")
+    got := run_http(t, request)
 
     testing.expectf(
         t,
@@ -856,7 +862,7 @@ test_daemon_upgrade_keeps_trailing_bytes :: proc(t: ^testing.T) {
 test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    scheme := daemon_run_http(
+    scheme := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Basic abc\r\n\r\n",
         {auth_token = "s3cret"},
@@ -869,7 +875,7 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
         scheme,
     )
 
-    malformed := daemon_run_http(
+    malformed := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer\r\n\r\n",
         {auth_token = "s3cret"},
@@ -881,7 +887,7 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
         malformed,
     )
 
-    ambiguous := daemon_run_http(
+    ambiguous := run_http(
         t,
         "GET /ws?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer s3cret\r\n\r\n",
         {auth_token = "s3cret"},
@@ -906,7 +912,7 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
 test_daemon_head_response_has_no_content :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := daemon_run_http(t, "HEAD /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
+    got := run_http(t, "HEAD /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n")
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "HEAD is not routed")
     testing.expect(t, strings.contains(got, "Allow: GET\r\n"), "405 still carries Allow")
@@ -918,10 +924,10 @@ test_daemon_head_response_has_no_content :: proc(t: ^testing.T) {
 test_daemon_head_on_blob_has_no_content :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_blob_dir("yuke-blob-head")
+    dir := test_make_blob_dir("yuke-blob-head")
     defer os.remove_all(dir)
 
-    got := daemon_run_http(t, "HEAD /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    got := run_http(t, "HEAD /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "HEAD is not routed")
     testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
@@ -949,7 +955,7 @@ test_daemon_refuses_a_malformed_host_without_crashing :: proc(t: ^testing.T) {
         ":80",
     }
     for host in hosts {
-        got := daemon_run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
+        got := run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
         testing.expectf(
             t,
             strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
@@ -964,7 +970,7 @@ test_daemon_refuses_a_malformed_host_without_crashing :: proc(t: ^testing.T) {
 test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    missing := daemon_run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    missing := run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
     testing.expect(t, strings.has_prefix(missing, "HTTP/1.1 401 Unauthorized\r\n"), "an absent credential should 401")
     testing.expect(
         t,
@@ -972,7 +978,7 @@ test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
         "an absent credential must not be reported as a rejected one",
     )
 
-    wrong := daemon_run_http(
+    wrong := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer nope\r\n\r\n",
         {auth_token = "s3cret"},
@@ -989,12 +995,12 @@ test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
 test_daemon_creates_a_missing_blob_dir :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-create")
+    dir := test_make_dir("yuke-blob-create")
     defer os.remove_all(dir)
 
     nested, _ := os.join_path({dir, "blobs"}, context.temp_allocator)
 
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
+    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
 
     testing.expect(t, os.is_dir(nested), "a missing blob directory should be created at start")
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 201 Created\r\n"), "an upload into it should 201")
@@ -1005,12 +1011,12 @@ test_daemon_creates_a_missing_blob_dir :: proc(t: ^testing.T) {
 test_daemon_blob_store_is_owner_only :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-perms")
+    dir := test_make_dir("yuke-blob-perms")
     defer os.remove_all(dir)
 
     nested, _ := os.join_path({dir, "blobs"}, context.temp_allocator)
 
-    put := daemon_run_http(t, daemon_blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
+    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = nested})
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 201 Created\r\n"), "the upload should store a blob")
 
     dir_info, dir_err := os.stat(nested, context.temp_allocator)
@@ -1037,7 +1043,7 @@ test_daemon_blob_store_is_owner_only :: proc(t: ^testing.T) {
 test_daemon_rejects_an_unusable_blob_dir :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-blob-unusable")
+    dir := test_make_dir("yuke-blob-unusable")
     defer os.remove_all(dir)
 
     // A regular file where the blob directory should be: it can never hold a blob.
@@ -1049,7 +1055,7 @@ test_daemon_rejects_an_unusable_blob_dir :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    err := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, blob_dir = occupied})
+    err := start(&d, loop, {host = "127.0.0.1", port = 0, blob_dir = occupied})
 
-    testing.expect_value(t, err, Daemon_Error.Invalid_Options)
+    testing.expect_value(t, err, Error.Invalid_Options)
 }

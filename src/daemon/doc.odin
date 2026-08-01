@@ -35,7 +35,7 @@ page and `catalog.list` the empty revision; the workspace methods read the real
 filesystem.
 
 The pump (`pump.odin`) is the daemon's single seq authority and its only fan-out path.
-`daemon_broadcast` derives the name from the closed payload union, then classifies it
+`broadcast` derives the name from the closed payload union, then classifies it
 with `wire.broadcast_name_class`. A `Durable_Gated` one is assigned `high_water + 1`,
 written to the `src/daemon/store` log
 with its derived marks, and only fanned out once the commit returns — clients never
@@ -97,19 +97,19 @@ Per-connection state machine (the inverse of the client's):
 
 Ownership:
 
-  - Each accepted connection owns a `Conn` allocated in the transport `on_open` and
-    freed in the terminal callback (`on_close`/`on_error`). It holds a per-frame
+  - Each accepted connection owns a `Conn` allocated in the transport `ws_on_open` and
+    freed in the terminal callback (`ws_on_close`/`ws_on_error`). It holds a per-frame
     `scratch` arena, `free_all`'d after each inbound frame; wire values decoded into
     it are non-owning borrows valid only for that frame.
   - The one datum retained from `initialize` is the client identity (`name`,
     `version`), kept as owned `strings.clone`s into the connection allocator for
     logging/identity and freed with the `Conn`. Nothing else survives the frame.
   - `Daemon.daemon_version`, `blob_dir`, and `auth_token` are owned clones freed by
-    `daemon_destroy`. The database path is not retained: `store.open` copies what it
+    `destroy`. The database path is not retained: `store.open` copies what it
     needs, so the store handle itself records that a database is configured.
-  - The store is opened by `daemon_start` before the transport adopts anything — a
+  - The store is opened by `start` before the transport adopts anything — a
     damaged or future-versioned database is a start failure, not a per-request one —
-    and closed by `daemon_destroy` after the blob worker pool drains, since a drained
+    and closed by `destroy` after the blob worker pool drains, since a drained
     completion runs on this loop and may still reach the front door. The pump's
     tracked high-water marks live and die with the store.
 */

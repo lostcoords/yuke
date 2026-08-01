@@ -13,7 +13,7 @@ import wire "src:wire"
 // --- session.resync cut tests --------------------------------------------------
 //
 // The cut is folded from the durable log alone, so each fixture seeds the log through
-// `daemon_broadcast` — the pump entry point the session engine will use — and then
+// `broadcast` — the pump entry point the session engine will use — and then
 // builds the cut the handler would send. One test carries a cut over a real
 // connection and installs it into a `src/client` replica, which is the consumer whose
 // invariants the fold exists to satisfy.
@@ -111,12 +111,12 @@ resync_with_daemon :: proc(t: ^testing.T, name: string, body: proc(t: ^testing.T
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Daemon_Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
     testing.expect(t, d.store != nil, "a configured database opens the store at start")
 
     body(t, &d)
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -129,9 +129,9 @@ test_daemon_resync_cut_derives_from_the_log :: proc(t: ^testing.T) {
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('a')
 
-            testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_user(session, 1)), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_assistant(session, 2, 1)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_user(session, 1)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_assistant(session, 2, 1)), Pump_Error.None)
 
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
@@ -176,7 +176,7 @@ test_daemon_resync_of_an_unknown_session_is_refused :: proc(t: ^testing.T) {
         "daemon-resync-unknown",
         proc(t: ^testing.T, d: ^Daemon) {
             written := pump_test_session('b')
-            testing.expect_value(t, daemon_broadcast(d, resync_user(written, 1)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_user(written, 1)), Pump_Error.None)
 
             // A session with no durable stream was never written by anything.
             _, err := resync_build(d, {session_id = pump_test_session('c')}, context.temp_allocator)
@@ -194,13 +194,13 @@ test_daemon_resync_without_a_store_is_unknown :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, daemon_start(&d, loop, {host = "127.0.0.1", port = 0}), Daemon_Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0}), Error.None)
     testing.expect(t, d.store == nil, "no database configured means no store")
 
     _, err := resync_build(&d, {session_id = pump_test_session('d')}, context.temp_allocator)
     testing.expect_value(t, err, Resync_Error.Unknown_Session)
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -217,25 +217,17 @@ test_daemon_resync_survives_a_restart :: proc(t: ^testing.T) {
     session := pump_test_session('e')
 
     first: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
-    testing.expect_value(t, daemon_broadcast(&first, resync_config(session, 1, "m1")), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, resync_user(session, 1)), Pump_Error.None)
+    testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    testing.expect_value(t, broadcast(&first, resync_config(session, 1, "m1")), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_user(session, 1)), Pump_Error.None)
 
     before, berr := resync_build(&first, {session_id = session}, context.temp_allocator)
     testing.expect_value(t, berr, Resync_Error.None)
-    daemon_test_teardown(&first)
+    test_teardown(&first)
 
     // Nothing about the cut lives in the daemon: a fresh process folds the same log.
     second: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
+    testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     after, aerr := resync_build(&second, {session_id = session}, context.temp_allocator)
     testing.expect_value(t, aerr, Resync_Error.None)
@@ -247,7 +239,7 @@ test_daemon_resync_survives_a_restart :: proc(t: ^testing.T) {
         testing.expect_value(t, wire.message_id(after.messages[0]), wire.Message_Id(1))
     }
 
-    daemon_test_teardown(&second)
+    test_teardown(&second)
 }
 
 @(test)
@@ -261,11 +253,7 @@ test_daemon_resync_pages_the_transcript_tail :: proc(t: ^testing.T) {
             session := pump_test_session('f')
 
             for id in 1 ..= 5 {
-                testing.expect_value(
-                    t,
-                    daemon_broadcast(d, resync_user(session, wire.Message_Id(id))),
-                    Pump_Error.None,
-                )
+                testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
             }
 
             cut, err := resync_build(d, {session_id = session, limit = u64(2)}, context.temp_allocator)
@@ -293,11 +281,11 @@ test_daemon_resync_configs_cover_the_page :: proc(t: ^testing.T) {
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('1')
 
-            testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_assistant(session, 1, 1)), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_config(session, 2, "m2")), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_assistant(session, 2, 2)), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_assistant(session, 3, 2)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_assistant(session, 1, 1)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_config(session, 2, "m2")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_assistant(session, 2, 2)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_assistant(session, 3, 2)), Pump_Error.None)
 
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
@@ -334,14 +322,10 @@ test_daemon_resync_drops_truncated_messages :: proc(t: ^testing.T) {
             session := pump_test_session('2')
 
             for id in 1 ..= 3 {
-                testing.expect_value(
-                    t,
-                    daemon_broadcast(d, resync_user(session, wire.Message_Id(id))),
-                    Pump_Error.None,
-                )
+                testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
             }
 
-            testing.expect_value(t, daemon_broadcast(d, resync_truncated(session, 2)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_truncated(session, 2)), Pump_Error.None)
 
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
@@ -369,8 +353,8 @@ test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('3')
 
-            testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, pump_run_started(session)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, pump_run_started(session)), Pump_Error.None)
 
             running, rerr := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, rerr, Resync_Error.None)
@@ -385,7 +369,7 @@ test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
             testing.expect_value(t, cfg.config_rev, wire.Config_Rev(1))
             testing.expect_value(t, len(running.configs), 1)
 
-            testing.expect_value(t, daemon_broadcast(d, resync_run_done(session, 1)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_run_done(session, 1)), Pump_Error.None)
 
             idle, ierr := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, ierr, Resync_Error.None)
@@ -428,7 +412,7 @@ test_daemon_resync_of_a_conflicting_config_revision_is_refused :: proc(t: ^testi
 
     resync_with_daemon(t, "daemon-resync-conflicting-config", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('5')
-        testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
         resync_append_corrupt_fixture(t, d, resync_config(session, 1, "m2"))
 
         _, err := resync_build(d, {session_id = session}, context.temp_allocator)
@@ -467,9 +451,9 @@ test_daemon_resync_of_a_reused_truncated_message_id_is_refused :: proc(t: ^testi
     resync_with_daemon(t, "daemon-resync-reused-id", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('7')
 
-        testing.expect_value(t, daemon_broadcast(d, resync_user(session, 1)), Pump_Error.None)
-        testing.expect_value(t, daemon_broadcast(d, resync_user(session, 2)), Pump_Error.None)
-        testing.expect_value(t, daemon_broadcast(d, resync_truncated(session, 2)), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_user(session, 1)), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_user(session, 2)), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_truncated(session, 2)), Pump_Error.None)
         resync_append_corrupt_fixture(t, d, resync_user(session, 2))
 
         _, err := resync_build(d, {session_id = session}, context.temp_allocator)
@@ -510,12 +494,12 @@ test_daemon_resync_keeps_a_run_open_past_a_mismatched_terminal :: proc(t: ^testi
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('8')
 
-            testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-            testing.expect_value(t, daemon_broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
 
             // A run canceled while queued terminates without ever having started, so its
             // terminal must not close the run that is actually open.
-            testing.expect_value(t, daemon_broadcast(d, resync_run_done(session, 2)), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_run_done(session, 2)), Pump_Error.None)
 
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
@@ -536,8 +520,8 @@ test_daemon_resync_refuses_overlapping_runs :: proc(t: ^testing.T) {
     resync_with_daemon(t, "daemon-resync-run-replace", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('9')
 
-        testing.expect_value(t, daemon_broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-        testing.expect_value(t, daemon_broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
         resync_append_corrupt_fixture(t, d, resync_run_started(session, 2, 20))
 
         _, err := resync_build(d, {session_id = session}, context.temp_allocator)
@@ -558,11 +542,7 @@ test_daemon_resync_folds_a_log_past_one_chunk :: proc(t: ^testing.T) {
             // One row past the read chunk, so the fold's continuation is exercised.
             rows := RESYNC_CHUNK + 1
             for id in 1 ..= rows {
-                testing.expect_value(
-                    t,
-                    daemon_broadcast(d, resync_user(session, wire.Message_Id(id))),
-                    Pump_Error.None,
-                )
+                testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
             }
 
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
@@ -667,12 +647,12 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Daemon_Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     session := pump_test_session('5')
-    testing.expect_value(t, daemon_broadcast(&d, resync_config(session, 1, "m1")), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&d, resync_user(session, 1)), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&d, resync_assistant(session, 2, 1)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, resync_config(session, 1, "m1")), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, resync_user(session, 1)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, resync_assistant(session, 2, 1)), Pump_Error.None)
 
     obs := Resync_Obs {
         t       = t,
@@ -682,7 +662,7 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = resync_on_ready, on_close = resync_on_close, on_error = resync_on_error},
@@ -697,7 +677,7 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.messages, 2)
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // --- end to end: a corrupt row is answered, not fatal ---------------------------
@@ -779,7 +759,7 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Daemon_Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     session := pump_test_session('0')
 
@@ -795,7 +775,7 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = corrupt_on_ready, on_close = corrupt_on_close, on_error = corrupt_on_error},
@@ -810,5 +790,5 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     testing.expect(t, obs.survived, "the connection should outlive the fault")
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }

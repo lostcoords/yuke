@@ -506,6 +506,51 @@ test_http_receives_a_bounded_body :: proc(t: ^testing.T) {
     testing.expect_value(t, split.body_got, 11)
 }
 
+// The cap is enforced on the declared length, so an oversized body is refused before the
+// handler runs and before a byte of it is read.
+@(test)
+test_http_refuses_a_body_over_the_cap :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        receive_body = true,
+    }
+    got := run_exchange(
+        t,
+        "PUT /up HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 11\r\n\r\nhello world",
+        &obs,
+        {max_body_bytes = 10},
+    )
+
+    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 413 Content Too Large\r\n"), "an over-cap body should 413")
+    testing.expect_value(t, obs.request_count, 0)
+    testing.expect(t, !obs.body_ended, "the body sink must never run")
+
+    // One byte under the cap still reaches the handler.
+    fits := Obs {
+        receive_body = true,
+    }
+    ok := run_exchange(
+        t,
+        "PUT /up HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 11\r\n\r\nhello world",
+        &fits,
+        {max_body_bytes = 11},
+    )
+
+    testing.expect(t, strings.has_prefix(ok, "HTTP/1.1 200 OK\r\n"), "a body at the cap is accepted")
+    testing.expect_value(t, fits.body_got, 11)
+}
+
+// A negative ceiling is a configuration error, not a way to ask for "unlimited"; zero
+// means the default, which every other exchange here exercises.
+@(test)
+test_http_body_cap_rejects_a_negative_ceiling :: proc(t: ^testing.T) {
+    s: Server
+    loop := nbio.Event_Loop{}
+
+    testing.expect_value(t, listen(&s, &loop, {max_body_bytes = -1}, test_on_request), Error.Invalid_Options)
+}
+
 @(test)
 test_http_body_sink_abort_finalizes :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)

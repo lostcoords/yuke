@@ -37,14 +37,14 @@ Auth_Result :: enum {
 // Authenticate a request. Exactly one credential source is accepted; duplicate
 // headers, duplicate query parameters, and header+query combinations are rejected as
 // ambiguous rather than resolved by precedence.
-daemon_authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth_Result {
+authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth_Result {
     assert(d != nil, "authentication needs a daemon")
 
     if d.auth_token == "" {
         return .Disabled
     }
 
-    assert(daemon_auth_token_valid(d.auth_token), "daemon retained an invalid auth token")
+    assert(auth_token_valid(d.auth_token), "daemon retained an invalid auth token")
     assert(head.consumed == len(head.bytes), "authentication received an inconsistent parsed head")
 
     query_token, query_lookup := http.query_value(query, "token")
@@ -56,7 +56,7 @@ daemon_authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) 
 
     switch header_lookup {
     case .One:
-        presented, parse := daemon_bearer_token(authorization)
+        presented, parse := bearer_token(authorization)
         switch parse {
         case .Other_Scheme:
             return .Unsupported_Scheme
@@ -65,7 +65,7 @@ daemon_authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) 
             return .Invalid
 
         case .Ok:
-            if !daemon_secret_equal(presented, d.auth_token) {
+            if !secret_equal(presented, d.auth_token) {
                 return .Invalid
             }
         }
@@ -80,7 +80,7 @@ daemon_authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) 
 
     switch query_lookup {
     case .One:
-        if !daemon_secret_equal(query_token, d.auth_token) {
+        if !secret_equal(query_token, d.auth_token) {
             return .Invalid
         }
 
@@ -112,7 +112,7 @@ Bearer_Parse :: enum {
 // Extract credentials from `Authorization: Bearer <token>`. The scheme is
 // case-insensitive and the separator is one or more spaces, as required by the
 // HTTP authentication grammar.
-daemon_bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
+bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
     separator := strings.index_byte(value, ' ')
     if separator <= 0 {
         // No credential at all: a bare `Bearer` is a malformed one, anything else is
@@ -145,7 +145,7 @@ daemon_bearer_token :: proc(value: string) -> (token: string, result: Bearer_Par
 
 // Whether a configured token is directly safe in both a bearer field and an
 // origin-form query without percent-encoding or normalization.
-daemon_auth_token_valid :: proc(token: string) -> bool {
+auth_token_valid :: proc(token: string) -> bool {
     if len(token) > MAX_AUTH_TOKEN_BYTES {
         return false
     }
@@ -167,15 +167,15 @@ daemon_auth_token_valid :: proc(token: string) -> bool {
 }
 
 // Constant-time token comparison; only the length is allowed to leak.
-daemon_secret_equal :: proc(presented: string, expected: string) -> bool {
+secret_equal :: proc(presented: string, expected: string) -> bool {
     assert(len(expected) > 0, "comparing against an empty configured token")
-    assert(daemon_auth_token_valid(expected), "comparing against an invalid configured token")
+    assert(auth_token_valid(expected), "comparing against an invalid configured token")
 
     return crypto.compare_constant_time(transmute([]byte)presented, transmute([]byte)expected) == 1
 }
 
 // `WWW-Authenticate` value for a refused request, per RFC 6750 §3.1.
-daemon_auth_challenge :: proc(result: Auth_Result) -> string {
+auth_challenge :: proc(result: Auth_Result) -> string {
     BEARER :: "Bearer realm=\"yuked\""
 
     switch result {

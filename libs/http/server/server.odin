@@ -43,6 +43,10 @@ Options :: struct {
     // Exact ceiling on the request head, including its terminating CRLF pair.
     max_head_bytes:   int,
 
+    // Ceiling on a declared request body; over it the driver answers 413 before any
+    // handler runs. Defaults to 1 MiB, as `client_max_body_size` does.
+    max_body_bytes:   i64,
+
     // Size of the reusable socket receive buffer.
     recv_chunk_bytes: int,
 
@@ -136,6 +140,10 @@ Server :: struct {
     // @private
     // Resolved request-head ceiling copied from `Options` in `listen`.
     max_head_bytes:    int,
+
+    // @private
+    // Resolved request-body ceiling copied from `Options` in `listen`.
+    max_body_bytes:    i64,
 
     // @private
     // Resolved recv-buffer size copied from `Options` in `listen`.
@@ -349,6 +357,9 @@ listen :: proc(
     if opts.max_head_bytes == 0 {
         opts.max_head_bytes = 64 << 10
     }
+    if opts.max_body_bytes == 0 {
+        opts.max_body_bytes = 1 << 20
+    }
     if opts.recv_chunk_bytes == 0 {
         opts.recv_chunk_bytes = 8 << 10
     }
@@ -363,6 +374,7 @@ listen :: proc(
        opts.port > 65535 ||
        opts.max_connections <= 0 ||
        opts.max_head_bytes < 4 ||
+       opts.max_body_bytes <= 0 ||
        opts.recv_chunk_bytes <= 0 ||
        opts.request_timeout <= 0 ||
        opts.body_timeout <= 0 {
@@ -393,6 +405,7 @@ listen :: proc(
     s.state = .Serving
     s.max_connections = opts.max_connections
     s.max_head_bytes = opts.max_head_bytes
+    s.max_body_bytes = opts.max_body_bytes
     s.recv_chunk_bytes = opts.recv_chunk_bytes
     s.request_timeout = opts.request_timeout
     s.body_timeout = opts.body_timeout
@@ -1054,6 +1067,14 @@ conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
     case .Invalid_Content_Length, .Unsupported_Transfer_Coding:
         log.debugf("http_server: rejecting body framing: %v", request_err)
         conn_respond_error(c, .Bad_Request, "request body not supported")
+        return
+    }
+
+    // Refused on the declared length, before a byte of body is read or a route sees it.
+    if body_length > c.server.max_body_bytes {
+        log.debugf("http_server: rejecting a %d-byte body over the %d cap", body_length, c.server.max_body_bytes)
+        conn_respond_error(c, .Content_Too_Large, "request body too large")
+
         return
     }
 

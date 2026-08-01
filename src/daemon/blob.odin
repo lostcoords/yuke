@@ -103,7 +103,7 @@ Blob_Upload :: struct {
 // Fold one body chunk into the running digest and the temp file. A write error or
 // shortfall aborts; the server then finalizes via the end callback with `ok = false`,
 // which deletes the partial temp.
-daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
+blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
     up := (^Blob_Upload)(user_data)
     assert(up != nil && up.file != nil, "blob chunk sink needs an open upload")
     assert(len(up.claimed) == BLOB_HASH_HEX_LEN, "blob upload lost its claimed digest")
@@ -123,7 +123,7 @@ daemon_blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk:
 // have no nbio operation, so publishing on the reactor would stall every other
 // connection; the whole finalize runs off it instead. The upload owns every path the
 // worker reads, so it outlives this connection.
-daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
+blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
     assert(up != nil, "blob end callback needs upload state")
     assert(up.daemon != nil, "blob upload lost its daemon")
@@ -139,17 +139,17 @@ daemon_blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool
         http_server.defer_response(c)
     }
 
-    offload.submit(&up.daemon.blobs, up, daemon_blob_publish, daemon_blob_published)
+    offload.submit(&up.daemon.blobs, up, blob_publish, blob_published)
 }
 
 // Worker thread. Touches only `up`, every path of which is an owned clone. Records an
 // outcome rather than answering or logging: there may be no connection left to answer,
 // and the logger belongs to the loop thread.
-daemon_blob_publish :: proc(up: ^Blob_Upload) {
+blob_publish :: proc(up: ^Blob_Upload) {
     assert(up.file != nil, "publish needs the temp file still open")
     assert(up.outcome == .Pending, "publish ran on a finalized upload")
 
-    up.outcome = daemon_blob_finalize(up)
+    up.outcome = blob_finalize(up)
     assert(up.file == nil, "finalize left the temp file open")
 
     // The temp survives only when the rename turned it into the blob; every other outcome
@@ -161,7 +161,7 @@ daemon_blob_publish :: proc(up: ^Blob_Upload) {
 
 // Close the temp file and decide the upload's fate, without touching the temp path: the
 // single caller removes it for every outcome but `.Stored`. Sets `err` on a failure.
-daemon_blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
+blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
     // Flush before the rename publishes a content-addressed name over bytes nothing
     // re-verifies on read. Narrows the power-loss window rather than closing it: darwin
     // needs `F_FULLFSYNC` for a media barrier. Directory durability is not forced.
@@ -211,10 +211,10 @@ daemon_blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
 // upload either way: a publish that completed is correct whether or not anyone is left
 // to hear about it. A mismatch, an already-present store, and a fresh store map to 400,
 // 200, and 201. No bodies.
-daemon_blob_published :: proc(up: ^Blob_Upload) {
+blob_published :: proc(up: ^Blob_Upload) {
     assert(up.outcome != .Pending, "publish completed without an outcome")
     assert(up.file == nil, "publish left the temp file open")
-    defer daemon_blob_upload_free(up)
+    defer blob_upload_free(up)
 
     switch up.outcome {
     case .Stored:
@@ -250,7 +250,7 @@ daemon_blob_published :: proc(up: ^Blob_Upload) {
 }
 
 // Build the owned final and temp paths for `hash` under `blob_dir`.
-daemon_blob_paths :: proc(
+blob_paths :: proc(
     blob_dir: string,
     hash: string,
     allocator: mem.Allocator,
@@ -288,7 +288,7 @@ daemon_blob_paths :: proc(
 // `make_directory_all` leaves an existing directory's mode alone, so a store predating
 // `BLOB_DIR_PERMISSIONS` stays exposed. Reported, not tightened: narrowing an
 // operator's directory is theirs to decide.
-daemon_warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) {
+warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) {
     assert(len(blob_dir) > 0, "blob dir exposure check needs a configured directory")
 
     info, err := os.stat(blob_dir, allocator)
@@ -313,7 +313,7 @@ daemon_warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allo
 // Temp residue only accrues on a crash — a clean shutdown always renames or removes
 // its temp — so a boot-only pass covers the threat model. Best-effort: an unreadable
 // directory is not an error.
-daemon_blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) {
+blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) {
     assert(len(blob_dir) > 0, "blob temp sweep needs a configured blob directory")
 
     // The listing covers every entry in the store, so release it rather than retaining
@@ -349,7 +349,7 @@ daemon_blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed
 
 // Release the upload's owned strings and the `Blob_Upload`; the temp file must
 // already be closed.
-daemon_blob_upload_free :: proc(up: ^Blob_Upload) {
+blob_upload_free :: proc(up: ^Blob_Upload) {
     assert(up != nil, "blob upload free needs state")
     assert(up.file == nil, "freeing an upload with its temp file still open")
 

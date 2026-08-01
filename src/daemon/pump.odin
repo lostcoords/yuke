@@ -26,7 +26,7 @@ Pump_Error :: enum {
 // Emit one broadcast. A `Durable_Gated` broadcast is assigned its seq, committed, and
 // only then fanned out; every other class fans out directly. Runs on the reactor
 // thread, like every other store touch.
-daemon_broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
+broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
     assert(d != nil, "broadcast needs daemon state")
     assert(wire.broadcast_data_validate(data) == .None, "daemon built an invalid broadcast payload")
 
@@ -303,7 +303,7 @@ pump_fan_out :: proc(d: ^Daemon, class: wire.Broadcast_Class, session: Maybe(wir
             sid, named := session.?
             assert(named, "a gated broadcast names its session")
 
-            if !daemon_conn_subscribed(conn, sid) {
+            if !conn_subscribed(conn, sid) {
                 continue
             }
         }
@@ -327,13 +327,13 @@ pump_fan_out :: proc(d: ^Daemon, class: wire.Broadcast_Class, session: Maybe(wir
             continue
         }
 
-        daemon_conn_abort(conn, send_err)
+        conn_abort(conn, send_err)
     }
 }
 
 // `subscription.set` replaces the connection's subscription set wholesale. The params
 // are already bounded and id-checked by `request_validate`.
-daemon_method_subscription_set :: proc(conn: ^Conn, req: wire.Request) {
+method_subscription_set :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "subscription.set needs connection state")
     assert(conn.state == .Ready, "subscription.set ran outside Ready")
     assert(req.method == .Subscription_Set, "subscription.set received another method")
@@ -344,12 +344,12 @@ daemon_method_subscription_set :: proc(conn: ^Conn, req: wire.Request) {
     conn.subscription_count = copy(conn.subscriptions[:], params.sessions)
     assert(conn.subscription_count == len(params.sessions), "the replaced set lost a session")
 
-    daemon_send_result(conn, req.id, wire.Empty{})
+    send_result(conn, req.id, wire.Empty{})
 }
 
 // Whether `conn` subscribed to `session`. The set is a replace-semantics list bounded
 // by `LIMITS.max_subscriptions`, so a linear scan is the membership test.
-daemon_conn_subscribed :: proc(conn: ^Conn, session: wire.Session_Id) -> bool {
+conn_subscribed :: proc(conn: ^Conn, session: wire.Session_Id) -> bool {
     assert(conn != nil, "subscription test needs connection state")
     assert(conn.subscription_count >= 0, "subscription set has a negative length")
     assert(conn.subscription_count <= len(conn.subscriptions), "subscription set over its bound")

@@ -39,14 +39,12 @@ accept_upgrade :: proc(
     if result != .Ok {
         log.debugf("websocket server: bad upgrade: %v", result)
         http_server.respond_text(c, .Bad_Request, "expected a websocket upgrade")
-
         return .Not_An_Upgrade
     }
 
     if !server_can_adopt(s) {
         log.warn("websocket server: at capacity")
         http_server.respond_text(c, .Service_Unavailable, "at capacity")
-
         return .At_Capacity
     }
 
@@ -54,7 +52,6 @@ accept_upgrade :: proc(
     if _, err := server_adopt(s, socket, upgrade.key, trailing, response_headers); err != .None {
         log.errorf("websocket server: adopt failed: %v", err)
         nbio.close(socket, l = loop)
-
         return .Adopt_Failed
     }
 

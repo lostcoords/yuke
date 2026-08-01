@@ -21,7 +21,7 @@ import wire "src:wire"
 // --- Pump, fan-out, and subscription tests ------------------------------------
 //
 // These drive real `src/client` connections against a daemon on one shared loop, then
-// call `daemon_broadcast` from the test body — the entry point the session engine will
+// call `broadcast` from the test body — the entry point the session engine will
 // use — and observe what each connection received. Durable cases run against a real
 // on-disk store so persistence and delivery are exercised together.
 
@@ -180,8 +180,8 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
 
     dropped := pump_test_session('a')
     kept := pump_test_session('b')
@@ -189,7 +189,7 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     obs: Pump_Obs
     pump_obs_init(&obs, {dropped})
     c: client.Client
-    pump_client_arm(t, &c, loop, daemon_bound_port(&d), &obs)
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
     testing.expect(t, !obs.sub_failed, "subscription.set should answer with a result")
 
     // The replacement drops `dropped` and adds `kept`; only the second set is live.
@@ -203,8 +203,8 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     )
     testing.expect(t, pump_tick_until(&obs.armed), "the replacement should be answered")
 
-    testing.expect_value(t, daemon_broadcast(&d, pump_message_started(dropped)), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&d, pump_message_started(kept)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_message_started(dropped)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_message_started(kept)), Pump_Error.None)
     pump_settle()
 
     if testing.expect_value(t, len(obs.names), 1) {
@@ -214,7 +214,7 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -229,12 +229,12 @@ test_daemon_durable_broadcast_is_persisted_and_delivered :: proc(t: ^testing.T) 
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
     testing.expect(t, d.store != nil, "a configured database opens the store at start")
 
     session := pump_test_session('c')
-    port := daemon_bound_port(&d)
+    port := bound_port(&d)
 
     subscribed: Pump_Obs
     pump_obs_init(&subscribed, {session})
@@ -246,7 +246,7 @@ test_daemon_durable_broadcast_is_persisted_and_delivered :: proc(t: ^testing.T) 
     idle_client: client.Client
     pump_client_arm(t, &idle_client, loop, port, &idle)
 
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     pump_settle()
 
     if testing.expect_value(t, len(subscribed.names), 1) {
@@ -271,7 +271,7 @@ test_daemon_durable_broadcast_is_persisted_and_delivered :: proc(t: ^testing.T) 
     testing.expect(t, pump_tick_until(&idle.done), "the idle client should close cleanly")
     client.client_destroy(&sub_client)
     client.client_destroy(&idle_client)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -288,24 +288,16 @@ test_daemon_durable_seq_recovers_across_restart :: proc(t: ^testing.T) {
     session := pump_test_session('d')
 
     first: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
-    testing.expect_value(t, daemon_broadcast(&first, pump_run_started(session)), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, pump_run_started(session)), Pump_Error.None)
-    daemon_test_teardown(&first)
+    testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    testing.expect_value(t, broadcast(&first, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, pump_run_started(session)), Pump_Error.None)
+    test_teardown(&first)
 
     // The high-water lives in the store, so a fresh daemon continues the stream
     // instead of reissuing numbers.
     second: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
-    testing.expect_value(t, daemon_broadcast(&second, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    testing.expect_value(t, broadcast(&second, pump_run_started(session)), Pump_Error.None)
 
     rows, rerr := store.events_after(second.store, session, 0, 8, context.temp_allocator)
     testing.expect_value(t, rerr, nil)
@@ -316,7 +308,7 @@ test_daemon_durable_seq_recovers_across_restart :: proc(t: ^testing.T) {
         testing.expect_value(t, rows[2].seq, wire.Seq(3))
     }
 
-    daemon_test_teardown(&second)
+    test_teardown(&second)
 }
 
 @(test)
@@ -333,28 +325,20 @@ test_daemon_id_marks_recover_across_restart :: proc(t: ^testing.T) {
     session := pump_test_session('5')
 
     first: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
+    testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     // Each arm carries a different family: the config rev, an assistant message's id
     // and run, a run id, then a user message's id and the input it came from.
-    testing.expect_value(t, daemon_broadcast(&first, resync_config(session, 4, "m1")), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, resync_assistant(session, 7, 4)), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, resync_run_started(session, 5, 1)), Pump_Error.None)
-    testing.expect_value(t, daemon_broadcast(&first, resync_user(session, 8)), Pump_Error.None)
-    daemon_test_teardown(&first)
+    testing.expect_value(t, broadcast(&first, resync_config(session, 4, "m1")), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_assistant(session, 7, 4)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_run_started(session, 5, 1)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&first, resync_user(session, 8)), Pump_Error.None)
+    test_teardown(&first)
 
     // Every minting family recovers with the seq; a zero here would let the next
     // session engine reissue an id the transcript already folded.
     second: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.None,
-    )
+    testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     hw, herr := store.high_water(second.store, session)
     testing.expect_value(t, herr, nil)
@@ -364,7 +348,7 @@ test_daemon_id_marks_recover_across_restart :: proc(t: ^testing.T) {
     testing.expect_value(t, hw.config_rev, wire.Config_Rev(4))
     testing.expect_value(t, hw.input_id, wire.Input_Id(8))
 
-    daemon_test_teardown(&second)
+    test_teardown(&second)
 }
 
 @(test)
@@ -379,11 +363,11 @@ test_daemon_ungated_broadcast_reaches_every_connection :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('e')
-    port := daemon_bound_port(&d)
+    port := bound_port(&d)
 
     subscribed: Pump_Obs
     pump_obs_init(&subscribed, {pump_test_session('f')})
@@ -400,7 +384,7 @@ test_daemon_ungated_broadcast_reaches_every_connection :: proc(t: ^testing.T) {
         revision   = 1,
         session_id = session,
     }
-    testing.expect_value(t, daemon_broadcast(&d, removed), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, removed), Pump_Error.None)
     pump_settle()
 
     testing.expect_value(t, len(subscribed.names), 1)
@@ -416,7 +400,7 @@ test_daemon_ungated_broadcast_reaches_every_connection :: proc(t: ^testing.T) {
     testing.expect(t, pump_tick_until(&idle.done), "the idle client should close cleanly")
     client.client_destroy(&sub_client)
     client.client_destroy(&idle_client)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -431,17 +415,17 @@ test_daemon_live_gated_broadcast_is_not_persisted :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('0')
 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
     c: client.Client
-    pump_client_arm(t, &c, loop, daemon_bound_port(&d), &obs)
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
 
-    testing.expect_value(t, daemon_broadcast(&d, pump_message_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_message_started(session)), Pump_Error.None)
     pump_settle()
 
     if testing.expect_value(t, len(obs.names), 1) {
@@ -456,7 +440,7 @@ test_daemon_live_gated_broadcast_is_not_persisted :: proc(t: ^testing.T) {
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -468,8 +452,8 @@ test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) 
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
     testing.expect(t, d.store == nil, "no database configured means no store")
 
     session := pump_test_session('1')
@@ -477,17 +461,17 @@ test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
     c: client.Client
-    pump_client_arm(t, &c, loop, daemon_bound_port(&d), &obs)
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
 
     // Nothing can be sequenced, so nothing is delivered either.
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.No_Store)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.No_Store)
     pump_settle()
     testing.expect_value(t, len(obs.names), 0)
 
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -504,22 +488,22 @@ test_daemon_exhausted_sequence_is_reported :: proc(t: ^testing.T) {
     context.logger = log.nil_logger()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('e')
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     exhaust := fmt.tprintf("UPDATE session_meta SET seq_high = %d", wire.MAX_WIRE_INTEGER)
     testing.expect_value(t, sqlite.exec(d.store.writer, exhaust), sqlite.Result.Ok)
     delete_key(&d.seq_high, session)
 
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.Sequence_Exhausted)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.Sequence_Exhausted)
 
     rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
     testing.expect_value(t, rerr, nil)
     testing.expect_value(t, len(rows), 1)
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -534,25 +518,25 @@ test_daemon_removed_session_drops_its_seq_mark :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('9')
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     testing.expect_value(t, d.seq_high[session], wire.Seq(1))
 
     removed := wire.Session_Removed_Data {
         revision   = 1,
         session_id = session,
     }
-    testing.expect_value(t, daemon_broadcast(&d, removed), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, removed), Pump_Error.None)
 
     _, tracked := d.seq_high[session]
     testing.expect(t, !tracked, "a removed session must not keep its memoized mark")
 
     // The mark is memoization only: the next durable broadcast recovers the same
     // high-water from the log and continues the stream contiguously.
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     testing.expect_value(t, d.seq_high[session], wire.Seq(2))
 
     rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
@@ -562,7 +546,7 @@ test_daemon_removed_session_drops_its_seq_mark :: proc(t: ^testing.T) {
         testing.expect_value(t, rows[1].seq, wire.Seq(2))
     }
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -585,11 +569,7 @@ test_daemon_start_refuses_a_damaged_database :: proc(t: ^testing.T) {
 
     // A damaged database is reported, not crashed on, and nothing is left listening.
     d: Daemon
-    testing.expect_value(
-        t,
-        daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}),
-        Daemon_Error.Store_Failed,
-    )
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.Store_Failed)
     testing.expect(t, d.store == nil, "a refused start leaves no store open")
 }
 
@@ -612,11 +592,11 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('4')
-    port := daemon_bound_port(&d)
+    port := bound_port(&d)
 
     subscribed: Pump_Obs
     pump_obs_init(&subscribed, {session})
@@ -630,7 +610,7 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
 
     // Droppable is still subscription-gated and still never logged; only the send path
     // treats it differently.
-    testing.expect_value(t, daemon_broadcast(&d, pump_part_delta(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_part_delta(session)), Pump_Error.None)
     pump_settle()
 
     if testing.expect_value(t, len(subscribed.names), 1) {
@@ -650,7 +630,7 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
     testing.expect(t, pump_tick_until(&idle.done), "the idle client should close cleanly")
     client.client_destroy(&sub_client)
     client.client_destroy(&idle_client)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -669,21 +649,21 @@ test_daemon_refused_append_broadcasts_nothing :: proc(t: ^testing.T) {
     context.logger = log.nil_logger()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('2')
 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
     c: client.Client
-    pump_client_arm(t, &c, loop, daemon_bound_port(&d), &obs)
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
 
     // Take the log out from under the writer, so the append fails inside its
     // transaction.
     testing.expect_value(t, sqlite.exec(d.store.writer, "DROP TABLE events"), sqlite.Result.Ok)
 
-    testing.expect_value(t, daemon_broadcast(&d, pump_run_started(session)), Pump_Error.Store_Failed)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.Store_Failed)
     pump_settle()
 
     testing.expect_value(t, len(obs.names), 0)
@@ -693,7 +673,7 @@ test_daemon_refused_append_broadcasts_nothing :: proc(t: ^testing.T) {
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // --- Subscription bound rejection over a raw peer ------------------------------
@@ -719,21 +699,21 @@ Sub_Peer :: struct {
     close_code: u16,
 }
 
-daemon_sub_peer :: proc(p: ^Sub_Peer) {
+sub_peer :: proc(p: ^Sub_Peer) {
     defer free_all(context.temp_allocator)
 
-    sock, dialed := daemon_raw_dial(p.port)
+    sock, dialed := raw_dial(p.port)
     if !dialed {
         return
     }
     defer net.close(sock)
 
-    if !daemon_raw_upgrade(sock) {
+    if !raw_upgrade(sock) {
         return
     }
 
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}}`
-    if !daemon_peer_send_text(sock, hello) {
+    if !peer_send_text(sock, hello) {
         return
     }
 
@@ -758,7 +738,7 @@ daemon_sub_peer :: proc(p: ^Sub_Peer) {
             }
 
             if msg.kind == .Text && !sent {
-                if !daemon_peer_send_text(sock, p.frame) {
+                if !peer_send_text(sock, p.frame) {
                     return
                 }
 
@@ -780,7 +760,7 @@ daemon_sub_peer :: proc(p: ^Sub_Peer) {
 }
 
 // Send one masked text frame, as a real client always does.
-daemon_peer_send_text :: proc(sock: net.TCP_Socket, payload: string) -> bool {
+peer_send_text :: proc(sock: net.TCP_Socket, payload: string) -> bool {
     key: [ws.MASK_KEY_BYTES]byte
     for i in 0 ..< len(key) {
         key[i] = u8(i + 1)
@@ -801,8 +781,8 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
 
     // One past `LIMITS.max_subscriptions`: a bound violation is a protocol error, not
     // an error response.
@@ -819,10 +799,10 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
     strings.write_string(&b, `]}}`)
 
     p := Sub_Peer {
-        port  = daemon_bound_port(&d),
+        port  = bound_port(&d),
         frame = strings.to_string(b),
     }
-    peer := thread.create_and_start_with_poly_data(&p, daemon_sub_peer)
+    peer := thread.create_and_start_with_poly_data(&p, sub_peer)
     defer {
         thread.join(peer)
         thread.destroy(peer)
@@ -840,7 +820,7 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
     testing.expect(t, p.got_close, "an over-bound subscription set should close the connection")
     testing.expect_value(t, p.close_code, wire.CLOSE.protocol_error)
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // One encoding serves the log and the fan-out, so a reasoning signature and a turn's
@@ -857,8 +837,8 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('3')
     parts := []wire.Assistant_Part{wire.Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"}}
@@ -875,7 +855,7 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
             provenance = wire.Turn_Provenance{protocol = .Anthropic_Messages, model = "claude-sonnet-4-5"},
         },
     }
-    testing.expect_value(t, daemon_broadcast(&d, committed), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, committed), Pump_Error.None)
 
     rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
     testing.expect_value(t, rerr, nil)
@@ -896,5 +876,5 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
         testing.expect_value(t, replayed, rows[0].payload)
     }
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }

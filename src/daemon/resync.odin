@@ -64,7 +64,7 @@ Resync_Fold :: struct {
 
 // `session.resync`: the full snapshot, folded from the session's durable log. Result
 // data is built in `sa`, the per-frame arena the caller reclaims on return.
-daemon_method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.resync needs connection state")
     assert(conn.state == .Ready, "session.resync ran outside Ready")
     assert(req.method == .Session_Resync, "session.resync received another method")
@@ -75,16 +75,16 @@ daemon_method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.All
 
     switch err {
     case .None:
-        daemon_send_result(conn, req.id, result)
+        send_result(conn, req.id, result)
 
     case .Unknown_Session:
-        daemon_send_error(conn, req.id, .Unknown_Session, "unknown session")
+        send_error(conn, req.id, .Unknown_Session, "unknown session")
 
     case .Store_Failed, .Corrupt_Log, .Invalid_Cut:
         // A cut our own validator rejects, a log row the codec rejects, and a refused
         // read are all daemon-side faults: report `Internal` and keep the connection,
         // never ship a snapshot we do not believe.
-        daemon_send_error(conn, req.id, .Internal, "resync snapshot unavailable")
+        send_error(conn, req.id, .Internal, "resync snapshot unavailable")
     }
 }
 

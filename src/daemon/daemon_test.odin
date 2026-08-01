@@ -30,18 +30,18 @@ import wire "src:wire"
 // mirroring `libs/websocket/server_test.odin`.
 //
 // Helpers bind an OS-assigned ephemeral port (port 0); recover it with
-// `daemon_bound_port` after `daemon_start`.
+// `bound_port` after `start`.
 
 // Bring a daemon all the way down and reclaim it.
-daemon_test_teardown :: proc(d: ^Daemon) {
-    daemon_shutdown(d)
+test_teardown :: proc(d: ^Daemon) {
+    shutdown(d)
     nbio.run_until(&d.ws_server.shutdown_complete)
     nbio.run_until(&d.front_door.shutdown_complete)
-    daemon_destroy(d)
+    destroy(d)
 }
 
 // Recover the ephemeral port the daemon's front door bound, for dialing clients.
-daemon_bound_port :: proc(d: ^Daemon) -> int {
+bound_port :: proc(d: ^Daemon) -> int {
     return http_server.bound_port(&d.front_door)
 }
 
@@ -141,15 +141,15 @@ test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "9.8.7"})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "9.8.7"})
+    testing.expect_value(t, derr, Error.None)
 
     obs: Cli_Obs
     c: client.Client
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         "yuke-test",
         "0.1.0",
         cli_callbacks(),
@@ -169,7 +169,7 @@ test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.err, client.Protocol_Error.None)
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
@@ -181,8 +181,8 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
 
     obs := Cli_Obs {
         send_request_on_ready = true,
@@ -191,7 +191,7 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         "yuke-test",
         "0.1.0",
         cli_callbacks(),
@@ -211,7 +211,7 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.err, client.Protocol_Error.None)
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // --- Read-only method handlers via the real client driver ---------------------
@@ -309,7 +309,7 @@ handler_callbacks :: proc() -> client.Client_Callbacks {
 
 // Bring up a daemon, drive `obs`'s single request through the real client driver,
 // and run its check(s) to completion. Binds an OS-assigned ephemeral port.
-daemon_run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
+run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     obs.t = t
 
     nbio.acquire_thread_event_loop()
@@ -317,14 +317,14 @@ daemon_run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
 
     c: client.Client
     cerr := client.client_open(
         &c,
         loop,
-        {host = "127.0.0.1", port = daemon_bound_port(&d), path = "/ws"},
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         "yuke-test",
         "0.1.0",
         handler_callbacks(),
@@ -341,7 +341,7 @@ daemon_run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     } else {
         // Force a terminal callback before destroying the client; the timeout only
         // bounds the request exchange, not the transport's buffer lifetime.
-        daemon_shutdown(&d)
+        shutdown(&d)
         nbio.run_until(&obs.done)
     }
 
@@ -355,11 +355,11 @@ daemon_run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     testing.expect_value(t, obs.err, client.Protocol_Error.None)
 
     client.client_destroy(&c)
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 // Create a fresh, empty directory under the temp root, removing any stale copy first.
-daemon_test_make_dir :: proc(name: string) -> string {
+test_make_dir :: proc(name: string) -> string {
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
     if !has {
         base = "/tmp"
@@ -375,7 +375,7 @@ daemon_test_make_dir :: proc(name: string) -> string {
 // A name 270 UTF-8 bytes long (90 repeated 3-byte "あ" runes) but only 90 characters:
 // over the wire's 256-byte `Dir_Entry.name`/`Workspace.title` bound, yet well within
 // APFS's 255-character filename limit — the overlong-name regression fixture.
-daemon_test_overlong_name :: proc() -> string {
+test_overlong_name :: proc() -> string {
     b := strings.builder_make(context.temp_allocator)
     for _ in 0 ..< 90 {
         strings.write_string(&b, "あ")
@@ -418,7 +418,7 @@ test_daemon_session_list_empty :: proc(t: ^testing.T) {
         },
         check = check_session_list_empty,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_catalog_full :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -453,7 +453,7 @@ test_daemon_catalog_list_full_when_no_since_rev :: proc(t: ^testing.T) {
         params = wire.Catalog_List_Params{},
         check  = check_catalog_full,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_catalog_unchanged :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -480,10 +480,10 @@ test_daemon_catalog_list_unchanged_when_since_rev_matches :: proc(t: ^testing.T)
 
     obs := Handler_Obs {
         method = .Catalog_List,
-        params = wire.Catalog_List_Params{since_rev = daemon_empty_catalog_rev()},
+        params = wire.Catalog_List_Params{since_rev = empty_catalog_rev()},
         check = check_catalog_unchanged,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -504,7 +504,7 @@ check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handl
     canonical, cerr := os.get_absolute_path(o.dir, context.temp_allocator)
     testing.expect(t, cerr == nil, "the temp dir canonicalizes")
     testing.expect_value(t, result.workspace.root, canonical)
-    testing.expect_value(t, result.workspace.id, daemon_workspace_id(canonical))
+    testing.expect_value(t, result.workspace.id, workspace_id(canonical))
     testing.expect_value(t, result.workspace.title, os.base(canonical))
     testing.expect(t, result.last_modified_ms > 0, "mtime is populated")
     _, has_model := result.last_used_model.?
@@ -517,7 +517,7 @@ check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handl
 test_daemon_workspace_describe_non_git :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-odin-describe-nongit")
+    dir := test_make_dir("yuke-odin-describe-nongit")
     defer os.remove_all(dir)
 
     obs := Handler_Obs {
@@ -526,7 +526,7 @@ test_daemon_workspace_describe_non_git :: proc(t: ^testing.T) {
         check = check_describe_non_git,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_describe_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -556,7 +556,7 @@ check_describe_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_O
 test_daemon_workspace_describe_git :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-odin-describe-git")
+    dir := test_make_dir("yuke-odin-describe-git")
     defer os.remove_all(dir)
 
     git_dir, _ := os.join_path({dir, ".git"}, context.temp_allocator)
@@ -570,7 +570,7 @@ test_daemon_workspace_describe_git :: proc(t: ^testing.T) {
         check = check_describe_git,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_describe_invalid_utf8_branch :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -604,7 +604,7 @@ check_describe_invalid_utf8_branch :: proc(c: ^client.Client, resp: wire.Respons
 test_daemon_workspace_describe_invalid_utf8_branch :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-odin-describe-badbranch")
+    dir := test_make_dir("yuke-odin-describe-badbranch")
     defer os.remove_all(dir)
 
     git_dir, _ := os.join_path({dir, ".git"}, context.temp_allocator)
@@ -623,7 +623,7 @@ test_daemon_workspace_describe_invalid_utf8_branch :: proc(t: ^testing.T) {
         check = check_describe_invalid_utf8_branch,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_describe_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -647,7 +647,7 @@ test_daemon_workspace_describe_missing_path :: proc(t: ^testing.T) {
         params = wire.Workspace_Describe_Params{path = "/no/such/path/yuke-odin-xyz"},
         check = check_describe_missing,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_describe_overlong_basename :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -675,10 +675,10 @@ check_describe_overlong_basename :: proc(c: ^client.Client, resp: wire.Response,
 test_daemon_workspace_describe_overlong_basename :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    parent := daemon_test_make_dir("yuke-odin-describe-overlong")
+    parent := test_make_dir("yuke-odin-describe-overlong")
     defer os.remove_all(parent)
 
-    dir, _ := os.join_path({parent, daemon_test_overlong_name()}, context.temp_allocator)
+    dir, _ := os.join_path({parent, test_overlong_name()}, context.temp_allocator)
     if merr := os.make_directory_all(dir); merr != nil {
         fmt.printfln("skipping: filesystem rejected an overlong-basename directory: %v", merr)
         return
@@ -691,13 +691,13 @@ test_daemon_workspace_describe_overlong_basename :: proc(t: ^testing.T) {
         check = check_describe_overlong_basename,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 // Populate a browse fixture: subdirectories `alpha`, `beta`, and `repo` (a git repo),
 // plus a plain file that must be omitted from the listing.
-daemon_test_make_browse_dir :: proc(name: string) -> string {
-    dir := daemon_test_make_dir(name)
+test_make_browse_dir :: proc(name: string) -> string {
+    dir := test_make_dir(name)
 
     for sub in ([]string{"alpha", "beta", "repo"}) {
         p, _ := os.join_path({dir, sub}, context.temp_allocator)
@@ -745,7 +745,7 @@ check_browse_listing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler
 test_daemon_workspace_browse_lists_directories :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_browse_dir("yuke-odin-browse-list")
+    dir := test_make_browse_dir("yuke-odin-browse-list")
     defer os.remove_all(dir)
 
     obs := Handler_Obs {
@@ -754,7 +754,7 @@ test_daemon_workspace_browse_lists_directories :: proc(t: ^testing.T) {
         check = check_browse_listing,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -801,7 +801,7 @@ check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handl
 test_daemon_workspace_browse_paginates :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_browse_dir("yuke-odin-browse-page")
+    dir := test_make_browse_dir("yuke-odin-browse-page")
     defer os.remove_all(dir)
 
     obs := Handler_Obs {
@@ -810,7 +810,7 @@ test_daemon_workspace_browse_paginates :: proc(t: ^testing.T) {
         check = check_browse_paginated,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_browse_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -834,7 +834,7 @@ test_daemon_workspace_browse_missing_path :: proc(t: ^testing.T) {
         params = wire.Workspace_Browse_Params{path = "/no/such/path/yuke-odin-xyz"},
         check = check_browse_missing,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_browse_skips_overlong_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -869,13 +869,13 @@ check_browse_skips_overlong_name :: proc(c: ^client.Client, resp: wire.Response,
 test_daemon_workspace_browse_skips_overlong_name :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-odin-browse-overlong")
+    dir := test_make_dir("yuke-odin-browse-overlong")
     defer os.remove_all(dir)
 
     normal, _ := os.join_path({dir, "normal"}, context.temp_allocator)
     os.make_directory_all(normal)
 
-    overlong, _ := os.join_path({dir, daemon_test_overlong_name()}, context.temp_allocator)
+    overlong, _ := os.join_path({dir, test_overlong_name()}, context.temp_allocator)
     if merr := os.make_directory_all(overlong); merr != nil {
         fmt.printfln("skipping: filesystem rejected an overlong-name directory: %v", merr)
         return
@@ -887,7 +887,7 @@ test_daemon_workspace_browse_skips_overlong_name :: proc(t: ^testing.T) {
         check = check_browse_skips_overlong_name,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 check_browse_skips_non_utf8_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -923,7 +923,7 @@ check_browse_skips_non_utf8_name :: proc(c: ^client.Client, resp: wire.Response,
 test_daemon_workspace_browse_skips_non_utf8_name :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := daemon_test_make_dir("yuke-odin-browse-nonutf8")
+    dir := test_make_dir("yuke-odin-browse-nonutf8")
     defer os.remove_all(dir)
 
     normal, _ := os.join_path({dir, "normal"}, context.temp_allocator)
@@ -950,7 +950,7 @@ test_daemon_workspace_browse_skips_non_utf8_name :: proc(t: ^testing.T) {
         check = check_browse_skips_non_utf8_name,
         dir = dir,
     }
-    daemon_run_handler(t, &obs)
+    run_handler(t, &obs)
 }
 
 // --- Raw blocking TCP peer harness (worker thread) ----------------------------
@@ -981,7 +981,7 @@ Raw_Peer :: struct {
 }
 
 // Connect a blocking TCP socket to loopback:port.
-daemon_raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
+raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
     endpoint := net.Endpoint {
         address = net.IP4_Loopback,
         port    = port,
@@ -996,7 +996,7 @@ daemon_raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
 }
 
 // Perform the client half of the WebSocket upgrade and validate the 101.
-daemon_raw_upgrade :: proc(sock: net.TCP_Socket) -> bool {
+raw_upgrade :: proc(sock: net.TCP_Socket) -> bool {
     key_raw: [ws.SEC_WEBSOCKET_KEY_BYTES]byte
     crypto.rand_bytes(key_raw[:])
     key_encoded: [ws.SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte
@@ -1027,16 +1027,16 @@ daemon_raw_upgrade :: proc(sock: net.TCP_Socket) -> bool {
 
 // Upgrade, send the configured (masked, as a real client) frame, then read back the
 // server's Close frame or observe the socket close.
-daemon_raw_peer :: proc(p: ^Raw_Peer) {
+raw_peer :: proc(p: ^Raw_Peer) {
     defer free_all(context.temp_allocator)
 
-    sock, ok := daemon_raw_dial(p.port)
+    sock, ok := raw_dial(p.port)
     if !ok {
         return
     }
     defer net.close(sock)
 
-    if !daemon_raw_upgrade(sock) {
+    if !raw_upgrade(sock) {
         return
     }
 
@@ -1085,7 +1085,7 @@ daemon_raw_peer :: proc(p: ^Raw_Peer) {
 // Drive the loop while `peer` runs its blocking script, then assert the observed
 // close. Shared by the protocol-error cases; each supplies a peer and the expected
 // close code. Binds an OS-assigned ephemeral port.
-daemon_run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expect_code: u16) {
+run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expect_code: u16) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -1093,15 +1093,15 @@ daemon_run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expec
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
 
     p := Raw_Peer {
-        port    = daemon_bound_port(&d),
+        port    = bound_port(&d),
         opcode  = opcode,
         payload = transmute([]byte)payload,
     }
-    peer := thread.create_and_start_with_poly_data(&p, daemon_raw_peer)
+    peer := thread.create_and_start_with_poly_data(&p, raw_peer)
     defer {
         thread.join(peer)
         thread.destroy(peer)
@@ -1119,13 +1119,13 @@ daemon_run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expec
     testing.expect(t, p.got_close, "server should send a Close frame")
     testing.expect_value(t, p.close_code, expect_code)
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 }
 
 @(test)
 test_daemon_malformed_first_frame_closes :: proc(t: ^testing.T) {
     // A text frame that is not a valid `initialize` request (invalid JSON) is a protocol error.
-    daemon_run_raw(t, .Text, "not json at all", wire.CLOSE.protocol_error)
+    run_raw(t, .Text, "not json at all", wire.CLOSE.protocol_error)
 }
 
 @(test)
@@ -1133,7 +1133,7 @@ test_daemon_wrong_protocol_closes :: proc(t: ^testing.T) {
     // A well-formed `initialize` request with an unsupported protocol closes with the
     // dedicated code.
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":2,"client":{"name":"x","version":"y"}}}`
-    daemon_run_raw(t, .Text, hello, wire.CLOSE.unsupported_protocol)
+    run_raw(t, .Text, hello, wire.CLOSE.unsupported_protocol)
 }
 
 @(test)
@@ -1141,7 +1141,7 @@ test_daemon_binary_frame_closes :: proc(t: ^testing.T) {
     // The v1 protocol carries only text frames; a binary frame is a protocol error
     // regardless of content.
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}}`
-    daemon_run_raw(t, .Binary, hello, wire.CLOSE.protocol_error)
+    run_raw(t, .Binary, hello, wire.CLOSE.protocol_error)
 }
 
 @(test)
@@ -1149,7 +1149,7 @@ test_daemon_trailing_bytes_closes :: proc(t: ^testing.T) {
     // One JSON value per frame: a valid `initialize` request followed by a trailing
     // token is rejected by `dec_finish` before it takes effect.
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}} 5`
-    daemon_run_raw(t, .Text, hello, wire.CLOSE.protocol_error)
+    run_raw(t, .Text, hello, wire.CLOSE.protocol_error)
 }
 
 // --- Lifecycle soak under a tracking allocator (leak hunt) --------------------
@@ -1172,10 +1172,10 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := daemon_start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "1.0.0"}, tracked)
-    testing.expect_value(t, derr, Daemon_Error.None)
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, daemon_version = "1.0.0"}, tracked)
+    testing.expect_value(t, derr, Error.None)
 
-    port := daemon_bound_port(&d)
+    port := bound_port(&d)
     ITERATIONS :: 32
 
     for i in 0 ..< ITERATIONS {
@@ -1209,7 +1209,7 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
         testing.expectf(t, obs.ready, "cycle %d should reach Ready", i)
     }
 
-    daemon_test_teardown(&d)
+    test_teardown(&d)
 
     testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
     testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))
