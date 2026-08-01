@@ -76,10 +76,9 @@ daemon_router_init :: proc(d: ^Daemon) {
 
 }
 
-// A `?token=` credential rides in the URL, so every response to that request must be
-// marked private (RFC 6750 §2.3). Set once, before any step can answer, so every response
-// the connection reaches inherits it — including the router fallbacks, a deferred blob
-// answer, and the WebSocket handshake.
+// A `?token=` credential rides in the URL. RFC 6750 §2.3 asks this only of 2xx; every
+// response the application reaches is marked, since the URL itself is the secret. The
+// driver's framing refusals answer before any middleware and go out unmarked.
 daemon_middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     // A duplicated `token` still carries a credential, so the ambiguous-credential 400
     // is marked too.
