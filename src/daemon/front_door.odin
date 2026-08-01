@@ -11,6 +11,7 @@ import "core:os"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
+import http "libs:http"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
@@ -80,11 +81,13 @@ daemon_router_init :: proc(d: ^Daemon) {
 // the connection reaches inherits it — including the router fallbacks, a deferred blob
 // answer, and the WebSocket handshake.
 daemon_middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
-    if !daemon_query_credential(ctx.request.query) {
+    // A duplicated `token` still carries a credential, so the ambiguous-credential 400
+    // is marked too.
+    if _, lookup := http.query_value(ctx.request.query, "token"); lookup == .Missing {
         return .Continue
     }
 
-    if !http_server.conn_add_header(ctx.conn, "Cache-Control", CACHE_PRIVATE) {
+    if !http_server.conn_add_header(ctx.conn, "Cache-Control", "private, no-store") {
         return .Stop
     }
 

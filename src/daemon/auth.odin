@@ -34,31 +34,6 @@ Auth_Result :: enum {
     Ambiguous,
 }
 
-// `error` code on a refusal's challenge, per RFC 6750 §3.1.
-Auth_Challenge :: enum {
-    // No code: an absent credential or an unsupported scheme.
-    None,
-
-    // A credential that was presented and rejected.
-    Invalid_Token,
-
-    // A request that carried more than one credential source.
-    Invalid_Request,
-}
-
-BEARER_CHALLENGE :: "Bearer realm=\"yuked\""
-BEARER_CHALLENGE_INVALID_TOKEN :: "Bearer realm=\"yuked\", error=\"invalid_token\""
-BEARER_CHALLENGE_INVALID_REQUEST :: "Bearer realm=\"yuked\", error=\"invalid_request\""
-CACHE_PRIVATE :: "private, no-store"
-
-// `WWW-Authenticate` value per refusal (RFC 6750 §3.1).
-@(rodata)
-AUTH_CHALLENGES := [Auth_Challenge]string {
-    .None            = BEARER_CHALLENGE,
-    .Invalid_Token   = BEARER_CHALLENGE_INVALID_TOKEN,
-    .Invalid_Request = BEARER_CHALLENGE_INVALID_REQUEST,
-}
-
 // Authenticate a request. Exactly one credential source is accepted; duplicate
 // headers, duplicate query parameters, and header+query combinations are rejected as
 // ambiguous rather than resolved by precedence.
@@ -199,28 +174,23 @@ daemon_secret_equal :: proc(presented: string, expected: string) -> bool {
     return crypto.compare_constant_time(transmute([]byte)presented, transmute([]byte)expected) == 1
 }
 
-// Whether the request carried a `token` query parameter, present even when duplicated.
-daemon_query_credential :: proc(query: string) -> bool {
-    _, lookup := http.query_value(query, "token")
-    return lookup != .Missing
-}
-
-// `WWW-Authenticate` value for a refused request.
+// `WWW-Authenticate` value for a refused request, per RFC 6750 §3.1.
 daemon_auth_challenge :: proc(result: Auth_Result) -> string {
-    challenge: Auth_Challenge
+    BEARER :: "Bearer realm=\"yuked\""
+
     switch result {
     case .Missing, .Unsupported_Scheme:
-        challenge = .None
+        return BEARER
 
     case .Invalid:
-        challenge = .Invalid_Token
+        return BEARER + ", error=\"invalid_token\""
 
     case .Ambiguous:
-        challenge = .Invalid_Request
+        return BEARER + ", error=\"invalid_request\""
 
     case .Disabled, .Header, .Query:
         assert(false, "auth challenge built for a result that is not a refusal")
     }
 
-    return AUTH_CHALLENGES[challenge]
+    return ""
 }

@@ -513,6 +513,12 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
         strings.has_prefix(duplicate_query, "HTTP/1.1 400 Bad Request\r\n"),
         "duplicate token parameters are ambiguous",
     )
+    testing.expectf(
+        t,
+        strings.contains(duplicate_query, "Cache-Control: private, no-store\r\n"),
+        "a duplicated ?token= refusal stays private, got %q",
+        duplicate_query,
+    )
 }
 
 // Even with auth disabled, a request carrying a `?token=` is marked private so no
