@@ -517,7 +517,7 @@ event_visit_probe :: proc(user: rawptr, event: Event) -> Event_Visit {
     return .Continue
 }
 
-@(private = "file")
+@(private)
 hex_session :: proc(session: wire.Session_Id) -> string {
     b := strings.builder_make(context.temp_allocator)
     for byte_ in ([16]u8)(session) {
@@ -548,22 +548,27 @@ test_session :: proc(tag: byte) -> wire.Session_Id {
 // Every event and projected message carries a foreign key into `sessions`, so a
 // synthetic id needs its registry row before anything can be appended for it.
 @(private)
+test_session_summary :: proc(id: wire.Session_Id) -> wire.Session {
+    return wire.Session {
+        id = id,
+        profile = "default",
+        model = "test/model",
+        reasoning = "low",
+        permission = .Normal,
+        title = "test",
+        created_at_ms = 1,
+        updated_at_ms = 1,
+        created_by = wire.Client{name = "test", version = "0"},
+        origin = wire.Session_Origin_Root{},
+    }
+}
+
+// Every event and projected message carries a foreign key into `sessions`, so a
+// synthetic id needs its registry row before anything can be appended for it.
+@(private)
 test_session_create :: proc(t: ^testing.T, s: ^Store, ids: ..wire.Session_Id) {
     for id in ids {
-        summary := wire.Session {
-            id = id,
-            profile = "default",
-            model = "test/model",
-            reasoning = "low",
-            permission = .Normal,
-            title = "test",
-            created_at_ms = 1,
-            updated_at_ms = 1,
-            created_by = wire.Client{name = "test", version = "0"},
-            origin = wire.Session_Origin_Root{},
-        }
-
-        testing.expect_value(t, session_create(s, summary), nil)
+        testing.expect_value(t, session_create(s, test_session_summary(id), nil), nil)
     }
 }
 

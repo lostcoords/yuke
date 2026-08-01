@@ -835,8 +835,8 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
     test_teardown(&d)
 }
 
-// One encoding serves the log and the fan-out, so a reasoning signature and a turn's
-// provenance survive the append and a re-encode of the stored row is byte-identical.
+// One encoding serves the log and the fan-out, so signed and redacted reasoning plus
+// a turn's provenance survive the append and re-encode byte-identically.
 @(test)
 test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -854,7 +854,10 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
 
     session := pump_test_session('3')
     daemon_test_session_create(t, &d, session)
-    parts := []wire.Assistant_Part{wire.Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"}}
+    parts := []wire.Assistant_Part {
+        wire.Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"},
+        wire.Redacted_Reasoning_Part{id = 1, data = "opaque-data"},
+    }
     committed := wire.Message_Committed_Data {
         session_id = session,
         message = wire.Assistant_Message {
@@ -875,6 +878,7 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
 
     if testing.expect_value(t, len(rows), 1) {
         testing.expect(t, strings.contains(rows[0].payload, `"signature":"ErUBCkYIB"`), "the log keeps the signature")
+        testing.expect(t, strings.contains(rows[0].payload, `"data":"opaque-data"`), "the log keeps redacted data")
         testing.expect(t, strings.contains(rows[0].payload, `"provenance":`), "the log keeps the provenance")
 
         dec := wire.decoder_init(rows[0].payload, context.temp_allocator)
@@ -914,6 +918,6 @@ daemon_test_session_create :: proc(t: ^testing.T, d: ^Daemon, ids: ..wire.Sessio
             origin = wire.Session_Origin_Root{},
         }
 
-        testing.expect_value(t, store.session_create(d.store, summary), nil)
+        testing.expect_value(t, store.session_create(d.store, summary, nil), nil)
     }
 }

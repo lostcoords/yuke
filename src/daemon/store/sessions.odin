@@ -33,7 +33,10 @@ Create_Session_Params :: struct {
 // Write the registry row for a session. Every event and projected message points
 // at this row through a foreign key, so it exists before anything references it
 // rather than being invented by the first append.
-session_create :: proc(s: ^Store, session: wire.Session) -> Error {
+//
+// `system_prompt` belongs to creation because no method changes it afterwards;
+// nil means none is sent to the model.
+session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> Error {
     assert(s != nil, "session_create needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
     assert(session.origin != nil, "a session carries its origin")
@@ -76,5 +79,7 @@ session_create :: proc(s: ^Store, session: wire.Session) -> Error {
         params.created_by_version = cb.version
     }
 
-    return sqlite.execute(&s.binds.create_session, &params)
+    sqlite.execute(&s.binds.create_session, &params) or_return
+
+    return session_prompt_set(s, session.id, system_prompt)
 }

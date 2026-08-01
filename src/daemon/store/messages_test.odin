@@ -23,7 +23,7 @@ message_row_count :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
     return sqlite.column_i64(st, 0)
 }
 
-@(private = "file")
+@(private)
 session_message_count :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
     st, prep := sqlite.prepare(s.writer, "SELECT message_count FROM sessions WHERE id = ?1")
     if prep != .Ok {
@@ -281,7 +281,7 @@ test_non_transcript_events_project_nothing :: proc(t: ^testing.T) {
 
 // The real encoding of a payload. Replay decodes the stored bytes, so a fixture
 // that wants to be replayable has to store what the pump would have stored.
-@(private = "file")
+@(private)
 test_encode :: proc(data: wire.Broadcast_Data, allocator := context.allocator) -> string {
     e: wire.Emitter
     wire.emitter_init(&e, allocator)
@@ -416,7 +416,7 @@ test_replay_reproduces_the_projection :: proc(t: ^testing.T) {
     testing.expect_value(t, live_count, i64(3))
     testing.expect(t, len(live) > 0, "the live projection is not empty")
 
-    testing.expect_value(t, messages_rebuild(s, session), nil)
+    testing.expect_value(t, projection_rebuild(s, session), nil)
 
     rebuilt := project_snapshot(s, session, context.temp_allocator)
     testing.expect_value(t, rebuilt, live)
@@ -449,8 +449,8 @@ test_replay_is_idempotent :: proc(t: ^testing.T) {
     }
 
     first := project_snapshot(s, session, context.temp_allocator)
-    testing.expect_value(t, messages_rebuild(s, session), nil)
-    testing.expect_value(t, messages_rebuild(s, session), nil)
+    testing.expect_value(t, projection_rebuild(s, session), nil)
+    testing.expect_value(t, projection_rebuild(s, session), nil)
 
     testing.expect_value(t, project_snapshot(s, session, context.temp_allocator), first)
     testing.expect_value(t, session_message_count(s, session), i64(3))

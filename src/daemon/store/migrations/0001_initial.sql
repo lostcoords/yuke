@@ -112,3 +112,29 @@ CREATE TABLE messages (
 -- Partial: no row carries a model until the engine records provenance, so this
 -- costs nothing until it is the index that answers "which turns used X".
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
+
+-- Projection of `config.changed`, rebuildable by replay. session.config can fetch
+-- any past revision, which a fold from seq 1 would otherwise have to rebuild on
+-- every call.
+CREATE TABLE session_configs (
+    session_id BLOB NOT NULL
+        CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
+        REFERENCES sessions(id) ON DELETE CASCADE,
+    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991),
+    model      TEXT NOT NULL CHECK (typeof(model)     = 'text' AND length(model)     <= 128),
+    reasoning  TEXT NOT NULL CHECK (typeof(reasoning) = 'text' AND length(reasoning) <= 32),
+
+    PRIMARY KEY (session_id, config_rev)
+) WITHOUT ROWID;
+
+-- The prompt is per-session, not per-revision: it is set by Create_Session and no
+-- method changes it. It sits apart from `sessions` because it is @unbounded and
+-- that table is WITHOUT ROWID — a multi-KB column there would carry into the
+-- interior B-tree nodes every session.list scan walks, for a value it never reads.
+-- A missing row is `system_prompt: null`, meaning no prompt is sent to the model.
+CREATE TABLE session_prompts (
+    session_id BLOB PRIMARY KEY
+        CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
+        REFERENCES sessions(id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL CHECK (typeof(prompt) = 'text')
+) WITHOUT ROWID;

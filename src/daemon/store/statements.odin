@@ -17,6 +17,9 @@ Statement_Id :: enum {
     Insert_Message,
     Truncate_Messages,
     Count_Messages,
+    Insert_Config,
+    Clear_Configs,
+    Set_Prompt,
 }
 
 @(private)
@@ -90,6 +93,15 @@ STATEMENT_SQL := [Statement_Id]string {
         message_count = message_count + :delta,
         updated_at_ms = MAX(updated_at_ms, COALESCE(:updated_at_ms, 0))
         WHERE id = :session_id`,
+
+    // A revision is minted once, so a repeat is drift rather than an update.
+    .Insert_Config     = `INSERT INTO session_configs(session_id, config_rev, model, reasoning)
+        VALUES (:session_id, :config_rev, :model, :reasoning)`,
+    .Clear_Configs     = `DELETE FROM session_configs WHERE session_id = :session_id`,
+
+    // Absent means no prompt is sent, so a null clears the row rather than storing one.
+    .Set_Prompt        = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
+        SELECT :session_id, :prompt WHERE :prompt IS NOT NULL`,
 }
 
 // The row shapes the two reading statements are scanned through. Resolving a shape costs
@@ -115,6 +127,9 @@ Binds :: struct {
     insert_message:    sqlite.Bind_Mapping(Insert_Message_Params),
     truncate_messages: sqlite.Bind_Mapping(Truncate_Messages_Params),
     count_messages:    sqlite.Bind_Mapping(Count_Messages_Params),
+    insert_config:     sqlite.Bind_Mapping(Insert_Config_Params),
+    clear_configs:     sqlite.Bind_Mapping(Session_Params),
+    set_prompt:        sqlite.Bind_Mapping(Set_Prompt_Params),
 }
 
 // Resolve both read shapes. The SQL and the destination structs are both ours and
@@ -173,6 +188,9 @@ binds_prepare :: proc(set: Statements, binds: ^Binds) {
     binds.insert_message = bind_expect(set, .Insert_Message, Insert_Message_Params)
     binds.truncate_messages = bind_expect(set, .Truncate_Messages, Truncate_Messages_Params)
     binds.count_messages = bind_expect(set, .Count_Messages, Count_Messages_Params)
+    binds.insert_config = bind_expect(set, .Insert_Config, Insert_Config_Params)
+    binds.clear_configs = bind_expect(set, .Clear_Configs, Session_Params)
+    binds.set_prompt = bind_expect(set, .Set_Prompt, Set_Prompt_Params)
 }
 
 // `loc` is the caller's line, so a drifted statement names itself rather than

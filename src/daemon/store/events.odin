@@ -136,6 +136,7 @@ event_append :: proc(
 
     append_body(s, session, seq, name, payload, ids) or_return
     messages_apply(s, session, seq, data) or_return
+    configs_apply(s, session, data) or_return
     sqlite.txn_commit(s.writer) or_return
 
     return nil

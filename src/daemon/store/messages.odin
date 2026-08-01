@@ -169,8 +169,8 @@ Messages_Rebuild :: struct {
 // Drop and rebuild one session's projection by replaying its log. The projection holds no
 // fact the log doesn't, which is why it can reshape without a migration and why
 // `events.payload` must stay verbatim JSON. Runs in one transaction; `sa` is caller-owned scratch.
-messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp_allocator) -> (err: Error) {
-    assert(s != nil, "messages_rebuild needs a store")
+projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp_allocator) -> (err: Error) {
+    assert(s != nil, "projection_rebuild needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
     sqlite.txn_begin(s.writer, .Immediate) or_return
@@ -184,6 +184,7 @@ messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp
     // Ids start at 1, so truncating from there clears the session and carries the
     // count back to zero through the same path a real truncation takes.
     messages_truncate(s, session, 1) or_return
+    sqlite.execute(&s.binds.clear_configs, &Session_Params{session_id = session}) or_return
 
     rebuild := Messages_Rebuild {
         store   = s,
@@ -198,7 +199,7 @@ messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp
             session,
             rebuild.last,
             REBUILD_PAGE,
-            messages_rebuild_visit,
+            projection_rebuild_visit,
             &rebuild,
             sa,
         )
@@ -226,7 +227,7 @@ messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp
 REBUILD_PAGE :: 256
 
 @(private)
-messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
+projection_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     rebuild := (^Messages_Rebuild)(user)
     assert(rebuild != nil, "a replay needs its state")
     assert(rebuild.err == nil, "a replay stops after its first error")
@@ -237,7 +238,7 @@ messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     // Only two of the five durable names say anything about the transcript, so the
     // rest never pay a decode.
     #partial switch event.name {
-    case .Message_Committed, .Transcript_Truncated:
+    case .Message_Committed, .Transcript_Truncated, .Config_Changed:
     case:
         return .Continue
     }
@@ -255,6 +256,12 @@ messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     }
 
     if aerr := messages_apply(rebuild.store, rebuild.session, event.seq, data); aerr != nil {
+        rebuild.err = aerr
+
+        return .Stop
+    }
+
+    if aerr := configs_apply(rebuild.store, rebuild.session, data); aerr != nil {
         rebuild.err = aerr
 
         return .Stop
