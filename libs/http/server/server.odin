@@ -467,9 +467,17 @@ bound_port :: proc(s: ^Server) -> int {
     return ep.port
 }
 
-// `body` is copied, so caller-supplied response bytes need not outlive this call. Any
-// header beyond the framing fields comes from `conn_add_header`.
-respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte) -> Response_Error {
+// Answer the request, aborting if the response cannot be built. `body` is copied, so
+// caller-supplied response bytes need not outlive this call. Any header beyond the
+// framing fields comes from `conn_add_header`.
+respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte) {
+    abort_failed_response(c, try_respond(c, status, content_type, body))
+}
+
+// `respond`, reporting the failure instead of aborting. Nothing was written, so the
+// connection can still be answered.
+@(require_results)
+try_respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte) -> Response_Error {
     assert(c != nil, "respond needs a connection")
     assert(conn_can_respond(c), "respond on an answered connection")
 
@@ -508,14 +516,26 @@ respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte) ->
 }
 
 // `respond` with a `text/plain` body.
-respond_text :: proc(c: ^Conn, status: Status, text: string) -> Response_Error {
-    return respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text)
+respond_text :: proc(c: ^Conn, status: Status, text: string) {
+    respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text)
 }
 
-// Redirect to `location` with an empty body. `status` must carry a target (RFC 9110
-// §15.4); the target may not also be pending, since two `Location` fields would be
-// ambiguous.
-respond_redirect :: proc(c: ^Conn, status: Status, location: string) -> Response_Error {
+// `try_respond` with a `text/plain` body.
+@(require_results)
+try_respond_text :: proc(c: ^Conn, status: Status, text: string) -> Response_Error {
+    return try_respond(c, status, "text/plain; charset=utf-8", transmute([]byte)text)
+}
+
+// Redirect to `location` with an empty body, aborting if the response cannot be built.
+// `status` must carry a target (RFC 9110 §15.4); the target may not also be pending,
+// since two `Location` fields would be ambiguous.
+respond_redirect :: proc(c: ^Conn, status: Status, location: string) {
+    abort_failed_response(c, try_respond_redirect(c, status, location))
+}
+
+// `respond_redirect`, reporting the failure instead of aborting.
+@(require_results)
+try_respond_redirect :: proc(c: ^Conn, status: Status, location: string) -> Response_Error {
     assert(c != nil, "respond_redirect needs a connection")
     assert(conn_can_respond(c), "respond_redirect on an answered connection")
     assert(http.status_is_redirect(status), "respond_redirect needs a redirect that carries a target")
@@ -528,15 +548,37 @@ respond_redirect :: proc(c: ^Conn, status: Status, location: string) -> Response
         return .Invalid_Header
     }
 
-    conn_add_header(c, "Location", location) or_return
+    try_conn_add_header(c, "Location", location) or_return
 
-    return respond(c, status, "", nil)
+    return try_respond(c, status, "", nil)
 }
 
-// Ownership of `file` transfers only on `.None`; the post-transfer stat keeps
-// `Content-Length` and `max_file_bytes` describing the same open file. An invalid,
-// unavailable, or oversized file receives the supplied small failure response.
+// Answer from an open file, aborting if the response cannot be built. Ownership of `file`
+// always transfers. An invalid, unavailable, or oversized file receives the supplied small
+// failure response.
 respond_file :: proc(
+    c: ^Conn,
+    status: Status,
+    content_type: string,
+    file: nbio.Handle,
+    max_file_bytes: i64,
+    failure_status: Status,
+    failure_text: string,
+) {
+    err := try_respond_file(c, status, content_type, file, max_file_bytes, failure_status, failure_text)
+    if err == .None {
+        return
+    }
+
+    nbio.close(file, l = c.loop)
+    abort_failed_response(c, err)
+}
+
+// `respond_file`, reporting the failure instead of aborting. Ownership of `file` transfers
+// only on `.None`; the post-transfer stat keeps `Content-Length` and `max_file_bytes`
+// describing the same open file.
+@(require_results)
+try_respond_file :: proc(
     c: ^Conn,
     status: Status,
     content_type: string,
@@ -679,8 +721,22 @@ conn_can_add_header :: proc(c: ^Conn) -> bool {
 
 // Add a header to whatever response this connection eventually sends, so a pre-match step
 // can mark every downstream response without every response site repeating it. `name` and
-// `value` are cloned, so neither need outlive this call.
-conn_add_header :: proc(c: ^Conn, name: string, value: string) -> Response_Error {
+// `value` are cloned, so neither need outlive this call. `false` means the connection was
+// aborted and the caller must stop rather than answer.
+conn_add_header :: proc(c: ^Conn, name: string, value: string) -> (ok: bool) {
+    if err := try_conn_add_header(c, name, value); err != .None {
+        log.errorf("http_server: response header %s rejected: %v", name, err)
+        abort(c)
+
+        return false
+    }
+
+    return true
+}
+
+// `conn_add_header`, reporting the refusal instead of aborting.
+@(require_results)
+try_conn_add_header :: proc(c: ^Conn, name: string, value: string) -> Response_Error {
     assert(c != nil, "adding a header needs a connection")
     assert(conn_can_add_header(c), "response header added after the head was built")
 
@@ -775,11 +831,22 @@ conn_resolve :: proc(s: ^Server, ticket: Ticket) -> ^Conn {
 }
 
 // Tear down a connection that cannot be answered (for example after allocation
-// failure). This is the only valid fallback after a fallible response call.
+// failure). This is the only valid fallback after a `try_respond*` call.
 abort :: proc(c: ^Conn) {
     assert(c != nil && c.state != .Hijacked, "abort on an invalid connection")
 
     conn_finalize(c)
+}
+
+// Shared tail of the `respond*` wrappers.
+@(private)
+abort_failed_response :: proc(c: ^Conn, err: Response_Error) {
+    if err == .None {
+        return
+    }
+
+    log.errorf("http_server: response failed: %v", err)
+    abort(c)
 }
 
 // Re-arm accept; no-op when not `Serving`.
@@ -1128,15 +1195,12 @@ conn_on_timeout :: proc(op: ^nbio.Operation, c: ^Conn) {
     }
 }
 
-// Send a small text/plain error response, falling back to finalize if the
-// response itself fails.
+// Small text/plain refusal the driver itself originated during the request phase.
 @(private)
 conn_respond_error :: proc(c: ^Conn, status: Status, text: string) {
     assert(c != nil && c.state == .Reading, "error response outside Reading")
 
-    if respond_text(c, status, text) != .None {
-        conn_finalize(c)
-    }
+    respond_text(c, status, text)
 }
 
 // Cancel the pending deadline and transition `Reading` or `Deferred` to `Responding`.

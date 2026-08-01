@@ -237,8 +237,7 @@ router_dispatch :: proc(r: ^Router($T), c: ^Conn, req: Request) {
 
         // RFC 9110 §15.5.6: a 405 names the methods the path does route, so one that
         // cannot carry `Allow` is torn down rather than sent without it.
-        if conn_add_header(c, "Allow", ctx.allow) != .None {
-            conn_finalize(c)
+        if !conn_add_header(c, "Allow", ctx.allow) {
             return
         }
 

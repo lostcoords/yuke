@@ -67,7 +67,6 @@ DAEMON_ROUTES := [?]Http_Route {
 // `user_data` from it, so no callback can be paired with the wrong daemon.
 daemon_router_init :: proc(d: ^Daemon) {
     assert(d != nil, "router init needs a daemon")
-
     d.router = {
         middleware            = DAEMON_MIDDLEWARE[:],
         routes                = DAEMON_ROUTES[:],
@@ -87,8 +86,7 @@ daemon_middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middle
         return .Continue
     }
 
-    if http_server.conn_add_header(ctx.conn, "Cache-Control", CACHE_PRIVATE) != .None {
-        http_server.abort(ctx.conn)
+    if !http_server.conn_add_header(ctx.conn, "Cache-Control", CACHE_PRIVATE) {
         return .Stop
     }
 
@@ -105,9 +103,7 @@ daemon_middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Re
             ctx.request.head.method,
             ctx.request.path,
         )
-        if http_server.respond_text(ctx.conn, .Forbidden, "forbidden") != .None {
-            http_server.abort(ctx.conn)
-        }
+        http_server.respond_text(ctx.conn, .Forbidden, "forbidden")
 
         return .Stop
     }
@@ -123,27 +119,21 @@ daemon_middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Res
     switch auth {
     case .Missing, .Invalid, .Unsupported_Scheme:
         log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
-        if http_server.conn_add_header(ctx.conn, "WWW-Authenticate", daemon_auth_challenge(auth)) != .None {
-            http_server.abort(ctx.conn)
+        if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", daemon_auth_challenge(auth)) {
             return .Stop
         }
 
-        if http_server.respond_text(ctx.conn, .Unauthorized, "unauthorized") != .None {
-            http_server.abort(ctx.conn)
-        }
+        http_server.respond_text(ctx.conn, .Unauthorized, "unauthorized")
 
         return .Stop
 
     case .Ambiguous:
         log.warnf("daemon: ambiguous credentials %s %s", ctx.request.head.method, ctx.request.path)
-        if http_server.conn_add_header(ctx.conn, "WWW-Authenticate", daemon_auth_challenge(auth)) != .None {
-            http_server.abort(ctx.conn)
+        if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", daemon_auth_challenge(auth)) {
             return .Stop
         }
 
-        if http_server.respond_text(ctx.conn, .Bad_Request, "ambiguous credentials") != .None {
-            http_server.abort(ctx.conn)
-        }
+        http_server.respond_text(ctx.conn, .Bad_Request, "ambiguous credentials")
 
         return .Stop
 
@@ -160,23 +150,18 @@ daemon_router_not_found :: proc(ctx: ^Http_Context) {
     }
 
     log.debugf("daemon: not found %s", ctx.request.path)
-    if http_server.respond_text(ctx.conn, .Not_Found, "not found") != .None {
-        http_server.abort(ctx.conn)
-    }
+    http_server.respond_text(ctx.conn, .Not_Found, "not found")
 }
 
 // Path pattern matched a registered route, but not this method. `ctx.allow` borrows router
 // scratch, which `conn_add_header` clones.
 daemon_router_method_not_allowed :: proc(ctx: ^Http_Context) {
-    if http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) != .None {
-        http_server.abort(ctx.conn)
+    if !http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) {
         return
     }
 
     log.debugf("daemon: method not allowed %s %s", ctx.request.head.method, ctx.request.path)
-    if http_server.respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed") != .None {
-        http_server.abort(ctx.conn)
-    }
+    http_server.respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed")
 }
 
 // Refuse a pipelined follow-up request. `/ws` is exempt: a hijacking route keeps its
@@ -187,9 +172,7 @@ daemon_reject_pipelined :: proc(ctx: ^Http_Context) -> (answered: bool) {
     }
 
     log.debug("daemon: rejecting pipelined request")
-    if http_server.respond_text(ctx.conn, .Bad_Request, "pipelining not supported") != .None {
-        http_server.abort(ctx.conn)
-    }
+    http_server.respond_text(ctx.conn, .Bad_Request, "pipelining not supported")
 
     return true
 }
@@ -241,14 +224,12 @@ daemon_address_addresses_us :: proc(d: ^Daemon, addr: net.Address) -> bool {
         if a == net.IP4_Any {
             return false
         }
-
         return a[0] == 127 || a == d.bind_address
 
     case net.IP6_Address:
         if a == net.IP6_Any {
             return false
         }
-
         return a == net.IP6_Loopback || daemon_ip6_maps_loopback(a)
     }
 
@@ -263,7 +244,6 @@ daemon_ip6_maps_loopback :: proc(a: net.IP6_Address) -> bool {
             return false
         }
     }
-
     return a[5] == 0xffff && u16(a[6]) >> 8 == 127
 }
 
@@ -276,18 +256,14 @@ daemon_route_ws :: proc(ctx: ^Http_Context) {
     upgrade, result := ws.parse_upgrade_request_head(ctx.request.head)
     if result != .Ok {
         log.debugf("daemon: bad websocket upgrade: %v", result)
-        if http_server.respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade") != .None {
-            http_server.abort(ctx.conn)
-        }
+        http_server.respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade")
 
         return
     }
 
     if !ws.server_can_adopt(&d.ws_server) {
         log.warn("daemon: websocket at capacity")
-        if http_server.respond_text(ctx.conn, .Service_Unavailable, "at capacity") != .None {
-            http_server.abort(ctx.conn)
-        }
+        http_server.respond_text(ctx.conn, .Service_Unavailable, "at capacity")
 
         return
     }
@@ -356,7 +332,7 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
     }
 
     // Blob bodies are opaque bytes; the referencing `Media_Source` carries the MIME.
-    response_err := http_server.respond_file(
+    http_server.respond_file(
         c,
         .Ok,
         "application/octet-stream",
@@ -365,12 +341,6 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
         .Not_Found,
         "unknown blob",
     )
-    if response_err != .None {
-        log.errorf("daemon: respond_file failed: %v", response_err)
-        nbio.close(file, l = d.loop)
-        http_server.abort(c)
-        return
-    }
 
     log.debugf("daemon: serving blob %s", hash)
 }
@@ -379,9 +349,7 @@ daemon_route_blob_get :: proc(ctx: ^Http_Context) {
 daemon_blob_not_found :: proc(c: ^http_server.Conn) {
     assert(c != nil && c.server != nil, "blob failure needs an owned connection")
 
-    if http_server.respond_text(c, .Not_Found, "unknown blob") != .None {
-        http_server.abort(c)
-    }
+    http_server.respond_text(c, .Not_Found, "unknown blob")
 }
 
 // What publishing an upload decided. Recorded on a worker thread, which can neither
@@ -469,9 +437,7 @@ daemon_route_blob_put :: proc(ctx: ^Http_Context) {
     // Reject an over-cap upload up front on its declared length, before opening a temp
     // file or reading a byte of the body.
     if ctx.request.content_length > i64(wire.LIMITS.max_blob_bytes) {
-        if http_server.respond_text(c, .Content_Too_Large, "blob too large") != .None {
-            http_server.abort(c)
-        }
+        http_server.respond_text(c, .Content_Too_Large, "blob too large")
 
         return
     }
@@ -513,9 +479,7 @@ daemon_route_blob_put :: proc(ctx: ^Http_Context) {
     if oerr != nil {
         log.errorf("daemon: blob temp open failed: %v", oerr)
         daemon_blob_upload_free(up)
-        if http_server.respond_text(c, .Internal_Server_Error, "cannot store blob") != .None {
-            http_server.abort(c)
-        }
+        http_server.respond_text(c, .Internal_Server_Error, "cannot store blob")
 
         return
     }
@@ -657,26 +621,21 @@ daemon_blob_published :: proc(up: ^Blob_Upload) {
         return
     }
 
-    answered: http_server.Response_Error
     switch up.outcome {
     case .Stored:
-        answered = http_server.respond_text(c, .Created, "")
+        http_server.respond_text(c, .Created, "")
 
     case .Already_Present:
-        answered = http_server.respond_text(c, .Ok, "")
+        http_server.respond_text(c, .Ok, "")
 
     case .Mismatch:
-        answered = http_server.respond_text(c, .Bad_Request, "hash mismatch")
+        http_server.respond_text(c, .Bad_Request, "hash mismatch")
 
     case .Failed:
-        answered = http_server.respond_text(c, .Internal_Server_Error, "cannot store blob")
+        http_server.respond_text(c, .Internal_Server_Error, "cannot store blob")
 
     case .Pending, .Discarded:
         assert(false, "an upload with no answer owed resolved a connection")
-    }
-
-    if answered != .None {
-        http_server.abort(c)
     }
 }
 

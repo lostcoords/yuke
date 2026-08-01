@@ -112,7 +112,7 @@ test_on_request :: proc(c: ^Conn, req: Request) {
 
     assert(len(o.add_headers) <= len(o.add_errs), "test add_errs is too small for its add_headers")
     for field, i in o.add_headers {
-        o.add_errs[i] = conn_add_header(c, field.name, field.value)
+        o.add_errs[i] = try_conn_add_header(c, field.name, field.value)
     }
 
     if o.receive_body {
@@ -126,7 +126,7 @@ test_on_request :: proc(c: ^Conn, req: Request) {
     }
 
     if o.redirect {
-        o.answer_err = respond_redirect(c, .Found, o.redirect_to)
+        o.answer_err = try_respond_redirect(c, .Found, o.redirect_to)
         test_answer_fallback(c, o)
         return
     }
@@ -137,7 +137,7 @@ test_on_request :: proc(c: ^Conn, req: Request) {
     }
 
     if !o.hijack {
-        o.answer_err = respond_text(c, .Ok, "hello")
+        o.answer_err = try_respond_text(c, .Ok, "hello")
         test_answer_fallback(c, o)
 
         if o.shutdown {
@@ -236,7 +236,7 @@ test_respond_from_file :: proc(c: ^Conn, o: ^Obs) {
         return
     }
 
-    o.answer_err = respond_file(c, .Ok, "text/plain", file, 1 << 20, .Not_Found, "missing")
+    o.answer_err = try_respond_file(c, .Ok, "text/plain", file, 1 << 20, .Not_Found, "missing")
     if o.answer_err != .None {
         nbio.close(file, l = c.loop)
     }
@@ -251,7 +251,7 @@ test_answer_fallback :: proc(c: ^Conn, o: ^Obs) {
         return
     }
 
-    if respond_text(c, .Internal_Server_Error, "answer rejected") != .None {
+    if try_respond_text(c, .Internal_Server_Error, "answer rejected") != .None {
         abort(c)
     }
 }
