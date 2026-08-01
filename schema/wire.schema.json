@@ -571,6 +571,28 @@
         },
         {
           "properties": {
+            "data": {
+              "description": "Opaque encrypted provider data. Persist and replay it verbatim at this position; never interpret, normalize, collapse, or reorder it.",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/Part_Id"
+            },
+            "type": {
+              "const": "redacted_reasoning",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "data"
+          ],
+          "title": "Redacted_Reasoning_Part",
+          "type": "object"
+        },
+        {
+          "properties": {
             "arguments": {
               "description": "Opaque JSON-encoded arguments.",
               "type": "string"
@@ -3999,6 +4021,23 @@
       ],
       "type": "object"
     },
+    "Redacted_Reasoning_Part": {
+      "description": "Opaque safety-redacted model reasoning payload. Non-owning.",
+      "properties": {
+        "data": {
+          "description": "Opaque encrypted provider data. Persist and replay it verbatim at this position; never interpret, normalize, collapse, or reorder it.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/Part_Id"
+        }
+      },
+      "required": [
+        "id",
+        "data"
+      ],
+      "type": "object"
+    },
     "Request": {
       "description": "A JSON-RPC request. `method` is a const per arm, so a frame selects its own params type.",
       "oneOf": [
@@ -7384,7 +7423,7 @@
       "type": "object"
     },
     "Text_Part": {
-      "description": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
+      "description": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | redacted_reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
       "properties": {
         "id": {
           "$ref": "#/$defs/Part_Id"

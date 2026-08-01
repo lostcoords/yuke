@@ -57,10 +57,12 @@ Install_Outcome :: enum {
     Resync_Again,
 }
 
-// Kind of one active assistant part. Text and reasoning share the `Text_Buffer` payload.
+// Kind of one active assistant part. Text and visible reasoning share the
+// `Text_Buffer` payload; redacted reasoning remains opaque and immutable.
 Part_Kind :: enum {
     Text,
     Reasoning,
+    Redacted_Reasoning,
     Tool,
 }
 
@@ -86,9 +88,10 @@ Tool_Buffer :: struct {
 // One owned part of the active draft. A union discriminates by type, so text and
 // reasoning (both `Text_Buffer`) cannot be separate arms; a `kind` tag selects instead.
 Active_Part :: struct {
-    kind: Part_Kind,
-    text: Text_Buffer, // used for `.Text` and `.Reasoning`
-    tool: Tool_Buffer, // used for `.Tool`; owned by the draft arena
+    kind:     Part_Kind,
+    text:     Text_Buffer, // used for `.Text` and `.Reasoning`
+    redacted: wire.Redacted_Reasoning_Part, // used for `.Redacted_Reasoning`
+    tool:     Tool_Buffer, // used for `.Tool`; owned by the draft arena
 }
 
 // One accumulated assistant draft and the arena owning its bytes.
@@ -422,8 +425,8 @@ replica_on_part_delta :: proc(
 
     part := &draft.parts[index]
 
-    // Only text and reasoning parts carry a byte buffer; a delta targeting a tool is a gap.
-    if part.kind == .Tool {
+    // Only text and visible reasoning parts carry a byte buffer.
+    if part.kind != .Text && part.kind != .Reasoning {
         return {kind = .Gap}, .None
     }
 
@@ -692,6 +695,14 @@ active_part_from_wire :: proc(
 
         return {kind = .Reasoning, text = buf}, .None
 
+    case wire.Redacted_Reasoning_Part:
+        redacted := wire.Redacted_Reasoning_Part {
+            id   = v.id,
+            data = strings.clone(v.data, allocator),
+        }
+
+        return {kind = .Redacted_Reasoning, redacted = redacted}, .None
+
     case wire.Tool_Part:
         // `wire.tool_part_clone` cannot signal OOM, and the output buffer only records its
         // arena allocator (no allocation) here, so this arm never fails mid-build.
@@ -773,7 +784,19 @@ located_part :: proc(self: ^Session_Replica, message_id: wire.Message_Id, part_i
         return nil
     }
 
-    stored_id := part.tool.tool.id if part.kind == .Tool else part.text.id
+    stored_id: wire.Part_Id
+
+    switch part.kind {
+    case .Text, .Reasoning:
+        stored_id = part.text.id
+
+    case .Redacted_Reasoning:
+        stored_id = part.redacted.id
+
+    case .Tool:
+        stored_id = part.tool.tool.id
+    }
+
     assert(stored_id == part_id, "draft part stored off its ordinal")
 
     return part
@@ -869,11 +892,12 @@ replica_part_kind :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (Par
     return part.kind, true
 }
 
-// Borrow accumulated text/reasoning bytes; ok is false for a tool or absent part.
+// Borrow accumulated text/reasoning bytes; ok is false for an opaque redacted
+// reasoning part, a tool, or an absent part.
 // Invalidated by any later replica mutation.
 replica_part_text :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (string, bool) {
     part := part_at(self, part_id)
-    if part == nil || part.kind == .Tool {
+    if part == nil || (part.kind != .Text && part.kind != .Reasoning) {
         return "", false
     }
 

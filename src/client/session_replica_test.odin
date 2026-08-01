@@ -241,7 +241,7 @@ test_duplicate_overlap_ignored_and_forward_offset_is_gap :: proc(t: ^testing.T) 
 }
 
 @(test)
-test_missing_part_and_tool_target_delta_are_gaps :: proc(t: ^testing.T) {
+test_missing_part_and_non_text_target_deltas_are_gaps :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
@@ -260,6 +260,38 @@ test_missing_part_and_tool_target_delta_are_gaps :: proc(t: ^testing.T) {
     // A tool part has no byte buffer, so a delta targeting it is still a gap.
     tool_delta, _ := replica_on_part_delta(&r, _delta(3, 0, 0, "x"))
     testing.expect_value(t, tool_delta.kind, Apply_Kind.Gap)
+}
+
+@(test)
+test_redacted_reasoning_part_is_owned_and_never_accepts_text_deltas :: proc(t: ^testing.T) {
+    r: Session_Replica
+    replica_init(&r, context.allocator, _sid())
+    defer replica_destroy(&r)
+
+    _, _ = replica_on_started(&r, _started(3))
+
+    src: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&src, context.allocator, context.allocator)
+    a := mem.dynamic_arena_allocator(&src)
+    data := strings.clone("opaque-data", a)
+
+    added, aerr := replica_on_part_added(&r, _part_added(3, wire.Redacted_Reasoning_Part{id = 0, data = data}))
+    testing.expect_value(t, aerr, Replica_Error.None)
+    testing.expect_value(t, added.kind, Apply_Kind.Changed)
+
+    mem.dynamic_arena_destroy(&src)
+
+    kind, has_kind := replica_part_kind(&r, 0)
+    testing.expect(t, has_kind, "redacted reasoning part must be present")
+    testing.expect_value(t, kind, Part_Kind.Redacted_Reasoning)
+    testing.expect_value(t, r.active.parts[0].redacted.data, "opaque-data")
+
+    _, has_text := replica_part_text(&r, 0)
+    testing.expect(t, !has_text, "redacted reasoning must not surface as visible text")
+
+    delta, derr := replica_on_part_delta(&r, _delta(3, 0, 0, "x"))
+    testing.expect_value(t, derr, Replica_Error.None)
+    testing.expect_value(t, delta.kind, Apply_Kind.Gap)
 }
 
 @(test)

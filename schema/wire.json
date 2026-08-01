@@ -4240,7 +4240,7 @@
     },
     {
       "name": "Text_Part",
-      "doc": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
+      "doc": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | redacted_reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
       "fields": [
         {
           "name": "id",
@@ -4286,6 +4286,29 @@
           "name": "signature",
           "type": "string",
           "doc": "Opaque provider data: Anthropic's extended-thinking block signature, delivered by `signature_delta`. Empty when the provider issued none. Persisted verbatim and replayed verbatim on the next request of a tool-use conversation; never interpreted. A part carrying one must never be collapsed or reordered by a normalization pass, even when `text` is empty: the signature covers the block at its position.",
+          "presence": "required",
+          "bound": {
+            "kind": "unbounded",
+            "expr": "",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Redacted_Reasoning_Part",
+      "doc": "Opaque safety-redacted model reasoning payload. Non-owning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "Part_Id",
+          "doc": "Part ordinal in the message content array.",
+          "presence": "required"
+        },
+        {
+          "name": "data",
+          "type": "string",
+          "doc": "Opaque encrypted provider data. Persist and replay it verbatim at this position; never interpret, normalize, collapse, or reorder it.",
           "presence": "required",
           "bound": {
             "kind": "unbounded",
@@ -5786,6 +5809,10 @@
         {
           "type": "Reasoning_Part",
           "tag": "reasoning"
+        },
+        {
+          "type": "Redacted_Reasoning_Part",
+          "tag": "redacted_reasoning"
         },
         {
           "type": "Tool_Part",

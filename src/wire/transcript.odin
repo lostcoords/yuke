@@ -66,7 +66,7 @@ message_error_clone :: proc(self: Message_Error, allocator := context.allocator)
 }
 
 // ---------------------------------------------------------------------------
-// AssistantPart: text | reasoning | tool
+// AssistantPart: text | reasoning | redacted_reasoning | tool
 // ---------------------------------------------------------------------------
 
 // Text assistant part payload. Non-owning.
@@ -96,6 +96,17 @@ Reasoning_Part :: struct {
     // be collapsed or reordered by a normalization pass, even when `text` is
     // empty: the signature covers the block at its position.
     signature: string,
+}
+
+// Opaque safety-redacted model reasoning payload. Non-owning.
+Redacted_Reasoning_Part :: struct {
+    // Part ordinal in the message content array.
+    id:   Part_Id,
+
+    // @unbounded
+    // Opaque encrypted provider data. Persist and replay it verbatim at this
+    // position; never interpret, normalize, collapse, or reorder it.
+    data: string,
 }
 
 // Tool assistant part payload. Non-owning.
@@ -217,6 +228,9 @@ Assistant_Part :: union {
     // Model reasoning trace.
     Reasoning_Part,
 
+    // Opaque safety-redacted model reasoning.
+    Redacted_Reasoning_Part,
+
     // A tool call and its state.
     Tool_Part,
 }
@@ -239,6 +253,11 @@ assistant_part_emit :: proc(e: ^Emitter, self: Assistant_Part) {
         if v.signature != "" {
             field_string(e, "signature", v.signature)
         }
+
+    case Redacted_Reasoning_Part:
+        field_string(e, "type", "redacted_reasoning")
+        field_u64(e, "id", u64(v.id))
+        field_string(e, "data", v.data)
 
     case Tool_Part:
         field_string(e, "type", "tool")
@@ -286,6 +305,9 @@ assistant_part_clone :: proc(self: Assistant_Part, allocator := context.allocato
             signature = strings.clone(v.signature, allocator),
         }
 
+    case Redacted_Reasoning_Part:
+        return Redacted_Reasoning_Part{id = v.id, data = strings.clone(v.data, allocator)}
+
     case Tool_Part:
         return tool_part_clone(v, allocator)
     }
@@ -300,6 +322,9 @@ assistant_part_id :: proc(self: Assistant_Part) -> Part_Id {
         return v.id
 
     case Reasoning_Part:
+        return v.id
+
+    case Redacted_Reasoning_Part:
         return v.id
 
     case Tool_Part:
@@ -1131,6 +1156,9 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
     case Reasoning_Part:
         return len(v.text) + len(v.signature)
 
+    case Redacted_Reasoning_Part:
+        return len(v.data)
+
     case Tool_Part:
         total := len(v.name) + len(v.arguments)
 
@@ -1395,7 +1423,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
                 text = dec_string(d) or_return
                 seen += {.Text}
 
-            case "call_id", "name", "arguments", "input_view", "state", "permission", "signature":
+            case "call_id", "name", "arguments", "input_view", "state", "permission", "signature", "data":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1437,7 +1465,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
             case "signature":
                 signature = dec_string(d) or_return
 
-            case "call_id", "name", "arguments", "input_view", "state", "permission":
+            case "call_id", "name", "arguments", "input_view", "state", "permission", "data":
                 return nil, .Mismatched_Payload
 
             case:
@@ -1450,6 +1478,43 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
         }
 
         return Reasoning_Part{id = Part_Id(id), text = text, signature = signature}, .None
+
+    case "redacted_reasoning":
+        id: u64
+        data: string
+
+        Field :: enum {
+            Id,
+            Data,
+        }
+
+        seen: bit_set[Field]
+        for {
+            k, kdone := dec_key(d) or_return
+            if kdone do break
+
+            switch k {
+            case "id":
+                id = dec_u64(d) or_return
+                seen += {.Id}
+
+            case "data":
+                data = dec_string(d) or_return
+                seen += {.Data}
+
+            case "text", "signature", "call_id", "name", "arguments", "input_view", "state", "permission":
+                return nil, .Mismatched_Payload
+
+            case:
+                dec_skip(d) or_return
+            }
+        }
+
+        if seen != {.Id, .Data} {
+            return nil, .Mismatched_Payload
+        }
+
+        return Redacted_Reasoning_Part{id = Part_Id(id), data = data}, .None
 
     case "tool":
         tp: Tool_Part
@@ -1492,7 +1557,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
             case "permission":
                 tp.permission_state = _permission_state_from_reader(d) or_return
 
-            case "text":
+            case "text", "signature", "data":
                 return nil, .Mismatched_Payload
 
             case:

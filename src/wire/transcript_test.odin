@@ -501,6 +501,74 @@ test_reasoning_signature_counts_toward_string_bytes :: proc(t: ^testing.T) {
     testing.expect_value(t, _assistant_part_string_bytes(part), 6)
 }
 
+// A redacted reasoning block has its own closed arm: the opaque encrypted data
+// survives persistence without being confused with a regular thinking signature.
+@(test)
+test_redacted_reasoning_part_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"type":"redacted_reasoning","id":2,"data":"opaque-data"}`
+    v := decoder_init(input)
+
+    part, derr := assistant_part_from_reader(&v)
+    testing.expect_value(t, derr, Validation_Error.None)
+    redacted, ok := part.(Redacted_Reasoning_Part)
+    testing.expect(t, ok, "should be redacted reasoning")
+
+    if ok {
+        testing.expect_value(t, redacted.id, Part_Id(2))
+        testing.expect_value(t, redacted.data, "opaque-data")
+    }
+
+    e: Emitter
+    emitter_init(&e, context.temp_allocator)
+    defer emitter_destroy(&e)
+    assistant_part_emit(&e, part)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// `data` is required and belongs only to the redacted-reasoning arm. Known
+// sibling fields are rejected instead of being materialized or ignored.
+@(test)
+test_redacted_reasoning_part_rejects_mismatched_shape :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    inputs := []string {
+        `{"type":"redacted_reasoning","id":0}`,
+        `{"type":"redacted_reasoning","id":0,"data":"opaque","text":"not-opaque"}`,
+        `{"type":"text","id":0,"text":"hi","data":"opaque"}`,
+        `{"type":"reasoning","id":0,"text":"hm","data":"opaque"}`,
+        `{"type":"tool","id":0,"name":"read","arguments":"{}","state":{"type":"pending"},"data":"opaque"}`,
+    }
+    for input in inputs {
+        v := decoder_init(input)
+        _, derr := assistant_part_from_reader(&v)
+        testing.expect_value(t, derr, Validation_Error.Mismatched_Payload)
+    }
+}
+
+// Opaque data is borrowed on decode and therefore cloned into the destination owner.
+@(test)
+test_redacted_reasoning_part_clone_copies_data :: proc(t: ^testing.T) {
+    src := Assistant_Part(Redacted_Reasoning_Part{id = 0, data = "opaque-data"})
+    cloned := assistant_part_clone(src, context.temp_allocator).(Redacted_Reasoning_Part)
+    testing.expect_value(t, cloned.data, "opaque-data")
+    testing.expect(
+        t,
+        raw_data(cloned.data) != raw_data(src.(Redacted_Reasoning_Part).data),
+        "clone must not alias the source data",
+    )
+}
+
+// Redacted data is unbounded payload covered by the aggregate assistant-message cap.
+@(test)
+test_redacted_reasoning_data_counts_toward_string_bytes :: proc(t: ^testing.T) {
+    part := Assistant_Part(Redacted_Reasoning_Part{id = 0, data = "opaque"})
+    testing.expect_value(t, _assistant_part_string_bytes(part), 6)
+}
+
 // The aggregate cap bounds a message on both paths, so one message always fits in a
 // frame. `text` is @unbounded, so nothing else stops a single part from growing.
 @(test)
