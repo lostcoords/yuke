@@ -96,7 +96,7 @@ pump_commit :: proc(
     defer wire.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, stamped)
 
-    if aerr := store.event_append(d.store, session, seq, name, wire.to_string(&e), ids); aerr != nil {
+    if aerr := store.event_append(d.store, session, seq, stamped, wire.to_string(&e), ids); aerr != nil {
         // Seq_Conflict means our tracked high-water diverged from the log: a daemon
         // bug, so it crashes here. Other failures drop the cached mark, since it
         // can't be trusted after a failed append, and degrade.

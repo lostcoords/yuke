@@ -22,16 +22,39 @@ test_append_recovers_across_restart :: proc(t: ^testing.T) {
     test_session_create(t, s, alpha, beta)
 
     // Interleaved so neither session's numbering can borrow the other's.
-    testing.expect_value(t, event_append(s, alpha, 1, .Run_Started, `{"seq":1}`, {run_id = 1}), nil)
-    testing.expect_value(t, event_append(s, beta, 1, .Run_Started, `{"seq":1}`, {run_id = 1}), nil)
     testing.expect_value(
         t,
-        event_append(s, alpha, 2, .Message_Committed, `{"seq":2}`, {message_id = 7, input_id = 5}),
+        event_append(s, alpha, 1, test_durable(.Run_Started, alpha, 1), `{"seq":1}`, {run_id = 1}),
         nil,
     )
-    testing.expect_value(t, event_append(s, beta, 2, .Config_Changed, `{"seq":2}`, {config_rev = 3}), nil)
+    testing.expect_value(
+        t,
+        event_append(s, beta, 1, test_durable(.Run_Started, beta, 1), `{"seq":1}`, {run_id = 1}),
+        nil,
+    )
+    testing.expect_value(
+        t,
+        event_append(
+            s,
+            alpha,
+            2,
+            test_durable(.Message_Committed, alpha, 2),
+            `{"seq":2}`,
+            {message_id = 7, input_id = 5},
+        ),
+        nil,
+    )
+    testing.expect_value(
+        t,
+        event_append(s, beta, 2, test_durable(.Config_Changed, beta, 2), `{"seq":2}`, {config_rev = 3}),
+        nil,
+    )
     // A stale mark in a later append cannot rewind a family.
-    testing.expect_value(t, event_append(s, alpha, 3, .Run_Done, `{"seq":3}`, {message_id = 1, run_id = 1}), nil)
+    testing.expect_value(
+        t,
+        event_append(s, alpha, 3, test_durable(.Run_Done, alpha, 3), `{"seq":3}`, {message_id = 1, run_id = 1}),
+        nil,
+    )
 
     before_alpha, ba_err := high_water(s, alpha)
     testing.expect_value(t, ba_err, nil)
@@ -62,11 +85,15 @@ test_append_recovers_across_restart :: proc(t: ^testing.T) {
     // (b) the next append continues from the recovered mark, and only from it.
     testing.expect_value(
         t,
-        event_append(reopened, alpha, 3, .Run_Done, `{"replay":true}`, {}),
+        event_append(reopened, alpha, 3, test_durable(.Run_Done, alpha, 3), `{"replay":true}`, {}),
         Store_Error.Seq_Conflict,
     )
-    testing.expect_value(t, event_append(reopened, alpha, 5, .Run_Done, `{"gap":true}`, {}), Store_Error.Seq_Conflict)
-    testing.expect_value(t, event_append(reopened, alpha, 4, .Run_Done, `{"seq":4}`, {}), nil)
+    testing.expect_value(
+        t,
+        event_append(reopened, alpha, 5, test_durable(.Run_Done, alpha, 5), `{"gap":true}`, {}),
+        Store_Error.Seq_Conflict,
+    )
+    testing.expect_value(t, event_append(reopened, alpha, 4, test_durable(.Run_Done, alpha, 4), `{"seq":4}`, {}), nil)
 
     // (c) the tail reads back whole and in order.
     events, events_err := events_after(reopened, alpha, 0, 16)
@@ -96,7 +123,11 @@ test_deleted_tail_does_not_reclaim_seq :: proc(t: ^testing.T) {
     test_session_create(t, s, session)
 
     for seq in wire.Seq(1) ..= 4 {
-        testing.expect_value(t, event_append(s, session, seq, .Run_Done, `{"n":0}`, {}), nil)
+        testing.expect_value(
+            t,
+            event_append(s, session, seq, test_durable(.Run_Done, session, seq), `{"n":0}`, {}),
+            nil,
+        )
     }
 
     // A truncating rewind deletes rows; the mark is not a MAX(seq) derivation.
@@ -112,9 +143,21 @@ test_deleted_tail_does_not_reclaim_seq :: proc(t: ^testing.T) {
     testing.expect_value(t, hw.seq, wire.Seq(4))
 
     // The deleted numbers are spent: only 5 continues the log.
-    testing.expect_value(t, event_append(reopened, session, 3, .Run_Done, `{"n":3}`, {}), Store_Error.Seq_Conflict)
-    testing.expect_value(t, event_append(reopened, session, 4, .Run_Done, `{"n":4}`, {}), Store_Error.Seq_Conflict)
-    testing.expect_value(t, event_append(reopened, session, 5, .Run_Done, `{"n":5}`, {}), nil)
+    testing.expect_value(
+        t,
+        event_append(reopened, session, 3, test_durable(.Run_Done, session, 3), `{"n":3}`, {}),
+        Store_Error.Seq_Conflict,
+    )
+    testing.expect_value(
+        t,
+        event_append(reopened, session, 4, test_durable(.Run_Done, session, 4), `{"n":4}`, {}),
+        Store_Error.Seq_Conflict,
+    )
+    testing.expect_value(
+        t,
+        event_append(reopened, session, 5, test_durable(.Run_Done, session, 5), `{"n":5}`, {}),
+        nil,
+    )
 
     events, events_err := events_after(reopened, session, 0, 16)
     testing.expect_value(t, events_err, nil)
@@ -136,11 +179,19 @@ test_failed_append_leaves_the_mark_untouched :: proc(t: ^testing.T) {
     defer close(s)
     test_session_create(t, s, session)
 
-    testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"n":1}`, {run_id = 9}), nil)
+    testing.expect_value(
+        t,
+        event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{"n":1}`, {run_id = 9}),
+        nil,
+    )
 
     // Same seq, so the high-water guard rejects the replay before any row is
     // inserted and the transaction unwinds.
-    testing.expect_value(t, event_append(s, session, 1, .Run_Done, `{"n":1}`, {run_id = 99}), Store_Error.Seq_Conflict)
+    testing.expect_value(
+        t,
+        event_append(s, session, 1, test_durable(.Run_Done, session, 1), `{"n":1}`, {run_id = 99}),
+        Store_Error.Seq_Conflict,
+    )
 
     hw, hw_err := high_water(s, session)
     testing.expect_value(t, hw_err, nil)
@@ -148,7 +199,11 @@ test_failed_append_leaves_the_mark_untouched :: proc(t: ^testing.T) {
     testing.expect_value(t, hw.run_id, wire.Run_Id(9))
 
     // A gap likewise leaves no event or id mark behind.
-    testing.expect_value(t, event_append(s, session, 3, .Run_Done, `{"n":3}`, {run_id = 42}), Store_Error.Seq_Conflict)
+    testing.expect_value(
+        t,
+        event_append(s, session, 3, test_durable(.Run_Done, session, 3), `{"n":3}`, {run_id = 42}),
+        Store_Error.Seq_Conflict,
+    )
 
     after, after_err := high_water(s, session)
     testing.expect_value(t, after_err, nil)
@@ -196,7 +251,7 @@ test_tail_read_honors_from_seq_and_limit :: proc(t: ^testing.T) {
     for seq in wire.Seq(1) ..= 6 {
         // `{` opens a format directive, so the brace arrives as an argument.
         payload := fmt.tprintf(`%s%d}`, `{"n":`, seq)
-        testing.expect_value(t, event_append(s, session, seq, .Run_Done, payload, {}), nil)
+        testing.expect_value(t, event_append(s, session, seq, test_durable(.Run_Done, session, seq), payload, {}), nil)
     }
 
     page, page_err := events_after(s, session, 2, 3)
@@ -236,7 +291,7 @@ test_unknown_stored_name_fails_the_read :: proc(t: ^testing.T) {
     defer close(s)
     test_session_create(t, s, session)
 
-    testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"n":1}`, {}), nil)
+    testing.expect_value(t, event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{"n":1}`, {}), nil)
 
     // A row a newer daemon could have written: the name is not in this binary's
     // closed broadcast set, so the read refuses rather than inventing a variant.
@@ -270,7 +325,7 @@ test_persisted_values_are_validated_without_asserting :: proc(t: ^testing.T) {
     defer close(s)
     test_session_create(t, s, session)
 
-    testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{}`, {}), nil)
+    testing.expect_value(t, event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{}`, {}), nil)
     testing.expect_value(t, sqlite.exec(s.writer, "PRAGMA ignore_check_constraints=ON"), sqlite.Result.Ok)
 
     corrupt_high := fmt.tprintf("UPDATE sessions SET seq_high = -1 WHERE id = x'%s'", hex_session(session))
@@ -339,7 +394,7 @@ test_tail_materialization_oom_leaves_statement_reusable :: proc(t: ^testing.T) {
     defer close(s)
     test_session_create(t, s, session)
 
-    testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{}`, {}), nil)
+    testing.expect_value(t, event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{}`, {}), nil)
 
     failing: testsupport.Failing_Allocator
     testsupport.failing_allocator_init(&failing, context.allocator, 1)
@@ -365,7 +420,11 @@ test_event_visitor_allocates_only_owned_payloads :: proc(t: ^testing.T) {
     test_session_create(t, s, session)
 
     for seq in wire.Seq(1) ..= 3 {
-        testing.expect_value(t, event_append(s, session, seq, .Run_Started, `{"seq":1}`, {}), nil)
+        testing.expect_value(
+            t,
+            event_append(s, session, seq, test_durable(.Run_Started, session, seq), `{"seq":1}`, {}),
+            nil,
+        )
     }
 
     track: mem.Tracking_Allocator
@@ -403,8 +462,16 @@ test_store_lifecycle_leaks_nothing :: proc(t: ^testing.T) {
     testing.expect_value(t, err, nil)
     test_session_create(t, s, session)
 
-    testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"seq":1}`, {run_id = 1}), nil)
-    testing.expect_value(t, event_append(s, session, 2, .Run_Done, `{"seq":2}`, {run_id = 1}), nil)
+    testing.expect_value(
+        t,
+        event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{"seq":1}`, {run_id = 1}),
+        nil,
+    )
+    testing.expect_value(
+        t,
+        event_append(s, session, 2, test_durable(.Run_Done, session, 2), `{"seq":2}`, {run_id = 1}),
+        nil,
+    )
 
     hw, hw_err := high_water(s, session)
     testing.expect_value(t, hw_err, nil)
@@ -460,7 +527,7 @@ hex_session :: proc(session: wire.Session_Id) -> string {
     return strings.to_string(b)
 }
 
-@(private = "file")
+@(private)
 test_session :: proc(tag: byte) -> wire.Session_Id {
     id: [16]u8
     for &b, i in id {
@@ -472,7 +539,7 @@ test_session :: proc(tag: byte) -> wire.Session_Id {
 
 // Every event and projected message carries a foreign key into `sessions`, so a
 // synthetic id needs its registry row before anything can be appended for it.
-@(private = "file")
+@(private)
 test_session_create :: proc(t: ^testing.T, s: ^Store, ids: ..wire.Session_Id) {
     for id in ids {
         summary := wire.Session {
@@ -490,4 +557,48 @@ test_session_create :: proc(t: ^testing.T, s: ^Store, ids: ..wire.Session_Id) {
 
         testing.expect_value(t, session_create(s, summary), nil)
     }
+}
+
+// A minimal typed payload for a durable name. These tests exercise sequencing and
+// row shape rather than message content, so each arm carries only what the
+// projection reads; `seq` doubles as the message id so repeated commits stay unique.
+@(private = "file")
+test_durable :: proc(name: wire.Broadcast_Name, session: wire.Session_Id, seq: wire.Seq) -> wire.Broadcast_Data {
+    #partial switch name {
+    case .Run_Started:
+        return wire.Run_Started_Data{session_id = session, seq = seq, run_id = 1, kind = .Turn, started_at_ms = 1}
+
+    case .Run_Done:
+        return wire.Run_Done_Data {
+            session_id = session,
+            seq = seq,
+            run_id = 1,
+            kind = .Turn,
+            timing = {started_at_ms = u64(1), ended_at_ms = 2},
+            outcome = wire.Run_Outcome_Turn{finish = .Stop, rounds = 1},
+        }
+
+    case .Config_Changed:
+        return wire.Config_Changed_Data {
+            session_id = session,
+            seq = seq,
+            config = {config_rev = 1, model = "test/model", reasoning = "low"},
+        }
+
+    case .Message_Committed:
+        return wire.Message_Committed_Data {
+            session_id = session,
+            seq = seq,
+            message = wire.User_Message {
+                id = wire.Message_Id(seq),
+                input_id = wire.Input_Id(seq),
+                time = {created_at_ms = 1},
+            },
+        }
+
+    case .Transcript_Truncated:
+        return wire.Transcript_Truncated_Data{session_id = session, seq = seq, first_removed_id = 1}
+    }
+
+    panic("test_durable has no payload for this name")
 }

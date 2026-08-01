@@ -4,6 +4,7 @@ import "core:log"
 import "core:nbio"
 import "core:testing"
 
+import "libs:bindings/sqlite"
 import "libs:testsupport"
 import ws "libs:websocket"
 import client "src:client"
@@ -83,8 +84,6 @@ resync_append_corrupt_fixture :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broa
     assert(d != nil, "a corruption fixture needs daemon state")
     assert(d.store != nil, "a corruption fixture needs an open store")
 
-    name, typed := wire.broadcast_data_name(data)
-    assert(typed, "a corruption fixture uses a typed payload")
     session, named := wire.broadcast_data_session_id(data).?
     assert(named, "a durable corruption fixture names its session")
 
@@ -98,7 +97,37 @@ resync_append_corrupt_fixture :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broa
     defer wire.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, stamped)
 
-    testing.expect_value(t, store.event_append(d.store, session, seq, name, wire.to_string(&e), {}), nil)
+    testing.expect_value(t, store.event_append(d.store, session, seq, stamped, wire.to_string(&e), {}), nil)
+}
+
+// Overwrite one stored payload without touching seq, marks, or the projection.
+// This models a damaged file: the daemon's own write path could not have produced
+// the replacement, so it is written underneath that path rather than through it.
+resync_damage_payload :: proc(
+    t: ^testing.T,
+    d: ^Daemon,
+    session: wire.Session_Id,
+    seq: wire.Seq,
+    data: wire.Broadcast_Data,
+) {
+    assert(d != nil, "damaging a row needs daemon state")
+    assert(d.store != nil, "damaging a row needs an open store")
+
+    e: wire.Emitter
+    wire.emitter_init(&e, d.allocator)
+    defer wire.emitter_destroy(&e)
+    wire.broadcast_data_emit(&e, pump_stamp_seq(data, seq))
+
+    st, prep := sqlite.prepare(d.store.writer, "UPDATE events SET payload = ?1 WHERE session_id = ?2 AND seq = ?3")
+    testing.expect_value(t, prep, sqlite.Result.Ok)
+    defer sqlite.finalize(st)
+
+    sid := ([16]u8)(session)
+    testing.expect_value(t, sqlite.bind_text(st, 1, wire.to_string(&e)), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.bind_blob(st, 2, sid[:]), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.bind_i64(st, 3, i64(seq)), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.execute(st), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.changes(d.store.writer), 1)
 }
 
 // Bring up a daemon on a real database and run `body` against it.
@@ -444,7 +473,10 @@ test_daemon_resync_of_a_zero_message_id_is_refused :: proc(t: ^testing.T) {
 
             // Id 0 is never minted, and a cut carrying it would pass our wire validator:
             // the fold refuses the damaged historical row before it reaches a replica.
-            resync_append_corrupt_fixture(t, d, resync_user(session, 0))
+            // The daemon could never emit this, so it is written as on-disk damage to
+            // a well-formed row rather than pushed through the append path.
+            resync_append_corrupt_fixture(t, d, resync_user(session, 1))
+            resync_damage_payload(t, d, session, 1, resync_user(session, 0))
 
             _, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.Corrupt_Log)
@@ -781,8 +813,14 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     daemon_test_session_create(t, &d, session)
 
     // The store validates only the class and a non-empty payload, so a payload the
-    // codec rejects reaches the log the way real corruption would.
-    testing.expect_value(t, store.event_append(d.store, session, 1, .Message_Committed, "{}", {}), nil)
+    // codec rejects reaches the log the way real corruption would. The typed value
+    // still projects, since only the stored row is corrupt.
+    corrupt := wire.Message_Committed_Data {
+        session_id = session,
+        seq = 1,
+        message = wire.User_Message{id = 1, input_id = 1, time = {created_at_ms = 1}},
+    }
+    testing.expect_value(t, store.event_append(d.store, session, 1, corrupt, "{}", {}), nil)
 
     obs := Corrupt_Obs {
         t       = t,

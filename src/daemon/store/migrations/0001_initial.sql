@@ -101,6 +101,7 @@ CREATE TABLE messages (
     finish             TEXT,
     tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       >= 0),
     tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      >= 0),
+    tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   >= 0),
     tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  >= 0),
     tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0),
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),

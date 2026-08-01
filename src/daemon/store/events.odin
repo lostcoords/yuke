@@ -107,7 +107,7 @@ event_append :: proc(
     s: ^Store,
     session: wire.Session_Id,
     seq: wire.Seq,
-    name: wire.Broadcast_Name,
+    data: wire.Broadcast_Data,
     payload: string,
     ids: Id_Marks,
 ) -> (
@@ -116,8 +116,14 @@ event_append :: proc(
     assert(s != nil, "event_append needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
     assert(seq > 0, "seq numbering starts at 1")
-    assert(wire.broadcast_name_class(name) == .Durable_Gated, "only durable broadcasts are logged")
     assert(len(payload) > 0, "a durable event carries its encoded payload")
+
+    // The typed payload is the single source: the row's name is derived from it
+    // rather than passed alongside, so the two cannot disagree, and the
+    // projection folds the same value the row encodes.
+    name, named := wire.broadcast_data_name(data)
+    assert(named, "a durable payload names its broadcast")
+    assert(wire.broadcast_name_class(name) == .Durable_Gated, "only durable broadcasts are logged")
 
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
@@ -130,6 +136,7 @@ event_append :: proc(
     }
 
     append_body(s, session, seq, name, payload, ids) or_return
+    messages_apply(s, session, seq, data) or_return
     sqlite.txn_commit(s.writer) or_return
 
     return nil

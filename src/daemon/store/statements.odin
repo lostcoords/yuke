@@ -14,6 +14,9 @@ Statement_Id :: enum {
     Bump_Ids,
     Read_High,
     Events_After,
+    Insert_Message,
+    Truncate_Messages,
+    Count_Messages,
 }
 
 @(private)
@@ -27,7 +30,7 @@ STATEMENT_SQL := [Statement_Id]string {
     // The registry row is created explicitly, never lazily: a session carries
     // required metadata that an append has no way to invent. The id marks and
     // message_count take their column defaults.
-    .Create_Session = `INSERT INTO sessions(
+    .Create_Session    = `INSERT INTO sessions(
             id, workspace_id,
             origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
             profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
@@ -39,28 +42,54 @@ STATEMENT_SQL := [Statement_Id]string {
             :profile, :model, :reasoning, :config_rev, :permission, :max_rounds, :title, :agent,
             :created_by_name, :created_by_version,
             :created_at_ms, :updated_at_ms)`,
-    .Append_Event   = `INSERT INTO events(session_id, seq, name, payload)
+    .Append_Event      = `INSERT INTO events(session_id, seq, name, payload)
         VALUES (:session_id, :seq, :name, :payload)`,
 
     // Contiguity lives in the update predicate: a gap or replay matches nothing.
     // This runs before the insert so every high-water divergence is Seq_Conflict.
     // One `:seq` feeds both sides, so the two can never drift apart.
-    .Advance_Seq    = `UPDATE sessions SET seq_high = :seq
+    .Advance_Seq       = `UPDATE sessions SET seq_high = :seq
         WHERE id = :session_id AND seq_high = :seq - 1`,
 
     // Marks only rise; a stale bump is a no-op rather than a rewind.
-    .Bump_Ids       = `UPDATE sessions SET
+    .Bump_Ids          = `UPDATE sessions SET
         message_id_high = MAX(message_id_high, :message_id_high),
         run_id_high     = MAX(run_id_high, :run_id_high),
         input_id_high   = MAX(input_id_high, :input_id_high),
         config_rev_high = MAX(config_rev_high, :config_rev_high)
         WHERE id = :session_id`,
-    .Read_High      = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    .Read_High         = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
         FROM sessions WHERE id = :session_id`,
 
-    // The composite primary key is this read's index; no extra index exists.
-    .Events_After   = `SELECT seq, name, payload FROM events
+    // `events_by_session_seq` is this read's index.
+    .Events_After      = `SELECT seq, name, payload FROM events
         WHERE session_id = :session_id AND seq > :seq ORDER BY seq LIMIT :limit`,
+
+    // The transcript projection. `model`/`protocol` come from the turn's
+    // provenance — what answered, not what `config_rev` requested — and stay null
+    // until the engine records it.
+    .Insert_Message    = `INSERT INTO messages(
+            session_id, message_id, seq, role, run_id, config_rev,
+            model, protocol, finish,
+            tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
+            cost, created_at_ms)
+        VALUES (
+            :session_id, :message_id, :seq, :role, :run_id, :config_rev,
+            :model, :protocol, :finish,
+            :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write,
+            :cost, :created_at_ms)`,
+
+    // Truncation is an appended marker that removes *earlier* messages, so the
+    // projection folds it rather than mirroring the log row for row.
+    .Truncate_Messages = `DELETE FROM messages
+        WHERE session_id = :session_id AND message_id >= :first_removed_id`,
+
+    // One statement for both directions: `delta` is negative on a truncation, and
+    // MAX keeps a timestamp-less event from lowering the mark.
+    .Count_Messages    = `UPDATE sessions SET
+        message_count = message_count + :delta,
+        updated_at_ms = MAX(updated_at_ms, :updated_at_ms)
+        WHERE id = :session_id`,
 }
 
 // The row shapes the two reading statements are scanned through. Resolving a shape
@@ -78,12 +107,15 @@ Mappings :: struct {
 // open instead of writing a wrong column. These own no memory and need no teardown.
 @(private)
 Binds :: struct {
-    create_session: sqlite.Bind_Mapping(Create_Session_Params),
-    append_event:   sqlite.Bind_Mapping(Append_Event_Params),
-    advance_seq:    sqlite.Bind_Mapping(Advance_Seq_Params),
-    bump_ids:       sqlite.Bind_Mapping(Bump_Ids_Params),
-    read_high:      sqlite.Bind_Mapping(Session_Params),
-    events_after:   sqlite.Bind_Mapping(Events_After_Params),
+    create_session:    sqlite.Bind_Mapping(Create_Session_Params),
+    append_event:      sqlite.Bind_Mapping(Append_Event_Params),
+    advance_seq:       sqlite.Bind_Mapping(Advance_Seq_Params),
+    bump_ids:          sqlite.Bind_Mapping(Bump_Ids_Params),
+    read_high:         sqlite.Bind_Mapping(Session_Params),
+    events_after:      sqlite.Bind_Mapping(Events_After_Params),
+    insert_message:    sqlite.Bind_Mapping(Insert_Message_Params),
+    truncate_messages: sqlite.Bind_Mapping(Truncate_Messages_Params),
+    count_messages:    sqlite.Bind_Mapping(Count_Messages_Params),
 }
 
 // Resolve both read shapes. The SQL and the destination structs are both ours and
@@ -139,6 +171,9 @@ binds_prepare :: proc(set: Statements, binds: ^Binds) {
     binds.bump_ids = bind_expect(set, .Bump_Ids, Bump_Ids_Params)
     binds.read_high = bind_expect(set, .Read_High, Session_Params)
     binds.events_after = bind_expect(set, .Events_After, Events_After_Params)
+    binds.insert_message = bind_expect(set, .Insert_Message, Insert_Message_Params)
+    binds.truncate_messages = bind_expect(set, .Truncate_Messages, Truncate_Messages_Params)
+    binds.count_messages = bind_expect(set, .Count_Messages, Count_Messages_Params)
 }
 
 // `loc` is the caller's line, so a drifted statement names itself rather than
