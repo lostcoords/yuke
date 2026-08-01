@@ -92,10 +92,9 @@ STATEMENT_SQL := [Statement_Id]string {
         WHERE id = :session_id`,
 }
 
-// The row shapes the two reading statements are scanned through. Resolving a shape
-// costs one reflection walk and one column-name search per field, so it happens once
-// per statement rather than once per row; a mapping belongs to its statement and is
-// released just before it is finalized.
+// The row shapes the two reading statements are scanned through. Resolving a shape costs
+// a reflection walk and column-name search per field, so it happens once per statement
+// rather than once per row. A mapping belongs to its statement and is released before it.
 @(private)
 Mappings :: struct {
     read_high:    sqlite.Scan_Mapping(High_Water),

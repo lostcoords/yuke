@@ -3,10 +3,9 @@ package sqlite
 import "base:intrinsics"
 import "core:reflect"
 
-// The most parameters one bound struct may carry. A statement is written beside
-// its parameter struct, so outgrowing this is a design decision rather than a
-// runtime condition; the cap keeps a mapping allocation-free. 32 is the widest
-// statement any caller currently binds.
+// The most parameters one bound struct may carry. Outgrowing this is a design decision,
+// not a runtime condition, since a statement is written beside its parameter struct; the
+// cap keeps a mapping allocation-free. 32 is the widest statement any caller binds today.
 BIND_MAX_PARAMS :: 32
 
 // Why a struct could not be resolved against a statement's parameters. These
@@ -65,14 +64,10 @@ Bind_Slot :: struct {
     param:  int,
 }
 
-// Resolve `P` against `statement`'s named parameters once. This rejects exactly
-// the pairings `bind` could not carry out, so a struct that does not match the
-// query fails here rather than on every write. Allocates nothing.
-//
-// The mapping is closed in both directions: every field binds one parameter and
-// every parameter is fed by one field. `sql:"name"` renames a field; `sql:"-"`
-// ignores it. A scan's `optional` and `borrowed` options have no meaning on the
-// way into SQLite and are refused rather than silently accepted.
+// Resolve `P` against `statement`'s named parameters once, rejecting exactly the pairings
+// `bind` could not carry out — so a mismatched struct fails here, not on every write. The
+// mapping is closed both ways: every field binds one parameter and vice versa. `sql:"name"`
+// renames a field, `sql:"-"` ignores it; a scan's `optional`/`borrowed` options are refused.
 @(require_results)
 bind_prepare :: proc(
     statement: ^Stmt,
@@ -203,10 +198,9 @@ bind_with_lifetime :: proc(
     return .Ok
 }
 
-// Bind `params` and run a statement that yields no rows, leaving it clean for
-// reuse. A failed bind resets as well, so a partial binding never outlives this
-// call. Text and blobs are borrowed through the step and released by the
-// unconditional clear; `.Row` means the statement wanted `step`.
+// Bind `params` and run a statement that yields no rows, leaving it clean for reuse. A
+// failed bind resets too, so a partial binding never outlives this call. Text and blobs are
+// borrowed through the step and released by the unconditional clear; `.Row` means it wanted `step`.
 @(require_results)
 execute_bound :: proc(mapping: ^Bind_Mapping($P), params: ^P) -> Result where intrinsics.type_is_struct(P) {
     assert(mapping != nil, "execute needs a mapping")

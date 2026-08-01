@@ -154,11 +154,10 @@ close :: proc(s: ^Store) {
     free(s, s.allocator)
 }
 
-// WAL plus `synchronous=NORMAL` is the durability contract: commits survive a
-// process crash, power loss can only lose the newest commits. Foreign keys join
-// them: the pragma defaults off, is per-connection, and is a no-op inside a
-// transaction, so a forgotten one would disable every ON DELETE CASCADE silently.
-// All three are read back for that reason.
+// WAL plus `synchronous=NORMAL` is the durability contract: commits survive a process
+// crash, power loss loses only the newest ones. Foreign keys are set here too since the
+// pragma defaults off, is per-connection, and a no-op mid-transaction — forgetting it would
+// silently disable every ON DELETE CASCADE. All three are read back for that reason.
 @(private)
 store_configure :: proc(db: ^sqlite.Conn) -> Error {
     assert(db != nil, "store_configure needs a connection")

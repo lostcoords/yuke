@@ -40,18 +40,12 @@ Scan_Error :: enum {
     Out_Of_Memory,
 }
 
-// Materialize the current `.Row` into `value`. Text and byte slices are cloned
-// into `allocator`; release them with `scan_destroy`. Untagged fields use their
-// Odin name and are mandatory. `sql:"name,optional"` permits a missing result
-// column, while `sql:"-"` leaves a field untouched. SQL NULL remains an error.
-// Scan-managed strings and slices must be empty before the call; `value` is left
-// with every scanned field zeroed on failure, so a partial row never reaches the
-// caller.
-//
-// `sql:"name,borrowed"` binds a `string` or `[]byte` field to SQLite's own column
-// memory instead of cloning it. Such a field owns nothing and dies at the next
-// `step` or `reset`, so it must be consumed before the statement advances and must
-// never outlive the row it came from.
+// Materialize the current `.Row` into `value`. Text and byte slices clone into `allocator`;
+// release with `scan_destroy`. Untagged fields are mandatory by name; `sql:"name,optional"`
+// allows a missing column and `sql:"-"` skips a field; SQL NULL is always an error, and
+// `value` is left zeroed on failure so a partial row never reaches the caller.
+// `sql:"name,borrowed"` instead points `string`/`[]byte` at SQLite's own column memory,
+// which owns nothing and must not outlive the row.
 @(require_results)
 scan_row :: proc(
     statement: ^Stmt,
@@ -91,11 +85,9 @@ scan_row :: proc(
     return
 }
 
-// A destination shape resolved against one prepared statement. `scan_prepare`
-// validates the mapping and records the column every leaf binds to, so scanning a row
-// is a straight store loop with no tag parsing, no reflection ladder, and no
-// column-name search. A mapping belongs to its statement and must be released before
-// that statement is finalized.
+// A destination shape resolved against one prepared statement. `scan_prepare` records
+// the column each leaf binds to, so scanning a row is a straight store loop — no tag
+// parsing, no reflection, no column search. Release it before the statement is finalized.
 Scan_Mapping :: struct($T: typeid) {
     // Statement the mapping resolves columns against.
     statement: ^Stmt,
@@ -325,9 +317,8 @@ Scan_Leaf :: struct {
 Scan_Visitor :: #type proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error
 
 // Which direction a field walk resolves for. The accepted type surface is almost
-// identical both ways; `Maybe(T)` is the exception, since a value or NULL is
-// unambiguous on the way into SQLite but a read would have to invent how NULL
-// lands back in the union.
+// identical both ways; `Maybe(T)` is the exception, since NULL is unambiguous going
+// into SQLite but a read would have to invent how NULL lands back in the union.
 @(private)
 Walk_Direction :: enum {
     Scan,
@@ -466,7 +457,6 @@ scan_count_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     return .None
 }
 
-// How many leaves of `root` bind to `name`.
 // Whether a validated leaf type is one a scan clones into the caller's allocator.
 // Every other accepted type is stored by value and owns nothing.
 @(private)
@@ -484,6 +474,7 @@ scan_type_owns :: proc(info: ^reflect.Type_Info) -> bool {
     return false
 }
 
+// How many leaves of `root` bind to `name`.
 @(private)
 scan_leaf_count :: proc(root: ^reflect.Type_Info, name: string) -> (matches: int, err: Scan_Error) {
     assert(root != nil, "scan_leaf_count needs type information")

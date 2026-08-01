@@ -50,10 +50,9 @@ Event_Visit :: enum {
 // The event payload belongs to the visitor, including when it stops the read.
 Event_Visitor :: #type proc(user: rawptr, event: Event) -> Event_Visit
 
-// One row scanned from the `events` table. `name` is borrowed from SQLite's
-// column memory and dies with this row — it must not be retained. `payload`
-// is owned by the row's allocator and is freed by `scan_destroy` unless
-// transferred out first.
+// One row scanned from the `events` table. `name` is borrowed from SQLite's column
+// memory and dies with this row — it must not be retained. `payload` is owned by the
+// row's allocator and freed by `scan_destroy` unless transferred out first.
 @(private)
 Event_Row :: struct {
     seq:     wire.Seq,
@@ -377,10 +376,9 @@ append_body :: proc(
     assert(wire.broadcast_name_class(name) == .Durable_Gated, "append_body receives a durable name")
     assert(len(payload) > 0, "append_body receives an encoded payload")
 
-    // The guard is the contiguity rule itself: only the row whose high-water is
-    // `seq - 1` advances, so every gap or replay has one error classification.
-    // A session that was never created has no row to match, which lands here as
-    // Seq_Conflict rather than inventing a registry row an append cannot fill.
+    // The guard is the contiguity rule itself: only the row whose high-water is `seq - 1`
+    // advances, so every gap or replay gets one error classification — including a session
+    // that was never created, which has no row to match and lands here as Seq_Conflict.
     sqlite.execute(&s.binds.advance_seq, &Advance_Seq_Params{session_id = session, seq = seq}) or_return
 
     changed := sqlite.changes(s.writer)

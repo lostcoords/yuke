@@ -1,13 +1,11 @@
 -- The session registry, the event log of record, and the transcript projection.
--- Shipped migration text is immutable: add a step, never edit one.
--- Numeric upper bounds are 2^53-1, the largest integer the wire's JSON encoding
--- round-trips exactly.
+-- Shipped migration text is immutable: add a step, never edit one. Numeric upper
+-- bounds are 2^53-1, the largest integer the wire's JSON round-trips exactly.
 
--- Primary state, not derived: session.summary_changed is Ungated and never
--- reaches the log, so nothing here can be rebuilt by replaying events. Carries
--- the id-minting marks too, one row per session rather than a second table on
--- the same key. `origin` is the flattened Session_Origin union; each arm's ids
--- are non-null exactly for that arm.
+-- Primary state, not derived: session.summary_changed is Ungated and never reaches the
+-- log, so nothing here rebuilds by replay. Carries the id-minting marks too, one row per
+-- session, and `origin` flattened from the Session_Origin union with each arm's ids
+-- non-null exactly for that arm.
 CREATE TABLE sessions (
     id           BLOB PRIMARY KEY CHECK (typeof(id) = 'blob' AND length(id) = 16),
     workspace_id BLOB NOT NULL    CHECK (typeof(workspace_id) = 'blob' AND length(workspace_id) = 16),
@@ -59,10 +57,9 @@ CREATE INDEX sessions_by_workspace ON sessions(workspace_id, updated_at_ms DESC,
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
 CREATE INDEX sessions_by_job       ON sessions(job_id, updated_at_ms DESC, id DESC)    WHERE job_id IS NOT NULL;
 
--- The log of record. A rowid table, not WITHOUT ROWID: payloads are whole
--- committed messages, and a WITHOUT ROWID table stores content in interior
--- B-tree nodes as well as leaves, which collapses fanout on the tail read.
--- `payload` stays last so reading any earlier column never pays overflow I/O.
+-- The log of record. A rowid table, not WITHOUT ROWID: payloads are whole committed
+-- messages, and WITHOUT ROWID stores content in interior B-tree nodes too, collapsing
+-- fanout on the tail read. `payload` stays last so earlier columns never pay overflow I/O.
 CREATE TABLE events (
     session_id BLOB NOT NULL
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)

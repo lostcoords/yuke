@@ -166,16 +166,9 @@ Messages_Rebuild :: struct {
     err:     Error,
 }
 
-// Drop and rebuild one session's projection by replaying its log. This is the
-// property that makes `messages` safe to reshape: it holds no fact the log does
-// not, so the shape can change without a data migration. `events.payload` must
-// stay verbatim wire JSON for exactly this reason — the replay decodes it with
-// the production codec.
-//
-// Runs in one transaction so a failed rebuild leaves the old projection in place
-// rather than a half-built one.
-// `sa` is scratch for the decoded events; the caller owns releasing it, as it does
-// for the resync fold.
+// Drop and rebuild one session's projection by replaying its log. The projection holds no
+// fact the log doesn't, which is why it can reshape without a migration and why
+// `events.payload` must stay verbatim JSON. Runs in one transaction; `sa` is caller-owned scratch.
 messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp_allocator) -> (err: Error) {
     assert(s != nil, "messages_rebuild needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
@@ -252,10 +245,9 @@ messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     d := wire.decoder_init(event.payload, rebuild.scratch)
     data, derr := wire.broadcast_data_from_reader(event.name, &d)
 
-    // A row the codec refuses is damage, not a programmer error: the rebuild
-    // reports it rather than asserting on the contents of a file. Validation runs
-    // here too, because the live caller reaches `messages_apply` through the pump's
-    // validated payload and a replay must arrive with the same guarantee.
+    // A row the codec refuses is damage, not a programmer error: the rebuild reports it
+    // rather than asserting on file contents. Validation runs here too, since a replay must
+    // arrive with the same guarantee the live path gets from the pump's validated payload.
     if derr != .None || wire.broadcast_data_validate(data) != .None {
         rebuild.err = Store_Error.Invalid_Row
 
