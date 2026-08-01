@@ -1,5 +1,7 @@
 package store
 
+import "core:mem"
+
 import "libs:bindings/sqlite"
 import "src:wire"
 
@@ -35,7 +37,7 @@ Truncate_Messages_Params :: struct {
 Count_Messages_Params :: struct {
     session_id:    wire.Session_Id,
     delta:         i64,
-    updated_at_ms: u64,
+    updated_at_ms: Maybe(u64),
 }
 
 // Fold one durable event into the transcript projection. Runs inside the append
@@ -68,15 +70,14 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
         session_id = session,
         message_id = wire.message_id(message),
         seq        = seq,
+        role       = wire.message_type_to_wire(message),
     }
 
     switch m in message {
     case wire.User_Message:
-        params.role = "user"
         params.created_at_ms = m.time.created_at_ms
 
     case wire.Assistant_Message:
-        params.role = "assistant"
         params.run_id = m.run_id
         params.config_rev = m.config_rev
         params.created_at_ms = m.time.created_at_ms
@@ -103,12 +104,10 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
         }
 
     case wire.Compaction_Message:
-        params.role = "compaction"
         params.run_id = m.run_id
         params.created_at_ms = m.time.created_at_ms
     }
 
-    assert(len(params.role) > 0, "every message arm names its role")
     assert(params.message_id > 0, "a committed message carries a minted id")
     sqlite.execute(&s.binds.insert_message, &params) or_return
 
@@ -135,16 +134,16 @@ messages_truncate :: proc(s: ^Store, session: wire.Session_Id, first_removed_id:
         return nil
     }
 
-    // No timestamp on the marker, so the update mark is left where it is rather
-    // than invented; `MAX` in the statement makes 0 a no-op.
-    return messages_count_add(s, session, -i64(removed), 0)
+    // The marker carries no timestamp, so the update mark is left where it is
+    // rather than invented.
+    return messages_count_add(s, session, -i64(removed), nil)
 }
 
 // Move `sessions.message_count` by `delta` and raise the update mark. The
 // schema's `message_count >= 0` check is the drift alarm: the projection and the
 // count are written in one transaction, so they cannot disagree.
 @(private)
-messages_count_add :: proc(s: ^Store, session: wire.Session_Id, delta: i64, updated_at_ms: u64) -> Error {
+messages_count_add :: proc(s: ^Store, session: wire.Session_Id, delta: i64, updated_at_ms: Maybe(u64)) -> Error {
     assert(s != nil, "messages_count_add needs a store")
     assert(delta != 0, "a count update moves the count")
 
@@ -162,6 +161,7 @@ messages_count_add :: proc(s: ^Store, session: wire.Session_Id, delta: i64, upda
 Messages_Rebuild :: struct {
     store:   ^Store,
     session: wire.Session_Id,
+    scratch: mem.Allocator,
     last:    wire.Seq,
     err:     Error,
 }
@@ -174,7 +174,9 @@ Messages_Rebuild :: struct {
 //
 // Runs in one transaction so a failed rebuild leaves the old projection in place
 // rather than a half-built one.
-messages_rebuild :: proc(s: ^Store, session: wire.Session_Id) -> (err: Error) {
+// `sa` is scratch for the decoded events; the caller owns releasing it, as it does
+// for the resync fold.
+messages_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp_allocator) -> (err: Error) {
     assert(s != nil, "messages_rebuild needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
@@ -186,35 +188,26 @@ messages_rebuild :: proc(s: ^Store, session: wire.Session_Id) -> (err: Error) {
         }
     }
 
-    // Clearing through the same count statement keeps `message_count` derived from
-    // the rows rather than assumed to be whatever the session row already held.
-    existing := messages_count(s, session) or_return
-
-    sqlite.execute(
-        &s.binds.truncate_messages,
-        &Truncate_Messages_Params{session_id = session, first_removed_id = 1},
-    ) or_return
-
-    if existing != 0 {
-        messages_count_add(s, session, -existing, 0) or_return
-    }
+    // Ids start at 1, so truncating from there clears the session and carries the
+    // count back to zero through the same path a real truncation takes.
+    messages_truncate(s, session, 1) or_return
 
     rebuild := Messages_Rebuild {
         store   = s,
         session = session,
+        scratch = sa,
     }
 
     // The tail read is bounded, so the replay pages until the log is exhausted.
-    cursor := wire.Seq(0)
     for {
         visited, _, verr := events_visit_after(
             s,
             session,
-            cursor,
+            rebuild.last,
             REBUILD_PAGE,
             messages_rebuild_visit,
             &rebuild,
-            context.temp_allocator,
+            sa,
         )
 
         if verr != nil {
@@ -225,12 +218,10 @@ messages_rebuild :: proc(s: ^Store, session: wire.Session_Id) -> (err: Error) {
             return rebuild.err
         }
 
-        if visited == 0 {
+        // A short page is the end of the log; a full one may have more behind it.
+        if visited < REBUILD_PAGE {
             break
         }
-
-        assert(rebuild.last > cursor, "a replay page advances the cursor")
-        cursor = rebuild.last
     }
 
     return sqlite.txn_commit(s.writer)
@@ -246,14 +237,26 @@ messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     rebuild := (^Messages_Rebuild)(user)
     assert(rebuild != nil, "a replay needs its state")
     assert(rebuild.err == nil, "a replay stops after its first error")
-    defer delete(event.payload, context.temp_allocator)
+    defer delete(event.payload, rebuild.scratch)
 
-    d := wire.decoder_init(event.payload, context.temp_allocator)
+    rebuild.last = event.seq
+
+    // Only two of the five durable names say anything about the transcript, so the
+    // rest never pay a decode.
+    #partial switch event.name {
+    case .Message_Committed, .Transcript_Truncated:
+    case:
+        return .Continue
+    }
+
+    d := wire.decoder_init(event.payload, rebuild.scratch)
     data, derr := wire.broadcast_data_from_reader(event.name, &d)
 
     // A row the codec refuses is damage, not a programmer error: the rebuild
-    // reports it rather than asserting on the contents of a file.
-    if derr != .None {
+    // reports it rather than asserting on the contents of a file. Validation runs
+    // here too, because the live caller reaches `messages_apply` through the pump's
+    // validated payload and a replay must arrive with the same guarantee.
+    if derr != .None || wire.broadcast_data_validate(data) != .None {
         rebuild.err = Store_Error.Invalid_Row
 
         return .Stop
@@ -265,29 +268,5 @@ messages_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
         return .Stop
     }
 
-    rebuild.last = event.seq
-
     return .Continue
-}
-
-// Rows currently projected for one session.
-@(private)
-messages_count :: proc(s: ^Store, session: wire.Session_Id) -> (count: i64, err: Error) {
-    assert(s != nil, "messages_count needs a store")
-
-    st, prep := sqlite.prepare(s.writer, "SELECT count(*) FROM messages WHERE session_id = ?1")
-
-    if prep != .Ok {
-        return 0, prep
-    }
-    defer sqlite.finalize(st)
-
-    sid := ([16]u8)(session)
-    sqlite.bind_blob(st, 1, sid[:]) or_return
-
-    if step := sqlite.step(st); step != .Row {
-        return 0, step if sqlite.is_error(step) else Store_Error.Invalid_Row
-    }
-
-    return sqlite.column_i64(st, 0), nil
 }

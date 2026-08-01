@@ -925,6 +925,23 @@ Message :: union {
     Compaction_Message,
 }
 
+// Discriminator for a message arm. The one place the three strings are spelled, so
+// a persisted discriminator cannot drift from the emitted one.
+message_type_to_wire :: proc(self: Message) -> string {
+    switch _ in self {
+    case User_Message:
+        return "user"
+
+    case Assistant_Message:
+        return "assistant"
+
+    case Compaction_Message:
+        return "compaction"
+    }
+
+    return ""
+}
+
 // Write internally-tagged JSON with `type` first.
 message_emit :: proc(e: ^Emitter, self: Message) {
     switch v in self {

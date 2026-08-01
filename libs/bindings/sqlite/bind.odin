@@ -5,8 +5,8 @@ import "core:reflect"
 
 // The most parameters one bound struct may carry. A statement is written beside
 // its parameter struct, so outgrowing this is a design decision rather than a
-// runtime condition; the cap keeps a mapping allocation-free. Raised to 32 for
-// the session insert, which writes one row per column of `wire.Session`.
+// runtime condition; the cap keeps a mapping allocation-free. 32 is the widest
+// statement any caller currently binds.
 BIND_MAX_PARAMS :: 32
 
 // Why a struct could not be resolved against a statement's parameters. These

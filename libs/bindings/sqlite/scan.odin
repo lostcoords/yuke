@@ -79,7 +79,7 @@ scan_row :: proc(
         data      = rawptr(value),
         allocator = allocator,
     }
-    err = scan_walk(info, 0, scan_store_visit, &store)
+    err = scan_walk(info, 0, scan_store_visit, &store, .Scan)
 
     if err != .None {
         scan_value_destroy(rawptr(value), info, allocator)
@@ -143,7 +143,7 @@ scan_prepare :: proc(
     // The leaf count is a property of the destination type, but flattening `using`
     // makes it a runtime one; counting first keeps the mapping a single exact allocation.
     count := 0
-    tally_err := scan_walk(info, 0, scan_tally_visit, &count)
+    tally_err := scan_walk(info, 0, scan_tally_visit, &count, .Scan)
     assert(tally_err == .None, "a validated shape walks without error")
 
     binds, make_err := make([]Scan_Bind, count, allocator)
@@ -156,7 +156,7 @@ scan_prepare :: proc(
         statement = statement,
         binds     = binds,
     }
-    fill_err := scan_walk(info, 0, scan_fill_visit, &fill)
+    fill_err := scan_walk(info, 0, scan_fill_visit, &fill, .Scan)
     assert(fill_err == .None, "a validated shape walks without error")
     assert(fill.filled == count, "the mapping binds every leaf exactly once")
 
@@ -343,7 +343,7 @@ scan_walk :: proc(
     offset: uintptr,
     visit: Scan_Visitor,
     user: rawptr,
-    direction := Walk_Direction.Scan,
+    direction: Walk_Direction,
 ) -> Scan_Error {
     assert(info != nil, "scan_walk needs type information")
     assert(visit != nil, "scan_walk needs a visitor")
@@ -402,7 +402,7 @@ scan_shape :: proc(statement: ^Stmt, info: ^reflect.Type_Info) -> Scan_Error {
     assert(statement != nil, "scan_shape needs a statement")
     assert(info != nil, "scan_shape needs destination type information")
 
-    scan_walk(info, 0, scan_unique_visit, rawptr(info)) or_return
+    scan_walk(info, 0, scan_unique_visit, rawptr(info), .Scan) or_return
 
     for col in 0 ..< column_count(statement) {
         matches := scan_leaf_count(info, column_name(statement, col)) or_return
@@ -416,7 +416,7 @@ scan_shape :: proc(statement: ^Stmt, info: ^reflect.Type_Info) -> Scan_Error {
         }
     }
 
-    return scan_walk(info, 0, scan_required_visit, rawptr(statement))
+    return scan_walk(info, 0, scan_required_visit, rawptr(statement), .Scan)
 }
 
 // Reject a destination that binds two fields to one column name; `user` is the root
@@ -491,7 +491,7 @@ scan_leaf_count :: proc(root: ^reflect.Type_Info, name: string) -> (matches: int
     counter := Scan_Leaf_Count {
         name = name,
     }
-    scan_walk(root, 0, scan_count_visit, &counter) or_return
+    scan_walk(root, 0, scan_count_visit, &counter, .Scan) or_return
 
     return counter.matches, .None
 }
@@ -510,7 +510,7 @@ scan_column_find :: proc(statement: ^Stmt, name: string) -> int {
 }
 
 @(private)
-scan_type_validate :: proc(info: ^reflect.Type_Info, direction := Walk_Direction.Scan) -> Scan_Error {
+scan_type_validate :: proc(info: ^reflect.Type_Info, direction: Walk_Direction) -> Scan_Error {
     assert(info != nil, "scan_type_validate needs type information")
 
     base := reflect.type_info_base(info)
@@ -955,7 +955,7 @@ scan_value_owns_nothing :: proc(data: rawptr, info: ^reflect.Type_Info) -> bool 
         data  = data,
         empty = true,
     }
-    err := scan_walk(info, 0, scan_empty_visit, &state)
+    err := scan_walk(info, 0, scan_empty_visit, &state, .Scan)
     assert(err == .None, "a successfully shaped scan walks without error")
 
     return state.empty
@@ -975,7 +975,7 @@ scan_value_clear :: proc(data: rawptr, info: ^reflect.Type_Info) {
     assert(data != nil, "scan_value_clear needs value storage")
     assert(info != nil, "scan_value_clear needs type information")
 
-    err := scan_walk(info, 0, scan_clear_visit, data)
+    err := scan_walk(info, 0, scan_clear_visit, data, .Scan)
     assert(err == .None, "a successfully shaped scan walks without error")
 }
 
@@ -1019,6 +1019,6 @@ scan_value_destroy :: proc(data: rawptr, info: ^reflect.Type_Info, allocator: me
         data      = data,
         allocator = allocator,
     }
-    err := scan_walk(info, 0, scan_release_visit, &release)
+    err := scan_walk(info, 0, scan_release_visit, &release, .Scan)
     assert(err == .None, "a successfully shaped scan walks without error")
 }

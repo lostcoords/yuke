@@ -1,5 +1,7 @@
 -- The session registry, the event log of record, and the transcript projection.
 -- Shipped migration text is immutable: add a step, never edit one.
+-- Numeric upper bounds are 2^53-1, the largest integer the wire's JSON encoding
+-- round-trips exactly.
 
 -- Primary state, not derived: session.summary_changed is Ungated and never
 -- reaches the log, so nothing here can be rebuilt by replaying events. Carries
@@ -20,18 +22,18 @@ CREATE TABLE sessions (
     profile    TEXT NOT NULL CHECK (typeof(profile)   = 'text' AND length(profile)   <= 64),
     model      TEXT NOT NULL CHECK (typeof(model)     = 'text' AND length(model)     <= 128),
     reasoning  TEXT NOT NULL CHECK (typeof(reasoning) = 'text' AND length(reasoning) <= 32),
-    config_rev INTEGER NOT NULL CHECK (typeof(config_rev) = 'integer' AND config_rev BETWEEN 0 AND 9007199254740991),
+    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991),
     permission TEXT NOT NULL CHECK (permission IN ('strict', 'normal', 'yolo')),
     max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991),
     title      TEXT NOT NULL CHECK (typeof(title) = 'text' AND length(title) <= 256),
     agent      TEXT CHECK (agent IS NULL OR (typeof(agent) = 'text' AND length(agent) <= 64)),
 
-    created_by_name    TEXT CHECK (created_by_name    IS NULL OR length(created_by_name)    <= 64),
-    created_by_version TEXT CHECK (created_by_version IS NULL OR length(created_by_version) <= 32),
+    created_by_name    TEXT CHECK (created_by_name    IS NULL OR (typeof(created_by_name)    = 'text' AND length(created_by_name)    <= 64)),
+    created_by_version TEXT CHECK (created_by_version IS NULL OR (typeof(created_by_version) = 'text' AND length(created_by_version) <= 32)),
 
     message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991),
-    created_at_ms INTEGER NOT NULL CHECK (typeof(created_at_ms) = 'integer' AND created_at_ms >= 0),
-    updated_at_ms INTEGER NOT NULL CHECK (typeof(updated_at_ms) = 'integer' AND updated_at_ms >= 0),
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
 
     -- Id-minting marks. Monotonic; only ever raised. Recovery reads these, never
     -- MAX(seq) over events: a truncating rewind would reclaim ids.
@@ -84,21 +86,20 @@ CREATE TABLE messages (
     session_id BLOB NOT NULL
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
         REFERENCES sessions(id) ON DELETE CASCADE,
-    message_id INTEGER NOT NULL
-        CHECK (typeof(message_id) = 'integer' AND message_id BETWEEN 1 AND 9007199254740991),
-    seq INTEGER NOT NULL
-        CHECK (typeof(seq) = 'integer' AND seq BETWEEN 1 AND 9007199254740991),
+    message_id INTEGER NOT NULL CHECK (message_id BETWEEN 1 AND 9007199254740991),
+    seq        INTEGER NOT NULL CHECK (seq        BETWEEN 1 AND 9007199254740991),
 
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'compaction')),
     run_id     INTEGER CHECK (run_id     IS NULL OR run_id     BETWEEN 1 AND 9007199254740991),
     config_rev INTEGER CHECK (config_rev IS NULL OR config_rev BETWEEN 0 AND 9007199254740991),
 
-    -- Folded at append time: provenance.model when present, else the config in
-    -- force at this seq. Null only for roles that carry no model.
-    model    TEXT CHECK (model    IS NULL OR length(model)    <= 128),
-    protocol TEXT CHECK (protocol IS NULL OR length(protocol) <= 32),
+    -- What answered, from the turn's provenance — not the config_rev it was
+    -- requested under. Null until the engine records provenance.
+    model    TEXT CHECK (model    IS NULL OR (typeof(model)    = 'text' AND length(model)    <= 128)),
+    protocol TEXT CHECK (protocol IS NULL OR (typeof(protocol) = 'text' AND length(protocol) <= 32)),
 
-    finish             TEXT,
+    finish TEXT CHECK (finish IS NULL OR
+        finish IN ('stop', 'length', 'content_filter', 'tool_calls', 'canceled', 'error', 'unknown')),
     tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       >= 0),
     tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      >= 0),
     tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   >= 0),
@@ -106,10 +107,11 @@ CREATE TABLE messages (
     tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0),
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),
 
-    created_at_ms INTEGER NOT NULL CHECK (typeof(created_at_ms) = 'integer' AND created_at_ms >= 0),
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
 
     PRIMARY KEY (session_id, message_id)
 ) WITHOUT ROWID;
 
+-- Partial: no row carries a model until the engine records provenance, so this
+-- costs nothing until it is the index that answers "which turns used X".
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
-CREATE INDEX messages_by_time  ON messages(created_at_ms);

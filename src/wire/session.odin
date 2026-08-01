@@ -389,26 +389,43 @@ Session_Origin :: union {
     Session_Origin_Cron,
 }
 
+// Discriminator for an origin arm. The one place the four strings are spelled, so
+// a persisted discriminator cannot drift from the emitted one.
+session_origin_type_to_wire :: proc(self: Session_Origin) -> string {
+    switch _ in self {
+    case Session_Origin_Root:
+        return "root"
+
+    case Session_Origin_Child:
+        return "child"
+
+    case Session_Origin_Fork:
+        return "fork"
+
+    case Session_Origin_Cron:
+        return "cron"
+    }
+
+    return ""
+}
+
 // Write internal-tagged JSON with `type` first.
 session_origin_emit :: proc(e: ^Emitter, self: Session_Origin) {
     object_begin(e)
+    field_string(e, "type", session_origin_type_to_wire(self))
 
     switch v in self {
     case Session_Origin_Root:
-        field_string(e, "type", "root")
 
     case Session_Origin_Child:
-        field_string(e, "type", "child")
         field_id(e, "parent_id", ([16]u8)(v.parent_id))
         field_u64(e, "parent_message_id", u64(v.parent_message_id))
         field_u64(e, "parent_part_id", u64(v.parent_part_id))
 
     case Session_Origin_Fork:
-        field_string(e, "type", "fork")
         field_id(e, "source_id", ([16]u8)(v.source_id))
 
     case Session_Origin_Cron:
-        field_string(e, "type", "cron")
         field_id(e, "job_id", ([16]u8)(v.job_id))
     }
 

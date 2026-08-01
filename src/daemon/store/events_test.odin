@@ -528,11 +528,19 @@ hex_session :: proc(session: wire.Session_Id) -> string {
 }
 
 @(private)
+// A session id is 16 lowercase hex characters (`enforce_id`), so the tag is spelled
+// into the first two and the rest padded — arbitrary bytes would be a value the
+// protocol rejects.
 test_session :: proc(tag: byte) -> wire.Session_Id {
+    hex := "0123456789abcdef"
+
     id: [16]u8
-    for &b, i in id {
-        b = tag ~ byte(i)
+    for &b in id {
+        b = '0'
     }
+
+    id[0] = hex[tag >> 4]
+    id[1] = hex[tag & 0xf]
 
     return wire.Session_Id(id)
 }

@@ -84,11 +84,11 @@ STATEMENT_SQL := [Statement_Id]string {
     .Truncate_Messages = `DELETE FROM messages
         WHERE session_id = :session_id AND message_id >= :first_removed_id`,
 
-    // One statement for both directions: `delta` is negative on a truncation, and
-    // MAX keeps a timestamp-less event from lowering the mark.
+    // `delta` is negative on a truncation. A null `updated_at_ms` is an event with
+    // no timestamp of its own, which leaves the mark where it is.
     .Count_Messages    = `UPDATE sessions SET
         message_count = message_count + :delta,
-        updated_at_ms = MAX(updated_at_ms, :updated_at_ms)
+        updated_at_ms = MAX(updated_at_ms, COALESCE(:updated_at_ms, 0))
         WHERE id = :session_id`,
 }
 

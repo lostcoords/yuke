@@ -91,10 +91,9 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
 
     sqlite.busy_timeout(db, BUSY_TIMEOUT_MS) or_return
 
-    // Both pragmas have ordering constraints that outrank everything below:
-    // page_size is ignored once WAL is on, and foreign_keys is a no-op inside a
-    // transaction. Neither can be recovered from later without a VACUUM.
-    store_configure_layout(db) or_return
+    // Ignored once the file has pages, and unchangeable under WAL: this is the
+    // only slot where it still takes.
+    sqlite.exec(db, "PRAGMA page_size = 8192") or_return
 
     store_check_integrity(db) or_return
     version := store_check_identity(db) or_return
@@ -155,32 +154,11 @@ close :: proc(s: ^Store) {
     free(s, s.allocator)
 }
 
-// Page size and foreign keys, both of which must be settled before anything else
-// touches the database. `page_size` is remembered only until the file has pages
-// and cannot be changed under WAL at all; `foreign_keys` defaults off, is
-// per-connection, and is silently ignored inside a transaction. A forgotten
-// pragma here would disable every ON DELETE CASCADE without an error, so both
-// are read back the way `journal_mode` and `synchronous` are.
-@(private)
-store_configure_layout :: proc(db: ^sqlite.Conn) -> Error {
-    assert(db != nil, "store_configure_layout needs a connection")
-
-    // A no-op on a database that already has pages, which is why it runs before
-    // integrity and identity checks rather than after them.
-    sqlite.exec(db, "PRAGMA page_size = 8192") or_return
-    sqlite.exec(db, "PRAGMA foreign_keys = ON") or_return
-
-    enforced := sqlite.query_one_i64(db, "PRAGMA foreign_keys") or_return
-
-    if enforced != 1 {
-        return .Constraints_Unavailable
-    }
-
-    return nil
-}
-
 // WAL plus `synchronous=NORMAL` is the durability contract: commits survive a
-// process crash, power loss can only lose the newest commits.
+// process crash, power loss can only lose the newest commits. Foreign keys join
+// them: the pragma defaults off, is per-connection, and is a no-op inside a
+// transaction, so a forgotten one would disable every ON DELETE CASCADE silently.
+// All three are read back for that reason.
 @(private)
 store_configure :: proc(db: ^sqlite.Conn) -> Error {
     assert(db != nil, "store_configure needs a connection")
@@ -201,6 +179,13 @@ store_configure :: proc(db: ^sqlite.Conn) -> Error {
 
     if level != .Normal {
         return .Durability_Unavailable
+    }
+
+    sqlite.exec(db, "PRAGMA foreign_keys = ON") or_return
+    enforced := sqlite.query_one_i64(db, "PRAGMA foreign_keys") or_return
+
+    if enforced != 1 {
+        return .Constraints_Unavailable
     }
 
     return nil

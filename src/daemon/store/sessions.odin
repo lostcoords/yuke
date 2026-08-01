@@ -54,26 +54,22 @@ session_create :: proc(s: ^Store, session: wire.Session) -> Error {
         updated_at_ms = session.updated_at_ms,
     }
 
+    params.origin = wire.session_origin_type_to_wire(session.origin)
+
     switch v in session.origin {
     case wire.Session_Origin_Root:
-        params.origin = "root"
 
     case wire.Session_Origin_Child:
-        params.origin = "child"
         params.parent_id = v.parent_id
         params.parent_message_id = v.parent_message_id
         params.parent_part_id = v.parent_part_id
 
     case wire.Session_Origin_Fork:
-        params.origin = "fork"
         params.source_id = v.source_id
 
     case wire.Session_Origin_Cron:
-        params.origin = "cron"
         params.job_id = v.job_id
     }
-
-    assert(len(params.origin) > 0, "every origin arm names itself")
 
     if cb, ok := session.created_by.?; ok {
         params.created_by_name = cb.name
