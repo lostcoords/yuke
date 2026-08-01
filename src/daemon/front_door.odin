@@ -7,12 +7,10 @@ import "core:encoding/hex"
 import "core:log"
 import "core:mem"
 import "core:nbio"
-import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
-import http "libs:http"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
@@ -95,9 +93,7 @@ daemon_middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middle
 
 // Refuse browser-originated or DNS-rebound requests before any credential check.
 daemon_middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
-    d := ctx.user_data
-
-    if !daemon_admit_request(d, ctx.request.head) {
+    if !http_server.request_is_local(ctx.conn, ctx.request.head) {
         log.warnf(
             "daemon: refused browser-originated or rebound request %s %s",
             ctx.request.head.method,
@@ -176,77 +172,6 @@ daemon_reject_pipelined :: proc(ctx: ^Http_Context) -> (answered: bool) {
 
     return true
 }
-
-// Refuse traffic a browser can be made to send. `Origin` marks a page-driven
-// request, which CORS does not block for the WebSocket handshake; a named `Host` is
-// the DNS-rebinding shape, which needs a name resolving at the daemon.
-daemon_admit_request :: proc(d: ^Daemon, head: http.Request_Head) -> bool {
-    assert(d != nil, "admission needs a daemon")
-    assert(head.consumed == len(head.bytes), "admission received an inconsistent parsed head")
-
-    if _, lookup := http.request_header(head, "origin"); lookup != .Missing {
-        return false
-    }
-
-    host, host_lookup := http.request_header(head, "host")
-    assert(host_lookup == .One, "head parser admitted a request without exactly one Host")
-
-    return daemon_host_is_literal(d, host)
-}
-
-// Whether a `Host` addresses the daemon by IP literal rather than naming it.
-// `localhost` is the one name a browser cannot be made to resolve elsewhere.
-daemon_host_is_literal :: proc(d: ^Daemon, host: string) -> bool {
-    name, bracketed := http.split_host(host) or_return
-
-    // Brackets enclose an IP-literal only, so `[localhost]` gets no name exemption.
-    if !bracketed && strings.equal_fold(name, "localhost") {
-        return true
-    }
-
-    addr := net.parse_address(name)
-    if addr == nil {
-        return false
-    }
-
-    return daemon_address_addresses_us(d, addr)
-}
-
-// Whether `addr` is a way this daemon can legitimately be reached: loopback, or the
-// address it bound. The unspecified address is a bind wildcard, never a destination —
-// and `0.0.0.0` reaches a loopback-bound socket while escaping the browser
-// local-network gating that `127.0.0.1` receives.
-daemon_address_addresses_us :: proc(d: ^Daemon, addr: net.Address) -> bool {
-    assert(d != nil && addr != nil, "address admission needs a daemon and an address")
-
-    switch a in addr {
-    case net.IP4_Address:
-        if a == net.IP4_Any {
-            return false
-        }
-        return a[0] == 127 || a == d.bind_address
-
-    case net.IP6_Address:
-        if a == net.IP6_Any {
-            return false
-        }
-        return a == net.IP6_Loopback || daemon_ip6_maps_loopback(a)
-    }
-
-    return false
-}
-
-// Whether `a` is an IPv4-mapped loopback literal (`::ffff:127.0.0.1`), which addresses
-// loopback by another spelling.
-daemon_ip6_maps_loopback :: proc(a: net.IP6_Address) -> bool {
-    for i in 0 ..< 5 {
-        if a[i] != 0 {
-            return false
-        }
-    }
-    return a[5] == 0xffff && u16(a[6]) >> 8 == 127
-}
-
 
 // Validate the upgrade, then transfer the socket to the WebSocket server.
 daemon_route_ws :: proc(ctx: ^Http_Context) {

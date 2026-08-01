@@ -921,30 +921,6 @@ test_daemon_head_on_blob_has_no_content :: proc(t: ^testing.T) {
     testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
 }
 
-// The bind-address arm of admission cannot be reached by binding a non-loopback address
-// portably, so it is checked directly.
-@(test)
-test_daemon_admits_its_own_bind_address :: proc(t: ^testing.T) {
-    d := Daemon {
-        bind_address = {192, 168, 1, 50},
-    }
-
-    testing.expect(t, daemon_address_addresses_us(&d, net.IP4_Address{192, 168, 1, 50}), "its own bind address")
-    testing.expect(t, daemon_address_addresses_us(&d, net.IP4_Loopback), "loopback regardless of bind")
-    testing.expect(t, !daemon_address_addresses_us(&d, net.IP4_Address{192, 168, 1, 51}), "a neighbour")
-    testing.expect(t, !daemon_address_addresses_us(&d, net.IP4_Any), "the unspecified address")
-
-    wildcard := Daemon {
-        bind_address = net.IP4_Any,
-    }
-    testing.expect(t, !daemon_address_addresses_us(&wildcard, net.IP4_Any), "a wildcard bind admits no wildcard Host")
-    testing.expect(
-        t,
-        daemon_address_addresses_us(&wildcard, net.IP4_Loopback),
-        "a wildcard bind still admits loopback",
-    )
-}
-
 // A `Host` starting with `]:` panics `net.split_port`, pre-auth: refuse, never abort.
 @(test)
 test_daemon_refuses_a_malformed_host_without_crashing :: proc(t: ^testing.T) {

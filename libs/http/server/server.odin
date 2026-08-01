@@ -117,6 +117,9 @@ Server :: struct {
     // Bound listen socket; exposed so callers can inspect an ephemeral port.
     socket:            net.TCP_Socket,
 
+    // Address the listen socket is bound to, as `Options.host` resolved it.
+    bind_address:      net.IP4_Address,
+
     // @private
     // Current lifecycle state; see `Server_State`.
     state:             Server_State,
@@ -387,6 +390,7 @@ listen :: proc(
     s.loop = loop
     s.allocator = allocator
     s.socket = socket
+    s.bind_address = addr
     s.state = .Serving
     s.max_connections = opts.max_connections
     s.max_head_bytes = opts.max_head_bytes

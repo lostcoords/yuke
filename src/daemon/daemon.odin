@@ -123,11 +123,6 @@ Daemon :: struct {
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
     seq_high:       map[wire.Session_Id]wire.Seq,
-
-    // @private
-    // Resolved bind address. Admission accepts a `Host` naming this or loopback, so a
-    // non-loopback deployment still reaches itself without widening the gate.
-    bind_address:   net.IP4_Address,
 }
 
 // One accepted connection past the WebSocket handshake. Allocated in the transport
@@ -309,15 +304,6 @@ daemon_start :: proc(
         return .Out_Of_Memory
     }
 
-    // Read from the socket rather than re-deriving it: admission compares a request's
-    // `Host` against the address actually served.
-    bound, bound_ok := http_server.bound_address(&d.front_door)
-    if !bound_ok {
-        daemon_start_rollback(d)
-        return .Listen_Failed
-    }
-    d.bind_address = bound.(net.IP4_Address)
-
     assert(d.loop == loop, "daemon lost its event loop during startup")
     assert(d.front_door.user_data == &d.router, "front door user_data must be the daemon router")
     assert(d.router.user_data == d, "router has the wrong owner")
@@ -335,7 +321,7 @@ daemon_start :: proc(
 
     log.infof(
         "daemon: listening on %s:%d version=%s auth=%v blob=%v store=%v",
-        net.to_string(net.Address(d.bind_address), context.temp_allocator),
+        net.to_string(net.Address(d.front_door.bind_address), context.temp_allocator),
         http_server.bound_port(&d.front_door),
         d.daemon_version,
         d.auth_token != "",
