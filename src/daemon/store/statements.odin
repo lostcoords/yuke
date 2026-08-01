@@ -99,7 +99,7 @@ STATEMENT_SQL := [Statement_Id]string {
         VALUES (:session_id, :config_rev, :model, :reasoning)`,
     .Clear_Configs     = `DELETE FROM session_configs WHERE session_id = :session_id`,
 
-    // Absent means no prompt is sent, so a null clears the row rather than storing one.
+    // A null writes no row, which reads back as `system_prompt: null`.
     .Set_Prompt        = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
         SELECT :session_id, :prompt WHERE :prompt IS NOT NULL`,
 }

@@ -17,11 +17,9 @@ Set_Prompt_Params :: struct {
     prompt:     Maybe(string),
 }
 
-// Fold one durable event into the config projection. Runs inside the append
-// transaction alongside the transcript fold.
-//
-// Truncation does not reach here: a discarded message tail leaves the revisions
-// announced before it intact, and resync folds them the same way.
+// Fold one durable event into the config projection, inside the append
+// transaction. Truncation is not a case here: dropping a message tail leaves the
+// revisions announced before it intact.
 @(private)
 configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_Data) -> Error {
     assert(s != nil, "configs_apply needs a store")
@@ -44,9 +42,8 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
     )
 }
 
-// Record a session's system prompt. `Default` is resolved to its text before it
-// reaches here; `None` arrives as nil and stores nothing, which reads back as
-// `system_prompt: null`.
+// `Default` is resolved to its text before it reaches here; nil stores nothing
+// and reads back as `system_prompt: null`.
 @(private)
 session_prompt_set :: proc(s: ^Store, session: wire.Session_Id, prompt: Maybe(string)) -> Error {
     assert(s != nil, "session_prompt_set needs a store")

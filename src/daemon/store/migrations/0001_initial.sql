@@ -114,8 +114,7 @@ CREATE TABLE messages (
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
 
 -- Projection of `config.changed`, rebuildable by replay. session.config can fetch
--- any past revision, which a fold from seq 1 would otherwise have to rebuild on
--- every call.
+-- any past revision, which would otherwise mean folding the log from seq 1.
 CREATE TABLE session_configs (
     session_id BLOB NOT NULL
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
@@ -127,11 +126,10 @@ CREATE TABLE session_configs (
     PRIMARY KEY (session_id, config_rev)
 ) WITHOUT ROWID;
 
--- The prompt is per-session, not per-revision: it is set by Create_Session and no
--- method changes it. It sits apart from `sessions` because it is @unbounded and
--- that table is WITHOUT ROWID — a multi-KB column there would carry into the
--- interior B-tree nodes every session.list scan walks, for a value it never reads.
--- A missing row is `system_prompt: null`, meaning no prompt is sent to the model.
+-- Per-session, not per-revision: Create_Session sets it and no method changes it.
+-- Kept out of `sessions` because it is @unbounded and that table is WITHOUT ROWID,
+-- so a large value would land in the interior nodes session.list scans walk.
+-- A missing row is `system_prompt: null`.
 CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)

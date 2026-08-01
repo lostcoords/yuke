@@ -30,12 +30,9 @@ Create_Session_Params :: struct {
     updated_at_ms:      u64,
 }
 
-// Write the registry row for a session. Every event and projected message points
-// at this row through a foreign key, so it exists before anything references it
-// rather than being invented by the first append.
-//
-// `system_prompt` belongs to creation because no method changes it afterwards;
-// nil means none is sent to the model.
+// Write the registry row for a session. Events and projected messages carry a
+// foreign key into it, so it exists before anything references it. The system
+// prompt belongs to creation because no method changes it after; nil means none.
 session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> Error {
     assert(s != nil, "session_create needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
