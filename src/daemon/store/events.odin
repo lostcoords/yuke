@@ -101,7 +101,7 @@ Events_After_Params :: struct {
 }
 
 // Append one durable event and advance the session's seq high-water in a single
-// transaction. `events.seq` and `session_meta.seq_high` are bound from the same
+// transaction. `events.seq` and `sessions.seq_high` are bound from the same
 // parameter, so a commit can never leave them disagreeing.
 event_append :: proc(
     s: ^Store,
@@ -370,10 +370,10 @@ append_body :: proc(
     assert(wire.broadcast_name_class(name) == .Durable_Gated, "append_body receives a durable name")
     assert(len(payload) > 0, "append_body receives an encoded payload")
 
-    sqlite.execute(&s.binds.ensure_meta, &Session_Params{session_id = session}) or_return
-
     // The guard is the contiguity rule itself: only the row whose high-water is
     // `seq - 1` advances, so every gap or replay has one error classification.
+    // A session that was never created has no row to match, which lands here as
+    // Seq_Conflict rather than inventing a registry row an append cannot fill.
     sqlite.execute(&s.binds.advance_seq, &Advance_Seq_Params{session_id = session, seq = seq}) or_return
 
     changed := sqlite.changes(s.writer)
@@ -404,7 +404,7 @@ append_body :: proc(
     return nil
 }
 
-// Raise the four id columns of the append's existing `session_meta` row.
+// Raise the four id columns of the append's existing `sessions` row.
 @(private)
 id_marks_advance :: proc(s: ^Store, session: wire.Session_Id, ids: Id_Marks) -> (err: Error) {
     assert(s != nil, "id mark advance needs a store")

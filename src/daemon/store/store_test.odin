@@ -27,8 +27,19 @@ test_open_creates_schema_at_latest_version :: proc(t: ^testing.T) {
     testing.expect_value(t, aerr, sqlite.Result.Ok)
     testing.expect_value(t, application_id, i64(APPLICATION_ID))
 
+    testing.expect(t, table_exists(s.writer, "sessions"), "0001 creates sessions")
     testing.expect(t, table_exists(s.writer, "events"), "0001 creates events")
-    testing.expect(t, table_exists(s.writer, "session_meta"), "0001 creates session_meta")
+    testing.expect(t, table_exists(s.writer, "messages"), "0001 creates messages")
+
+    // Both must be settled before WAL and before any transaction; a silent
+    // default here would disable every cascade and halve the page budget.
+    page, page_err := sqlite.query_one_i64(s.writer, "PRAGMA page_size")
+    testing.expect_value(t, page_err, sqlite.Result.Ok)
+    testing.expect_value(t, page, i64(8192))
+
+    keys, keys_err := sqlite.query_one_i64(s.writer, "PRAGMA foreign_keys")
+    testing.expect_value(t, keys_err, sqlite.Result.Ok)
+    testing.expect_value(t, keys, i64(1))
 
     mode, merr := sqlite.query_one_text(s.writer, "PRAGMA journal_mode")
     defer delete(mode)
@@ -163,7 +174,7 @@ test_reopen_after_missing_migration_hash_is_refused :: proc(t: ^testing.T) {
 
     raw, rc := sqlite.open(strings.clone_to_cstring(path, context.temp_allocator))
     testing.expect_value(t, rc, sqlite.Result.Ok)
-    testing.expect_value(t, sqlite.exec(raw, "DELETE FROM migration_hash WHERE version = 2"), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.exec(raw, "DELETE FROM migration_hash WHERE version = 1"), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.close(raw), sqlite.Result.Ok)
 
     before, before_err := os.read_entire_file(path, context.temp_allocator)

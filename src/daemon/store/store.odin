@@ -22,6 +22,10 @@ Store_Error :: enum {
     // the store requires; some filesystems refuse WAL.
     Durability_Unavailable,
 
+    // The connection would not enforce foreign keys, which would leave every
+    // ON DELETE CASCADE silently doing nothing rather than failing.
+    Constraints_Unavailable,
+
     // The appended seq did not continue the session's high-water, so nothing was
     // written. The pump is the sole seq authority and mints `seq_high + 1`.
     Seq_Conflict,
@@ -87,6 +91,11 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
 
     sqlite.busy_timeout(db, BUSY_TIMEOUT_MS) or_return
 
+    // Both pragmas have ordering constraints that outrank everything below:
+    // page_size is ignored once WAL is on, and foreign_keys is a no-op inside a
+    // transaction. Neither can be recovered from later without a VACUUM.
+    store_configure_layout(db) or_return
+
     store_check_integrity(db) or_return
     version := store_check_identity(db) or_return
     store_configure(db) or_return
@@ -144,6 +153,30 @@ close :: proc(s: ^Store) {
 
     s.writer = nil
     free(s, s.allocator)
+}
+
+// Page size and foreign keys, both of which must be settled before anything else
+// touches the database. `page_size` is remembered only until the file has pages
+// and cannot be changed under WAL at all; `foreign_keys` defaults off, is
+// per-connection, and is silently ignored inside a transaction. A forgotten
+// pragma here would disable every ON DELETE CASCADE without an error, so both
+// are read back the way `journal_mode` and `synchronous` are.
+@(private)
+store_configure_layout :: proc(db: ^sqlite.Conn) -> Error {
+    assert(db != nil, "store_configure_layout needs a connection")
+
+    // A no-op on a database that already has pages, which is why it runs before
+    // integrity and identity checks rather than after them.
+    sqlite.exec(db, "PRAGMA page_size = 8192") or_return
+    sqlite.exec(db, "PRAGMA foreign_keys = ON") or_return
+
+    enforced := sqlite.query_one_i64(db, "PRAGMA foreign_keys") or_return
+
+    if enforced != 1 {
+        return .Constraints_Unavailable
+    }
+
+    return nil
 }
 
 // WAL plus `synchronous=NORMAL` is the durability contract: commits survive a

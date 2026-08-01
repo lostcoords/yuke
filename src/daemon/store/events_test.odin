@@ -19,6 +19,7 @@ test_append_recovers_across_restart :: proc(t: ^testing.T) {
 
     s, err := open(path)
     testing.expect_value(t, err, nil)
+    test_session_create(t, s, alpha, beta)
 
     // Interleaved so neither session's numbering can borrow the other's.
     testing.expect_value(t, event_append(s, alpha, 1, .Run_Started, `{"seq":1}`, {run_id = 1}), nil)
@@ -92,6 +93,7 @@ test_deleted_tail_does_not_reclaim_seq :: proc(t: ^testing.T) {
 
     s, err := open(path)
     testing.expect_value(t, err, nil)
+    test_session_create(t, s, session)
 
     for seq in wire.Seq(1) ..= 4 {
         testing.expect_value(t, event_append(s, session, seq, .Run_Done, `{"n":0}`, {}), nil)
@@ -132,6 +134,7 @@ test_failed_append_leaves_the_mark_untouched :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"n":1}`, {run_id = 9}), nil)
 
@@ -188,6 +191,7 @@ test_tail_read_honors_from_seq_and_limit :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     for seq in wire.Seq(1) ..= 6 {
         // `{` opens a format directive, so the brace arrives as an argument.
@@ -230,6 +234,7 @@ test_unknown_stored_name_fails_the_read :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"n":1}`, {}), nil)
 
@@ -263,17 +268,18 @@ test_persisted_values_are_validated_without_asserting :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{}`, {}), nil)
     testing.expect_value(t, sqlite.exec(s.writer, "PRAGMA ignore_check_constraints=ON"), sqlite.Result.Ok)
 
-    corrupt_high := fmt.tprintf("UPDATE session_meta SET seq_high = -1 WHERE session_id = x'%s'", hex_session(session))
+    corrupt_high := fmt.tprintf("UPDATE sessions SET seq_high = -1 WHERE id = x'%s'", hex_session(session))
     testing.expect_value(t, sqlite.exec(s.writer, corrupt_high), sqlite.Result.Ok)
 
     _, high_err := high_water(s, session)
     testing.expect_value(t, high_err, sqlite.Scan_Error.Value_Out_Of_Range)
 
-    restore_high := fmt.tprintf("UPDATE session_meta SET seq_high = 1 WHERE session_id = x'%s'", hex_session(session))
+    restore_high := fmt.tprintf("UPDATE sessions SET seq_high = 1 WHERE id = x'%s'", hex_session(session))
     testing.expect_value(t, sqlite.exec(s.writer, restore_high), sqlite.Result.Ok)
 
     // This is a known wire name, but it is live-only and must never be replayed.
@@ -314,6 +320,7 @@ test_schema_rejects_out_of_range_persisted_numbers :: proc(t: ^testing.T) {
     defer close(s)
 
     session := test_session(0x4a)
+    test_session_create(t, s, session)
     insert := fmt.tprintf(
         "INSERT INTO events(session_id, seq, name, payload) VALUES (x'%s', -1, 'run.started', '{}')",
         hex_session(session),
@@ -330,6 +337,7 @@ test_tail_materialization_oom_leaves_statement_reusable :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{}`, {}), nil)
 
@@ -354,6 +362,7 @@ test_event_visitor_allocates_only_owned_payloads :: proc(t: ^testing.T) {
     s, err := open(path)
     testing.expect_value(t, err, nil)
     defer close(s)
+    test_session_create(t, s, session)
 
     for seq in wire.Seq(1) ..= 3 {
         testing.expect_value(t, event_append(s, session, seq, .Run_Started, `{"seq":1}`, {}), nil)
@@ -392,6 +401,7 @@ test_store_lifecycle_leaks_nothing :: proc(t: ^testing.T) {
     session := test_session(0x7c)
     s, err := open(path, tracked)
     testing.expect_value(t, err, nil)
+    test_session_create(t, s, session)
 
     testing.expect_value(t, event_append(s, session, 1, .Run_Started, `{"seq":1}`, {run_id = 1}), nil)
     testing.expect_value(t, event_append(s, session, 2, .Run_Done, `{"seq":2}`, {run_id = 1}), nil)
@@ -458,4 +468,26 @@ test_session :: proc(tag: byte) -> wire.Session_Id {
     }
 
     return wire.Session_Id(id)
+}
+
+// Every event and projected message carries a foreign key into `sessions`, so a
+// synthetic id needs its registry row before anything can be appended for it.
+@(private = "file")
+test_session_create :: proc(t: ^testing.T, s: ^Store, ids: ..wire.Session_Id) {
+    for id in ids {
+        summary := wire.Session {
+            id = id,
+            profile = "default",
+            model = "test/model",
+            reasoning = "low",
+            permission = .Normal,
+            title = "test",
+            created_at_ms = 1,
+            updated_at_ms = 1,
+            created_by = wire.Client{name = "test", version = "0"},
+            origin = wire.Session_Origin_Root{},
+        }
+
+        testing.expect_value(t, session_create(s, summary), nil)
+    }
 }

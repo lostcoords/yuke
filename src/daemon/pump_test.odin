@@ -184,7 +184,9 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     dropped := pump_test_session('a')
+    daemon_test_session_create(t, &d, dropped)
     kept := pump_test_session('b')
+    daemon_test_session_create(t, &d, kept)
 
     obs: Pump_Obs
     pump_obs_init(&obs, {dropped})
@@ -234,6 +236,7 @@ test_daemon_durable_broadcast_is_persisted_and_delivered :: proc(t: ^testing.T) 
     testing.expect(t, d.store != nil, "a configured database opens the store at start")
 
     session := pump_test_session('c')
+    daemon_test_session_create(t, &d, session)
     port := bound_port(&d)
 
     subscribed: Pump_Obs
@@ -289,6 +292,7 @@ test_daemon_durable_seq_recovers_across_restart :: proc(t: ^testing.T) {
 
     first: Daemon
     testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    daemon_test_session_create(t, &first, session)
     testing.expect_value(t, broadcast(&first, pump_run_started(session)), Pump_Error.None)
     testing.expect_value(t, broadcast(&first, pump_run_started(session)), Pump_Error.None)
     test_teardown(&first)
@@ -326,6 +330,7 @@ test_daemon_id_marks_recover_across_restart :: proc(t: ^testing.T) {
 
     first: Daemon
     testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    daemon_test_session_create(t, &first, session)
 
     // Each arm carries a different family: the config rev, an assistant message's id
     // and run, a run id, then a user message's id and the input it came from.
@@ -367,6 +372,7 @@ test_daemon_ungated_broadcast_reaches_every_connection :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('e')
+    daemon_test_session_create(t, &d, session)
     port := bound_port(&d)
 
     subscribed: Pump_Obs
@@ -419,6 +425,7 @@ test_daemon_live_gated_broadcast_is_not_persisted :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('0')
+    daemon_test_session_create(t, &d, session)
 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
@@ -457,6 +464,7 @@ test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) 
     testing.expect(t, d.store == nil, "no database configured means no store")
 
     session := pump_test_session('1')
+    daemon_test_session_create(t, &d, session)
 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
@@ -492,6 +500,7 @@ test_daemon_exhausted_sequence_is_reported :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('e')
+    daemon_test_session_create(t, &d, session)
     testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     exhaust := fmt.tprintf("UPDATE session_meta SET seq_high = %d", wire.MAX_WIRE_INTEGER)
     testing.expect_value(t, sqlite.exec(d.store.writer, exhaust), sqlite.Result.Ok)
@@ -522,6 +531,7 @@ test_daemon_removed_session_drops_its_seq_mark :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('9')
+    daemon_test_session_create(t, &d, session)
     testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     testing.expect_value(t, d.seq_high[session], wire.Seq(1))
 
@@ -596,6 +606,7 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('4')
+    daemon_test_session_create(t, &d, session)
     port := bound_port(&d)
 
     subscribed: Pump_Obs
@@ -653,6 +664,7 @@ test_daemon_refused_append_broadcasts_nothing :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('2')
+    daemon_test_session_create(t, &d, session)
 
     obs: Pump_Obs
     pump_obs_init(&obs, {session})
@@ -841,6 +853,7 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     testing.expect_value(t, derr, Error.None)
 
     session := pump_test_session('3')
+    daemon_test_session_create(t, &d, session)
     parts := []wire.Assistant_Part{wire.Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"}}
     committed := wire.Message_Committed_Data {
         session_id = session,
@@ -877,4 +890,30 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     }
 
     test_teardown(&d)
+}
+
+// Every event carries a foreign key into `sessions`, so a synthetic id needs its
+// registry row before the pump can log anything for it. The daemon has no session
+// engine yet, so tests stand in for what `session.create` will do.
+daemon_test_session_create :: proc(t: ^testing.T, d: ^Daemon, ids: ..wire.Session_Id) {
+    if d.store == nil {
+        return
+    }
+
+    for id in ids {
+        summary := wire.Session {
+            id = id,
+            profile = "default",
+            model = "test/model",
+            reasoning = "low",
+            permission = .Normal,
+            title = "test",
+            created_at_ms = 1,
+            updated_at_ms = 1,
+            created_by = wire.Client{name = "yuke-test", version = "0.1.0"},
+            origin = wire.Session_Origin_Root{},
+        }
+
+        testing.expect_value(t, store.session_create(d.store, summary), nil)
+    }
 }

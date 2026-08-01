@@ -128,6 +128,7 @@ test_daemon_resync_cut_derives_from_the_log :: proc(t: ^testing.T) {
         "daemon-resync-derive",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('a')
+            daemon_test_session_create(t, d, session)
 
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, resync_user(session, 1)), Pump_Error.None)
@@ -176,6 +177,7 @@ test_daemon_resync_of_an_unknown_session_is_refused :: proc(t: ^testing.T) {
         "daemon-resync-unknown",
         proc(t: ^testing.T, d: ^Daemon) {
             written := pump_test_session('b')
+            daemon_test_session_create(t, d, written)
             testing.expect_value(t, broadcast(d, resync_user(written, 1)), Pump_Error.None)
 
             // A session with no durable stream was never written by anything.
@@ -218,6 +220,7 @@ test_daemon_resync_survives_a_restart :: proc(t: ^testing.T) {
 
     first: Daemon
     testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    daemon_test_session_create(t, &first, session)
     testing.expect_value(t, broadcast(&first, resync_config(session, 1, "m1")), Pump_Error.None)
     testing.expect_value(t, broadcast(&first, resync_user(session, 1)), Pump_Error.None)
 
@@ -251,6 +254,7 @@ test_daemon_resync_pages_the_transcript_tail :: proc(t: ^testing.T) {
         "daemon-resync-paging",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('f')
+            daemon_test_session_create(t, d, session)
 
             for id in 1 ..= 5 {
                 testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
@@ -280,6 +284,7 @@ test_daemon_resync_configs_cover_the_page :: proc(t: ^testing.T) {
         "daemon-resync-configs",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('1')
+            daemon_test_session_create(t, d, session)
 
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, resync_assistant(session, 1, 1)), Pump_Error.None)
@@ -320,6 +325,7 @@ test_daemon_resync_drops_truncated_messages :: proc(t: ^testing.T) {
         "daemon-resync-truncate",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('2')
+            daemon_test_session_create(t, d, session)
 
             for id in 1 ..= 3 {
                 testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
@@ -352,6 +358,7 @@ test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
         "daemon-resync-run",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('3')
+            daemon_test_session_create(t, d, session)
 
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, pump_run_started(session)), Pump_Error.None)
@@ -393,6 +400,7 @@ test_daemon_resync_of_an_undeclared_config_is_refused :: proc(t: ^testing.T) {
         "daemon-resync-unknown-config",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('4')
+            daemon_test_session_create(t, d, session)
 
             // A run under a revision no `config.changed` announced cannot be resolved,
             // and an unresolvable cut is our own log's fault, not a peer's.
@@ -412,6 +420,7 @@ test_daemon_resync_of_a_conflicting_config_revision_is_refused :: proc(t: ^testi
 
     resync_with_daemon(t, "daemon-resync-conflicting-config", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('5')
+        daemon_test_session_create(t, d, session)
         testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
         resync_append_corrupt_fixture(t, d, resync_config(session, 1, "m2"))
 
@@ -431,6 +440,7 @@ test_daemon_resync_of_a_zero_message_id_is_refused :: proc(t: ^testing.T) {
         "daemon-resync-zero-id",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('6')
+            daemon_test_session_create(t, d, session)
 
             // Id 0 is never minted, and a cut carrying it would pass our wire validator:
             // the fold refuses the damaged historical row before it reaches a replica.
@@ -450,6 +460,7 @@ test_daemon_resync_of_a_reused_truncated_message_id_is_refused :: proc(t: ^testi
 
     resync_with_daemon(t, "daemon-resync-reused-id", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('7')
+        daemon_test_session_create(t, d, session)
 
         testing.expect_value(t, broadcast(d, resync_user(session, 1)), Pump_Error.None)
         testing.expect_value(t, broadcast(d, resync_user(session, 2)), Pump_Error.None)
@@ -472,6 +483,7 @@ test_daemon_resync_of_a_lagging_message_mark_is_refused :: proc(t: ^testing.T) {
         "daemon-resync-lagging-mark",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('a')
+            daemon_test_session_create(t, d, session)
 
             // The fixture logs the row without the mark the pump raises in the same
             // transaction, which is how a damaged `session_meta` reads: the boundary the cut
@@ -493,6 +505,7 @@ test_daemon_resync_keeps_a_run_open_past_a_mismatched_terminal :: proc(t: ^testi
         "daemon-resync-run-mismatch",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('8')
+            daemon_test_session_create(t, d, session)
 
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
@@ -519,6 +532,7 @@ test_daemon_resync_refuses_overlapping_runs :: proc(t: ^testing.T) {
 
     resync_with_daemon(t, "daemon-resync-run-replace", proc(t: ^testing.T, d: ^Daemon) {
         session := pump_test_session('9')
+        daemon_test_session_create(t, d, session)
 
         testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
         testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
@@ -538,6 +552,7 @@ test_daemon_resync_folds_a_log_past_one_chunk :: proc(t: ^testing.T) {
         "daemon-resync-chunks",
         proc(t: ^testing.T, d: ^Daemon) {
             session := pump_test_session('c')
+            daemon_test_session_create(t, d, session)
 
             // One row past the read chunk, so the fold's continuation is exercised.
             rows := RESYNC_CHUNK + 1
@@ -650,6 +665,7 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
     testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     session := pump_test_session('5')
+    daemon_test_session_create(t, &d, session)
     testing.expect_value(t, broadcast(&d, resync_config(session, 1, "m1")), Pump_Error.None)
     testing.expect_value(t, broadcast(&d, resync_user(session, 1)), Pump_Error.None)
     testing.expect_value(t, broadcast(&d, resync_assistant(session, 2, 1)), Pump_Error.None)
@@ -762,6 +778,7 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     session := pump_test_session('0')
+    daemon_test_session_create(t, &d, session)
 
     // The store validates only the class and a non-empty payload, so a payload the
     // codec rejects reaches the log the way real corruption would.

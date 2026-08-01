@@ -135,6 +135,7 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
 
     first: Daemon
     testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    daemon_test_session_create(t, &first, session, other)
     port := bound_port(&first)
 
     subscribed: Pump_Obs
