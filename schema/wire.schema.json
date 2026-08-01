@@ -6085,6 +6085,12 @@
         "config_rev": {
           "$ref": "#/$defs/Config_Rev"
         },
+        "created_at_ms": {
+          "description": "Creation epoch ms. Never changes; `updated_at_ms` is never below it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "created_by": {
           "anyOf": [
             {
@@ -6169,6 +6175,7 @@
         "max_rounds",
         "title",
         "message_count",
+        "created_at_ms",
         "updated_at_ms",
         "created_by",
         "origin"

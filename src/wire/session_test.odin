@@ -27,6 +27,7 @@ _sample_session_list_item :: proc() -> Session_List_Item {
             max_rounds = nil,
             title = "title",
             message_count = 0,
+            created_at_ms = 1,
             updated_at_ms = 1,
             created_by = Client{name = "test", version = "0"},
             origin = Session_Origin_Root{},
@@ -181,7 +182,7 @@ test_session_accepts_null_attribution_for_child :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"created_at_ms":1,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     v := decoder_init(input, context.temp_allocator)
 
     session, derr := session_from_reader(&v)
@@ -647,10 +648,52 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
 test_session_rejects_missing_created_by :: proc(t: ^testing.T) {
     // `created_by` is required-but-nullable: an explicit null is fine, an absent
     // key is not (it is always emitted).
-    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"updated_at_ms":1,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"created_at_ms":1,"updated_at_ms":1,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     v := decoder_init(input, context.temp_allocator)
     _, derr := session_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing created_by must be rejected")
+}
+
+@(test)
+test_session_rejects_updated_before_created :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    session := Session {
+        id = Session_Id(_fixed16("0123456789abcdef")),
+        workspace_id = Workspace_Id(_fixed16("aaaaaaaaaaaaaaaa")),
+        profile = "default",
+        model = "openai/gpt",
+        reasoning = "low",
+        config_rev = Config_Rev(1),
+        permission = .Normal,
+        max_rounds = nil,
+        title = "title",
+        message_count = 0,
+        created_at_ms = 5,
+        updated_at_ms = 4,
+        created_by = Client{name = "test", version = "0"},
+        origin = Session_Origin_Root{},
+    }
+
+    testing.expect(
+        t,
+        session_validate(session) == .Mismatched_Payload,
+        "updated_at_ms below created_at_ms is rejected",
+    )
+    session.updated_at_ms = session.created_at_ms
+    testing.expect(t, session_validate(session) == .None, "equal timestamps are valid")
+}
+
+@(test)
+test_session_rejects_missing_created_at :: proc(t: ^testing.T) {
+    // `created_at_ms` is required and always emitted; an absent key is rejected.
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    v := decoder_init(input, context.temp_allocator)
+    _, derr := session_from_reader(&v)
+    testing.expect(t, derr == .Mismatched_Payload, "missing created_at_ms must be rejected")
 }

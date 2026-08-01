@@ -3459,6 +3459,12 @@
           "presence": "required"
         },
         {
+          "name": "created_at_ms",
+          "type": "u64",
+          "doc": "Creation epoch ms. Never changes; `updated_at_ms` is never below it.",
+          "presence": "required"
+        },
+        {
           "name": "updated_at_ms",
           "type": "u64",
           "doc": "Last update epoch ms.",

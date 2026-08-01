@@ -119,7 +119,7 @@ test_run_done_canceled_null_start_roundtrip :: proc(t: ^testing.T) {
 test_session_summary_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
+    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
     v := decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &v)
@@ -399,7 +399,7 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
     dst := mem.dynamic_arena_allocator(&dst_arena)
     defer mem.dynamic_arena_destroy(&dst_arena)
 
-    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
+    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
     d := decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")

@@ -478,6 +478,9 @@ Session :: struct {
     // Committed transcript message count.
     message_count: u64,
 
+    // Creation epoch ms. Never changes; `updated_at_ms` is never below it.
+    created_at_ms: u64,
+
     // Last update epoch ms.
     updated_at_ms: u64,
 
@@ -508,6 +511,7 @@ session_emit :: proc(e: ^Emitter, self: Session) {
     field_required_null_u64(e, "max_rounds", self.max_rounds)
     field_string(e, "title", self.title)
     field_u64(e, "message_count", self.message_count)
+    field_u64(e, "created_at_ms", self.created_at_ms)
     field_u64(e, "updated_at_ms", self.updated_at_ms)
     key(e, "created_by")
 
@@ -538,6 +542,10 @@ session_validate :: proc(self: Session) -> Validation_Error {
 
     if cb, ok := self.created_by.?; ok {
         client_validate(cb) or_return
+    }
+
+    if self.updated_at_ms < self.created_at_ms {
+        return .Mismatched_Payload
     }
 
     session_origin_validate(self.origin) or_return
@@ -583,6 +591,7 @@ session_clone :: proc(self: Session, allocator := context.allocator) -> Session 
         max_rounds = self.max_rounds,
         title = strings.clone(self.title, allocator),
         message_count = self.message_count,
+        created_at_ms = self.created_at_ms,
         updated_at_ms = self.updated_at_ms,
         created_by = created_by,
         origin = session_origin_clone(self.origin, allocator),
@@ -2158,6 +2167,7 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
         Max,
         Title,
         Count,
+        Created_At,
         Updated,
         Created,
         Origin,
@@ -2212,6 +2222,10 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
             out.message_count = dec_u64(d) or_return
             seen += {.Count}
 
+        case "created_at_ms":
+            out.created_at_ms = dec_u64(d) or_return
+            seen += {.Created_At}
+
         case "updated_at_ms":
             out.updated_at_ms = dec_u64(d) or_return
             seen += {.Updated}
@@ -2236,7 +2250,22 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
     }
 
     if seen !=
-       {.Id, .Wid, .Profile, .Model, .Reasoning, .Cfg, .Perm, .Max, .Title, .Count, .Updated, .Created, .Origin} {
+       {
+               .Id,
+               .Wid,
+               .Profile,
+               .Model,
+               .Reasoning,
+               .Cfg,
+               .Perm,
+               .Max,
+               .Title,
+               .Count,
+               .Created_At,
+               .Updated,
+               .Created,
+               .Origin,
+           } {
         return {}, .Mismatched_Payload
     }
 
