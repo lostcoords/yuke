@@ -29,6 +29,7 @@ FRONT_DOOR_MIDDLEWARE := [?]Http_Middleware{{middleware_mark_private}, {middlewa
 FRONT_DOOR_ROUTES := [?]Http_Route {
     {method = "GET", pattern = "/ws", handler = route_ws},
     {method = "GET", pattern = "/blob/*", handler = route_blob_get},
+    {method = "HEAD", pattern = "/blob/*", handler = route_blob_get},
     {method = "PUT", pattern = "/blob/*", handler = route_blob_put},
 }
 

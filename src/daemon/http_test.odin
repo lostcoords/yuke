@@ -371,10 +371,9 @@ test_daemon_rejects_a_non_get :: proc(t: ^testing.T) {
     testing.expectf(t, strings.contains(got, "Allow: GET\r\n"), "405 must carry Allow, got %q", got)
 }
 
-// The blob routes register two methods, and a `?token=` 405 must keep both the cache
-// marker and `Allow`.
+// A `?token=` 405 must keep both the cache marker and `Allow`.
 @(test)
-test_daemon_405_on_blob_lists_both_methods :: proc(t: ^testing.T) {
+test_daemon_405_on_blob_lists_every_method :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     got := run_http(
@@ -384,7 +383,7 @@ test_daemon_405_on_blob_lists_both_methods :: proc(t: ^testing.T) {
     )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "DELETE is not routed")
-    testing.expectf(t, strings.contains(got, "Allow: GET, PUT\r\n"), "405 must list both methods, got %q", got)
+    testing.expectf(t, strings.contains(got, "Allow: GET, HEAD, PUT\r\n"), "405 must list every method, got %q", got)
     testing.expectf(
         t,
         strings.contains(got, "Cache-Control: private, no-store\r\n"),
@@ -919,7 +918,8 @@ test_daemon_head_response_has_no_content :: proc(t: ^testing.T) {
     testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
 }
 
-// HEAD on a blob path: not routed, so a 405 — and it must carry no content either.
+// HEAD routes to the GET handler, so it answers with the headers a GET would carry and
+// no content (RFC 9110 §9.3.2).
 @(test)
 test_daemon_head_on_blob_has_no_content :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -929,8 +929,19 @@ test_daemon_head_on_blob_has_no_content :: proc(t: ^testing.T) {
 
     got := run_http(t, "HEAD /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
 
-    testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "HEAD is not routed")
+    testing.expectf(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "HEAD is routed like GET, got %q", got)
+    testing.expectf(
+        t,
+        strings.contains(got, fmt.tprintf("Content-Length: %d\r\n", len(BLOB_BODY))),
+        "HEAD advertises the length it would have sent, got %q",
+        got,
+    )
     testing.expectf(t, strings.has_suffix(got, "\r\n\r\n"), "HEAD must send no content, got %q", got)
+
+    // A HEAD for an absent blob is the same 404 a GET gets.
+    MISSING :: "0000000000000000000000000000000000000000000000000000000000000000"
+    missing := run_http(t, "HEAD /blob/" + MISSING + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {blob_dir = dir})
+    testing.expect(t, strings.has_prefix(missing, "HTTP/1.1 404 Not Found\r\n"), "an absent blob 404s")
 }
 
 // A `Host` starting with `]:` panics `net.split_port`, pre-auth: refuse, never abort.
