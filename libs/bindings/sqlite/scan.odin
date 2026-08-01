@@ -324,11 +324,27 @@ Scan_Leaf :: struct {
 @(private)
 Scan_Visitor :: #type proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error
 
+// Which direction a field walk resolves for. The accepted type surface is almost
+// identical both ways; `Maybe(T)` is the exception, since a value or NULL is
+// unambiguous on the way into SQLite but a read would have to invent how NULL
+// lands back in the union.
+@(private)
+Walk_Direction :: enum {
+    Scan,
+    Bind,
+}
+
 // The single definition of which fields a scan reads and owns. Shape validation,
 // storing a row, and releasing a scanned value all walk here, so the tag ladder and
 // the accepted type surface exist once and cannot drift apart.
 @(private)
-scan_walk :: proc(info: ^reflect.Type_Info, offset: uintptr, visit: Scan_Visitor, user: rawptr) -> Scan_Error {
+scan_walk :: proc(
+    info: ^reflect.Type_Info,
+    offset: uintptr,
+    visit: Scan_Visitor,
+    user: rawptr,
+    direction := Walk_Direction.Scan,
+) -> Scan_Error {
     assert(info != nil, "scan_walk needs type information")
     assert(visit != nil, "scan_walk needs a visitor")
 
@@ -353,12 +369,12 @@ scan_walk :: proc(info: ^reflect.Type_Info, offset: uintptr, visit: Scan_Visitor
                 return .Invalid_Tag
             }
 
-            scan_walk(field.type, offset + field.offset, visit, user) or_return
+            scan_walk(field.type, offset + field.offset, visit, user, direction) or_return
 
             continue
         }
 
-        scan_type_validate(field.type) or_return
+        scan_type_validate(field.type, direction) or_return
 
         // Borrowing is only meaningful where a clone would otherwise be made; on a
         // by-value destination it would silently mean nothing.
@@ -494,7 +510,7 @@ scan_column_find :: proc(statement: ^Stmt, name: string) -> int {
 }
 
 @(private)
-scan_type_validate :: proc(info: ^reflect.Type_Info) -> Scan_Error {
+scan_type_validate :: proc(info: ^reflect.Type_Info, direction := Walk_Direction.Scan) -> Scan_Error {
     assert(info != nil, "scan_type_validate needs type information")
 
     base := reflect.type_info_base(info)
@@ -511,7 +527,16 @@ scan_type_validate :: proc(info: ^reflect.Type_Info) -> Scan_Error {
         return .None
 
     case reflect.Type_Info_Enum:
-        return scan_type_validate(kind.base)
+        return scan_type_validate(kind.base, direction)
+
+    case reflect.Type_Info_Union:
+        // Only `Maybe(T)`, and only into SQLite: one variant, nil admitted, and a
+        // payload that is itself bindable. Anything else stays unsupported.
+        if direction != .Bind || len(kind.variants) != 1 || kind.no_nil {
+            return .Unsupported_Type
+        }
+
+        return scan_type_validate(kind.variants[0], direction)
 
     case reflect.Type_Info_Float:
         if kind.endianness != .Platform || (base.size != 2 && base.size != 4 && base.size != 8) {

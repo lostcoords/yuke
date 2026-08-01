@@ -141,9 +141,25 @@ test_bind_prepare_rejects_more_parameters_than_a_mapping_holds :: proc(t: ^testi
         f14: i64,
         f15: i64,
         f16: i64,
+        f17: i64,
+        f18: i64,
+        f19: i64,
+        f20: i64,
+        f21: i64,
+        f22: i64,
+        f23: i64,
+        f24: i64,
+        f25: i64,
+        f26: i64,
+        f27: i64,
+        f28: i64,
+        f29: i64,
+        f30: i64,
+        f31: i64,
+        f32: i64,
     }
 
-    #assert(BIND_MAX_PARAMS == 16)
+    #assert(BIND_MAX_PARAMS == 32)
 
     _, err := bind_prepare(st, Wide)
     testing.expect_value(t, err, Bind_Error.Too_Many_Parameters)
@@ -416,4 +432,96 @@ test_bind_reports_unsigned_values_sqlite_cannot_represent :: proc(t: ^testing.T)
     testing.expect_value(t, bind(&mapping, &params), Result.Ok)
     testing.expect_value(t, step(st), Result.Row)
     testing.expect_value(t, column_i64(st, 0), max(i64))
+}
+
+@(test)
+test_bind_maybe_binds_payload_or_null :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    testing.expect_value(t, exec(db, "CREATE TABLE t (a INTEGER, b TEXT, c BLOB)"), Result.Ok)
+
+    st, prep := prepare(db, "INSERT INTO t (a, b, c) VALUES (:a, :b, :c)")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    Params :: struct {
+        a: Maybe(u64),
+        b: Maybe(string),
+        c: Maybe([4]u8),
+    }
+
+    mapping, mapping_err := bind_prepare(st, Params)
+    testing.expect_value(t, mapping_err, Bind_Error.None)
+    testing.expect_value(t, mapping.count, 3)
+
+    present := Params {
+        a = 9,
+        b = "set",
+        c = [4]u8{1, 2, 3, 4},
+    }
+    testing.expect_value(t, execute(&mapping, &present), Result.Ok)
+
+    absent: Params
+    testing.expect_value(t, execute(&mapping, &absent), Result.Ok)
+
+    sel, sel_prep := prepare(db, "SELECT a, b, c FROM t ORDER BY rowid")
+    testing.expect_value(t, sel_prep, Result.Ok)
+    defer testing.expect_value(t, finalize(sel), Result.Ok)
+
+    testing.expect_value(t, step(sel), Result.Row)
+    testing.expect_value(t, column_i64(sel, 0), i64(9))
+    text, text_rc := column_text(sel, 1)
+    testing.expect_value(t, text_rc, Result.Ok)
+    testing.expect_value(t, text, "set")
+    testing.expect_value(t, len(column_blob(sel, 2)), 4)
+
+    // The nil arm reaches SQLite as a real NULL, not a zero value.
+    testing.expect_value(t, step(sel), Result.Row)
+    testing.expect_value(t, column_type(sel, 0), Type.Null)
+    testing.expect_value(t, column_type(sel, 1), Type.Null)
+    testing.expect_value(t, column_type(sel, 2), Type.Null)
+    testing.expect_value(t, step(sel), Result.Done)
+}
+
+@(test)
+test_scan_rejects_maybe :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    st, prep := prepare(db, "SELECT 1 AS a")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    // `Maybe` is bind-only; the read direction has no caller and stays refused.
+    Row :: struct {
+        a: Maybe(i64),
+    }
+
+    _, err := scan_prepare(st, Row, context.allocator)
+    testing.expect_value(t, err, Scan_Error.Unsupported_Type)
+}
+
+@(test)
+test_bind_rejects_multi_variant_union :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    st, prep := prepare(db, "SELECT :a")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    // Only `Maybe` is admitted; a real sum type has no single column form.
+    Params :: struct {
+        a: union {
+            i64,
+            string,
+        },
+    }
+
+    _, err := bind_prepare(st, Params)
+    testing.expect_value(t, err, Bind_Error.Unsupported_Type)
 }

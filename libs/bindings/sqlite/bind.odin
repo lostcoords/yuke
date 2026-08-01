@@ -5,8 +5,9 @@ import "core:reflect"
 
 // The most parameters one bound struct may carry. A statement is written beside
 // its parameter struct, so outgrowing this is a design decision rather than a
-// runtime condition; the cap keeps a mapping allocation-free.
-BIND_MAX_PARAMS :: 16
+// runtime condition; the cap keeps a mapping allocation-free. Raised to 32 for
+// the session insert, which writes one row per column of `wire.Session`.
+BIND_MAX_PARAMS :: 32
 
 // Why a struct could not be resolved against a statement's parameters. These
 // describe the statement/struct pairing, never a bound value: both sides are
@@ -86,7 +87,7 @@ bind_prepare :: proc(
     assert(info != nil, "a bind source has type information")
 
     leaves: Bind_Leaves
-    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves)) or_return
+    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves, .Bind)) or_return
 
     if leaves.overflow {
         return {}, .Too_Many_Parameters
@@ -314,6 +315,35 @@ bind_slot :: proc(statement: ^Stmt, slot: Bind_Slot, data: rawptr, lifetime: Bin
         assert(kind.elem_size == 1, "bind_prepare admits only byte slices")
 
         return bind_blob_lifetime(statement, slot.param, (^[]byte)(data)^, lifetime)
+
+    case reflect.Type_Info_Union:
+        // `bind_prepare` admitted this only as a `Maybe(T)`: one variant, nil
+        // allowed. Odin stores the payload at offset 0, so the recursion reuses
+        // `data` and only swaps the type it is read as.
+        assert(len(kind.variants) == 1, "bind_prepare admits only single-variant unions")
+        assert(!kind.no_nil, "bind_prepare admits only nil-able unions")
+
+        tag, tag_rc := bind_integer_load(
+            rawptr(uintptr(data) + kind.tag_offset),
+            reflect.type_info_base(kind.tag_type),
+        )
+
+        if tag_rc != .Ok {
+            return tag_rc
+        }
+
+        if tag == 0 {
+            return bind_null(statement, slot.param)
+        }
+
+        assert(tag == 1, "a single-variant union tag is nil or its only variant")
+
+        return bind_slot(
+            statement,
+            {type = kind.variants[0], offset = slot.offset, param = slot.param},
+            data,
+            lifetime,
+        )
     }
 
     // Every other kind was rejected by `scan_type_validate` before a mapping resolved.
