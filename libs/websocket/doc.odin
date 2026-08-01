@@ -22,8 +22,9 @@ that adopts sockets an HTTP front door has already routed.
   - `handshake.odin`: the HTTP upgrade handshake, both directions. A client builds a
     request with `build_upgrade_request` and validates the reply with
     `parse_upgrade_response`; a server validates the request with
-    `parse_upgrade_request` and answers with `build_upgrade_response`. Refusing a bad
-    upgrade is the front door's job. Both parsers report `.Need_More` until the full header
+    `parse_upgrade_request`, or with `parse_upgrade_request_head` when the HTTP head is
+    already parsed, and answers with `build_upgrade_response`. Both parsers report
+    `.Need_More` until the full header
     block is buffered and never consume bytes past the `\r\n\r\n` terminator, leaving
     pipelined frames for the caller. `make_sec_websocket_accept` is shared.
   - `conn.odin`: the nbio reactor driver, `Conn_Core`, embedded first in both `Client`
@@ -40,5 +41,10 @@ that adopts sockets an HTTP front door has already routed.
     socket plus the `Sec-WebSocket-Key` a front door already validated, writes the
     101, and runs the connection from there. It owns the connection table (capped at
     `max_connections`), the shutdown sequence, and per-connection release.
+  - `accept.odin`: `accept_upgrade`, the bridge from a `libs:http/server` connection to
+    `server_adopt`. It validates the head, refuses with 400 or 503, and otherwise hijacks
+    the socket and adopts it, forwarding the connection's pending response headers onto
+    the 101. Capacity is checked before the hijack, since a refusal needs a connection
+    that can still answer. The only place this package depends on an HTTP driver.
 */
 package websocket

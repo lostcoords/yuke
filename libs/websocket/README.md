@@ -17,9 +17,9 @@ the nbio driver.
 The server driver **owns no listener**. The sans-I/O HTTP grammar lives in
 [`libs/http`](../http); its deliberately small nbio driver lives in
 [`libs/http/server`](../http/server). That front door binds the port, reads the
-request head, routes it, and hands the socket over with `server_adopt`. One port
-therefore serves `/ws` alongside plain HTTP routes, and routing, authorization,
-and every non-101 status stay in the application where they belong.
+request head, routes it, and hands the socket over via `accept_upgrade`. One port
+therefore serves `/ws` alongside plain HTTP routes, and routing and authorization
+stay in the application where they belong.
 
 `ws://` only — there is no TLS. For `wss://`, terminate TLS in a proxy in front
 of the daemon and connect to it over plaintext loopback.
@@ -163,39 +163,36 @@ will touch the `Client` or its freed buffers.
 ## Server driver
 
 `server_init` readies a server (no I/O); `server_adopt` takes over a socket whose
-upgrade request the caller already validated with `parse_upgrade_request`, writes
-the 101, and fires `on_open` from the loop. There is exactly one way to start a
-connection, so a front door is not optional.
+upgrade request the caller already validated, writes the 101, and fires `on_open`
+from the loop. There is exactly one way to start a connection, so a front door is
+not optional.
+
+`accept_upgrade` is that front door for a `libs:http/server` connection. It
+validates the head, answers 400 or 503 itself, and otherwise hijacks and adopts,
+forwarding the connection's pending response headers onto the 101. Capacity is
+checked before the hijack, because a refusal needs a connection that can still
+answer.
 
 ```odin
 import http_server "libs:http/server"
 
-// In the front door's request handler, once the head is buffered:
-upgrade, result, _, status := ws.parse_upgrade_request(req.head.bytes)
-if status != .Ready || result != .Ok {
-    http_server.respond_text(c, .Bad_Request, "expected an upgrade")
-    return
-}
-
-// Refuse while the front door still owns the socket, so a full server answers a
-// status instead of dropping the connection.
-if !ws.server_can_adopt(&s) {
-    http_server.respond_text(c, .Service_Unavailable, "at capacity")
-    return
-}
-
-socket, loop := http_server.hijack(c)                           // the socket is now ours
-if _, err := ws.server_adopt(&s, socket, upgrade.key, req.trailing); err != .None {
-    nbio.close(socket, l = loop)                               // refused: still ours to close
-}
+// In the front door's request handler:
+ws.accept_upgrade(&s, c, req.head, req.trailing)
 ```
 
-`src/daemon/front_door.odin` is the reference handler — same shape, plus global
-authorization and blob routing.
+The `Accept_Result` it returns distinguishes `.Adopted`, `.Not_An_Upgrade`,
+`.At_Capacity`, and `.Adopt_Failed` for a caller that wants to add its own
+context; every refusal has already been answered and every failed adopt has
+already closed the socket.
+
+Callers that own a socket from somewhere other than this HTTP driver call
+`parse_upgrade_request` (or `parse_upgrade_request_head`) and `server_adopt`
+directly.
 
 | Procedure | Purpose |
 |---|---|
 | `server_init(s, loop, options, callbacks, user_data=nil, allocator=context.allocator) -> Server_Error` | Validate options and ready the server without doing I/O. |
+| `accept_upgrade(s, conn, head, trailing=nil) -> Accept_Result` | Validate an HTTP request as an upgrade and adopt its socket, answering 400 or 503 itself and closing the socket on a failed adopt. |
 | `server_can_adopt(s) -> bool` | Whether `server_adopt` has room. Check it before hijacking so a refusal can still be an HTTP status. |
 | `server_adopt(s, socket, key, pipelined=nil, response_headers=nil) -> (^Server_Conn, Server_Error)` | Take ownership of `socket` and write the 101. `key` and optional response headers are consumed during the call; pipelined frame bytes are copied. Ownership transfers only on `.None`. |
 | `server_send_text/binary(conn, data) -> Server_Error` | Queue a message. `.Not_Open` unless Open. |

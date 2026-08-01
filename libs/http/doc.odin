@@ -11,9 +11,15 @@ caller. A closed `Method` enum is deliberately not part of this package.
 The `libs:http/server` subpackage is the deliberately small `core:nbio` driver. It
 accepts one HTTP/1.1 request per connection (optional Content-Length body via
 `receive_body`), then either writes one `Connection: close` response or hands the
-socket to another protocol (`hijack`). Reading is bounded on both phases:
-`request_timeout` is the head deadline and per-write timeout, `body_timeout` the
-absolute ceiling on a whole body transfer.
+socket to another protocol (`hijack`). Reading is bounded on every axis:
+`max_head_bytes` and `max_body_bytes` cap the head and the declared body,
+`request_timeout` is the head deadline and per-write timeout, and `body_timeout` is
+the absolute ceiling on a whole body transfer. A body over its cap is refused with
+413 on the declared length, before any of it is read.
+
+`request_is_local` is the admission predicate for a server meant to be reached only
+from the machine it runs on: it refuses a request carrying `Origin`, and one whose
+`Host` names the server rather than addressing it by IP literal or `localhost`.
 
 Optional routing (`Router(T)`, bound with `router_listen`) adds pre-handler middleware
 and a small method+path table, both parameterized on the application type so every

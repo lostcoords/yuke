@@ -8,13 +8,20 @@ messages; the process that drives `nbio.run` / `run_until` owns the logger (nbio
 callbacks inherit that context). Never log bearer tokens or Authorization values.
 
 One port serves everything. `front_door.odin` composes a `libs:http/server` router:
-admit and auth middleware, then `GET /ws`, `GET`/`PUT` on `/blob/<hash>`. When a
-token is configured, middleware requires exactly one credential source
-(`Authorization: Bearer` or `?token=`) before any route or method is disclosed.
+cache-marking, admit, and auth middleware, then `GET /ws`, `GET`/`HEAD`/`PUT` on
+`/blob/<hash>`. When a token is configured, middleware requires exactly one credential
+source (`Authorization: Bearer` or `?token=`) before any route or method is disclosed.
+A credential in the URL marks every response the application reaches private.
 `GET /ws` upgrades into the WebSocket server; blob routes stream from or store into
 `blob_dir`. The 64-lowercase-hex hash grammar keeps request paths inside that
 directory. An unmatched path is a 404; a known path pattern with the wrong method is
 a 405 carrying `Allow`.
+
+`blob.odin` holds the store behind those routes: the streamed upload, its digest
+check against the URL hash, and the atomic publish, whose `fsync` and `rename` run on
+a worker pool because neither has an nbio operation. `workspace.odin`, `git.odin`, and
+`fs.odin` hold the path, repository, and directory-listing helpers the
+`workspace.describe` and `workspace.browse` methods read.
 
 Admission runs before authentication and refuses what a browser can be made to send:
 any `Origin`, and any `Host` that does not address this daemon by IP literal. Admissible
