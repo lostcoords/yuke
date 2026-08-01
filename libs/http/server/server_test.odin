@@ -171,13 +171,13 @@ test_defer_and_answer_later :: proc(c: ^Conn) {
 test_answer_deferred :: proc(op: ^nbio.Operation, c: ^Conn) {
     o := obs_of(c)
 
-    o.resolved_self = conn_resolve(c.server, conn_ticket(c)) == c
+    o.resolved_self = conn_resolve(c.server, c.ticket) == c
     o.resolved_miss = conn_resolve(c.server, UNISSUED_TICKET) == nil
     o.resolved_zero = conn_resolve(c.server, 0) == nil
     o.answered_late = true
 
     // What deferred work must do: answer only what resolving still hands back.
-    if conn_resolve(c.server, conn_ticket(c)) == nil {
+    if conn_resolve(c.server, c.ticket) == nil {
         return
     }
 

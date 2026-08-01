@@ -135,7 +135,7 @@ blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     // Only a completed body has anyone to answer: `ok == false` also arrives from
     // connection teardown, where there is no longer a request in flight.
     if ok {
-        up.ticket = http_server.conn_ticket(c)
+        up.ticket = c.ticket
         http_server.defer_response(c)
     }
 

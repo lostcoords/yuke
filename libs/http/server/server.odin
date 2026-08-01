@@ -209,8 +209,7 @@ Conn :: struct {
     // Allocator backing all owned storage.
     allocator:         mem.Allocator,
 
-    // @private
-    // Identity that outlives this connection; read through `conn_ticket`. See `Ticket`.
+    // Identity that outlives this connection, for work that may outlive it. See `Ticket`.
     ticket:            Ticket,
 
     // @private
@@ -810,13 +809,6 @@ defer_response :: proc(c: ^Conn) {
     c.timeout_op = nbio.timeout_poly(c.server.request_timeout, c, conn_on_timeout, c.loop)
 
     assert(c.timeout_op != nil, "deferred response left no deadline armed")
-}
-
-// This connection's ticket, for work that may outlive it. See `Ticket`.
-conn_ticket :: proc(c: ^Conn) -> Ticket {
-    assert(c != nil, "ticket needs a connection")
-    assert(c.ticket != 0, "connection was never enrolled")
-    return c.ticket
 }
 
 // The connection `ticket` names if it can still be answered, otherwise `nil`. Answers the

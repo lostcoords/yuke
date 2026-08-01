@@ -474,7 +474,7 @@ test_curl_cancels_mid_stream_and_reuses_client :: proc(t: ^testing.T) {
     testing.expect_value(t, cut.done_count, 0)
     testing.expect_value(t, cut.after_cancel, 0)
     testing.expect_value(t, cut.chunk_count, cut.chunks_at_cut)
-    testing.expect_value(t, turn_state(&cut.turn), Turn_State.Canceled)
+    testing.expect_value(t, cut.turn.state, Turn_State.Canceled)
     testing.expect_value(t, len(c.live), 0)
     testing.expect(t, c.timer_op == nil, "canceling the last turn must disarm the pump timer")
 

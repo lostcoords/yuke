@@ -141,7 +141,7 @@ Turn :: struct {
     // @private
     cbs:     Callbacks,
 
-    // @private
+    // Lifecycle of this turn, readable by callers that keep one across loop turns.
     state:   Turn_State,
 
     // @private
@@ -174,7 +174,6 @@ Client :: struct {
     // The re-armed pump timer; nil exactly when no turn is live.
     timer_op:    ^nbio.Operation,
 
-    // @private
     // Set across every curl call region and every curl-to-Odin trampoline.
     // Removing a handle or adding one from inside that region is undefined
     // behaviour in libcurl, so the mutating entry points assert on it.
@@ -475,12 +474,6 @@ turn_cancel :: proc(t: ^Turn) {
     t.state = .Canceled
     turn_release(t)
     client_sync_timer(c)
-}
-
-// State of a turn, for callers that keep one across loop turns.
-turn_state :: proc(t: ^Turn) -> Turn_State {
-    assert(t != nil, "turn_state needs a turn")
-    return t.state
 }
 
 // Drops a handle that was never added to the multi, leaving the turn as if
