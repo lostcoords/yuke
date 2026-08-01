@@ -39,11 +39,13 @@ The package is layered as:
     session_windows.odin), so this file itself is platform-independent.
   - `resize_posix.odin`: SIGWINCH resize notifier for terminals without in-band
     resize (mode 2048): signal -> self-pipe (the one async-signal-safe step) -> a
-    caller blocking in `poll`. POSIX only (macOS + Linux). `resize_notifier_init`
-    borrows `tty` for the notifier's lifetime, re-querying its size via `get_size`
-    on every wake. The event itself carries no dimensions: SIGWINCH only means "at
-    least one resize happened since the last wait", so the real size always comes
-    from the TIOCGWINSZ ioctl, never from event count.
+    readable FD. POSIX only (macOS + Linux). `resize_notifier_init` borrows `tty`
+    for the notifier's lifetime. Callers either block in `resize_notifier_wait` or
+    poll `read_fd` themselves (termdrive arms `nbio.poll` on it) and call
+    `resize_notifier_consume` to drain and re-query size via `get_size`. The event
+    itself carries no dimensions: SIGWINCH only means "at least one resize
+    happened since the last consume", so the real size always comes from the
+    TIOCGWINSZ ioctl, never from event count.
   - `resize_windows.odin`: Windows resize strategy — intentionally no notifier.
     Windows has no SIGWINCH (nor any async signal for a console size change), so
     the POSIX self-pipe notifier has no analogue here. A polling notifier was
@@ -64,11 +66,20 @@ The package is layered as:
     Windows. HANDLE-MEANING WARNING (Windows only): the handle `enable_raw_mode`
     needs (console INPUT) is NOT the handle `get_size` needs (console screen-buffer
     OUTPUT). On POSIX both are the same tty fd.
-  - `tty_posix.odin` / `tty_windows.odin`: per-OS raw-mode terminal control and
-    window-size queries. Windows raw mode sets ENABLE_VIRTUAL_TERMINAL_INPUT, so
-    the console driver translates keys, mouse, and in-band resize into the same
-    VT/ANSI byte stream xterm emits, read as plain bytes — which is what keeps the
-    reader and event layers platform-independent.
+  - `tty_posix.odin` / `tty_windows.odin`: per-OS raw-mode terminal control, plus
+    the console screen-buffer size query on Windows. Windows raw mode sets
+    ENABLE_VIRTUAL_TERMINAL_INPUT, so the console driver translates keys, mouse,
+    and in-band resize into the same VT/ANSI byte stream xterm emits, read as plain
+    bytes — which is what keeps the reader and event layers platform-independent.
+  - `tty_size_darwin.odin` / `tty_size_linux.odin`: the POSIX `get_size`, split per
+    OS because C's `ioctl` is variadic and Apple's arm64 ABI passes variadic
+    arguments on the stack. A fixed 3-arg `foreign` binding therefore mis-passes
+    the `winsize` pointer on Darwin (EFAULT), so that side calls the XNU syscall
+    wrapper directly; AAPCS64 and SysV pass variadic arguments in the same
+    registers as named ones, so Linux keeps the plain libc binding.
+
+I/O onto `core:nbio` lives in `src/termdrive` (reader thread → socketpair →
+`nbio.recv`). This package stays sans-IO: callers own the byte source.
 */
 
 package term

@@ -1,22 +1,11 @@
 #+build linux, darwin
 package term
 
-import "core:c"
 import "core:sys/posix"
 
 // The terminal handle on POSIX: a plain file descriptor. Raw-mode and get_size
 // take the same tty fd (input and output name one tty).
 Tty_Handle :: posix.FD
-
-when ODIN_OS == .Darwin {
-    foreign import libc "system:System"
-} else {
-    foreign import libc "system:c"
-}
-
-foreign libc {
-    ioctl :: proc(fd: posix.FD, request: c.ulong, arg: rawptr) -> c.int ---
-}
 
 // `struct winsize` from `<sys/ioctl.h>`; field order matches the C layout so the
 // ioctl call fills it in place.
@@ -27,12 +16,6 @@ Winsize :: struct {
     ws_ypixel: u16,
 }
 #assert(size_of(Winsize) == 8)
-
-when ODIN_OS == .Darwin {
-    TIOCGWINSZ :: 0x40087468
-} else {
-    TIOCGWINSZ :: 0x5413
-}
 
 // Saved terminal state plus the fd it was captured from, so `disable_raw_mode`
 // restores it on the same descriptor.
@@ -81,15 +64,4 @@ disable_raw_mode :: proc(t: Raw_Term) -> Term_Error {
     }
 
     return .None
-}
-
-// Query the terminal's size in character cells via TIOCGWINSZ. `handle` is the tty
-// fd; input and output name the same tty on POSIX, so either works.
-get_size :: proc(handle: Tty_Handle) -> (Size, Term_Error) {
-    ws: Winsize
-    if ioctl(handle, TIOCGWINSZ, &ws) < 0 {
-        return {}, .Size_Query_Failed
-    }
-
-    return {width = ws.ws_col, height = ws.ws_row}, .None
 }

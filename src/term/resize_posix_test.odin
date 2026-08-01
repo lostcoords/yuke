@@ -129,3 +129,28 @@ test_resize_notifier_wait_propagates_size_query_failure :: proc(t: ^testing.T) {
     zero := Size{}
     testing.expect_value(t, size, zero)
 }
+
+@(test)
+test_resize_notifier_consume_drains_and_queries :: proc(t: ^testing.T) {
+    sync.mutex_lock(&resize_test_lock)
+    defer sync.mutex_unlock(&resize_test_lock)
+
+    fake_tty: [2]posix.FD
+    testing.expect_value(t, posix.pipe(&fake_tty), posix.result.OK)
+    defer posix.close(fake_tty[0])
+    defer posix.close(fake_tty[1])
+
+    n, err := resize_notifier_init(fake_tty[0])
+    testing.expect_value(t, err, Resize_Error.None)
+    defer resize_notifier_destroy(&n)
+
+    testing.expect_value(t, posix.raise(SIGWINCH), posix.result.OK)
+    testing.expect(t, poll_readable(n.read_fd, 200))
+
+    // Fake tty cannot answer TIOCGWINSZ; consume still drains the pipe.
+    size, cerr := resize_notifier_consume(&n)
+    testing.expect_value(t, cerr, Resize_Error.Size_Query_Failed)
+    zero := Size{}
+    testing.expect_value(t, size, zero)
+    testing.expect(t, !poll_readable(n.read_fd, 50))
+}

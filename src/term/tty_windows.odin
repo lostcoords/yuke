@@ -55,5 +55,11 @@ get_size :: proc(handle: Tty_Handle) -> (Size, Term_Error) {
     width := int(info.srWindow.Right) - int(info.srWindow.Left) + 1
     height := int(info.srWindow.Bottom) - int(info.srWindow.Top) + 1
 
+    // Reject a degenerate viewport before the u16 narrowing: an inverted rect
+    // would otherwise wrap into a huge bogus size.
+    if width <= 0 || height <= 0 {
+        return {}, .Size_Query_Failed
+    }
+
     return {width = u16(width), height = u16(height)}, .None
 }

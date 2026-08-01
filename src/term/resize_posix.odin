@@ -33,8 +33,8 @@ Resize_Error :: enum {
 // SIGWINCH self-pipe notifier. `tty` is borrowed for `get_size` re-queries; it
 // must outlive the notifier.
 Resize_Notifier :: struct {
-    // Self-pipe read end (non-blocking); polled by `resize_notifier_wait`. A caller
-    // polling it directly must drain the pipe and re-query the size.
+    // Self-pipe read end (non-blocking). Polled by `resize_notifier_wait`, or by a
+    // reactor via nbio (termdrive): on readable call `resize_notifier_consume`.
     read_fd:    posix.FD,
 
     // @private
@@ -66,10 +66,8 @@ sigwinch_handler :: proc "c" (sig: posix.Signal) {
     }
 
     b: [1]u8
-    // Result discarded: EAGAIN when a byte is already queued is not a failure,
-    // it is the coalescing mechanism — a burst of SIGWINCH collapses into one
-    // pending byte, hence one wake. A signal handler has no safe way to report
-    // anything else regardless.
+    // Content-free wake token. Result discarded: a full pipe already has a wake
+    // pending, and a handler has no safe way to report anything else.
     posix.write(fd, raw_data(b[:]), 1)
 }
 
@@ -128,6 +126,28 @@ pipe_prepare :: proc(fd: posix.FD) -> Resize_Error {
     return .None
 }
 
+// Drain the self-pipe and re-query the size, for reactors polling `read_fd`.
+// Safe with nothing pending.
+//
+// Draining before the query is deliberate: a SIGWINCH landing between the two
+// leaves a token behind and costs one redundant wake with an already-correct
+// size, whereas querying first would let that signal be drained away and lose
+// the resize. A failed query still consumes the token, so the caller keeps its
+// last known size until the next SIGWINCH.
+resize_notifier_consume :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
+    assert(n != nil, "resize_notifier_consume needs a notifier")
+    assert(n.read_fd != n.write_fd, "resize_notifier_consume on an unarmed notifier")
+
+    drain_pipe(n.read_fd)
+
+    size, serr := get_size(n.tty)
+    if serr != .None {
+        return {}, .Size_Query_Failed
+    }
+
+    return size, .None
+}
+
 // Block until a resize is signaled, then return the terminal's current size.
 // Only one waiter at a time; a second concurrent call fails immediately rather
 // than stacking behind the first.
@@ -154,21 +174,11 @@ resize_notifier_wait :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
         return {}, .Size_Query_Failed
     }
 
-    drain_pipe(n.read_fd)
-
-    // The event only means "at least one resize happened"; the dimensions
-    // always come from ioctl, never from the pipe.
-    size, serr := get_size(n.tty)
-    if serr != .None {
-        return {}, .Size_Query_Failed
-    }
-
-    return size, .None
+    return resize_notifier_consume(n)
 }
 
-// Drain every byte queued on the self-pipe until empty (EAGAIN) or another
-// error. Bursts of SIGWINCH coalesce to at most one pending byte, but draining
-// in a loop is still correct if more than one arrived between wakes.
+// Empty the self-pipe (until EAGAIN) so `read_fd` stops reporting readable. One
+// signal queues one byte, so a burst needs the loop to collapse into one wake.
 drain_pipe :: proc(fd: posix.FD) {
     buf: [64]u8
     for {
@@ -179,14 +189,19 @@ drain_pipe :: proc(fd: posix.FD) {
     }
 }
 
-
 // Tear down the notifier: restore the previous SIGWINCH disposition and close
 // the pipe. The caller must have no `resize_notifier_wait` in flight.
 //
 // Order matters here and must not change: it prevents a handler from writing
 // to a pipe fd this has already closed.
 resize_notifier_destroy :: proc(n: ^Resize_Notifier) {
+    assert(n != nil, "resize_notifier_destroy needs a notifier")
     assert(!intrinsics.atomic_load(&n.waiting), "resize_notifier_destroy with a wait in flight")
+
+    // A zero-valued notifier (what a failed `resize_notifier_init` returns, and
+    // what this proc leaves behind) would disarm a live notifier and close fd 0
+    // twice. Both ends of a real pipe are distinct, so this catches either misuse.
+    assert(n.read_fd != n.write_fd, "resize_notifier_destroy on an unarmed notifier")
 
     // 1. Withdraw the fd first. A handler that fires from this point on loads
     //    -1 and returns without touching the pipe.
@@ -207,4 +222,8 @@ resize_notifier_destroy :: proc(n: ^Resize_Notifier) {
     //    either end.
     posix.close(n.read_fd)
     posix.close(n.write_fd)
+
+    // Leave it unarmed so a second destroy trips the assert above instead of
+    // double-closing.
+    n^ = {}
 }
