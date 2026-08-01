@@ -124,21 +124,7 @@ srv_server_empty :: proc(s: ^Server) -> bool {
 srv_on_request :: proc(c: ^http.Conn, req: http.Request) {
     s := (^Server)(c.server.user_data)
 
-    ureq, result, _, status := parse_upgrade_request(req.head.bytes)
-    if status != .Ready || result != .Ok {
-        http.respond_text(c, .Bad_Request, "expected a websocket upgrade")
-        return
-    }
-
-    if !server_can_adopt(s) {
-        http.respond_text(c, .Service_Unavailable, "at capacity")
-        return
-    }
-
-    socket, loop, _ := http.hijack(c)
-    if _, err := server_adopt(s, socket, ureq.key, req.trailing); err != .None {
-        nbio.close(socket, l = loop)
-    }
+    accept_upgrade(s, c, req.head, req.trailing)
 }
 
 // Stand up a server plus the front door that feeds it, both on `loop`. Binds an

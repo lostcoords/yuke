@@ -149,32 +149,13 @@ daemon_reject_pipelined :: proc(ctx: ^Http_Context) -> (answered: bool) {
     return true
 }
 
-// Validate the upgrade, then transfer the socket to the WebSocket server.
+// Validate the upgrade, then transfer the socket to the WebSocket server. `accept_upgrade`
+// answers every refusal itself and logs the reason.
 daemon_route_ws :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     assert(len(ctx.params.path_rest) == 0, "websocket route has no path capture")
 
-    upgrade, result := ws.parse_upgrade_request_head(ctx.request.head)
-    if result != .Ok {
-        log.debugf("daemon: bad websocket upgrade: %v", result)
-        http_server.respond_text(ctx.conn, .Bad_Request, "expected a websocket upgrade")
-
-        return
-    }
-
-    if !ws.server_can_adopt(&d.ws_server) {
-        log.warn("daemon: websocket at capacity")
-        http_server.respond_text(ctx.conn, .Service_Unavailable, "at capacity")
-
-        return
-    }
-
-    socket, loop, response_headers := http_server.hijack(ctx.conn)
-    if _, err := ws.server_adopt(&d.ws_server, socket, upgrade.key, ctx.request.trailing, response_headers);
-       err != .None {
-        log.errorf("daemon: server_adopt failed: %v", err)
-        nbio.close(socket, l = loop)
-    }
+    ws.accept_upgrade(&d.ws_server, ctx.conn, ctx.request.head, ctx.request.trailing)
 }
 
 // Serve one content-addressed blob without reading it into the reactor's heap.
