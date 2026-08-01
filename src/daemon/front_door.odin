@@ -40,6 +40,14 @@ DAEMON_ROUTES := [?]Http_Route {
 // `user_data` from it, so no callback can be paired with the wrong daemon.
 daemon_router_init :: proc(d: ^Daemon) {
     assert(d != nil, "router init needs a daemon")
+
+    // A step inserted ahead of the marker would answer a `?token=` request unmarked, and
+    // no test covers a middleware that does not exist yet.
+    assert(
+        DAEMON_MIDDLEWARE[0].run == daemon_middleware_mark_private,
+        "the private marker must precede every middleware that can answer",
+    )
+
     d.router = {
         middleware            = DAEMON_MIDDLEWARE[:],
         routes                = DAEMON_ROUTES[:],
