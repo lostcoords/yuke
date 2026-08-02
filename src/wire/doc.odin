@@ -7,7 +7,10 @@ type's `*_clone(value, allocator)` procedure. The codec is streaming and
 token-based (no intermediate value tree), and the closed sets — methods,
 broadcasts, union arms, enum values — stay closed.
 
-Framing is JSON-RPC 2.0. Requests and broadcasts share one `method` namespace;
+Framing is JSON-RPC 2.0. `jsonrpc: "2.0"` is validated on decode and written
+from `JSONRPC_VERSION` on emit, so it is never stored on a frame type; envelope
+emit order is `jsonrpc`, `id`, then `method`/`result`/`error`, and decoding is
+order-insensitive. Requests and broadcasts share one `method` namespace;
 broadcasts are notifications (no `id`), so nothing replies to them. Batching is
 not supported, and the daemon never sends a request to the client — the one
 interaction needing an answer, permission, is a notification plus a

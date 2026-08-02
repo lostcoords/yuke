@@ -401,8 +401,6 @@ workspace_skills_result_validate :: proc(self: Workspace_Skills_Result) -> Valid
     return .None
 }
 
-// --- streaming decoders ---
-
 // Decode a Workspace straight from the token stream.
 workspace_from_reader :: proc(d: ^Decoder) -> (ws: Workspace, err: Validation_Error) {
     dec_object_begin(d) or_return

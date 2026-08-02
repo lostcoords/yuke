@@ -150,10 +150,14 @@ struct_read :: proc(
     t: ^ast.Struct_Type,
     d: ^Diags,
 ) -> Struct_Def {
+    decl_pos := source_pos(s, v.pos.line)
+
+    doc_group_check(v.docs, decl_pos, name, "(declaration)", d)
+
     def := Struct_Def {
         name = name,
         doc  = comment_text(v.docs),
-        pos  = source_pos(s, v.pos.line),
+        pos  = decl_pos,
     }
 
     if t.fields == nil {
@@ -175,6 +179,9 @@ struct_read :: proc(
         declared := expr_text(s, f.type)
         type_expr := wire_type_expr(declared)
         pos := source_pos(s, f.pos.line)
+
+        doc_group_check(f.docs, pos, name, field_name, d)
+
         bound, doc := marker_read(m, f.docs, declared, pos, name, field_name, d)
         declared_presence, default_expr, has_presence := presence_marker_read(f.docs, pos, name, field_name, d)
         const_expr, const_value := const_marker_read(m, f.docs, pos, name, field_name, d)
@@ -634,12 +641,16 @@ union_read :: proc(
         }
     }
 
+    decl_pos := source_pos(s, v.pos.line)
+
+    doc_group_check(v.docs, decl_pos, name, "(declaration)", d)
+
     return Union_Def {
         name = name,
         doc = comment_text(v.docs),
         arms = arms[:],
         discriminator = discriminator,
-        pos = source_pos(s, v.pos.line),
+        pos = decl_pos,
     }
 }
 
@@ -825,12 +836,16 @@ enum_read :: proc(
     table: Wire_Table,
     d: ^Diags,
 ) -> Enum_Def {
+    decl_pos := source_pos(s, v.pos.line)
+
+    doc_group_check(v.docs, decl_pos, name, "(declaration)", d)
+
     def := Enum_Def {
         name    = name,
         doc     = comment_text(v.docs),
         table   = table.name,
         numeric = table.numeric,
-        pos     = source_pos(s, v.pos.line),
+        pos     = decl_pos,
     }
     values := make([dynamic]Enum_Value, 0, len(t.fields))
 
@@ -839,7 +854,12 @@ enum_read :: proc(
 
         // `Enum_Type.fields` are expressions with no `docs` pointer, so the member's
         // documentation comes from the comment group ending on the line above it.
-        doc := s.doc_ends[member.pos.line - 1]
+        docs := s.doc_ends[member.pos.line - 1]
+        member_pos := source_pos(s, member.pos.line)
+
+        doc_group_check(docs, member_pos, name, member_name, d)
+
+        doc := comment_text(docs)
         wire, has := table.entries[member_name]
 
         if !has {
@@ -857,6 +877,9 @@ enum_read :: proc(
 // Read a `distinct` scalar newtype and the marker on its declaration.
 alias_read :: proc(m: ^Model, s: ^Source, name: string, base: string, v: ^ast.Value_Decl, d: ^Diags) -> Alias_Def {
     pos := source_pos(s, v.pos.line)
+
+    doc_group_check(v.docs, pos, name, "(declaration)", d)
+
     bound, doc := marker_read(m, v.docs, "", pos, name, "(declaration)", d)
 
     return Alias_Def{name = name, base = base, doc = doc, bound = bound, pos = pos}

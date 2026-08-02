@@ -193,9 +193,6 @@ broadcast_class_droppable :: proc(class: Broadcast_Class) -> bool {
     unreachable()
 }
 
-// Typed broadcast payloads. One struct per broadcast name; a broadcast frame's data
-// is always exactly one of these.
-
 // Payload for `session.summary_changed`.
 Session_Summary_Changed_Data :: struct {
     // Daemon-lifetime compact-index revision.

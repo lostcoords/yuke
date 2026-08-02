@@ -12,9 +12,9 @@ Source :: struct {
     path:     string,
     file:     ast.File,
 
-    // Doc text keyed by the line the comment group ends on. An enum member's doc is the
-    // group ending on the line above it.
-    doc_ends: map[int]string,
+    // Comment groups keyed by the line they end on. An enum member's doc is the group
+    // ending on the line above it.
+    doc_ends: map[int]^ast.Comment_Group,
 }
 
 // A procedure body together with the file it was parsed from. The two travel as one
@@ -122,7 +122,7 @@ source_index_comments :: proc(s: ^Source) {
             continue
         }
 
-        s.doc_ends[group.list[len(group.list) - 1].pos.line] = comment_text(group)
+        s.doc_ends[group.list[len(group.list) - 1].pos.line] = group
     }
 }
 
@@ -192,6 +192,34 @@ comment_lines :: proc(g: ^ast.Comment_Group, allocator := context.allocator) -> 
     }
 
     return out[:]
+}
+
+// Reject a doc comment split by a blank line. `core:odin/parser` merges comment groups
+// separated by one blank line, so a section banner or a floating note above a declaration
+// silently becomes part of its documentation — here and in every ols hover. A doc comment
+// must sit directly on what it documents.
+doc_group_check :: proc(g: ^ast.Comment_Group, pos: Pos, owner: string, field: string, d: ^Diags) {
+    assert(d != nil, "doc_group_check needs a diagnostic sink")
+
+    if g == nil {
+        return
+    }
+
+    assert(len(g.list) > 0, "the parser only builds non-empty comment groups")
+
+    for i in 1 ..< len(g.list) {
+        if g.list[i].pos.line != g.list[i - 1].pos.line + 1 {
+            diagf(
+                d,
+                pos,
+                "%s.%s has a blank line inside its doc comment; the lines above it document this declaration too",
+                owner,
+                field,
+            )
+
+            return
+        }
+    }
 }
 
 // A doc comment group as one line of prose.

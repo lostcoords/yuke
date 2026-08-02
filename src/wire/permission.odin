@@ -489,8 +489,6 @@ permission_forget_params_validate :: proc(self: Permission_Forget_Params) -> Val
     return enforce_id(([16]u8)(self.rule_id))
 }
 
-// --- streaming decoders ---
-
 // Decode a permission option straight from the token stream.
 permission_option_from_reader :: proc(d: ^Decoder) -> (opt: Permission_Option, err: Validation_Error) {
     dec_object_begin(d) or_return

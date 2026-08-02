@@ -1,11 +1,5 @@
 package wire
 
-// JSON-RPC 2.0 framing. `jsonrpc: "2.0"` is validated on decode and written from
-// `JSONRPC_VERSION` on emit, so it is never stored on a frame type. Emit order is
-// `jsonrpc`, `id`, then `method`/`result`/`error`; decoding is order-insensitive.
-// No batching (a top-level array is an Invalid Request), and no server-to-client
-// requests — server traffic is responses and notifications only.
-
 // Client request frame with typed method params.
 Request :: struct {
     // Correlation id, echoed verbatim in the response.
@@ -180,8 +174,6 @@ Server_Frame_Header :: struct {
     // Raw method name, for a notification.
     method: string,
 }
-
-// --- streaming decoders ---
 
 // Consume a frame's opening `{`. A non-object root — notably a batch array — is a
 // framing violation rather than a payload mismatch.

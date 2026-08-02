@@ -616,8 +616,6 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
     return params
 }
 
-// --- streaming decoders ---
-
 // Read an empty params/result object; extra fields are ignored.
 empty_from_reader :: proc(d: ^Decoder) -> (out: Empty, err: Validation_Error) {
     dec_object_begin(d) or_return

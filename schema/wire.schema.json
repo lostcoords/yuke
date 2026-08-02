@@ -7184,7 +7184,7 @@
       "type": "object"
     },
     "Session_Summary_Changed_Data": {
-      "description": "Typed broadcast payloads. One struct per broadcast name; a broadcast frame's data is always exactly one of these. Payload for `session.summary_changed`.",
+      "description": "Payload for `session.summary_changed`.",
       "properties": {
         "revision": {
           "$ref": "#/$defs/Session_Revision"
@@ -7423,7 +7423,7 @@
       "type": "object"
     },
     "Text_Part": {
-      "description": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | redacted_reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
+      "description": "Text assistant part payload. Non-owning.",
       "properties": {
         "id": {
           "$ref": "#/$defs/Part_Id"
@@ -7823,7 +7823,7 @@
       "type": "object"
     },
     "Tool_State_Pending": {
-      "description": "--------------------------------------------------------------------------- ToolState: pending | waiting_permission | running | completed | error | denied | canceled --------------------------------------------------------------------------- Not yet started.",
+      "description": "Not yet started.",
       "properties": {
 
       },
@@ -7903,7 +7903,7 @@
       "type": "object"
     },
     "User_Message": {
-      "description": "NOTE: Compaction_Reason and its wire table live in session.odin (source of truth); Compaction_Message references them directly from this same package. --------------------------------------------------------------------------- Message: user | assistant | compaction --------------------------------------------------------------------------- User transcript message payload. Non-owning.",
+      "description": "User transcript message payload. Non-owning.",
       "properties": {
         "content": {
           "description": "Content parts in rendered order.",

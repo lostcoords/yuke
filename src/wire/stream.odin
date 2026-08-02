@@ -30,8 +30,6 @@ dec_finish :: proc(d: ^Decoder) -> Validation_Error {
     return .None
 }
 
-// --- scalar readers (consume the current value token) ---
-
 // A JSON string, unquoted into the parser allocator. A non-string is an error.
 dec_string :: proc(d: ^Decoder) -> (string, Validation_Error) {
     tok := d.curr_token
@@ -270,8 +268,6 @@ dec_skip :: proc(d: ^Decoder) -> Validation_Error {
     return .None
 }
 
-// --- object iteration ---
-
 // Consume the opening `{`. A non-object is an error.
 dec_object_begin :: proc(d: ^Decoder) -> Validation_Error {
     if d.curr_token.kind != .Open_Brace {
@@ -347,8 +343,6 @@ dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Validati
         dec_skip(d) or_return
     }
 }
-
-// --- array iteration ---
 
 // Consume the opening `[`. A non-array is an error.
 dec_array_begin :: proc(d: ^Decoder) -> Validation_Error {

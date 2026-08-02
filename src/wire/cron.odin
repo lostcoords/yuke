@@ -626,8 +626,6 @@ cron_job_clone :: proc(self: Cron_Job, allocator := context.allocator) -> Cron_J
     }
 }
 
-// --- streaming decoders ---
-
 // Decode internally-tagged cron schedule straight from the token stream.
 cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Validation_Error) {
     dec_object_begin(d) or_return

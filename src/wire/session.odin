@@ -1826,8 +1826,6 @@ subscription_set_params_validate :: proc(self: Subscription_Set_Params) -> Valid
     return .None
 }
 
-// --- streaming decoders ---
-
 // Decode a Create_Session straight from the token stream.
 create_session_from_reader :: proc(d: ^Decoder) -> (out: Create_Session, err: Validation_Error) {
     out.system_prompt = System_Prompt_Default{}

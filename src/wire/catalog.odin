@@ -416,8 +416,6 @@ _field_f64 :: proc(e: ^Emitter, name: string, f: f64) {
     _val_f64(e, f)
 }
 
-// --- streaming decoders ---
-
 // Decode a Model_Cost straight from the token stream.
 model_cost_from_reader :: proc(d: ^Decoder) -> (cost: Model_Cost, err: Validation_Error) {
     dec_object_begin(d) or_return

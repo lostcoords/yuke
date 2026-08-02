@@ -306,8 +306,6 @@ initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error 
     return .None
 }
 
-// --- streaming decoders ---
-
 // Decode a Daemon_Info straight from the token stream.
 daemon_info_from_reader :: proc(d: ^Decoder) -> (info: Daemon_Info, err: Validation_Error) {
     dec_object_begin(d) or_return

@@ -424,8 +424,6 @@ part_delta_clone :: proc(self: Part_Delta, allocator := context.allocator) -> Pa
     }
 }
 
-// --- streaming decoders ---
-
 // Decode internally-tagged input straight from the token stream (any member order).
 input_from_reader :: proc(d: ^Decoder) -> (input: Input, err: Validation_Error) {
     dec_object_begin(d) or_return

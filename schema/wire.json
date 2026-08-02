@@ -702,7 +702,7 @@
   "structures": [
     {
       "name": "Session_Summary_Changed_Data",
-      "doc": "Typed broadcast payloads. One struct per broadcast name; a broadcast frame's data is always exactly one of these. Payload for `session.summary_changed`.",
+      "doc": "Payload for `session.summary_changed`.",
       "fields": [
         {
           "name": "revision",
@@ -2033,7 +2033,7 @@
     },
     {
       "name": "Request",
-      "doc": "JSON-RPC 2.0 framing. `jsonrpc: \"2.0\"` is validated on decode and written from `JSONRPC_VERSION` on emit, so it is never stored on a frame type. Emit order is `jsonrpc`, `id`, then `method`/`result`/`error`; decoding is order-insensitive. No batching (a top-level array is an Invalid Request), and no server-to-client requests \u2014 server traffic is responses and notifications only. Client request frame with typed method params.",
+      "doc": "Client request frame with typed method params.",
       "fields": [
         {
           "name": "id",
@@ -4240,7 +4240,7 @@
     },
     {
       "name": "Text_Part",
-      "doc": "--------------------------------------------------------------------------- AssistantPart: text | reasoning | redacted_reasoning | tool --------------------------------------------------------------------------- Text assistant part payload. Non-owning.",
+      "doc": "Text assistant part payload. Non-owning.",
       "fields": [
         {
           "name": "id",
@@ -4388,7 +4388,7 @@
     },
     {
       "name": "Tool_State_Pending",
-      "doc": "--------------------------------------------------------------------------- ToolState: pending | waiting_permission | running | completed | error | denied | canceled --------------------------------------------------------------------------- Not yet started.",
+      "doc": "Not yet started.",
       "fields": [
 
       ]
@@ -4528,7 +4528,7 @@
     },
     {
       "name": "User_Message",
-      "doc": "NOTE: Compaction_Reason and its wire table live in session.odin (source of truth); Compaction_Message references them directly from this same package. --------------------------------------------------------------------------- Message: user | assistant | compaction --------------------------------------------------------------------------- User transcript message payload. Non-owning.",
+      "doc": "User transcript message payload. Non-owning.",
       "fields": [
         {
           "name": "id",

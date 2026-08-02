@@ -65,10 +65,6 @@ message_error_clone :: proc(self: Message_Error, allocator := context.allocator)
     return {type = strings.clone(self.type, allocator), message = strings.clone(self.message, allocator)}
 }
 
-// ---------------------------------------------------------------------------
-// AssistantPart: text | reasoning | redacted_reasoning | tool
-// ---------------------------------------------------------------------------
-
 // Text assistant part payload. Non-owning.
 Text_Part :: struct {
     // Part ordinal in the message content array.
@@ -334,10 +330,6 @@ assistant_part_id :: proc(self: Assistant_Part) -> Part_Id {
     return 0
 }
 
-// ---------------------------------------------------------------------------
-// ToolState: pending | waiting_permission | running | completed | error | denied | canceled
-// ---------------------------------------------------------------------------
-
 // Not yet started.
 Tool_State_Pending :: struct {}
 
@@ -538,13 +530,6 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
 
     return nil
 }
-
-// NOTE: Compaction_Reason and its wire table live in session.odin (source of
-// truth); Compaction_Message references them directly from this same package.
-
-// ---------------------------------------------------------------------------
-// Message: user | assistant | compaction
-// ---------------------------------------------------------------------------
 
 // User transcript message payload. Non-owning.
 User_Message :: struct {
@@ -1069,10 +1054,6 @@ message_id :: proc(self: Message) -> Message_Id {
     return 0
 }
 
-// ---------------------------------------------------------------------------
-// Private codec helpers
-// ---------------------------------------------------------------------------
-
 // Write a display-only view array field.
 @(private)
 _emit_view_slice :: proc(e: ^Emitter, name: string, views: []View) {
@@ -1254,8 +1235,6 @@ _permission_state_string_bytes :: proc(self: Permission_State) -> int {
 
     return total
 }
-
-// --- streaming decoders ---
 
 // Decode creation/completion timestamps straight from the token stream.
 message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Validation_Error) {
