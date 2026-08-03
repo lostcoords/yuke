@@ -135,12 +135,13 @@ MAX_PROBE_BYTES :: 512
 // failure after raw mode is entered the terminal is restored before returning. Call
 // once before the event loop: the probe reads replies synchronously.
 //
-// Windows precondition: `tty` is the console INPUT handle (raw mode + negotiation reads),
-// and `out` must write to the process's standard-output console — VT processing is
-// enabled on `GetStdHandle(STD_OUTPUT_HANDLE)`, so escapes sent through an `out` backed by
-// a different handle would not be interpreted. On POSIX `tty` is the single tty fd.
+// Windows takes two handles: `tty` is the console INPUT handle (raw mode + negotiation
+// reads) and `size_handle` is the screen-buffer OUTPUT handle (VT processing + `get_size`).
+// `out` must write to the same console as `size_handle`, or the escapes it carries will
+// not be interpreted. On POSIX both are the single tty fd.
 session_enter :: proc(
     tty: Tty_Handle,
+    size_handle: Tty_Handle,
     out: io.Writer,
     startup_input: ^Reader,
     options: Options,
@@ -159,7 +160,7 @@ session_enter :: proc(
     // before raw mode, so its restore runs last on leave. POSIX no-op. This unwind arm
     // is registered first, so on failure it runs after the raw/mode unwind (LIFO) — the
     // outermost-first pairing.
-    out_mode := output_mode_enter()
+    out_mode := output_mode_enter(size_handle)
     defer if !committed {
         output_mode_leave(out_mode)
     }
@@ -262,23 +263,23 @@ session_leave :: proc(s: ^Session) {
 // caller flushes.
 restore :: proc(out: io.Writer, enabled: Enabled) {
     if enabled.kitty_keyboard {
-        write_swallow(out, KITTY_POP)
+        _, _ = io.write_string(out, KITTY_POP)
     }
 
     if enabled.mouse {
-        write_swallow(out, MOUSE_TRACKING_DISABLE)
+        _, _ = io.write_string(out, MOUSE_TRACKING_DISABLE)
     }
 
     if enabled.in_band_resize {
-        write_swallow(out, IN_BAND_RESIZE_DISABLE)
+        _, _ = io.write_string(out, IN_BAND_RESIZE_DISABLE)
     }
 
     if enabled.bracketed_paste {
-        write_swallow(out, BRACKETED_PASTE_DISABLE)
+        _, _ = io.write_string(out, BRACKETED_PASTE_DISABLE)
     }
 
     if enabled.alternate_screen {
-        write_swallow(out, ALT_SCREEN_EXIT)
+        _, _ = io.write_string(out, ALT_SCREEN_EXIT)
     }
 }
 
@@ -289,10 +290,10 @@ restore :: proc(out: io.Writer, enabled: Enabled) {
 restore_presentation :: proc(out: io.Writer, cursor, synchronized_output: Mode_Status) {
     switch synchronized_output {
     case .Set:
-        write_swallow(out, SYNC_UPDATE_BEGIN)
+        _, _ = io.write_string(out, SYNC_UPDATE_BEGIN)
 
     case .Reset:
-        write_swallow(out, SYNC_UPDATE_END)
+        _, _ = io.write_string(out, SYNC_UPDATE_END)
 
     case .Not_Recognized, .Permanently_Set, .Permanently_Reset:
     // Untouched: nothing observed, or the state is permanent.
@@ -300,14 +301,14 @@ restore_presentation :: proc(out: io.Writer, cursor, synchronized_output: Mode_S
 
     switch cursor {
     case .Reset:
-        write_swallow(out, CURSOR_HIDE)
+        _, _ = io.write_string(out, CURSOR_HIDE)
 
     case .Set:
-        write_swallow(out, CURSOR_SHOW)
+        _, _ = io.write_string(out, CURSOR_SHOW)
 
     case .Not_Recognized:
         // Showing is the conventional safe fallback when mode 25 could not be queried.
-        write_swallow(out, CURSOR_SHOW)
+        _, _ = io.write_string(out, CURSOR_SHOW)
 
     case .Permanently_Set, .Permanently_Reset:
     // Permanent states cannot be changed.
@@ -676,14 +677,8 @@ write_out :: proc(out: io.Writer, s: string) -> Session_Error {
     return .None
 }
 
-// Best-effort mode write used on the restore paths, where errors are swallowed.
-write_swallow :: proc(out: io.Writer, s: string) {
-    _, _ = io.write_string(out, s)
-}
-
-// Flush the writer, treating "flush unsupported" as success. An unbuffered sink (such as
-// a test string builder) reports `.Unsupported`, which is not a real failure; anything
-// else is a genuine write error.
+// Flush, treating "flush unsupported" as success: the test string-builder sink has no
+// flush. Any other error is a real write failure.
 flush_out :: proc(out: io.Writer) -> io.Error {
     err := io.flush(out)
     if err == .Unsupported {

@@ -203,7 +203,7 @@ test_invalid_query_timeout :: proc(t: ^testing.T) {
     // handle is never read and nothing is written. Zero-valued so it is portable across
     // the per-OS `Tty_Handle` (a POSIX fd vs a Windows HANDLE).
     dummy: Tty_Handle
-    _, err := session_enter(dummy, w, &input, opts)
+    _, err := session_enter(dummy, dummy, w, &input, opts)
     testing.expect_value(t, err, Session_Error.Invalid_Query_Timeout)
     testing.expect_value(t, len(strings.to_string(b)), 0)
 }

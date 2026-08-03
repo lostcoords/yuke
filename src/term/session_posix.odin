@@ -26,7 +26,7 @@ read_byte :: proc(handle: Tty_Handle) -> (u8, bool) {
 // stay OS-agnostic; the Windows definition carries the real saved state.
 Output_Mode_State :: struct {}
 
-output_mode_enter :: proc() -> Output_Mode_State {
+output_mode_enter :: proc(_: Tty_Handle) -> Output_Mode_State {
     return {}
 }
 

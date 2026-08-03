@@ -6,10 +6,11 @@ import "core:sys/windows"
 // Wait for the console input `handle` to be readable, up to `timeout_ms` ms (the
 // negotiate loop only ever passes a value >= 0).
 //
-// TODO(windows-verify): the input handle signals for any input record, including ones
-// that translate to zero VT bytes (key-up, focus, buffer-size). A blocking ReadFile
-// after such a wake may not return a byte immediately, so the negotiate deadline is
-// best-effort until confirmed on real conhost / Windows Terminal.
+// Over-reports: the handle signals for any input record, including ones that translate to
+// zero VT bytes (key-up, focus, buffer-size), so a true result does not guarantee that
+// `read_byte` returns promptly. `read_byte` skips such records and keeps waiting, so the
+// negotiate deadline is a floor, not a bound, and a terminal that never answers DA1 would
+// park there. Every terminal we target answers it.
 poll_readable :: proc(handle: Tty_Handle, timeout_ms: i32) -> bool {
     return windows.WaitForSingleObject(handle, windows.DWORD(timeout_ms)) == windows.WAIT_OBJECT_0
 }
@@ -47,17 +48,14 @@ Output_Mode_State :: struct {
 }
 
 // Configure the console for TUI output: enable ENABLE_VIRTUAL_TERMINAL_PROCESSING on
-// the OUTPUT handle (preserve-and-OR, so our escapes are interpreted rather than
-// printed literally) and switch the console code pages to UTF-8, saving both to
-// restore. Deliberately does NOT set DISABLE_NEWLINE_AUTO_RETURN (it breaks `\n` on the
-// legacy console; Windows Terminal does not set it either). Best-effort: when output is
-// not a console (redirected), the mode step is skipped and its restore is a no-op.
-//
-// TODO(windows-verify): the runtime effect needs a real console; the test suite has no
-// console, so only compilation is exercised here.
-output_mode_enter :: proc() -> Output_Mode_State {
+// `handle` (preserve-and-OR, so our escapes are interpreted rather than printed
+// literally) and switch the console code pages to UTF-8, saving both to restore.
+// Deliberately does NOT set DISABLE_NEWLINE_AUTO_RETURN (it breaks `\n` on the legacy
+// console; Windows Terminal does not set it either). Best-effort: when `handle` is not a
+// console (redirected), the mode step is skipped and its restore is a no-op.
+output_mode_enter :: proc(handle: Tty_Handle) -> Output_Mode_State {
     state: Output_Mode_State
-    state.handle = windows.GetStdHandle(windows.STD_OUTPUT_HANDLE)
+    state.handle = handle
 
     if windows.GetConsoleMode(state.handle, &state.prev_mode) {
         state.mode_saved = true
