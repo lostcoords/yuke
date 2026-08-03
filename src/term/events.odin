@@ -168,14 +168,14 @@ parser_ground :: proc(p: ^Parser, b: u8) -> Parse_Event {
         p.state = .Escape
         return nil
     case 0x08, 0x7f:
-        return make_key(.Backspace)
+        return Key{code = .Backspace}
     case 0x09:
-        return make_key(.Tab)
+        return Key{code = .Tab}
     case 0x0a, 0x0d:
-        return make_key(.Enter)
+        return Key{code = .Enter}
     case 0x01 ..= 0x07, 0x0b ..= 0x0c, 0x0e ..= 0x1a:
         // Ctrl+A..Z (tab / enter / backspace peeled off above). No shift synthesis.
-        return make_key_char(rune(b) + 'a' - 0x01, {.Ctrl})
+        return Key{code = .Char, char = rune(b) + 'a' - 0x01, mods = {.Ctrl}}
     case:
         need, ok := utf8_seq_len(b)
         if !ok {
@@ -224,13 +224,13 @@ parser_escape :: proc(p: ^Parser, b: u8) -> Parse_Event {
     case 0x01 ..= 0x0c, 0x0e ..= 0x1a:
         // ESC + ctrl char = Ctrl+Alt (raw byte + 0x60). No shift synthesis.
         parser_reset(p)
-        return make_key_char(rune(b) + 0x60, {.Ctrl, .Alt})
+        return Key{code = .Char, char = rune(b) + 0x60, mods = {.Ctrl, .Alt}}
     case:
         // ESC + char = Alt. The raw byte is kept verbatim: unlike the ground path,
-        // uppercase ASCII is NOT rewritten to shift+lowercase. This asymmetry is
-        // deliberate legacy mibu parity.
+        // uppercase ASCII is NOT rewritten to shift+lowercase. The asymmetry is
+        // deliberate.
         parser_reset(p)
-        return make_key_char(rune(b), {.Alt})
+        return Key{code = .Char, char = rune(b), mods = {.Alt}}
     }
 }
 
@@ -301,17 +301,17 @@ parser_finish_ss3 :: proc(p: ^Parser, b: u8) -> Parse_Event {
     parser_reset(p)
     switch b {
     case 'P':
-        return make_key(.F1)
+        return Key{code = .F1}
     case 'Q':
-        return make_key(.F2)
+        return Key{code = .F2}
     case 'R':
-        return make_key(.F3)
+        return Key{code = .F3}
     case 'S':
-        return make_key(.F4)
+        return Key{code = .F4}
     case 'H':
-        return make_key(.Home)
+        return Key{code = .Home}
     case 'F':
-        return make_key(.End)
+        return Key{code = .End}
     case:
         return Invalid{}
     }
@@ -356,20 +356,20 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
     mods := mods_from_param(p.params[1]) if p.param_count >= 2 else {}
     switch final {
     case 'A':
-        return make_key(.Up, mods)
+        return Key{code = .Up, mods = mods}
     case 'B':
-        return make_key(.Down, mods)
+        return Key{code = .Down, mods = mods}
     case 'C':
-        return make_key(.Right, mods)
+        return Key{code = .Right, mods = mods}
     case 'D':
-        return make_key(.Left, mods)
+        return Key{code = .Left, mods = mods}
     case 'H':
-        return make_key(.Home, mods)
+        return Key{code = .Home, mods = mods}
     case 'F':
-        return make_key(.End, mods)
+        return Key{code = .End, mods = mods}
     case 'Z':
         // Shift-tab forces Shift, ignoring any computed modifiers.
-        return make_key(.Tab, {.Shift})
+        return Key{code = .Tab, mods = {.Shift}}
     case '~':
         n := p.params[0] if p.param_count >= 1 else 0
         if n == 200 {
@@ -385,7 +385,7 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
             return Invalid{}
         }
 
-        return make_key(code, mods)
+        return Key{code = code, mods = mods}
     case 'u':
         return parser_dispatch_kitty(p)
     case 't':
@@ -435,25 +435,15 @@ parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
     return Key{code = code, char = char, mods = mods, event = kind}
 }
 
-// Key event, no modifiers.
-make_key :: proc(code: Key_Code, mods: Modifiers = {}) -> Key {
-    return Key{code = code, mods = mods}
-}
-
-// Literal-codepoint key event.
-make_key_char :: proc(cp: rune, mods: Modifiers = {}) -> Key {
-    return Key{code = .Char, char = cp, mods = mods}
-}
-
-// Uppercase ASCII is reported as Shift + lowercase (legacy mibu behavior). This
-// synthesis is confined to the ground/UTF-8 path on purpose: the Alt path keeps
-// its raw byte and Kitty `u` codepoints are kept verbatim.
+// Uppercase ASCII is reported as Shift + lowercase. This synthesis is confined to the
+// ground/UTF-8 path on purpose: the Alt path keeps its raw byte and Kitty `u`
+// codepoints are kept verbatim.
 emit_char :: proc(cp: rune) -> Key {
     if cp >= 'A' && cp <= 'Z' {
-        return make_key_char(cp + 32, {.Shift})
+        return Key{code = .Char, char = cp + 32, mods = {.Shift}}
     }
 
-    return make_key_char(cp)
+    return Key{code = .Char, char = cp}
 }
 
 // xterm modifier encoding: 1 + bitmask. Kitty adds 8/16/32 (super/hyper/meta);
@@ -641,8 +631,7 @@ sat_sub_32 :: proc(b: u8) -> u16 {
 parse_mouse_action :: proc(cb: u8) -> Mouse {
     m: Mouse
 
-    // Diverges from the mibu reference, whose shift mask duplicates meta (both 8);
-    // these are the xterm-documented bits: shift=4, meta/alt=8, ctrl=16.
+    // The xterm-documented modifier bits: shift=4, meta/alt=8, ctrl=16.
     m.shift = cb & 4 != 0
     m.alt = cb & 8 != 0
     m.ctrl = cb & 16 != 0
@@ -702,7 +691,7 @@ flush :: proc(bytes: []u8) -> Parse_Event {
     }
 
     if len(bytes) == 1 && bytes[0] == 0x1b {
-        return make_key(.Esc)
+        return Key{code = .Esc}
     }
 
     event, _, incomplete := parse(bytes)

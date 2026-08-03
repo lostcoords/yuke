@@ -204,9 +204,8 @@ test_machine_x10_mouse_shift_only :: proc(t: ^testing.T) {
 
 @(test)
 test_machine_x10_mouse_alt_only :: proc(t: ^testing.T) {
-    // Mask fix: alt/meta bit is 8. Button 0 + alt = 0x08; +32 bias = 0x28.
-    // This event is now distinguishable from a shift-only event (mibu duplicated
-    // both masks at 8).
+    // Alt/meta bit is 8. Button 0 + alt = 0x08; +32 bias = 0x28. Distinguishable from
+    // a shift-only event, which uses bit 4.
     m, ok := feed("\x1b[M\x28\x21\x22").(Mouse)
     testing.expect(t, ok)
     testing.expect_value(t, m.action, Mouse_Action.Left)
