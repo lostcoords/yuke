@@ -283,10 +283,12 @@ to_string :: proc(ctx: ^Context, v: Value) -> (s: string, ok: bool) {
 }
 
 // Release a view returned by `to_string`.
+// Empty strings still need free when the engine returned a non-nil pointer
+// (ASCII `""` is a real `JSString` ref in QuickJS-NG).
 free_string :: proc(ctx: ^Context, s: string) {
     assert(ctx != nil, "free_string needs a context")
 
-    if len(s) == 0 {
+    if raw_data(s) == nil {
         return
     }
 
@@ -378,4 +380,94 @@ new_promise :: proc(ctx: ^Context) -> (promise: Value, resolve: Value, reject: V
     promise = c_new_promise_capability(ctx, raw_data(funcs[:]))
 
     return promise, funcs[0], funcs[1]
+}
+
+// Associate host state with a context; recovered in C host callbacks via
+// `get_context_opaque`.
+set_context_opaque :: proc(ctx: ^Context, user: rawptr) {
+    assert(ctx != nil, "set_context_opaque needs a context")
+
+    c_set_context_opaque(ctx, user)
+}
+
+get_context_opaque :: proc(ctx: ^Context) -> rawptr {
+    assert(ctx != nil, "get_context_opaque needs a context")
+
+    return c_get_context_opaque(ctx)
+}
+
+set_runtime_opaque :: proc(rt: ^Runtime, user: rawptr) {
+    assert(rt != nil, "set_runtime_opaque needs a runtime")
+
+    c_set_runtime_opaque(rt, user)
+}
+
+get_runtime_opaque :: proc(rt: ^Runtime) -> rawptr {
+    assert(rt != nil, "get_runtime_opaque needs a runtime")
+
+    return c_get_runtime_opaque(rt)
+}
+
+// Install the ES module normalize + load hooks. `normalize` may be nil to use
+// the engine default (identity). `loader` must return a `Module_Def` from
+// `new_cmodule` (or nil + exception).
+set_module_loader :: proc(
+    rt: ^Runtime,
+    normalize: Module_Normalize_Func,
+    loader: Module_Loader_Func,
+    opaque: rawptr = nil,
+) {
+    assert(rt != nil, "set_module_loader needs a runtime")
+    assert(loader != nil, "set_module_loader needs a loader")
+
+    c_set_module_loader_func(rt, normalize, loader, opaque)
+}
+
+// Create a native ES module; `init` runs when the module is evaluated.
+new_cmodule :: proc(ctx: ^Context, name: cstring, init: Module_Init_Func) -> ^Module_Def {
+    assert(ctx != nil, "new_cmodule needs a context")
+    assert(name != nil, "new_cmodule needs a name")
+    assert(init != nil, "new_cmodule needs an init proc")
+
+    return c_new_cmodule(ctx, name, init)
+}
+
+// Declare an export name before evaluation (pairs with `set_module_export`).
+add_module_export :: proc(ctx: ^Context, m: ^Module_Def, name: cstring) -> bool {
+    assert(ctx != nil, "add_module_export needs a context")
+    assert(m != nil, "add_module_export needs a module")
+    assert(name != nil, "add_module_export needs a name")
+
+    return c_add_module_export(ctx, m, name) == 0
+}
+
+// **Consumes `val`** — same ownership as `set_property`.
+set_module_export :: proc(ctx: ^Context, m: ^Module_Def, name: cstring, val: Value) -> bool {
+    assert(ctx != nil, "set_module_export needs a context")
+    assert(m != nil, "set_module_export needs a module")
+    assert(name != nil, "set_module_export needs a name")
+
+    return c_set_module_export(ctx, m, name, val) == 0
+}
+
+// Throw a TypeError; returns the exception sentinel for host C functions.
+throw_type_error :: proc(ctx: ^Context, msg: cstring) -> Value {
+    assert(ctx != nil, "throw_type_error needs a context")
+    assert(msg != nil, "throw_type_error needs a message")
+
+    return c_throw_type_error(ctx, "%s", msg)
+}
+
+// Resolve imports on a module record returned by `eval(..., .Module)`.
+resolve_module :: proc(ctx: ^Context, module_val: Value) -> bool {
+    assert(ctx != nil, "resolve_module needs a context")
+
+    return c_resolve_module(ctx, module_val) == 0
+}
+
+// Evaluate a resolved module function. **Consumes `fun_obj`.**
+eval_function :: proc(ctx: ^Context, fun_obj: Value) -> Value {
+    assert(ctx != nil, "eval_function needs a context")
+
+    return c_eval_function(ctx, fun_obj)
 }
