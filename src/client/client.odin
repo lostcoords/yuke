@@ -1,5 +1,6 @@
 package client
 
+import "core:log"
 import "core:mem"
 import "core:strings"
 import ws "libs:websocket"
@@ -80,10 +81,9 @@ Pending_Request :: struct {
     user_data:   rawptr,
 }
 
-// Event sink for connection-wide events. Any field may be nil. The `wire.Initialize_Result`,
-// `wire.Notification`, and `method` arguments borrow frame memory valid ONLY for the call
-// (see LIFETIME CONTRACT). Responses are not routed here; they reach their request's
-// `Response_Proc`.
+// Event sink for connection-wide events. Any field may be nil. Callbacks borrow
+// frame memory valid only for the call. Responses are not routed here; they reach
+// their request's `Response_Proc`.
 Client_Callbacks :: struct {
     // Fired once when the `initialize` result is accepted and the driver reaches Ready.
     // `hello` is borrowed.
@@ -299,10 +299,8 @@ client_send_request :: proc(
     return id, .None
 }
 
-// Route one server text frame to the sink. The pure core of the driver: it performs
-// no transport operations and returns the outcome so the caller decides whether to
-// close. `scratch` is `free_all`'d before returning, so every value handed to a
-// callback is valid only for that callback (see LIFETIME CONTRACT).
+// Decode one server frame and dispatch it to the sink. `data` is borrowed for the call;
+// the scratch arena is freed on return, so values handed to callbacks outlive only that callback.
 client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     sa := mem.dynamic_arena_allocator(&c.scratch)
     defer free_all(sa)
@@ -310,6 +308,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     // Route from the streaming header without materializing the (possibly large) body.
     header, herr := wire.server_frame_header_stream(string(data), sa)
     if herr != .None {
+        log.warnf("client: server frame header decode failed: %v", herr)
         return .Decode_Failed
     }
 
@@ -320,6 +319,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         id, numeric := wire.req_id_to_u64(header.id)
 
         if !numeric {
+            log.warnf("client: response id %v is not driver-originated", header.id)
             return .Decode_Failed
         }
 
@@ -329,6 +329,8 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         // decoded. Error objects are method-agnostic, so an uncorrelated one is still
         // decoded and validated — it simply has no completion to reach.
         if !ok && header.kind == .Response {
+            log.warnf("client: response to unknown request id %v", id)
+
             if c.cbs.on_error != nil {
                 c.cbs.on_error(c, .Unknown_Response)
             }
@@ -347,14 +349,17 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         d := wire.decoder_init(string(data), sa)
         resp, derr := wire.response_from_reader(req.method, &d)
         if derr != .None {
+            log.warnf("client: response decode failed for %v: %v", req.method, derr)
             return .Decode_Failed
         }
 
         if wire.dec_finish(&d) != .None {
+            log.warnf("client: response for %v has trailing data", req.method)
             return .Decode_Failed
         }
 
         if wire.response_validate(resp) != .None {
+            log.warnf("client: response for %v failed validation", req.method)
             return .Decode_Failed
         }
 
@@ -374,6 +379,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     case .Notification:
         // Nothing is pushed before the handshake completes.
         if c.state != .Ready {
+            log.warnf("client: broadcast %v arrived before Ready", header.method)
             return .Bad_Initialize
         }
 
@@ -392,14 +398,17 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         d := wire.decoder_init(string(data), sa)
         bc, derr := wire.notification_from_reader(&d)
         if derr != .None {
+            log.warnf("client: broadcast %v decode failed: %v", header.method, derr)
             return .Decode_Failed
         }
 
         if wire.dec_finish(&d) != .None {
+            log.warnf("client: broadcast %v has trailing data", header.method)
             return .Decode_Failed
         }
 
         if wire.notification_validate(bc) != .None {
+            log.warnf("client: broadcast %v failed validation", header.method)
             return .Decode_Failed
         }
 
@@ -419,15 +428,15 @@ client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: 
     assert(c != nil && c.state == .Awaiting_Initialize, "initialize completed outside Awaiting_Initialize")
 
     ok, is_ok := resp.(wire.Response_Ok)
-
     if !is_ok {
+        log.warnf("client: initialize returned an error response")
         c.initialize_error = .Bad_Initialize
         return
     }
 
     hello, is_hello := ok.result.(wire.Initialize_Result)
-
     if !is_hello {
+        log.warnf("client: initialize result was not an Initialize_Result")
         c.initialize_error = .Bad_Initialize
         return
     }
@@ -437,6 +446,7 @@ client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: 
     assert(c.daemon_version == "", "daemon version retained twice")
     daemon_version, aerr := strings.clone(hello.daemon.version, c.allocator)
     if aerr != nil {
+        log.errorf("client: initialize clone of daemon version failed: %v", aerr)
         c.initialize_error = .Out_Of_Memory
         return
     }
@@ -515,13 +525,10 @@ client_abort :: proc(c: ^Client, err: Protocol_Error) {
     }
 }
 
-// --- transport events ---
+// Inbound transport seam. Backends report here in order: `on_open`, then
+// `on_text`/`on_binary` frames, then one of `on_close`/`on_error`; keepalives never surface.
 //
-// The inbound half of the transport seam: every implementation reports here, in the
-// order `on_open` … `on_text`/`on_binary` … one of `on_close`/`on_error`. Keepalives
-// and control frames are the transport's own business and never surface.
-
-// Connected: advance to Awaiting_Initialize and send the pre-built `initialize` request.
+// on_open: advance to Awaiting_Initialize and send the pre-built `initialize` request.
 transport_on_open :: proc(c: ^Client) {
     assert(c != nil, "transport open needs a client")
     assert(c.state == .Connecting, "transport opened outside Connecting")
@@ -545,12 +552,13 @@ transport_on_open :: proc(c: ^Client) {
     }
 }
 
-// One complete text frame, borrowed for this call.
+// One borrowed text frame. Gates on state, runs the pure handler, and turns its verdict
+// into keep-or-close — the transport-side decision the handler deliberately leaves open.
 transport_on_text :: proc(c: ^Client, data: []byte) {
     assert(c != nil, "transport text needs a client")
 
-    // Frames only matter in Awaiting_Initialize (the initialize response) or Ready; ignore
-    // anything that arrives while connecting, closing, or closed.
+    // Only Awaiting_Initialize (the initialize response) and Ready carry meaningful frames;
+    // drop anything that arrives while connecting, closing, or closed.
     if c.state != .Awaiting_Initialize && c.state != .Ready {
         return
     }
@@ -573,6 +581,7 @@ transport_on_binary :: proc(c: ^Client) {
         return
     }
 
+    log.warnf("client: binary frame is not v1 wire")
     client_abort(c, .Bad_Frame)
 }
 
@@ -593,6 +602,8 @@ transport_on_error :: proc(c: ^Client, err: ws.Client_Error) {
     assert(err != .None, "transport reported a failure with no reason")
     c.state = .Closed
     c.transport_error = err
+
+    log.errorf("client: transport failed: %v", err)
 
     if c.cbs.on_error != nil {
         c.cbs.on_error(c, .Transport_Failed)
