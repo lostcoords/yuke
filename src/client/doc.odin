@@ -3,20 +3,17 @@ The client package binds a text-frame transport to the `wire` toolkit and correl
 each request with its typed response.
 
 The driver runs over anything that can carry text frames: `client_open` takes a
-`Transport` the caller chose, and no transport type appears in the driver's API. The
-bundled one is `ws_transport_create`, a `ws://` socket on a single-threaded `core:nbio`
-callback reactor that this driver never runs. It sends an `initialize` request, waits
-for its result, then routes each server frame by shape: a response (`result` or
-`error`) reaches the `Response_Proc` its request registered with
-`client_send_request`, while notifications and connection-wide events (readiness,
+`Transport` the caller chose, and no backend type appears in the driver's API. The
+bundled factory is fallible `ws_create` (`ws://` on `core:nbio`; dials on `open`).
+It sends an `initialize` request, waits for its result, then routes each server frame by
+shape: a response (`result` or `error`) reaches the `Response_Proc` its request registered
+with `client_send_request`, while notifications and connection-wide events (readiness,
 broadcasts, termination) reach the `Client_Callbacks` sink. `client_handle_text` is
 the pure routing core and is unit-tested directly with no socket.
 
 The package is layered as:
 
-  - `transport.odin`: the transport seam — `Transport`, `Transport_Error`, and
-    `Close_Code`, all free of any one transport's types.
-  - `transport_ws.odin`: the `libs:websocket` implementation of that seam.
+  - `transport.odin`: `Transport` ops bag, `Close_Code`, and the WS backend (`ws_create`).
   - `client.odin`: the daemon client driver — the state machine, request/response
     correlation, and frame routing.
   - `session_replica.odin`: owned state for one session — a committed-message

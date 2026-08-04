@@ -859,24 +859,19 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
 
     obs: Cli_Obs
     c: client.Client
-    cerr := client.client_open(
-        &c,
-        client.ws_transport_create(
-            loop,
-            ws.Options {
-                host = "127.0.0.1",
-                port = bound_port(&d),
-                path = "/ws",
-                extra_headers = "Authorization: Bearer s3cret00000000000000000000000000\r\n",
-            },
-            context.temp_allocator,
-        ),
-        "yuke-test",
-        "0.1.0",
-        cli_callbacks(),
-        &obs,
+    transport, terr := client.ws_create(
+        loop,
+        ws.Options {
+            host = "127.0.0.1",
+            port = bound_port(&d),
+            path = "/ws",
+            extra_headers = "Authorization: Bearer s3cret00000000000000000000000000\r\n",
+        },
         context.temp_allocator,
     )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
+    cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
 
     nbio.run_until(&obs.done)

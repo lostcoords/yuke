@@ -2,6 +2,7 @@ package client
 
 import "core:mem"
 import "core:strings"
+import ws "libs:websocket"
 import wire "src:wire"
 
 // Ceiling on concurrently outstanding requests. Bounds `pending` growth against a
@@ -35,7 +36,7 @@ Protocol_Error :: enum {
     // No error.
     None,
 
-    // A transport-level failure; the specific `Transport_Error` is on `transport_error`.
+    // A transport-level failure; the specific `ws.Client_Error` is on `transport_error`.
     Transport_Failed,
 
     // The `initialize` result failed to decode or validate.
@@ -63,9 +64,8 @@ Protocol_Error :: enum {
     Not_Ready,
 }
 
-// Completion for one request, given to `client_send_request` and fired exactly once
-// with that request's response. `resp` borrows frame memory valid ONLY for the call
-// (see LIFETIME CONTRACT); `user_data` is the pointer registered with the request.
+// Fired exactly once for one request's response. `resp` borrows frame memory valid only
+// for the call.
 Response_Proc :: proc(c: ^Client, resp: wire.Response, user_data: rawptr)
 
 // One outstanding request. Holds no borrowed frame data.
@@ -85,16 +85,15 @@ Pending_Request :: struct {
 // (see LIFETIME CONTRACT). Responses are not routed here; they reach their request's
 // `Response_Proc`.
 Client_Callbacks :: struct {
-    // Fired once the `initialize` result is accepted and the driver reaches Ready. `hello`
-    // is borrowed for this call only; clone any snapshot data the application retains.
+    // Fired once when the `initialize` result is accepted and the driver reaches Ready.
+    // `hello` is borrowed.
     on_ready:             proc(c: ^Client, hello: wire.Initialize_Result),
 
-    // Fired for each known broadcast. `bc` is borrowed for this call only; retain it
-    // with `wire.notification_clone` into your own allocator.
+    // Fired for each known broadcast. `bc` is borrowed; retain with `wire.notification_clone`.
     on_broadcast:         proc(c: ^Client, bc: wire.Notification),
 
-    // Fired for a broadcast whose method this build does not recognize. The payload is
-    // never decoded; `method` is borrowed for this call only.
+    // Fired for a broadcast this build does not recognize. The payload is not decoded;
+    // `method` is borrowed.
     on_unknown_broadcast: proc(c: ^Client, method: string),
 
     // Fired once at `.Closed` with the reported (or synthesized) close code. Terminal.
@@ -163,7 +162,7 @@ Client :: struct {
     daemon_version:   string,
 
     // Last transport failure, latched before an `on_error(.Transport_Failed)`.
-    transport_error:  Transport_Error,
+    transport_error:  ws.Client_Error,
 
     // @private
     // Outcome of the `initialize` completion, which cannot return one. Consumed by
@@ -191,7 +190,7 @@ client_open :: proc(
     allocator := context.allocator,
 ) -> Protocol_Error {
     assert(
-        transport.start != nil &&
+        transport.open != nil &&
         transport.send_text != nil &&
         transport.close != nil &&
         transport.abort != nil &&
@@ -232,7 +231,7 @@ client_open :: proc(
     copy(c.initialize_frame, payload)
     wire.emitter_destroy(&e)
 
-    terr := transport.start(transport.self, c)
+    terr := transport.open(transport.self, c)
     if terr != .None {
         c.transport_error = terr
         client_free_owned(c)
@@ -594,7 +593,7 @@ transport_on_close :: proc(c: ^Client, code: Close_Code) {
 
 // Failed terminally: latch the reason and surface it as `.Transport_Failed`. The
 // connection is Closed; no `on_close` follows.
-transport_on_error :: proc(c: ^Client, err: Transport_Error) {
+transport_on_error :: proc(c: ^Client, err: ws.Client_Error) {
     assert(c != nil, "transport error needs a client")
     assert(err != .None, "transport reported a failure with no reason")
     c.state = .Closed

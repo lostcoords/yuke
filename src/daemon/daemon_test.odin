@@ -148,19 +148,14 @@ test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
 
     obs: Cli_Obs
     c: client.Client
-    cerr := client.client_open(
-        &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
-        "yuke-test",
-        "0.1.0",
-        cli_callbacks(),
-        &obs,
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
+    cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
 
     nbio.run_until(&obs.done)
@@ -193,19 +188,14 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
         send_request_on_ready = true,
     }
     c: client.Client
-    cerr := client.client_open(
-        &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
-        "yuke-test",
-        "0.1.0",
-        cli_callbacks(),
-        &obs,
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
+    cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
 
     nbio.run_until(&obs.done)
@@ -329,19 +319,14 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     testing.expect_value(t, derr, Error.None)
 
     c: client.Client
-    cerr := client.client_open(
-        &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
-        "yuke-test",
-        "0.1.0",
-        handler_callbacks(),
-        obs,
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
+    cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", handler_callbacks(), obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
 
     timeout_op := nbio.timeout_poly(2 * time.Second, obs, handler_on_timeout, loop)
@@ -1399,13 +1384,16 @@ test_daemon_workspace_browse_two_in_flight :: proc(t: ^testing.T) {
     obs.counts = make(map[string]int, 4, context.temp_allocator)
 
     c: client.Client
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        context.temp_allocator,
+    )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
     cerr := client.client_open(
         &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
+        transport,
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks {
@@ -1500,9 +1488,12 @@ test_daemon_workspace_browse_close_during_pass_no_leak :: proc(t: ^testing.T) {
         }
 
         c: client.Client
+        transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
+        testing.expect_value(t, terr, ws.Client_Error.None)
+
         cerr := client.client_open(
             &c,
-            client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked),
+            transport,
             "yuke-test",
             "0.1.0",
             client.Client_Callbacks {
@@ -1612,15 +1603,10 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
     for i in 0 ..< ITERATIONS {
         obs: Cli_Obs
         c: client.Client
-        cerr := client.client_open(
-            &c,
-            client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked),
-            "yuke-test",
-            "0.1.0",
-            cli_callbacks(),
-            &obs,
-            tracked,
-        )
+        transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
+        testing.expect_value(t, terr, ws.Client_Error.None)
+
+        cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, tracked)
         testing.expect_value(t, cerr, client.Protocol_Error.None)
 
         nbio.run_until(&obs.done)

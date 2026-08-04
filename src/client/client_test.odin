@@ -4,6 +4,7 @@ import "core:mem"
 import "core:reflect"
 import "core:strings"
 import "core:testing"
+import ws "libs:websocket"
 import wire "src:wire"
 
 // Driver tests exercise the pure routing/bookkeeping core with hand-written JSON and
@@ -157,14 +158,14 @@ _teardown :: proc(c: ^Client) {
 // A transport that records what the driver asked of it and always succeeds, so the
 // send paths run with no socket and no loop.
 Fake_Transport :: struct {
-    started:     bool,
-    start_error: Transport_Error,
-    sent:        [dynamic]string,
-    closes:      int,
-    close_code:  Close_Code,
-    aborts:      int,
-    last_abort:  Transport_Error,
-    destroys:    int,
+    opened:     bool,
+    open_error: ws.Client_Error,
+    sent:       [dynamic]string,
+    closes:     int,
+    close_code: Close_Code,
+    aborts:     int,
+    last_abort: ws.Client_Error,
+    destroys:   int,
 }
 
 _fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
@@ -172,7 +173,7 @@ _fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
 
     return Transport {
         self = t,
-        start = _fake_start,
+        open = _fake_open,
         send_text = _fake_send_text,
         close = _fake_close,
         abort = _fake_abort,
@@ -180,21 +181,21 @@ _fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
     }
 }
 
-_fake_start :: proc(self: rawptr, _: ^Client) -> Transport_Error {
+_fake_open :: proc(self: rawptr, _: ^Client) -> ws.Client_Error {
     t := (^Fake_Transport)(self)
-    t.started = true
+    t.opened = true
 
-    return t.start_error
+    return t.open_error
 }
 
-_fake_send_text :: proc(self: rawptr, data: []byte) -> Transport_Error {
+_fake_send_text :: proc(self: rawptr, data: []byte) -> ws.Client_Error {
     t := (^Fake_Transport)(self)
     append(&t.sent, strings.clone(string(data)))
 
     return .None
 }
 
-_fake_close :: proc(self: rawptr, code: Close_Code) -> Transport_Error {
+_fake_close :: proc(self: rawptr, code: Close_Code) -> ws.Client_Error {
     t := (^Fake_Transport)(self)
     t.closes += 1
     t.close_code = code
@@ -202,7 +203,7 @@ _fake_close :: proc(self: rawptr, code: Close_Code) -> Transport_Error {
     return .None
 }
 
-_fake_abort :: proc(self: rawptr, err: Transport_Error) {
+_fake_abort :: proc(self: rawptr, err: ws.Client_Error) {
     t := (^Fake_Transport)(self)
     t.aborts += 1
     t.last_abort = err
@@ -227,11 +228,11 @@ test_open_rollback_destroys_the_transport :: proc(t: ^testing.T) {
     c: Client
 
     transport := _fake_transport_init(&sink.transport)
-    sink.transport.start_error = .Dial_Failed
+    sink.transport.open_error = .Dial_Failed
 
     err := client_open(&c, transport, "yuke-test", "0.1.0", _rec_callbacks(), &sink)
     testing.expect_value(t, err, Protocol_Error.Transport_Failed)
-    testing.expect_value(t, c.transport_error, Transport_Error.Dial_Failed)
+    testing.expect_value(t, c.transport_error, ws.Client_Error.Dial_Failed)
     testing.expect_value(t, sink.transport.destroys, 1)
 }
 

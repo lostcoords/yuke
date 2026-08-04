@@ -902,13 +902,16 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
         session = session,
     }
     c: client.Client
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        context.temp_allocator,
+    )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
     cerr := client.client_open(
         &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
+        transport,
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = resync_on_ready, on_close = resync_on_close, on_error = resync_on_error},
@@ -1025,13 +1028,16 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
         session = session,
     }
     c: client.Client
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        context.temp_allocator,
+    )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
     cerr := client.client_open(
         &c,
-        client.ws_transport_create(
-            loop,
-            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
-            context.temp_allocator,
-        ),
+        transport,
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = corrupt_on_ready, on_close = corrupt_on_close, on_error = corrupt_on_error},

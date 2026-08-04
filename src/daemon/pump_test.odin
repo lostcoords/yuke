@@ -150,15 +150,14 @@ pump_obs_init :: proc(o: ^Pump_Obs, sessions: []wire.Session_Id) {
 // Open one driver against the daemon and run the loop until it is Ready with its
 // subscription set installed.
 pump_client_arm :: proc(t: ^testing.T, c: ^client.Client, loop: ^nbio.Event_Loop, port: int, o: ^Pump_Obs) {
-    cerr := client.client_open(
-        c,
-        client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator),
-        "yuke-test",
-        "0.1.0",
-        pump_callbacks(),
-        o,
+    transport, terr := client.ws_create(
+        loop,
+        {host = "127.0.0.1", port = port, path = "/ws"},
         context.temp_allocator,
     )
+    testing.expect_value(t, terr, ws.Client_Error.None)
+
+    cerr := client.client_open(c, transport, "yuke-test", "0.1.0", pump_callbacks(), o, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
     testing.expect(t, pump_tick_until(&o.armed), "the client should reach Ready and install its subscriptions")
 }
