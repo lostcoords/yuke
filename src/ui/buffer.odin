@@ -332,8 +332,12 @@ buffer_set_string_n :: proc(
             return used, .Unsupported_Grapheme_Width
         }
 
+        // Placed directly rather than through `buffer_set`: the cluster is already segmented,
+        // validated and measured here, and re-deriving it per character costs more than the
+        // write. The width test above keeps a two-cell glyph off the last column.
         wv := u16(cw)
-        buffer_set(b, col, y, bytes, style) or_return
+        glyph := glyph_for(b, bytes) or_return
+        cell_place(b, offset(b, col, y), glyph, wv, style)
         col += wv
         used += wv
 
