@@ -4,7 +4,6 @@ import "core:mem"
 import "core:reflect"
 import "core:strings"
 import "core:testing"
-import ws "libs:websocket"
 import wire "src:wire"
 
 // Driver tests exercise the pure routing/bookkeeping core with hand-written JSON and
@@ -28,7 +27,8 @@ Sink :: struct {
     errors:           int,
     last_error:       Protocol_Error,
     closes:           int,
-    last_close_code:  ws.Close_Code,
+    last_close_code:  Close_Code,
+    transport:        Fake_Transport,
     want_clone:       bool,
     clone_alloc:      mem.Allocator,
     cloned:           wire.Notification,
@@ -98,7 +98,7 @@ _rec_on_unknown_broadcast :: proc(c: ^Client, name: string) {
     s.last_unknown = strings.clone(name, s.clone_alloc)
 }
 
-_rec_on_close :: proc(c: ^Client, code: ws.Close_Code) {
+_rec_on_close :: proc(c: ^Client, code: Close_Code) {
     s := (^Sink)(c.user_data)
     s.closes += 1
     s.last_close_code = code
@@ -121,10 +121,11 @@ _rec_callbacks :: proc() -> Client_Callbacks {
 }
 
 // Set up a driver for pure-core testing: owned `pending`/`scratch`, the recording
-// sink, and Ready state (tests override `state` as needed). No transport is connected.
+// sink, the sink's fake transport, and Ready state (tests override `state` as needed).
 _init_client :: proc(c: ^Client, sink: ^Sink) {
     c^ = {}
     c.allocator = context.allocator
+    c.transport = _fake_transport_init(&sink.transport)
     c.pending = make(map[u64]Pending_Request, context.allocator)
     mem.dynamic_arena_init(&c.scratch, context.allocator, context.allocator)
     c.next_request_id = 1
@@ -143,34 +144,95 @@ _expect_response :: proc(c: ^Client, id: u64, method: wire.Method_Name, own: ^Co
     }
 }
 
-// Release the driver-owned state a test allocated (never touches an unconnected
-// transport). Fake-open tests additionally drain the transport send queue first.
+// Release the driver-owned state a test allocated, transport included.
 _teardown :: proc(c: ^Client) {
     delete(c.pending)
     mem.dynamic_arena_destroy(&c.scratch)
 
     delete(c.daemon_version, c.allocator)
+
+    c.transport.destroy(c.transport.self)
 }
 
-// Make `ws.client_send_text` accept a frame into the transport's send queue without
-// submitting to a (nil) loop: `.Open` passes the guard, and `sending` makes
-// `pump_send` return before it touches `nbio`.
-_arm_fake_open :: proc(c: ^Client) {
-    c.sock.state = .Open
-    c.sock.allocator = context.allocator
-    c.sock.max_frame_bytes = 1 << 20
-    c.sock.max_send_queue_bytes = 1 << 20
-    c.sock.sending = true
+// A transport that records what the driver asked of it and always succeeds, so the
+// send paths run with no socket and no loop.
+Fake_Transport :: struct {
+    started:     bool,
+    start_error: Transport_Error,
+    sent:        [dynamic]string,
+    closes:      int,
+    close_code:  Close_Code,
+    aborts:      int,
+    last_abort:  Transport_Error,
+    destroys:    int,
 }
 
-// Free the frames the fake-open path enqueued and the queue itself.
-_drain_fake_send_queue :: proc(c: ^Client) {
-    for frame in c.sock.send_queue {
-        delete(frame, c.sock.allocator)
+_fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
+    t^ = {}
+
+    return Transport {
+        self = t,
+        start = _fake_start,
+        send_text = _fake_send_text,
+        close = _fake_close,
+        abort = _fake_abort,
+        destroy = _fake_destroy,
+    }
+}
+
+_fake_start :: proc(self: rawptr, _: ^Client) -> Transport_Error {
+    t := (^Fake_Transport)(self)
+    t.started = true
+
+    return t.start_error
+}
+
+_fake_send_text :: proc(self: rawptr, data: []byte) -> Transport_Error {
+    t := (^Fake_Transport)(self)
+    append(&t.sent, strings.clone(string(data)))
+
+    return .None
+}
+
+_fake_close :: proc(self: rawptr, code: Close_Code) -> Transport_Error {
+    t := (^Fake_Transport)(self)
+    t.closes += 1
+    t.close_code = code
+
+    return .None
+}
+
+_fake_abort :: proc(self: rawptr, err: Transport_Error) {
+    t := (^Fake_Transport)(self)
+    t.aborts += 1
+    t.last_abort = err
+}
+
+_fake_destroy :: proc(self: rawptr) {
+    t := (^Fake_Transport)(self)
+    for frame in t.sent {
+        delete(frame)
     }
 
-    delete(c.sock.send_queue)
-    c.sock.send_queue = nil
+    delete(t.sent)
+    t.sent = nil
+    t.destroys += 1
+}
+
+// `client_open` takes ownership of the transport, so a rollback destroys it exactly
+// once and the caller is left with nothing to release.
+@(test)
+test_open_rollback_destroys_the_transport :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+
+    transport := _fake_transport_init(&sink.transport)
+    sink.transport.start_error = .Dial_Failed
+
+    err := client_open(&c, transport, "yuke-test", "0.1.0", _rec_callbacks(), &sink)
+    testing.expect_value(t, err, Protocol_Error.Transport_Failed)
+    testing.expect_value(t, c.transport_error, Transport_Error.Dial_Failed)
+    testing.expect_value(t, sink.transport.destroys, 1)
 }
 
 @(test)
@@ -178,11 +240,7 @@ test_send_request_ids_increment_and_record_pending :: proc(t: ^testing.T) {
     sink: Sink
     c: Client
     _init_client(&c, &sink)
-    _arm_fake_open(&c)
-    defer {
-        _drain_fake_send_queue(&c)
-        _teardown(&c)
-    }
+    defer _teardown(&c)
 
     own1: Completion
     own2: Completion
@@ -197,6 +255,7 @@ test_send_request_ids_increment_and_record_pending :: proc(t: ^testing.T) {
 
     testing.expect_value(t, len(c.pending), 2)
     testing.expect_value(t, u64(c.next_request_id), u64(3))
+    testing.expect_value(t, len(sink.transport.sent), 2)
 
     p1, ok1 := c.pending[id1]
     testing.expect(t, ok1, "id1 recorded")
@@ -216,11 +275,7 @@ test_two_in_flight_requests_reach_their_own_completion :: proc(t: ^testing.T) {
     sink: Sink
     c: Client
     _init_client(&c, &sink)
-    _arm_fake_open(&c)
-    defer {
-        _drain_fake_send_queue(&c)
-        _teardown(&c)
-    }
+    defer _teardown(&c)
 
     refresh: Completion
     list: Completion

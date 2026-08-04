@@ -1,17 +1,22 @@
 /*
-The client package binds the async `libs:websocket` reactor to the `wire` toolkit
-and correlates each request with its typed response.
+The client package binds a text-frame transport to the `wire` toolkit and correlates
+each request with its typed response.
 
-The transport (`libs:websocket`) is a single-threaded `core:nbio` callback reactor;
-this driver never runs the loop. It sends an `initialize` request, waits for its
-result, then routes each server frame by shape: a response (`result` or `error`)
-reaches the `Response_Proc` its request registered with `client_send_request`, while
-notifications and connection-wide events (readiness, broadcasts, termination) reach
-the `Client_Callbacks` sink. `client_handle_text` is the pure routing core and is
-unit-tested directly with no socket.
+The driver runs over anything that can carry text frames: `client_open` takes a
+`Transport` the caller chose, and no transport type appears in the driver's API. The
+bundled one is `ws_transport_create`, a `ws://` socket on a single-threaded `core:nbio`
+callback reactor that this driver never runs. It sends an `initialize` request, waits
+for its result, then routes each server frame by shape: a response (`result` or
+`error`) reaches the `Response_Proc` its request registered with
+`client_send_request`, while notifications and connection-wide events (readiness,
+broadcasts, termination) reach the `Client_Callbacks` sink. `client_handle_text` is
+the pure routing core and is unit-tested directly with no socket.
 
 The package is layered as:
 
+  - `transport.odin`: the transport seam — `Transport`, `Transport_Error`, and
+    `Close_Code`, all free of any one transport's types.
+  - `transport_ws.odin`: the `libs:websocket` implementation of that seam.
   - `client.odin`: the daemon client driver — the state machine, request/response
     correlation, and frame routing.
   - `session_replica.odin`: owned state for one session — a committed-message
@@ -34,13 +39,14 @@ Lifetime contract:
     the connection closes or errors are dropped with `pending`, so any `user_data`
     they own must be reclaimed from the terminal callback, not from the completion.
   - `scratch` is `free_all`'d after every message; `pending`, the `daemon_version`
-    clone, and `scratch` are released by `client_destroy`.
+    clone, and `scratch` are released by `client_destroy`, which also destroys the
+    transport `client_open` took ownership of.
 
 Terminal contract:
 
   `client_destroy` is safe exactly once `c.state == .Closed`. `on_close`
   always fires at `.Closed` and is the terminal callback. A transport failure
-  instead fires `on_error(.Ws_Error)` at `.Closed` (no `on_close` follows it). Every
+  instead fires `on_error(.Transport_Failed)` at `.Closed` (no `on_close` follows it). Every
   other `on_error` — a driver protocol error (`.Bad_Initialize`/`.Bad_Frame`/
   `.Out_Of_Memory`) or a per-frame diagnostic
   (`.Unknown_Response`/`.Decode_Failed`) — fires while the connection is still
