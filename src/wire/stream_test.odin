@@ -103,15 +103,15 @@ test_dec_f64_rejects_overflowing_integer_tokens :: proc(t: ^testing.T) {
 // An id that wraps onto a live pending id would correlate a response to the wrong
 // request, which is exactly the peer alteration this proc exists to catch.
 @(test)
-test_request_id_to_u64_rejects_overflowing_tokens :: proc(t: ^testing.T) {
+test_req_id_to_u64_rejects_overflowing_tokens :: proc(t: ^testing.T) {
     wrapping := []string{"18446744073709551617", "18446744073709551616", "36893488147419103232"}
 
     for text in wrapping {
-        _, ok := request_id_to_u64(Request_Id(text))
+        _, ok := req_id_to_u64(Request_Id(text))
         testing.expectf(t, !ok, "%s must not correlate", text)
     }
 
-    n, ok := request_id_to_u64(Request_Id("9007199254740991"))
+    n, ok := req_id_to_u64(Request_Id("9007199254740991"))
     testing.expect(t, ok, "MAX_REQUEST_ID round-trips")
     testing.expect_value(t, n, u64(MAX_REQUEST_ID))
 }

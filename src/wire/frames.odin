@@ -34,7 +34,7 @@ request_emit :: proc(e: ^Emitter, self: Request) {
 
 // Verify the id shape and params bounds.
 request_validate :: proc(self: Request) -> Validation_Error {
-    request_id_validate(self.id) or_return
+    req_id_validate(self.id) or_return
 
     return request_params_validate(self.params)
 }
@@ -99,12 +99,12 @@ response_emit :: proc(e: ^Emitter, self: Response) {
 response_validate :: proc(self: Response) -> Validation_Error {
     switch v in self {
     case Response_Ok:
-        request_id_validate(v.id) or_return
+        req_id_validate(v.id) or_return
 
         return response_result_validate(v.result)
 
     case Response_Error:
-        request_id_validate(v.id) or_return
+        req_id_validate(v.id) or_return
 
         return error_object_validate(v.error)
     }

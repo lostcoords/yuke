@@ -212,12 +212,12 @@ client_open :: proc(
     // counter starts past it.
     id_buf: [20]u8
     init := wire.request_build(
-        wire.request_id_from_u64(INITIALIZE_REQUEST_ID, id_buf[:]),
+        wire.req_id(INITIALIZE_REQUEST_ID, id_buf[:]),
         .Initialize,
         wire.initialize_params_build({name = name, version = version}),
     )
     if wire.request_validate(init) != .None {
-        client_free_owned(c)
+        client_destroy(c)
         return .Bad_Frame
     }
 
@@ -234,7 +234,7 @@ client_open :: proc(
     terr := transport.open(transport.self, c)
     if terr != .None {
         c.transport_error = terr
-        client_free_owned(c)
+        client_destroy(c)
         return .Transport_Failed
     }
 
@@ -270,7 +270,7 @@ client_send_request :: proc(
 
     id := c.next_request_id
     id_buf: [20]u8
-    req := wire.request_build(wire.request_id_from_u64(id, id_buf[:]), method, params)
+    req := wire.request_build(wire.req_id(id, id_buf[:]), method, params)
     if wire.request_validate(req) != .None {
         return 0, .Bad_Frame
     }
@@ -316,7 +316,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
     case .Response, .Error:
         // The driver only originates numeric ids, so an echo that is not one cannot
         // correlate: the peer altered it.
-        id, numeric := wire.request_id_to_u64(header.id)
+        id, numeric := wire.req_id_to_u64(header.id)
 
         if !numeric {
             return .Decode_Failed
@@ -474,13 +474,24 @@ client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
     c.state = .Closing
 }
 
-// Release all driver-owned resources and the transport. Call once `c.state`
-// is `.Closed` (after `on_close`, or after a transport `on_error`). Does not touch the
-// borrowed loop.
+// Release all driver-owned state and the transport. Valid at `.Closed` (after the
+// terminal callback) or at `.Connecting` on a `client_open` rollback; anything between
+// still has transport work outstanding. Leaves `transport_error` readable.
 client_destroy :: proc(c: ^Client) {
-    client_free_owned(c)
-}
+    assert(c.state == .Connecting || c.state == .Closed, "client_destroy with transport work still outstanding")
 
+    delete(c.pending)
+    mem.dynamic_arena_destroy(&c.scratch)
+
+    delete(c.initialize_frame, c.allocator)
+    c.initialize_frame = nil
+
+    delete(c.daemon_version, c.allocator)
+    c.daemon_version = ""
+
+    c.transport.destroy(c.transport.self)
+    c.transport = {}
+}
 
 // Report a fatal driver error and begin a transport close. `on_error` fires now (at
 // `.Closing`); the terminal `on_close` follows when the close completes. Idempotent.
@@ -501,23 +512,6 @@ client_abort :: proc(c: ^Client, err: Protocol_Error) {
         assert(close_err != .Not_Open, "protocol and transport close states diverged")
         t.abort(t.self, close_err)
     }
-}
-
-// Free the driver-owned state allocated by `client_open` and the transport it took
-// ownership of. Used both to roll back a failed open and by `client_destroy`; leaves
-// `transport_error` for a rolled-back caller to read.
-client_free_owned :: proc(c: ^Client) {
-    delete(c.pending)
-    mem.dynamic_arena_destroy(&c.scratch)
-
-    delete(c.initialize_frame, c.allocator)
-    c.initialize_frame = nil
-
-    delete(c.daemon_version, c.allocator)
-    c.daemon_version = ""
-
-    c.transport.destroy(c.transport.self)
-    c.transport = {}
 }
 
 // --- transport events ---

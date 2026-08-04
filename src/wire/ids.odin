@@ -1,7 +1,6 @@
 package wire
 
 import "core:strconv"
-import "core:strings"
 
 // @fixed 16
 // 16 lowercase hex chars. Doubles as an on-disk directory name.
@@ -51,7 +50,7 @@ Config_Rev :: distinct u64
 
 // Format an originated numeric id into `buf`, returning the token that borrows it.
 // `buf` must outlive the returned id; a 20-byte buffer holds any u64.
-request_id_from_u64 :: proc(n: u64, buf: []u8) -> Request_Id {
+req_id :: proc(n: u64, buf: []u8) -> Request_Id {
     assert(len(buf) >= 20, "request id buffer must hold any u64")
     assert(n <= MAX_REQUEST_ID, "originated request ids stay in the JSON safe integer range")
 
@@ -60,7 +59,7 @@ request_id_from_u64 :: proc(n: u64, buf: []u8) -> Request_Id {
 
 // Parse an id token back to the number we originated; `ok` is false if it is not a
 // bare integer we could have issued. An over-long token would wrap `parse_i64`.
-request_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
+req_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
     if len(id) > MAX_INTEGER_TOKEN_DIGITS {
         return 0, false
     }
@@ -75,7 +74,7 @@ request_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
 }
 
 // Verify the token is one of JSON-RPC's permitted id forms and within its bound.
-request_id_validate :: proc(id: Request_Id) -> Validation_Error {
+req_id_validate :: proc(id: Request_Id) -> Validation_Error {
     s := string(id)
 
     if len(s) == 0 {
@@ -106,7 +105,7 @@ request_id_validate :: proc(id: Request_Id) -> Validation_Error {
 
 // Write an id field verbatim, so the echo is byte-identical.
 field_request_id :: proc(e: ^Emitter, name: string, id: Request_Id) {
-    assert(request_id_validate(id) == .None, "emitted a correlation id that is not valid JSON")
+    assert(req_id_validate(id) == .None, "emitted a correlation id that is not valid JSON")
     key(e, name)
     _put(e, string(id))
 }

@@ -62,12 +62,12 @@ _rec_on_response :: proc(c: ^Client, resp: wire.Response, user_data: rawptr) {
 
     switch v in resp {
     case wire.Response_Ok:
-        s.last_response_id, _ = wire.request_id_to_u64(v.id)
+        s.last_response_id, _ = wire.req_id_to_u64(v.id)
         s.last_ok = true
         s.last_result_type = reflect.union_variant_typeid(v.result)
 
     case wire.Response_Error:
-        s.last_response_id, _ = wire.request_id_to_u64(v.id)
+        s.last_response_id, _ = wire.req_id_to_u64(v.id)
         s.last_ok = false
         s.last_result_type = nil
         s.last_error_code = v.error.code
