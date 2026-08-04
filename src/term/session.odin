@@ -3,6 +3,10 @@ package term
 import "core:io"
 import "core:time"
 
+// Probes carried in one scratch buffer; 512 bytes comfortably holds every DECRPM reply
+// plus the Kitty and DA1 responses.
+MAX_PROBE_BYTES :: 512
+
 // DECRPM state reported for a DECRQM query. Values are the wire status codes so the
 // enum can be produced directly from a parsed report.
 Mode_Status :: enum {
@@ -13,8 +17,7 @@ Mode_Status :: enum {
     Permanently_Reset = 4, // 4: off and cannot change (e.g. GNOME Terminal)
 }
 
-// Per-mode capabilities the terminal advertised via DECRQM. Mode numbers are noted
-// per field.
+// Per-mode capabilities the terminal advertised via DECRQM.
 Capabilities :: struct {
     // Synchronized output, DEC mode 2026.
     synchronized_output: bool,
@@ -27,11 +30,15 @@ Capabilities :: struct {
 
     // Kitty keyboard protocol (queried, not DECRQM).
     kitty_keyboard:      bool,
+
+    // Kitty is reporting each key's associated text (flag 16). Read back from the
+    // terminal after the push, because flag 8 routes every key through `CSI u` and a
+    // terminal that honors it without flag 16 leaves `Key.text` empty for every key.
+    kitty_text:          bool,
 }
 
-// Modes to enable on `session_enter`. A requested capability the terminal lacks is
-// skipped. Construct from `DEFAULT_OPTIONS` and override fields; Odin has no struct
-// field defaults, so defaults live in that constant.
+// Modes to enable on `session_enter`; a requested capability the terminal lacks is
+// skipped. Construct from `DEFAULT_OPTIONS` and override fields.
 Options :: struct {
     alternate_screen: bool,
     bracketed_paste:  bool,
@@ -46,8 +53,7 @@ Options :: struct {
     query_timeout_ms: i32,
 }
 
-// Default `Options` values, expressed as a constant since Odin structs cannot carry
-// per-field defaults.
+// Default `Options`; Odin structs cannot carry per-field defaults.
 DEFAULT_OPTIONS :: Options {
     alternate_screen = true,
     bracketed_paste  = true,
@@ -77,9 +83,7 @@ Session_Error :: enum {
 }
 
 // A live terminal session. Borrows `tty` and `out` (they must outlive it) and owns no
-// heap memory. `initial_cursor` / `initial_synchronized_output` snapshot what the
-// terminal reported for those presentation modes before enter, so leave can restore
-// them.
+// heap memory.
 Session :: struct {
     // Advertised capabilities from negotiation.
     caps:                        Capabilities,
@@ -127,18 +131,9 @@ mode_status_supported :: proc(s: Mode_Status) -> bool {
     return false
 }
 
-// Probes carried in one scratch buffer; 512 bytes comfortably holds every DECRPM reply
-// plus the Kitty and DA1 responses.
-MAX_PROBE_BYTES :: 512
-
-// Enter raw mode, negotiate capabilities, and enable the supported modes. On any
-// failure after raw mode is entered the terminal is restored before returning. Call
-// once before the event loop: the probe reads replies synchronously.
-//
-// Windows takes two handles: `tty` is the console INPUT handle (raw mode + negotiation
-// reads) and `size_handle` is the screen-buffer OUTPUT handle (VT processing + `get_size`).
-// `out` must write to the same console as `size_handle`, or the escapes it carries will
-// not be interpreted. On POSIX both are the single tty fd.
+// Enter raw mode, negotiate capabilities, and enable the supported modes; on failure the
+// terminal is restored before returning. Windows takes two handles: `tty` is the console
+// INPUT handle, `size_handle` the OUTPUT handle that `out` and `get_size` must target.
 session_enter :: proc(
     tty: Tty_Handle,
     size_handle: Tty_Handle,
@@ -156,10 +151,8 @@ session_enter :: proc(
 
     committed := false
 
-    // Enable console output translation (Windows: VT processing + UTF-8 code pages)
-    // before raw mode, so its restore runs last on leave. POSIX no-op. This unwind arm
-    // is registered first, so on failure it runs after the raw/mode unwind (LIFO) — the
-    // outermost-first pairing.
+    // Console output translation (Windows: VT processing + UTF-8 code pages) before raw
+    // mode, so its restore runs last on leave (LIFO). POSIX no-op.
     out_mode := output_mode_enter(size_handle)
     defer if !committed {
         output_mode_leave(out_mode)
@@ -172,20 +165,25 @@ session_enter :: proc(
 
     enabled: Enabled
 
-    // errdefer analogue (see src/client/session_replica.odin): any failure after raw
-    // mode is entered disables every mode turned on so far in reverse, best-effort
-    // flushes, and drops raw mode. The terminal must be clean after a partial failure.
+    // errdefer analogue (see src/client/session_replica.odin): any failure after raw mode
+    // disables what was turned on, flushes, and drops raw mode. The terminal must be clean.
     defer if !committed {
         restore(out, enabled)
         _ = flush_out(out)
         _ = disable_raw_mode(raw)
     }
 
+    // Kitty flags are pushed inside the probe batch so the query that follows reports which
+    // took effect. Pushing creates the stack entry, so the pop is owed from here on —
+    // including the failure paths below. A terminal that ignored the push ignores the pop too.
+    // @note(xyaman): always pop kitty, supported or not.
+    enabled.kitty_keyboard = options.negotiate && options.kitty_keyboard
+
     // Negotiate before any screen-mode write, so the probe replies land on the primary
     // screen rather than the alternate one.
     negotiated: Negotiated
     if options.negotiate {
-        n, nerr := negotiate(tty, out, startup_input, options.query_timeout_ms)
+        n, nerr := negotiate(tty, out, startup_input, options.query_timeout_ms, options.kitty_keyboard)
         if nerr != .None {
             return {}, nerr
         }
@@ -195,10 +193,9 @@ session_enter :: proc(
 
     caps := negotiated_capabilities(negotiated)
 
-    // The two enable gates differ deliberately. Alt-screen and mouse tracking predate
-    // DECRQM, so they enable best-effort whenever the mode is off OR unqueryable
-    // (`unprobed_mode_needs_enable`). Bracketed paste and in-band resize are only
-    // enabled on a positive `.Reset` confirmation that the mode exists and is off.
+    // The two enable gates differ: alt-screen and mouse tracking predate DECRQM, so they
+    // enable whenever the mode is off OR unqueryable (`unprobed_mode_needs_enable`).
+    // Bracketed paste and in-band resize enable only on a positive `.Reset`.
     if options.alternate_screen && unprobed_mode_needs_enable(negotiated.alternate_screen) {
         write_out(out, ALT_SCREEN_ENTER) or_return
         enabled.alternate_screen = true
@@ -209,8 +206,7 @@ session_enter :: proc(
         enabled.bracketed_paste = true
     }
 
-    // In-band resize is not gated by any option: it is always attempted when the
-    // terminal confirms the mode is off.
+    // In-band resize is not gated by an option: always attempted when the mode is off.
     if negotiated.in_band_resize == .Reset {
         write_out(out, IN_BAND_RESIZE_ENABLE) or_return
         enabled.in_band_resize = true
@@ -219,11 +215,6 @@ session_enter :: proc(
     if options.mouse && unprobed_mode_needs_enable(negotiated.mouse) {
         write_out(out, MOUSE_TRACKING_ENABLE) or_return
         enabled.mouse = true
-    }
-
-    if options.kitty_keyboard && caps.kitty_keyboard {
-        write_out(out, KITTY_PUSH_DISAMBIGUATE_REPORT_EVENTS) or_return
-        enabled.kitty_keyboard = true
     }
 
     if flush_out(out) != .None {
@@ -247,8 +238,7 @@ session_enter :: proc(
 
 // Restore the terminal: disable every mode `session_enter` turned on (reverse order),
 // restore presentation modes to the pre-enter snapshot, drop raw mode. Best-effort and
-// idempotent: after the first call `enabled` is cleared, so a second call disables
-// nothing.
+// idempotent: `enabled` is cleared, so a second call disables nothing.
 session_leave :: proc(s: ^Session) {
     restore(s.out, s.enabled)
     restore_presentation(s.out, s.initial_cursor, s.initial_synchronized_output)
@@ -283,10 +273,9 @@ restore :: proc(out: io.Writer, enabled: Enabled) {
     }
 }
 
-// Restore presentation modes to what the terminal reported at startup. A renderer
-// running between enter and leave may have hidden the cursor or left a synchronized
-// update open; this puts both back to the pre-enter snapshot. Permanent states cannot
-// be changed and are left untouched.
+// Restore presentation modes to what the terminal reported at startup: a renderer may
+// have hidden the cursor or left a synchronized update open. Permanent states cannot be
+// changed and are left untouched.
 restore_presentation :: proc(out: io.Writer, cursor, synchronized_output: Mode_Status) {
     switch synchronized_output {
     case .Set:
@@ -315,7 +304,7 @@ restore_presentation :: proc(out: io.Writer, cursor, synchronized_output: Mode_S
     }
 }
 
-// Per-mode DECRQM results plus the Kitty support flag. Zero value is all
+// Per-mode DECRQM results plus the Kitty query reply. Zero value is all
 // `.Not_Recognized` / kitty off, matching a terminal that answered nothing.
 Negotiated :: struct {
     cursor:              Mode_Status,
@@ -325,6 +314,9 @@ Negotiated :: struct {
     bracketed_paste:     Mode_Status,
     mouse:               Mode_Status,
     kitty_keyboard:      bool,
+
+    // Flags in force after the push, read back from the terminal rather than assumed.
+    kitty_flags:         u8,
 }
 
 // Collapse the raw per-mode reports into the advertised capability set.
@@ -334,13 +326,13 @@ negotiated_capabilities :: proc(n: Negotiated) -> Capabilities {
         in_band_resize = mode_status_supported(n.in_band_resize),
         bracketed_paste = mode_status_supported(n.bracketed_paste),
         kitty_keyboard = n.kitty_keyboard,
+        kitty_text = n.kitty_flags & KITTY_FLAG_ASSOCIATED_TEXT != 0,
     }
 }
 
-// Whether a pre-DECRQM mode (alt-screen, mouse) should be enabled: yes when the
-// terminal reports it off (`.Reset`) or gives no answer (`.Not_Recognized`); no when it
-// is already on or permanently fixed. This is looser than the positive `.Reset`-only
-// gate used for paste/resize.
+// Whether a pre-DECRQM mode (alt-screen, mouse) should be enabled: yes when the terminal
+// reports it off or gives no answer, no when it is already on or permanently fixed.
+// Looser than the `.Reset`-only gate used for paste/resize.
 unprobed_mode_needs_enable :: proc(s: Mode_Status) -> bool {
     switch s {
     case .Reset, .Not_Recognized:
@@ -354,20 +346,20 @@ unprobed_mode_needs_enable :: proc(s: Mode_Status) -> bool {
 }
 
 // Send every probe in one batch, then read replies until the DA1 sentinel arrives, the
-// deadline passes, or EOF. Bytes that are not probe replies are pushed back into
-// `startup_input` for the event loop. The timeout is one total monotonic deadline, not
-// a fresh timeout per byte.
+// deadline passes, or EOF. Non-probe bytes are pushed back into `startup_input`. The
+// timeout is one total monotonic deadline, not a fresh timeout per byte.
 negotiate :: proc(
     tty: Tty_Handle,
     out: io.Writer,
     startup_input: ^Reader,
     timeout_ms: i32,
+    push_kitty: bool,
 ) -> (
     result: Negotiated,
     err: Session_Error,
 ) {
-    // One batched write: DECRQM for each mode, the Kitty query, then DA1 as the
-    // end-sentinel whose reply follows all the others.
+    // One batched write: DECRQM for each mode, the Kitty push, the Kitty query, then DA1
+    // as the end-sentinel whose reply follows all the others.
     buf: [16]u8
     write_out(out, decrqm_request(buf[:], 25)) or_return
     write_out(out, decrqm_request(buf[:], 1049)) or_return
@@ -375,6 +367,13 @@ negotiate :: proc(
     write_out(out, decrqm_request(buf[:], 2048)) or_return
     write_out(out, decrqm_request(buf[:], 2004)) or_return
     write_out(out, decrqm_request(buf[:], 1003)) or_return
+
+    // The push goes before the query so the reply reports the flags actually in force. A
+    // terminal without the protocol ignores both and creates no stack entry to pop.
+    if push_kitty {
+        write_out(out, KITTY_PUSH_FLAGS) or_return
+    }
+
     write_out(out, KITTY_QUERY) or_return
     write_out(out, DA1_REQUEST) or_return
 
@@ -421,6 +420,7 @@ negotiate :: proc(
     }
 
     received := scratch[:n]
+    kitty_flags, kitty_ok := kitty_query_reply(received)
     result = Negotiated {
         cursor              = parse_mode_report(received, 25),
         alternate_screen    = parse_mode_report(received, 1049),
@@ -428,13 +428,13 @@ negotiate :: proc(
         in_band_resize      = parse_mode_report(received, 2048),
         bracketed_paste     = parse_mode_report(received, 2004),
         mouse               = parse_mode_report(received, 1003),
-        kitty_keyboard      = kitty_supported(received),
+        kitty_keyboard      = kitty_ok,
+        kitty_flags         = kitty_flags,
     }
 
-    // Preserve any real keystrokes typed during the probe window. Best-effort: the
-    // scratch is bounded at 512 bytes, well under the reader's push limit, so the only
-    // possible failure is OOM, in which case dropping a few pre-session keystrokes is
-    // acceptable and must not abort entering the terminal.
+    // Preserve real keystrokes typed during the probe window. Best-effort: the scratch is
+    // well under the reader's push limit, so only OOM can fail, and dropping a keystroke
+    // must not abort entering the terminal.
     _ = preserve_non_probe_input(startup_input, received)
 
     // A full scratch with no DA1 reply means the replies overran the buffer.
@@ -447,9 +447,7 @@ negotiate :: proc(
 
 // Minimal CSI scanner: from `start`, require `ESC [`, then skip params/intermediates
 // (0x20..0x3f) up to a final byte (0x40..0x7e). Returns the index one past the final
-// byte. `ok` is false if `start` is not a CSI or the sequence is incomplete/malformed.
-// Deliberately separate from the events.odin parser: this only finds boundaries and
-// finals, with no semantic decode.
+// byte. `ok` is false if `start` is not a CSI or the sequence is incomplete.
 csi_end :: proc(bytes: []u8, start: int) -> (int, bool) {
     if start + 2 > len(bytes) || bytes[start] != 0x1b || bytes[start + 1] != '[' {
         return 0, false
@@ -493,10 +491,8 @@ has_da_response :: proc(bytes: []u8) -> bool {
     return false
 }
 
-// Scan `bytes` for a DECRPM reply `CSI ? <mode> ; <status> $ y` matching `mode`. A
-// missing reply, a different mode, or status 0 yields `.Not_Recognized`. Member order
-// within the report is fixed by the protocol, so this is a positional scan, not the
-// order-independent wire decoder.
+// Scan `bytes` for a DECRPM reply `CSI ? <mode> ; <status> $ y`. A missing reply, a
+// different mode, or status 0 yields `.Not_Recognized`.
 parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
     i := 0
     for i + 3 < len(bytes) {
@@ -554,14 +550,10 @@ parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
     return .Not_Recognized
 }
 
-// True if `bytes` contains a Kitty keyboard reply `CSI ? <flags> u`. A `CSI ? ... c`
-// (a DA1 reply) is not a match, so the Kitty reply must actually be present.
-//
-// The first `?` in the reply buffer may belong to a DECRPM report; anchoring there and
-// scanning to the first 'u'/'c' would fail the Kitty check on interior bytes. DECRPM-first
-// replies are the norm on real terminals, so walk complete CSI blocks and test each
-// `?...u` reply individually.
-kitty_supported :: proc(bytes: []u8) -> bool {
+// Find the Kitty reply `CSI ? <flags> u` in `bytes` (a DA1 `CSI ? ... c` is not a match).
+// `ok` is false when no reply is present. Walks complete CSI blocks rather than anchoring
+// on the first `?`, which may belong to a preceding DECRPM report.
+kitty_query_reply :: proc(bytes: []u8) -> (u8, bool) {
     i := 0
     for i + 1 < len(bytes) {
         end, ok := csi_end(bytes, i)
@@ -571,20 +563,21 @@ kitty_supported :: proc(bytes: []u8) -> bool {
         }
 
         if bytes[i + 2] == '?' && bytes[end - 1] == 'u' {
-            _, flags_ok := kitty_flags_response(bytes[i:end])
+            flags, flags_ok := kitty_flags_response(bytes[i:end])
             if flags_ok {
-                return true
+                return flags, true
             }
         }
 
         i = end
     }
 
-    return false
+    return 0, false
 }
 
-// Parse a Kitty query response `CSI ? <flags> u` into its flags bitmask. `ok` is false
-// if the shape does not match.
+// Parse a Kitty query response `CSI ? <flags> u` into its flags bitmask. `ok` is false if
+// the shape does not match or the value cannot be a flag set — the field is only five
+// bits wide, so anything past `max(u8)` is a malformed reply, not a truncated one.
 kitty_flags_response :: proc(bytes: []u8) -> (u8, bool) {
     if len(bytes) < 4 {
         return 0, false
@@ -598,13 +591,16 @@ kitty_flags_response :: proc(bytes: []u8) -> (u8, bool) {
         return 0, false
     }
 
-    flags: u16 = 0
+    flags: u32 = 0
     for b in bytes[3:len(bytes) - 1] {
         if b < '0' || b > '9' {
             return 0, false
         }
 
-        flags = flags * 10 + u16(b - '0')
+        flags = flags * 10 + u32(b - '0')
+        if flags > u32(max(u8)) {
+            return 0, false
+        }
     }
 
     return u8(flags), true

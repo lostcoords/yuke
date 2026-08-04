@@ -11,6 +11,9 @@ and resize as escape sequences in the same byte stream as ordinary text, so the
 parser is a state machine fed one byte at a time and the reader assembles its
 output into whole `Event`s across read boundaries.
 
+A key event answers "which key" and "what did it produce" as separate fields, because
+terminals differ in how much of that they report. `Key` documents the split.
+
 Resize is the one thing that is not uniform. Terminals that support in-band
 resize report it as an escape sequence like any other event; on POSIX, everything
 else needs the SIGWINCH notifier. Windows has neither.

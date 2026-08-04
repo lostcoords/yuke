@@ -3,8 +3,6 @@ package term
 import "core:strings"
 import "core:testing"
 
-// --- pure scanner tests: no tty required ---
-
 @(test)
 test_parse_mode_report_status_codes :: proc(t: ^testing.T) {
     // Each of the five DECRPM status codes maps to its Mode_Status.
@@ -84,22 +82,36 @@ test_csi_end :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_kitty_supported :: proc(t: ^testing.T) {
-    // Kitty reply then DA1 -> supported.
-    testing.expect(t, kitty_supported(transmute([]u8)string("\x1b[?1u\x1b[?64;1c")))
+test_kitty_query_reply :: proc(t: ^testing.T) {
+    expect_kitty_reply :: proc(t: ^testing.T, s: string, flags: u8, loc := #caller_location) {
+        got, ok := kitty_query_reply(transmute([]u8)s)
+        testing.expect(t, ok, "expected a Kitty reply", loc = loc)
+        testing.expect_value(t, got, flags, loc = loc)
+    }
+
+    expect_no_kitty_reply :: proc(t: ^testing.T, s: string, loc := #caller_location) {
+        _, ok := kitty_query_reply(transmute([]u8)s)
+        testing.expect(t, !ok, "expected no Kitty reply", loc = loc)
+    }
+
+    // Kitty reply then DA1 -> supported, and the flags come back with it.
+    expect_kitty_reply(t, "\x1b[?1u\x1b[?64;1c", 1)
+
+    // The flags we push, echoed by a terminal that honored all of them.
+    expect_kitty_reply(t, "\x1b[?31u\x1b[?64;1c", KITTY_FLAGS_WANTED)
 
     // DA1 only -> unsupported (the `?...c` is not a `?...u`).
-    testing.expect(t, !kitty_supported(transmute([]u8)string("\x1b[?64;1c")))
-    testing.expect(t, !kitty_supported(transmute([]u8)string("")))
+    expect_no_kitty_reply(t, "\x1b[?64;1c")
+    expect_no_kitty_reply(t, "")
 
     // DECRPM replies arrive before the Kitty reply on real terminals; they must not
     // poison detection.
-    testing.expect(t, kitty_supported(transmute([]u8)string("\x1b[?25;2$y\x1b[?1u")))
-    testing.expect(t, kitty_supported(transmute([]u8)string("\x1b[?25;2$y\x1b[?1049;2$y\x1b[?1u")))
+    expect_kitty_reply(t, "\x1b[?25;2$y\x1b[?1u", 1)
+    expect_kitty_reply(t, "\x1b[?25;2$y\x1b[?1049;2$y\x1b[?31u", 31)
 
     // A malformed Kitty-shaped block is skipped, and a later valid reply is accepted.
-    testing.expect(t, kitty_supported(transmute([]u8)string("\x1b[?1;xu\x1b[?1u")))
-    testing.expect(t, !kitty_supported(transmute([]u8)string("\x1b[?1;xu")))
+    expect_kitty_reply(t, "\x1b[?1;xu\x1b[?1u", 1)
+    expect_no_kitty_reply(t, "\x1b[?1;xu")
 }
 
 @(test)
@@ -199,20 +211,16 @@ test_invalid_query_timeout :: proc(t: ^testing.T) {
     opts := DEFAULT_OPTIONS
     opts.query_timeout_ms = -1
 
-    // The negative-timeout guard fires before the terminal is touched, so this dummy
-    // handle is never read and nothing is written. Zero-valued so it is portable across
-    // the per-OS `Tty_Handle` (a POSIX fd vs a Windows HANDLE).
+    // The negative-timeout guard fires before the terminal is touched, so this handle is
+    // never read. Zero-valued to stay portable across the per-OS `Tty_Handle`.
     dummy: Tty_Handle
     _, err := session_enter(dummy, dummy, w, &input, opts)
     testing.expect_value(t, err, Session_Error.Invalid_Query_Timeout)
     testing.expect_value(t, len(strings.to_string(b)), 0)
 }
 
-// --- restore write-ordering (no tty required) ---
-//
 // A full `session_enter` needs a real tty for raw mode, so the disable ordering is
-// exercised directly through `restore`, driven into a builder-backed writer.
-
+// exercised through `restore` into a builder-backed writer.
 @(test)
 test_restore_disables_in_reverse :: proc(t: ^testing.T) {
     b: strings.Builder
@@ -262,8 +270,6 @@ test_restore_only_enabled_modes :: proc(t: ^testing.T) {
     testing.expect(t, !strings.contains(out, KITTY_POP))
 }
 
-// --- test helpers ---
-
 // Assert the next reader event is a literal-char key with `char`.
 expect_reader_char :: proc(t: ^testing.T, r: ^Reader, char: rune, loc := #caller_location) {
     ev, err := reader_next(r)
@@ -281,4 +287,39 @@ expect_reader_code :: proc(t: ^testing.T, r: ^Reader, code: Key_Code, loc := #ca
     k, ok := ev.(Key)
     testing.expect(t, ok, "expected a key event", loc = loc)
     testing.expect_value(t, k.code, code, loc = loc)
+}
+
+@(test)
+test_kitty_text_capability_tracks_the_reported_flags :: proc(t: ^testing.T) {
+    // Flag 8 routes every key through `CSI u`, which makes flag 16 the only source of
+    // associated text. A terminal that keeps 8 and drops 16 must not look like it reports
+    // text, so the capability comes from the reply rather than from what was pushed.
+    honored := negotiated_capabilities(Negotiated{kitty_keyboard = true, kitty_flags = 31})
+    testing.expect(t, honored.kitty_keyboard)
+    testing.expect(t, honored.kitty_text)
+
+    partial := negotiated_capabilities(Negotiated{kitty_keyboard = true, kitty_flags = 15})
+    testing.expect(t, partial.kitty_keyboard)
+    testing.expect(t, !partial.kitty_text)
+
+    // No Kitty reply at all: neither the protocol nor its text channel.
+    none := negotiated_capabilities(Negotiated{})
+    testing.expect(t, !none.kitty_keyboard)
+    testing.expect(t, !none.kitty_text)
+}
+
+@(test)
+test_kitty_flags_response_rejects_oversized_values :: proc(t: ^testing.T) {
+    // The flag field is five bits wide; a value past max(u8) is malformed, not truncated.
+    // Accumulating into a narrow integer would have folded 256 back to 0 and reported it
+    // as a valid "no flags" reply.
+    _, ok := kitty_flags_response(transmute([]u8)string("\x1b[?256u"))
+    testing.expect(t, !ok)
+
+    _, huge := kitty_flags_response(transmute([]u8)string("\x1b[?99999999999u"))
+    testing.expect(t, !huge)
+
+    max_flags, max_ok := kitty_flags_response(transmute([]u8)string("\x1b[?255u"))
+    testing.expect(t, max_ok)
+    testing.expect_value(t, max_flags, u8(255))
 }

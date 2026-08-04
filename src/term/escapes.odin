@@ -23,10 +23,24 @@ CURSOR_HIDE :: "\x1b[?25l"
 KITTY_QUERY :: "\x1b[?u"
 KITTY_POP :: "\x1b[<u"
 
-// Push Kitty keyboard flags `disambiguate (1) | report_events (2) = 3`. The session
-// layer only ever pushes this one combination, so it's a plain constant rather than
-// a flags abstraction built for a single caller.
-KITTY_PUSH_DISAMBIGUATE_REPORT_EVENTS :: "\x1b[>3u"
+// Kitty keyboard flags. Alternates and text only reach keys that take the escape path, so
+// the set is pushed whole — but a terminal silently keeps only the bits it implements,
+// which is why the push is followed by a query rather than trusted.
+KITTY_FLAG_DISAMBIGUATE :: u8(1)
+KITTY_FLAG_EVENT_TYPES :: u8(2)
+KITTY_FLAG_ALTERNATE_KEYS :: u8(4)
+KITTY_FLAG_ALL_KEYS_ESCAPED :: u8(8)
+KITTY_FLAG_ASSOCIATED_TEXT :: u8(16)
+
+KITTY_FLAGS_WANTED ::
+    KITTY_FLAG_DISAMBIGUATE |
+    KITTY_FLAG_EVENT_TYPES |
+    KITTY_FLAG_ALTERNATE_KEYS |
+    KITTY_FLAG_ALL_KEYS_ESCAPED |
+    KITTY_FLAG_ASSOCIATED_TEXT
+#assert(KITTY_FLAGS_WANTED == 31)
+
+KITTY_PUSH_FLAGS :: "\x1b[>31u"
 
 DA1_REQUEST :: "\x1b[c"
 

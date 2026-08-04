@@ -1,10 +1,32 @@
 package term
 
+import "core:unicode"
 import "core:unicode/utf8"
 
-// Modifier keys carried on a key event. `Shift`, `Alt`, `Ctrl` come from legacy
-// and xterm sequences; `Super`, `Hyper`, `Meta` are Kitty-only and stay clear on
-// legacy paths.
+// Params one CSI sequence can carry across all `;` groups and `:` sub-params.
+MAX_CSI_PARAMS :: 16
+
+// Text codepoints one key event can carry: the param array less the key and modifier
+// groups, which always precede a text group.
+MAX_KEY_TEXT_RUNES :: MAX_CSI_PARAMS - 2
+
+// Sized for the longest text the param array can deliver.
+MAX_KEY_TEXT_BYTES :: MAX_KEY_TEXT_RUNES * utf8.UTF_MAX
+#assert(MAX_KEY_TEXT_BYTES <= int(max(u8)))
+
+// The Private Use Area block Kitty reserves for functional keys. Assignments currently
+// stop at ISO_Level5_Shift (57454), but the whole block is spoken for, so an unrecognized
+// codepoint inside it is a functional key this package has no name for, never text.
+FUNCTIONAL_KEY_MIN :: rune(57344)
+FUNCTIONAL_KEY_MAX :: rune(63743)
+
+// Largest value any param can carry: a Unicode scalar. Accumulation sticks here instead
+// of wrapping, so an overlong field stays out of range rather than folding onto a valid
+// codepoint, mode number, or modifier mask.
+PARAM_MAX :: u32(utf8.MAX_RUNE)
+
+// Modifiers held, as the terminal reported them; never inferred from the character an
+// event produced. `Super`, `Hyper`, `Meta` are Kitty-only.
 Modifier :: enum {
     Shift,
     Alt,
@@ -16,6 +38,15 @@ Modifier :: enum {
 
 Modifiers :: bit_set[Modifier]
 
+// Lock states (Kitty only). Kept out of `Modifiers` so `mods == {.Ctrl}` still matches
+// with Num Lock on.
+Lock :: enum {
+    Caps,
+    Num,
+}
+
+Locks :: bit_set[Lock]
+
 // Kitty reports press/repeat/release; legacy sequences are always `.Press`.
 Key_Event :: enum {
     Press,
@@ -23,9 +54,12 @@ Key_Event :: enum {
     Release,
 }
 
-// Named key, or `.Char` when the event carries a literal codepoint in `Key.char`.
+// Named key, `.Char` for a literal codepoint, `.Unknown` for an unnamed functional key
+// (codepoint in `Key.char`), or `.Text` for a Kitty text-only event with no key at all.
 Key_Code :: enum {
     Char,
+    Unknown,
+    Text,
     Up,
     Down,
     Left,
@@ -40,6 +74,7 @@ Key_Code :: enum {
     Tab,
     Backspace,
     Esc,
+    Menu,
     F1,
     F2,
     F3,
@@ -54,12 +89,86 @@ Key_Code :: enum {
     F12,
 }
 
-// A decoded key press. `char` is meaningful only when `code == .Char`.
+// A decoded key event. `code`/`char` say which key; `text` says what it produced.
 Key :: struct {
-    code:  Key_Code,
-    char:  rune,
-    mods:  Modifiers,
-    event: Key_Event,
+    code:        Key_Code,
+
+    // The key itself, case-folded so the same physical key reports the same value on
+    // every terminal. 0 for a named key and for a text-only event.
+    char:        rune,
+
+    // Alternates, 0 when unreported. `shifted` is the resolved character when it differs
+    // from the key, not a Shift signal — Caps Lock produces it too on the legacy path.
+    shifted:     rune,
+    base_layout: rune,
+
+    // UTF-8 of the text produced, never a control code. Empty for a named or Alt-modified
+    // key; a terminal that reports text alongside a modifier is taken at its word.
+    text:        [MAX_KEY_TEXT_BYTES]u8,
+    text_len:    u8,
+    mods:        Modifiers,
+    locks:       Locks,
+    event:       Key_Event,
+}
+
+// The text `k` produced. Borrows `k`.
+key_text :: proc(k: ^Key) -> string {
+    assert(int(k.text_len) <= len(k.text), "key text length exceeds its buffer")
+
+    return string(k.text[:k.text_len])
+}
+
+// Append `cp` to `k`'s text. A control code is not text; text past the buffer is dropped
+// rather than costing the keystroke.
+key_text_append :: proc(k: ^Key, cp: rune) {
+    assert(int(k.text_len) <= len(k.text), "key text length exceeds its buffer")
+
+    if !is_text_rune(cp) {
+        return
+    }
+
+    encoded, n := utf8.encode_rune(cp)
+    if n > len(k.text) - int(k.text_len) {
+        return
+    }
+
+    copy(k.text[k.text_len:], encoded[:n])
+    k.text_len += u8(n)
+}
+
+// Whether `k` is the keystroke `cp` held with `mods`. The key, the text it produced, and
+// the shifted alternate are all tried, since which one a terminal fills in varies; Shift
+// need not agree, having been spent producing `cp`. Spelling a punctuation key unshifted
+// (`Shift+;` for `:`) needs the alternate, which a legacy terminal does not report.
+key_matches :: proc(k: ^Key, cp: rune, mods: Modifiers = {}) -> bool {
+    assert(int(k.text_len) <= len(k.text), "key text length exceeds its buffer")
+
+    // A named key has no character, and `shifted` is 0 when unreported.
+    if cp == 0 {
+        return false
+    }
+
+    if k.char == cp && k.mods == mods {
+        return true
+    }
+
+    rest := k.mods - {.Shift} == mods - {.Shift}
+    if rest && k.text_len != 0 {
+        want := ascii_upper(cp) if .Shift in mods else cp
+        encoded, n := utf8.encode_rune(want)
+        if key_text(k) == string(encoded[:n]) {
+            return true
+        }
+    }
+
+    return rest && k.shifted == cp
+}
+
+// Whether `cp` can stand for a character: as text, a key, or an alternate. A control code
+// names a key, never a character; `utf8.valid_rune` rejects surrogates and codepoints
+// past `MAX_RUNE`.
+is_text_rune :: proc(cp: rune) -> bool {
+    return !unicode.is_control(cp) && utf8.valid_rune(cp)
 }
 
 // X10 mouse action. `Move`/`Move_Rightclick` are drag reports; scroll wheel maps
@@ -91,7 +200,7 @@ Paste_End :: struct {}
 Invalid :: struct {}
 
 // One completed parser outcome. A `nil` union value means "no event yet / need
-// more bytes" (the reference's null); it is never used to signal `.none`.
+// more bytes"; it is never used to signal that nothing happened.
 Parse_Event :: union {
     Key,
     Mouse,
@@ -116,20 +225,22 @@ Parser_State :: enum {
 Parser :: struct {
     state:            Parser_State,
 
-    // CSI params: `;` separates groups, `:` marks a sub-param continuation of the
-    // prior param's group (Kitty `key:… ; mods:event`). `subparam[i]` records that.
-    params:           [16]u16,
-    subparam:         [16]bool,
+    // CSI params: `;` separates groups, `:` marks a sub-param continuation of the prior
+    // param's group (Kitty `key:… ; mods:event`); `subparam[i]` records that. 32-bit
+    // because a Kitty key or text codepoint is a full Unicode scalar.
+    params:           [MAX_CSI_PARAMS]u32,
+    subparam:         [MAX_CSI_PARAMS]bool,
     param_count:      int,
-    param_cur:        u16,
+    param_cur:        u32,
     param_digits:     bool,
     pending_subparam: bool, // param being accumulated followed a `:`
     private:          u8, // '<' '=' '>' '?' seen before params, else 0
 
-    // UTF-8 assembly of a multi-byte lead sequence.
+    // UTF-8 assembly of a multi-byte lead sequence. `utf8_alt` marks an ESC-prefixed lead.
     utf8:             [4]u8,
     utf8_len:         int,
     utf8_need:        int,
+    utf8_alt:         bool,
 
     // X10 mouse: three payload bytes after `ESC [ M`.
     mouse:            [3]u8,
@@ -167,14 +278,23 @@ parser_ground :: proc(p: ^Parser, b: u8) -> Parse_Event {
     case 0x1b:
         p.state = .Escape
         return nil
+    case 0x00:
+        // Ctrl+Space / Ctrl+@. Reported as the space key so it matches the `CSI 32;5u` a
+        // Kitty terminal sends; left as-is it would be a `.Char` with no codepoint.
+        return Key{code = .Char, char = ' ', mods = {.Ctrl}}
     case 0x08, 0x7f:
         return Key{code = .Backspace}
     case 0x09:
         return Key{code = .Tab}
     case 0x0a, 0x0d:
         return Key{code = .Enter}
+    case 0x1c ..= 0x1f:
+        // Ctrl+\ ] ^ _ — the C0 codes above the letter range, recovered as byte + 0x40 to
+        // match the `CSI 92;5u` … `CSI 95;5u` a Kitty terminal sends.
+        return Key{code = .Char, char = rune(b) + 0x40, mods = {.Ctrl}}
     case 0x01 ..= 0x07, 0x0b ..= 0x0c, 0x0e ..= 0x1a:
-        // Ctrl+A..Z (tab / enter / backspace peeled off above). No shift synthesis.
+        // Ctrl+A..Z (tab / enter / backspace peeled off above), the legacy Ctrl
+        // encoding. A control code is never text.
         return Key{code = .Char, char = rune(b) + 'a' - 0x01, mods = {.Ctrl}}
     case:
         need, ok := utf8_seq_len(b)
@@ -196,6 +316,9 @@ parser_ground :: proc(p: ^Parser, b: u8) -> Parse_Event {
 
 // Accumulate UTF-8 continuation bytes, then emit the codepoint.
 parser_step_utf8 :: proc(p: ^Parser, b: u8) -> Parse_Event {
+    assert(p.utf8_len < len(p.utf8), "utf8 assembly ran past its buffer")
+    assert(p.utf8_need > 1 && p.utf8_need <= len(p.utf8), "utf8 sequence length out of range")
+
     p.utf8[p.utf8_len] = b
     p.utf8_len += 1
     if p.utf8_len < p.utf8_need {
@@ -203,13 +326,13 @@ parser_step_utf8 :: proc(p: ^Parser, b: u8) -> Parse_Event {
     }
 
     cp, size := utf8.decode_rune(p.utf8[:p.utf8_len])
-    if size != p.utf8_len {
-        parser_reset(p)
+    alt, need := p.utf8_alt, p.utf8_len
+    parser_reset(p)
+    if size != need {
         return Invalid{}
     }
 
-    parser_reset(p)
-    return emit_char(cp)
+    return emit_alt_char(cp) if alt else emit_char(cp)
 }
 
 // After ESC: CSI (`[`), SS3 (`O`), or an Alt / Ctrl+Alt char.
@@ -222,15 +345,30 @@ parser_escape :: proc(p: ^Parser, b: u8) -> Parse_Event {
         p.state = .Ss3
         return nil
     case 0x01 ..= 0x0c, 0x0e ..= 0x1a:
-        // ESC + ctrl char = Ctrl+Alt (raw byte + 0x60). No shift synthesis.
+        // ESC + ctrl char = Ctrl+Alt (raw byte + 0x60).
         parser_reset(p)
         return Key{code = .Char, char = rune(b) + 0x60, mods = {.Ctrl, .Alt}}
     case:
-        // ESC + char = Alt. The raw byte is kept verbatim: unlike the ground path,
-        // uppercase ASCII is NOT rewritten to shift+lowercase. The asymmetry is
-        // deliberate.
-        parser_reset(p)
-        return Key{code = .Char, char = rune(b), mods = {.Alt}}
+        // ESC + char = Alt. A lead byte enters the ground path's UTF-8 assembly so a
+        // non-ASCII Alt key is not cut off after one byte.
+        need, ok := utf8_seq_len(b)
+        if !ok {
+            parser_reset(p)
+            return Invalid{}
+        }
+
+        if need == 1 {
+            parser_reset(p)
+            return emit_alt_char(rune(b))
+        }
+
+        p.utf8[0] = b
+        p.utf8_len = 1
+        p.utf8_need = need
+        p.utf8_alt = true
+        p.state = .Utf8
+
+        return nil
     }
 }
 
@@ -238,9 +376,13 @@ parser_escape :: proc(p: ^Parser, b: u8) -> Parse_Event {
 parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
     switch b {
     case '0' ..= '9':
-        // u16 params accumulate with wrapping; Odin unsigned arithmetic wraps by
-        // default, so an overlong numeric field folds modulo 2^16 as in the reference.
-        p.param_cur = p.param_cur * 10 + u16(b - '0')
+        // Saturate rather than wrap: once a field passes `PARAM_MAX` it stops
+        // accumulating and stays out of range, so no length of digits can land it back on
+        // a meaningful value.
+        if p.param_cur <= PARAM_MAX {
+            p.param_cur = p.param_cur * 10 + u32(b - '0')
+        }
+
         p.param_digits = true
         return nil
     case ';':
@@ -255,10 +397,10 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
         p.private = b
         return nil
     case 0x20 ..= 0x2f:
-        return nil // intermediate byte: ignored (pragmatic)
+        return nil // intermediate byte: ignored
     case 'M':
         // Bare `ESC [ M` (no params, no private) is X10 mouse; three bytes follow.
-        // With params it is SGR mouse etc. — unsupported for now.
+        // With params it is SGR mouse etc., which this parser does not decode.
         if p.private == 0 && p.param_count == 0 && !p.param_digits {
             p.state = .Mouse
             p.mouse_len = 0
@@ -296,10 +438,20 @@ parser_step_mouse :: proc(p: ^Parser, b: u8) -> Parse_Event {
     return m
 }
 
-// SS3 final byte -> F1-F4 / home / end.
+// SS3 final byte -> arrows / F1-F4 / home / end. Emitted in cursor-key mode (DECCKM) and
+// only without modifiers, so there is no envelope to read. Nothing here resets DECCKM, so
+// the arrows matter: a terminal left in cursor-key mode by a previous program sends them.
 parser_finish_ss3 :: proc(p: ^Parser, b: u8) -> Parse_Event {
     parser_reset(p)
     switch b {
+    case 'A':
+        return Key{code = .Up}
+    case 'B':
+        return Key{code = .Down}
+    case 'C':
+        return Key{code = .Right}
+    case 'D':
+        return Key{code = .Left}
     case 'P':
         return Key{code = .F1}
     case 'Q':
@@ -330,7 +482,9 @@ parser_push_param :: proc(p: ^Parser) {
 }
 
 // Value of sub-param `si` in `;`-group `gi` (0-based), or `ok == false` if absent.
-parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u16, bool) {
+parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u32, bool) {
+    assert(gi >= 0 && si >= 0, "group and sub-param indices are 0-based")
+
     g := 0
     s := 0
     for i in 0 ..< p.param_count {
@@ -353,23 +507,38 @@ parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u16, bool) {
 
 // Map a completed CSI sequence (params + final byte) to a key/mouse/resize event.
 parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
-    mods := mods_from_param(p.params[1]) if p.param_count >= 2 else {}
+    // Kitty's own form shares the modifier group but assembles a different key.
+    if final == 'u' {
+        return parser_dispatch_kitty(p)
+    }
+
+    key := parser_key_envelope(p)
+
     switch final {
     case 'A':
-        return Key{code = .Up, mods = mods}
+        key.code = .Up
     case 'B':
-        return Key{code = .Down, mods = mods}
+        key.code = .Down
     case 'C':
-        return Key{code = .Right, mods = mods}
+        key.code = .Right
     case 'D':
-        return Key{code = .Left, mods = mods}
+        key.code = .Left
     case 'H':
-        return Key{code = .Home, mods = mods}
+        key.code = .Home
     case 'F':
-        return Key{code = .End, mods = mods}
+        key.code = .End
+    case 'P':
+        key.code = .F1
+    case 'Q':
+        key.code = .F2
+    case 'R':
+        key.code = .F3
+    case 'S':
+        key.code = .F4
     case 'Z':
         // Shift-tab forces Shift, ignoring any computed modifiers.
-        return Key{code = .Tab, mods = {.Shift}}
+        key.code = .Tab
+        key.mods = {.Shift}
     case '~':
         n := p.params[0] if p.param_count >= 1 else 0
         if n == 200 {
@@ -385,9 +554,7 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
             return Invalid{}
         }
 
-        return Key{code = code, mods = mods}
-    case 'u':
-        return parser_dispatch_kitty(p)
+        key.code = code
     case 't':
         // In-band resize report `CSI 48 … t` (DEC mode 2048). The reported
         // dimensions are discarded; the caller re-queries via get_size.
@@ -399,56 +566,158 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
     case:
         return Invalid{}
     }
+
+    return key
 }
 
-// Kitty `CSI key:… ; mods:event ; text u`.
+// Kitty `CSI key:shifted:base-layout ; mods:event ; text u`. Every group past the key is
+// optional, and each is taken only as reported.
 parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
-    // A `?`-private payload is a Kitty query response, never a keystroke; guard it
-    // so query replies can never be materialized as fake key events.
+    // A `?`-private payload is a Kitty query reply, never a keystroke.
     if p.private == '?' {
         return Invalid{}
     }
 
-    cp, ok := parser_group_sub(p, 0, 0)
+    raw, ok := parser_group_sub(p, 0, 0)
     if !ok {
         return Invalid{}
     }
 
-    code, char := kitty_key_code(rune(cp))
-    mods := Modifiers{}
-    if m, has := parser_group_sub(p, 1, 0); has {
-        mods = mods_from_param(m)
-    }
+    key := parser_key_envelope(p)
 
-    kind := Key_Event.Press
-    if k, has := parser_group_sub(p, 1, 1); has {
-        switch k {
-        case 2:
-            kind = .Repeat
-        case 3:
-            kind = .Release
-        case:
-            kind = .Press
+    if raw == 0 {
+        // Key 0 is the protocol's "no key is identifiable with this text" — a dead key or
+        // an OS-composed character. It carries text and nothing else.
+        key.code = .Text
+    } else {
+        code, char, valid := kitty_key_code(rune(raw))
+        if !valid {
+            return Invalid{}
+        }
+
+        key.code, key.char = code, char
+
+        // Alternates describe a character key; a named key has none.
+        if key.code == .Char {
+            key.shifted = kitty_alternate(p, 1)
+            key.base_layout = kitty_alternate(p, 2)
         }
     }
 
-    return Key{code = code, char = char, mods = mods, event = kind}
-}
+    // Third group: the produced text, one decimal codepoint per sub-param.
+    for si in 0 ..< MAX_CSI_PARAMS {
+        t, has := parser_group_sub(p, 2, si)
+        if !has {
+            break
+        }
 
-// Uppercase ASCII is reported as Shift + lowercase. This synthesis is confined to the
-// ground/UTF-8 path on purpose: the Alt path keeps its raw byte and Kitty `u`
-// codepoints are kept verbatim.
-emit_char :: proc(cp: rune) -> Key {
-    if cp >= 'A' && cp <= 'Z' {
-        return Key{code = .Char, char = cp + 32, mods = {.Shift}}
+        key_text_append(&key, rune(t))
     }
 
-    return Key{code = .Char, char = cp}
+    // Nothing identifies a text event but its text, so an empty one reports no keystroke.
+    // An omitted key group (`CSI ; 5 u`) lands here too.
+    if key.code == .Text && key.text_len == 0 {
+        return Invalid{}
+    }
+
+    assert(key.code != .Text || key.char == 0, "a text event identifies no key")
+    assert(
+        key.code != .Unknown || (key.char >= FUNCTIONAL_KEY_MIN && key.char <= FUNCTIONAL_KEY_MAX),
+        "an unnamed key keeps its functional-key codepoint",
+    )
+
+    return key
 }
 
-// xterm modifier encoding: 1 + bitmask. Kitty adds 8/16/32 (super/hyper/meta);
-// 64/128 (caps/num-lock) are ignored.
-mods_from_param :: proc(v: u16) -> Modifiers {
+// The `mods:event-type` group both CSI forms share. Read by group, since sub-params of
+// the key group shift the positions.
+parser_key_envelope :: proc(p: ^Parser) -> Key {
+    key: Key
+    if m, has := parser_group_sub(p, 1, 0); has {
+        key.mods, key.locks = mods_from_param(m)
+    }
+
+    key.event = parser_event_type(p)
+
+    return key
+}
+
+// Sub-param 1 of the modifier group; absent or unrecognized is a press.
+parser_event_type :: proc(p: ^Parser) -> Key_Event {
+    v, has := parser_group_sub(p, 1, 1)
+    if !has {
+        return .Press
+    }
+
+    switch v {
+    case 2:
+        return .Repeat
+    case 3:
+        return .Release
+    case:
+        return .Press
+    }
+}
+
+// Sub-param `si` of the key group, or 0 when absent, empty, or not a usable codepoint.
+kitty_alternate :: proc(p: ^Parser, si: int) -> rune {
+    assert(si > 0, "sub-param 0 of the key group is the key itself")
+
+    v, ok := parser_group_sub(p, 0, si)
+    if !ok {
+        return 0
+    }
+
+    cp := rune(v)
+    if !is_text_rune(cp) {
+        return 0
+    }
+
+    return cp
+}
+
+// A literal codepoint from the legacy byte stream: the terminal already resolved the
+// character, so that is the text. `char` case-folds it to match what Kitty would report
+// for the same key. No modifier is inferred — Shift and Caps Lock produce the same byte.
+emit_char :: proc(cp: rune) -> Key {
+    key := Key {
+        code = .Char,
+        char = ascii_lower(cp),
+    }
+    key_text_append(&key, cp)
+
+    return key
+}
+
+// The same key under Alt, which produces no text. The resolved character survives in
+// `shifted` when the fold changed it — the only record the legacy stream keeps of it.
+emit_alt_char :: proc(cp: rune) -> Key {
+    key := Key {
+        code = .Char,
+        char = ascii_lower(cp),
+        mods = {.Alt},
+    }
+    if key.char != cp {
+        key.shifted = cp
+    }
+
+    return key
+}
+
+// Case-fold a key's codepoint. ASCII only: it is the one case mapping that holds under
+// every keyboard layout.
+ascii_lower :: proc(cp: rune) -> rune {
+    return cp + 'a' - 'A' if cp >= 'A' && cp <= 'Z' else cp
+}
+
+// Inverse of `ascii_lower`, for resolving a Shift-modified match against reported text.
+ascii_upper :: proc(cp: rune) -> rune {
+    return cp - 'a' + 'A' if cp >= 'a' && cp <= 'z' else cp
+}
+
+// xterm modifier encoding: 1 + bitmask. Kitty adds 8/16/32 (super/hyper/meta) and the
+// locks 64/128.
+mods_from_param :: proc(v: u32) -> (Modifiers, Locks) {
     m := v - 1 if v > 0 else 0
     mods: Modifiers
     if m & 1 != 0 {
@@ -475,94 +744,91 @@ mods_from_param :: proc(v: u16) -> Modifiers {
         mods += {.Meta}
     }
 
-    return mods
+    locks: Locks
+    if m & 64 != 0 {
+        locks += {.Caps}
+    }
+
+    if m & 128 != 0 {
+        locks += {.Num}
+    }
+
+    return mods, locks
 }
 
-// Kitty `CSI codepoint u` -> key code. C0-legacy keys keep their ASCII codes;
-// functional keys live in the Unicode PUA; anything else is a literal codepoint.
-kitty_key_code :: proc(cp: rune) -> (code: Key_Code, char: rune) {
+// Kitty `CSI codepoint u` -> key code. `ok` is false when the codepoint names no key at
+// all. Legacy keys keep their ASCII codes; functional keys live in the reserved PUA
+// block; anything else is a literal character.
+kitty_key_code :: proc(cp: rune) -> (code: Key_Code, char: rune, ok: bool) {
     switch cp {
     case 13:
-        return .Enter, 0
+        return .Enter, 0, true
     case 9:
-        return .Tab, 0
+        return .Tab, 0, true
     case 27:
-        return .Esc, 0
+        return .Esc, 0, true
     case 8, 127:
-        return .Backspace, 0
+        return .Backspace, 0, true
     }
 
-    if fk, is_fk := functional_key(cp); is_fk {
-        return fk, 0
+    if cp >= FUNCTIONAL_KEY_MIN && cp <= FUNCTIONAL_KEY_MAX {
+        if fk, named := functional_key(cp); named {
+            return fk, 0, true
+        }
+
+        // A functional key with no name here keeps its codepoint, so a caller can still
+        // tell one from another; it is never `.Char`.
+        return .Unknown, cp, true
     }
 
-    return .Char, cp
+    // Every other control code is a key we cannot name, not a character.
+    if !is_text_rune(cp) {
+        return {}, 0, false
+    }
+
+    // Kitty is specified to send the unshifted key, but folding here costs nothing and
+    // keeps `char` case-independent even from a terminal that sends the shifted one.
+    return .Char, ascii_lower(cp), true
 }
 
-// Kitty functional-key codepoints (PUA 57344+). The gaps (57358..57363 and
-// 57376+) are intentional: those codepoints have no mapping in the reference.
+// Reserved-PUA keys this package names: the keypad twins (unfolded by the disambiguate
+// flag) plus Menu, folded onto the same codes as their legacy-encoded primary-cluster
+// counterparts. Everything else in the PUA block reaches the caller as `.Unknown`.
 functional_key :: proc(cp: rune) -> (Key_Code, bool) {
     switch cp {
-    case 57344:
-        return .Esc, true
-    case 57345:
+    case 57363:
+        return .Menu, true
+    case 57414:
         return .Enter, true
-    case 57346:
-        return .Tab, true
-    case 57347:
-        return .Backspace, true
-    case 57348:
-        return .Insert, true
-    case 57349:
-        return .Delete, true
-    case 57350:
+    case 57417:
         return .Left, true
-    case 57351:
+    case 57418:
         return .Right, true
-    case 57352:
+    case 57419:
         return .Up, true
-    case 57353:
+    case 57420:
         return .Down, true
-    case 57354:
+    case 57421:
         return .Page_Up, true
-    case 57355:
+    case 57422:
         return .Page_Down, true
-    case 57356:
+    case 57423:
         return .Home, true
-    case 57357:
+    case 57424:
         return .End, true
-    case 57364:
-        return .F1, true
-    case 57365:
-        return .F2, true
-    case 57366:
-        return .F3, true
-    case 57367:
-        return .F4, true
-    case 57368:
-        return .F5, true
-    case 57369:
-        return .F6, true
-    case 57370:
-        return .F7, true
-    case 57371:
-        return .F8, true
-    case 57372:
-        return .F9, true
-    case 57373:
-        return .F10, true
-    case 57374:
-        return .F11, true
-    case 57375:
-        return .F12, true
+    case 57425:
+        return .Insert, true
+    case 57426:
+        return .Delete, true
     case:
         return .Char, false
     }
 }
 
-// First param of a `~`-terminated CSI -> named key. Codes 16 and 22 are
-// deliberate gaps (they fall through to invalid), matching the reference.
-tilde_code :: proc(n: u16) -> (Key_Code, bool) {
+// First param of a `~`-terminated CSI -> named key. Home and End have two encodings each
+// (`CSI H`/`CSI 7~`, `CSI F`/`CSI 8~`): Kitty sends the letter forms, xterm/rxvt/Linux
+// console the numeric ones. Codes 16 and 22 are unassigned and fall through to invalid.
+tilde_code :: proc(n: u32) -> (Key_Code, bool) {
     switch n {
     case 1:
         return .Home, true
@@ -576,6 +842,10 @@ tilde_code :: proc(n: u16) -> (Key_Code, bool) {
         return .Page_Up, true
     case 6:
         return .Page_Down, true
+    case 7:
+        return .Home, true
+    case 8:
+        return .End, true
     case 11:
         return .F1, true
     case 12:
@@ -600,6 +870,8 @@ tilde_code :: proc(n: u16) -> (Key_Code, bool) {
         return .F11, true
     case 24:
         return .F12, true
+    case 29:
+        return .Menu, true
     case:
         return .Char, false
     }
@@ -666,10 +938,9 @@ parse_mouse_action :: proc(cb: u8) -> Mouse {
     return m
 }
 
-// Parse one event from the front of `bytes` by walking a fresh parser. On success
-// `incomplete` is false and `consumed` counts the bytes making up `event`; when
-// `incomplete` is true `bytes` is a prefix of a longer sequence (feed more, then
-// re-parse). A lone/trailing ESC is incomplete — resolve it with `flush`.
+// Parse one event from the front of `bytes` by walking a fresh parser. `incomplete` false
+// means `consumed` counts `event`'s bytes; `incomplete` true means `bytes` is a prefix of
+// a longer sequence — feed more and re-parse. A lone/trailing ESC resolves via `flush`.
 parse :: proc(bytes: []u8) -> (event: Parse_Event, consumed: int, incomplete: bool) {
     p: Parser
     for b, i in bytes {

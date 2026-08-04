@@ -24,7 +24,7 @@ test_escape_constants_exact_bytes :: proc(t: ^testing.T) {
 
     testing.expect_value(t, KITTY_QUERY, "\x1b[?u")
     testing.expect_value(t, KITTY_POP, "\x1b[<u")
-    testing.expect_value(t, KITTY_PUSH_DISAMBIGUATE_REPORT_EVENTS, "\x1b[>3u")
+    testing.expect_value(t, KITTY_PUSH_FLAGS, "\x1b[>31u")
 
     testing.expect_value(t, DA1_REQUEST, "\x1b[c")
 }
