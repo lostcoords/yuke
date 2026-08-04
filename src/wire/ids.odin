@@ -108,5 +108,5 @@ request_id_validate :: proc(id: Request_Id) -> Validation_Error {
 field_request_id :: proc(e: ^Emitter, name: string, id: Request_Id) {
     assert(request_id_validate(id) == .None, "emitted a correlation id that is not valid JSON")
     key(e, name)
-    strings.write_string(&e.sb, string(id))
+    _put(e, string(id))
 }

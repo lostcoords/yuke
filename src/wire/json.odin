@@ -29,17 +29,49 @@ field_required_null_string :: proc(e: ^Emitter, name: string, m: Maybe(string)) 
 }
 
 // Encode back end. Builds JSON into a growable buffer with the discriminator
-// written first, one open container tracked per nesting level.
+// written first, one open container tracked per nesting level. A write the buffer
+// could not grow for latches `failed`: the text is then truncated, so a caller that
+// ships or persists it must consult `emitter_failed` first.
 Emitter :: struct {
-    sb:    strings.Builder,
-    depth: int,
-    first: [32]bool,
+    sb:     strings.Builder,
+    depth:  int,
+    first:  [32]bool,
+    failed: bool,
 }
 
 // Initialize an emitter over a fresh buffer.
 emitter_init :: proc(e: ^Emitter, allocator := context.allocator) {
     e.sb = strings.builder_make(allocator)
     e.depth = 0
+    e.failed = false
+}
+
+// Whether any write was truncated by a failed buffer growth. The accumulated text is
+// then incomplete JSON and must not be sent or stored.
+emitter_failed :: proc(e: ^Emitter) -> bool {
+    assert(e != nil, "the health check needs an emitter")
+
+    return e.failed
+}
+
+// Append `s` verbatim, latching `failed` when the buffer could not take all of it.
+@(private)
+_put :: proc(e: ^Emitter, s: string) {
+    n := strings.write_string(&e.sb, s)
+
+    if n != len(s) {
+        e.failed = true
+    }
+}
+
+// Append one byte, latching `failed` when the buffer could not take it.
+@(private)
+_put_byte :: proc(e: ^Emitter, c: byte) {
+    n := strings.write_byte(&e.sb, c)
+
+    if n != 1 {
+        e.failed = true
+    }
 }
 
 // Release the emitter's buffer.
@@ -60,7 +92,7 @@ _sep :: proc(e: ^Emitter) {
     }
 
     if !e.first[e.depth - 1] {
-        strings.write_byte(&e.sb, ',')
+        _put_byte(e, ',')
     } else {
         e.first[e.depth - 1] = false
     }
@@ -69,7 +101,7 @@ _sep :: proc(e: ^Emitter) {
 // Open a JSON object.
 object_begin :: proc(e: ^Emitter) {
     assert(e.depth < len(e.first), "json emitter nesting too deep")
-    strings.write_byte(&e.sb, '{')
+    _put_byte(e, '{')
     e.first[e.depth] = true
     e.depth += 1
 }
@@ -77,13 +109,13 @@ object_begin :: proc(e: ^Emitter) {
 // Close a JSON object.
 object_end :: proc(e: ^Emitter) {
     e.depth -= 1
-    strings.write_byte(&e.sb, '}')
+    _put_byte(e, '}')
 }
 
 // Open a JSON array.
 array_begin :: proc(e: ^Emitter) {
     assert(e.depth < len(e.first), "json emitter nesting too deep")
-    strings.write_byte(&e.sb, '[')
+    _put_byte(e, '[')
     e.first[e.depth] = true
     e.depth += 1
 }
@@ -91,14 +123,14 @@ array_begin :: proc(e: ^Emitter) {
 // Close a JSON array.
 array_end :: proc(e: ^Emitter) {
     e.depth -= 1
-    strings.write_byte(&e.sb, ']')
+    _put_byte(e, ']')
 }
 
 // Write an object key. The following value writer supplies the value.
 key :: proc(e: ^Emitter, name: string) {
     _sep(e)
     _write_json_string(e, name)
-    strings.write_byte(&e.sb, ':')
+    _put_byte(e, ':')
 }
 
 // Open the next array element.
@@ -114,23 +146,31 @@ val_string :: proc(e: ^Emitter, s: string) {
 // Write a bare u64 value.
 val_u64 :: proc(e: ^Emitter, n: u64) {
     buf: [20]u8
-    strings.write_string(&e.sb, strconv.write_uint(buf[:], n, 10))
+    _put(e, strconv.write_uint(buf[:], n, 10))
 }
 
 // Write a bare i64 value (used for signed wire fields, e.g. cron UTC offsets).
 val_i64 :: proc(e: ^Emitter, n: i64) {
     buf: [20]u8
-    strings.write_string(&e.sb, strconv.write_int(buf[:], n, 10))
+    _put(e, strconv.write_int(buf[:], n, 10))
 }
 
 // Write a bare boolean value.
 val_bool :: proc(e: ^Emitter, b: bool) {
-    strings.write_string(&e.sb, b ? "true" : "false")
+    _put(e, b ? "true" : "false")
 }
 
 // Write a null value.
 val_null :: proc(e: ^Emitter) {
-    strings.write_string(&e.sb, "null")
+    _put(e, "null")
+}
+
+// Splice an already-encoded JSON value in as the current value. The bytes are written
+// verbatim, so they must be one complete value this emitter produced — it is what lets
+// a payload be encoded once and reused inside its envelope.
+val_raw :: proc(e: ^Emitter, json: string) {
+    assert(len(json) > 0, "a spliced value is not empty")
+    _put(e, json)
 }
 
 // Write a `name: string` object field.
@@ -180,44 +220,44 @@ field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
 // Write a JSON string literal with the required escapes.
 @(private)
 _write_json_string :: proc(e: ^Emitter, s: string) {
-    strings.write_byte(&e.sb, '"')
+    _put_byte(e, '"')
     for i in 0 ..< len(s) {
         c := s[i]
 
         switch c {
         case '"':
-            strings.write_string(&e.sb, "\\\"")
+            _put(e, "\\\"")
 
         case '\\':
-            strings.write_string(&e.sb, "\\\\")
+            _put(e, "\\\\")
 
         case '\n':
-            strings.write_string(&e.sb, "\\n")
+            _put(e, "\\n")
 
         case '\r':
-            strings.write_string(&e.sb, "\\r")
+            _put(e, "\\r")
 
         case '\t':
-            strings.write_string(&e.sb, "\\t")
+            _put(e, "\\t")
 
         case '\b':
-            strings.write_string(&e.sb, "\\b")
+            _put(e, "\\b")
 
         case '\f':
-            strings.write_string(&e.sb, "\\f")
+            _put(e, "\\f")
 
         case:
             if c < 0x20 {
-                strings.write_string(&e.sb, "\\u00")
-                strings.write_byte(&e.sb, _hex_digit(c >> 4))
-                strings.write_byte(&e.sb, _hex_digit(c & 0xf))
+                _put(e, "\\u00")
+                _put_byte(e, _hex_digit(c >> 4))
+                _put_byte(e, _hex_digit(c & 0xf))
             } else {
-                strings.write_byte(&e.sb, c)
+                _put_byte(e, c)
             }
         }
     }
 
-    strings.write_byte(&e.sb, '"')
+    _put_byte(e, '"')
 }
 
 @(private)

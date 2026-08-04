@@ -138,6 +138,18 @@ notification_emit :: proc(e: ^Emitter, self: Notification) {
     object_end(e)
 }
 
+// Write a notification whose `params` are already encoded. The durable path logs the
+// payload and ships it nested in one frame, so both come from a single emit and cannot
+// disagree; `params` must be what `broadcast_data_emit` wrote for `method`.
+notification_emit_raw :: proc(e: ^Emitter, method: Broadcast_Name, params: string) {
+    object_begin(e)
+    field_string(e, "jsonrpc", JSONRPC_VERSION)
+    field_string(e, "method", broadcast_name_to_wire(method))
+    key(e, "params")
+    val_raw(e, params)
+    object_end(e)
+}
+
 // Verify the notification payload bounds.
 notification_validate :: proc(self: Notification) -> Validation_Error {
     return broadcast_data_validate(self.params)

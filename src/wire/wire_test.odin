@@ -32,6 +32,16 @@ test_run_error_code_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_close_codes_are_distinguishable :: proc(t: ^testing.T) {
+    // A version mismatch and a framing violation must be told apart by the code alone,
+    // so `unsupported_protocol` lives in the RFC 6455 private-use range.
+    testing.expect_value(t, CLOSE.protocol_error, u16(1002))
+    testing.expect_value(t, CLOSE.unsupported_protocol, u16(4000))
+    testing.expect(t, CLOSE.unsupported_protocol != CLOSE.protocol_error, "the two codes must differ")
+    testing.expect(t, CLOSE.unsupported_protocol >= 4000 && CLOSE.unsupported_protocol <= 4999, "private-use range")
+}
+
+@(test)
 test_error_object_validate :: proc(t: ^testing.T) {
     ok := Error_Object {
         code    = .Bad_Request,

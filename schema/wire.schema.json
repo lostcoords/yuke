@@ -714,6 +714,9 @@
         },
         {
           "$ref": "#/$defs/Input_Canceled_Data"
+        },
+        {
+          "$ref": "#/$defs/Session_Deltas_Shed_Data"
         }
       ],
       "description": "Typed broadcast payload, tagged by broadcast name on the frame. A broadcast frame's data is always exactly one of these variants."
@@ -744,7 +747,8 @@
         "tool.state_changed",
         "tool.output_delta",
         "input.queued",
-        "input.canceled"
+        "input.canceled",
+        "session.deltas_shed"
       ],
       "type": "string"
     },
@@ -3570,6 +3574,33 @@
             "params"
           ],
           "type": "object"
+        },
+        {
+          "description": "Live deltas were shed to a lagging connection.",
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "session.deltas_shed",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Session_Deltas_Shed_Data"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "method",
+            "params"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -6080,6 +6111,9 @@
         "kind": {
           "$ref": "#/$defs/Run_Kind"
         },
+        "reason": {
+          "$ref": "#/$defs/Compaction_Reason"
+        },
         "run_id": {
           "$ref": "#/$defs/Run_Id"
         },
@@ -6429,6 +6463,25 @@
       "required": [
         "config",
         "system_prompt"
+      ],
+      "type": "object"
+    },
+    "Session_Deltas_Shed_Data": {
+      "description": "Payload for `session.deltas_shed`: advisory notice that this connection's live deltas were shed under backpressure, so a client can tell that apart from a bug. Delivered per connection and itself sheddable \u2014 when it cannot be sent the delta offset gap remains the signal. Recovery is unchanged: resync.",
+      "properties": {
+        "count": {
+          "description": "Deltas shed on this connection since the last delivered marker; never zero.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_id": {
+          "$ref": "#/$defs/Session_Id"
+        }
+      },
+      "required": [
+        "session_id",
+        "count"
       ],
       "type": "object"
     },

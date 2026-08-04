@@ -406,7 +406,7 @@ _val_f64 :: proc(e: ^Emitter, f: f64) {
         s = s[1:]
     }
 
-    strings.write_string(&e.sb, s)
+    _put(e, s)
 }
 
 // Write a `name: f64` object field.

@@ -75,6 +75,9 @@ Broadcast_Name :: enum {
 
     // Queued input was canceled before starting.
     Input_Canceled,
+
+    // Live deltas were shed to a lagging connection.
+    Session_Deltas_Shed,
 }
 
 // Broadcast_Name <-> wire string, indexed by the enum so a missing mapping is visible.
@@ -104,6 +107,7 @@ broadcast_name_wire := [Broadcast_Name]string {
     .Tool_Output_Delta        = "tool.output_delta",
     .Input_Queued             = "input.queued",
     .Input_Canceled           = "input.canceled",
+    .Session_Deltas_Shed      = "session.deltas_shed",
 }
 
 // Wire string for a broadcast name.
@@ -139,7 +143,7 @@ broadcast_name_class :: proc(name: Broadcast_Name) -> Broadcast_Class {
     switch name {
     case .Message_Committed, .Run_Started, .Run_Done, .Config_Changed, .Transcript_Truncated:
         return .Durable_Gated
-    case .Message_Part_Delta, .Tool_Output_Delta:
+    case .Message_Part_Delta, .Tool_Output_Delta, .Session_Deltas_Shed:
         return .Live_Droppable
     case .Message_Started,
          .Message_Discarded,
@@ -496,6 +500,10 @@ Run_Started_Data :: struct {
     // What kind of run started.
     kind:          Run_Kind,
 
+    // Why compaction is running; present exactly when `kind` is compaction. The
+    // durable log carries it so a resync can rebuild a compacting session.
+    reason:        Maybe(Compaction_Reason),
+
     // Config revision used by the run.
     config_rev:    Config_Rev,
 
@@ -510,14 +518,26 @@ run_started_data_emit :: proc(e: ^Emitter, self: Run_Started_Data) {
     field_u64(e, "seq", u64(self.seq))
     field_u64(e, "run_id", u64(self.run_id))
     field_string(e, "kind", run_kind_to_wire(self.kind))
+
+    if r, ok := self.reason.?; ok {
+        field_string(e, "reason", compaction_reason_to_wire(r))
+    }
+
     field_u64(e, "config_rev", u64(self.config_rev))
     field_u64(e, "started_at_ms", self.started_at_ms)
     object_end(e)
 }
 
-// Verify the session id.
+// Verify the session id and the reason/kind cross-field invariant.
 run_started_data_validate :: proc(self: Run_Started_Data) -> Validation_Error {
-    return enforce_id(([16]u8)(self.session_id))
+    enforce_id(([16]u8)(self.session_id)) or_return
+    _, has_reason := self.reason.?
+
+    if has_reason != (self.kind == .Compaction) {
+        return .Mismatched_Payload
+    }
+
+    return .None
 }
 
 // Payload for `run.done`. One terminal event for a run: `outcome` carries the
@@ -807,6 +827,37 @@ input_canceled_data_validate :: proc(self: Input_Canceled_Data) -> Validation_Er
     return enforce_id(([16]u8)(self.session_id))
 }
 
+// Payload for `session.deltas_shed`: advisory notice that this connection's live
+// deltas were shed under backpressure, so a client can tell that apart from a bug.
+// Delivered per connection and itself sheddable — when it cannot be sent the delta
+// offset gap remains the signal. Recovery is unchanged: resync.
+Session_Deltas_Shed_Data :: struct {
+    // Owning session id.
+    session_id: Session_Id,
+
+    // Deltas shed on this connection since the last delivered marker; never zero.
+    count:      u64,
+}
+
+// Write a session.deltas_shed payload.
+session_deltas_shed_data_emit :: proc(e: ^Emitter, self: Session_Deltas_Shed_Data) {
+    object_begin(e)
+    field_id(e, "session_id", ([16]u8)(self.session_id))
+    field_u64(e, "count", self.count)
+    object_end(e)
+}
+
+// Verify the session id and that the shed count is positive and JSON-safe.
+session_deltas_shed_data_validate :: proc(self: Session_Deltas_Shed_Data) -> Validation_Error {
+    enforce_id(([16]u8)(self.session_id)) or_return
+
+    if self.count == 0 || self.count > MAX_WIRE_INTEGER {
+        return .Out_Of_Range
+    }
+
+    return .None
+}
+
 // Typed broadcast payload, tagged by broadcast name on the frame. A broadcast
 // frame's data is always exactly one of these variants.
 Broadcast_Data :: union {
@@ -834,6 +885,7 @@ Broadcast_Data :: union {
     Tool_Output_Delta_Data,
     Input_Queued_Data,
     Input_Canceled_Data,
+    Session_Deltas_Shed_Data,
 }
 
 // Write just the active payload's fields (no tag wrapper).
@@ -910,6 +962,9 @@ broadcast_data_emit :: proc(e: ^Emitter, self: Broadcast_Data) {
 
     case Input_Canceled_Data:
         input_canceled_data_emit(e, v)
+
+    case Session_Deltas_Shed_Data:
+        session_deltas_shed_data_emit(e, v)
     }
 }
 
@@ -987,6 +1042,9 @@ broadcast_data_validate :: proc(self: Broadcast_Data) -> Validation_Error {
 
     case Input_Canceled_Data:
         return input_canceled_data_validate(v)
+
+    case Session_Deltas_Shed_Data:
+        return session_deltas_shed_data_validate(v)
     }
 
     return .None
@@ -1106,6 +1164,9 @@ broadcast_data_clone :: proc(self: Broadcast_Data, allocator := context.allocato
 
     case Input_Canceled_Data:
         return v
+
+    case Session_Deltas_Shed_Data:
+        return v
     }
 
     return nil
@@ -1186,6 +1247,9 @@ broadcast_data_name :: proc(self: Broadcast_Data) -> (Broadcast_Name, bool) {
 
     case Input_Canceled_Data:
         return .Input_Canceled, true
+
+    case Session_Deltas_Shed_Data:
+        return .Session_Deltas_Shed, true
     }
 
     return {}, false
@@ -1262,6 +1326,9 @@ broadcast_data_session_id :: proc(self: Broadcast_Data) -> Maybe(Session_Id) {
         return v.session_id
 
     case Input_Canceled_Data:
+        return v.session_id
+
+    case Session_Deltas_Shed_Data:
         return v.session_id
     }
 
@@ -1678,6 +1745,9 @@ run_started_data_from_reader :: proc(d: ^Decoder) -> (out: Run_Started_Data, err
             out.kind = dec_enum(d, run_kind_wire) or_return
             seen += {.Kind}
 
+        case "reason":
+            out.reason = dec_enum(d, compaction_reason_wire) or_return
+
         case "config_rev":
             out.config_rev = Config_Rev(dec_u64(d) or_return)
             seen += {.Cfg}
@@ -2072,6 +2142,40 @@ input_canceled_data_from_reader :: proc(d: ^Decoder) -> (out: Input_Canceled_Dat
     return out, .None
 }
 
+session_deltas_shed_data_from_reader :: proc(d: ^Decoder) -> (out: Session_Deltas_Shed_Data, err: Validation_Error) {
+    dec_object_begin(d) or_return
+
+    Field :: enum {
+        Sid,
+        Count,
+    }
+
+    seen: bit_set[Field]
+    for {
+        k, done := dec_key(d) or_return
+        if done do break
+
+        switch k {
+        case "session_id":
+            out.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            seen += {.Sid}
+
+        case "count":
+            out.count = dec_u64(d) or_return
+            seen += {.Count}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if seen != {.Sid, .Count} {
+        return {}, .Mismatched_Payload
+    }
+
+    return out, .None
+}
+
 // Decode typed broadcast payload for `name` straight from the token stream.
 broadcast_data_from_reader :: proc(
     name: Broadcast_Name,
@@ -2154,6 +2258,9 @@ broadcast_data_from_reader :: proc(
 
     case .Input_Canceled:
         data = input_canceled_data_from_reader(d) or_return
+
+    case .Session_Deltas_Shed:
+        data = session_deltas_shed_data_from_reader(d) or_return
     }
 
     return

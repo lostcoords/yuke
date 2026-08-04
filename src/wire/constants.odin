@@ -218,7 +218,8 @@ Close_Codes :: struct {
     // Outbound queue is full; caller should back off.
     send_queue_overflow:  u16,
 
-    // Client offered a `protocol` we do not support.
+    // Client offered a `protocol` we do not support. In the RFC 6455 private-use
+    // range so it stays distinguishable from a framing violation.
     unsupported_protocol: u16,
 }
 
@@ -228,5 +229,5 @@ CLOSE :: Close_Codes {
     message_too_big      = 1009,
     internal_error       = 1011,
     send_queue_overflow  = 1013,
-    unsupported_protocol = 1002,
+    unsupported_protocol = 4000,
 }

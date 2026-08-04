@@ -61,7 +61,7 @@
     "protocol_error": 1002,
     "send_queue_overflow": 1013,
     "shutting_down": 1012,
-    "unsupported_protocol": 1002
+    "unsupported_protocol": 4000
   },
   "methods": [
     {
@@ -539,6 +539,15 @@
       "params": "Input_Canceled_Data",
       "class": "live_gated",
       "sessionField": "session_id"
+    },
+    {
+      "name": "session.deltas_shed",
+      "odinName": "Session_Deltas_Shed",
+      "direction": "serverToClient",
+      "doc": "Live deltas were shed to a lagging connection.",
+      "params": "Session_Deltas_Shed_Data",
+      "class": "live_droppable",
+      "sessionField": "session_id"
     }
   ],
   "deliveryClasses": [
@@ -926,6 +935,12 @@
           "presence": "required"
         },
         {
+          "name": "reason",
+          "type": "Maybe(Compaction_Reason)",
+          "doc": "Why compaction is running; present exactly when `kind` is compaction. The durable log carries it so a resync can rebuild a compacting session.",
+          "presence": "optional"
+        },
+        {
           "name": "config_rev",
           "type": "Config_Rev",
           "doc": "Config revision used by the run.",
@@ -1186,6 +1201,24 @@
           "name": "input_id",
           "type": "Input_Id",
           "doc": "Id of the canceled input.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Session_Deltas_Shed_Data",
+      "doc": "Payload for `session.deltas_shed`: advisory notice that this connection's live deltas were shed under backpressure, so a client can tell that apart from a bug. Delivered per connection and itself sheddable \u2014 when it cannot be sent the delta offset gap remains the signal. Recovery is unchanged: resync.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "Session_Id",
+          "doc": "Owning session id.",
+          "presence": "required"
+        },
+        {
+          "name": "count",
+          "type": "u64",
+          "doc": "Deltas shed on this connection since the last delivered marker; never zero.",
           "presence": "required"
         }
       ]
@@ -5319,6 +5352,9 @@
         },
         {
           "type": "Input_Canceled_Data"
+        },
+        {
+          "type": "Session_Deltas_Shed_Data"
         }
       ]
     },
@@ -6027,6 +6063,11 @@
           "name": "Input_Canceled",
           "wire": "input.canceled",
           "doc": "Queued input was canceled before starting."
+        },
+        {
+          "name": "Session_Deltas_Shed",
+          "wire": "session.deltas_shed",
+          "doc": "Live deltas were shed to a lagging connection."
         }
       ]
     },

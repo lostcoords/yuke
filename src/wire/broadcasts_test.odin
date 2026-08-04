@@ -11,6 +11,10 @@ test_broadcast_name_wire_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, broadcast_name_to_wire(.Session_Summary_Changed), "session.summary_changed")
     testing.expect_value(t, broadcast_name_to_wire(.Session_Activity_Changed), "session.activity_changed")
 
+    shed, shed_ok := broadcast_name_from_wire("session.deltas_shed")
+    testing.expect(t, shed_ok, "session.deltas_shed should be known")
+    testing.expect_value(t, shed, Broadcast_Name.Session_Deltas_Shed)
+
     _, bad := broadcast_name_from_wire("unknown.broadcast")
     testing.expect(t, !bad, "unknown name must be rejected")
 
@@ -56,6 +60,160 @@ test_broadcast_data_name :: proc(t: ^testing.T) {
 
     _, empty := broadcast_data_name(nil)
     testing.expect(t, !empty, "an empty payload names nothing")
+}
+
+@(test)
+test_run_started_turn_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    input := `{"session_id":"0123456789abcdef","seq":1,"run_id":7,"kind":"turn","config_rev":1,"started_at_ms":10}`
+    v := decoder_init(input, context.temp_allocator)
+
+    data, derr := broadcast_data_from_reader(.Run_Started, &v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    rs, ok := data.(Run_Started_Data)
+    testing.expect(t, ok, "should be run.started")
+    testing.expect_value(t, rs.kind, Run_Kind.Turn)
+    _, has_reason := rs.reason.?
+    testing.expect(t, !has_reason, "a turn carries no compaction reason")
+    testing.expect(t, broadcast_data_validate(data) == .None, "valid run.started")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    broadcast_data_emit(&e, data)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// The durable log has to carry the reason, or a resync cannot rebuild a compacting session.
+@(test)
+test_run_started_compaction_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    input := `{"session_id":"0123456789abcdef","seq":4,"run_id":8,"kind":"compaction","reason":"manual","config_rev":2,"started_at_ms":11}`
+    v := decoder_init(input, context.temp_allocator)
+
+    data, derr := broadcast_data_from_reader(.Run_Started, &v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    rs, ok := data.(Run_Started_Data)
+    testing.expect(t, ok, "should be run.started")
+    testing.expect_value(t, rs.kind, Run_Kind.Compaction)
+    reason, has_reason := rs.reason.?
+    testing.expect(t, has_reason, "a compaction carries its reason")
+    testing.expect_value(t, reason, Compaction_Reason.Manual)
+    testing.expect(t, broadcast_data_validate(data) == .None, "valid compaction run.started")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    broadcast_data_emit(&e, data)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+// The reason is meaningful only for a compaction run, in both directions.
+@(test)
+test_run_started_rejects_reason_kind_mismatch :: proc(t: ^testing.T) {
+    data := Run_Started_Data {
+        session_id    = Session_Id(
+            [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'},
+        ),
+        seq           = 1,
+        run_id        = 7,
+        kind          = .Turn,
+        reason        = Compaction_Reason.Auto,
+        config_rev    = 1,
+        started_at_ms = 10,
+    }
+    testing.expect(
+        t,
+        run_started_data_validate(data) == .Mismatched_Payload,
+        "a turn with a compaction reason must fail",
+    )
+
+    data.reason = nil
+    data.kind = .Compaction
+    testing.expect(
+        t,
+        run_started_data_validate(data) == .Mismatched_Payload,
+        "a compaction without a reason must fail",
+    )
+
+    data.reason = Compaction_Reason.Auto
+    testing.expect(t, run_started_data_validate(data) == .None, "a compaction with a reason validates")
+}
+
+@(test)
+test_run_started_rejects_unknown_reason :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    input := `{"session_id":"0123456789abcdef","seq":4,"run_id":8,"kind":"compaction","reason":"whenever","config_rev":2,"started_at_ms":11}`
+    v := decoder_init(input, context.temp_allocator)
+
+    _, derr := broadcast_data_from_reader(.Run_Started, &v)
+    testing.expect(t, derr != .None, "an unknown compaction reason must be rejected")
+}
+
+@(test)
+test_session_deltas_shed_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    input := `{"session_id":"0123456789abcdef","count":12}`
+    v := decoder_init(input, context.temp_allocator)
+
+    data, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    shed, ok := data.(Session_Deltas_Shed_Data)
+    testing.expect(t, ok, "should be session.deltas_shed")
+    testing.expect_value(t, shed.count, u64(12))
+    testing.expect(t, broadcast_data_validate(data) == .None, "valid session.deltas_shed")
+
+    // Live droppable: never sequenced, routed by session like the deltas it reports on.
+    _, has_seq := broadcast_data_seq(data).?
+    testing.expect(t, !has_seq, "the shed marker is not durable")
+    _, has_sid := broadcast_data_session_id(data).?
+    testing.expect(t, has_sid, "the shed marker routes by session")
+    testing.expect_value(t, broadcast_name_class(.Session_Deltas_Shed), Broadcast_Class.Live_Droppable)
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    broadcast_data_emit(&e, data)
+    testing.expect_value(t, to_string(&e), input)
+}
+
+@(test)
+test_session_deltas_shed_rejects_zero_count :: proc(t: ^testing.T) {
+    // A marker that reports nothing shed is meaningless; the count is the payload.
+    bad := Session_Deltas_Shed_Data {
+        session_id = Session_Id(
+            [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'},
+        ),
+        count      = 0,
+    }
+    testing.expect(t, session_deltas_shed_data_validate(bad) == .Out_Of_Range, "zero count must be rejected")
+
+    bad.count = MAX_WIRE_INTEGER + 1
+    testing.expect(
+        t,
+        session_deltas_shed_data_validate(bad) == .Out_Of_Range,
+        "a count past the JSON safe range must be rejected",
+    )
+}
+
+@(test)
+test_session_deltas_shed_requires_both_fields :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+    {
+        v := decoder_init(`{"session_id":"0123456789abcdef"}`, context.temp_allocator)
+        _, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
+        testing.expect(t, derr == .Mismatched_Payload, "a missing count must be rejected")
+    }
+    {
+        v := decoder_init(`{"count":3}`, context.temp_allocator)
+        _, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
+        testing.expect(t, derr == .Mismatched_Payload, "a missing session id must be rejected")
+    }
 }
 
 @(test)

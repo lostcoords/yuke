@@ -274,6 +274,26 @@ test_initialize_result_ignores_unknown_capability :: proc(t: ^testing.T) {
     testing.expect_value(t, h.capabilities, bit_set[Capability]{.Blob_Upload})
 }
 
+// The set is the contract, not the list: a repeated token names the same surface.
+@(test)
+test_initialize_result_capabilities_are_idempotent :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"protocol":1,
+        "daemon":{"version":"0.0.0","server_now_ms":1},
+        "workspaces":[],"profiles":[],"agents":[],"session_revision":0,"cron_revision":0,
+        "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "catalog_health":{"skipped":[],"load_error":null},
+        "capabilities":["blob_upload","blob_upload"]}`
+
+    v := decoder_init(input)
+
+    h, derr := initialize_result_from_reader(&v)
+    testing.expect(t, derr == .None, "a repeated capability token must decode")
+    testing.expect_value(t, h.capabilities, bit_set[Capability]{.Blob_Upload})
+}
+
 @(test)
 test_initialize_result_rejects_non_string_capability :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
