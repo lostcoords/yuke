@@ -425,7 +425,7 @@ presence_marker_parse :: proc(line: string) -> (presence: Presence, expr: string
     }
 
     if strings.has_prefix(line, "@default ") {
-        expr := strings.trim_space(strings.trim_prefix(line, "@default "))
+        expr = strings.trim_space(strings.trim_prefix(line, "@default "))
 
         return .Defaulted, expr, expr != ""
     }

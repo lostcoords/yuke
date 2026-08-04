@@ -3,7 +3,6 @@ package daemon
 import "core:crypto"
 import "core:strings"
 import http "libs:http"
-import http_server "libs:http/server"
 
 // Sanity ceiling on a configured token's length; well above any realistic credential.
 MAX_AUTH_TOKEN_BYTES :: 4096

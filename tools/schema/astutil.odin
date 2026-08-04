@@ -319,7 +319,7 @@ clause_string_labels :: proc(s: ^Source, clause: ^ast.Case_Clause, allocator := 
     out := make([dynamic]string, 0, len(clause.list), allocator)
 
     for label in clause.list {
-        lit, is_lit := label.derived.(^ast.Basic_Lit)
+        _, is_lit := label.derived.(^ast.Basic_Lit)
 
         if !is_lit {
             continue

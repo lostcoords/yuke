@@ -2,8 +2,6 @@ package schema
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:os"
-import "core:slice"
 import "core:strings"
 
 // JSON Schema 2020-12 over the same model `wire.json` is built from, for validators, docs

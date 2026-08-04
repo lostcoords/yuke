@@ -178,7 +178,7 @@ to_uint32 :: proc(ctx: ^Context, val: Value) -> (value: u32, ok: bool) {
 
     i: i32
     ok = c_to_i32(ctx, &i, val) == 0
-    value = transmute(u32)i
+    value = u32(i)
 
     return
 }

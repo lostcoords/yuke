@@ -112,7 +112,7 @@ test_grapheme_pool_generation_bytes_cap_boundary :: proc(t: ^testing.T) {
 
     // Exactly one byte of budget left.
     pool.bytes_len = MAX_GRAPHEME_BYTES_PER_GENERATION - 1
-    g1, err1 := pool_intern(&pool, "x")
+    _, err1 := pool_intern(&pool, "x")
     testing.expect_value(t, err1, Pool_Error.None)
     testing.expect_value(t, pool.bytes_len, MAX_GRAPHEME_BYTES_PER_GENERATION)
 

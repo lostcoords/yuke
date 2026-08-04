@@ -234,8 +234,6 @@ Session_Replica :: struct {
     resync:                  ^Resync_Buffer,
 }
 
-// --- construction / teardown ---
-
 // Initialize an empty replica for `session_id`. `allocator` backs every region arena and
 // dynamic-array spine.
 replica_init :: proc(self: ^Session_Replica, allocator: mem.Allocator, session_id: wire.Session_Id) {
@@ -579,7 +577,7 @@ replica_on_tool_state_changed :: proc(
     part.tool.tool.state = wire.tool_state_clone(data.state, arena_alloc)
     part.tool.tool.permission_state = nil
 
-    if p, ok := data.permission_state.?; ok {
+    if p, has_permission := data.permission_state.?; has_permission {
         part.tool.tool.permission_state = wire.permission_state_clone(p, arena_alloc)
     }
 

@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Build, test, format, and lint driver for yuke-odin.
+
+Every Odin invocation is derived from the PACKAGES table, so a package is declared
+once and the test, cross-target check, and Windows-test gates all pick it up.
+"""
+
+import filecmp
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+BUILD = ROOT / "build"
+
+ODIN = shlex.split(os.environ.get("ODIN", "mise exec -- odin"))
+ODINFMT = shlex.split(os.environ.get("ODINFMT", "odinfmt"))
+CONFIG = f"-config:{ROOT / 'odinfmt.json'}"
+
+COLLECTIONS = ["-collection:src=src", "-collection:libs=libs"]
+
+# No -vet-tabs (odinfmt formats with spaces), no -vet-unused-procedures (libs/ may
+# carry unused surface).
+LINT = ["-vet", "-strict-style", "-warnings-as-errors"]
+
+# Covers what a test takes from context.allocator, not an arena fed from its own memory.
+TEST_DEFINES = ["-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true"]
+
+BINDINGS = ("quickjs", "sqlite")
+
+FMT_DIRS = ("src", "libs", "tools")
+
+AGGREGATE = "tests"
+
+
+class Package:
+    def __init__(
+        self,
+        name,
+        path,
+        note="",
+        tests=True,
+        in_aggregate=True,  # reached by tests/all.odin
+        windows=False,
+        windows_test=False,  # runs under test-windows, a subset of the check gate
+        entry_point=False,
+        needs=(),
+    ):
+        self.name = name
+        self.path = path
+        self.note = note
+        self.tests = tests
+        self.in_aggregate = in_aggregate
+        self.windows = windows
+        self.windows_test = windows_test
+        self.entry_point = entry_point
+        self.needs = needs
+
+    def __str__(self):
+        return f"{self.name:<13} {self.path:<23} {self.note}"
+
+
+PACKAGES = (
+    Package("wire", "src/wire", "protocol types, JSON codec, registries, validation"),
+    Package("client", "src/client", "session replica", windows=True),
+    Package("daemon", "src/daemon", "front-door routes plus the initialize exchange"),
+    Package("store", "src/daemon/store", "open/configure plus the migration runner", windows=True),
+    Package("provider", "src/provider", "requests, decoding, turn lifecycle, retry policy", windows=True),
+    Package("term", "src/term", "terminal input/output encoding", windows=True, windows_test=True),
+    Package("termdrive", "src/termdrive", "term x nbio driver; pipe harness, no TTY", windows=True, windows_test=True),
+    Package("ui", "src/ui", "cells, grapheme pool, paint", windows=True, windows_test=True),
+    Package(
+        "yuke",
+        "src/yuke",
+        "client binary: termdrive + QuickJS + ui paint",
+        tests=False,
+        in_aggregate=False,
+        windows=True,
+        entry_point=True,
+        needs=BINDINGS,
+    ),
+    Package("ws", "libs/websocket", "both drivers plus the sans-I/O core", windows=True),
+    Package("http", "libs/http", "sans-I/O HTTP"),
+    Package("http-server", "libs/http/server", "nbio front door"),
+    Package("http-sse", "libs/http/sse", "sans-I/O SSE parser"),
+    Package("offload", "libs/offload", "worker pool: blocking work off the reactor"),
+    Package("testsupport", "libs/testsupport", "shared test helpers"),
+    Package("curl", "libs/bindings/curl", "libcurl binding and multi-on-nbio driver", windows=True),
+    Package("quickjs", "libs/bindings/quickjs", "QuickJS binding", windows=True, needs=("quickjs",)),
+    Package("sqlite", "libs/bindings/sqlite", "binding over system libsqlite3", windows=True),
+    Package("schema", "tools/schema", "wire.json and wire.schema.json generator", in_aggregate=False, entry_point=True),
+)
+
+BY_NAME = {p.name: p for p in PACKAGES}
+
+COMMANDS = {}
+
+
+def command(fn):
+    COMMANDS[fn.__name__.replace("_", "-")] = fn
+
+    return fn
+
+
+def run(argv, env=None, cwd=None, quiet=False):
+    print("$ " + " ".join(shlex.quote(a) for a in argv), flush=True)
+
+    result = subprocess.run(
+        argv,
+        cwd=cwd or ROOT,
+        env={**os.environ, **env} if env else None,
+        stdout=subprocess.DEVNULL if quiet else None,
+    )
+
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
+def odin(*args):
+    BUILD.mkdir(exist_ok=True)
+    run([*ODIN, *args, *COLLECTIONS, *LINT])
+
+
+def binding_build(name, force=False):
+    directory = ROOT / "libs/bindings" / name
+    # cwd is not searched for executables on Windows, so the .bat needs its full path.
+    argv = [str(directory / "build_static.bat")] if os.name == "nt" else ["bash", "build_static.sh"]
+
+    run(argv, cwd=directory, env={"FORCE": "1"} if force else None)
+
+
+def ensure(needs):
+    for name in needs:
+        binding_build(name)
+
+
+def test_package(package):
+    ensure(package.needs)
+    odin("test", package.path, *TEST_DEFINES, f"-out:{BUILD / package.name}_test.bin")
+
+
+def resolve(names):
+    for name in names:
+        if name not in BY_NAME:
+            sys.exit(f"unknown package '{name}'; run './build.py help' for the list")
+
+        yield BY_NAME[name]
+
+
+@command
+def test(args):
+    """run tests; no argument runs every package"""
+    if args:
+        for package in resolve(args):
+            if not package.tests:
+                sys.exit(f"package '{package.name}' has no tests")
+
+            test_package(package)
+
+        return
+
+    ensure(("quickjs",))
+    odin("test", AGGREGATE, "-all-packages", *TEST_DEFINES, f"-out:{BUILD / 'all_test.bin'}")
+
+    for package in PACKAGES:
+        if package.tests and not package.in_aggregate:
+            test_package(package)
+
+
+@command
+def yuke(args):
+    """build the client binary into build/yuke"""
+    package = BY_NAME["yuke"]
+    ensure(package.needs)
+
+    # Odin defaults to -o:minimal, which costs this paint loop ~8x.
+    odin("build", package.path, "-o:speed", f"-out:{BUILD / 'yuke'}")
+
+
+@command
+def check_windows(args):
+    """cross-compile type-check of the Windows arms from the host"""
+    # Compiles *_test.odin, so POSIX-only test files need `#+build` tags.
+    for package in PACKAGES:
+        if package.windows:
+            entry = [] if package.entry_point else ["-no-entry-point"]
+            odin("check", package.path, "-target:windows_amd64", *entry)
+
+
+@command
+def test_windows(args):
+    """run the Windows-arm tests on a Windows Odin (WIN_ODIN)"""
+    # A Scoop shim works from WSL. -out: must be a native path, or it resolves against
+    # the UNC cwd (LNK1104); the tests inherit pipes, so console arms take their
+    # not-a-console branches. Linking that way does not work at all: Odin passes archives
+    # as `//wsl.localhost/...`, which link.exe reads as an option and ignores (LNK4044).
+    shims = sorted(Path("/mnt/c/Users").glob("*/scoop/shims/odin.exe"))
+    win_odin = os.environ.get("WIN_ODIN") or (str(shims[0]) if shims else "")
+
+    if not win_odin:
+        sys.exit("no Windows odin found; set WIN_ODIN=/mnt/c/path/to/odin.exe (and WIN_OUT)")
+
+    # The Windows account name need not match the WSL one, so never guess it.
+    user = Path(win_odin).parents[2].name
+    out = os.environ.get("WIN_OUT", rf"C:\Users\{user}\AppData\Local\Temp")
+
+    for package in PACKAGES:
+        if package.windows_test:
+            run([win_odin, "test", package.path, *COLLECTIONS, *LINT, *TEST_DEFINES,
+                 rf"-out:{out}\yuke_{package.name}_test.exe"])
+
+
+@command
+def schema(args):
+    """regenerate schema/wire.json and schema/wire.schema.json from src/wire"""
+    (ROOT / "schema").mkdir(exist_ok=True)
+    odin("build", BY_NAME["schema"].path, f"-out:{BUILD / 'schema.bin'}")
+    run([str(BUILD / "schema.bin")])
+
+
+@command
+def schema_check(args):
+    """verify the committed schema artifacts still describe src/wire"""
+    odin("build", BY_NAME["schema"].path, f"-out:{BUILD / 'schema.bin'}")
+    run([str(BUILD / "schema.bin"), "--check", "--quiet"])
+    test(["schema"])
+
+
+@command
+def fmt(args):
+    """format all Odin sources in place"""
+    for directory in FMT_DIRS:
+        run([*ODINFMT, CONFIG, "-w", directory])
+
+
+@command
+def fmt_check(args):
+    """report unformatted sources without touching the working tree"""
+    unformatted = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        mirror = Path(tmp)
+
+        for directory in FMT_DIRS:
+            for source in (ROOT / directory).rglob("*.odin"):
+                target = mirror / source.relative_to(ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+
+        run([*ODINFMT, CONFIG, "-w", str(mirror)], quiet=True)
+
+        for formatted in mirror.rglob("*.odin"):
+            relative = formatted.relative_to(mirror)
+
+            if not filecmp.cmp(ROOT / relative, formatted, shallow=False):
+                unformatted.append(str(relative))
+
+    if unformatted:
+        print("unformatted (run './build.py fmt'):", file=sys.stderr)
+
+        for path in sorted(unformatted):
+            print(f"  {path}", file=sys.stderr)
+
+        sys.exit(1)
+
+    print(f"{len(FMT_DIRS)} trees formatted")
+
+
+@command
+def deps(args):
+    """build the C archives: QuickJS everywhere, SQLite for Windows linking"""
+    # libcurl is absent on purpose: system:curl on Unix, build_static.bat on Windows.
+    ensure(BINDINGS)
+
+
+@command
+def deps_rebuild(args):
+    """refetch and recompile both archives, ignoring what is built"""
+    for name in BINDINGS:
+        binding_build(name, force=True)
+
+
+@command
+def clean(args):
+    """remove build/; binding archives survive, use deps-rebuild for those"""
+    shutil.rmtree(BUILD, ignore_errors=True)
+
+
+@command
+def setup(args):
+    """point git at the tracked hooks in .githooks"""
+    run(["git", "config", "core.hooksPath", ".githooks"])
+
+
+@command
+def help(args):
+    """show this message"""
+    print(__doc__.strip())
+    print("\nCommands:")
+
+    for name, fn in COMMANDS.items():
+        print(f"  {name:<13} {fn.__doc__}")
+
+    print("\nPackages (for `test`):")
+
+    for package in PACKAGES:
+        if package.tests:
+            print(f"  {package}")
+
+    print("\nEnvironment: ODIN, ODINFMT, WIN_ODIN, WIN_OUT")
+
+
+def main():
+    name, *args = sys.argv[1:] or ["help"]
+
+    if name not in COMMANDS:
+        sys.exit(f"unknown command '{name}'; run './build.py help' for the list")
+
+    COMMANDS[name](args)
+
+
+if __name__ == "__main__":
+    main()

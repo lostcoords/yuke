@@ -2,7 +2,6 @@ package schema
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 
 Options :: struct {
     wire_dir: string,

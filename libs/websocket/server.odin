@@ -1,6 +1,5 @@
 package websocket
 
-import "base:runtime"
 import "core:log"
 import "core:mem"
 import "core:nbio"
