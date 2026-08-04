@@ -1326,10 +1326,23 @@ concurrent_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr
         return
     }
 
-    // The result path is borrowed for this callback only; the key is a fixture string
-    // the test owns for the whole run.
-    key := result.path == o.other ? o.other : o.dir
-    o.counts[key] = len(result.entries)
+    // The result path is borrowed for this callback only, so each response is recorded
+    // under the matching fixture string the test owns for the whole run. A path matching
+    // neither fixture is a failure in its own right: silently attributing it to one of
+    // them would report a wrong entry count somewhere else instead.
+    switch result.path {
+    case o.dir:
+        o.counts[o.dir] = len(result.entries)
+
+    case o.other:
+        o.counts[o.other] = len(result.entries)
+
+    case:
+        testing.expectf(o.t, false, "browse answered for an unrequested path %q", result.path)
+        client.client_close(c)
+
+        return
+    }
 
     if o.answered == 2 {
         client.client_close(c)
@@ -1376,10 +1389,18 @@ test_daemon_workspace_browse_two_in_flight :: proc(t: ^testing.T) {
     derr := start(&d, loop, {host = "127.0.0.1", port = 0})
     testing.expect_value(t, derr, Error.None)
 
+    // Browse answers with the canonical path, so the correlation keys must be canonical
+    // too: on macOS the temp fixtures live under `/var/...`, which resolves to
+    // `/private/var/...` and would never match the raw fixture string.
+    canonical_dir, dir_err := os.get_absolute_path(dir, context.temp_allocator)
+    testing.expect(t, dir_err == nil, "the browse fixture canonicalizes")
+    canonical_other, other_err := os.get_absolute_path(other, context.temp_allocator)
+    testing.expect(t, other_err == nil, "the second fixture canonicalizes")
+
     obs := Concurrent_Obs {
         t     = t,
-        dir   = dir,
-        other = other,
+        dir   = canonical_dir,
+        other = canonical_other,
     }
     obs.counts = make(map[string]int, 4, context.temp_allocator)
 
@@ -1418,8 +1439,8 @@ test_daemon_workspace_browse_two_in_flight :: proc(t: ^testing.T) {
 
     testing.expect(t, !obs.timed_out, "both browses should answer before the harness timeout")
     testing.expect_value(t, obs.answered, 2)
-    testing.expect_value(t, obs.counts[dir], 3)
-    testing.expect_value(t, obs.counts[other], 1)
+    testing.expect_value(t, obs.counts[canonical_dir], 3)
+    testing.expect_value(t, obs.counts[canonical_other], 1)
 
     client.client_destroy(&c)
     test_teardown(&d)
