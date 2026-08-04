@@ -231,7 +231,7 @@ client_open :: proc(
     copy(c.initialize_frame, payload)
     wire.emitter_destroy(&e)
 
-    terr := transport.open(transport.self, c)
+    terr := transport->open(c)
     if terr != .None {
         c.transport_error = terr
         client_destroy(c)
@@ -275,12 +275,10 @@ client_send_request :: proc(
         return 0, .Bad_Frame
     }
 
-    e: wire.Emitter
-    wire.emitter_init(&e, c.allocator)
+    e, _ := wire.request_encode(req, c.allocator)
     defer wire.emitter_destroy(&e)
-    wire.request_emit(&e, req)
 
-    serr := c.transport.send_text(c.transport.self, transmute([]byte)wire.to_string(&e))
+    serr := c.transport->send_text(transmute([]byte)wire.to_string(&e))
     if serr != .None {
         c.transport_error = serr
         return 0, .Transport_Failed
@@ -463,11 +461,11 @@ client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
     }
 
     t := c.transport
-    close_err := t.close(t.self, code)
+    close_err := t->close(code)
     if close_err != .None {
         assert(close_err != .Not_Open, "protocol and transport close states diverged")
         c.state = .Closing
-        t.abort(t.self, close_err)
+        t->abort(close_err)
         return
     }
 
@@ -489,7 +487,7 @@ client_destroy :: proc(c: ^Client) {
     delete(c.daemon_version, c.allocator)
     c.daemon_version = ""
 
-    c.transport.destroy(c.transport.self)
+    c.transport->destroy()
     c.transport = {}
 }
 
@@ -507,10 +505,10 @@ client_abort :: proc(c: ^Client, err: Protocol_Error) {
     }
 
     t := c.transport
-    close_err := t.close(t.self, wire.CLOSE.protocol_error)
+    close_err := t->close(wire.CLOSE.protocol_error)
     if close_err != .None {
         assert(close_err != .Not_Open, "protocol and transport close states diverged")
-        t.abort(t.self, close_err)
+        t->abort(close_err)
     }
 }
 
@@ -527,12 +525,12 @@ transport_on_open :: proc(c: ^Client) {
     c.state = .Awaiting_Initialize
 
     t := c.transport
-    send_err := t.send_text(t.self, c.initialize_frame)
+    send_err := t->send_text(c.initialize_frame)
     delete(c.initialize_frame, c.allocator)
     c.initialize_frame = nil
     if send_err != .None {
         c.state = .Closing
-        t.abort(t.self, send_err)
+        t->abort(send_err)
         return
     }
 

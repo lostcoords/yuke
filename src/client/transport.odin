@@ -12,25 +12,26 @@ Close_Code :: u16
 CLOSE_NORMAL :: Close_Code(1000)
 
 // Ops bag for a text-frame pipe. Successful create only; `client_open` takes ownership.
-// Failures are `ws.Client_Error`.
+// Operations are invoked with `->`, so each receives the bag and recovers its backend
+// from `self`. Failures are `ws.Client_Error`.
 Transport :: struct {
-    // Backend state, passed back to every operation.
+    // Erased backend pointer, recovered by every operation from its receiver.
     self:      rawptr,
 
     // Begin opening the pipe. Should be called once; success is reported via on_open.
-    open:      proc(self: rawptr, c: ^Client) -> ws.Client_Error,
+    open:      proc(t: Transport, c: ^Client) -> ws.Client_Error,
 
     // Queue one text frame.
-    send_text: proc(self: rawptr, data: []byte) -> ws.Client_Error,
+    send_text: proc(t: Transport, data: []byte) -> ws.Client_Error,
 
     // Begin a graceful close with `code`.
-    close:     proc(self: rawptr, code: Close_Code) -> ws.Client_Error,
+    close:     proc(t: Transport, code: Close_Code) -> ws.Client_Error,
 
     // Fail without a close handshake. `err` is never `.None` or `.Not_Open`.
-    abort:     proc(self: rawptr, err: ws.Client_Error),
+    abort:     proc(t: Transport, err: ws.Client_Error),
 
     // Release backend storage. Safe after a failed `open`.
-    destroy:   proc(self: rawptr),
+    destroy:   proc(t: Transport),
 }
 
 // WebSocket backend behind a `Transport` (`ws://` on an `nbio` loop).
@@ -78,11 +79,11 @@ ws_create :: proc(
 }
 
 @(private = "file")
-ws_open :: proc(self: rawptr, c: ^Client) -> ws.Client_Error {
+ws_open :: proc(t: Transport, c: ^Client) -> ws.Client_Error {
     assert(c != nil, "ws_open needs a client")
-    assert(self != nil, "ws_open needs a backend from a successful create")
+    assert(t.self != nil, "ws_open needs a backend from a successful create")
 
-    backend := (^Ws_Backend)(self)
+    backend := (^Ws_Backend)(t.self)
     assert(backend.client == nil, "ws backend opened twice")
 
     backend.client = c
@@ -98,23 +99,23 @@ ws_open :: proc(self: rawptr, c: ^Client) -> ws.Client_Error {
 }
 
 @(private = "file")
-ws_send_text :: proc(self: rawptr, data: []byte) -> ws.Client_Error {
-    backend := (^Ws_Backend)(self)
+ws_send_text :: proc(t: Transport, data: []byte) -> ws.Client_Error {
+    backend := (^Ws_Backend)(t.self)
     assert(backend != nil, "ws_send_text needs a backend")
     return ws.client_send_text(&backend.sock, data)
 }
 
 @(private = "file")
-ws_close :: proc(self: rawptr, code: Close_Code) -> ws.Client_Error {
-    backend := (^Ws_Backend)(self)
+ws_close :: proc(t: Transport, code: Close_Code) -> ws.Client_Error {
+    backend := (^Ws_Backend)(t.self)
     assert(backend != nil, "ws_close needs a backend")
 
     return ws.client_close(&backend.sock, ws.Close_Code(code))
 }
 
 @(private = "file")
-ws_abort :: proc(self: rawptr, err: ws.Client_Error) {
-    backend := (^Ws_Backend)(self)
+ws_abort :: proc(t: Transport, err: ws.Client_Error) {
+    backend := (^Ws_Backend)(t.self)
     assert(backend != nil, "ws_abort needs a backend")
     assert(err != .None && err != .Not_Open, "ws_abort needs a terminal error")
 
@@ -123,10 +124,10 @@ ws_abort :: proc(self: rawptr, err: ws.Client_Error) {
 
 // Safe after a failed `open`.
 @(private = "file")
-ws_destroy :: proc(self: rawptr) {
-    assert(self != nil, "ws_destroy needs a backend from a successful create")
+ws_destroy :: proc(t: Transport) {
+    assert(t.self != nil, "ws_destroy needs a backend from a successful create")
 
-    backend := (^Ws_Backend)(self)
+    backend := (^Ws_Backend)(t.self)
     ws.client_destroy(&backend.sock)
     free(backend, backend.allocator)
 }

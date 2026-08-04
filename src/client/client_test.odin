@@ -152,7 +152,7 @@ _teardown :: proc(c: ^Client) {
 
     delete(c.daemon_version, c.allocator)
 
-    c.transport.destroy(c.transport.self)
+    c.transport->destroy()
 }
 
 // A transport that records what the driver asked of it and always succeeds, so the
@@ -181,36 +181,36 @@ _fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
     }
 }
 
-_fake_open :: proc(self: rawptr, _: ^Client) -> ws.Client_Error {
-    t := (^Fake_Transport)(self)
+_fake_open :: proc(tr: Transport, _: ^Client) -> ws.Client_Error {
+    t := (^Fake_Transport)(tr.self)
     t.opened = true
 
     return t.open_error
 }
 
-_fake_send_text :: proc(self: rawptr, data: []byte) -> ws.Client_Error {
-    t := (^Fake_Transport)(self)
+_fake_send_text :: proc(tr: Transport, data: []byte) -> ws.Client_Error {
+    t := (^Fake_Transport)(tr.self)
     append(&t.sent, strings.clone(string(data)))
 
     return .None
 }
 
-_fake_close :: proc(self: rawptr, code: Close_Code) -> ws.Client_Error {
-    t := (^Fake_Transport)(self)
+_fake_close :: proc(tr: Transport, code: Close_Code) -> ws.Client_Error {
+    t := (^Fake_Transport)(tr.self)
     t.closes += 1
     t.close_code = code
 
     return .None
 }
 
-_fake_abort :: proc(self: rawptr, err: ws.Client_Error) {
-    t := (^Fake_Transport)(self)
+_fake_abort :: proc(tr: Transport, err: ws.Client_Error) {
+    t := (^Fake_Transport)(tr.self)
     t.aborts += 1
     t.last_abort = err
 }
 
-_fake_destroy :: proc(self: rawptr) {
-    t := (^Fake_Transport)(self)
+_fake_destroy :: proc(tr: Transport) {
+    t := (^Fake_Transport)(tr.self)
     for frame in t.sent {
         delete(frame)
     }
