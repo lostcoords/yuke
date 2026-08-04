@@ -395,7 +395,8 @@ buffer_clear :: proc(b: ^Buffer, area: Maybe(Rect)) {
 
 // Write the cells changed since the last frame and advance the double buffer. When
 // `synchronized`, wrap the frame in DEC mode 2026 so a half-painted frame never shows. The
-// frame advances only after the writer itself flushes successfully.
+// frame advances only after the writer itself flushes successfully. Cursor moves and SGR are
+// emitted only where they change; see `Pen`.
 //
 // FAILURE DISCIPLINE (mirrors Zig's errdefer): any error forces a full repaint next time
 // (force_redraw = true on exit). If a synchronized block was opened, the error path makes a
@@ -424,6 +425,7 @@ flush_diff :: proc(b: ^Buffer, w: io.Writer, synchronized: bool) -> Buffer_Error
     }
 
     full := b.force_redraw
+    pen: Pen
     y: u16 = 0
     for y < b.area.height {
         x: u16 = 0
@@ -437,13 +439,16 @@ flush_diff :: proc(b: ^Buffer, w: io.Writer, synchronized: bool) -> Buffer_Error
                 continue
             }
 
+            width: u16 = 2 if cell_is_wide(c) else 1
+
             if full || !cell_eq(b, idx) {
-                write_goto(w, x, y) or_return
-                queue_style(w, cell_style_of(c)) or_return
+                pen_move(w, &pen, x, y) or_return
+                pen_style(w, &pen, cell_style_of(c)) or_return
                 write_glyph(b, w, idx) or_return
+                pen_advance(&pen, width, b.area.width)
             }
 
-            x += 2 if cell_is_wide(c) else 1
+            x += width
         }
 
         y += 1
@@ -615,10 +620,62 @@ write_glyph :: proc(b: ^Buffer, w: io.Writer, idx: int) -> Buffer_Error {
     return write_str(w, string(bytes[:n]))
 }
 
-// Emit a full style reset then this cell's colors and modifiers. There is deliberately NO
-// cross-cell SGR state tracking: every repainted cell re-sends its whole style, so the output
-// is byte-exact and independent of neighbors. The leading SGR 0 clears prior attributes, so
-// modifiers are only ever added (no off-codes).
+// What the terminal is known to hold, so a paint can skip a move or an SGR that would repeat.
+// Both halves start unknown: a frame never assumes what the one before it left behind.
+Pen :: struct {
+    x, y:       u16,
+    positioned: bool,
+    style:      Style,
+    styled:     bool,
+}
+
+// Put the cursor at `x`,`y`. An unpositioned pen always emits.
+pen_move :: proc(w: io.Writer, pen: ^Pen, x, y: u16) -> Buffer_Error {
+    if pen.positioned && pen.x == x && pen.y == y {
+        return .None
+    }
+
+    write_goto(w, x, y) or_return
+    pen.x, pen.y = x, y
+    pen.positioned = true
+
+    return .None
+}
+
+// Put `style` in force. An unstyled pen always emits.
+pen_style :: proc(w: io.Writer, pen: ^Pen, style: Style) -> Buffer_Error {
+    if pen.styled && pen.style == style {
+        return .None
+    }
+
+    queue_style(w, style) or_return
+    pen.style = style
+    pen.styled = true
+
+    return .None
+}
+
+// Account for a glyph `width` cells wide just written at the pen. The right edge leaves the
+// terminal in its deferred-wrap state, an unpredictable position, so the pen unpositions there.
+// Reckoning forward makes `cluster_width` load-bearing for a whole run, not just its own cell.
+pen_advance :: proc(pen: ^Pen, width: u16, right_edge: u16) {
+    assert(pen.positioned, "advancing a pen that was never positioned")
+    assert(width == 1 || width == 2, "a glyph occupies one or two cells")
+
+    next := int(pen.x) + int(width)
+    assert(next <= int(right_edge), "a glyph overhangs the grid")
+
+    if next == int(right_edge) {
+        pen.positioned = false
+        return
+    }
+
+    pen.x = u16(next)
+}
+
+// Emit a full style reset then this cell's colors and modifiers. Self-contained by design: a
+// run boundary restates the whole style rather than diffing against the last one, so modifiers
+// are only ever added (no off-codes) and SGR 22's aliasing of bold and dim never arises.
 queue_style :: proc(w: io.Writer, style: Style) -> Buffer_Error {
     write_str(w, SGR_RESET) or_return
     emit_fg(w, style.fg) or_return
@@ -698,9 +755,8 @@ palette_index :: proc(c: Ansi_Color) -> u8 {
     return u8(int(c) - 1)
 }
 
-// Cursor positioning: `\x1b[{row};{col}H`, 1-indexed, ROW then COL — the y coordinate is
-// emitted first. (mibu's reference goTo names its params x,y but prints y;x; matching that
-// ordering here is load-bearing.)
+// Cursor positioning: `\x1b[{row};{col}H`, 1-indexed. Takes x,y and emits row then column, so
+// the arguments are swapped on the way out — deliberate, not a bug to correct.
 write_goto :: proc(w: io.Writer, x, y: u16) -> Buffer_Error {
     return write_fmt(w, "\x1b[%d;%dH", int(y) + 1, int(x) + 1)
 }

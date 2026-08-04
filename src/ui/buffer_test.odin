@@ -415,3 +415,158 @@ test_buffer_integration_geometry_draw_clip_diff_flush :: proc(t: ^testing.T) {
     testing.expect_value(t, flush_diff(&buf, test_writer_stream(&frame2), true), Buffer_Error.None)
     testing.expect(t, strings.index(test_writer_written(&frame2), "w") < 0) // unchanged: no repaint
 }
+
+// Final byte of a cursor-position escape; no test glyph below is `H`.
+GOTO_FINAL :: "H"
+
+@(test)
+test_buffer_flush_emits_one_move_and_one_style_per_run :: proc(t: ^testing.T) {
+    buf, err := buffer_init(context.allocator, 4, 1)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    buffer_set_string_n(&buf, 0, 0, "abcd", 4, {fg = Ansi_Color.Cyan})
+
+    tw: Test_Writer
+    defer test_writer_destroy(&tw)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&tw), false), Buffer_Error.None)
+
+    out := test_writer_written(&tw)
+    testing.expect(t, strings.index(out, "abcd") >= 0)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 1)
+    testing.expect_value(t, strings.count(out, SGR_RESET), 2)
+}
+
+@(test)
+test_buffer_flush_emits_style_only_where_it_changes :: proc(t: ^testing.T) {
+    buf, err := buffer_init(context.allocator, 4, 1)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    // Two styled runs, adjacent: the second needs its style but not a move.
+    buffer_set_string_n(&buf, 0, 0, "ab", 2, {fg = Ansi_Color.Cyan})
+    buffer_set_string_n(&buf, 2, 0, "cd", 2, {fg = Ansi_Color.Red})
+
+    tw: Test_Writer
+    defer test_writer_destroy(&tw)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&tw), false), Buffer_Error.None)
+
+    out := test_writer_written(&tw)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 1)
+    testing.expect_value(t, strings.count(out, SGR_RESET), 3)
+}
+
+@(test)
+test_buffer_flush_reanchors_across_an_unchanged_cell :: proc(t: ^testing.T) {
+    buf, err := buffer_init(context.allocator, 4, 1)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    buffer_set_string_n(&buf, 0, 0, "abcd", 4, {})
+    first: Test_Writer
+    defer test_writer_destroy(&first)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&first), false), Buffer_Error.None)
+
+    // Skipping a cell leaves the cursor behind, so the next change has to move to it.
+    buffer_set_string_n(&buf, 0, 0, "xbyd", 4, {})
+    second: Test_Writer
+    defer test_writer_destroy(&second)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&second), false), Buffer_Error.None)
+
+    out := test_writer_written(&second)
+    testing.expect(t, strings.index(out, "x") >= 0 && strings.index(out, "y") >= 0)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 2)
+}
+
+@(test)
+test_buffer_flush_reanchors_at_the_row_edge :: proc(t: ^testing.T) {
+    // The terminal defers the wrap at the last column, so every row re-anchors.
+    buf, err := buffer_init(context.allocator, 2, 2)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    buffer_set_string_n(&buf, 0, 0, "ab", 2, {})
+    buffer_set_string_n(&buf, 0, 1, "cd", 2, {})
+
+    tw: Test_Writer
+    defer test_writer_destroy(&tw)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&tw), false), Buffer_Error.None)
+
+    out := test_writer_written(&tw)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 2)
+    testing.expect_value(t, strings.count(out, SGR_RESET), 2)
+}
+
+@(test)
+test_buffer_flush_moves_between_rows_at_the_same_column :: proc(t: ^testing.T) {
+    // Changes a row apart at a column where the pen's x already matches: comparing x alone
+    // would paint the second one a row high.
+    buf, err := buffer_init(context.allocator, 4, 2)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    for y: u16 = 0; y < 2; y += 1 {
+        buffer_set_string_n(&buf, 0, y, "....", 4, {})
+    }
+    first: Test_Writer
+    defer test_writer_destroy(&first)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&first), false), Buffer_Error.None)
+
+    buffer_set_string_n(&buf, 0, 0, "X...", 4, {})
+    buffer_set_string_n(&buf, 0, 1, ".Y..", 4, {})
+    second: Test_Writer
+    defer test_writer_destroy(&second)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&second), false), Buffer_Error.None)
+
+    out := test_writer_written(&second)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 2)
+    testing.expect(t, strings.index(out, "\x1b[2;2HY") >= 0) // row 2, column 2, 1-indexed
+}
+
+@(test)
+test_buffer_flush_restates_style_each_frame :: proc(t: ^testing.T) {
+    // A frame settles the terminal on the way out, so the next inherits nothing and restates
+    // its style even when the last one matched.
+    buf, err := buffer_init(context.allocator, 4, 1)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    red :: Style {
+        bg = Ansi_Color.Red,
+    }
+
+    buffer_set_string_n(&buf, 0, 0, "aaaa", 4, red)
+    first: Test_Writer
+    defer test_writer_destroy(&first)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&first), false), Buffer_Error.None)
+
+    buffer_set_string_n(&buf, 0, 0, "aaaa", 4, red)
+    buffer_set(&buf, 2, 0, "Z", red)
+    second: Test_Writer
+    defer test_writer_destroy(&second)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&second), false), Buffer_Error.None)
+
+    // One style for the repainted cell, one for the trailing settle.
+    out := test_writer_written(&second)
+    testing.expect(t, strings.index(out, "Z") >= 0)
+    testing.expect_value(t, strings.count(out, SGR_RESET), 2)
+}
+
+@(test)
+test_buffer_flush_advances_two_columns_past_a_wide_glyph :: proc(t: ^testing.T) {
+    // A wide glyph leaves the cursor two columns on; advancing by one would cost a move.
+    buf, err := buffer_init(context.allocator, 4, 1)
+    testing.expect_value(t, err, Buffer_Error.None)
+    defer buffer_destroy(&buf)
+
+    buffer_set(&buf, 0, 0, "漢", {})
+    buffer_set_string_n(&buf, 2, 0, "cd", 2, {})
+
+    tw: Test_Writer
+    defer test_writer_destroy(&tw)
+    testing.expect_value(t, flush_diff(&buf, test_writer_stream(&tw), false), Buffer_Error.None)
+
+    out := test_writer_written(&tw)
+    testing.expect(t, strings.index(out, "漢cd") >= 0)
+    testing.expect_value(t, strings.count(out, GOTO_FINAL), 1)
+}
