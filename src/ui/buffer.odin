@@ -252,19 +252,28 @@ buffer_set :: proc(b: ^Buffer, x, y: u16, cluster: string, style: Style) -> Buff
     }
 
     glyph := glyph_for(b, cluster) or_return
+    cell_place(b, idx, glyph, w, style)
+
+    return .None
+}
+
+// Write an already-measured `glyph` at `idx`, repairing whatever it lands on. Callers own the
+// guarantee that a width-2 glyph has its continuation cell on the same row.
+cell_place :: proc(b: ^Buffer, idx: int, glyph: Glyph, width: u16, style: Style) {
+    assert(width == 1 || width == 2, "a glyph occupies one or two cells")
+
     repair_landing(b, idx)
     repair_overwritten(b, idx)
 
-    if w == 2 {
+    if width == 2 {
         // The continuation covers a cell that may have held its own wide head; repair it too.
         repair_overwritten(b, idx + 1)
         set_one(b, idx, glyph, style, {.Wide})
         set_one(b, idx + 1, GLYPH_SPACE, style, {.Cont})
-    } else {
-        set_one(b, idx, glyph, style, {})
+        return
     }
 
-    return .None
+    set_one(b, idx, glyph, style, {})
 }
 
 // Write `text` from (x,y), clipped to the buffer width. Returns cells used.
@@ -341,7 +350,11 @@ buffer_set_string_n :: proc(
 // not reset to EMPTY_CELL).
 buffer_fill :: proc(b: ^Buffer, area: Rect, cluster: string, style: Style) -> Buffer_Error {
     a := buffer_clamp(b, area)
+
+    // Measured and interned once: the cluster is the same for every cell, and re-deriving it
+    // per cell dominates the cost of a full-screen wash.
     w := checked_grapheme_width(cluster) or_return
+    glyph := glyph_for(b, cluster) or_return
 
     row := a.y
     for row < rect_bottom(a) {
@@ -351,7 +364,7 @@ buffer_fill :: proc(b: ^Buffer, area: Rect, cluster: string, style: Style) -> Bu
                 break
             }
 
-            buffer_set(b, col, row, cluster, style) or_return
+            cell_place(b, offset(b, col, row), glyph, w, style)
             col += w
         }
 
