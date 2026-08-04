@@ -6,6 +6,7 @@ import "core:net"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "libs:http"
 import http_server "libs:http/server"
 import ts "libs:testsupport"
 
@@ -19,11 +20,13 @@ test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Url), 10002)
     testing.expect_value(t, int(Option.Write_Data), 10001)
     testing.expect_value(t, int(Option.Error_Buffer), 10010)
-    testing.expect_value(t, int(Option.Post_Fields), 10015)
     testing.expect_value(t, int(Option.Http_Header), 10023)
     testing.expect_value(t, int(Option.Header_Data), 10029)
+    testing.expect_value(t, int(Option.Copy_Post_Fields), 10165)
     testing.expect_value(t, int(Option.Write_Function), 20011)
     testing.expect_value(t, int(Option.Header_Function), 20079)
+    testing.expect_value(t, int(Option.Post_Field_Size_Large), 30120)
+    testing.expect_value(t, int(Option.Ssl_Cert_Blob), 40291)
     testing.expect_value(t, int(Option.Low_Speed_Limit), 19)
     testing.expect_value(t, int(Option.Low_Speed_Time), 20)
     testing.expect_value(t, int(Option.Post), 47)
@@ -63,16 +66,20 @@ test_curl_parses_status_lines :: proc(t: ^testing.T) {
 // test can prove chunks reach `On_Body` before the response has finished
 // arriving. The front door only supplies the accept and the request parse.
 Fake :: struct {
-    front:  http_server.Server,
-    parts:  []string,
+    front:    http_server.Server,
+    parts:    []string,
 
     // Delay inserted before every piece after the first.
-    gap:    time.Duration,
-    next:   int,
-    socket: net.TCP_Socket,
-    loop:   ^nbio.Event_Loop,
-    taken:  bool,
-    closed: bool,
+    gap:      time.Duration,
+    next:     int,
+    socket:   net.TCP_Socket,
+    loop:     ^nbio.Event_Loop,
+    taken:    bool,
+    closed:   bool,
+
+    // Request body received before the canned response goes out.
+    body:     [64]byte,
+    body_len: int,
 }
 
 fake_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
@@ -80,6 +87,26 @@ fake_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
     f.socket, f.loop, _ = http_server.hijack(c)
     f.taken = true
 
+    f.body_len = copy(f.body[:], req.trailing)
+    remaining := min(int(req.content_length) - f.body_len, len(f.body) - f.body_len)
+    if remaining > 0 {
+        nbio.recv_poly(
+            f.socket,
+            [][]byte{f.body[f.body_len:][:remaining]},
+            f,
+            fake_on_body,
+            true,
+            nbio.NO_TIMEOUT,
+            f.loop,
+        )
+        return
+    }
+
+    fake_send_next(f)
+}
+
+fake_on_body :: proc(op: ^nbio.Operation, f: ^Fake) {
+    f.body_len += op.recv.received
     fake_send_next(f)
 }
 
@@ -95,7 +122,7 @@ fake_send_next :: proc(f: ^Fake) {
 }
 
 fake_on_sent :: proc(op: ^nbio.Operation, f: ^Fake) {
-    // The peer going away mid-script is the canceled-turn case, not a failure.
+    // The peer going away mid-script is the canceled-transfer case, not a failure.
     if op.send.err != nil {
         fake_close(f)
         return
@@ -128,10 +155,10 @@ fake_on_closed :: proc(op: ^nbio.Operation) {
 
 // --- Observation ---------------------------------------------------------------
 
-// What the turn under test saw, accumulated without allocating so the fixture
+// What the transfer under test saw, accumulated without allocating so the fixture
 // stays leak-clean.
 Obs :: struct {
-    turn:          Turn,
+    transfer:      Transfer,
     client:        ^Client,
 
     // Body chunks concatenated in arrival order.
@@ -157,14 +184,14 @@ Obs :: struct {
     // Return false from `On_Body` once this many chunks have arrived (0: never).
     abort_after:   int,
 
-    // Cancel the turn from a loop callback once this many chunks have arrived.
+    // Cancel the transfer from a loop callback once this many chunks have arrived.
     cancel_after:  int,
     cancel_armed:  bool,
 
     // Set when the test may stop driving the loop.
     finished:      bool,
 
-    // When set, `On_Done` starts this turn against `chain_url` before returning
+    // When set, `On_Done` starts this transfer against `chain_url` before returning
     // — the reentrancy a retrying engine performs.
     chain:         ^Obs,
     chain_url:     cstring,
@@ -173,11 +200,11 @@ Obs :: struct {
     // How long to keep watching for stray callbacks after a cancel.
     grace:         time.Duration,
 
-    // Callbacks seen after the turn was canceled, which must stay zero.
+    // Callbacks seen after the transfer was canceled, which must stay zero.
     after_cancel:  int,
     canceled:      bool,
 
-    // Chunk count at the moment the turn was canceled.
+    // Chunk count at the moment the transfer was canceled.
     chunks_at_cut: int,
 }
 
@@ -229,7 +256,7 @@ obs_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
         return false
     }
 
-    // Cancellation is deferred to the loop: `turn_cancel` from inside a curl
+    // Cancellation is deferred to the loop: `transfer_cancel` from inside a curl
     // callback is exactly what the driver forbids.
     if o.cancel_after > 0 && o.chunk_count >= o.cancel_after && !o.cancel_armed {
         o.cancel_armed = true
@@ -254,8 +281,8 @@ obs_on_done :: proc(user: rawptr, result: Result) {
         next := o.chain
         o.chain = nil
         next.client = o.client
-        next.chain_err = turn_start(
-            &next.turn,
+        next.chain_err = transfer_start(
+            &next.transfer,
             o.client,
             Request{url = o.chain_url, method = .Get},
             obs_callbacks(),
@@ -267,7 +294,7 @@ obs_on_done :: proc(user: rawptr, result: Result) {
 }
 
 obs_cancel_now :: proc(op: ^nbio.Operation, o: ^Obs) {
-    turn_cancel(&o.turn)
+    transfer_cancel(&o.transfer)
     o.canceled = true
     o.chunks_at_cut = o.chunk_count
 
@@ -298,18 +325,17 @@ obs_headers :: proc(o: ^Obs) -> string {
 
 // --- Harness -------------------------------------------------------------------
 
-// The request body the fixture posts. `POSTFIELDS` borrows it until the turn
-// completes, which a package-level constant satisfies trivially.
+// The request body the fixture posts.
 @(rodata)
 REQUEST_BODY := [?]byte{'{', '"', 's', 't', 'r', 'e', 'a', 'm', '"', ':', 't', 'r', 'u', 'e', '}'}
 
-// Binds the front door on an OS-assigned port, runs one turn against it on the
+// Binds the front door on an OS-assigned port, runs one transfer against it on the
 // same loop, and leaves the client for the caller to inspect and destroy.
-run_turn :: proc(t: ^testing.T, o: ^Obs, c: ^Client, f: ^Fake, method: Method = .Post) {
+run_transfer :: proc(t: ^testing.T, o: ^Obs, c: ^Client, f: ^Fake, method: Method = .Post) {
     port := http_server.bound_port(&f.front)
     testing.expect(t, port > 0, "front door must have a bound port")
 
-    headers := []cstring{"content-type: application/json", "x-test-client: yuke"}
+    headers := []Header{{name = "content-type", value = "application/json"}, {name = "x-test-client", value = "yuke"}}
     req := Request {
         url     = fmt.ctprintf("http://127.0.0.1:%d/v1/messages", port),
         headers = headers,
@@ -318,14 +344,14 @@ run_turn :: proc(t: ^testing.T, o: ^Obs, c: ^Client, f: ^Fake, method: Method = 
     }
 
     o.client = c
-    testing.expect_value(t, turn_start(&o.turn, c, req, obs_callbacks(), o), Error.None)
-    testing.expect(t, c.timer_op != nil, "starting a turn must arm the pump timer")
+    testing.expect_value(t, transfer_start(&o.transfer, c, req, obs_callbacks(), o), Error.None)
+    testing.expect(t, c.timer_op != nil, "starting a transfer must arm the pump timer")
     testing.expect_value(t, len(c.live), 1)
 
-    ts.nbio_run_until(t, o, obs_finished, "curl turn completion")
+    ts.nbio_run_until(t, o, obs_finished, "curl transfer completion")
 }
 
-// Full fixture lifecycle: loop, front door, client, one or more turns, teardown.
+// Full fixture lifecycle: loop, front door, client, one or more transfers, teardown.
 run_fixture :: proc(t: ^testing.T, o: ^Obs, parts: []string, gap: time.Duration, method: Method = .Post) {
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -344,7 +370,7 @@ run_fixture :: proc(t: ^testing.T, o: ^Obs, parts: []string, gap: time.Duration,
     c: Client
     testing.expect_value(t, client_init(&c, loop), Error.None)
 
-    run_turn(t, o, &c, &f)
+    run_transfer(t, o, &c, &f)
 
     testing.expect_value(t, len(c.live), 0)
     testing.expect(t, c.timer_op == nil, "an idle client must disarm its pump timer")
@@ -415,7 +441,7 @@ test_curl_surfaces_non_2xx_with_body :: proc(t: ^testing.T) {
 }
 
 // `On_Body` returning false is the only in-callback cancellation: the transfer
-// aborts and the turn still completes through the ordinary done path.
+// aborts and the transfer still completes through the ordinary done path.
 @(test)
 test_curl_aborts_from_body_callback :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -432,7 +458,7 @@ test_curl_aborts_from_body_callback :: proc(t: ^testing.T) {
     testing.expect_value(t, obs_body(&o), "data: one\n\n")
 }
 
-// `turn_cancel` from a loop callback is terminal and silent: no further callback
+// `transfer_cancel` from a loop callback is terminal and silent: no further callback
 // fires, the handles are gone, and the client is immediately reusable.
 @(test)
 test_curl_cancels_mid_stream_and_reuses_client :: proc(t: ^testing.T) {
@@ -468,17 +494,17 @@ test_curl_cancels_mid_stream_and_reuses_client :: proc(t: ^testing.T) {
         cancel_after = 1,
         grace        = 150 * time.Millisecond,
     }
-    run_turn(t, &cut, &c, &f)
+    run_transfer(t, &cut, &c, &f)
 
-    testing.expect(t, cut.canceled, "the turn must have been canceled")
+    testing.expect(t, cut.canceled, "the transfer must have been canceled")
     testing.expect_value(t, cut.done_count, 0)
     testing.expect_value(t, cut.after_cancel, 0)
     testing.expect_value(t, cut.chunk_count, cut.chunks_at_cut)
-    testing.expect_value(t, cut.turn.state, Turn_State.Canceled)
+    testing.expect_value(t, cut.transfer.state, Transfer_State.Canceled)
     testing.expect_value(t, len(c.live), 0)
-    testing.expect(t, c.timer_op == nil, "canceling the last turn must disarm the pump timer")
+    testing.expect(t, c.timer_op == nil, "canceling the last transfer must disarm the pump timer")
 
-    // The same client must serve a fresh turn against a fresh connection.
+    // The same client must serve a fresh transfer against a fresh connection.
     fixture_teardown(t, &f)
 
     second := Fake {
@@ -491,7 +517,7 @@ test_curl_cancels_mid_stream_and_reuses_client :: proc(t: ^testing.T) {
     )
 
     o: Obs
-    run_turn(t, &o, &c, &second)
+    run_transfer(t, &o, &c, &second)
 
     testing.expect_value(t, o.done_count, 1)
     testing.expect_value(t, o.done_code, Code.Ok)
@@ -503,10 +529,10 @@ test_curl_cancels_mid_stream_and_reuses_client :: proc(t: ^testing.T) {
     fixture_teardown(t, &second)
 }
 
-// Two turns in a row on one client exercise the reuse path through the multi
+// Two transfers in a row on one client exercise the reuse path through the multi
 // handle. Connection reuse itself is libcurl's business and is not asserted.
 @(test)
-test_curl_runs_two_sequential_turns :: proc(t: ^testing.T) {
+test_curl_runs_two_sequential_transfers :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -531,7 +557,7 @@ test_curl_runs_two_sequential_turns :: proc(t: ^testing.T) {
     )
 
     a: Obs
-    run_turn(t, &a, &c, &first)
+    run_transfer(t, &a, &c, &first)
     fixture_teardown(t, &first)
 
     second := Fake {
@@ -544,7 +570,7 @@ test_curl_runs_two_sequential_turns :: proc(t: ^testing.T) {
     )
 
     b: Obs
-    run_turn(t, &b, &c, &second, .Get)
+    run_transfer(t, &b, &c, &second, .Get)
     fixture_teardown(t, &second)
 
     testing.expect_value(t, a.done_count, 1)
@@ -586,11 +612,11 @@ test_curl_delivers_two_header_blocks :: proc(t: ^testing.T) {
     testing.expect_value(t, obs_body(&o), "created")
 }
 
-// Starting a turn from inside `On_Done` is what a retrying engine does. It runs
-// while the driver is still walking its completion scratch, so both turns must
+// Starting a transfer from inside `On_Done` is what a retrying engine does. It runs
+// while the driver is still walking its completion scratch, so both transfers must
 // finish and the pump timer must end up disarmed.
 @(test)
-test_curl_starts_a_turn_from_on_done :: proc(t: ^testing.T) {
+test_curl_starts_a_transfer_from_on_done :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -615,16 +641,16 @@ test_curl_starts_a_turn_from_on_done :: proc(t: ^testing.T) {
         chain     = &second,
         chain_url = fmt.ctprintf("http://127.0.0.1:%d/second", http_server.bound_port(&f.front)),
     }
-    run_turn(t, &first, &c, &f)
+    run_transfer(t, &first, &c, &f)
 
     testing.expect_value(t, first.done_count, 1)
     testing.expect_value(t, second.chain_err, Error.None)
 
-    // The front door serves the chained turn from the same listener.
+    // The front door serves the chained transfer from the same listener.
     f.next = 0
     f.taken = false
     f.closed = false
-    ts.nbio_run_until(t, &second, obs_finished, "chained curl turn completion")
+    ts.nbio_run_until(t, &second, obs_finished, "chained curl transfer completion")
 
     testing.expect_value(t, second.done_count, 1)
     testing.expect_value(t, second.done_code, Code.Ok)
@@ -638,7 +664,7 @@ test_curl_starts_a_turn_from_on_done :: proc(t: ^testing.T) {
 
 // A refused connection is an operating error, not a crash: it comes back through
 // the ordinary done path with curl's own code, no HTTP status, and the reason
-// text libcurl wrote into the turn's error buffer.
+// text libcurl wrote into the transfer's error buffer.
 @(test)
 test_curl_reports_connection_failure :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -672,7 +698,7 @@ test_curl_reports_connection_failure :: proc(t: ^testing.T) {
         url    = fmt.ctprintf("http://127.0.0.1:%d/gone", port),
         method = .Get,
     }
-    testing.expect_value(t, turn_start(&o.turn, &c, request, obs_callbacks(), &o), Error.None)
+    testing.expect_value(t, transfer_start(&o.transfer, &c, request, obs_callbacks(), &o), Error.None)
 
     ts.nbio_run_until(t, &o, obs_finished, "curl connection failure")
 
@@ -685,4 +711,137 @@ test_curl_reports_connection_failure :: proc(t: ^testing.T) {
     testing.expect(t, c.timer_op == nil, "an idle client must disarm its pump timer")
 
     client_destroy(&c)
+}
+
+// `transfer_start` copies the body, so scribbling the caller's buffer the moment it
+// returns cannot change what the peer receives.
+@(test)
+test_curl_copies_request_body :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    f := Fake {
+        parts = []string{"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: one\n\n"},
+    }
+    options := http_server.Options {
+        host = "127.0.0.1",
+        port = 0,
+    }
+    testing.expect_value(t, http_server.listen(&f.front, loop, options, fake_on_request, &f), http_server.Error.None)
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    body := [?]byte{'{', '"', 'a', '"', ':', '1', '}'}
+    o: Obs
+    o.client = &c
+    req := Request {
+        url    = fmt.ctprintf("http://127.0.0.1:%d/v1/messages", http_server.bound_port(&f.front)),
+        body   = body[:],
+        method = .Post,
+    }
+    testing.expect_value(t, transfer_start(&o.transfer, &c, req, obs_callbacks(), &o), Error.None)
+
+    for &b in body {
+        b = 0xff
+    }
+
+    ts.nbio_run_until(t, &o, obs_finished, "curl transfer completion")
+
+    testing.expect_value(t, string(f.body[:f.body_len]), `{"a":1}`)
+    testing.expect_value(t, o.done_code, Code.Ok)
+    testing.expect_value(t, o.done_status, 200)
+
+    client_destroy(&c)
+    fixture_teardown(t, &f)
+}
+
+// A rejected header stops the request before any handle joins the multi.
+@(test)
+test_curl_rejects_unsendable_headers :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    long := strings.repeat("k", HEADER_LINE_MAX, context.temp_allocator)
+    cases := [?][]Header {
+        {{name = "authorization", value = "Bearer x\r\nx-injected: yes"}},
+        {{name = "x bad name", value = "yes"}},
+        {{name = "accept", value = ""}},
+        {{name = "authorization", value = long}},
+    }
+
+    for headers in cases {
+        o: Obs
+        o.client = &c
+        request := Request {
+            url     = "http://127.0.0.1:1/v1/messages",
+            headers = headers,
+            method  = .Get,
+        }
+        testing.expect_value(t, transfer_start(&o.transfer, &c, request, obs_callbacks(), &o), Error.Invalid_Request)
+        testing.expect_value(t, len(c.live), 0)
+        testing.expect_value(t, o.done_count, 0)
+    }
+
+    client_destroy(&c)
+}
+
+// `field_name_valid` and `field_value_valid` are copies of the `libs:http` originals,
+// duplicated so a binding depends on nothing but its C library. They guard against
+// header injection, so a copy that silently drifted from the original would be a
+// security regression rather than a style problem. This pins them to it over the
+// whole byte range; the dependency is test-only and never reaches a consumer.
+@(test)
+test_field_validators_match_libs_http :: proc(t: ^testing.T) {
+    for c in 0 ..= 255 {
+        one := string([]byte{u8(c)})
+
+        testing.expectf(
+            t,
+            field_name_valid(one) == http.field_name_valid(one),
+            "field_name_valid disagrees with libs:http on byte %d",
+            c,
+        )
+        testing.expectf(
+            t,
+            field_value_valid(one) == http.field_value_valid(one),
+            "field_value_valid disagrees with libs:http on byte %d",
+            c,
+        )
+    }
+
+    samples := [?]string {
+        "",
+        "authorization",
+        "x-api-key",
+        "x bad name",
+        "colon:inside",
+        "Bearer token",
+        "value\r\nx-injected: yes",
+        "trailing\t",
+    }
+
+    for s in samples {
+        testing.expectf(
+            t,
+            field_name_valid(s) == http.field_name_valid(s),
+            "field_name_valid disagrees with libs:http on %q",
+            s,
+        )
+        testing.expectf(
+            t,
+            field_value_valid(s) == http.field_value_valid(s),
+            "field_value_valid disagrees with libs:http on %q",
+            s,
+        )
+    }
 }
