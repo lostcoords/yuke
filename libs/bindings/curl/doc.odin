@@ -2,13 +2,20 @@
 package curl is a minimal Odin binding to libcurl plus a streaming driver that
 runs libcurl's multi interface on a `core:nbio` event loop.
 
-Two layers, one package:
+Three layers, one package:
 
   - `c.odin`: the raw FFI. `@(private)` `c_*` procedures, the `CURLcode` and
     `CURLMcode` enums, the subset of `CURLoption` this driver sets, and the
     typed `setopt_long` / `setopt_str` / `setopt_ptr` / `setopt_write_cb`
     wrappers. `curl_easy_setopt` is variadic and therefore type-unsafe, so the
     wrappers are its only callers; importers see none of this.
+
+  - `socket.odin`: `Socket`, a `Connect_Only` connection. libcurl performs the TCP
+    and TLS handshake on its own multi handle, then hands over raw
+    `socket_send`/`socket_recv`. The handle stays added to that multi for the
+    socket's whole life — removing it destroys the connection — but a connected
+    socket needs no pumping at all, so the dial's timer is dropped once it lands and
+    an idle socket costs nothing on the loop.
 
   - `curl.odin`: `Client` and `Transfer`. A `Client` owns the multi handle and
     one re-armed `nbio.timeout` that calls `curl_multi_perform` and drains

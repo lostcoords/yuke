@@ -1,9 +1,11 @@
 package curl
 
+import "core:c"
 import "core:fmt"
 import "core:nbio"
 import "core:net"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:time"
 import "libs:http"
@@ -36,6 +38,11 @@ test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Http_Get), 80)
     testing.expect_value(t, int(Option.No_Signal), 99)
     testing.expect_value(t, int(Option.Pipe_Wait), 237)
+    testing.expect_value(t, int(Option.Connect_Only), 141)
+    testing.expect_value(t, int(Option.Http_Version), 84)
+    testing.expect_value(t, int(Option.Ca_Info), 10065)
+    testing.expect_value(t, HTTP_VERSION_1_1, 2)
+    testing.expect_value(t, int(Info.Active_Socket), 5242924)
     testing.expect_value(t, int(Info.Response_Code), 2097154)
     testing.expect_value(t, int(Code.Write_Error), 23)
     testing.expect_value(t, int(Code.Aborted_By_Callback), 42)
@@ -844,4 +851,326 @@ test_field_validators_match_libs_http :: proc(t: ^testing.T) {
             s,
         )
     }
+}
+
+// --- Connect-only sockets ------------------------------------------------------
+
+// Drive a `Connect_Only` handle on `multi` until its transfer completes, and report
+// that transfer's own result.
+connect_only_dial :: proc(easy: ^Easy, multi: ^Multi, url: cstring) -> Code {
+    if code := setopt_str(easy, .Url, url); code != .Ok {
+        return code
+    }
+
+    if code := setopt_long(easy, .Connect_Only, 1); code != .Ok {
+        return code
+    }
+
+    if mcode := c_multi_add_handle(multi, easy); mcode != .Ok {
+        return .Failed_Init
+    }
+
+    deadline := time.time_add(time.now(), 5 * time.Second)
+    for time.diff(time.now(), deadline) > 0 {
+        running, mcode := multi_perform(multi)
+        if mcode != .Ok && mcode != .Call_Multi_Perform {
+            return .Failed_Init
+        }
+
+        for {
+            msg, _ := multi_info_read(multi)
+            if msg == nil {
+                break
+            }
+
+            if msg.kind == .Done && msg.easy == easy {
+                return msg.data.result
+            }
+        }
+
+        if running == 0 {
+            break
+        }
+
+        time.sleep(time.Millisecond)
+    }
+
+    return .Operation_Timedout
+}
+
+// Listener plus the connected curl handle that dialed it, with the accepted peer.
+Connect_Only_Pair :: struct {
+    listener: net.TCP_Socket,
+    peer:     net.TCP_Socket,
+    easy:     ^Easy,
+    multi:    ^Multi,
+}
+
+connect_only_pair :: proc(t: ^testing.T) -> (p: Connect_Only_Pair, ok: bool) {
+    sync.once_do(&global_init_once, global_init)
+
+    listener, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    if lerr != nil {
+        testing.expectf(t, false, "listen failed: %v", lerr)
+        return {}, false
+    }
+
+    endpoint, eerr := net.bound_endpoint(listener)
+    if eerr != nil {
+        net.close(listener)
+        testing.expectf(t, false, "bound_endpoint failed: %v", eerr)
+        return {}, false
+    }
+
+    p.listener = listener
+    p.easy = c_easy_init()
+    p.multi = c_multi_init()
+
+    url := fmt.ctprintf("http://127.0.0.1:%d/", endpoint.port)
+    if code := connect_only_dial(p.easy, p.multi, url); code != .Ok {
+        testing.expectf(t, false, "connect-only dial failed: %v", code)
+        connect_only_pair_destroy(&p)
+        return {}, false
+    }
+
+    // The TCP handshake completed into the listen backlog, so this does not block.
+    peer, _, aerr := net.accept_tcp(listener)
+    if aerr != nil {
+        testing.expectf(t, false, "accept failed: %v", aerr)
+        connect_only_pair_destroy(&p)
+        return {}, false
+    }
+
+    p.peer = peer
+
+    return p, true
+}
+
+connect_only_pair_destroy :: proc(p: ^Connect_Only_Pair) {
+    if p.easy != nil {
+        c_easy_cleanup(p.easy)
+    }
+
+    if p.multi != nil {
+        c_multi_cleanup(p.multi)
+    }
+
+    if p.peer != 0 {
+        net.close(p.peer)
+    }
+
+    if p.listener != 0 {
+        net.close(p.listener)
+    }
+}
+
+// The control: a `Connect_Only` handle still on the multi can send.
+@(test)
+test_connect_only_sends_while_attached :: proc(t: ^testing.T) {
+    p, ok := connect_only_pair(t)
+    if !ok {
+        return
+    }
+    defer connect_only_pair_destroy(&p)
+
+    payload := "ping"
+    sent: c.size_t
+    code := c_easy_send(p.easy, raw_data(payload), len(payload), &sent)
+    testing.expect_value(t, code, Code.Ok)
+    testing.expect_value(t, int(sent), len(payload))
+
+    buf: [16]byte
+    n, rerr := net.recv_tcp(p.peer, buf[:])
+    testing.expect_value(t, rerr, nil)
+    testing.expect_value(t, string(buf[:n]), payload)
+}
+
+// `curl_multi_remove_handle` destroys a `Connect_Only` connection: the active socket
+// goes to `-1` and the handle can no longer send. So a parked socket has to stay added
+// to the multi for its whole life, and keeping the pump timer off it is the caller's
+// job rather than something detaching can buy.
+@(test)
+test_connect_only_dies_on_multi_remove :: proc(t: ^testing.T) {
+    p, ok := connect_only_pair(t)
+    if !ok {
+        return
+    }
+    defer connect_only_pair_destroy(&p)
+
+    testing.expect_value(t, c_multi_remove_handle(p.multi, p.easy), Multi_Code.Ok)
+
+    sock, icode := getinfo_socket(p.easy, .Active_Socket)
+    testing.expect_value(t, icode, Code.Ok)
+    testing.expect_value(t, int(sock), -1)
+
+    payload := "ping"
+    sent: c.size_t
+    testing.expect_value(t, c_easy_send(p.easy, raw_data(payload), len(payload), &sent), Code.Unsupported_Protocol)
+    testing.expect_value(t, int(sent), 0)
+}
+
+// A parked connect-only handle asks nothing of the pump: curl reports no timeout and
+// no running transfer, and `curl_easy_send`/`curl_easy_recv` work with no
+// `curl_multi_perform` in between. `client_period` maps that `-1` to `TICK_MAX`, so
+// such a handle must stay out of the live set or it arms a 10ms timer forever.
+@(test)
+test_connect_only_parked_asks_nothing_of_the_pump :: proc(t: ^testing.T) {
+    p, ok := connect_only_pair(t)
+    if !ok {
+        return
+    }
+    defer connect_only_pair_destroy(&p)
+
+    for _ in 0 ..< 3 {
+        ms, code := multi_timeout_ms(p.multi)
+        testing.expect_value(t, code, Multi_Code.Ok)
+        testing.expect_value(t, ms, -1)
+
+        running, mcode := multi_perform(p.multi)
+        testing.expect_value(t, mcode, Multi_Code.Ok)
+        testing.expect_value(t, running, 0)
+    }
+
+    // Never pumped since the dial completed, yet the socket still works.
+    payload := "ping"
+    sent: c.size_t
+    testing.expect_value(t, c_easy_send(p.easy, raw_data(payload), len(payload), &sent), Code.Ok)
+
+    buf: [16]byte
+    n, rerr := net.recv_tcp(p.peer, buf[:])
+    testing.expect_value(t, rerr, nil)
+    testing.expect_value(t, string(buf[:n]), payload)
+}
+
+// What a dial reported, so a test can wait on the loop and then assert.
+Dial_Obs :: struct {
+    socket: Socket,
+    calls:  int,
+    code:   Code,
+    done:   bool,
+}
+
+dial_on_connect :: proc(user: rawptr, result: Result) {
+    o := (^Dial_Obs)(user)
+    o.calls += 1
+    o.code = result.code
+    o.done = true
+}
+
+// The whole point of the connect-only socket: it dials on the loop, then carries raw
+// bytes with no pump behind it. The dropped timer is what makes an idle session free.
+@(test)
+test_socket_connects_and_carries_bytes :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    listener, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    testing.expect_value(t, lerr, nil)
+    defer net.close(listener)
+
+    endpoint, eerr := net.bound_endpoint(listener)
+    testing.expect_value(t, eerr, nil)
+
+    o: Dial_Obs
+    url := fmt.ctprintf("http://127.0.0.1:%d/", endpoint.port)
+    testing.expect_value(t, socket_connect(&o.socket, loop, {url = url}, dial_on_connect, &o), Error.None)
+    defer socket_destroy(&o.socket)
+
+    nbio.run_until(&o.done)
+
+    testing.expect_value(t, o.calls, 1)
+    testing.expect_value(t, o.code, Code.Ok)
+    testing.expect_value(t, o.socket.state, Socket_State.Connected)
+    testing.expect(t, o.socket.timer_op == nil, "a connected socket must leave no timer armed")
+    testing.expect(t, socket_handle(&o.socket) != SOCKET_BAD, "a connected socket has a real handle")
+
+    peer, _, aerr := net.accept_tcp(listener)
+    testing.expect_value(t, aerr, nil)
+    defer net.close(peer)
+
+    sent, scode := socket_send(&o.socket, transmute([]byte)string("ping"))
+    testing.expect_value(t, scode, Code.Ok)
+    testing.expect_value(t, sent, 4)
+
+    buf: [16]byte
+    n, rerr := net.recv_tcp(peer, buf[:])
+    testing.expect_value(t, rerr, nil)
+    testing.expect_value(t, string(buf[:n]), "ping")
+
+    _, serr := net.send_tcp(peer, transmute([]byte)string("pong"))
+    testing.expect_value(t, serr, nil)
+
+    // The peer's bytes have to land before a non-blocking read can see them, and
+    // there is no completion to wait on: this is exactly the readiness wait the ws
+    // pipe will do with `nbio.poll`.
+    got: int
+    for _ in 0 ..< 200 {
+        received, code := socket_recv(&o.socket, buf[:])
+        if code == .Ok && received > 0 {
+            got = received
+            break
+        }
+
+        testing.expect_value(t, code, Code.Again)
+        time.sleep(time.Millisecond)
+    }
+
+    testing.expect_value(t, string(buf[:got]), "pong")
+}
+
+// A refused dial reports through the same callback and leaves nothing armed.
+@(test)
+test_socket_dial_failure_reports_once :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    // Bind and close to get a port nothing is listening on.
+    probe, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    testing.expect_value(t, lerr, nil)
+    endpoint, eerr := net.bound_endpoint(probe)
+    testing.expect_value(t, eerr, nil)
+    net.close(probe)
+
+    o: Dial_Obs
+    url := fmt.ctprintf("http://127.0.0.1:%d/", endpoint.port)
+    testing.expect_value(t, socket_connect(&o.socket, loop, {url = url}, dial_on_connect, &o), Error.None)
+    defer socket_destroy(&o.socket)
+
+    nbio.run_until(&o.done)
+
+    testing.expect_value(t, o.calls, 1)
+    testing.expect_value(t, o.code, Code.Couldnt_Connect)
+    testing.expect_value(t, o.socket.state, Socket_State.Failed)
+    testing.expect(t, o.socket.timer_op == nil, "a failed dial must leave no timer armed")
+}
+
+// `socket_destroy` mid-dial is final and silent, like `nbio.remove`.
+@(test)
+test_socket_destroy_during_dial_is_silent :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    listener, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    testing.expect_value(t, lerr, nil)
+    defer net.close(listener)
+
+    endpoint, eerr := net.bound_endpoint(listener)
+    testing.expect_value(t, eerr, nil)
+
+    o: Dial_Obs
+    url := fmt.ctprintf("http://127.0.0.1:%d/", endpoint.port)
+    testing.expect_value(t, socket_connect(&o.socket, loop, {url = url}, dial_on_connect, &o), Error.None)
+
+    socket_destroy(&o.socket)
+    testing.expect_value(t, o.socket.state, Socket_State.Closed)
+
+    // Nothing is left to run; any stray callback would have to come from the loop.
+    for _ in 0 ..< 20 {
+        nbio.tick(time.Millisecond)
+    }
+
+    testing.expect_value(t, o.calls, 0)
 }

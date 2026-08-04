@@ -292,23 +292,53 @@ client_sync_timer :: proc(c: ^Client) {
             c.timer_op = nil
         }
     } else if c.timer_op == nil {
-        c.timer_op = nbio.timeout_poly(client_period(c), c, client_on_tick, c.loop)
+        c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
     }
 
     assert((c.timer_op != nil) == (len(c.live) > 0), "pump timer state disagrees with the live-transfer count")
 }
 
-// Delay until the next pump, clamped into the poll window.
+// Delay until the next pump, clamped into the poll window. A negative timeout means
+// curl has nothing scheduled, which for a live transfer still means "look again soon".
 @(private)
-client_period :: proc(c: ^Client) -> time.Duration {
-    assert(c != nil, "client_period needs a client")
+multi_period :: proc(multi: ^Multi) -> time.Duration {
+    assert(multi != nil, "multi_period needs a multi handle")
 
-    ms, code := multi_timeout_ms(c.multi)
+    ms, code := multi_timeout_ms(multi)
     if code != .Ok || ms < 0 {
         return TICK_MAX
     }
 
     return clamp(time.Duration(ms) * time.Millisecond, TICK_MIN, TICK_MAX)
+}
+
+// Advance every handle on `multi` until it stops asking to be called again.
+@(private)
+multi_perform_all :: proc(multi: ^Multi) {
+    assert(multi != nil, "multi_perform_all needs a multi handle")
+
+    for {
+        _, code := multi_perform(multi)
+        if code == .Call_Multi_Perform {
+            continue
+        }
+
+        assert(code == .Ok, "curl_multi_perform failed on a handle this package owns")
+        break
+    }
+}
+
+// The failure reason curl left behind, preferring its own buffer over the generic text
+// for the code. Borrows `errbuf`, so it is valid for the call only.
+@(private)
+curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
+    assert(errbuf != nil, "curl_message needs an error buffer")
+
+    if errbuf[0] != 0 {
+        return string(cstring(&errbuf[0]))
+    }
+
+    return string(c_easy_strerror(code))
 }
 
 @(private)
@@ -332,15 +362,7 @@ client_pump :: proc(c: ^Client) {
     clear(&c.completed)
     c.in_curl = true
 
-    for {
-        _, code := multi_perform(c.multi)
-        if code == .Call_Multi_Perform {
-            continue
-        }
-
-        assert(code == .Ok, "curl_multi_perform failed on the client's own handle")
-        break
-    }
+    multi_perform_all(c.multi)
 
     for {
         msg, _ := multi_info_read(c.multi)
@@ -565,11 +587,7 @@ transfer_complete :: proc(t: ^Transfer, code: Code) {
 transfer_message :: proc(t: ^Transfer, code: Code) -> string {
     assert(t != nil, "transfer_message needs a transfer")
 
-    if t.errbuf[0] != 0 {
-        return string(cstring(&t.errbuf[0]))
-    }
-
-    return string(c_easy_strerror(code))
+    return curl_message(&t.errbuf, code)
 }
 
 // Whether `c` is an RFC 9110 token byte.

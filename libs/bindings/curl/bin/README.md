@@ -4,7 +4,13 @@ Unix builds link the system `libcurl`. Windows builds link a **static**
 `libs/bindings/curl/bin/curl.lib`, built on a Windows host from a pinned upstream
 release. The foreign import lives in `libs/bindings/curl/c.odin` as `@(private)`
 (`bin/curl.lib`), together with the system libraries a static archive cannot
-carry itself: `ws2_32`, `crypt32`, `secur32`, `bcrypt`, `advapi32`.
+carry itself: `ws2_32`, `crypt32`, `secur32`, `bcrypt`, `advapi32`, and
+`iphlpapi` (for `if_nametoindex`, which curl resolves scope ids with).
+
+The archive must use the **static** CRT. Odin links `libucrt.lib`, so a curl built
+with cmake's default DLL runtime fails to link with unresolved `__imp_*` CRT
+symbols; `build_static.bat` pins `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` for
+that reason.
 
 ## Build
 

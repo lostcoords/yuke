@@ -53,8 +53,12 @@ if not exist "%TREE%" (
 REM HTTP and HTTPS only, TLS through Schannel so there is no bundled CA store and
 REM no OpenSSL to track. Everything else libcurl can speak is compiled out.
 echo Configuring...
+REM The CRT model must match Odin's, which links the static UCRT (`libucrt.lib`).
+REM cmake defaults to the DLL runtime, and an archive built that way fails to link with
+REM unresolved `__imp_*` CRT symbols.
 cmake -S "%TREE%" -B "%TREE%\build" -G "NMake Makefiles" ^
   -DCMAKE_BUILD_TYPE=Release ^
+  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
   -DBUILD_SHARED_LIBS=OFF ^
   -DBUILD_STATIC_LIBS=ON ^
   -DBUILD_CURL_EXE=OFF ^

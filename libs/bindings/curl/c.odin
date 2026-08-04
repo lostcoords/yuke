@@ -483,15 +483,30 @@ Option :: enum c.int {
     Server_Response_Timeout_Ms = OPTTYPE_LONG + 324,
 }
 
-// `CURLINFO` values are a type tag plus an ordinal; only the long-typed status
-// code is read here.
+// `CURLINFO` values are a type tag plus an ordinal.
 
 @(private)
 INFOTYPE_LONG :: 0x200000
 
+@(private)
+INFOTYPE_SOCKET :: 0x500000
+
 Info :: enum c.int {
     Response_Code = INFOTYPE_LONG + 2,
+    Active_Socket = INFOTYPE_SOCKET + 44,
 }
+
+// `curl_socket_t`: a `SOCKET` handle on Windows, a file descriptor elsewhere.
+// `net.Socket` is a `distinct i64`, wide enough for either, so a handle read back
+// from curl casts straight to one.
+when ODIN_OS == .Windows {
+    Socket_Handle :: distinct uintptr
+} else {
+    Socket_Handle :: distinct c.int
+}
+
+// `CURL_SOCKET_BAD`: what `Active_Socket` reports once a handle has no connection.
+SOCKET_BAD :: Socket_Handle(~uintptr(0)) when ODIN_OS == .Windows else Socket_Handle(-1)
 
 // Message kind from `multi_info_read` (`CURLMSG`).
 Msg_Kind :: enum c.int {
@@ -528,6 +543,9 @@ WRITEFUNC_ERROR :: c.size_t(0xFFFFFFFF)
 @(private)
 LONG_MAX :: int(max(c.long))
 
+// `CURL_HTTP_VERSION_1_1`, the only `Http_Version` value this package sets.
+HTTP_VERSION_1_1 :: 2
+
 // Minimum size of the buffer handed to `CURLOPT_ERRORBUFFER` (`CURL_ERROR_SIZE`).
 ERROR_SIZE :: 256
 
@@ -540,7 +558,7 @@ when ODIN_OS == .Windows {
     // Static libcurl built with Schannel by `libs/bindings/curl/build_static.bat`. A static
     // archive carries no import records, so its system dependencies — sockets,
     // the certificate store, and the crypto providers — are named here.
-    foreign import lib {"bin/curl.lib", "system:ws2_32.lib", "system:crypt32.lib", "system:secur32.lib", "system:bcrypt.lib", "system:advapi32.lib"}
+    foreign import lib {"bin/curl.lib", "system:ws2_32.lib", "system:crypt32.lib", "system:secur32.lib", "system:bcrypt.lib", "system:advapi32.lib", "system:iphlpapi.lib"} // `if_nametoindex`, which curl resolves scope ids with.
 } else {
     foreign import lib "system:curl"
 }
@@ -560,6 +578,13 @@ foreign lib {
     c_easy_getinfo :: proc(easy: ^Easy, info: Info, #c_vararg args: ..any) -> Code ---
     @(link_name = "curl_easy_strerror")
     c_easy_strerror :: proc(code: Code) -> cstring ---
+
+    // Raw transfer on a `Connect_Only` connection. Both report `.Again` when the
+    // socket is not ready; neither is usable before the connect completes.
+    @(link_name = "curl_easy_send")
+    c_easy_send :: proc(easy: ^Easy, buffer: rawptr, buflen: c.size_t, sent: ^c.size_t) -> Code ---
+    @(link_name = "curl_easy_recv")
+    c_easy_recv :: proc(easy: ^Easy, buffer: rawptr, buflen: c.size_t, received: ^c.size_t) -> Code ---
 
     @(link_name = "curl_slist_append")
     c_slist_append :: proc(list: ^Slist, value: cstring) -> ^Slist ---
@@ -634,6 +659,17 @@ getinfo_long :: proc(easy: ^Easy, info: Info) -> (value: int, code: Code) {
     code = c_easy_getinfo(easy, info, &out)
 
     return int(out), code
+}
+
+// Reads a socket-typed transfer info value.
+@(private)
+getinfo_socket :: proc(easy: ^Easy, info: Info) -> (value: Socket_Handle, code: Code) {
+    assert(easy != nil, "getinfo_socket needs an easy handle")
+
+    out: Socket_Handle
+    code = c_easy_getinfo(easy, info, &out)
+
+    return out, code
 }
 
 // Milliseconds curl wants to wait before the next `multi_perform`. A negative
