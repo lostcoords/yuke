@@ -13,6 +13,7 @@ Statement_Id :: enum {
     Advance_Seq,
     Bump_Ids,
     Read_High,
+    Session_Exists,
     Events_After,
     Insert_Message,
     Truncate_Messages,
@@ -63,6 +64,10 @@ STATEMENT_SQL := [Statement_Id]string {
         WHERE id = :session_id`,
     .Read_High         = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
         FROM sessions WHERE id = :session_id`,
+
+    // Tells a session that was never created apart from one whose mark diverged; the
+    // seq guard alone matches no row in either case.
+    .Session_Exists    = `SELECT 1 FROM sessions WHERE id = :session_id`,
 
     // `events_by_session_seq` is this read's index.
     .Events_After      = `SELECT seq, name, payload FROM events
@@ -123,6 +128,7 @@ Binds :: struct {
     advance_seq:       sqlite.Bind_Mapping(Advance_Seq_Params),
     bump_ids:          sqlite.Bind_Mapping(Bump_Ids_Params),
     read_high:         sqlite.Bind_Mapping(Session_Params),
+    session_exists:    sqlite.Bind_Mapping(Session_Params),
     events_after:      sqlite.Bind_Mapping(Events_After_Params),
     insert_message:    sqlite.Bind_Mapping(Insert_Message_Params),
     truncate_messages: sqlite.Bind_Mapping(Truncate_Messages_Params),
@@ -184,6 +190,7 @@ binds_prepare :: proc(set: Statements, binds: ^Binds) {
     binds.advance_seq = bind_expect(set, .Advance_Seq, Advance_Seq_Params)
     binds.bump_ids = bind_expect(set, .Bump_Ids, Bump_Ids_Params)
     binds.read_high = bind_expect(set, .Read_High, Session_Params)
+    binds.session_exists = bind_expect(set, .Session_Exists, Session_Params)
     binds.events_after = bind_expect(set, .Events_After, Events_After_Params)
     binds.insert_message = bind_expect(set, .Insert_Message, Insert_Message_Params)
     binds.truncate_messages = bind_expect(set, .Truncate_Messages, Truncate_Messages_Params)

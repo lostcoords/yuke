@@ -267,6 +267,28 @@ test_open_releases_a_partial_statement_set :: proc(t: ^testing.T) {
     testing.expect(t, again == nil, "a refused open returns no store")
 }
 
+// The registry row and the system prompt are one creation. A failure on the second
+// must leave no session behind, or the retry would collide with a row that never
+// carried its prompt.
+@(test)
+test_session_create_is_all_or_nothing :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "session-create-atomic")
+    defer testsupport.sqlite_db_remove(path)
+
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    defer close(s)
+
+    testing.expect_value(t, sqlite.exec(s.writer, "DROP TABLE session_prompts"), sqlite.Result.Ok)
+
+    session := test_session(0x8d)
+    testing.expect(t, session_create(s, test_session_summary(session), "be brief") != nil, "the prompt insert fails")
+
+    count, count_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM sessions")
+    testing.expect_value(t, count_err, sqlite.Result.Ok)
+    testing.expect_value(t, count, i64(0))
+}
+
 @(private = "file")
 probe_migrations :: proc() -> [2]Migration {
     return [2]Migration {

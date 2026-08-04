@@ -30,6 +30,10 @@ Store_Error :: enum {
     // written. The pump is the sole seq authority and mints `seq_high + 1`.
     Seq_Conflict,
 
+    // The append named a session with no registry row, so there is no stream to
+    // continue. Distinct from `Seq_Conflict`, which is a divergence of a real mark.
+    Unknown_Session,
+
     // A stored row is well-formed SQLite but not a value this binary accepts:
     // an unknown or live-only broadcast name, an out-of-order seq, an empty payload.
     Invalid_Row,
@@ -95,9 +99,9 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
     // only slot where it still takes.
     sqlite.exec(db, "PRAGMA page_size = 8192") or_return
 
-    store_check_integrity(db) or_return
-    version := store_check_identity(db) or_return
-    store_configure(db) or_return
+    check_integrity(db) or_return
+    version := check_identity(db) or_return
+    configure(db) or_return
     migrations_apply(db, MIGRATIONS[:], APPLICATION_ID, version) or_return
 
     stmts: Statements
@@ -159,8 +163,8 @@ close :: proc(s: ^Store) {
 // pragma defaults off, is per-connection, and a no-op mid-transaction — forgetting it would
 // silently disable every ON DELETE CASCADE. All three are read back for that reason.
 @(private)
-store_configure :: proc(db: ^sqlite.Conn) -> Error {
-    assert(db != nil, "store_configure needs a connection")
+configure :: proc(db: ^sqlite.Conn) -> Error {
+    assert(db != nil, "configure needs a connection")
 
     // WAL is refused on some filesystems, and the pragma reports the mode it
     // settled on rather than failing.
@@ -192,8 +196,8 @@ store_configure :: proc(db: ^sqlite.Conn) -> Error {
 
 // Cheap startup sanity. Damage is a store-open error, never a crash.
 @(private)
-store_check_integrity :: proc(db: ^sqlite.Conn) -> Error {
-    assert(db != nil, "store_check_integrity needs a connection")
+check_integrity :: proc(db: ^sqlite.Conn) -> Error {
+    assert(db != nil, "check_integrity needs a connection")
 
     // The argument caps reporting at the first fault; we only branch on "ok".
     healthy := sqlite.query_one_text_equal(db, "PRAGMA quick_check(1)", "ok") or_return
@@ -207,8 +211,8 @@ store_check_integrity :: proc(db: ^sqlite.Conn) -> Error {
 // Refuse to adopt a valid but unrelated SQLite database, and report the applied
 // version so the migration runner does not re-derive it. Runs before any write.
 @(private)
-store_check_identity :: proc(db: ^sqlite.Conn) -> (version: int, err: Error) {
-    assert(db != nil, "store_check_identity needs a connection")
+check_identity :: proc(db: ^sqlite.Conn) -> (version: int, err: Error) {
+    assert(db != nil, "check_identity needs a connection")
 
     application_id := sqlite.query_one_i64(db, "PRAGMA application_id") or_return
     stored := sqlite.query_one_i64(db, "PRAGMA user_version") or_return

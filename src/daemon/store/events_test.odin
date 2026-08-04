@@ -236,6 +236,50 @@ test_unwritten_session_recovers_as_zero :: proc(t: ^testing.T) {
     testing.expect_value(t, len(events), 0)
 }
 
+// A session id the daemon never created reaches the append with nothing to continue.
+// It must not read as a mark divergence: the pump treats that as its own bug.
+@(test)
+test_append_to_an_unknown_session_is_reported :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "unknown-session")
+    defer testsupport.sqlite_db_remove(path)
+
+    unknown := test_session(0x1f)
+    known := test_session(0x2f)
+
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    defer close(s)
+    test_session_create(t, s, known)
+
+    testing.expect_value(
+        t,
+        event_append(s, unknown, 1, test_durable(.Run_Started, unknown, 1), `{"n":1}`, {run_id = 1}),
+        Store_Error.Unknown_Session,
+    )
+
+    rows, rows_err := events_after(s, unknown, 0, 8)
+    testing.expect_value(t, rows_err, nil)
+    defer events_destroy(rows)
+    testing.expect_value(t, len(rows), 0)
+
+    count, count_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM sessions")
+    testing.expect_value(t, count_err, sqlite.Result.Ok)
+    testing.expect_value(t, count, i64(1))
+
+    // A real session keeps the old classification for a replay and for a gap.
+    testing.expect_value(t, event_append(s, known, 1, test_durable(.Run_Started, known, 1), `{"n":1}`, {}), nil)
+    testing.expect_value(
+        t,
+        event_append(s, known, 1, test_durable(.Run_Done, known, 1), `{"n":1}`, {}),
+        Store_Error.Seq_Conflict,
+    )
+    testing.expect_value(
+        t,
+        event_append(s, known, 3, test_durable(.Run_Done, known, 3), `{"n":3}`, {}),
+        Store_Error.Seq_Conflict,
+    )
+}
+
 @(test)
 test_tail_read_honors_from_seq_and_limit :: proc(t: ^testing.T) {
     path := testsupport.sqlite_db_path(t, "tail")
@@ -312,6 +356,43 @@ test_unknown_stored_name_fails_the_read :: proc(t: ^testing.T) {
 
     testing.expect_value(t, len(prefix), 1)
     testing.expect_value(t, prefix[0].name, wire.Broadcast_Name.Run_Started)
+}
+
+@(test)
+test_non_monotonic_stored_seq_fails_the_read :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "non-monotonic-seq")
+    defer testsupport.sqlite_db_remove(path)
+
+    session := test_session(0x2a)
+
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    defer close(s)
+    test_session_create(t, s, session)
+
+    testing.expect_value(t, event_append(s, session, 1, test_durable(.Run_Started, session, 1), `{"n":1}`, {}), nil)
+    testing.expect_value(t, event_append(s, session, 2, test_durable(.Run_Done, session, 2), `{"n":2}`, {}), nil)
+
+    // `events_by_session_seq` is what makes duplicate seqs impossible in normal
+    // operation; drop it so a corrupted duplicate can be inserted at all, mirroring
+    // the row a broken writer (or a hand-edited database) could leave behind.
+    testing.expect_value(t, sqlite.exec(s.writer, "DROP INDEX events_by_session_seq"), sqlite.Result.Ok)
+
+    duplicate := fmt.tprintf("UPDATE events SET seq = 1 WHERE session_id = x'%s' AND seq = 2", hex_session(session))
+    testing.expect_value(t, sqlite.exec(s.writer, duplicate), sqlite.Result.Ok)
+
+    events, events_err := events_after(s, session, 0, 16)
+    testing.expect_value(t, events_err, Store_Error.Invalid_Row)
+    testing.expect(t, events == nil, "a refused read returns no rows")
+
+    // The good prefix (up to and including the first offending row) is still readable
+    // on its own; the duplicate seq only breaks a read that walks past it.
+    prefix, prefix_err := events_after(s, session, 0, 1)
+    testing.expect_value(t, prefix_err, nil)
+    defer events_destroy(prefix)
+
+    testing.expect_value(t, len(prefix), 1)
+    testing.expect_value(t, prefix[0].seq, wire.Seq(1))
 }
 
 @(test)
@@ -495,6 +576,85 @@ test_store_lifecycle_leaks_nothing :: proc(t: ^testing.T) {
 
     testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
     testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))
+}
+
+// Materializing a tail read is a test convenience, not a store API: production reads
+// stream through `events_visit_after`. Ordering, ownership, and allocator discipline
+// are exercised through this collector.
+@(private)
+Events_Collect :: struct {
+    rows: ^[dynamic]Event,
+    err:  Error,
+}
+
+@(private)
+events_collect :: proc(user: rawptr, event: Event) -> Event_Visit {
+    collect := (^Events_Collect)(user)
+    assert(collect != nil, "events_collect needs collection state")
+    assert(collect.rows != nil, "events_collect needs a destination")
+    assert(collect.err == nil, "events_collect stops after its first error")
+
+    _, append_err := append(collect.rows, event)
+    if append_err != nil {
+        delete(event.payload, collect.rows^.allocator)
+        collect.err = Store_Error.Alloc_Failed
+
+        return .Stop
+    }
+
+    return .Continue
+}
+
+// Collect up to `limit` events after `seq`, oldest first, into an owned array carrying
+// the caller's allocator; released with `events_destroy`.
+@(private)
+events_after :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+    seq: wire.Seq,
+    limit: int,
+    allocator := context.allocator,
+) -> (
+    events: [dynamic]Event,
+    err: Error,
+) {
+    rows, make_err := make([dynamic]Event, 0, min(limit, 16), allocator)
+    if make_err != nil {
+        return nil, Store_Error.Alloc_Failed
+    }
+    defer if err != nil {
+        events_destroy(rows)
+    }
+
+    collect := Events_Collect {
+        rows = &rows,
+    }
+    visited, stopped, visit_err := events_visit_after(s, session, seq, limit, events_collect, &collect, allocator)
+
+    if visit_err != nil {
+        return nil, visit_err
+    }
+
+    if stopped {
+        assert(collect.err != nil, "the collector stops only on append failure")
+
+        return nil, collect.err
+    }
+
+    assert(collect.err == nil, "a completed collection did not fail")
+    assert(visited == len(rows), "the collector retains every visited event")
+
+    return rows, nil
+}
+
+// Release a collected tail read with the allocator carried by its dynamic array.
+@(private)
+events_destroy :: proc(events: [dynamic]Event) {
+    for e in events {
+        delete(e.payload, events.allocator)
+    }
+
+    delete(events)
 }
 
 @(private = "file")

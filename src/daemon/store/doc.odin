@@ -31,9 +31,10 @@ with `Migration_Drift`.
 `event_append` writes the event row and the session's `seq_high` from the same
 bound value inside one `BEGIN IMMEDIATE` transaction, so the log and the mark
 cannot diverge; the caller supplies `seq_high + 1`. Contiguity is enforced by the
-update's own `WHERE seq_high = ? - 1` guard rather than by a prior read, and a
-replayed or gapped seq returns `Seq_Conflict` and rolls the whole transaction
-back. High-water marks are read from `session_meta`, never from
+update's own `WHERE seq_high = ? - 1` guard rather than by a prior read. A session
+with no registry row returns `Unknown_Session`, distinct from a replayed or gapped
+seq against a real row, which returns `Seq_Conflict`; either rolls the whole
+transaction back. High-water marks are read from `sessions`, never from
 `MAX(events.seq)`: if rows are ever deleted, a max-row derivation would hand the
 deleted numbers out again.
 
@@ -45,17 +46,23 @@ are both re-minted after a restart. That is unobservable, because the queue and
 the draft do not survive one either. Marks only ever move up, so a stale value is
 a no-op rather than a rewind.
 
+`session_create` writes the registry row and its (optional) system prompt row in
+one transaction: events and projected messages carry a foreign key into the
+registry row, so it must exist first, and a half-created session must not be
+possible.
+
 Ownership: `Store` owns its writer connection, its prepared statements, and their
 scan mappings, and is freed by `close`. The mappings resolve columns of those
 statements, so `close` destroys them first. Statements are prepared once after
 migrations and left clean by `reset_and_clear` or `execute`, on failing paths as
 well as succeeding ones. Column borrows from `libs:bindings/sqlite` never outlive the
 statement that produced them. Tagged row scans require every high-water column and
-clone event text before the next step. `events_visit_after` transfers each owned
-payload directly to its visitor; `events_after` collects the same rows into an
-owned dynamic array carrying the caller's allocator, released with
-`events_destroy`. Persisted storage classes are validated on read as well as
-constrained by the schema.
+clone event text before the next step. `events_visit_after` is the only reader of
+the log: each row's payload is cloned into the allocator the caller supplies, and
+that clone is handed to the visitor outright — the visitor frees nothing, and the
+caller reclaims every row wholesale (typically by resetting the arena backing that
+allocator) once the visit ends. Persisted storage classes are validated on read as
+well as constrained by the schema.
 */
 
 package store

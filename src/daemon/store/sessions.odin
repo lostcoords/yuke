@@ -33,7 +33,9 @@ Create_Session_Params :: struct {
 // Write the registry row for a session. Events and projected messages carry a
 // foreign key into it, so it exists before anything references it. The system
 // prompt belongs to creation because no method changes it after; nil means none.
-session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> Error {
+// Both rows land in one transaction: a half-created session would refuse its own
+// retry on the primary key while never carrying its prompt.
+session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> (err: Error) {
     assert(s != nil, "session_create needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
     assert(session.origin != nil, "a session carries its origin")
@@ -76,7 +78,19 @@ session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(st
         params.created_by_version = cb.version
     }
 
-    sqlite.execute(&s.binds.create_session, &params) or_return
+    sqlite.txn_begin(s.writer, .Immediate) or_return
 
-    return session_prompt_set(s, session.id, system_prompt)
+    // A failed ROLLBACK leaves the transaction open, which outlives this call, so it
+    // replaces the original error rather than being dropped.
+    defer if err != nil {
+        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
+            err = rollback
+        }
+    }
+
+    sqlite.execute(&s.binds.create_session, &params) or_return
+    session_prompt_set(s, session.id, system_prompt) or_return
+    sqlite.txn_commit(s.writer) or_return
+
+    return nil
 }

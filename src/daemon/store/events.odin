@@ -29,8 +29,8 @@ High_Water :: struct {
     using ids: Id_Marks,
 }
 
-// One persisted event. Its payload is cloned into the caller's allocator; an
-// array read releases it with `events_destroy`, while a visitor takes ownership.
+// One persisted event. Its payload is cloned into the caller's allocator and the
+// visitor it is handed to owns it.
 Event :: struct {
     // Position on the session's durable stream.
     seq:     wire.Seq,
@@ -280,85 +280,6 @@ events_visit_after :: proc(
     return visited, false, nil
 }
 
-@(private)
-Events_Collect :: struct {
-    rows: ^[dynamic]Event,
-    err:  Error,
-}
-
-@(private)
-events_collect :: proc(user: rawptr, event: Event) -> Event_Visit {
-    collect := (^Events_Collect)(user)
-    assert(collect != nil, "events_collect needs collection state")
-    assert(collect.rows != nil, "events_collect needs a destination")
-    assert(collect.err == nil, "events_collect stops after its first error")
-
-    _, append_err := append(collect.rows, event)
-    if append_err != nil {
-        delete(event.payload, collect.rows^.allocator)
-        collect.err = Store_Error.Alloc_Failed
-
-        return .Stop
-    }
-
-    return .Continue
-}
-
-// Read up to `limit` events after `seq`, oldest first. Rows are materialized
-// rather than streamed: a read transaction should not stay open across the
-// caller's use of them.
-events_after :: proc(
-    s: ^Store,
-    session: wire.Session_Id,
-    seq: wire.Seq,
-    limit: int,
-    allocator := context.allocator,
-) -> (
-    events: [dynamic]Event,
-    err: Error,
-) {
-    assert(s != nil, "events_after needs a store")
-    assert(s.writer != nil, "an open store always holds its writer")
-    assert(limit > 0, "a tail read is bounded")
-
-    rows, make_err := make([dynamic]Event, 0, min(limit, 16), allocator)
-    if make_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
-    defer if err != nil {
-        events_destroy(rows)
-    }
-
-    collect := Events_Collect {
-        rows = &rows,
-    }
-    visited, stopped, visit_err := events_visit_after(s, session, seq, limit, events_collect, &collect, allocator)
-
-    if visit_err != nil {
-        return nil, visit_err
-    }
-
-    if stopped {
-        assert(collect.err != nil, "the collector stops only on append failure")
-
-        return nil, collect.err
-    }
-
-    assert(collect.err == nil, "a completed collection did not fail")
-    assert(visited == len(rows), "the collector retains every visited event")
-
-    return rows, nil
-}
-
-// Release a tail read with the allocator carried by its dynamic array.
-events_destroy :: proc(events: [dynamic]Event) {
-    for e in events {
-        delete(e.payload, events.allocator)
-    }
-
-    delete(events)
-}
-
 // The transactional part of an append; the caller owns the transaction.
 @(private)
 append_body :: proc(
@@ -378,15 +299,19 @@ append_body :: proc(
     assert(len(payload) > 0, "append_body receives an encoded payload")
 
     // The guard is the contiguity rule itself: only the row whose high-water is `seq - 1`
-    // advances, so every gap or replay gets one error classification — including a session
-    // that was never created, which has no row to match and lands here as Seq_Conflict.
+    // advances, so every gap or replay matches nothing — as does a session that was
+    // never created, which the existence read then tells apart.
     sqlite.execute(&s.binds.advance_seq, &Advance_Seq_Params{session_id = session, seq = seq}) or_return
 
     changed := sqlite.changes(s.writer)
     assert(changed <= 1, "the seq guard updates at most one session row")
 
     if changed == 0 {
-        return .Seq_Conflict
+        // Inside the caller's transaction, so no concurrent writer can create or
+        // remove the row between the guard and this read.
+        known := session_exists(s, session) or_return
+
+        return known ? .Seq_Conflict : .Unknown_Session
     }
 
     assert(changed == 1, "a contiguous append advances its session row")
@@ -408,6 +333,31 @@ append_body :: proc(
     }
 
     return nil
+}
+
+// Whether the session has a registry row. `id` is the primary key, so one step
+// settles it.
+@(private)
+session_exists :: proc(s: ^Store, session: wire.Session_Id) -> (exists: bool, err: Error) {
+    assert(s != nil, "the existence read needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+
+    st := s.stmts[.Session_Exists]
+    assert(st != nil, "the statement set is prepared at open")
+
+    defer _ = sqlite.reset_and_clear(st)
+
+    sqlite.bind(&s.binds.session_exists, &Session_Params{session_id = session}) or_return
+
+    step := sqlite.step(st)
+
+    if sqlite.is_error(step) {
+        return false, step
+    }
+
+    assert(step == .Row || step == .Done, "a keyed existence read either matches or completes")
+
+    return step == .Row, nil
 }
 
 // Raise the four id columns of the append's existing `sessions` row.
