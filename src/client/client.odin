@@ -223,13 +223,16 @@ client_open :: proc(
 
     c.next_request_id = INITIALIZE_REQUEST_ID + 1
 
-    e: wire.Emitter
-    wire.emitter_init(&e, allocator)
-    wire.request_emit(&e, init)
+    e, ok := wire.request_encode(init, allocator)
+    defer wire.emitter_destroy(&e)
+    if !ok {
+        client_destroy(c)
+        return .Out_Of_Memory
+    }
+
     payload := wire.to_string(&e)
     c.initialize_frame = make([]byte, len(payload), allocator)
     copy(c.initialize_frame, payload)
-    wire.emitter_destroy(&e)
 
     terr := transport->open(c)
     if terr != .None {

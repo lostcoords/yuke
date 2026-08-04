@@ -32,10 +32,18 @@ request_emit :: proc(e: ^Emitter, self: Request) {
     object_end(e)
 }
 
+// Encode a request; the caller owns the returned emitter (`to_string` then destroy).
+// `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
+request_encode :: proc(self: Request, allocator := context.allocator) -> (e: Emitter, ok: bool) {
+    emitter_init(&e, allocator)
+    request_emit(&e, self)
+
+    return e, !emitter_failed(&e)
+}
+
 // Verify the id shape and params bounds.
 request_validate :: proc(self: Request) -> Validation_Error {
     req_id_validate(self.id) or_return
-
     return request_params_validate(self.params)
 }
 
