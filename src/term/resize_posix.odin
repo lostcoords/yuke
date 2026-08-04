@@ -8,16 +8,12 @@ import "core:sys/posix"
 // is the raw per-platform constant, converted once here.
 SIGWINCH :: posix.Signal(posix.SIGWINCH)
 
-// Process-wide singleton: a POSIX handler installed without SA_SIGINFO gets no
-// user-data pointer, so it has no way to reach a `^Resize_Notifier` except
-// through a global. This is the pipe write end the handler targets; -1 means no
-// notifier is armed. One notifier is live at a time (one tty).
+// Pipe write end the handler targets; -1 means unarmed. A handler installed without
+// SA_SIGINFO gets no user-data pointer, so a global is the only way to reach it.
 g_write_fd: posix.FD = -1
 
-// Count of handler invocations currently in flight. `resize_notifier_destroy`
-// spins on this before closing the pipe, so a handler that already loaded
-// `g_write_fd` is guaranteed to finish its write before the fd it's holding is
-// closed out from under it.
+// Handler invocations in flight. `resize_notifier_destroy` spins on this so a handler
+// that already loaded `g_write_fd` finishes its write before the fd is closed.
 g_active_handlers: int = 0
 
 // Failure modes of the resize notifier. `None` is success.
@@ -66,8 +62,8 @@ sigwinch_handler :: proc "c" (sig: posix.Signal) {
     }
 
     b: [1]u8
-    // Content-free wake token. Result discarded: a full pipe already has a wake
-    // pending, and a handler has no safe way to report anything else.
+    // Content-free wake token; a full pipe already has a wake pending, and a handler
+    // cannot report anything anyway.
     posix.write(fd, raw_data(b[:]), 1)
 }
 
@@ -126,14 +122,10 @@ pipe_prepare :: proc(fd: posix.FD) -> Resize_Error {
     return .None
 }
 
-// Drain the self-pipe and re-query the size, for reactors polling `read_fd`.
-// Safe with nothing pending.
-//
-// Draining before the query is deliberate: a SIGWINCH landing between the two
-// leaves a token behind and costs one redundant wake with an already-correct
-// size, whereas querying first would let that signal be drained away and lose
-// the resize. A failed query still consumes the token, so the caller keeps its
-// last known size until the next SIGWINCH.
+// Drain the self-pipe and re-query the size, for reactors polling `read_fd`. Safe with
+// nothing pending. Draining first costs a redundant wake when a signal lands mid-call;
+// querying first would drain that signal away and lose the resize. A failed query still
+// consumes the token.
 resize_notifier_consume :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
     assert(n != nil, "resize_notifier_consume needs a notifier")
     assert(n.read_fd != n.write_fd, "resize_notifier_consume on an unarmed notifier")
@@ -148,9 +140,8 @@ resize_notifier_consume :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
     return size, .None
 }
 
-// Block until a resize is signaled, then return the terminal's current size.
-// Only one waiter at a time; a second concurrent call fails immediately rather
-// than stacking behind the first.
+// Block until a resize is signaled, then return the current size. One waiter at a time;
+// a second concurrent call fails instead of stacking behind the first.
 resize_notifier_wait :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
     if intrinsics.atomic_exchange(&n.waiting, true) {
         return {}, .Already_Waiting
@@ -168,9 +159,8 @@ resize_notifier_wait :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
             continue
         }
 
-        // No dedicated poll-failure variant: an unexpected poll error leaves
-        // `wait` unable to produce a size, the same outward failure as a bad
-        // ioctl below.
+        // No dedicated poll-failure variant: an unexpected poll error leaves `wait`
+        // unable to produce a size, the same outward failure as a bad ioctl.
         return {}, .Size_Query_Failed
     }
 
@@ -189,41 +179,33 @@ drain_pipe :: proc(fd: posix.FD) {
     }
 }
 
-// Tear down the notifier: restore the previous SIGWINCH disposition and close
-// the pipe. The caller must have no `resize_notifier_wait` in flight.
-//
-// Order matters here and must not change: it prevents a handler from writing
-// to a pipe fd this has already closed.
+// Tear down the notifier: restore the previous SIGWINCH disposition and close the pipe.
+// The caller must have no `resize_notifier_wait` in flight. The step order below must not
+// change: it keeps a handler from writing to an already-closed fd.
 resize_notifier_destroy :: proc(n: ^Resize_Notifier) {
     assert(n != nil, "resize_notifier_destroy needs a notifier")
     assert(!intrinsics.atomic_load(&n.waiting), "resize_notifier_destroy with a wait in flight")
 
-    // A zero-valued notifier (what a failed `resize_notifier_init` returns, and
-    // what this proc leaves behind) would disarm a live notifier and close fd 0
-    // twice. Both ends of a real pipe are distinct, so this catches either misuse.
+    // A zero-valued notifier (what a failed init returns, and what this leaves behind)
+    // would disarm a live notifier and close fd 0 twice; real pipe ends are distinct.
     assert(n.read_fd != n.write_fd, "resize_notifier_destroy on an unarmed notifier")
 
-    // 1. Withdraw the fd first. A handler that fires from this point on loads
-    //    -1 and returns without touching the pipe.
+    // 1. Withdraw the fd: a handler firing from here on loads -1 and returns.
     intrinsics.atomic_store(&g_write_fd, posix.FD(-1))
 
-    // 2. Restore the previous disposition so no further signal reaches our
-    //    handler at all.
+    // 2. Restore the previous disposition so no further signal reaches the handler.
     old := n.old_action
     posix.sigaction(SIGWINCH, &old, nil)
 
-    // 3. A handler that loaded the fd before step 1 is still mid-write; wait
-    //    for it to finish before the fd it's holding is closed.
+    // 3. A handler that loaded the fd before step 1 is still mid-write; let it finish.
     for intrinsics.atomic_load(&g_active_handlers) != 0 {
         intrinsics.cpu_relax()
     }
 
-    // 4. Only now is it safe to close: no handler can still be touching
-    //    either end.
+    // 4. Safe to close: no handler can still be touching either end.
     posix.close(n.read_fd)
     posix.close(n.write_fd)
 
-    // Leave it unarmed so a second destroy trips the assert above instead of
-    // double-closing.
+    // Leave it unarmed so a second destroy asserts instead of double-closing.
     n^ = {}
 }

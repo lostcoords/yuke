@@ -9,10 +9,8 @@ import "core:testing"
 // `resize_notifier_wait` can pass any placeholder fd.
 DUMMY_TTY :: posix.FD(-1)
 
-// `g_write_fd`/`g_active_handlers` and the SIGWINCH disposition are process-wide,
-// but the Odin test runner runs tests in parallel by default. Every resize test
-// serializes on this lock so the singleton slot and raised signals from one test
-// cannot cross-talk into another running concurrently.
+// `g_write_fd`/`g_active_handlers` and the SIGWINCH disposition are process-wide and the
+// test runner runs tests in parallel, so every resize test serializes on this lock.
 resize_test_lock: sync.Mutex
 
 @(test)
@@ -89,13 +87,8 @@ test_resize_notifier_destroy_restores_disposition :: proc(t: ^testing.T) {
     restored: posix.sigaction_t
     testing.expect_value(t, posix.sigaction(SIGWINCH, nil, &restored), posix.result.OK)
 
-    // Compare only the handler, not the whole sigaction_t. On glibc, restoring a
-    // disposition through sigaction() stamps SA_RESTORER and a libc return
-    // trampoline into sa_flags/sa_restorer even when the handler is SIG_DFL, and
-    // sa_mask carries uninitialized padding — neither reflects whether our handler
-    // was withdrawn. sa_handler returning to its pre-init value is the actual
-    // "disposition restored" invariant, and unlike a full-struct compare it holds
-    // across libcs.
+    // Compare only the handler: glibc stamps SA_RESTORER and a return trampoline into
+    // sa_flags/sa_restorer on restore, and sa_mask carries uninitialized padding.
     testing.expect_value(t, restored.sa_handler, original.sa_handler)
 
     // Re-init after destroy works: the slot and the disposition are both clean.

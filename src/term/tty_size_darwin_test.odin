@@ -8,10 +8,9 @@ import "core:testing"
 
 TIOCSWINSZ :: 0x80087467
 
-// Round-trip the size through a real pty. This is the only coverage of the XNU
-// syscall path in `get_size`: the reason it exists is that a plain `foreign`
-// binding to Darwin's variadic `ioctl` mis-passes the `winsize` pointer, and
-// that failure mode is invisible to a non-tty test (both spellings "fail").
+// Round-trip through a real pty: the only coverage of the XNU syscall path in
+// `get_size`. A plain `foreign` binding to Darwin's variadic `ioctl` mis-passes the
+// `winsize` pointer, and a non-tty test cannot tell the two spellings apart.
 @(test)
 test_get_size_reads_pty_winsize :: proc(t: ^testing.T) {
     master: posix.FD

@@ -3,23 +3,6 @@ package term
 import "core:mem"
 import "core:strings"
 
-// A whole terminal event handed to the caller. `Paste` borrows the reader buffer.
-Paste :: distinct string
-
-Event :: union {
-    Key,
-    Mouse,
-    Paste,
-    Resize,
-}
-
-// Failure modes of `reader_push`/`reader_next`. `None` is success.
-Reader_Error :: enum {
-    None,
-    Input_Too_Large,
-    Out_Of_Memory,
-}
-
 // Bracketed-paste terminator; the reader scans for it while assembling a paste.
 PASTE_END :: "\x1b[201~"
 
@@ -37,6 +20,23 @@ MAX_PUSH_BYTES :: 64 * 1024
 
 // One unresolved sequence plus one fresh stdin read.
 MAX_TAIL_BYTES :: MAX_SEQ_BYTES + MAX_PUSH_BYTES
+
+// A whole terminal event handed to the caller. `Paste` borrows the reader buffer.
+Paste :: distinct string
+
+Event :: union {
+    Key,
+    Mouse,
+    Paste,
+    Resize,
+}
+
+// Failure modes of `reader_push`/`reader_next`. `None` is success.
+Reader_Error :: enum {
+    None,
+    Input_Too_Large,
+    Out_Of_Memory,
+}
 
 // Stateful input assembler — see the module doc for the contract.
 Reader :: struct {
@@ -148,6 +148,8 @@ reader_next :: proc(r: ^Reader) -> (Event, Reader_Error) {
         case Resize:
             return e, .None
         case Paste_Start:
+            // @note(xyaman): review this — `clear` keeps capacity, so `paste` holds its
+            // high-water mark (up to 4 MB) until `reader_destroy`.
             clear(&r.paste)
             r.in_paste = true
         case Paste_End, Invalid:

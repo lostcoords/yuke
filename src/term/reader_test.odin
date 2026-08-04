@@ -188,9 +188,8 @@ test_reader_bounds_pending_bytes_when_caller_does_not_drain :: proc(t: ^testing.
 
 @(test)
 test_reader_oom_during_paste_assembly_propagates :: proc(t: ^testing.T) {
-    // alloc 0 is the tail append in push; alloc 1 is the paste-content append in
-    // next, which the failing allocator rejects. next must surface the error and
-    // leave the pending bytes unconsumed rather than spinning.
+    // alloc 0 is the tail append in push; alloc 1 is the paste-content append in next,
+    // which the failing allocator rejects. next must surface the error and not spin.
     fa := ts.Failing_Allocator{}
     ts.failing_allocator_init(&fa, context.allocator, 1)
     alloc := ts.failing_allocator(&fa)

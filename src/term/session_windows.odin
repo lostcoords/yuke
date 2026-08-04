@@ -3,14 +3,11 @@ package term
 
 import "core:sys/windows"
 
-// Wait for the console input `handle` to be readable, up to `timeout_ms` ms (the
-// negotiate loop only ever passes a value >= 0).
+// Wait for the console input `handle` to be readable, up to `timeout_ms` ms.
 //
-// Over-reports: the handle signals for any input record, including ones that translate to
-// zero VT bytes (key-up, focus, buffer-size), so a true result does not guarantee that
-// `read_byte` returns promptly. `read_byte` skips such records and keeps waiting, so the
-// negotiate deadline is a floor, not a bound, and a terminal that never answers DA1 would
-// park there. Every terminal we target answers it.
+// Over-reports: the handle signals for any input record, including ones that yield zero
+// VT bytes (key-up, focus, buffer-size). `read_byte` skips those and keeps waiting, so
+// the negotiate deadline is a floor, not a bound. Every supported terminal answers DA1.
 poll_readable :: proc(handle: Tty_Handle, timeout_ms: i32) -> bool {
     return windows.WaitForSingleObject(handle, windows.DWORD(timeout_ms)) == windows.WAIT_OBJECT_0
 }
@@ -47,12 +44,10 @@ Output_Mode_State :: struct {
     prev_in_cp:  windows.CODEPAGE,
 }
 
-// Configure the console for TUI output: enable ENABLE_VIRTUAL_TERMINAL_PROCESSING on
-// `handle` (preserve-and-OR, so our escapes are interpreted rather than printed
-// literally) and switch the console code pages to UTF-8, saving both to restore.
-// Deliberately does NOT set DISABLE_NEWLINE_AUTO_RETURN (it breaks `\n` on the legacy
-// console; Windows Terminal does not set it either). Best-effort: when `handle` is not a
-// console (redirected), the mode step is skipped and its restore is a no-op.
+// Configure the console for TUI output: ENABLE_VIRTUAL_TERMINAL_PROCESSING on `handle`
+// (preserve-and-OR) plus UTF-8 code pages, saving both to restore. Does not set
+// DISABLE_NEWLINE_AUTO_RETURN: it breaks `\n` on the legacy console. When `handle` is not
+// a console, the mode step is skipped and its restore is a no-op.
 output_mode_enter :: proc(handle: Tty_Handle) -> Output_Mode_State {
     state: Output_Mode_State
     state.handle = handle
@@ -73,8 +68,7 @@ output_mode_enter :: proc(handle: Tty_Handle) -> Output_Mode_State {
     return state
 }
 
-// Restore whatever `output_mode_enter` changed. Best-effort; results ignored, like the
-// POSIX restore paths.
+// Restore whatever `output_mode_enter` changed. Best-effort; results ignored.
 output_mode_leave :: proc(state: Output_Mode_State) {
     if state.mode_saved {
         windows.SetConsoleMode(state.handle, state.prev_mode)

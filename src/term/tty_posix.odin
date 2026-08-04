@@ -37,11 +37,9 @@ enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
     raw.c_oflag -= {.OPOST}
     raw.c_lflag -= {.ECHO, .ICANON, .IEXTEN, .ISIG}
 
-    // CS8 spans both bits of the 2-bit CSIZE field, so its bit_set enum member
-    // (derived via floor-log2 of a non-power-of-two mask) aliases CS7's single
-    // bit rather than representing CS8 on its own. Clear the whole CSIZE mask
-    // and OR in the raw CS8 bit pattern directly, the same way `posix.CSIZE`
-    // itself is built, instead of trusting `.CS8`.
+    // CS8 spans both bits of the 2-bit CSIZE field, so its bit_set member aliases CS7's
+    // single bit. Clear the whole CSIZE mask and OR in the raw CS8 pattern, the way
+    // `posix.CSIZE` itself is built, instead of trusting `.CS8`.
     raw.c_cflag -= posix.CSIZE
     raw.c_cflag += transmute(posix.CControl_Flags)posix.tcflag_t(posix.CS8)
 

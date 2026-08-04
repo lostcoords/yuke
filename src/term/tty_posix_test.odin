@@ -54,9 +54,8 @@ pty_open :: proc(master: ^posix.FD) -> posix.FD {
     return posix.open(name, {.RDWR, .NOCTTY})
 }
 
-// A freshly allocated pty carries an all-zero winsize and the query still
-// succeeds at the OS level. `.None` must never report a degenerate size, so
-// this is a failure on every platform, not a 0x0 success.
+// A freshly allocated pty carries an all-zero winsize and the query still succeeds at
+// the OS level; `.None` must never report a degenerate size.
 @(test)
 test_get_size_on_unsized_pty_fails :: proc(t: ^testing.T) {
     master: posix.FD
