@@ -7,6 +7,7 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:time"
+import curl "libs:bindings/curl"
 
 // Connection lifecycle: Idle -> Dialing -> Upgrading -> Open -> Closing -> Closed.
 // `Idle` and `Dialing` are client-only; an adopted server connection starts at
@@ -71,6 +72,12 @@ Conn_Core :: struct {
     // Whether `socket` was acquired; guards teardown from `close(0)` when a client
     // dial failed before one existed. Always set for an adopted server connection.
     has_socket:                bool,
+
+    // @private
+    // Set when this connection runs over TLS: libcurl owns the session and the socket,
+    // and every byte moves through it. Nil for a plain `ws://` connection, which is
+    // every server connection. Owned by `Client`; see `Tls_Pipe`.
+    tls:                       ^Tls_Pipe,
     state:                     Conn_State,
 
     // @private
@@ -170,15 +177,7 @@ conn_start_recv :: proc(core: ^Conn_Core) {
     assert(core.state == .Open, "steady-state recv on a connection that is not open")
     assert(core.recv_op == nil, "a receive is already in flight")
 
-    core.recv_op = nbio.recv_poly(
-        core.socket,
-        [][]byte{core.recv_buf},
-        core,
-        conn_on_recv,
-        false,
-        nbio.NO_TIMEOUT,
-        core.loop,
-    )
+    conn_submit_recv(core, nbio.NO_TIMEOUT)
 }
 
 @(private)
@@ -186,22 +185,29 @@ conn_on_recv :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
     assert(op == core.recv_op, "receive completion does not match stored operation")
     core.recv_op = nil
 
+    pipe_recv_completed(core, op.recv.received, recv_io_result(op.recv.err))
+}
+
+// One receive's outcome, whichever pipe produced it. `received` of 0 without a failure
+// is the peer's EOF.
+@(private)
+conn_recv_completed :: proc(core: ^Conn_Core, received: int, failed: bool) {
     if core.state != .Open && core.state != .Closing {
         return
     }
 
-    if op.recv.err != nil {
+    if failed {
         conn_fail(core, .Recv_Failed)
         return
     }
 
-    if op.recv.received == 0 {
+    if received == 0 {
         // Peer closed the TCP connection without a WebSocket close frame.
         conn_finalize_close(core, .Abnormal_Closure)
         return
     }
 
-    if decoder_feed(&core.decoder, core.recv_buf[:op.recv.received]) != nil {
+    if decoder_feed(&core.decoder, core.recv_buf[:received]) != nil {
         conn_fail(core, .Out_Of_Memory)
         return
     }
@@ -433,24 +439,22 @@ conn_pump_send :: proc(core: ^Conn_Core) {
     assert(len(core.send_batch) > 0, "coalesced an empty batch from a non-empty queue")
 
     core.sending = true
-    core.send_op = nbio.send_poly(
-        core.socket,
-        core.send_batch[:],
-        core,
-        conn_on_sent,
-        {},
-        true,
-        nbio.NO_TIMEOUT,
-        core.loop,
-    )
+    conn_submit_send(core, core.send_batch[:], nbio.NO_TIMEOUT)
 }
 
 @(private)
 conn_on_sent :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
-    assert(core.sending, "send completed while none was in flight")
     assert(op == core.send_op, "send completion does not match stored operation")
 
     core.send_op = nil
+    pipe_send_completed(core, send_io_result(op.send.err))
+}
+
+// One batch send's outcome, whichever pipe produced it. The batch is released either
+// way: a failed send owns its frames no less than a successful one.
+@(private)
+conn_send_completed :: proc(core: ^Conn_Core, failed: bool) {
+    assert(core.sending, "send completed while none was in flight")
 
     for frame in core.send_batch {
         assert(len(frame) <= core.pending_send_bytes, "send byte accounting underflow")
@@ -464,7 +468,7 @@ conn_on_sent :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
         "sent byte accounting mismatch",
     )
 
-    if op.send.err != nil {
+    if failed {
         conn_fail(core, .Send_Failed)
         return
     }
@@ -529,15 +533,7 @@ conn_ensure_close_recv :: proc(core: ^Conn_Core) {
         return
     }
 
-    core.recv_op = nbio.recv_poly(
-        core.socket,
-        [][]byte{core.recv_buf},
-        core,
-        conn_on_recv,
-        false,
-        nbio.NO_TIMEOUT,
-        core.loop,
-    )
+    conn_submit_recv(core, nbio.NO_TIMEOUT)
 }
 
 // Closing-handshake deadline expired: finalize with an abnormal close.
@@ -592,6 +588,22 @@ conn_teardown :: proc(core: ^Conn_Core) {
     assert(core.terminal_error != .None || core.close_code != Close_Code(0), "teardown without terminal outcome")
 
     conn_cancel_pending_ops(core)
+
+    if core.tls != nil {
+        // libcurl closes the socket, and a TLS read hands its buffer to curl
+        // synchronously, so nothing of ours is left in the kernel's hands. The terminal
+        // callback is still deferred: the app may free this connection from it, and the
+        // driver frame that asked for teardown keeps using `core` after we return.
+        //
+        // A real timer rather than `next_tick`, because this is the last thing the
+        // connection ever schedules: with nothing left in flight the loop parks in its
+        // submit wait, and a queued next-tick completion would never be drained.
+        curl.socket_destroy(&core.tls.sock)
+        core.tls = nil
+        nbio.timeout_poly(time.Microsecond, core, conn_on_teardown_closed, core.loop)
+
+        return
+    }
 
     if core.has_socket {
         nbio.close_poly(core.socket, core, conn_on_teardown_closed, core.loop)

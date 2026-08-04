@@ -1,5 +1,6 @@
 package websocket
 
+import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:nbio"
@@ -9,6 +10,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import curl "libs:bindings/curl"
 
 // Shared state between the loopback server thread and the client test.
 Loopback_Args :: struct {
@@ -1445,4 +1447,318 @@ test_client_rejects_injectable_options :: proc(t: ^testing.T) {
         {},
     )
     testing.expect_value(t, err, Client_Error.Invalid_Options)
+}
+
+// A `Wss` client whose TLS handshake cannot complete: the peer here is a plain TCP
+// listener that never speaks TLS. What this guards is the path curl owns — the dial
+// reports through the same terminal contract, and teardown releases the curl handles
+// and the driver's own storage with nothing left behind.
+Wss_Obs :: struct {
+    client: Client,
+    opens:  int,
+    closes: int,
+    errors: int,
+    err:    Client_Error,
+    done:   bool,
+}
+
+wss_on_open :: proc(c: ^Client) {
+    o := (^Wss_Obs)(c.user_data)
+    o.opens += 1
+}
+
+wss_on_close :: proc(c: ^Client, code: Close_Code) {
+    o := (^Wss_Obs)(c.user_data)
+    o.closes += 1
+    o.done = true
+}
+
+wss_on_error :: proc(c: ^Client, err: Client_Error) {
+    o := (^Wss_Obs)(c.user_data)
+    o.errors += 1
+    o.err = err
+    o.done = true
+}
+
+@(test)
+test_client_wss_handshake_failure_tears_down :: proc(t: ^testing.T) {
+    track: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track, context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+    tracked := mem.tracking_allocator(&track)
+
+    listener, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    testing.expect_value(t, lerr, nil)
+    defer net.close(listener)
+
+    endpoint, eerr := net.bound_endpoint(listener)
+    testing.expect_value(t, eerr, nil)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    o: Wss_Obs
+    options := Options {
+        scheme            = .Wss,
+        host              = "127.0.0.1",
+        port              = endpoint.port,
+        path              = "/",
+
+        // The peer accepts TCP and then never speaks TLS, so this bound is what ends
+        // the dial. Short enough to keep the suite quick, long enough to be the only
+        // thing that can end it.
+        handshake_timeout = 2 * time.Second,
+    }
+    callbacks := Callbacks {
+        on_open  = wss_on_open,
+        on_close = wss_on_close,
+        on_error = wss_on_error,
+    }
+
+    testing.expect_value(t, client_connect(&o.client, loop, options, callbacks, &o, tracked), Client_Error.None)
+
+    nbio.run_until(&o.done)
+
+    testing.expect_value(t, o.opens, 0)
+    testing.expect_value(t, o.closes, 0)
+    testing.expect_value(t, o.errors, 1)
+    testing.expect(t, o.err == .Handshake_Failed || o.err == .Dial_Failed, "a failed TLS dial is terminal")
+    testing.expect_value(t, o.client.state, Conn_State.Closed)
+
+    client_destroy(&o.client)
+
+    testing.expectf(
+        t,
+        len(track.allocation_map) == 0,
+        "a torn-down wss client left %d allocations behind",
+        len(track.allocation_map),
+    )
+}
+
+// --- TLS pipe: a write the socket could not take -------------------------------
+//
+// `curl_easy_send` takes one buffer at a time and may take only part of one, so
+// `tls_pump_send` carries its own frame and byte progress across a writability wait.
+// Nothing reaches that resume unless the peer stops reading, so this harness makes it
+// happen: a server that accepts and then stalls, a client that writes until the socket
+// backs up, and an exact byte count once the server drains.
+//
+// The pipe is driven over plain `http` CONNECT_ONLY rather than `https`: the send and
+// receive semantics `tls_pump_send` is written against are libcurl's, not TLS's, and
+// this keeps the test free of a certificate and a TLS server.
+Stall_Args :: struct {
+    port:      int,
+    listening: bool,
+
+    // Set by the test once it wants the server to start reading.
+    drain:     bool,
+
+    // Bytes the server read before the client closed.
+    received:  int,
+    finished:  bool,
+}
+
+stall_server :: proc(args: ^Stall_Args) {
+    defer free_all(context.temp_allocator)
+
+    listener, conn, ok := srv_accept(&args.port, &args.listening)
+    if !ok {
+        return
+    }
+    defer net.close(listener)
+    defer net.close(conn)
+
+    // Hold the connection open without reading, so the client's socket buffer fills
+    // and libcurl starts refusing writes.
+    for !sync.atomic_load(&args.drain) {
+        time.sleep(time.Millisecond)
+    }
+
+    total := 0
+    buf: [64 * 1024]byte
+    for {
+        n, err := net.recv_tcp(conn, buf[:])
+        if err != nil || n == 0 {
+            break
+        }
+
+        total += n
+        sync.atomic_store(&args.received, total)
+    }
+
+    sync.atomic_store(&args.received, total)
+    sync.atomic_store(&args.finished, true)
+}
+
+// What the connect-only dial reported.
+Stall_Obs :: struct {
+    connected: bool,
+    code:      curl.Code,
+}
+
+stall_on_connect :: proc(user: rawptr, result: curl.Result) {
+    o := (^Stall_Obs)(user)
+    o.code = result.code
+    o.connected = true
+}
+
+stall_noop_message :: proc(core: ^Conn_Core, kind: Message_Kind, data: []byte) {}
+stall_noop_terminal :: proc(core: ^Conn_Core) {}
+
+@(test)
+test_tls_pipe_resumes_a_write_the_socket_refused :: proc(t: ^testing.T) {
+    // One frame per payload, each with a 2-byte header, 2-byte extended length and a
+    // 4-byte mask, so the byte count on the wire is exact and checkable.
+    PAYLOAD :: 60000
+    FRAME :: 1 + 1 + 2 + 4 + PAYLOAD
+
+    args := Stall_Args{}
+    server := thread.create_and_start_with_poly_data(&args, stall_server)
+    defer {
+        thread.join(server)
+        thread.destroy(server)
+    }
+
+    ready := false
+    for _ in 0 ..< 200 {
+        if sync.atomic_load(&args.listening) {
+            ready = true
+            break
+        }
+
+        time.sleep(10 * time.Millisecond)
+    }
+    if !testing.expect(t, ready, "the stall server should start listening") {
+        sync.atomic_store(&args.drain, true)
+        return
+    }
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    pipe: Tls_Pipe
+    obs: Stall_Obs
+    url := fmt.ctprintf("http://127.0.0.1:%d/", sync.atomic_load(&args.port))
+    testing.expect_value(
+        t,
+        curl.socket_connect(&pipe.sock, loop, {url = url}, stall_on_connect, &obs),
+        curl.Error.None,
+    )
+    defer curl.socket_destroy(&pipe.sock)
+
+    nbio.run_until(&obs.connected)
+    if !testing.expect_value(t, obs.code, curl.Code.Ok) {
+        sync.atomic_store(&args.drain, true)
+        return
+    }
+
+    // A client parked at Open over that pipe. Built here rather than dialed: the dial
+    // is `wss` only, and what is under test is the write loop, not the handshake.
+    c: Client
+    c.role = .Client
+    c.loop = loop
+    c.allocator = context.allocator
+    c.socket = net.TCP_Socket(curl.socket_handle(&pipe.sock))
+    c.tls = &pipe
+    c.state = .Open
+    c.max_frame_bytes = 1 << 20
+    c.max_send_queue_bytes = 64 << 20
+    c.close_timeout = time.Second
+    c.message = stall_noop_message
+    c.terminal = stall_noop_terminal
+    c.send_queue = make([dynamic][]byte, context.allocator)
+    c.send_batch = make([dynamic][]byte, context.allocator)
+    defer {
+        for frame in c.send_queue {
+            delete(frame, c.allocator)
+        }
+
+        delete(c.send_queue)
+
+        for frame in c.send_batch {
+            delete(frame, c.allocator)
+        }
+
+        delete(c.send_batch)
+    }
+
+    testing.expect_value(t, nbio.associate_socket(c.socket, loop), nil)
+
+    payload := make([]byte, PAYLOAD, context.allocator)
+    defer delete(payload, context.allocator)
+    for i in 0 ..< len(payload) {
+        payload[i] = byte(i)
+    }
+
+    // Write until libcurl refuses and the pipe parks on writability. The socket buffer
+    // is the OS's to size, so this is bounded by frames rather than by a fixed count.
+    sent_frames := 0
+    parked := false
+    for _ in 0 ..< 400 {
+        if client_send_text(&c, payload) != .None {
+            break
+        }
+
+        sent_frames += 1
+
+        nbio.tick(time.Millisecond)
+
+        if len(pipe.send_pending) > 0 {
+            parked = true
+            break
+        }
+    }
+
+    if !testing.expect(t, parked, "the pipe should park mid-batch once the peer stops reading") {
+        sync.atomic_store(&args.drain, true)
+        return
+    }
+
+    testing.expect(t, c.send_op != nil, "a parked write leaves a writability wait armed")
+
+    // Queue several more frames without running the loop. They cannot start a batch
+    // while the parked one is in flight, so the pump coalesces them into one multi-frame
+    // batch when it resumes — which is what walks the front-trim across frames.
+    for _ in 0 ..< 8 {
+        if client_send_text(&c, payload) != .None {
+            break
+        }
+
+        sent_frames += 1
+    }
+
+    testing.expect(t, len(c.send_queue) > 1, "the resume should find a multi-frame batch waiting")
+
+    // Let the server drain; the pump must resume and finish every queued frame.
+    sync.atomic_store(&args.drain, true)
+
+    drained := false
+    for _ in 0 ..< 20000 {
+        nbio.tick(time.Millisecond)
+
+        if len(c.send_queue) == 0 && !c.sending {
+            drained = true
+            break
+        }
+    }
+
+    testing.expect(t, drained, "every queued frame should finish once the peer reads again")
+    testing.expect_value(t, len(pipe.send_pending), 0)
+    testing.expect_value(t, c.pending_send_bytes, 0)
+
+    // Close the socket so the server's read loop ends, then compare byte counts.
+    curl.socket_destroy(&pipe.sock)
+
+    for _ in 0 ..< 2000 {
+        if sync.atomic_load(&args.finished) {
+            break
+        }
+
+        time.sleep(time.Millisecond)
+    }
+
+    testing.expect_value(t, sync.atomic_load(&args.received), sent_frames * FRAME)
+    testing.expectf(t, sent_frames > 1, "the test should have queued more than one frame, got %d", sent_frames)
 }

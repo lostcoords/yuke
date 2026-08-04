@@ -3,6 +3,7 @@ package websocket
 import "base:runtime"
 import "core:crypto"
 import "core:encoding/base64"
+import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:nbio"
@@ -10,6 +11,7 @@ import "core:net"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import curl "libs:bindings/curl"
 import http "libs:http"
 
 // Ceiling on the buffered upgrade response; bounds `handshake_buf` against a
@@ -65,8 +67,19 @@ Client_Error :: enum {
     Not_Open,
 }
 
+// How the connection reaches the server. `Ws` is a plain socket this package drives on
+// the loop; `Wss` hands the connect and the TLS session to libcurl and moves every byte
+// through it, which is also what brings proxy support and certificate verification.
+Scheme :: enum {
+    Ws,
+    Wss,
+}
+
 // Connect and protocol options. Zero-valued fields default in `client_connect`.
 Options :: struct {
+    // Transport for this connection.
+    scheme:               Scheme,
+
     // Hostname or dotted IPv4 address (no brackets, no scheme).
     host:                 string,
 
@@ -97,6 +110,10 @@ Options :: struct {
 
     // Maximum wait for the peer's Close after a close handshake begins.
     close_timeout:        time.Duration,
+
+    // `Wss` only: PEM bundle to verify the server against. Empty uses libcurl's own
+    // default store.
+    ca_file:              string,
 }
 
 // Fired once the upgrade succeeds and the connection is Open.
@@ -159,6 +176,16 @@ Client :: struct {
     // @private
     // Application callbacks.
     cbs:               Callbacks,
+
+    // @private
+    // TLS state for a `Wss` client. `core.tls` points at it; it stays zero-valued for
+    // a plain `ws://` client.
+    tls_pipe:          Tls_Pipe,
+
+    // @private
+    // Backing for the one-buffer handshake write. The TLS pipe holds its batch across
+    // a readiness wait, so it cannot be handed a slice literal that dies with the call.
+    send_one:          [1][]byte,
 }
 
 // Begin connecting. Resolves the endpoint and submits the TCP dial; the rest of
@@ -219,11 +246,6 @@ client_connect :: proc(
 
     if !extra_headers_valid(opts.extra_headers) {
         return .Invalid_Options
-    }
-
-    endpoint, ok := resolve_endpoint(opts.host, opts.port)
-    if !ok {
-        return .Resolve_Failed
     }
 
     c^ = {}
@@ -294,9 +316,93 @@ client_connect :: proc(
     assert(c.max_send_queue_bytes >= c.max_frame_bytes + MAX_HEADER_BYTES, "send queue cannot fit one frame")
 
     log.debugf("websocket client: dialing %s:%d%s", opts.host, opts.port, opts.path)
-    c.dial_op = nbio.dial_poly(endpoint, c, on_dial, c.handshake_timeout, loop)
+
+    switch opts.scheme {
+    case .Ws:
+        return client_dial_plain(c, opts)
+
+    case .Wss:
+        return client_dial_tls(c, opts)
+    }
 
     return .None
+}
+
+// Resolve and dial directly on the loop. libcurl does its own resolution, so this
+// resolver's narrower view of a name never gets to refuse a `Wss` client.
+@(private)
+client_dial_plain :: proc(c: ^Client, opts: Options) -> Client_Error {
+    endpoint, ok := resolve_endpoint(opts.host, opts.port)
+    if !ok {
+        client_connect_rollback(c)
+
+        return .Resolve_Failed
+    }
+
+    c.dial_op = nbio.dial_poly(endpoint, c, on_dial, c.handshake_timeout, c.loop)
+
+    return .None
+}
+
+// Hand the connect and the TLS session to libcurl. The socket it returns is polled for
+// readiness here but stays curl's to close, and every byte after this moves through
+// `curl.socket_send`/`socket_recv`.
+@(private)
+client_dial_tls :: proc(c: ^Client, opts: Options) -> Client_Error {
+    url := fmt.caprintf("https://%s:%d/", opts.host, opts.port, allocator = c.allocator)
+    defer delete(url, c.allocator)
+
+    ca := strings.clone_to_cstring(opts.ca_file, c.allocator) if len(opts.ca_file) > 0 else nil
+    defer if ca != nil {
+        delete(ca, c.allocator)
+    }
+
+    // `tls` is set before the dial so a failed one still tears the curl handles down
+    // through the one teardown path.
+    c.tls = &c.tls_pipe
+
+    req := curl.Socket_Request {
+        url             = url,
+        connect_timeout = c.handshake_timeout,
+        ca_file         = ca,
+    }
+
+    err := curl.socket_connect(&c.tls_pipe.sock, c.loop, req, client_on_tls_connect, c)
+    if err == .None {
+        return .None
+    }
+
+    c.tls = nil
+    client_connect_rollback(c)
+
+    return .Out_Of_Memory if err == .Out_Of_Memory else .Invalid_Options
+}
+
+// libcurl finished the TCP and TLS handshake: adopt its socket for readiness waits and
+// run the same WebSocket upgrade a plain connection does.
+@(private)
+client_on_tls_connect :: proc(user: rawptr, result: curl.Result) {
+    c := (^Client)(user)
+    assert(c.state == .Dialing, "the TLS dial completed outside Dialing")
+
+    if result.code != .Ok {
+        log.debugf("websocket client: TLS dial failed: %s", result.message)
+        conn_fail(&c.core, .Dial_Failed if result.code == .Couldnt_Connect else .Handshake_Failed)
+        return
+    }
+
+    // `has_socket` stays false: it means "this connection must close this socket", and
+    // libcurl closes this one.
+    c.socket = net.TCP_Socket(curl.socket_handle(&c.tls_pipe.sock))
+
+    // Readiness waits need the socket on this loop; curl created it outside one.
+    if nbio.associate_socket(c.socket, c.loop) != nil {
+        conn_fail(&c.core, .Handshake_Failed)
+        return
+    }
+
+    c.state = .Upgrading
+    client_send_upgrade(c)
 }
 
 @(private)
@@ -480,6 +586,15 @@ on_dial :: proc(op: ^nbio.Operation, c: ^Client) {
     // best-effort).
     net.set_option(c.socket, .TCP_Nodelay, true)
 
+    client_send_upgrade(c)
+}
+
+// Build and write the upgrade request. Both dial paths reach Upgrading with a socket
+// in hand and join here.
+@(private)
+client_send_upgrade :: proc(c: ^Client) {
+    assert(c.state == .Upgrading, "the upgrade request was written outside Upgrading")
+
     key_raw: [SEC_WEBSOCKET_KEY_BYTES]byte
     crypto.rand_bytes(key_raw[:])
     base64.encode_into_buf(c.key_encoded[:], key_raw[:])
@@ -489,64 +604,46 @@ on_dial :: proc(op: ^nbio.Operation, c: ^Client) {
         conn_fail(&c.core, .Out_Of_Memory)
         return
     }
+
     c.request_buf = request
-    c.send_op = nbio.send_poly(
-        c.socket,
-        [][]byte{c.request_buf},
-        c,
-        on_upgrade_sent,
-        {},
-        true,
-        c.handshake_timeout,
-        c.loop,
-    )
+    c.send_one[0] = c.request_buf
+    conn_submit_send(&c.core, c.send_one[:], c.handshake_timeout)
 }
 
 // Upgrade request sent: free it and start reading the response.
 @(private)
-on_upgrade_sent :: proc(op: ^nbio.Operation, c: ^Client) {
+client_upgrade_sent :: proc(c: ^Client, result: Io_Result) {
     assert(c.state == .Upgrading, "upgrade request completed outside Upgrading")
-    assert(op == c.send_op, "upgrade send completion does not match stored operation")
-    c.send_op = nil
 
-    if op.send.err != nil {
-        conn_fail(&c.core, send_timed_out(op.send.err) ? .Timed_Out : .Handshake_Failed)
+    if result != .Ok {
+        conn_fail(&c.core, result == .Timed_Out ? .Timed_Out : .Handshake_Failed)
         return
     }
 
     delete(c.request_buf, c.allocator)
     c.request_buf = nil
+    c.send_one[0] = nil
 
-    c.recv_op = nbio.recv_poly(
-        c.socket,
-        [][]byte{c.recv_buf},
-        c,
-        on_handshake_recv,
-        false,
-        c.handshake_timeout,
-        c.loop,
-    )
+    conn_submit_recv(&c.core, c.handshake_timeout)
 }
 
 // Accumulate and validate the upgrade response. Reads until the header block is
 // complete, then transitions to Open and hands off to the read loop.
 @(private)
-on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
+client_handshake_received :: proc(c: ^Client, received: int, result: Io_Result) {
     assert(c.state == .Upgrading, "upgrade response completed outside Upgrading")
-    assert(op == c.recv_op, "upgrade receive completion does not match stored operation")
-    c.recv_op = nil
 
-    if op.recv.err != nil {
-        conn_fail(&c.core, recv_timed_out(op.recv.err) ? .Timed_Out : .Handshake_Failed)
+    if result != .Ok {
+        conn_fail(&c.core, result == .Timed_Out ? .Timed_Out : .Handshake_Failed)
         return
     }
 
-    if op.recv.received == 0 {
+    if received == 0 {
         conn_fail(&c.core, .Handshake_Failed)
         return
     }
 
-    if _, aerr := append(&c.handshake_buf, ..c.recv_buf[:op.recv.received]); aerr != nil {
+    if _, aerr := append(&c.handshake_buf, ..c.recv_buf[:received]); aerr != nil {
         conn_fail(&c.core, .Out_Of_Memory)
         return
     }
@@ -557,22 +654,14 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
         return
     }
 
-    result, consumed, status := parse_upgrade_response(c.handshake_buf[:], c.key_encoded[:])
+    outcome, consumed, status := parse_upgrade_response(c.handshake_buf[:], c.key_encoded[:])
     if status == .Need_More {
-        c.recv_op = nbio.recv_poly(
-            c.socket,
-            [][]byte{c.recv_buf},
-            c,
-            on_handshake_recv,
-            false,
-            c.handshake_timeout,
-            c.loop,
-        )
+        conn_submit_recv(&c.core, c.handshake_timeout)
 
         return
     }
 
-    if result != .Ok {
+    if outcome != .Ok {
         conn_fail(&c.core, .Handshake_Failed)
         return
     }
@@ -591,6 +680,13 @@ on_handshake_recv :: proc(op: ^nbio.Operation, c: ^Client) {
 
     if c.cbs.on_open != nil {
         c.cbs.on_open(c)
+    }
+
+    // `on_open` may have failed the connection — the driver's own `transport_on_open`
+    // does exactly that when the first frame cannot be queued. The drain below asserts
+    // an active state, and the server path has guarded this since it was written.
+    if c.state == .Closed {
+        return
     }
 
     if !conn_drain_decoder(&c.core) {

@@ -1,10 +1,19 @@
 /*
-package websocket is an RFC 6455 WebSocket implementation (ws:// only, no TLS).
+package websocket is an RFC 6455 WebSocket implementation. A client reaches a server
+over `ws://` or `wss://`; the server is `ws://` only and expects TLS, when it is
+wanted, to be terminated by a reverse proxy in front of it.
 
 The sans-IO protocol layer serves both directions: `Role` selects client or server
 strictness at each surface. One nbio reactor driver (`conn.odin`) sits on top of it,
 shared by two roles: a client dialer (`client.odin`) and a server (`server.odin`)
 that adopts sockets an HTTP front door has already routed.
+
+Both schemes share every byte of that driver. `pipe.odin` is the one place they
+differ: a `Ws` connection reads and writes with nbio directly, while a `Wss`
+connection hands the connect and the TLS session to libcurl and moves plaintext
+through `curl.socket_send`/`socket_recv`, waiting on `nbio.poll` for readiness.
+Choosing `Wss` also brings certificate verification and proxy support, which is much
+of why the connect is libcurl's rather than this package's.
 
   - `frame.odin`: the frame codec. `parse_header(buf, role)` decodes a header from a
     buffer without blocking, reporting `.Need_More` when the buffer is incomplete.
