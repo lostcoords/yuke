@@ -16,6 +16,16 @@ import ws "libs:websocket"
 import store "src:daemon/store"
 import wire "src:wire"
 
+// Workers for every blocking filesystem call. Each one spends its time inside a syscall
+// rather than competing for a core, and concurrent work is already bounded by the
+// transport's connection cap, so a small count is enough.
+WORKER_COUNT :: 2
+
+// One block holds the version, blob directory, and token together. The out-of-band
+// threshold matches it so a longer path or token is a direct allocation the arena still
+// owns, rather than a size that fits neither.
+CONFIG_ARENA_BLOCK :: 1024
+
 Protocol_State :: enum {
     // Connection is Open; awaiting the client's `initialize` request.
     Awaiting_Initialize,
@@ -95,6 +105,11 @@ Daemon :: struct {
     allocator:      mem.Allocator,
 
     // @private
+    // Backs the three owned config strings below, which live for the daemon's whole
+    // serving life and are released together in `free_config`.
+    config_arena:   mem.Dynamic_Arena,
+
+    // @private
     // Owned daemon version string, reported in every `initialize` result.
     daemon_version: string,
 
@@ -103,10 +118,11 @@ Daemon :: struct {
     blob_dir:       string,
 
     // @private
-    // Workers for the blob store's blocking filesystem calls. `fsync`, `rename`, and
-    // `unlink` have no nbio operation, so publishing an upload from a reactor callback
-    // would stall every other connection. Only started when `blob_dir` is set.
-    blobs:          offload.Pool,
+    // Workers for every blocking filesystem call the daemon makes: publishing a blob
+    // upload and the `workspace.*` path walks. None of `fsync`, `rename`, `open`, or
+    // `readdir` has an nbio operation, so running one from a reactor callback would
+    // stall every other connection.
+    workers:        offload.Pool,
 
     // @private
     // Owned bearer token; empty when authorization is disabled.
@@ -121,7 +137,29 @@ Daemon :: struct {
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
     seq_high:       map[wire.Session_Id]wire.Seq,
+
+    // @private
+    // Encode scratch for one broadcast: the payload, the frame, and any shed marker the
+    // fan-out mints. Reset — not freed — at `broadcast` exit, so the blocks are reused
+    // for the daemon's life and a fan-out to N connections encodes once.
+    pump_scratch:   mem.Dynamic_Arena,
+
+    // @private
+    // Live connections keyed by the ticket that outlives them. Sized for the transport's
+    // connection cap in `start`, so an admitted connection never allocates to register.
+    conns:          map[Conn_Ticket]^Conn,
+
+    // @private
+    // Monotonic ticket source; incremented before use so zero is never issued.
+    next_ticket:    Conn_Ticket,
 }
+
+// A connection identity that outlives the connection. Handed to work that may finish
+// after the `Conn` is freed — an offloaded filesystem pass — so it can ask whether there
+// is still anyone to answer instead of holding a dangling pointer. Never reused, so a
+// stale ticket resolves to `nil` rather than to a later connection. Zero is not a
+// connection and always resolves to `nil`.
+Conn_Ticket :: distinct u64
 
 // One accepted connection past the WebSocket handshake. Allocated in the transport
 // `ws_on_open` and freed in the terminal callback.
@@ -132,12 +170,17 @@ Conn :: struct {
     // Owning daemon, for the version string and allocator.
     daemon:             ^Daemon,
 
+    // Identity that outlives this connection, for work that may outlive it. See
+    // `Conn_Ticket`.
+    ticket:             Conn_Ticket,
+
     // Allocator backing `scratch` and the retained client identity (the daemon's).
     allocator:          mem.Allocator,
     state:              Protocol_State,
 
-    // Per-frame decode scratch, `free_all`'d after each inbound frame. A frame's
-    // borrowed strings and slices live here only for the handler that consumes them.
+    // Per-frame scratch, reset after each inbound frame. A frame's borrowed strings and
+    // slices, and the response the handler encodes from them, live here only for that
+    // handler; the blocks are retained across frames and freed with the `Conn`.
     scratch:            mem.Dynamic_Arena,
 
     // Retained client name from `initialize`; an owned `strings.clone` for
@@ -154,6 +197,11 @@ Conn :: struct {
 
     // Live prefix length of `subscriptions`.
     subscription_count: int,
+
+    // Live deltas shed to this connection since the last `session.deltas_shed` it
+    // accepted, positionally parallel to `subscriptions`. Inline for the same reason:
+    // the fan-out's backpressure path allocates no per-connection state.
+    shed_counts:        [wire.LIMITS.max_subscriptions]u64,
 }
 
 // Begin listening. A synchronous failure returns directly and rolls back the clones
@@ -176,38 +224,38 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         version = "0.0.0"
     }
 
-    aerr: mem.Allocator_Error
-    d.daemon_version, aerr = strings.clone(version, allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    mem.dynamic_arena_init(&d.config_arena, allocator, allocator, CONFIG_ARENA_BLOCK, CONFIG_ARENA_BLOCK)
+    ca := mem.dynamic_arena_allocator(&d.config_arena)
 
-    d.blob_dir, aerr = strings.clone(options.blob_dir, allocator)
-    if aerr != nil {
+    cloned_version, version_aerr := strings.clone(version, ca)
+    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, ca)
+    cloned_token, token_aerr := strings.clone(options.auth_token, ca)
+    if version_aerr != nil || blob_aerr != nil || token_aerr != nil {
         free_config(d)
         return .Out_Of_Memory
     }
 
-    d.auth_token, aerr = strings.clone(options.auth_token, allocator)
-    if aerr != nil {
+    d.daemon_version = cloned_version
+    d.blob_dir = cloned_blob_dir
+    d.auth_token = cloned_token
+
+    // Started unconditionally: `workspace.describe` and `workspace.browse` offload their
+    // path walks whether or not a blob directory is configured.
+    if perr := offload.pool_init(&d.workers, loop, WORKER_COUNT); perr != .None {
         free_config(d)
-        return .Out_Of_Memory
+        return .Invalid_Options
     }
 
     // The `initialize` result advertises `blob_upload` from this field alone, so an
     // unusable directory must fail the start rather than 500 every upload.
     if d.blob_dir != "" {
         if mkerr := os.make_directory_all(d.blob_dir, BLOB_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(d.blob_dir) {
+            workers_stop(d)
             free_config(d)
             return .Invalid_Options
         }
 
         warn_exposed_blob_dir(d.blob_dir, allocator)
-
-        if perr := offload.pool_init(&d.blobs, loop, BLOB_WORKER_COUNT); perr != .None {
-            free_config(d)
-            return .Invalid_Options
-        }
     }
 
     // The log of record has to be usable before anything is adopted: a damaged or
@@ -216,7 +264,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         opened, serr := store.open(options.db_path, allocator)
         if serr != nil {
             log.errorf("daemon: event store unavailable at %s: %v", options.db_path, serr)
-            blobs_stop(d)
+            workers_stop(d)
             free_config(d)
             return .Store_Failed
         }
@@ -224,7 +272,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         marks, merr := make(map[wire.Session_Id]wire.Seq, 16, allocator)
         if merr != nil {
             store.close(opened)
-            blobs_stop(d)
+            workers_stop(d)
             free_config(d)
             return .Out_Of_Memory
         }
@@ -250,13 +298,13 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     case .None:
 
     case .Invalid_Options:
-        blobs_stop(d)
+        workers_stop(d)
         store_close(d)
         free_config(d)
         return .Invalid_Options
 
     case .Out_Of_Memory:
-        blobs_stop(d)
+        workers_stop(d)
         store_close(d)
         free_config(d)
         return .Out_Of_Memory
@@ -271,6 +319,16 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
          .Not_Open:
         assert(false, "server_init returned a connection-only error")
     }
+
+    conns, conns_aerr := make(map[Conn_Ticket]^Conn, d.ws_server.max_connections, allocator)
+    if conns_aerr != nil {
+        start_rollback(d)
+        return .Out_Of_Memory
+    }
+
+    d.conns = conns
+
+    mem.dynamic_arena_init(&d.pump_scratch, allocator, allocator)
 
     router_init(d)
 
@@ -332,28 +390,32 @@ start_rollback :: proc(d: ^Daemon) {
     assert(d.front_door.state == .Idle, "failed front door retained active state")
     assert(d.ws_server.state == .Serving, "websocket server was not initialized before rollback")
 
-    blobs_stop(d)
+    workers_stop(d)
     store_close(d)
     ws.server_destroy(&d.ws_server)
+    mem.dynamic_arena_destroy(&d.pump_scratch)
+    delete(d.conns)
+    d.conns = nil
     free_config(d)
 }
 
-// Drain and release the blob workers. Idempotent, so every teardown path can call it
-// without knowing how far `start` got. Draining runs each finished task's
-// completion on this loop, which is why it must precede releasing the front door: a
-// completion resolves its connection ticket against that server.
-blobs_stop :: proc(d: ^Daemon) {
-    assert(d != nil, "blob worker teardown needs daemon state")
+// Drain and release the workers. Idempotent, so every teardown path can call it without
+// knowing how far `start` got. Draining runs each finished task's completion on this
+// loop, which is why it must precede releasing the front door and the connection table:
+// a blob completion resolves its ticket against that server, and a workspace completion
+// resolves its ticket against `conns`.
+workers_stop :: proc(d: ^Daemon) {
+    assert(d != nil, "worker teardown needs daemon state")
 
-    if !offload.pool_is_running(&d.blobs) {
+    if !offload.pool_is_running(&d.workers) {
         return
     }
 
-    if derr := offload.pool_drain(&d.blobs); derr != nil {
-        log.errorf("daemon: blob worker drain failed: %v", derr)
+    if derr := offload.pool_drain(&d.workers); derr != nil {
+        log.errorf("daemon: worker drain failed: %v", derr)
     }
 
-    offload.pool_destroy(&d.blobs)
+    offload.pool_destroy(&d.workers)
 }
 
 // Stop accepting and close every live connection. Closing is async: run the loop
@@ -377,11 +439,15 @@ destroy :: proc(d: ^Daemon) {
     assert(d.front_door.shutdown_complete, "destroy before HTTP shutdown completed")
     assert(d.ws_server.shutdown_complete, "destroy before WebSocket shutdown completed")
 
-    blobs_stop(d)
+    workers_stop(d)
     ws.server_destroy(&d.ws_server)
     http_server.destroy(&d.front_door)
+    assert(len(d.conns) == 0, "connections outlived the transport that owned them")
 
     store_close(d)
+    mem.dynamic_arena_destroy(&d.pump_scratch)
+    delete(d.conns)
+    d.conns = nil
     free_config(d)
 }
 
@@ -401,13 +467,12 @@ store_close :: proc(d: ^Daemon) {
     d.seq_high = nil
 }
 
-// Release the owned config strings and reset them to empty.
+// Release the owned config strings, resetting them to empty. Destroying the arena
+// zeroes it, so every teardown path can call this without knowing how far `start` got.
 free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
-    delete(d.daemon_version, d.allocator)
-    delete(d.blob_dir, d.allocator)
-    delete(d.auth_token, d.allocator)
+    mem.dynamic_arena_destroy(&d.config_arena)
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
@@ -445,6 +510,19 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     conn.allocator = d.allocator
     conn.state = .Awaiting_Initialize
     mem.dynamic_arena_init(&conn.scratch, d.allocator, d.allocator)
+
+    d.next_ticket += 1
+    conn.ticket = d.next_ticket
+    registered := map_insert(&d.conns, conn.ticket, conn)
+    if registered == nil {
+        // The table grows past its reserve at high load; out of memory registering
+        // the connection refuses it like any other admission failure.
+        log.error("daemon: out of memory registering websocket connection")
+        mem.dynamic_arena_destroy(&conn.scratch)
+        free(conn, d.allocator)
+        ws.server_abort(wsc, .Out_Of_Memory)
+        return
+    }
 
     wsc.user_data = conn
     assert(conn.wsc.user_data == conn, "connection state was not attached to its transport")
@@ -519,7 +597,8 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     assert(conn.state != .Closed, "text handler ran after protocol close")
 
     sa := mem.dynamic_arena_allocator(&conn.scratch)
-    defer free_all(sa)
+
+    defer mem.dynamic_arena_reset(&conn.scratch)
 
     d := wire.decoder_init(string(data), sa)
     req, derr := wire.request_from_reader(&d)
@@ -539,7 +618,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 
 // Answer `initialize`. On success the daemon retains the client identity, responds
 // with its snapshot, and reaches Ready.
-handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
+handle_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "initialize handler needs connection state")
     assert(conn.wsc != nil, "initialize handler needs transport state")
     assert(conn.state == .Awaiting_Initialize, "initialize ran outside Awaiting_Initialize")
@@ -573,7 +652,7 @@ handle_initialize :: proc(conn: ^Conn, req: wire.Request) {
     conn.client_name = client_name
     conn.client_version = client_version
 
-    if send_initialize_result(conn, req.id) {
+    if send_initialize_result(conn, req.id, sa) {
         conn.state = .Ready
     }
 }
@@ -606,22 +685,22 @@ handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 
     switch req.method {
     case .Initialize:
-        handle_initialize(conn, req)
+        handle_initialize(conn, req, sa)
 
     case .Session_List:
-        method_session_list(conn, req)
+        method_session_list(conn, req, sa)
 
     case .Catalog_List:
-        method_catalog_list(conn, req)
+        method_catalog_list(conn, req, sa)
 
     case .Workspace_Describe:
-        method_workspace_describe(conn, req, sa)
+        method_workspace_describe(conn, req)
 
     case .Workspace_Browse:
         method_workspace_browse(conn, req, sa)
 
     case .Subscription_Set:
-        method_subscription_set(conn, req)
+        method_subscription_set(conn, req, sa)
 
     case .Session_Resync:
         method_session_resync(conn, req, sa)
@@ -648,13 +727,13 @@ handle_request :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
          .Cron_Remove,
          .Cron_List,
          .Cron_Run_Now:
-        send_error(conn, req.id, .Unknown_Method, "method not implemented")
+        send_error(conn, req.id, .Unknown_Method, "method not implemented", sa)
     }
 }
 
 // `session.list` before the session engine exists: an empty page pinned to revision 0,
 // matching the session revision the initialize snapshot claims.
-method_session_list :: proc(conn: ^Conn, req: wire.Request) {
+method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.list needs connection state")
     assert(conn.state == .Ready, "session.list ran outside Ready")
     assert(req.method == .Session_List, "session.list received another method")
@@ -666,13 +745,13 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request) {
         total       = 0,
     }
 
-    send_result(conn, req.id, result)
+    send_result(conn, req.id, result, sa)
 }
 
 // `catalog.list` before any catalog is loaded: `unchanged` when the client already
 // holds the empty revision, otherwise a `full` snapshot with no models and empty
 // health. Both carry the all-zero catalog hash the initialize snapshot reports.
-method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
+method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "catalog.list needs connection state")
     assert(conn.state == .Ready, "catalog.list ran outside Ready")
     assert(req.method == .Catalog_List, "catalog.list received another method")
@@ -693,38 +772,21 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request) {
         }
     }
 
-    send_result(conn, req.id, result)
+    send_result(conn, req.id, result, sa)
 }
 
-// `workspace.describe` on a real path: canonicalize it (a missing path or a
-// non-directory is `Bad_Request`), then report the derived id, basename title, git
-// branch, and directory mtime. With no session engine yet, there is no `last_used_model`.
-method_workspace_describe :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+// `workspace.describe` on a real path: the path walk is offloaded, and the completion
+// reports the derived id, basename title, git branch, and directory mtime (a missing path
+// or a non-directory is `Bad_Request`). With no session engine yet, there is no
+// `last_used_model`.
+method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "workspace.describe needs connection state")
     assert(conn.state == .Ready, "workspace.describe ran outside Ready")
     assert(req.method == .Workspace_Describe, "workspace.describe received another method")
 
     params := req.params.(wire.Workspace_Describe_Params)
 
-    canonical, cerr := os.get_absolute_path(params.path, sa)
-    if cerr != nil {
-        send_error(conn, req.id, .Bad_Request, "invalid workspace path")
-        return
-    }
-
-    if !os.is_dir(canonical) {
-        send_error(conn, req.id, .Bad_Request, "workspace path is not a directory")
-        return
-    }
-
-    result := wire.Workspace_Describe_Result {
-        workspace = wire.Workspace{id = workspace_id(canonical), root = canonical, title = workspace_title(canonical)},
-        git = git_info(canonical, sa),
-        last_modified_ms = path_mtime_ms(canonical, sa),
-        last_used_model = nil,
-    }
-
-    send_result(conn, req.id, result)
+    workspace_job_submit(conn, req.id, .Describe, params.path, 0, 0)
 }
 
 // Longest browse cursor we could have minted. `strconv.parse_int` wraps silently
@@ -734,8 +796,10 @@ MAX_BROWSE_CURSOR_DIGITS :: 16
 
 // `workspace.browse` of a real directory: its immediate subdirectories (never files,
 // never `.git`), sorted case-insensitively, paginated by an opaque decimal-offset
-// cursor. A missing path defaults to the daemon user's home. Path and cursor faults
-// are `Bad_Request`; a weird path never crashes the daemon.
+// cursor. A missing path defaults to the daemon user's home. The cursor and page window
+// are decided here — they are answerable from the params alone — and the listing is
+// offloaded. Path and cursor faults are `Bad_Request`; a weird path never crashes the
+// daemon.
 method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "workspace.browse needs connection state")
     assert(conn.state == .Ready, "workspace.browse ran outside Ready")
@@ -743,37 +807,16 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
 
     params := req.params.(wire.Workspace_Browse_Params)
 
-    target: string
-    if p, ok := params.path.?; ok {
-        target = p
-    } else if home, found := os.lookup_env("HOME", sa); found {
-        target = home
-    } else {
-        target = "/"
-    }
-
-    dir, derr := os.get_absolute_path(target, sa)
-    if derr != nil {
-        send_error(conn, req.id, .Bad_Request, "cannot open path")
-        return
-    }
-
-    entries, lerr := browse_entries(dir, sa)
-    if lerr != nil {
-        send_error(conn, req.id, .Bad_Request, "cannot list path")
-        return
-    }
-
     offset := 0
     if cursor, ok := params.cursor.?; ok {
         if len(cursor) > MAX_BROWSE_CURSOR_DIGITS {
-            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
+            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor", sa)
             return
         }
 
         n, valid := strconv.parse_int(cursor, 10)
         if !valid || n < 0 {
-            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor")
+            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor", sa)
             return
         }
 
@@ -786,39 +829,38 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         page_size = int(limit)
     }
 
-    total := len(entries)
-    lo := min(offset, total)
-    hi := min(lo + page_size, total)
-    page := entries[lo:hi]
-
-    next_cursor: Maybe(string)
-    cursor_buf: [24]u8
-    if hi < total {
-        next_cursor = strconv.write_int(cursor_buf[:], i64(hi), 10)
+    // Reading the environment touches no filesystem, so the default is resolved here and
+    // the worker only ever sees a concrete path.
+    target: string
+    if p, ok := params.path.?; ok {
+        target = p
+    } else if home, found := os.lookup_env("HOME", sa); found {
+        target = home
+    } else {
+        target = "/"
     }
 
-    result := wire.Workspace_Browse_Result {
-        path        = dir,
-        parent      = parent_dir(dir),
-        entries     = page,
-        next_cursor = next_cursor,
-    }
-
-    send_result(conn, req.id, result)
+    workspace_job_submit(conn, req.id, .Browse, target, offset, page_size)
 }
 
 // Validate and emit a successful response. The result is built from already-trusted
 // daemon state, so an invalid outgoing frame is our bug, not the peer's — assert
 // rather than ship it.
-send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result) {
+send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result, allocator: mem.Allocator) {
     assert(conn != nil, "result send needs connection state")
     assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
-    send_response(conn, wire.response_ok_build(id, result))
+    send_response(conn, wire.response_ok_build(id, result), allocator)
 }
 
 // Emit an error response naming `code`. `message` is diagnostic only; clients branch
 // on `code`.
-send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Code, message: string) {
+send_error :: proc(
+    conn: ^Conn,
+    id: wire.Request_Id,
+    code: wire.Error_Code,
+    message: string,
+    allocator: mem.Allocator,
+) {
     assert(conn != nil, "error response send needs connection state")
 
     eo := wire.Error_Object {
@@ -826,12 +868,14 @@ send_error :: proc(conn: ^Conn, id: wire.Request_Id, code: wire.Error_Code, mess
         message = message,
     }
 
-    send_response(conn, wire.response_error_build(id, eo))
+    send_response(conn, wire.response_error_build(id, eo), allocator)
 }
 
 // Serialize a response and hand it to the transport. `server_send_text` copies the
 // payload into an owned frame, so the emitter buffer may be released on return.
-send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
+// `allocator` is the arena of the lifetime that asked for the response — the frame arena
+// under `handle_text`, the job arena in an offloaded completion — never a longer-lived one.
+send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "response send needs connection state")
     assert(conn.wsc != nil, "response send needs transport state")
     // `initialize` is answered while still Awaiting_Initialize; every other response is Ready.
@@ -839,9 +883,18 @@ send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
     assert(wire.response_validate(resp) == .None, "daemon built an invalid response frame")
 
     e: wire.Emitter
-    wire.emitter_init(&e, conn.allocator)
+    wire.emitter_init(&e, allocator)
     defer wire.emitter_destroy(&e)
     wire.response_emit(&e, resp)
+
+    // A truncated response is damaged protocol, not a smaller one: the peer would read a
+    // partial JSON value and lose framing, so the connection dies instead.
+    if wire.emitter_failed(&e) {
+        log.error("daemon: a response could not be encoded")
+        conn_abort(conn, .Out_Of_Memory)
+
+        return false
+    }
 
     if send_err := ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)); send_err != .None {
         conn_abort(conn, send_err)
@@ -854,7 +907,7 @@ send_response :: proc(conn: ^Conn, resp: wire.Response) -> bool {
 // Answer `initialize` with the daemon snapshot. No session engine or catalog exists yet,
 // so the snapshot is empty; capabilities advertise only what this config
 // offers (`blob_upload` when a blob directory is configured).
-send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool {
+send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "initialize send needs connection state")
     assert(conn.daemon != nil, "initialize send needs daemon state")
     assert(conn.wsc != nil, "initialize send needs transport state")
@@ -879,7 +932,7 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id) -> bool {
     }
     assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
 
-    return send_response(conn, wire.response_ok_build(id, result))
+    return send_response(conn, wire.response_ok_build(id, result), allocator)
 }
 
 // Close a connection with `CLOSE.protocol_error` for a framing/sequence violation
@@ -921,6 +974,32 @@ conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     ws.server_abort(conn.wsc, err)
 }
 
+// The connection `ticket` names if it can still be answered, otherwise `nil`. The only
+// question offloaded work may ask about a connection it does not own, and the only safe
+// way to ask it: the `^Conn` itself may already be freed, and tickets are never reused, so
+// a stale one can never name a later connection. Loop thread only, where `Conn`s are
+// registered and released.
+conn_resolve :: proc(d: ^Daemon, ticket: Conn_Ticket) -> ^Conn {
+    assert(d != nil, "resolve needs daemon state")
+
+    if ticket == 0 {
+        return nil
+    }
+
+    conn := d.conns[ticket]
+    if conn == nil {
+        return nil
+    }
+
+    assert(conn.ticket == ticket, "connection table returned a mismatched ticket")
+    assert(conn.wsc != nil, "a registered connection has transport state")
+
+    // A connection stays registered until its terminal callback runs, so both halves have
+    // to agree it can still be answered: a peer close latches the transport out of Open
+    // well before the `Conn` is freed, and a send there fails as `Not_Open`.
+    return conn.state != .Closed && conn.wsc.state == .Open ? conn : nil
+}
+
 // Free the connection's owned state and the `Conn` itself. Called once from the
 // transport terminal callback, after which the transport frees `wsc`.
 conn_free :: proc(conn: ^Conn) {
@@ -928,7 +1007,10 @@ conn_free :: proc(conn: ^Conn) {
     assert(conn.wsc != nil, "connection cleanup needs transport state")
     assert(conn.state == .Closed, "connection cleanup before Closed")
     assert(conn.wsc.user_data == conn, "connection cleanup crossed transport ownership")
+    assert(conn.daemon != nil, "connection cleanup needs daemon state")
+    assert(conn.ticket in conn.daemon.conns, "connection cleanup on an unregistered connection")
 
+    delete_key(&conn.daemon.conns, conn.ticket)
     conn.wsc.user_data = nil
     mem.dynamic_arena_destroy(&conn.scratch)
 

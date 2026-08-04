@@ -25,6 +25,30 @@ import wire "src:wire"
 // use — and observe what each connection received. Durable cases run against a real
 // on-disk store so persistence and delivery are exercised together.
 
+// The store streams its tail to a visitor. These tests want the rows in hand, so a
+// test-local collector materializes them into the temp arena, which owns the payloads.
+Pump_Events :: struct {
+    rows: [dynamic]store.Event,
+}
+
+pump_events_collect :: proc(user: rawptr, event: store.Event) -> store.Event_Visit {
+    collect := (^Pump_Events)(user)
+    append(&collect.rows, event)
+
+    return .Continue
+}
+
+// Every event logged for `session`, oldest first.
+pump_events :: proc(t: ^testing.T, s: ^store.Store, session: wire.Session_Id) -> []store.Event {
+    collect := Pump_Events {
+        rows = make([dynamic]store.Event, context.temp_allocator),
+    }
+    _, _, err := store.events_visit_after(s, session, 0, 16, pump_events_collect, &collect, context.temp_allocator)
+    testing.expect_value(t, err, nil)
+
+    return collect.rows[:]
+}
+
 // A session id is 16 lowercase-hex characters on the wire; repeat one for a fixture.
 pump_test_session :: proc(c: u8) -> wire.Session_Id {
     sid: [16]u8
@@ -51,6 +75,9 @@ Pump_Obs :: struct {
 
     // Durable seq carried by each delivered broadcast; 0 for an unsequenced one.
     seqs:       [dynamic]wire.Seq,
+
+    // Count carried by each delivered `session.deltas_shed`, in arrival order.
+    sheds:      [dynamic]u64,
 
     // Terminal driver error, if any.
     err:        client.Protocol_Error,
@@ -86,9 +113,13 @@ pump_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
 
     seq, sequenced := wire.broadcast_data_seq(bc.params).?
     append(&o.seqs, sequenced ? seq : 0)
+
+    if shed, ok := bc.params.(wire.Session_Deltas_Shed_Data); ok {
+        append(&o.sheds, shed.count)
+    }
 }
 
-pump_on_close :: proc(c: ^client.Client, _: ws.Close_Code) {
+pump_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
     o := (^Pump_Obs)(c.user_data)
     o.done = true
 }
@@ -113,6 +144,7 @@ pump_obs_init :: proc(o: ^Pump_Obs, sessions: []wire.Session_Id) {
     o.sessions = sessions
     o.names = make([dynamic]wire.Broadcast_Name, context.temp_allocator)
     o.seqs = make([dynamic]wire.Seq, context.temp_allocator)
+    o.sheds = make([dynamic]u64, context.temp_allocator)
 }
 
 // Open one driver against the daemon and run the loop until it is Ready with its
@@ -120,8 +152,7 @@ pump_obs_init :: proc(o: ^Pump_Obs, sessions: []wire.Session_Id) {
 pump_client_arm :: proc(t: ^testing.T, c: ^client.Client, loop: ^nbio.Event_Loop, port: int, o: ^Pump_Obs) {
     cerr := client.client_open(
         c,
-        loop,
-        {host = "127.0.0.1", port = port, path = "/ws"},
+        client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator),
         "yuke-test",
         "0.1.0",
         pump_callbacks(),
@@ -260,8 +291,7 @@ test_daemon_durable_broadcast_is_persisted_and_delivered :: proc(t: ^testing.T) 
 
     testing.expect_value(t, len(idle.names), 0)
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
 
     if testing.expect_value(t, len(rows), 1) {
         testing.expect_value(t, rows[0].seq, wire.Seq(1))
@@ -303,8 +333,7 @@ test_daemon_durable_seq_recovers_across_restart :: proc(t: ^testing.T) {
     testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
     testing.expect_value(t, broadcast(&second, pump_run_started(session)), Pump_Error.None)
 
-    rows, rerr := store.events_after(second.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, second.store, session)
 
     if testing.expect_value(t, len(rows), 3) {
         testing.expect_value(t, rows[0].seq, wire.Seq(1))
@@ -396,8 +425,7 @@ test_daemon_ungated_broadcast_reaches_every_connection :: proc(t: ^testing.T) {
     testing.expect_value(t, len(subscribed.names), 1)
     testing.expect_value(t, len(idle.names), 1)
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
     testing.expect_value(t, len(rows), 0)
 
     client.client_close(&sub_client)
@@ -440,8 +468,7 @@ test_daemon_live_gated_broadcast_is_not_persisted :: proc(t: ^testing.T) {
         testing.expect_value(t, obs.seqs[0], wire.Seq(0))
     }
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
     testing.expect_value(t, len(rows), 0)
 
     client.client_close(&c)
@@ -508,8 +535,7 @@ test_daemon_exhausted_sequence_is_reported :: proc(t: ^testing.T) {
 
     testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.Sequence_Exhausted)
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
     testing.expect_value(t, len(rows), 1)
 
     test_teardown(&d)
@@ -549,8 +575,7 @@ test_daemon_removed_session_drops_its_seq_mark :: proc(t: ^testing.T) {
     testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     testing.expect_value(t, d.seq_high[session], wire.Seq(2))
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
 
     if testing.expect_value(t, len(rows), 2) {
         testing.expect_value(t, rows[1].seq, wire.Seq(2))
@@ -631,8 +656,7 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
 
     testing.expect_value(t, len(idle.names), 0)
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
     testing.expect_value(t, len(rows), 0)
 
     client.client_close(&sub_client)
@@ -641,6 +665,195 @@ test_daemon_live_droppable_broadcast_is_gated_and_not_persisted :: proc(t: ^test
     testing.expect(t, pump_tick_until(&idle.done), "the idle client should close cleanly")
     client.client_destroy(&sub_client)
     client.client_destroy(&idle_client)
+    test_teardown(&d)
+}
+
+// A message the protocol accepts — user text is unbounded — whose frame is past the
+// transport's cap. Committing one would abort every subscriber and then fail every
+// later resync of the session, so the pump must refuse it before the log.
+@(test)
+test_daemon_over_cap_durable_broadcast_is_refused_before_the_log :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    path := testsupport.sqlite_db_path(t, "daemon-pump-over-cap")
+    defer testsupport.sqlite_db_remove(path)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    // The refusal is logged as an error, which the runner would otherwise count as a
+    // test failure; the assertions below are the check.
+    context.logger = log.nil_logger()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
+    testing.expect_value(t, derr, Error.None)
+
+    session := pump_test_session('6')
+    daemon_test_session_create(t, &d, session)
+
+    text := make([]byte, wire.LIMITS.max_frame_bytes + 1024, context.temp_allocator)
+    for &c in text {
+        c = 'x'
+    }
+
+    huge := wire.Message_Committed_Data {
+        session_id = session,
+        message = wire.User_Message {
+            id = 1,
+            input_id = 1,
+            content = []wire.Content_Part{wire.Content_Text{text = string(text)}},
+            time = {created_at_ms = 1},
+        },
+    }
+    testing.expect_value(t, broadcast(&d, huge), Pump_Error.Frame_Too_Large)
+    testing.expect_value(t, len(pump_events(t, d.store, session)), 0)
+
+    _, tracked := d.seq_high[session]
+    testing.expect(t, !tracked, "a refused frame must not burn the seq")
+
+    // The stream is untouched: the next durable broadcast is still seq 1.
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
+
+    rows := pump_events(t, d.store, session)
+
+    if testing.expect_value(t, len(rows), 1) {
+        testing.expect_value(t, rows[0].seq, wire.Seq(1))
+    }
+
+    test_teardown(&d)
+}
+
+// A delta big enough that a shrunken send queue cannot take it, while the small shed
+// marker still fits.
+pump_big_delta :: proc(session: wire.Session_Id) -> wire.Broadcast_Data {
+    text := make([]byte, 4096, context.temp_allocator)
+    for &c in text {
+        c = 'x'
+    }
+
+    return wire.Message_Part_Delta_Data(
+        wire.Part_Delta{session_id = session, message_id = 1, part_id = 0, delta = string(text), offset = 0},
+    )
+}
+
+// The transport connection the daemon is currently serving; the tests shrink its send
+// queue to put exactly one connection under backpressure.
+pump_only_conn :: proc(t: ^testing.T, d: ^Daemon) -> ^ws.Server_Conn {
+    testing.expect_value(t, len(d.ws_server.conns), 1)
+
+    for wsc in d.ws_server.conns {
+        return wsc
+    }
+
+    return nil
+}
+
+@(test)
+test_daemon_shed_delta_marks_only_the_lagging_connection :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
+
+    session := pump_test_session('7')
+    port := bound_port(&d)
+
+    lagging: Pump_Obs
+    pump_obs_init(&lagging, {session})
+    lag_client: client.Client
+    pump_client_arm(t, &lag_client, loop, port, &lagging)
+
+    // Only this connection is backed up: its queue takes the marker but not the delta.
+    lag_conn := pump_only_conn(t, &d)
+    lag_conn.max_send_queue_bytes = 1024
+
+    healthy: Pump_Obs
+    pump_obs_init(&healthy, {session})
+    healthy_client: client.Client
+    pump_client_arm(t, &healthy_client, loop, port, &healthy)
+
+    testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
+    pump_settle()
+
+    // The marker is point to point: the connection that kept up sees the delta and no
+    // marker at all.
+    if testing.expect_value(t, len(lagging.names), 1) {
+        testing.expect_value(t, lagging.names[0], wire.Broadcast_Name.Session_Deltas_Shed)
+        testing.expect_value(t, len(lagging.sheds), 1)
+        testing.expect_value(t, lagging.sheds[0], u64(1))
+    }
+
+    if testing.expect_value(t, len(healthy.names), 1) {
+        testing.expect_value(t, healthy.names[0], wire.Broadcast_Name.Message_Part_Delta)
+        testing.expect_value(t, len(healthy.sheds), 0)
+    }
+
+    client.client_close(&lag_client)
+    client.client_close(&healthy_client)
+    testing.expect(t, pump_tick_until(&lagging.done), "the lagging client should close cleanly")
+    testing.expect(t, pump_tick_until(&healthy.done), "the healthy client should close cleanly")
+    client.client_destroy(&lag_client)
+    client.client_destroy(&healthy_client)
+    test_teardown(&d)
+}
+
+@(test)
+test_daemon_undeliverable_shed_marker_coalesces_into_the_next :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
+
+    session := pump_test_session('8')
+
+    obs: Pump_Obs
+    pump_obs_init(&obs, {session})
+    c: client.Client
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
+
+    // Nothing fits, so the two sheds and both marker attempts are all dropped.
+    conn := pump_only_conn(t, &d)
+    conn.max_send_queue_bytes = 1
+
+    testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
+    testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
+    pump_settle()
+    testing.expect_value(t, len(obs.names), 0)
+
+    // Room for the marker but not the delta: the next shed carries all three.
+    conn.max_send_queue_bytes = 1024
+    testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
+    pump_settle()
+
+    if testing.expect_value(t, len(obs.names), 1) {
+        testing.expect_value(t, obs.names[0], wire.Broadcast_Name.Session_Deltas_Shed)
+        testing.expect_value(t, len(obs.sheds), 1)
+        testing.expect_value(t, obs.sheds[0], u64(3))
+    }
+
+    // A delivered marker restarts the count.
+    testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
+    pump_settle()
+
+    if testing.expect_value(t, len(obs.sheds), 2) {
+        testing.expect_value(t, obs.sheds[1], u64(1))
+    }
+
+    client.client_close(&c)
+    testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
+    client.client_destroy(&c)
     test_teardown(&d)
 }
 
@@ -873,8 +1086,7 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     }
     testing.expect_value(t, broadcast(&d, committed), Pump_Error.None)
 
-    rows, rerr := store.events_after(d.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, d.store, session)
 
     if testing.expect_value(t, len(rows), 1) {
         testing.expect(t, strings.contains(rows[0].payload, `"signature":"ErUBCkYIB"`), "the log keeps the signature")

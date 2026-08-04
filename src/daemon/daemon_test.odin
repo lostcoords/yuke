@@ -3,6 +3,7 @@ package daemon
 import "core:crypto"
 import "core:encoding/base64"
 import "core:fmt"
+import "core:log"
 import "core:mem"
 import "core:nbio"
 import "core:net"
@@ -14,6 +15,7 @@ import "core:thread"
 import "core:time"
 import "core:unicode/utf8"
 import http_server "libs:http/server"
+import "libs:offload"
 import ws "libs:websocket"
 import client "src:client"
 import wire "src:wire"
@@ -78,7 +80,7 @@ Cli_Obs :: struct {
     done:                  bool,
 
     // Close code reported to the terminal `on_close`.
-    close_code:            ws.Close_Code,
+    close_code:            client.Close_Code,
 
     // Terminal driver error, if any.
     err:                   client.Protocol_Error,
@@ -116,7 +118,7 @@ cli_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     client.client_close(c)
 }
 
-cli_on_close :: proc(c: ^client.Client, code: ws.Close_Code) {
+cli_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
     o := (^Cli_Obs)(c.user_data)
     o.close_code = code
     o.done = true
@@ -148,8 +150,11 @@ test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         cli_callbacks(),
@@ -190,8 +195,11 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         cli_callbacks(),
@@ -281,7 +289,7 @@ handler_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     }
 }
 
-handler_on_close :: proc(c: ^client.Client, code: ws.Close_Code) {
+handler_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
     o := (^Handler_Obs)(c.user_data)
     o.done = true
     o.wait_done = true
@@ -323,8 +331,11 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         handler_callbacks(),
@@ -837,6 +848,72 @@ test_daemon_workspace_browse_missing_path :: proc(t: ^testing.T) {
     run_handler(t, &obs)
 }
 
+check_browse_bad_cursor :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    e, is_err := resp.(wire.Response_Error)
+    if !testing.expect(t, is_err, "a malformed cursor is an error response") {
+        return true
+    }
+
+    testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
+
+    return true
+}
+
+// The cursor grammar rejects, before ever parsing, a string longer than
+// `MAX_BROWSE_CURSOR_DIGITS`; the connection stays open and answers an error frame.
+@(test)
+test_daemon_workspace_browse_overlong_cursor_is_bad_request :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_browse_dir("yuke-odin-browse-cursor-overlong")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir, cursor = "10000000000000000"},
+        check = check_browse_bad_cursor,
+        dir = dir,
+    }
+    run_handler(t, &obs)
+}
+
+// A cursor within the digit bound that is not a decimal integer fails
+// `strconv.parse_int` and is a `Bad_Request`, not a crash.
+@(test)
+test_daemon_workspace_browse_unparseable_cursor_is_bad_request :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_browse_dir("yuke-odin-browse-cursor-unparseable")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir, cursor = "not-a-number"},
+        check = check_browse_bad_cursor,
+        dir = dir,
+    }
+    run_handler(t, &obs)
+}
+
+// A negative cursor parses but fails the `n < 0` guard, so it is also `Bad_Request`
+// rather than an accepted (and meaningless) offset.
+@(test)
+test_daemon_workspace_browse_negative_cursor_is_bad_request :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_browse_dir("yuke-odin-browse-cursor-negative")
+    defer os.remove_all(dir)
+
+    obs := Handler_Obs {
+        method = .Workspace_Browse,
+        params = wire.Workspace_Browse_Params{path = dir, cursor = "-1"},
+        check = check_browse_bad_cursor,
+        dir = dir,
+    }
+    run_handler(t, &obs)
+}
+
 check_browse_skips_overlong_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
@@ -1137,6 +1214,14 @@ test_daemon_wrong_protocol_closes :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_daemon_non_initialize_first_frame_closes :: proc(t: ^testing.T) {
+    // The other half of the state-machine XOR: a well-formed request for a method
+    // other than `initialize` is refused as a protocol error when sent first.
+    req := `{"jsonrpc":"2.0","id":1,"method":"session.list","params":{}}`
+    run_raw(t, .Text, req, wire.CLOSE.protocol_error)
+}
+
+@(test)
 test_daemon_binary_frame_closes :: proc(t: ^testing.T) {
     // The v1 protocol carries only text frames; a binary frame is a protocol error
     // regardless of content.
@@ -1150,6 +1235,352 @@ test_daemon_trailing_bytes_closes :: proc(t: ^testing.T) {
     // token is rejected by `dec_finish` before it takes effect.
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}} 5`
     run_raw(t, .Text, hello, wire.CLOSE.protocol_error)
+}
+
+// `initialize` is the only method accepted before Ready, and the only one refused
+// after it: a second `initialize` once Ready is a protocol error.
+@(test)
+test_daemon_second_initialize_after_ready_closes :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
+
+    second := `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}}`
+
+    p := Sub_Peer {
+        port  = bound_port(&d),
+        frame = second,
+    }
+    peer := thread.create_and_start_with_poly_data(&p, sub_peer)
+    defer {
+        thread.join(peer)
+        thread.destroy(peer)
+    }
+
+    for _ in 0 ..< 2000 {
+        nbio.tick(time.Millisecond)
+        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 {
+            break
+        }
+    }
+
+    thread.join(peer)
+
+    testing.expect(t, p.got_close, "a second initialize after Ready should close the connection")
+    testing.expect_value(t, p.close_code, wire.CLOSE.protocol_error)
+
+    test_teardown(&d)
+}
+
+// --- Offloaded workspace work outliving its request and its connection --------
+
+// Observations for the two-browses-in-flight test. Both requests are sent from the same
+// `on_ready` turn, so the daemon has two filesystem passes outstanding on one connection.
+Concurrent_Obs :: struct {
+    // The active testing context, so checks can assert from inside the callback.
+    t:         ^testing.T,
+
+    // Fixture with three subdirectories; the first request browses it.
+    dir:       string,
+
+    // Fixture with one subdirectory; the second request browses it.
+    other:     string,
+
+    // Entry counts keyed by the browsed path, so each response is matched to its own
+    // request rather than to arrival order.
+    counts:    map[string]int,
+
+    // Responses delivered.
+    answered:  int,
+
+    // Terminal callback fired.
+    done:      bool,
+
+    // Either a terminal callback or the harness timeout fired.
+    wait_done: bool,
+
+    // The harness timeout fired before both responses arrived.
+    timed_out: bool,
+}
+
+concurrent_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
+    o := (^Concurrent_Obs)(c.user_data)
+    client.client_send_request(
+        c,
+        .Workspace_Browse,
+        wire.Workspace_Browse_Params{path = o.dir},
+        concurrent_on_response,
+    )
+    client.client_send_request(
+        c,
+        .Workspace_Browse,
+        wire.Workspace_Browse_Params{path = o.other},
+        concurrent_on_response,
+    )
+}
+
+concurrent_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+    o := (^Concurrent_Obs)(c.user_data)
+    o.answered += 1
+
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(o.t, is_ok, "both browses should succeed") {
+        client.client_close(c)
+        return
+    }
+
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(o.t, is_browse, "result is a browse result") {
+        client.client_close(c)
+        return
+    }
+
+    // The result path is borrowed for this callback only; the key is a fixture string
+    // the test owns for the whole run.
+    key := result.path == o.other ? o.other : o.dir
+    o.counts[key] = len(result.entries)
+
+    if o.answered == 2 {
+        client.client_close(c)
+    }
+}
+
+concurrent_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
+    o := (^Concurrent_Obs)(c.user_data)
+    o.done = true
+    o.wait_done = true
+}
+
+concurrent_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
+    o := (^Concurrent_Obs)(c.user_data)
+    o.done = true
+    o.wait_done = true
+}
+
+concurrent_on_timeout :: proc(_: ^nbio.Operation, o: ^Concurrent_Obs) {
+    o.timed_out = true
+    o.wait_done = true
+}
+
+// Two `workspace.browse` requests in flight on one connection are both answered, each
+// against its own directory. Responses correlate by request id, so the offloaded passes
+// may complete in either order.
+@(test)
+test_daemon_workspace_browse_two_in_flight :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_browse_dir("yuke-odin-browse-concurrent-a")
+    defer os.remove_all(dir)
+
+    other := test_make_dir("yuke-odin-browse-concurrent-b")
+    defer os.remove_all(other)
+    only, _ := os.join_path({other, "solo"}, context.temp_allocator)
+    os.make_directory_all(only)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
+
+    obs := Concurrent_Obs {
+        t     = t,
+        dir   = dir,
+        other = other,
+    }
+    obs.counts = make(map[string]int, 4, context.temp_allocator)
+
+    c: client.Client
+    cerr := client.client_open(
+        &c,
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
+        "yuke-test",
+        "0.1.0",
+        client.Client_Callbacks {
+            on_ready = concurrent_on_ready,
+            on_close = concurrent_on_close,
+            on_error = concurrent_on_error,
+        },
+        &obs,
+        context.temp_allocator,
+    )
+    testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+    timeout_op := nbio.timeout_poly(2 * time.Second, &obs, concurrent_on_timeout, loop)
+    nbio.run_until(&obs.wait_done)
+
+    if !obs.timed_out {
+        nbio.remove(timeout_op)
+    } else {
+        shutdown(&d)
+        nbio.run_until(&obs.done)
+    }
+
+    testing.expect(t, !obs.timed_out, "both browses should answer before the harness timeout")
+    testing.expect_value(t, obs.answered, 2)
+    testing.expect_value(t, obs.counts[dir], 3)
+    testing.expect_value(t, obs.counts[other], 1)
+
+    client.client_destroy(&c)
+    test_teardown(&d)
+}
+
+// Observations for the browse-then-close soak: the connection is closed in the same turn
+// the request is sent, so the filesystem pass is still on a worker when its `Conn` goes.
+Detach_Obs :: struct {
+    // Directory the browse targets.
+    dir:  string,
+
+    // Terminal callback fired.
+    done: bool,
+}
+
+detach_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
+    o := (^Detach_Obs)(c.user_data)
+    client.client_send_request(c, .Workspace_Browse, wire.Workspace_Browse_Params{path = o.dir}, detach_on_response)
+    client.client_close(c)
+}
+
+// The connection is closed in the same turn the request was sent, so this may never run.
+detach_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+}
+
+detach_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
+    o := (^Detach_Obs)(c.user_data)
+    o.done = true
+}
+
+detach_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
+    o := (^Detach_Obs)(c.user_data)
+    o.done = true
+}
+
+// A `workspace.browse` whose connection closes while its filesystem pass is still on a
+// worker must neither crash nor leak: the completion resolves a ticket rather than a
+// `^Conn`, finds nobody to answer, and frees the job. Repeated so the close lands both
+// before and after the pass finishes.
+@(test)
+test_daemon_workspace_browse_close_during_pass_no_leak :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_browse_dir("yuke-odin-browse-detach")
+    defer os.remove_all(dir)
+
+    track: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track, context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+    tracked := mem.tracking_allocator(&track)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0}, tracked)
+    testing.expect_value(t, derr, Error.None)
+
+    port := bound_port(&d)
+    ITERATIONS :: 32
+
+    for i in 0 ..< ITERATIONS {
+        obs := Detach_Obs {
+            dir = dir,
+        }
+
+        c: client.Client
+        cerr := client.client_open(
+            &c,
+            client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked),
+            "yuke-test",
+            "0.1.0",
+            client.Client_Callbacks {
+                on_ready = detach_on_ready,
+                on_close = detach_on_close,
+                on_error = detach_on_error,
+            },
+            &obs,
+            tracked,
+        )
+        testing.expect_value(t, cerr, client.Protocol_Error.None)
+
+        nbio.run_until(&obs.done)
+        client.client_destroy(&c)
+
+        // Let the daemon-side release and any finished pass land before the next cycle,
+        // so completions interleave with fresh accepts instead of batching at teardown.
+        for _ in 0 ..< 64 {
+            if len(d.ws_server.conns) == 0 && offload.pool_outstanding(&d.workers) == 0 {
+                break
+            }
+
+            nbio.tick(time.Millisecond)
+        }
+
+        testing.expectf(t, obs.done, "cycle %d should reach a terminal callback", i)
+    }
+
+    test_teardown(&d)
+
+    testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
+    testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))
+}
+
+// A response the emitter could not finish is protocol damage, not a smaller response:
+// the peer would read a partial JSON value and lose framing for good. `send_response`
+// aborts the connection rather than shipping the prefix.
+@(test)
+test_daemon_truncated_response_aborts_the_connection :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    testing.expect_value(t, derr, Error.None)
+
+    obs: Pump_Obs
+    pump_obs_init(&obs, nil)
+    c: client.Client
+    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
+
+    conn: ^Conn
+    for _, live in d.conns {
+        conn = live
+    }
+
+    testing.expect(t, conn != nil, "the armed client has a daemon-side connection")
+
+    // The refused encode is logged as an error, which the runner would otherwise count
+    // as a test failure; the assertions below are the check.
+    context.logger = log.nil_logger()
+
+    // Smaller than the shortest response text, so the encode latches its truncation.
+    backing: [16]byte
+    arena: mem.Arena
+    mem.arena_init(&arena, backing[:])
+
+    send_result(conn, wire.Request_Id("1"), wire.Empty{}, mem.arena_allocator(&arena))
+
+    testing.expect_value(t, conn.state, Protocol_State.Closed)
+    testing.expect(t, pump_tick_until(&obs.done), "the aborted connection should terminate the client")
+    testing.expect_value(t, len(obs.names), 0)
+
+    client.client_destroy(&c)
+    test_teardown(&d)
 }
 
 // --- Lifecycle soak under a tracking allocator (leak hunt) --------------------
@@ -1183,8 +1614,7 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
         c: client.Client
         cerr := client.client_open(
             &c,
-            loop,
-            {host = "127.0.0.1", port = port, path = "/ws"},
+            client.ws_transport_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked),
             "yuke-test",
             "0.1.0",
             cli_callbacks(),

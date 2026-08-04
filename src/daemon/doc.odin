@@ -21,14 +21,23 @@ a 405 carrying `Allow`.
 check against the URL hash, and the atomic publish, whose `fsync` and `rename` run on
 a worker pool because neither has an nbio operation. `workspace.odin`, `git.odin`, and
 `fs.odin` hold the path, repository, and directory-listing helpers the
-`workspace.describe` and `workspace.browse` methods read.
+`workspace.describe` and `workspace.browse` methods read; those two methods also run
+on the shared worker pool (`workspace_jobs.odin`), since `get_absolute_path`, `stat`,
+and `readdir` have no nbio operation and are directed by a peer-supplied path — running
+them on the reactor would let one request, a FIFO with no writer or a hung mount, stall
+every other connection. A completion resolves its connection through the `Conn_Ticket`
+registry rather than a stored pointer, so a completion for a connection that has since
+closed is simply dropped.
 
-Admission runs before authentication and refuses what a browser can be made to send:
-any `Origin`, and any `Host` that does not address this daemon by IP literal. Admissible
-literals are loopback (including `::1` and `::ffff:127.0.0.1`), the configured bind
-address, and the bare name `localhost`. The unspecified address is rejected: `0.0.0.0`
-reaches a loopback-bound socket without receiving the browser local-network gating that
-`127.0.0.1` does.
+Admission runs before authentication and stops what a browser can be made to send with
+an `Origin` header, and DNS-rebound requests naming this daemon by a `Host` other than
+an IP literal it can legitimately be reached at. It does not stop a no-`Origin` browser
+request — an `<img>` tag, a top-level navigation — from reaching 127.0.0.1: the
+(optional, minimum 32 bytes when configured) bearer token is what stands between that
+request and the routes. Admissible literals are loopback (including `::1` and
+`::ffff:127.0.0.1`), the configured bind address, and the bare name `localhost`. The
+unspecified address is rejected: `0.0.0.0` reaches a loopback-bound socket without
+receiving the browser local-network gating that `127.0.0.1` does.
 
 The transport (`libs:websocket`) is a single-threaded `core:nbio` callback
 reactor; this driver never runs the loop. On each upgraded connection it waits
@@ -43,17 +52,28 @@ filesystem.
 
 The pump (`pump.odin`) is the daemon's single seq authority and its only fan-out path.
 `broadcast` derives the name from the closed payload union, then classifies it
-with `wire.broadcast_name_class`. A `Durable_Gated` one is assigned `high_water + 1`,
+with `wire.broadcast_name_class`. Before anything is minted or written, the frame is
+built and checked: a payload that cannot encode (`Encode_Failed`) or one whose encoded
+frame exceeds the transport's cap (`Frame_Too_Large`) is refused straight back to the
+caller, never logged or sent — a truncated or over-cap row in the log would abort every
+subscriber immediately and then fail every future resync of the session. A
+`Durable_Gated` one is assigned `high_water + 1`,
 written to the `src/daemon/store` log
 with its derived marks, and only fanned out once the commit returns — clients never
 observe state a crash then erases. `Live_Gated` and `Live_Droppable` are delivered to
 subscribed connections and never logged; `Ungated` reaches every ready connection,
 bypassing subscriptions and the log both. Send-path shedding applies to
 `Live_Droppable` alone: a dropped delta shows up as an offset gap the receiver resyncs
-from, whereas any other class failing to send closes the connection instead. A
-`Seq_Conflict` from the store means our tracked high-water diverged from the log — a
+from, whereas any other class failing to send closes the connection instead. A shed
+delivery on a subscribed connection also queues `session.deltas_shed`, an advisory
+marker sent point to point to that connection alone; it carries a cumulative shed
+count, is itself droppable, and is never the recovery mechanism — resync remains that.
+A `Seq_Conflict` from the store means our tracked high-water diverged from the log — a
 daemon bug with no recovery, so the pump asserts and crashes rather than limping on
-with a mark it can no longer trust. Any other store failure instead drops the cached
+with a mark it can no longer trust. An append naming a session with no registry row
+degrades the same as any other store failure (`Store_Failed`), since only a genuine
+divergence of a real mark is a daemon bug; a session that was simply never created is
+not one. Any other store failure instead drops the cached
 mark and degrades with `Store_Failed`.
 Exhausting the wire's finite sequence range is an operating limit reported as
 `Sequence_Exhausted`, not an assertion failure.
@@ -69,11 +89,16 @@ today is the five durable broadcasts. `message.committed` builds
 the transcript, `transcript.truncated` removes its
 tail while leaving the finalized boundary where it stands (a discarded id is finalized
 too), `config.changed` supplies the revisions the page references, and `run.started` /
-`run.done` open and close the activity's run. The session engine will add the live
+`run.done` open and close the activity's run. An open compaction run resyncs as
+`Activity_State_Compacting`, its reason carried from `run.started` and no config
+attached. The session engine will add the live
 draft, queued inputs, and authoritative session summary; their current absence is an
 implementation boundary, not protocol semantics. `base_seq` is the
 session's committed high-water; a session whose high-water is zero has never been
-written and is `Unknown_Session`. The high-water read, the fold, and the send all run
+written and is `Unknown_Session`. The durable log must be contiguous from seq 1 for a
+session that has one: the fold reads from the first row and treats any gap as
+`Corrupt_Log`; any future pruning of the log needs a resync-aware design before rows
+can be dropped. The high-water read, the fold, and the send all run
 to completion on the reactor thread, so the cut is one instant by construction and no
 commit can interleave with it. The finished cut is put through
 `wire.session_resync_result_validate` before it is sent: a cut that fails, a log row the codec
@@ -94,7 +119,8 @@ Per-connection state machine (the inverse of the client's):
   - The first frame must be a Text frame decoding to an `initialize` `Request` with
     `protocol == PROTOCOL_VERSION`. On success the daemon answers with an
     `Initialize_Result` and transitions Ready. A bad protocol version closes with
-    `CLOSE.unsupported_protocol`.
+    `CLOSE.unsupported_protocol` (4000), distinguishable on the wire from
+    `CLOSE.protocol_error` (1002).
   - A binary frame, a second `initialize` once Ready, any other method before Ready,
     a decode/validate failure, or trailing bytes after the JSON value all close the
     connection with `CLOSE.protocol_error`.
@@ -106,7 +132,8 @@ Ownership:
 
   - Each accepted connection owns a `Conn` allocated in the transport `ws_on_open` and
     freed in the terminal callback (`ws_on_close`/`ws_on_error`). It holds a per-frame
-    `scratch` arena, `free_all`'d after each inbound frame; wire values decoded into
+    `scratch` arena, reset (not `free_all`'d — its blocks are retained for the
+    connection's later frames) after each inbound frame; wire values decoded into
     it are non-owning borrows valid only for that frame.
   - The one datum retained from `initialize` is the client identity (`name`,
     `version`), kept as owned `strings.clone`s into the connection allocator for
@@ -116,7 +143,7 @@ Ownership:
     needs, so the store handle itself records that a database is configured.
   - The store is opened by `start` before the transport adopts anything — a
     damaged or future-versioned database is a start failure, not a per-request one —
-    and closed by `destroy` after the blob worker pool drains, since a drained
+    and closed by `destroy` after the worker pool drains, since a drained
     completion runs on this loop and may still reach the front door. The pump's
     tracked high-water marks live and die with the store.
 */

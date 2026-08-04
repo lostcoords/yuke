@@ -109,7 +109,7 @@ acceptance_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     o.post_seen = true
 }
 
-acceptance_on_close :: proc(c: ^client.Client, _: ws.Close_Code) {
+acceptance_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
     o := (^Acceptance_Obs)(c.user_data)
     o.done = true
 }
@@ -161,8 +161,7 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     // Subscription gating: a client subscribed to a different session sees nothing.
     testing.expect_value(t, len(other_obs.names), 0)
 
-    rows, rerr := store.events_after(first.store, session, 0, 8, context.temp_allocator)
-    testing.expect_value(t, rerr, nil)
+    rows := pump_events(t, first.store, session)
     testing.expect_value(t, len(rows), 2)
 
     client.client_close(&sub_client)
@@ -191,8 +190,11 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&second), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&second), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks {

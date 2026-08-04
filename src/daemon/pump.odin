@@ -1,6 +1,7 @@
 package daemon
 
 import "core:log"
+import "core:mem"
 
 import ws "libs:websocket"
 import store "src:daemon/store"
@@ -21,6 +22,14 @@ Pump_Error :: enum {
 
     // The session has consumed every sequence number representable on the wire.
     Sequence_Exhausted,
+
+    // The frame could not be encoded — the emitter's buffer would not grow — so the
+    // JSON is truncated. Nothing was logged or sent.
+    Encode_Failed,
+
+    // The encoded frame is over the transport's frame cap, which every receiver would
+    // refuse. Nothing was logged or sent: a committed one would fail every resync too.
+    Frame_Too_Large,
 }
 
 // Emit one broadcast. A `Durable_Gated` broadcast is assigned its seq, committed, and
@@ -39,6 +48,16 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
     session := wire.broadcast_data_session_id(data)
     out := data
 
+    // Reset on exit, not freed, so a shed marker the fan-out mints mid-send still shares
+    // this arena with the frame already in flight.
+    scratch := mem.dynamic_arena_allocator(&d.pump_scratch)
+    defer mem.dynamic_arena_reset(&d.pump_scratch)
+
+    // Built before anything is committed: a refusal here must never reach the log.
+    frame: wire.Emitter
+    wire.emitter_init(&frame, scratch)
+    defer wire.emitter_destroy(&frame)
+
     switch class {
     case .Durable_Gated:
         sid, named := session.?
@@ -48,9 +67,31 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
             return .No_Store
         }
 
-        out = pump_commit(d, name, data, sid) or_return
+        seq := pump_next_seq(d, sid) or_return
+        stamped := pump_stamp_seq(data, seq)
+        assert(wire.broadcast_data_validate(stamped) == .None, "stamping a seq keeps the payload valid")
+
+        // The durable payload the log stores; the frame carries these same bytes.
+        payload: wire.Emitter
+        wire.emitter_init(&payload, scratch)
+        defer wire.emitter_destroy(&payload)
+
+        wire.broadcast_data_emit(&payload, stamped)
+
+        if wire.emitter_failed(&payload) {
+            log.errorf("daemon: durable broadcast %v could not be encoded", name)
+
+            return .Encode_Failed
+        }
+
+        wire.notification_emit_raw(&frame, name, wire.to_string(&payload))
+        pump_frame_check(&frame, name) or_return
+        pump_commit(d, name, stamped, sid, seq, wire.to_string(&payload)) or_return
+        out = stamped
 
     case .Live_Gated, .Live_Droppable, .Ungated:
+        wire.notification_emit(&frame, wire.notification_build(name, data))
+        pump_frame_check(&frame, name) or_return
     }
 
     // A removed session mints nothing further, and the mark is pure memoization: an
@@ -62,54 +103,83 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
         delete_key(&d.seq_high, sid)
     }
 
-    pump_send(d, name, out, class, session)
+    pump_send(d, name, out, session, transmute([]byte)wire.to_string(&frame))
 
     return .None
 }
 
-// Sequence and log one durable broadcast, returning the payload the fan-out sends —
-// the seq is minted here, so the caller emits without one.
+// Refuse a frame no receiver could take. Both faults are the same decision: nothing is
+// logged and nothing is sent, so the caller sees the failure rather than the subscribers.
+@(private)
+pump_frame_check :: proc(e: ^wire.Emitter, name: wire.Broadcast_Name) -> Pump_Error {
+    assert(e != nil, "a frame check needs the emitter that built it")
+
+    if wire.emitter_failed(e) {
+        log.errorf("daemon: broadcast %v could not be encoded", name)
+
+        return .Encode_Failed
+    }
+
+    size := len(wire.to_string(e))
+    assert(size > 0, "a healthy emitter wrote the frame")
+
+    // The transport is configured with this same cap at start and enforces it on
+    // every send, so an over-cap frame would abort each connection in turn.
+    if size > wire.LIMITS.max_frame_bytes {
+        log.errorf(
+            "daemon: broadcast %v is %d bytes, over the %d byte frame cap",
+            name,
+            size,
+            wire.LIMITS.max_frame_bytes,
+        )
+
+        return .Frame_Too_Large
+    }
+
+    return .None
+}
+
+// Log one durable broadcast at its minted seq. The payload is the encoded bytes the
+// frame already carries, so the row and the fan-out can never disagree.
 @(private)
 pump_commit :: proc(
     d: ^Daemon,
     name: wire.Broadcast_Name,
     data: wire.Broadcast_Data,
     session: wire.Session_Id,
-) -> (
-    out: wire.Broadcast_Data,
-    err: Pump_Error,
-) {
+    seq: wire.Seq,
+    payload: string,
+) -> Pump_Error {
     assert(d != nil, "a durable broadcast needs daemon state")
     assert(d.store != nil, "a durable broadcast needs an open store")
     assert(wire.broadcast_name_class(name) == .Durable_Gated, "only durable broadcasts are logged")
+    assert(len(payload) > 0, "a durable broadcast is encoded before it is logged")
 
-    offered, sequenced := wire.broadcast_data_seq(data).?
+    stamped, sequenced := wire.broadcast_data_seq(data).?
     assert(sequenced, "a durable payload carries a sequence field")
-    assert(offered == 0, "a durable payload reaches the pump unstamped")
+    assert(stamped == seq, "the logged payload carries the seq it is logged at")
 
-    seq := pump_next_seq(d, session) or_return
-    stamped := pump_stamp_seq(data, seq)
-    ids := pump_id_marks(stamped)
+    ids := pump_id_marks(data)
 
-    e: wire.Emitter
-    wire.emitter_init(&e, d.allocator)
-    defer wire.emitter_destroy(&e)
-    wire.broadcast_data_emit(&e, stamped)
-
-    if aerr := store.event_append(d.store, session, seq, stamped, wire.to_string(&e), ids); aerr != nil {
+    if aerr := store.event_append(d.store, session, seq, data, payload, ids); aerr != nil {
         // Seq_Conflict means our tracked high-water diverged from the log: a daemon
         // bug, so it crashes here. Other failures drop the cached mark, since it
         // can't be trusted after a failed append, and degrade.
         assert(aerr != .Seq_Conflict, "the pump minted a seq the log did not continue")
         delete_key(&d.seq_high, session)
-        log.errorf("daemon: durable broadcast %v not logged: %v", name, aerr)
 
-        return nil, .Store_Failed
+        if aerr == .Unknown_Session {
+            log.errorf("daemon: durable broadcast %v names session %v, which has no registry row", name, session)
+        } else {
+            log.errorf("daemon: durable broadcast %v not logged: %v", name, aerr)
+        }
+
+        return .Store_Failed
     }
 
     d.seq_high[session] = seq
 
-    return stamped, .None
+    return .None
 }
 
 // Next durable seq for `session`: `high_water + 1`. The mark is recovered from the
@@ -255,14 +325,14 @@ pump_id_marks :: proc(data: wire.Broadcast_Data) -> store.Id_Marks {
     unreachable()
 }
 
-// Encode the notification frame once and hand it to the fan-out.
+// Hand the already-encoded frame to the fan-out.
 @(private)
 pump_send :: proc(
     d: ^Daemon,
     name: wire.Broadcast_Name,
     data: wire.Broadcast_Data,
-    class: wire.Broadcast_Class,
     session: Maybe(wire.Session_Id),
+    frame: []byte,
 ) {
     assert(d != nil, "broadcast send needs daemon state")
 
@@ -274,24 +344,18 @@ pump_send :: proc(
         assert(d.seq_high[sid] >= seq, "a durable broadcast fanned out before its commit")
     }
 
-    frame := wire.notification_build(name, data)
-    assert(wire.notification_validate(frame) == .None, "daemon built an invalid broadcast frame")
-
-    e: wire.Emitter
-    wire.emitter_init(&e, d.allocator)
-    defer wire.emitter_destroy(&e)
-    wire.notification_emit(&e, frame)
-
-    pump_fan_out(d, class, session, transmute([]byte)wire.to_string(&e))
+    pump_fan_out(d, name, session, frame)
 }
 
 // Deliver an encoded broadcast to every connection its class admits. Closing a
 // connection defers its release to the loop, so the connection table is stable across
 // this walk.
 @(private)
-pump_fan_out :: proc(d: ^Daemon, class: wire.Broadcast_Class, session: Maybe(wire.Session_Id), frame: []byte) {
+pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.Session_Id), frame: []byte) {
     assert(d != nil, "fan-out needs daemon state")
     assert(len(frame) > 0, "a fanned-out broadcast is already encoded")
+
+    class := wire.broadcast_name_class(name)
 
     for wsc in d.ws_server.conns {
         conn := (^Conn)(wsc.user_data)
@@ -324,6 +388,14 @@ pump_fan_out :: proc(d: ^Daemon, class: wire.Broadcast_Class, session: Maybe(wir
         if send_err == .Send_Queue_Full && wire.broadcast_class_droppable(class) {
             log.debug("daemon: shed a droppable broadcast under send backpressure")
 
+            // The marker is itself droppable and never marks itself; a shed one leaves
+            // the offset gap as the signal and rolls its count into the next attempt.
+            if name != .Session_Deltas_Shed {
+                sid, named := session.?
+                assert(named, "a droppable broadcast names its session")
+                pump_shed_mark(d, conn, sid)
+            }
+
             continue
         }
 
@@ -331,9 +403,47 @@ pump_fan_out :: proc(d: ^Daemon, class: wire.Broadcast_Class, session: Maybe(wir
     }
 }
 
+// Tell one lagging connection how many of its live deltas were dropped. Point to point:
+// no other connection shares this connection's backpressure. The count is cumulative
+// since the last marker this connection accepted, so a marker that cannot be sent is
+// simply carried into the next shed.
+@(private)
+pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
+    assert(d != nil, "a shed marker needs daemon state")
+    assert(conn != nil, "a shed marker needs connection state")
+    assert(conn.state == .Ready, "only a Ready connection sheds a gated broadcast")
+
+    index, subscribed := conn_subscription_index(conn, session)
+    assert(subscribed, "a gated broadcast reached a subscribed connection")
+
+    conn.shed_counts[index] += 1
+    data := wire.Session_Deltas_Shed_Data {
+        session_id = session,
+        count      = conn.shed_counts[index],
+    }
+    assert(wire.session_deltas_shed_data_validate(data) == .None, "the pump built an invalid shed marker")
+
+    e: wire.Emitter
+    wire.emitter_init(&e, mem.dynamic_arena_allocator(&d.pump_scratch))
+    defer wire.emitter_destroy(&e)
+    wire.notification_emit(&e, wire.notification_build(.Session_Deltas_Shed, data))
+
+    if wire.emitter_failed(&e) {
+        log.error("daemon: a shed marker could not be encoded")
+
+        return
+    }
+
+    if ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)) != .None {
+        return
+    }
+
+    conn.shed_counts[index] = 0
+}
+
 // `subscription.set` replaces the connection's subscription set wholesale. The params
 // are already bounded and id-checked by `request_validate`.
-method_subscription_set :: proc(conn: ^Conn, req: wire.Request) {
+method_subscription_set :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "subscription.set needs connection state")
     assert(conn.state == .Ready, "subscription.set ran outside Ready")
     assert(req.method == .Subscription_Set, "subscription.set received another method")
@@ -344,21 +454,33 @@ method_subscription_set :: proc(conn: ^Conn, req: wire.Request) {
     conn.subscription_count = copy(conn.subscriptions[:], params.sessions)
     assert(conn.subscription_count == len(params.sessions), "the replaced set lost a session")
 
-    send_result(conn, req.id, wire.Empty{})
+    // Shed counts are positional, so a replaced set starts its accounting over.
+    conn.shed_counts = {}
+
+    send_result(conn, req.id, wire.Empty{}, sa)
 }
 
-// Whether `conn` subscribed to `session`. The set is a replace-semantics list bounded
-// by `LIMITS.max_subscriptions`, so a linear scan is the membership test.
+// Whether `conn` subscribed to `session`.
 conn_subscribed :: proc(conn: ^Conn, session: wire.Session_Id) -> bool {
+    _, subscribed := conn_subscription_index(conn, session)
+
+    return subscribed
+}
+
+// Where `session` sits in the connection's subscription set. The set is a
+// replace-semantics list bounded by `LIMITS.max_subscriptions`, so a linear scan is the
+// membership test, and the position is what the parallel shed counts are keyed on.
+@(private)
+conn_subscription_index :: proc(conn: ^Conn, session: wire.Session_Id) -> (index: int, subscribed: bool) {
     assert(conn != nil, "subscription test needs connection state")
     assert(conn.subscription_count >= 0, "subscription set has a negative length")
     assert(conn.subscription_count <= len(conn.subscriptions), "subscription set over its bound")
 
     for i in 0 ..< conn.subscription_count {
         if conn.subscriptions[i] == session {
-            return true
+            return i, true
         }
     }
 
-    return false
+    return 0, false
 }

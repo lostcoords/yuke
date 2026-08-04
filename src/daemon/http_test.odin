@@ -11,6 +11,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "libs:offload"
 import ws "libs:websocket"
 import client "src:client"
 import wire "src:wire"
@@ -288,7 +289,11 @@ test_daemon_rejects_unauthorized_upload :: proc(t: ^testing.T) {
     dir := test_make_dir("yuke-blob-upload-unauth")
     defer os.remove_all(dir)
 
-    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir, auth_token = "s3cret"})
+    put := run_http(
+        t,
+        blob_put_request(BLOB_HASH, UPLOAD_BODY),
+        {blob_dir = dir, auth_token = "s3cret00000000000000000000000000"},
+    )
     testing.expect(t, strings.has_prefix(put, "HTTP/1.1 401 Unauthorized\r\n"), "an unauthenticated upload must 401")
 
     testing.expect_value(t, blob_dir_count(dir), 0)
@@ -310,6 +315,94 @@ test_daemon_rejects_a_traversing_upload_path :: proc(t: ^testing.T) {
 
     testing.expect_value(t, blob_dir_count(dir), 0)
     testing.expect(t, !blob_dir_has_temp(dir), "a rejected path opens no temp")
+}
+
+// A peer that sends a PUT's headers and a truncated body, then drops the socket
+// without finishing the declared `Content-Length`.
+Partial_Put_Peer :: struct {
+    // Port to connect to.
+    port:    int,
+
+    // Full header block, declaring a body longer than what is actually sent.
+    headers: string,
+
+    // Body bytes sent before the abrupt close.
+    partial: string,
+
+    // The peer ran its script to completion.
+    ok:      bool,
+}
+
+partial_put_peer :: proc(p: ^Partial_Put_Peer) {
+    sock, dialed := raw_dial(p.port)
+    if !dialed {
+        return
+    }
+    defer net.close(sock)
+
+    if _, serr := net.send_tcp(sock, transmute([]byte)p.headers); serr != nil {
+        return
+    }
+
+    if _, serr := net.send_tcp(sock, transmute([]byte)p.partial); serr != nil {
+        return
+    }
+
+    // The deferred `net.close` above drops the connection here, short of the
+    // declared Content-Length.
+    sync.atomic_store(&p.ok, true)
+}
+
+// A connection that aborts mid-body must leave no upload temp behind: `blob_upload_end`
+// also fires with `ok = false` on teardown, which deletes the partial temp file the
+// same way a rejected chunk write does.
+@(test)
+test_daemon_aborted_upload_leaves_no_temp :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-blob-upload-aborted")
+    defer os.remove_all(dir)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, blob_dir = dir})
+    testing.expect_value(t, derr, Error.None)
+
+    declared := len(UPLOAD_BODY) + 4096
+    p := Partial_Put_Peer {
+        port    = bound_port(&d),
+        headers = fmt.tprintf(
+            "PUT /blob/%s HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: %d\r\n\r\n",
+            BLOB_HASH,
+            declared,
+        ),
+        partial = "only a few bytes",
+    }
+    peer := thread.create_and_start_with_poly_data(&p, partial_put_peer)
+    defer {
+        thread.join(peer)
+        thread.destroy(peer)
+    }
+
+    for _ in 0 ..< 2000 {
+        nbio.tick(time.Millisecond)
+        if sync.atomic_load(&p.ok) &&
+           len(d.front_door.conns) == 0 &&
+           offload.pool_outstanding(&d.workers) == 0 &&
+           !blob_dir_has_temp(dir) {
+            break
+        }
+    }
+
+    thread.join(peer)
+
+    testing.expect(t, !blob_dir_has_temp(dir), "an aborted upload must leave no temp file")
+    testing.expect_value(t, blob_dir_count(dir), 0)
+
+    test_teardown(&d)
 }
 
 @(test)
@@ -352,6 +445,50 @@ test_daemon_rejects_a_traversing_blob_path :: proc(t: ^testing.T) {
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 404 Not Found\r\n"), "a non-hash path must never resolve")
 }
 
+// Every hash-grammar edge must 404 on both GET and PUT, and touch nothing on disk:
+// too short, too long, uppercase hex (the wire form is lowercase-only), a
+// percent-encoded traversal attempt (never decoded, so it fails the hex grammar
+// outright), and an empty capture.
+@(test)
+test_daemon_blob_hash_grammar_edges_404 :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    cases := []string {
+        BLOB_HASH[:63],
+        BLOB_HASH + "0",
+        strings.to_upper(BLOB_HASH, context.temp_allocator),
+        "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "",
+    }
+
+    for hash in cases {
+        get_dir := test_make_blob_dir("yuke-blob-grammar-get")
+        get := run_http(t, fmt.tprintf("GET /blob/%s HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", hash), {blob_dir = get_dir})
+        testing.expectf(
+            t,
+            strings.has_prefix(get, "HTTP/1.1 404 Not Found\r\n"),
+            "GET hash %q should 404, got %q",
+            hash,
+            get,
+        )
+        testing.expectf(t, blob_dir_count(get_dir) == 1, "GET hash %q must not touch the blob dir", hash)
+        os.remove_all(get_dir)
+
+        put_dir := test_make_dir("yuke-blob-grammar-put")
+        put := run_http(t, blob_put_request(hash, UPLOAD_BODY), {blob_dir = put_dir})
+        testing.expectf(
+            t,
+            strings.has_prefix(put, "HTTP/1.1 404 Not Found\r\n"),
+            "PUT hash %q should 404, got %q",
+            hash,
+            put,
+        )
+        testing.expectf(t, blob_dir_count(put_dir) == 0, "PUT hash %q must open no file", hash)
+        testing.expectf(t, !blob_dir_has_temp(put_dir), "PUT hash %q must leave no temp", hash)
+        os.remove_all(put_dir)
+    }
+}
+
 @(test)
 test_daemon_unknown_route_is_not_found :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -378,8 +515,8 @@ test_daemon_405_on_blob_lists_every_method :: proc(t: ^testing.T) {
 
     got := run_http(
         t,
-        "DELETE /blob/" + BLOB_HASH + "?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
-        {auth_token = "s3cret"},
+        "DELETE /blob/" + BLOB_HASH + "?token=s3cret00000000000000000000000000 HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
     )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 405 Method Not Allowed\r\n"), "DELETE is not routed")
@@ -414,7 +551,7 @@ test_daemon_upgrades_without_auth :: proc(t: ^testing.T) {
 test_daemon_requires_the_auth_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := run_http(t, upgrade_request("/ws"), {auth_token = "s3cret"})
+    got := run_http(t, upgrade_request("/ws"), {auth_token = "s3cret00000000000000000000000000"})
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"), "an unauthorized upgrade should 401")
     testing.expect(
@@ -428,7 +565,11 @@ test_daemon_requires_the_auth_token :: proc(t: ^testing.T) {
 test_daemon_rejects_a_wrong_auth_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := run_http(t, upgrade_request("/ws", "Authorization: Bearer wrong1\r\n"), {auth_token = "s3cret"})
+    got := run_http(
+        t,
+        upgrade_request("/ws", "Authorization: Bearer wrong111111111111111111111111111\r\n"),
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"), "a wrong token should 401")
 }
@@ -437,7 +578,11 @@ test_daemon_rejects_a_wrong_auth_token :: proc(t: ^testing.T) {
 test_daemon_accepts_a_query_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    got := run_http(t, upgrade_request("/ws?token=s3cret"), {auth_token = "s3cret"})
+    got := run_http(
+        t,
+        upgrade_request("/ws?token=s3cret00000000000000000000000000"),
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 101 Switching Protocols\r\n"), "?token= should authorize")
     testing.expect(
@@ -451,10 +596,18 @@ test_daemon_accepts_a_query_token :: proc(t: ^testing.T) {
 test_daemon_auth_gate_covers_blob_and_unknown_routes :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    blob := run_http(t, "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    blob := run_http(
+        t,
+        "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
     testing.expect(t, strings.has_prefix(blob, "HTTP/1.1 401 Unauthorized\r\n"), "blob access must be authenticated")
 
-    unknown := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    unknown := run_http(
+        t,
+        "GET /nope HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
     testing.expect(
         t,
         strings.has_prefix(unknown, "HTTP/1.1 401 Unauthorized\r\n"),
@@ -464,7 +617,7 @@ test_daemon_auth_gate_covers_blob_and_unknown_routes :: proc(t: ^testing.T) {
     non_get := run_http(
         t,
         "POST /ws HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 0\r\n\r\n",
-        {auth_token = "s3cret"},
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(
         t,
@@ -482,8 +635,10 @@ test_daemon_accepts_case_insensitive_bearer_for_blob :: proc(t: ^testing.T) {
 
     got := run_http(
         t,
-        "GET /blob/" + BLOB_HASH + " HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: bEaReR  s3cret\r\n\r\n",
-        {blob_dir = dir, auth_token = "s3cret"},
+        "GET /blob/" +
+        BLOB_HASH +
+        " HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: bEaReR  s3cret00000000000000000000000000\r\n\r\n",
+        {blob_dir = dir, auth_token = "s3cret00000000000000000000000000"},
     )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "the bearer scheme is case-insensitive")
@@ -496,8 +651,11 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
 
     both := run_http(
         t,
-        upgrade_request("/ws?token=s3cret", "Authorization: Bearer s3cret\r\n"),
-        {auth_token = "s3cret"},
+        upgrade_request(
+            "/ws?token=s3cret00000000000000000000000000",
+            "Authorization: Bearer s3cret00000000000000000000000000\r\n",
+        ),
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(
         t,
@@ -507,8 +665,11 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
 
     duplicate_header := run_http(
         t,
-        upgrade_request("/ws", "Authorization: Bearer s3cret\r\nAuthorization: Bearer s3cret\r\n"),
-        {auth_token = "s3cret"},
+        upgrade_request(
+            "/ws",
+            "Authorization: Bearer s3cret00000000000000000000000000\r\nAuthorization: Bearer s3cret00000000000000000000000000\r\n",
+        ),
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(
         t,
@@ -516,7 +677,11 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
         "duplicate authorization fields are ambiguous",
     )
 
-    duplicate_query := run_http(t, upgrade_request("/ws?token=s3cret&token=s3cret"), {auth_token = "s3cret"})
+    duplicate_query := run_http(
+        t,
+        upgrade_request("/ws?token=s3cret00000000000000000000000000&token=s3cret00000000000000000000000000"),
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
     testing.expect(
         t,
         strings.has_prefix(duplicate_query, "HTTP/1.1 400 Bad Request\r\n"),
@@ -527,6 +692,29 @@ test_daemon_rejects_ambiguous_credentials :: proc(t: ^testing.T) {
         strings.contains(duplicate_query, "Cache-Control: private, no-store\r\n"),
         "a duplicated ?token= refusal stays private, got %q",
         duplicate_query,
+    )
+}
+
+// A header credential and a query credential with different values are still ambiguous:
+// resolution is refused outright rather than picked by precedence, so a wrong header
+// cannot be excused by a correct query.
+@(test)
+test_daemon_rejects_differently_valued_credentials :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        upgrade_request(
+            "/ws?token=s3cret00000000000000000000000000",
+            "Authorization: Bearer wrong111111111111111111111111111\r\n",
+        ),
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 400 Bad Request\r\n"),
+        "a wrong header plus a correct query is still ambiguous, not authenticated, got %q",
+        got,
     )
 }
 
@@ -606,8 +794,8 @@ test_daemon_query_authenticated_blob_is_not_cacheable :: proc(t: ^testing.T) {
 
     got := run_http(
         t,
-        "GET /blob/" + BLOB_HASH + "?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
-        {blob_dir = dir, auth_token = "s3cret"},
+        "GET /blob/" + BLOB_HASH + "?token=s3cret00000000000000000000000000 HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {blob_dir = dir, auth_token = "s3cret00000000000000000000000000"},
     )
 
     testing.expect(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "a query token should authorize blob access")
@@ -620,9 +808,36 @@ test_daemon_query_authenticated_blob_is_not_cacheable :: proc(t: ^testing.T) {
 
 @(test)
 test_daemon_auth_token_uses_url_safe_grammar :: proc(t: ^testing.T) {
-    testing.expect(t, auth_token_valid("AZaz09-._~"), "the unreserved alphabet should be accepted")
-    testing.expect(t, !auth_token_valid("has space"), "spaces require URL encoding and should be rejected")
-    testing.expect(t, !auth_token_valid("has/slash"), "reserved query bytes should be rejected")
+    testing.expect(
+        t,
+        auth_token_valid("AZaz09-._~AZaz09-._~AZaz09-._~AZaz"),
+        "the unreserved alphabet should be accepted",
+    )
+    testing.expect(
+        t,
+        !auth_token_valid("has space has space has space 32"),
+        "spaces require URL encoding and should be rejected",
+    )
+    testing.expect(t, !auth_token_valid("has/slash has/slash has/slash32"), "reserved query bytes should be rejected")
+}
+
+// Empty is the distinct "auth disabled" state, exempt from the length floor. A non-empty
+// token must clear the floor; the boundary itself is exact.
+@(test)
+test_daemon_auth_token_enforces_a_minimum_length :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    testing.expect(t, auth_token_valid(""), "empty stays legal as auth-disabled")
+    testing.expect(
+        t,
+        !auth_token_valid(strings.repeat("a", MIN_AUTH_TOKEN_BYTES - 1, context.temp_allocator)),
+        "one byte short of the floor should be rejected",
+    )
+    testing.expect(
+        t,
+        auth_token_valid(strings.repeat("a", MIN_AUTH_TOKEN_BYTES, context.temp_allocator)),
+        "exactly the floor should be accepted",
+    )
 }
 
 // End to end: the real client driver reaches Ready through the token gate, carrying
@@ -636,19 +851,26 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "s3cret"}), Error.None)
+    testing.expect_value(
+        t,
+        start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "s3cret00000000000000000000000000"}),
+        Error.None,
+    )
 
     obs: Cli_Obs
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        ws.Options {
-            host = "127.0.0.1",
-            port = bound_port(&d),
-            path = "/ws",
-            extra_headers = "Authorization: Bearer s3cret\r\n",
-        },
+        client.ws_transport_create(
+            loop,
+            ws.Options {
+                host = "127.0.0.1",
+                port = bound_port(&d),
+                path = "/ws",
+                extra_headers = "Authorization: Bearer s3cret00000000000000000000000000\r\n",
+            },
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         cli_callbacks(),
@@ -740,7 +962,7 @@ test_daemon_refuses_an_origin_before_authenticating :: proc(t: ^testing.T) {
     got := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n",
-        {auth_token = "s3cret"},
+        {auth_token = "s3cret00000000000000000000000000"},
     )
 
     testing.expectf(
@@ -774,6 +996,13 @@ test_daemon_admits_literal_hosts :: proc(t: ^testing.T) {
         "[::1]",
         "[::1]:8080",
         "[::ffff:127.0.0.1]",
+        // `equal_fold` is intended: any casing of the one exempt name is admitted.
+        "LOCALHOST",
+        // Uppercase hex in the IPv6 mapped form parses the same as lowercase.
+        "[::FFFF:127.0.0.1]",
+        // The mapped form of a non-.1 loopback address is admitted like its plain
+        // IPv4 spelling above (`address_is_local` accepts any `127.x.x.x`).
+        "[::ffff:127.0.0.2]",
     }
     for host in hosts {
         got := run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
@@ -794,7 +1023,26 @@ test_daemon_admits_literal_hosts :: proc(t: ^testing.T) {
 test_daemon_refuses_literals_that_do_not_address_it :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    hosts := []string{"0.0.0.0", "0.0.0.0:8080", "[::]", "192.168.1.50", "10.0.0.1", "8.8.8.8", "[2001:db8::1]"}
+    hosts := []string {
+        "0.0.0.0",
+        "0.0.0.0:8080",
+        "[::]",
+        "192.168.1.50",
+        "10.0.0.1",
+        "8.8.8.8",
+        "[2001:db8::1]",
+        // A trailing dot is a distinct name from the one exempt `localhost`; `equal_fold`
+        // does not strip it, and it is not an IP literal either.
+        "localhost.",
+        // Userinfo-shaped junk before `@` is part of the name, not stripped.
+        "evil.com@localhost",
+        // `net.parse_address` here only accepts plain decimal-dotted IPv4; hex, bare
+        // decimal, and octal spellings of 127.0.0.1 all fail to parse and fall through
+        // to the named-host path, which does not match `localhost` either.
+        "0x7f000001",
+        "2130706433",
+        "017700000001",
+    }
     for host in hosts {
         got := run_http(t, fmt.tprintf("GET /nope HTTP/1.1\r\nhost: %s\r\n\r\n", host))
         testing.expectf(
@@ -805,6 +1053,23 @@ test_daemon_refuses_literals_that_do_not_address_it :: proc(t: ^testing.T) {
             got,
         )
     }
+}
+
+// `127.1` is `inet_aton` short form for `127.0.0.1` in some parsers, but `net.aton`
+// rejects any IPv4 literal shorter than 7 bytes before it ever looks at the digits, so
+// `net.parse_address("127.1")` returns nil and the Host is refused, not admitted as
+// loopback.
+@(test)
+test_daemon_refuses_short_form_loopback_host :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(t, "GET /nope HTTP/1.1\r\nhost: 127.1\r\n\r\n")
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+        "127.1 does not parse as an address and must not be treated as loopback, got %q",
+        got,
+    )
 }
 
 // Bytes past the declared body are a pipelined follow-up request. Bytes *within* it are
@@ -864,7 +1129,7 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
     scheme := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Basic abc\r\n\r\n",
-        {auth_token = "s3cret"},
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(t, strings.has_prefix(scheme, "HTTP/1.1 401 Unauthorized\r\n"), "another scheme should 401")
     testing.expectf(
@@ -877,7 +1142,7 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
     malformed := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer\r\n\r\n",
-        {auth_token = "s3cret"},
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expectf(
         t,
@@ -888,8 +1153,8 @@ test_daemon_challenge_matches_the_refusal :: proc(t: ^testing.T) {
 
     ambiguous := run_http(
         t,
-        "GET /ws?token=s3cret HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer s3cret\r\n\r\n",
-        {auth_token = "s3cret"},
+        "GET /ws?token=s3cret00000000000000000000000000 HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer s3cret00000000000000000000000000\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(t, strings.has_prefix(ambiguous, "HTTP/1.1 400 Bad Request\r\n"), "two sources should 400")
     testing.expectf(
@@ -981,7 +1246,11 @@ test_daemon_refuses_a_malformed_host_without_crashing :: proc(t: ^testing.T) {
 test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    missing := run_http(t, "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", {auth_token = "s3cret"})
+    missing := run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
     testing.expect(t, strings.has_prefix(missing, "HTTP/1.1 401 Unauthorized\r\n"), "an absent credential should 401")
     testing.expect(
         t,
@@ -992,7 +1261,7 @@ test_daemon_challenge_names_an_invalid_token :: proc(t: ^testing.T) {
     wrong := run_http(
         t,
         "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer nope\r\n\r\n",
-        {auth_token = "s3cret"},
+        {auth_token = "s3cret00000000000000000000000000"},
     )
     testing.expect(t, strings.has_prefix(wrong, "HTTP/1.1 401 Unauthorized\r\n"), "a wrong credential should 401")
     testing.expect(
@@ -1067,6 +1336,22 @@ test_daemon_rejects_an_unusable_blob_dir :: proc(t: ^testing.T) {
 
     d: Daemon
     err := start(&d, loop, {host = "127.0.0.1", port = 0, blob_dir = occupied})
+
+    testing.expect_value(t, err, Error.Invalid_Options)
+}
+
+// A non-empty token below the floor is refused at start, not silently accepted; empty
+// stays legal as the distinct "auth disabled" state.
+@(test)
+test_daemon_rejects_a_too_short_auth_token :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    err := start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "x"})
 
     testing.expect_value(t, err, Error.Invalid_Options)
 }

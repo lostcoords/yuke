@@ -77,6 +77,32 @@ resync_run_done :: proc(session: wire.Session_Id, run_id: wire.Run_Id) -> wire.B
     }
 }
 
+resync_compaction_started :: proc(
+    session: wire.Session_Id,
+    run_id: wire.Run_Id,
+    reason: wire.Compaction_Reason,
+    started_at_ms: u64,
+) -> wire.Broadcast_Data {
+    return wire.Run_Started_Data {
+        session_id = session,
+        run_id = run_id,
+        kind = .Compaction,
+        reason = reason,
+        config_rev = 1,
+        started_at_ms = started_at_ms,
+    }
+}
+
+resync_compaction_done :: proc(session: wire.Session_Id, run_id: wire.Run_Id) -> wire.Broadcast_Data {
+    return wire.Run_Done_Data {
+        session_id = session,
+        run_id = run_id,
+        kind = .Compaction,
+        timing = {started_at_ms = u64(1), ended_at_ms = 2},
+        outcome = wire.Run_Outcome_Compacted{message_id = 1},
+    }
+}
+
 // Put a codec-valid but semantically impossible historical row directly on the
 // log. Corruption fixtures bypass the pump so they do not model impossible daemon
 // output as an accepted internal operation.
@@ -576,6 +602,175 @@ test_daemon_resync_refuses_overlapping_runs :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_daemon_resync_reports_an_open_compaction_run :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    resync_with_daemon(
+        t,
+        "daemon-resync-compacting",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('a')
+            daemon_test_session_create(t, d, session)
+
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+            testing.expect_value(t, broadcast(d, resync_compaction_started(session, 1, .Auto, 10)), Pump_Error.None)
+
+            cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            testing.expect_value(t, err, Resync_Error.None)
+
+            state, is_compacting := cut.item.activity.state.(wire.Activity_State_Compacting)
+            testing.expect(t, is_compacting, "an open compaction run reports compacting")
+            testing.expect_value(t, state.run_id, wire.Run_Id(1))
+            testing.expect_value(t, state.reason, wire.Compaction_Reason.Auto)
+            testing.expect_value(t, state.started_at_ms, u64(10))
+
+            // `Activity_State_Compacting` carries no config, so the run's revision is
+            // neither hoisted nor added to the configs page.
+            testing.expect(t, cut.item.activity.config == nil, "a compacting activity hoists no config")
+            testing.expect_value(t, len(cut.configs), 0)
+            testing.expect_value(t, wire.session_resync_result_validate(cut), wire.Validation_Error.None)
+        },
+    )
+}
+
+@(test)
+test_daemon_resync_closes_a_compaction_run_before_the_cut :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    resync_with_daemon(t, "daemon-resync-compacting-closed", proc(t: ^testing.T, d: ^Daemon) {
+        session := pump_test_session('b')
+        daemon_test_session_create(t, d, session)
+
+        testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_compaction_started(session, 1, .Manual, 10)), Pump_Error.None)
+        testing.expect_value(t, broadcast(d, resync_compaction_done(session, 1)), Pump_Error.None)
+
+        cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+        testing.expect_value(t, err, Resync_Error.None)
+
+        _, is_idle := cut.item.activity.state.(wire.Activity_State_Idle)
+        testing.expect(t, is_idle, "the run's terminal closes it, same as a closed turn")
+        testing.expect(t, cut.item.activity.config == nil, "an idle activity hoists no config")
+    })
+}
+
+@(test)
+test_daemon_resync_of_a_compaction_run_missing_its_reason_is_refused :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    context.logger = log.nil_logger()
+
+    resync_with_daemon(
+        t,
+        "daemon-resync-compaction-no-reason",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('c')
+            daemon_test_session_create(t, d, session)
+
+            // A compaction row logged without its reason fails the codec's own
+            // kind/reason invariant, which the fold treats as log corruption.
+            resync_append_corrupt_fixture(
+                t,
+                d,
+                wire.Run_Started_Data {
+                    session_id = session,
+                    run_id = 1,
+                    kind = .Compaction,
+                    config_rev = 1,
+                    started_at_ms = 1,
+                },
+            )
+
+            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            testing.expect_value(t, err, Resync_Error.Corrupt_Log)
+        },
+    )
+}
+
+@(test)
+test_daemon_resync_of_a_turn_run_carrying_a_reason_is_refused :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    context.logger = log.nil_logger()
+
+    resync_with_daemon(
+        t,
+        "daemon-resync-turn-with-reason",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('d')
+            daemon_test_session_create(t, d, session)
+
+            // A turn row carrying a reason is the same invariant violated the other
+            // way; both are our own log's fault, never a peer's.
+            resync_append_corrupt_fixture(
+                t,
+                d,
+                wire.Run_Started_Data {
+                    session_id = session,
+                    run_id = 1,
+                    kind = .Turn,
+                    reason = wire.Compaction_Reason.Auto,
+                    config_rev = 1,
+                    started_at_ms = 1,
+                },
+            )
+
+            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            testing.expect_value(t, err, Resync_Error.Corrupt_Log)
+        },
+    )
+}
+
+@(test)
+test_daemon_resync_ignores_a_terminal_with_no_open_run :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    resync_with_daemon(
+        t,
+        "daemon-resync-done-without-open-run",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('e')
+            daemon_test_session_create(t, d, session)
+
+            // No run.started ever preceded this terminal; the fold has nothing to close.
+            testing.expect_value(t, broadcast(d, resync_run_done(session, 1)), Pump_Error.None)
+
+            cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            testing.expect_value(t, err, Resync_Error.None)
+
+            _, is_idle := cut.item.activity.state.(wire.Activity_State_Idle)
+            testing.expect(t, is_idle, "a terminal with no open run leaves activity idle")
+        },
+    )
+}
+
+@(test)
+test_daemon_resync_of_a_config_only_log_has_no_boundary :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    resync_with_daemon(
+        t,
+        "daemon-resync-config-only",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('f')
+            daemon_test_session_create(t, d, session)
+
+            // Nothing ever finalized a message id, so the boundary stays null even
+            // though the session is known and the log is not empty.
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
+
+            cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            testing.expect_value(t, err, Resync_Error.None)
+
+            testing.expect(t, cut.highest_finalized_message_id == nil, "no message has ever finalized")
+            testing.expect_value(t, len(cut.messages), 0)
+            testing.expect(t, !cut.has_more, "an empty transcript has no more behind it")
+            testing.expect_value(t, wire.session_resync_result_validate(cut), wire.Validation_Error.None)
+        },
+    )
+}
+
+@(test)
 test_daemon_resync_folds_a_log_past_one_chunk :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
@@ -672,7 +867,7 @@ resync_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     client.client_close(c)
 }
 
-resync_on_close :: proc(c: ^client.Client, _: ws.Close_Code) {
+resync_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
     o := (^Resync_Obs)(c.user_data)
     o.done = true
 }
@@ -709,8 +904,11 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = resync_on_ready, on_close = resync_on_close, on_error = resync_on_error},
@@ -781,7 +979,7 @@ corrupt_on_list :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     client.client_close(c)
 }
 
-corrupt_on_close :: proc(c: ^client.Client, _: ws.Close_Code) {
+corrupt_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
     o := (^Corrupt_Obs)(c.user_data)
     o.done = true
 }
@@ -829,8 +1027,11 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     c: client.Client
     cerr := client.client_open(
         &c,
-        loop,
-        {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+        client.ws_transport_create(
+            loop,
+            {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
+            context.temp_allocator,
+        ),
         "yuke-test",
         "0.1.0",
         client.Client_Callbacks{on_ready = corrupt_on_ready, on_close = corrupt_on_close, on_error = corrupt_on_error},

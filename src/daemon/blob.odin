@@ -28,17 +28,9 @@ UPLOAD_TEMP_GRACE :: 1 * time.Hour
 BLOB_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 BLOB_FILE_PERMISSIONS :: os.Permissions{.Read_User, .Write_User}
 
-// Workers publishing uploads. Each one spends its time inside `fsync` rather than
-// competing for a core, and concurrent publishes are already bounded by the front door's
-// connection cap, so a small count is enough.
-BLOB_WORKER_COUNT :: 2
-
 // What publishing an upload decided. Recorded on a worker thread, which can neither
 // answer the request nor log, and acted on by the completion back on the loop.
 Blob_Outcome :: enum {
-    // Not yet finalized.
-    Pending,
-
     // Body did not complete; the temp file was deleted and nobody is owed an answer.
     Discarded,
 
@@ -73,8 +65,9 @@ Blob_Upload :: struct {
     // discarded.
     publish:     bool,
 
-    // What the publish decided, and the failure behind `.Failed`.
-    outcome:     Blob_Outcome,
+    // What the publish decided, and the failure behind `.Failed`. Nil until the
+    // worker finalizes the upload.
+    outcome:     Maybe(Blob_Outcome),
     err:         os.Error,
 
     // Allocator backing the owned strings and this struct.
@@ -86,8 +79,8 @@ Blob_Upload :: struct {
     // Owned temp path streamed to, then atomically renamed to `final_path`.
     temp_path:   string,
 
-    // Owned copy of the claimed 64-hex digest from the URL, for logging.
-    claimed:     string,
+    // The claimed 64-hex digest from the URL, copied inline for logging.
+    claimed:     [BLOB_HASH_HEX_LEN]u8,
 
     // The same digest decoded once on the loop, so the worker compares raw bytes instead
     // of encoding on a thread that must not allocate.
@@ -106,7 +99,6 @@ Blob_Upload :: struct {
 blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
     up := (^Blob_Upload)(user_data)
     assert(up != nil && up.file != nil, "blob chunk sink needs an open upload")
-    assert(len(up.claimed) == BLOB_HASH_HEX_LEN, "blob upload lost its claimed digest")
 
     sha2.update(&up.sha, chunk)
 
@@ -127,7 +119,7 @@ blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
     assert(up != nil, "blob end callback needs upload state")
     assert(up.daemon != nil, "blob upload lost its daemon")
-    assert(up.outcome == .Pending, "blob upload finalized twice")
+    assert(up.outcome == nil, "blob upload finalized twice")
     assert(up.file != nil, "blob upload reached its end callback with no temp file")
 
     up.publish = ok
@@ -139,7 +131,7 @@ blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
         http_server.defer_response(c)
     }
 
-    offload.submit(&up.daemon.blobs, up, blob_publish, blob_published)
+    offload.submit(&up.daemon.workers, up, blob_publish, blob_published)
 }
 
 // Worker thread. Touches only `up`, every path of which is an owned clone. Records an
@@ -147,14 +139,15 @@ blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
 // and the logger belongs to the loop thread.
 blob_publish :: proc(up: ^Blob_Upload) {
     assert(up.file != nil, "publish needs the temp file still open")
-    assert(up.outcome == .Pending, "publish ran on a finalized upload")
+    assert(up.outcome == nil, "publish ran on a finalized upload")
 
-    up.outcome = blob_finalize(up)
+    outcome := blob_finalize(up)
+    up.outcome = outcome
     assert(up.file == nil, "finalize left the temp file open")
 
     // The temp survives only when the rename turned it into the blob; every other outcome
     // leaves nothing behind for the boot sweep to find.
-    if up.outcome != .Stored {
+    if outcome != .Stored {
         os.remove(up.temp_path)
     }
 }
@@ -212,18 +205,19 @@ blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
 // to hear about it. A mismatch, an already-present store, and a fresh store map to 400,
 // 200, and 201. No bodies.
 blob_published :: proc(up: ^Blob_Upload) {
-    assert(up.outcome != .Pending, "publish completed without an outcome")
+    outcome, decided := up.outcome.?
+    assert(decided, "publish completed without an outcome")
     assert(up.file == nil, "publish left the temp file open")
     defer blob_upload_free(up)
 
-    switch up.outcome {
+    switch outcome {
     case .Stored:
-        log.debugf("daemon: stored blob %s", up.claimed)
+        log.debugf("daemon: stored blob %s", string(up.claimed[:]))
 
     case .Failed:
         log.errorf("daemon: blob publish failed: %v", up.err)
 
-    case .Pending, .Discarded, .Already_Present, .Mismatch:
+    case .Discarded, .Already_Present, .Mismatch:
     }
 
     c := http_server.conn_resolve(&up.daemon.front_door, up.ticket)
@@ -231,7 +225,7 @@ blob_published :: proc(up: ^Blob_Upload) {
         return
     }
 
-    switch up.outcome {
+    switch outcome {
     case .Stored:
         http_server.respond_text(c, .Created, "")
 
@@ -244,45 +238,29 @@ blob_published :: proc(up: ^Blob_Upload) {
     case .Failed:
         http_server.respond_text(c, .Internal_Server_Error, "cannot store blob")
 
-    case .Pending, .Discarded:
+    case .Discarded:
         assert(false, "an upload with no answer owed resolved a connection")
     }
 }
 
-// Build the owned final and temp paths for `hash` under `blob_dir`.
-blob_paths :: proc(
-    blob_dir: string,
-    hash: string,
-    allocator: mem.Allocator,
-) -> (
-    final_path: string,
-    temp_path: string,
-    ok: bool,
-) {
+// Build and store `up`'s owned final and temp paths for `hash` under `blob_dir`. On
+// failure, whatever was already set is left for `blob_upload_free` to release.
+blob_paths_build :: proc(up: ^Blob_Upload, blob_dir: string, hash: string) -> mem.Allocator_Error {
     assert(len(blob_dir) > 0 && len(hash) == 64, "blob paths need a directory and a 64-hex name")
+    assert(up != nil && up.final_path == "" && up.temp_path == "", "blob paths are built once, before anything is set")
 
     nonce_raw: [8]byte
     crypto.rand_bytes(nonce_raw[:])
-    nonce, herr := hex.encode(nonce_raw[:], allocator)
-    if herr != nil {
-        return "", "", false
-    }
-    defer delete(nonce, allocator)
+    nonce := hex.encode(nonce_raw[:], up.allocator) or_return
+    defer delete(nonce, up.allocator)
 
-    ferr: mem.Allocator_Error
-    final_path, ferr = strings.concatenate({blob_dir, "/", hash}, allocator)
-    if ferr != nil {
-        return "", "", false
-    }
+    up.final_path = strings.concatenate({blob_dir, "/", hash}, up.allocator) or_return
+    up.temp_path = strings.concatenate(
+        {blob_dir, "/", BLOB_TEMP_PREFIX, hash, ".", string(nonce)},
+        up.allocator,
+    ) or_return
 
-    terr: mem.Allocator_Error
-    temp_path, terr = strings.concatenate({blob_dir, "/", BLOB_TEMP_PREFIX, hash, ".", string(nonce)}, allocator)
-    if terr != nil {
-        delete(final_path, allocator)
-        return "", "", false
-    }
-
-    return final_path, temp_path, true
+    return nil
 }
 
 // `make_directory_all` leaves an existing directory's mode alone, so a store predating
@@ -356,7 +334,6 @@ blob_upload_free :: proc(up: ^Blob_Upload) {
     // Each is either the zero value or an owned clone, and `delete` no-ops on nil.
     delete(up.final_path, up.allocator)
     delete(up.temp_path, up.allocator)
-    delete(up.claimed, up.allocator)
 
     free(up, up.allocator)
 }

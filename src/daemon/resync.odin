@@ -37,6 +37,12 @@ Resync_Open_Run :: struct {
     // Run the session is executing.
     run_id:        wire.Run_Id,
 
+    // What kind of run is open.
+    kind:          wire.Run_Kind,
+
+    // Why compaction is running; present exactly when `kind` is compaction.
+    reason:        Maybe(wire.Compaction_Reason),
+
     // Config revision it runs under; resolved against the folded configs.
     config_rev:    wire.Config_Rev,
 
@@ -75,16 +81,16 @@ method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
 
     switch err {
     case .None:
-        send_result(conn, req.id, result)
+        send_result(conn, req.id, result, sa)
 
     case .Unknown_Session:
-        send_error(conn, req.id, .Unknown_Session, "unknown session")
+        send_error(conn, req.id, .Unknown_Session, "unknown session", sa)
 
     case .Store_Failed, .Corrupt_Log, .Invalid_Cut:
         // A cut our own validator rejects, a log row the codec rejects, and a refused
         // read are all daemon-side faults: report `Internal` and keep the connection,
         // never ship a snapshot we do not believe.
-        send_error(conn, req.id, .Internal, "resync snapshot unavailable")
+        send_error(conn, req.id, .Internal, "resync snapshot unavailable", sa)
     }
 }
 
@@ -164,18 +170,33 @@ resync_build :: proc(
     configs := make([dynamic]wire.Run_Config, 0, len(messages) + 1, sa)
 
     // Until the session engine supplies its live state, the log can report only the
-    // durable run activity. Drafts and queued inputs are not reconstructed here. The
-    // open run's config is collected like every other, so an unannounced revision is
-    // diagnosed in one place.
+    // durable run activity. Drafts and queued inputs are not reconstructed here.
     if open, running := fold.run.?; running {
-        resync_config_add(&configs, fold.configs[:], open.config_rev) or_return
-        assert(len(configs) == 1, "the running config is the first one collected")
+        switch open.kind {
+        case .Turn:
+            // The turn's config is collected like every other, so an unannounced
+            // revision is diagnosed in one place.
+            resync_config_add(&configs, fold.configs[:], open.config_rev) or_return
+            assert(len(configs) == 1, "the running config is the first one collected")
 
-        activity.state = wire.Activity_State_Running {
-            run_id        = open.run_id,
-            started_at_ms = open.started_at_ms,
+            activity.state = wire.Activity_State_Running {
+                run_id        = open.run_id,
+                started_at_ms = open.started_at_ms,
+            }
+            activity.config = configs[0]
+
+        case .Compaction:
+            reason, has_reason := open.reason.?
+            assert(has_reason, "a compaction run's reason is validated present at decode")
+
+            // `Activity_State_Compacting` carries no config; the run's revision is not
+            // hoisted or added to the configs page, which is why the wire type omits it.
+            activity.state = wire.Activity_State_Compacting {
+                run_id        = open.run_id,
+                reason        = reason,
+                started_at_ms = open.started_at_ms,
+            }
         }
-        activity.config = configs[0]
     }
 
     for message in messages {
@@ -491,6 +512,8 @@ resync_fold_event :: proc(
 
         fold.run = Resync_Open_Run {
             run_id        = v.run_id,
+            kind          = v.kind,
+            reason        = v.reason,
             config_rev    = v.config_rev,
             started_at_ms = v.started_at_ms,
         }

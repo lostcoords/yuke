@@ -263,25 +263,17 @@ route_blob_put :: proc(ctx: ^Http_Context) {
     up.daemon = d
     up.allocator = d.allocator
 
-    paths_ok: bool
-    up.final_path, up.temp_path, paths_ok = blob_paths(d.blob_dir, hash, d.allocator)
-    if !paths_ok {
+    if perr := blob_paths_build(up, d.blob_dir, hash); perr != nil {
         blob_upload_free(up)
         http_server.abort(c)
         return
     }
 
-    claimed, cerr := strings.clone(hash, d.allocator)
-    if cerr != nil {
-        blob_upload_free(up)
-        http_server.abort(c)
-        return
-    }
-    up.claimed = claimed
+    copy(up.claimed[:], hash)
 
     // Already validated as fixed-length lower hex above, so every pair decodes.
     for i in 0 ..< len(up.claimed_raw) {
-        b, ok := hex.decode_sequence(up.claimed[i * 2:][:2])
+        b, ok := hex.decode_sequence(string(up.claimed[i * 2:][:2]))
         assert(ok, "validated blob hash failed to decode")
         up.claimed_raw[i] = b
     }

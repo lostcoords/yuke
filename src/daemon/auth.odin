@@ -8,6 +8,10 @@ import http_server "libs:http/server"
 // Sanity ceiling on a configured token's length; well above any realistic credential.
 MAX_AUTH_TOKEN_BYTES :: 4096
 
+// Floor on a non-empty configured token; comfortably past brute-force at connection rate.
+// Empty stays the distinct "auth disabled" state and is exempt from this floor.
+MIN_AUTH_TOKEN_BYTES :: 32
+
 // Authentication result for one syntactically valid request.
 Auth_Result :: enum {
     // No token is configured; every request is admitted.
@@ -144,9 +148,14 @@ bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
 }
 
 // Whether a configured token is directly safe in both a bearer field and an
-// origin-form query without percent-encoding or normalization.
+// origin-form query without percent-encoding or normalization. Empty is the distinct
+// "auth disabled" state, not a credential, so it is exempt from the length floor.
 auth_token_valid :: proc(token: string) -> bool {
-    if len(token) > MAX_AUTH_TOKEN_BYTES {
+    if token == "" {
+        return true
+    }
+
+    if len(token) < MIN_AUTH_TOKEN_BYTES || len(token) > MAX_AUTH_TOKEN_BYTES {
         return false
     }
 
