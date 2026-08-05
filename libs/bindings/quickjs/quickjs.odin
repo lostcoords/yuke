@@ -382,6 +382,20 @@ new_promise :: proc(ctx: ^Context) -> (promise: Value, resolve: Value, reject: V
     return promise, funcs[0], funcs[1]
 }
 
+// Whether `v` is a promise, and if so how it settled. This is how a caller learns a module's
+// top level threw: `eval` reports an exception only for a syntax error, never a rejection.
+promise_state :: proc(ctx: ^Context, v: Value) -> Promise_State {
+    assert(ctx != nil, "promise_state needs a context")
+    return c_promise_state(ctx, v)
+}
+
+// The fulfilled value or the rejection reason of a settled promise. Owned by the caller.
+// Reading it does not settle, handle, or otherwise consume the promise.
+promise_result :: proc(ctx: ^Context, v: Value) -> Value {
+    assert(ctx != nil, "promise_result needs a context")
+    return c_promise_result(ctx, v)
+}
+
 // Associate host state with a context; recovered in C host callbacks via
 // `get_context_opaque`.
 set_context_opaque :: proc(ctx: ^Context, user: rawptr) {
