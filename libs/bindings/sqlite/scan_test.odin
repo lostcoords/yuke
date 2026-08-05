@@ -437,6 +437,96 @@ test_scan_row_rejects_borrowing_a_by_value_field :: proc(t: ^testing.T) {
     testing.expect_value(t, scan_test_error(db, "SELECT 'x' AS value", Repeated_Option), Scan_Error.Invalid_Tag)
 }
 
+// The store scans through a resolved mapping rather than `scan_row`, so the nullable
+// path is exercised on the same route a real query takes, across a set and a nil row.
+@(test)
+test_scan_mapping_scans_maybe_columns :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    st, prep := prepare(db, "SELECT 7 AS a, 'text' AS b UNION ALL SELECT NULL, NULL")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    Row :: struct {
+        a: Maybe(u64),
+        b: Maybe(string),
+    }
+
+    mapping, mapping_err := scan_prepare(st, Row, context.allocator)
+    testing.expect_value(t, mapping_err, Scan_Error.None)
+    defer scan_mapping_destroy(&mapping, context.allocator)
+
+    testing.expect_value(t, step(st), Result.Row)
+
+    set: Row
+    testing.expect_value(t, scan(&mapping, &set, context.allocator), Scan_Error.None)
+    defer scan_destroy(&set, context.allocator)
+
+    testing.expect_value(t, set.a, Maybe(u64)(7))
+    testing.expect_value(t, set.b, Maybe(string)("text"))
+
+    testing.expect_value(t, step(st), Result.Row)
+
+    empty: Row
+    testing.expect_value(t, scan(&mapping, &empty, context.allocator), Scan_Error.None)
+    defer scan_destroy(&empty, context.allocator)
+
+    testing.expect_value(t, empty, Row{})
+    testing.expect_value(t, step(st), Result.Done)
+}
+
+// A `Maybe` payload that landed before a later column failed is still owned, so the
+// release walk has to see through the tag to give it back.
+@(test)
+test_scan_maybe_partial_failure_releases_a_set_payload :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    st, prep := prepare(db, "SELECT 'first' AS first, 'second' AS second")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    Row :: struct {
+        first:  Maybe(string),
+        second: string,
+    }
+
+    testing.expect_value(t, step(st), Result.Row)
+
+    track: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track, context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+
+    // One clone succeeds — the `Maybe` — and the plain string behind it fails.
+    failing: testsupport.Failing_Allocator
+    testsupport.failing_allocator_init(&failing, mem.tracking_allocator(&track), 1)
+
+    row: Row
+    err := scan_row(st, &row, testsupport.failing_allocator(&failing))
+    testing.expect_value(t, err, Scan_Error.Out_Of_Memory)
+    testing.expect_value(t, row, Row{})
+    testing.expect_value(t, track.total_allocation_count, i64(1))
+    scan_test_expect_no_leaks(t, &track)
+}
+
+// A `Maybe` is not an escape hatch from storage typing: only NULL is special, and a
+// column of the wrong class still fails against the payload type.
+@(test)
+test_scan_maybe_still_enforces_storage_class :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    Row :: struct {
+        a: Maybe(u64),
+    }
+
+    testing.expect_value(t, scan_test_error(db, "SELECT 'text' AS a", Row), Scan_Error.Storage_Type_Mismatch)
+}
+
 scan_test_expect_no_leaks :: proc(t: ^testing.T, track: ^mem.Tracking_Allocator) {
     testing.expectf(t, len(track.allocation_map) == 0, "expected zero leaks, got %d", len(track.allocation_map))
     testing.expectf(t, len(track.bad_free_array) == 0, "expected zero bad frees, got %d", len(track.bad_free_array))

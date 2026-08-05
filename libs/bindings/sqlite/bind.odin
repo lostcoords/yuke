@@ -82,7 +82,7 @@ bind_prepare :: proc(
     assert(info != nil, "a bind source has type information")
 
     leaves: Bind_Leaves
-    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves, .Bind)) or_return
+    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves)) or_return
 
     if leaves.overflow {
         return {}, .Too_Many_Parameters
@@ -317,20 +317,9 @@ bind_slot :: proc(statement: ^Stmt, slot: Bind_Slot, data: rawptr, lifetime: Bin
         assert(len(kind.variants) == 1, "bind_prepare admits only single-variant unions")
         assert(!kind.no_nil, "bind_prepare admits only nil-able unions")
 
-        tag, tag_rc := bind_integer_load(
-            rawptr(uintptr(data) + kind.tag_offset),
-            reflect.type_info_base(kind.tag_type),
-        )
-
-        if tag_rc != .Ok {
-            return tag_rc
-        }
-
-        if tag == 0 {
+        if !scan_maybe_is_set(data, kind) {
             return bind_null(statement, slot.param)
         }
-
-        assert(tag == 1, "a single-variant union tag is nil or its only variant")
 
         return bind_slot(
             statement,

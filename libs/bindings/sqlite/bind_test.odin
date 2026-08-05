@@ -485,23 +485,68 @@ test_bind_maybe_binds_payload_or_null :: proc(t: ^testing.T) {
     testing.expect_value(t, step(sel), Result.Done)
 }
 
+// The two directions are inverses: whatever a `Maybe` binds, scanning the same row back
+// reproduces, nil arm included.
 @(test)
-test_scan_rejects_maybe :: proc(t: ^testing.T) {
+test_maybe_round_trips_through_both_directions :: proc(t: ^testing.T) {
     db, rc := open_memory()
     testing.expect_value(t, rc, Result.Ok)
     defer testing.expect_value(t, close(db), Result.Ok)
 
-    st, prep := prepare(db, "SELECT 1 AS a")
+    testing.expect_value(t, exec(db, "CREATE TABLE t (a INTEGER, b TEXT, c BLOB)"), Result.Ok)
+
+    Row :: struct {
+        a: Maybe(u64),
+        b: Maybe(string),
+        c: Maybe([4]u8),
+    }
+
+    st, prep := prepare(db, "INSERT INTO t (a, b, c) VALUES (:a, :b, :c)")
     testing.expect_value(t, prep, Result.Ok)
     defer testing.expect_value(t, finalize(st), Result.Ok)
 
-    // `Maybe` is bind-only; the read direction has no caller and stays refused.
-    Row :: struct {
-        a: Maybe(i64),
-    }
+    mapping, mapping_err := bind_prepare(st, Row)
+    testing.expect_value(t, mapping_err, Bind_Error.None)
 
-    _, err := scan_prepare(st, Row, context.allocator)
-    testing.expect_value(t, err, Scan_Error.Unsupported_Type)
+    present := Row {
+        a = 9,
+        b = "set",
+        c = [4]u8{1, 2, 3, 4},
+    }
+    testing.expect_value(t, execute(&mapping, &present), Result.Ok)
+
+    absent: Row
+    testing.expect_value(t, execute(&mapping, &absent), Result.Ok)
+
+    sel, sel_prep := prepare(db, "SELECT a, b, c FROM t ORDER BY rowid")
+    testing.expect_value(t, sel_prep, Result.Ok)
+    defer testing.expect_value(t, finalize(sel), Result.Ok)
+
+    testing.expect_value(t, step(sel), Result.Row)
+
+    set: Row
+    testing.expect_value(t, scan_row(sel, &set, context.allocator), Scan_Error.None)
+    defer scan_destroy(&set, context.allocator)
+
+    testing.expect_value(t, set.a, present.a)
+    testing.expect_value(t, set.b, present.b)
+    testing.expect_value(t, set.c, present.c)
+
+    // NULL lands as the nil variant rather than a zero payload wearing a set tag.
+    testing.expect_value(t, step(sel), Result.Row)
+
+    nil_row: Row
+    testing.expect_value(t, scan_row(sel, &nil_row, context.allocator), Scan_Error.None)
+    defer scan_destroy(&nil_row, context.allocator)
+
+    _, a_set := nil_row.a.?
+    _, b_set := nil_row.b.?
+    _, c_set := nil_row.c.?
+    testing.expect(t, !a_set, "a NULL integer scans as the nil variant")
+    testing.expect(t, !b_set, "a NULL text scans as the nil variant")
+    testing.expect(t, !c_set, "a NULL blob scans as the nil variant")
+
+    testing.expect_value(t, step(sel), Result.Done)
 }
 
 @(test)

@@ -42,10 +42,8 @@ Scan_Error :: enum {
 
 // Materialize the current `.Row` into `value`. Text and byte slices clone into `allocator`;
 // release with `scan_destroy`. Untagged fields are mandatory by name; `sql:"name,optional"`
-// allows a missing column and `sql:"-"` skips a field; SQL NULL is always an error, and
-// `value` is left zeroed on failure so a partial row never reaches the caller.
-// `sql:"name,borrowed"` instead points `string`/`[]byte` at SQLite's own column memory,
-// which owns nothing and must not outlive the row.
+// allows a missing column and `sql:"-"` skips a field. SQL NULL errors except into a
+// `Maybe(T)` (nil variant); `sql:"name,borrowed"` borrows SQLite's memory instead, which must not outlive the row.
 @(require_results)
 scan_row :: proc(
     statement: ^Stmt,
@@ -73,7 +71,7 @@ scan_row :: proc(
         data      = rawptr(value),
         allocator = allocator,
     }
-    err = scan_walk(info, 0, scan_store_visit, &store, .Scan)
+    err = scan_walk(info, 0, scan_store_visit, &store)
 
     if err != .None {
         scan_value_destroy(rawptr(value), info, allocator)
@@ -135,7 +133,7 @@ scan_prepare :: proc(
     // The leaf count is a property of the destination type, but flattening `using`
     // makes it a runtime one; counting first keeps the mapping a single exact allocation.
     count := 0
-    tally_err := scan_walk(info, 0, scan_tally_visit, &count, .Scan)
+    tally_err := scan_walk(info, 0, scan_tally_visit, &count)
     assert(tally_err == .None, "a validated shape walks without error")
 
     binds, make_err := make([]Scan_Bind, count, allocator)
@@ -148,7 +146,7 @@ scan_prepare :: proc(
         statement = statement,
         binds     = binds,
     }
-    fill_err := scan_walk(info, 0, scan_fill_visit, &fill, .Scan)
+    fill_err := scan_walk(info, 0, scan_fill_visit, &fill)
     assert(fill_err == .None, "a validated shape walks without error")
     assert(fill.filled == count, "the mapping binds every leaf exactly once")
 
@@ -316,26 +314,12 @@ Scan_Leaf :: struct {
 @(private)
 Scan_Visitor :: #type proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error
 
-// Which direction a field walk resolves for. The accepted type surface is almost
-// identical both ways; `Maybe(T)` is the exception, since NULL is unambiguous going
-// into SQLite but a read would have to invent how NULL lands back in the union.
-@(private)
-Walk_Direction :: enum {
-    Scan,
-    Bind,
-}
-
 // The single definition of which fields a scan reads and owns. Shape validation,
 // storing a row, and releasing a scanned value all walk here, so the tag ladder and
-// the accepted type surface exist once and cannot drift apart.
+// the accepted type surface exist once and cannot drift apart. Both directions accept
+// the same types, so the walk is direction-free.
 @(private)
-scan_walk :: proc(
-    info: ^reflect.Type_Info,
-    offset: uintptr,
-    visit: Scan_Visitor,
-    user: rawptr,
-    direction: Walk_Direction,
-) -> Scan_Error {
+scan_walk :: proc(info: ^reflect.Type_Info, offset: uintptr, visit: Scan_Visitor, user: rawptr) -> Scan_Error {
     assert(info != nil, "scan_walk needs type information")
     assert(visit != nil, "scan_walk needs a visitor")
 
@@ -360,12 +344,12 @@ scan_walk :: proc(
                 return .Invalid_Tag
             }
 
-            scan_walk(field.type, offset + field.offset, visit, user, direction) or_return
+            scan_walk(field.type, offset + field.offset, visit, user) or_return
 
             continue
         }
 
-        scan_type_validate(field.type, direction) or_return
+        scan_type_validate(field.type) or_return
 
         // Borrowing is only meaningful where a clone would otherwise be made; on a
         // by-value destination it would silently mean nothing.
@@ -393,7 +377,7 @@ scan_shape :: proc(statement: ^Stmt, info: ^reflect.Type_Info) -> Scan_Error {
     assert(statement != nil, "scan_shape needs a statement")
     assert(info != nil, "scan_shape needs destination type information")
 
-    scan_walk(info, 0, scan_unique_visit, rawptr(info), .Scan) or_return
+    scan_walk(info, 0, scan_unique_visit, rawptr(info)) or_return
 
     for col in 0 ..< column_count(statement) {
         matches := scan_leaf_count(info, column_name(statement, col)) or_return
@@ -407,7 +391,7 @@ scan_shape :: proc(statement: ^Stmt, info: ^reflect.Type_Info) -> Scan_Error {
         }
     }
 
-    return scan_walk(info, 0, scan_required_visit, rawptr(statement), .Scan)
+    return scan_walk(info, 0, scan_required_visit, rawptr(statement))
 }
 
 // Reject a destination that binds two fields to one column name; `user` is the root
@@ -482,7 +466,7 @@ scan_leaf_count :: proc(root: ^reflect.Type_Info, name: string) -> (matches: int
     counter := Scan_Leaf_Count {
         name = name,
     }
-    scan_walk(root, 0, scan_count_visit, &counter, .Scan) or_return
+    scan_walk(root, 0, scan_count_visit, &counter) or_return
 
     return counter.matches, .None
 }
@@ -501,7 +485,7 @@ scan_column_find :: proc(statement: ^Stmt, name: string) -> int {
 }
 
 @(private)
-scan_type_validate :: proc(info: ^reflect.Type_Info, direction: Walk_Direction) -> Scan_Error {
+scan_type_validate :: proc(info: ^reflect.Type_Info) -> Scan_Error {
     assert(info != nil, "scan_type_validate needs type information")
 
     base := reflect.type_info_base(info)
@@ -518,16 +502,16 @@ scan_type_validate :: proc(info: ^reflect.Type_Info, direction: Walk_Direction) 
         return .None
 
     case reflect.Type_Info_Enum:
-        return scan_type_validate(kind.base, direction)
+        return scan_type_validate(kind.base)
 
     case reflect.Type_Info_Union:
-        // Only `Maybe(T)`, and only into SQLite: one variant, nil admitted, and a
-        // payload that is itself bindable. Anything else stays unsupported.
-        if direction != .Bind || len(kind.variants) != 1 || kind.no_nil {
+        // Only `Maybe(T)`: one variant, nil admitted, payload itself supported. NULL binds
+        // from the nil variant and scans back into it, so the two directions are inverses.
+        if len(kind.variants) != 1 || kind.no_nil {
             return .Unsupported_Type
         }
 
-        return scan_type_validate(kind.variants[0], direction)
+        return scan_type_validate(kind.variants[0])
 
     case reflect.Type_Info_Float:
         if kind.endianness != .Platform || (base.size != 2 && base.size != 4 && base.size != 8) {
@@ -626,12 +610,30 @@ scan_column :: proc(
     assert(destination != nil, "scan_column needs destination storage")
 
     storage := column_type(statement, col)
+    info := reflect.type_info_base(type_info_of(destination.id))
+
+    // `Maybe(T)`: NULL is the nil variant rather than an error. Odin stores the payload at
+    // offset 0, reusing `destination.data`; a nil variant needs no write, since the caller already zeroed it.
+    if maybe_info, is_maybe := info.variant.(reflect.Type_Info_Union); is_maybe {
+        assert(len(maybe_info.variants) == 1 && !maybe_info.no_nil, "the walk admits only Maybe destinations")
+        assert(maybe_info.tag_type != nil, "scan_type_validate rejects the pointer payloads that erase the tag")
+
+        if storage == .Null {
+            return .None
+        }
+
+        scan_column(statement, col, any{destination.data, maybe_info.variants[0].id}, borrowed, allocator) or_return
+
+        return scan_integer_store(
+            rawptr(uintptr(destination.data) + maybe_info.tag_offset),
+            reflect.type_info_base(maybe_info.tag_type),
+            1,
+        )
+    }
 
     if storage == .Null {
         return .Null_Not_Allowed
     }
-
-    info := reflect.type_info_base(type_info_of(destination.id))
 
     #partial switch kind in info.variant {
     case reflect.Type_Info_Boolean:
@@ -916,25 +918,35 @@ Scan_Empty :: struct {
 @(private)
 scan_empty_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     state := (^Scan_Empty)(user)
-    data := rawptr(uintptr(state.data) + leaf.offset)
+    state.empty &= scan_leaf_owns_nothing(rawptr(uintptr(state.data) + leaf.offset), leaf.type)
 
-    #partial switch kind in reflect.type_info_base(leaf.type).variant {
+    return .None
+}
+
+@(private)
+scan_leaf_owns_nothing :: proc(data: rawptr, type: ^reflect.Type_Info) -> bool {
+    assert(data != nil, "scan_leaf_owns_nothing needs leaf storage")
+    assert(type != nil, "scan_leaf_owns_nothing needs leaf type information")
+
+    #partial switch kind in reflect.type_info_base(type).variant {
     case reflect.Type_Info_String:
         _ = kind
 
-        if (^string)(data)^ != "" {
-            state.empty = false
-        }
+        return (^string)(data)^ == ""
 
     case reflect.Type_Info_Slice:
         _ = kind
 
-        if (^[]byte)(data)^ != nil {
-            state.empty = false
-        }
+        return (^[]byte)(data)^ == nil
+
+    case reflect.Type_Info_Union:
+        // A set `Maybe(T)` owns exactly what its payload owns, at offset 0.
+        assert(len(kind.variants) == 1 && kind.tag_type != nil, "the walk admits only Maybe leaves")
+
+        return !scan_maybe_is_set(data, kind) || scan_leaf_owns_nothing(data, kind.variants[0])
     }
 
-    return .None
+    return true
 }
 
 @(private)
@@ -946,7 +958,7 @@ scan_value_owns_nothing :: proc(data: rawptr, info: ^reflect.Type_Info) -> bool 
         data  = data,
         empty = true,
     }
-    err := scan_walk(info, 0, scan_empty_visit, &state, .Scan)
+    err := scan_walk(info, 0, scan_empty_visit, &state)
     assert(err == .None, "a successfully shaped scan walks without error")
 
     return state.empty
@@ -966,24 +978,33 @@ scan_value_clear :: proc(data: rawptr, info: ^reflect.Type_Info) {
     assert(data != nil, "scan_value_clear needs value storage")
     assert(info != nil, "scan_value_clear needs type information")
 
-    err := scan_walk(info, 0, scan_clear_visit, data, .Scan)
+    err := scan_walk(info, 0, scan_clear_visit, data)
     assert(err == .None, "a successfully shaped scan walks without error")
 }
 
 @(private)
 scan_release_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     release := (^Scan_Release)(user)
-    data := rawptr(uintptr(release.data) + leaf.offset)
+    scan_leaf_release(rawptr(uintptr(release.data) + leaf.offset), leaf.type, leaf.borrowed, release.allocator)
 
-    // Only text and byte slices are cloned; every other accepted leaf is stored by
-    // value and owns nothing. A borrowed leaf points into SQLite's memory, so it is
-    // blanked rather than freed.
-    #partial switch kind in reflect.type_info_base(leaf.type).variant {
+    return .None
+}
+
+// Only text and byte slices are cloned; everything else is stored by value and owns nothing.
+// A borrowed leaf points into SQLite's memory, so it is blanked rather than freed.
+@(private)
+scan_leaf_release :: proc(data: rawptr, type: ^reflect.Type_Info, borrowed: bool, allocator: mem.Allocator) {
+    assert(data != nil, "scan_leaf_release needs leaf storage")
+    assert(type != nil, "scan_leaf_release needs leaf type information")
+
+    base := reflect.type_info_base(type)
+
+    #partial switch kind in base.variant {
     case reflect.Type_Info_String:
         assert(!kind.is_cstring && kind.encoding == .UTF_8, "the walk admits only UTF-8 string leaves")
 
-        if !leaf.borrowed {
-            delete((^string)(data)^, release.allocator)
+        if !borrowed {
+            delete((^string)(data)^, allocator)
         }
 
         (^string)(data)^ = ""
@@ -991,14 +1012,36 @@ scan_release_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     case reflect.Type_Info_Slice:
         assert(kind.elem_size == 1, "the walk admits only byte slice leaves")
 
-        if !leaf.borrowed {
-            delete((^[]byte)(data)^, release.allocator)
+        if !borrowed {
+            delete((^[]byte)(data)^, allocator)
         }
 
         (^[]byte)(data)^ = nil
-    }
 
-    return .None
+    case reflect.Type_Info_Union:
+        // A nil `Maybe(T)` owns nothing; a set one owns whatever its payload does, at
+        // offset 0. Zeroing covers the payload and the tag in one step.
+        assert(len(kind.variants) == 1 && kind.tag_type != nil, "the walk admits only Maybe leaves")
+
+        if scan_maybe_is_set(data, kind) {
+            scan_leaf_release(data, kind.variants[0], borrowed, allocator)
+            mem.zero(data, base.size)
+        }
+    }
+}
+
+// Whether a `Maybe(T)` holds its payload. The tag is the only discriminator, so a
+// caller that reads the payload without it would see a stale value from a failed scan.
+@(private)
+scan_maybe_is_set :: proc(data: rawptr, info: reflect.Type_Info_Union) -> bool {
+    assert(data != nil, "scan_maybe_is_set needs union storage")
+    assert(info.tag_type != nil, "scan_type_validate rejects the pointer payloads that erase the tag")
+
+    tag, rc := bind_integer_load(rawptr(uintptr(data) + info.tag_offset), reflect.type_info_base(info.tag_type))
+    assert(rc == .Ok, "a union tag is an integer this package wrote")
+    assert(tag == 0 || tag == 1, "a single-variant union tag is nil or its only variant")
+
+    return tag == 1
 }
 
 @(private)
@@ -1010,6 +1053,6 @@ scan_value_destroy :: proc(data: rawptr, info: ^reflect.Type_Info, allocator: me
         data      = data,
         allocator = allocator,
     }
-    err := scan_walk(info, 0, scan_release_visit, &release, .Scan)
+    err := scan_walk(info, 0, scan_release_visit, &release)
     assert(err == .None, "a successfully shaped scan walks without error")
 }
