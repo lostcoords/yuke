@@ -21,7 +21,7 @@ ODIN = shlex.split(os.environ.get("ODIN", "mise exec -- odin"))
 ODINFMT = shlex.split(os.environ.get("ODINFMT", "odinfmt"))
 CONFIG = f"-config:{ROOT / 'odinfmt.json'}"
 
-COLLECTIONS = ["-collection:src=src", "-collection:libs=libs"]
+COLLECTIONS = ["-collection:src=src", "-collection:libs=libs", "-collection:tools=tools"]
 
 # No -vet-tabs (odinfmt formats with spaces), no -vet-unused-procedures (libs/ may
 # carry unused surface).
@@ -68,7 +68,14 @@ PACKAGES = (
     Package("wire", "src/wire", "protocol types, JSON codec, registries, validation"),
     Package("client", "src/client", "session replica", windows=True),
     Package("daemon", "src/daemon", "front-door routes plus the initialize exchange"),
+    Package("js", "src/js", "shared QuickJS host plus the yuke:fs module", windows=True),
     Package("store", "src/daemon/store", "open/configure plus the migration runner", windows=True),
+    Package(
+        "store-queries",
+        "src/daemon/store/queries",
+        "generated Params/Row structs and the Queries registry, decoupled from Store",
+        windows=True,
+    ),
     Package("provider", "src/provider", "requests, decoding, turn lifecycle, retry policy", windows=True),
     Package("term", "src/term", "terminal input/output encoding", windows=True, windows_test=True),
     Package("termdrive", "src/termdrive", "term x nbio driver; pipe harness, no TTY", windows=True, windows_test=True),
@@ -87,12 +94,14 @@ PACKAGES = (
     Package("http", "libs/http", "sans-I/O HTTP"),
     Package("http-server", "libs/http/server", "nbio front door"),
     Package("http-sse", "libs/http/sse", "sans-I/O SSE parser"),
-    Package("offload", "libs/offload", "worker pool: blocking work off the reactor"),
+    Package("offload", "libs/offload", "worker pool: blocking work off the reactor", windows=True),
     Package("testsupport", "libs/testsupport", "shared test helpers"),
     Package("curl", "libs/bindings/curl", "libcurl binding and multi-on-nbio driver", windows=True),
     Package("quickjs", "libs/bindings/quickjs", "QuickJS binding", windows=True, needs=("quickjs",)),
     Package("sqlite", "libs/bindings/sqlite", "binding over system libsqlite3", windows=True),
+    Package("gen", "tools/gen", "shared diagnostics and write-or-check codegen helpers", in_aggregate=False),
     Package("schema", "tools/schema", "wire.json and wire.schema.json generator", in_aggregate=False, entry_point=True),
+    Package("sqlgen", "tools/sqlgen", "queries_gen.odin generator from the real schema", in_aggregate=False, entry_point=True),
 )
 
 BY_NAME = {p.name: p for p in PACKAGES}
@@ -228,6 +237,61 @@ def schema_check(args):
     odin("build", BY_NAME["schema"].path, f"-out:{BUILD / 'schema.bin'}")
     run([str(BUILD / "schema.bin"), "--check", "--quiet"])
     test(["schema"])
+
+
+STORE_MIGRATIONS = ROOT / "src/daemon/store/migrations"
+STORE_QUERIES = ROOT / "src/daemon/store/queries"
+STORE_QUERIES_GEN = STORE_QUERIES / "queries_gen.odin"
+
+
+@command
+def sql(args):
+    """regenerate queries_gen.odin from the real schema"""
+    odin("build", BY_NAME["sqlgen"].path, f"-out:{BUILD / 'sqlgen.bin'}")
+    run(
+        [
+            str(BUILD / "sqlgen.bin"),
+            "--migrations",
+            str(STORE_MIGRATIONS),
+            "--queries",
+            str(STORE_QUERIES),
+            "--queries-out",
+            str(STORE_QUERIES_GEN),
+        ]
+    )
+    # sqlgen writes raw field lists; odinfmt owns column alignment, same as every
+    # other Odin source, so the committed file is always the formatted one.
+    run([*ODINFMT, CONFIG, "-w", str(STORE_QUERIES_GEN)], quiet=True)
+
+
+@command
+def sql_check(args):
+    """verify the committed generated store code still describes the real schema"""
+    odin("build", BY_NAME["sqlgen"].path, f"-out:{BUILD / 'sqlgen.bin'}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        candidate = Path(tmp) / "queries_gen.odin"
+        run(
+            [
+                str(BUILD / "sqlgen.bin"),
+                "--migrations",
+                str(STORE_MIGRATIONS),
+                "--queries",
+                str(STORE_QUERIES),
+                "--queries-out",
+                str(candidate),
+                "--quiet",
+            ]
+        )
+        run([*ODINFMT, CONFIG, "-w", str(candidate)], quiet=True)
+
+        if not STORE_QUERIES_GEN.exists():
+            sys.exit(f"{STORE_QUERIES_GEN}: nothing committed to check against; run './build.py sql' and commit it")
+
+        if not filecmp.cmp(STORE_QUERIES_GEN, candidate, shallow=False):
+            sys.exit(f"{STORE_QUERIES_GEN}: stale — run './build.py sql' and commit the result")
+
+    test(["sqlgen"])
 
 
 @command

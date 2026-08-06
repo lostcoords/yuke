@@ -2,10 +2,20 @@
 # Blocks commits with a stale schema. Installed via `./build.py setup`.
 set -e
 
-if git diff --cached --name-only | grep -qE '^(src/wire/|schema/)'; then
+staged=$(git diff --cached --name-only)
+
+if printf '%s\n' "$staged" | grep -qE '^(src/wire/|schema/)'; then
 	if ! ./build.py schema-check; then
 		echo "error: schema/wire.schema.json is stale or schema-test failed." >&2
 		echo "       run './build.py schema' and stage the result, then commit again." >&2
+		exit 1
+	fi
+fi
+
+if printf '%s\n' "$staged" | grep -qE '^(src/daemon/store/migrations/|src/daemon/store/queries/|tools/sqlgen/|tools/gen/)'; then
+	if ! ./build.py sql-check; then
+		echo "error: src/daemon/store/queries/queries_gen.odin is stale or sqlgen-test failed." >&2
+		echo "       run './build.py sql' and stage the result, then commit again." >&2
 		exit 1
 	fi
 fi

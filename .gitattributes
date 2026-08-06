@@ -5,5 +5,10 @@
 schema/*.json linguist-generated=true
 schema/*.json -merge
 
+# Generated from src/daemon/store/migrations and src/daemon/store/queries by
+# `./build.py sql`; never hand-edited. Conflicts are resolved by regenerating.
+src/daemon/store/queries/queries_gen.odin linguist-generated=true
+src/daemon/store/queries/queries_gen.odin -merge
+
 # Windows build scripts.
 *.bat text eol=crlf

@@ -7,31 +7,31 @@
 -- session, and `origin` flattened from the Session_Origin union with each arm's ids
 -- non-null exactly for that arm.
 CREATE TABLE sessions (
-    id           BLOB PRIMARY KEY CHECK (typeof(id) = 'blob' AND length(id) = 16),
-    workspace_id BLOB NOT NULL    CHECK (typeof(workspace_id) = 'blob' AND length(workspace_id) = 16),
+    id           BLOB PRIMARY KEY CHECK (typeof(id) = 'blob' AND length(id) = 16), -- wire.Session_Id
+    workspace_id BLOB NOT NULL    CHECK (typeof(workspace_id) = 'blob' AND length(workspace_id) = 16), -- wire.Workspace_Id
 
     origin            TEXT NOT NULL CHECK (origin IN ('root', 'child', 'fork', 'cron')),
-    parent_id         BLOB    CHECK (parent_id IS NULL OR (typeof(parent_id) = 'blob' AND length(parent_id) = 16)),
-    parent_message_id INTEGER CHECK (parent_message_id IS NULL OR parent_message_id BETWEEN 1 AND 9007199254740991),
-    parent_part_id    INTEGER CHECK (parent_part_id IS NULL OR parent_part_id BETWEEN 0 AND 9007199254740991),
-    source_id         BLOB    CHECK (source_id IS NULL OR (typeof(source_id) = 'blob' AND length(source_id) = 16)),
-    job_id            BLOB    CHECK (job_id IS NULL OR (typeof(job_id) = 'blob' AND length(job_id) = 16)),
+    parent_id         BLOB    CHECK (parent_id IS NULL OR (typeof(parent_id) = 'blob' AND length(parent_id) = 16)), -- wire.Session_Id
+    parent_message_id INTEGER CHECK (parent_message_id IS NULL OR parent_message_id BETWEEN 1 AND 9007199254740991), -- wire.Message_Id
+    parent_part_id    INTEGER CHECK (parent_part_id IS NULL OR parent_part_id BETWEEN 0 AND 9007199254740991), -- wire.Part_Id
+    source_id         BLOB    CHECK (source_id IS NULL OR (typeof(source_id) = 'blob' AND length(source_id) = 16)), -- wire.Session_Id
+    job_id            BLOB    CHECK (job_id IS NULL OR (typeof(job_id) = 'blob' AND length(job_id) = 16)), -- wire.Job_Id
 
     profile    TEXT NOT NULL CHECK (typeof(profile)   = 'text' AND length(profile)   <= 64),
     model      TEXT NOT NULL CHECK (typeof(model)     = 'text' AND length(model)     <= 128),
     reasoning  TEXT NOT NULL CHECK (typeof(reasoning) = 'text' AND length(reasoning) <= 32),
-    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991),
+    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- wire.Config_Rev
     permission TEXT NOT NULL CHECK (permission IN ('strict', 'normal', 'yolo')),
-    max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991),
+    max_rounds INTEGER CHECK (max_rounds IS NULL OR max_rounds BETWEEN 0 AND 9007199254740991), -- u64
     title      TEXT NOT NULL CHECK (typeof(title) = 'text' AND length(title) <= 256),
     agent      TEXT CHECK (agent IS NULL OR (typeof(agent) = 'text' AND length(agent) <= 64)),
 
     created_by_name    TEXT CHECK (created_by_name    IS NULL OR (typeof(created_by_name)    = 'text' AND length(created_by_name)    <= 64)),
     created_by_version TEXT CHECK (created_by_version IS NULL OR (typeof(created_by_version) = 'text' AND length(created_by_version) <= 32)),
 
-    message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991),
-    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
-    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+    message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991), -- u64
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), -- u64
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0), -- u64
 
     -- Id-minting marks. Monotonic; only ever raised. Recovery reads these, never
     -- MAX(seq) over events: a truncating rewind would reclaim ids.
@@ -80,15 +80,15 @@ CREATE UNIQUE INDEX events_by_session_seq ON events(session_id, seq);
 -- message body stays in events.payload and is joined back by (session_id, seq).
 -- The primary key is session.history's page: keyset, newest message id first.
 CREATE TABLE messages (
-    session_id BLOB NOT NULL
+    session_id BLOB NOT NULL -- wire.Session_Id
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
         REFERENCES sessions(id) ON DELETE CASCADE,
-    message_id INTEGER NOT NULL CHECK (message_id BETWEEN 1 AND 9007199254740991),
-    seq        INTEGER NOT NULL CHECK (seq        BETWEEN 1 AND 9007199254740991),
+    message_id INTEGER NOT NULL CHECK (message_id BETWEEN 1 AND 9007199254740991), -- wire.Message_Id
+    seq        INTEGER NOT NULL CHECK (seq        BETWEEN 1 AND 9007199254740991), -- wire.Seq
 
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'compaction')),
-    run_id     INTEGER CHECK (run_id     IS NULL OR run_id     BETWEEN 1 AND 9007199254740991),
-    config_rev INTEGER CHECK (config_rev IS NULL OR config_rev BETWEEN 0 AND 9007199254740991),
+    run_id     INTEGER CHECK (run_id     IS NULL OR run_id     BETWEEN 1 AND 9007199254740991), -- wire.Run_Id
+    config_rev INTEGER CHECK (config_rev IS NULL OR config_rev BETWEEN 0 AND 9007199254740991), -- wire.Config_Rev
 
     -- What answered, from the turn's provenance — not the config_rev it was
     -- requested under. Null until the engine records provenance.
@@ -97,14 +97,14 @@ CREATE TABLE messages (
 
     finish TEXT CHECK (finish IS NULL OR
         finish IN ('stop', 'length', 'content_filter', 'tool_calls', 'canceled', 'error', 'unknown')),
-    tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       >= 0),
-    tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      >= 0),
-    tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   >= 0),
-    tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  >= 0),
-    tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0),
+    tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       >= 0), -- u64
+    tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      >= 0), -- u64
+    tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   >= 0), -- u64
+    tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  >= 0), -- u64
+    tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0), -- u64
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),
 
-    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), -- u64
 
     PRIMARY KEY (session_id, message_id)
 ) WITHOUT ROWID;
@@ -116,10 +116,10 @@ CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS 
 -- Projection of `config.changed`, rebuildable by replay. session.config can fetch
 -- any past revision, which would otherwise mean folding the log from seq 1.
 CREATE TABLE session_configs (
-    session_id BLOB NOT NULL
+    session_id BLOB NOT NULL -- wire.Session_Id
         CHECK (typeof(session_id) = 'blob' AND length(session_id) = 16)
         REFERENCES sessions(id) ON DELETE CASCADE,
-    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991),
+    config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- wire.Config_Rev
     model      TEXT NOT NULL CHECK (typeof(model)     = 'text' AND length(model)     <= 128),
     reasoning  TEXT NOT NULL CHECK (typeof(reasoning) = 'text' AND length(reasoning) <= 32),
 
