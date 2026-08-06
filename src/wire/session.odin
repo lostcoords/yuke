@@ -389,8 +389,8 @@ Session_Origin :: union {
     Session_Origin_Cron,
 }
 
-// Discriminator for an origin arm. The one place the four strings are spelled, so
-// a persisted discriminator cannot drift from the emitted one.
+// Discriminator for an origin arm. This proc and its inverse are the only place the four
+// strings are spelled, so a persisted discriminator cannot drift from the emitted one.
 session_origin_type_to_wire :: proc(self: Session_Origin) -> string {
     switch _ in self {
     case Session_Origin_Root:
@@ -407,6 +407,26 @@ session_origin_type_to_wire :: proc(self: Session_Origin) -> string {
     }
 
     return ""
+}
+
+// Empty origin arm for a wire discriminator; ok is false for a string no arm spells. Arm ids
+// aren't encoded in the discriminator, so a caller fills them in from wherever it flattened them.
+session_origin_type_from_wire :: proc(s: string) -> (Session_Origin, bool) {
+    switch s {
+    case "root":
+        return Session_Origin_Root{}, true
+
+    case "child":
+        return Session_Origin_Child{}, true
+
+    case "fork":
+        return Session_Origin_Fork{}, true
+
+    case "cron":
+        return Session_Origin_Cron{}, true
+    }
+
+    return nil, false
 }
 
 // Write internal-tagged JSON with `type` first.
