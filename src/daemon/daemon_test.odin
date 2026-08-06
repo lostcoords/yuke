@@ -18,6 +18,7 @@ import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
 import client "src:client"
+import store "src:daemon/store"
 import wire "src:wire"
 
 // --- Daemon driver tests ------------------------------------------------------
@@ -305,9 +306,9 @@ handler_callbacks :: proc() -> client.Client_Callbacks {
     }
 }
 
-// Bring up a daemon, drive `obs`'s single request through the real client driver,
-// and run its check(s) to completion. Binds an OS-assigned ephemeral port.
-run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
+// Bring up a daemon, drive `obs`'s single request through the client driver, and run its
+// check(s). `db_path`/`sessions` seed a store; both default to the storeless daemon most methods need.
+run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: ..wire.Session) {
     obs.t = t
 
     nbio.acquire_thread_event_loop()
@@ -315,8 +316,12 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path})
     testing.expect_value(t, derr, Error.None)
+
+    for session in sessions {
+        testing.expect_value(t, store.session_create(d.store, session, nil), nil)
+    }
 
     c: client.Client
     transport, terr := client.ws_create(

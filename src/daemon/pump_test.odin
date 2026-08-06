@@ -1103,6 +1103,24 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
     test_teardown(&d)
 }
 
+// A protocol-valid registry row: every id satisfies `enforce_id`, and a root session
+// carries a creator, since the store refuses a row the wire would. Callers override fields as needed.
+daemon_test_session :: proc(id: wire.Session_Id) -> wire.Session {
+    return wire.Session {
+        id = id,
+        workspace_id = wire.Workspace_Id(pump_test_session('f')),
+        profile = "default",
+        model = "test/model",
+        reasoning = "low",
+        permission = .Normal,
+        title = "test",
+        created_at_ms = 1,
+        updated_at_ms = 1,
+        created_by = wire.Client{name = "yuke-test", version = "0.1.0"},
+        origin = wire.Session_Origin_Root{},
+    }
+}
+
 // Every event carries a foreign key into `sessions`, so a synthetic id needs its
 // registry row before the pump can log anything for it. The daemon has no session
 // engine yet, so tests stand in for what `session.create` will do.
@@ -1112,19 +1130,6 @@ daemon_test_session_create :: proc(t: ^testing.T, d: ^Daemon, ids: ..wire.Sessio
     }
 
     for id in ids {
-        summary := wire.Session {
-            id = id,
-            profile = "default",
-            model = "test/model",
-            reasoning = "low",
-            permission = .Normal,
-            title = "test",
-            created_at_ms = 1,
-            updated_at_ms = 1,
-            created_by = wire.Client{name = "yuke-test", version = "0.1.0"},
-            origin = wire.Session_Origin_Root{},
-        }
-
-        testing.expect_value(t, store.session_create(d.store, summary, nil), nil)
+        testing.expect_value(t, store.session_create(d.store, daemon_test_session(id), nil), nil)
     }
 }
