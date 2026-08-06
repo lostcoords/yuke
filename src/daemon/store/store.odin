@@ -3,6 +3,8 @@ package store
 import "core:mem"
 import "core:strings"
 
+import "src:daemon/store/queries"
+
 import "libs:bindings/sqlite"
 
 // Lock wait for external inspectors; the daemon itself keeps a single writer.
@@ -64,16 +66,95 @@ Error :: union #shared_nil {
     Store_Error,
     sqlite.Result,
     sqlite.Scan_Error,
+    sqlite.Read_Error,
+}
+
+// Unwrap a `Reader` call's error into this package's own union. `sqlite.Error` is
+// a distinct union type, so its dynamic variant is re-wrapped rather than assigned.
+@(private)
+read_err :: proc(err: sqlite.Error) -> Error {
+    switch e in err {
+    case sqlite.Result:
+        return e
+    case sqlite.Scan_Error:
+        return e
+    case sqlite.Read_Error:
+        return e
+    }
+
+    return nil
+}
+
+// The three full-row inserts: their SQL is built by `sqlite.insert_all_sql` from
+// their (schema-generated) parameter structs, not from `queries/`, so they are
+// bound directly rather than through the generated `Queries` registry.
+@(private)
+Insert_Binds :: struct {
+    create_session: sqlite.Bind_Mapping(queries.Create_Session_Params),
+    insert_message: sqlite.Bind_Mapping(queries.Insert_Message_Params),
+    insert_config:  sqlite.Bind_Mapping(queries.Insert_Config_Params),
+}
+
+// `inserts` is an out-parameter, not a named return: a caller's own `or_return` would
+// discard a named return on the error path, dropping whatever was already prepared —
+// the same reason `queries.queries_init` takes `^Queries`.
+@(private)
+inserts_prepare :: proc(db: ^sqlite.Conn, inserts: ^Insert_Binds, allocator: mem.Allocator) -> (err: Error) {
+    assert(db != nil, "inserts_prepare needs a connection")
+    assert(inserts != nil, "inserts_prepare needs a set to fill")
+
+    inserts.create_session = insert_bind_prepare(db, "sessions", queries.Create_Session_Params, allocator) or_return
+    inserts.insert_message = insert_bind_prepare(db, "messages", queries.Insert_Message_Params, allocator) or_return
+    inserts.insert_config = insert_bind_prepare(
+        db,
+        "session_configs",
+        queries.Insert_Config_Params,
+        allocator,
+    ) or_return
+
+    return nil
+}
+
+// One full-row insert: its SQL is generated from `P` itself, so a mismatch between the
+// two is impossible by construction and asserts rather than propagating.
+@(private)
+insert_bind_prepare :: proc(
+    db: ^sqlite.Conn,
+    table: string,
+    $P: typeid,
+    allocator: mem.Allocator,
+) -> (
+    bind: sqlite.Bind_Mapping(P),
+    err: Error,
+) {
+    sql := sqlite.insert_all_sql(table, P, allocator)
+    defer delete(sql, allocator)
+
+    stmt := sqlite.prepare(db, sql) or_return
+    bind_err: sqlite.Bind_Error
+    bind, bind_err = sqlite.bind_prepare(stmt, P)
+    assert(bind_err == .None, "the generated insert matches its parameter struct")
+
+    return bind, nil
+}
+
+@(private)
+inserts_destroy :: proc(inserts: ^Insert_Binds) {
+    assert(inserts != nil, "inserts_destroy needs a set")
+
+    sqlite.finalize(inserts.create_session.statement)
+    sqlite.finalize(inserts.insert_message.statement)
+    sqlite.finalize(inserts.insert_config.statement)
 }
 
 // The daemon's event store. Owns the writer connection, which the writer
 // discipline confines to the reactor thread.
 Store :: struct {
-    writer:    ^sqlite.Conn,
-    stmts:     Statements,
-    mappings:  Mappings,
-    binds:     Binds,
-    allocator: mem.Allocator,
+    writer:       ^sqlite.Conn,
+    queries:      queries.Queries,
+    inserts:      Insert_Binds,
+    events_after: Events_After_Reader,
+    allocator:    mem.Allocator,
 }
 
 // Open the store at `path`, creating it if absent, and migrate it to the latest
@@ -104,36 +185,32 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
     configure(db) or_return
     migrations_apply(db, MIGRATIONS[:], APPLICATION_ID, version) or_return
 
-    stmts: Statements
-    mappings: Mappings
-    binds: Binds
+    q: queries.Queries
+    inserts: Insert_Binds
+    events_after: Events_After_Reader
     defer if err != nil {
-        // Mappings resolve columns of these statements, so they die first.
-        mappings_destroy(&mappings, allocator)
-
-        // Unprepared slots are still nil, which `finalize` accepts.
-        for st in stmts {
-            sqlite.finalize(st)
-        }
+        queries.queries_destroy(&q, allocator)
+        inserts_destroy(&inserts)
+        events_after_destroy(&events_after, allocator)
     }
 
-    for sql, id in STATEMENT_SQL {
-        stmts[id] = sqlite.prepare(db, sql) or_return
+    if init_err := queries.queries_init(db, &q, allocator); init_err != nil {
+        return nil, read_err(init_err)
     }
+    inserts_prepare(db, &inserts, allocator) or_return
+    events_after = events_after_prepare(db, allocator) or_return
 
-    mappings_prepare(stmts, &mappings, allocator) or_return
-    binds_prepare(stmts, &binds)
     opened, aerr := new(Store, allocator)
     if aerr != nil {
         return nil, Store_Error.Alloc_Failed
     }
 
     opened^ = Store {
-        writer    = db,
-        stmts     = stmts,
-        mappings  = mappings,
-        binds     = binds,
-        allocator = allocator,
+        writer       = db,
+        queries      = q,
+        inserts      = inserts,
+        events_after = events_after,
+        allocator    = allocator,
     }
 
     return opened, nil
@@ -144,12 +221,9 @@ close :: proc(s: ^Store) {
     assert(s != nil, "close needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    // Mappings resolve columns of these statements, so they die first.
-    mappings_destroy(&s.mappings, s.allocator)
-
-    for st in s.stmts {
-        sqlite.finalize(st)
-    }
+    queries.queries_destroy(&s.queries, s.allocator)
+    inserts_destroy(&s.inserts)
+    events_after_destroy(&s.events_after, s.allocator)
 
     rc := sqlite.close(s.writer)
     assert(rc == .Ok, "a SQLite child outlived the store it belongs to")
@@ -158,10 +232,9 @@ close :: proc(s: ^Store) {
     free(s, s.allocator)
 }
 
-// WAL plus `synchronous=NORMAL` is the durability contract: commits survive a process
-// crash, power loss loses only the newest ones. Foreign keys are set here too since the
-// pragma defaults off, is per-connection, and a no-op mid-transaction — forgetting it would
-// silently disable every ON DELETE CASCADE. All three are read back for that reason.
+// WAL plus `synchronous=NORMAL`: commits survive a crash, power loss only the newest.
+// Foreign keys default off, are per-connection, and are a no-op mid-transaction —
+// forgetting one silently disables every ON DELETE CASCADE, so all three are read back.
 @(private)
 configure :: proc(db: ^sqlite.Conn) -> Error {
     assert(db != nil, "configure needs a connection")

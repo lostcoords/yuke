@@ -1,7 +1,9 @@
 package store
 
-import "libs:bindings/sqlite"
+import "src:daemon/store/queries"
 import "src:wire"
+
+import "libs:bindings/sqlite"
 
 // Session-scoped ids. Zero means no bump: the store keeps the larger of the
 // stored and offered mark, so a stale bump can never rewind one.
@@ -60,43 +62,62 @@ Event_Row :: struct {
     payload: string,
 }
 
-// Field names are the statements' parameter names: a marker binds to the field
-// that shares its name, so a parameter struct carries no ordering relationship
-// to its SQL. Shared by the two statements keyed on a session alone.
-@(private)
-Session_Params :: struct {
-    session_id: wire.Session_Id,
-}
-
-@(private)
-Advance_Seq_Params :: struct {
-    session_id: wire.Session_Id,
-    seq:        wire.Seq,
-}
-
-// `name` is the broadcast's wire name, not its Odin identifier, so the enum is
-// converted at the call site rather than bound as a discriminant.
-@(private)
-Append_Event_Params :: struct {
-    session_id: wire.Session_Id,
-    seq:        wire.Seq,
-    name:       string,
-    payload:    string,
-}
-
-// `Id_Marks` already names its columns for the recovery read; the bump's markers
-// are those same names, so one struct serves both directions.
-@(private)
-Bump_Ids_Params :: struct {
-    session_id: wire.Session_Id,
-    using ids:  Id_Marks,
-}
-
 @(private)
 Events_After_Params :: struct {
     session_id: wire.Session_Id,
     seq:        wire.Seq,
     limit:      int,
+}
+
+// `events_by_session_seq` is this read's index.
+@(private)
+EVENTS_AFTER_SQL :: `SELECT seq, name, payload FROM events
+    WHERE session_id = :session_id AND seq > :seq ORDER BY seq LIMIT :limit`
+
+// `Event_Row.name` is borrowed, which `sqlite.Reader` refuses at prepare time — a
+// borrowed field would dangle past the read loop's own step. Hand-rolled bind and
+// scan mirror what `Reader` bundles, minus that restriction.
+@(private)
+Events_After_Reader :: struct {
+    statement: ^sqlite.Stmt,
+    bind:      sqlite.Bind_Mapping(Events_After_Params),
+    scan:      sqlite.Scan_Mapping(Event_Row),
+}
+
+@(private)
+events_after_prepare :: proc(
+    db: ^sqlite.Conn,
+    allocator := context.allocator,
+) -> (
+    r: Events_After_Reader,
+    err: Error,
+) {
+    assert(db != nil, "events_after_prepare needs a connection")
+
+    st := sqlite.prepare(db, EVENTS_AFTER_SQL) or_return
+
+    bind, bind_err := sqlite.bind_prepare(st, Events_After_Params)
+    assert(bind_err == .None, "the tail read's SQL matches Events_After_Params")
+
+    scan, scan_err := sqlite.scan_prepare(st, Event_Row, allocator)
+    if scan_err == .Out_Of_Memory {
+        sqlite.finalize(st)
+
+        return {}, scan_err
+    }
+
+    assert(scan_err == .None, "the tail read matches Event_Row")
+
+    return Events_After_Reader{statement = st, bind = bind, scan = scan}, nil
+}
+
+@(private)
+events_after_destroy :: proc(r: ^Events_After_Reader, allocator := context.allocator) {
+    assert(r != nil, "events_after_destroy needs a reader")
+
+    sqlite.scan_mapping_destroy(&r.scan, allocator)
+    sqlite.finalize(r.statement)
+    r^ = {}
 }
 
 // Append one durable event and advance the session's seq high-water in a single
@@ -117,9 +138,8 @@ event_append :: proc(
     assert(seq > 0, "seq numbering starts at 1")
     assert(len(payload) > 0, "a durable event carries its encoded payload")
 
-    // The typed payload is the single source: the row's name is derived from it
-    // rather than passed alongside, so the two cannot disagree, and the
-    // projection folds the same value the row encodes.
+    // The typed payload is the single source: the row's name is derived from it, not
+    // passed alongside, so the two cannot disagree, and the projection folds the same value.
     name, named := wire.broadcast_data_name(data)
     assert(named, "a durable payload names its broadcast")
     assert(wire.broadcast_name_class(name) == .Durable_Gated, "only durable broadcasts are logged")
@@ -148,21 +168,30 @@ high_water :: proc(s: ^Store, session: wire.Session_Id) -> (hw: High_Water, err:
     assert(s != nil, "high_water needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    st := s.stmts[.Read_High]
-    assert(st != nil, "the statement set is prepared at open")
+    reader := &s.queries.read_high
+    defer _ = sqlite.reset_and_clear(reader.statement)
 
-    defer _ = sqlite.reset_and_clear(st)
+    sqlite.bind(&reader.bind, &queries.Read_High_Params{session_id = session}) or_return
 
-    sqlite.bind(&s.binds.read_high, &Session_Params{session_id = session}) or_return
-
-    step := sqlite.step(st)
+    step := sqlite.step(reader.statement)
 
     if step == .Row {
-        scan_err := sqlite.scan(&s.mappings.read_high, &hw, context.allocator)
+        row: queries.Read_High_Row
+        scan_err := sqlite.scan(&reader.scan, &row, context.allocator)
+
         if scan_err != .None {
             err = scan_err
         } else {
-            step = sqlite.step(st)
+            hw = High_Water {
+                seq = row.seq_high,
+                ids = Id_Marks {
+                    message_id = row.message_id_high,
+                    run_id = row.run_id_high,
+                    input_id = row.input_id_high,
+                    config_rev = row.config_rev_high,
+                },
+            }
+            step = sqlite.step(reader.statement)
         }
     }
 
@@ -204,12 +233,10 @@ events_visit_after :: proc(
     assert(visitor != nil, "an event visit needs a callback")
     assert(allocator.procedure != nil, "an event visit needs an allocator")
 
-    st := s.stmts[.Events_After]
-    assert(st != nil, "the statement set is prepared at open")
-
+    st := s.events_after.statement
     defer _ = sqlite.reset_and_clear(st)
 
-    sqlite.bind(&s.binds.events_after, &Events_After_Params{session_id = session, seq = seq, limit = limit}) or_return
+    sqlite.bind(&s.events_after.bind, &Events_After_Params{session_id = session, seq = seq, limit = limit}) or_return
 
     step: sqlite.Result
     previous := seq
@@ -220,7 +247,7 @@ events_visit_after :: proc(
         }
 
         row: Event_Row
-        scan_err := sqlite.scan(&s.mappings.events_after, &row, allocator)
+        scan_err := sqlite.scan(&s.events_after.scan, &row, allocator)
 
         if scan_err != .None {
             err = scan_err
@@ -299,9 +326,9 @@ append_body :: proc(
     assert(len(payload) > 0, "append_body receives an encoded payload")
 
     // The guard is the contiguity rule itself: only the row whose high-water is `seq - 1`
-    // advances, so every gap or replay matches nothing — as does a session that was
-    // never created, which the existence read then tells apart.
-    sqlite.execute(&s.binds.advance_seq, &Advance_Seq_Params{session_id = session, seq = seq}) or_return
+    // advances, so every gap, replay, or never-created session matches nothing — the
+    // existence read then tells them apart.
+    queries.advance_seq(&s.queries, {session_id = session, seq = seq}) or_return
 
     changed := sqlite.changes(s.writer)
     assert(changed <= 1, "the seq guard updates at most one session row")
@@ -316,14 +343,9 @@ append_body :: proc(
 
     assert(changed == 1, "a contiguous append advances its session row")
 
-    sqlite.execute(
-        &s.binds.append_event,
-        &Append_Event_Params {
-            session_id = session,
-            seq = seq,
-            name = wire.broadcast_name_to_wire(name),
-            payload = payload,
-        },
+    queries.append_event(
+        &s.queries,
+        {session_id = session, seq = seq, name = wire.broadcast_name_to_wire(name), payload = payload},
     ) or_return
 
     // `config_rev` 0 means "no revision", so a config change can raise nothing at
@@ -342,12 +364,10 @@ session_exists :: proc(s: ^Store, session: wire.Session_Id) -> (exists: bool, er
     assert(s != nil, "the existence read needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    st := s.stmts[.Session_Exists]
-    assert(st != nil, "the statement set is prepared at open")
-
+    st := s.queries.session_exists.statement
     defer _ = sqlite.reset_and_clear(st)
 
-    sqlite.bind(&s.binds.session_exists, &Session_Params{session_id = session}) or_return
+    sqlite.bind(&s.queries.session_exists, &queries.Session_Exists_Params{session_id = session}) or_return
 
     step := sqlite.step(st)
 
@@ -367,7 +387,16 @@ id_marks_advance :: proc(s: ^Store, session: wire.Session_Id, ids: Id_Marks) -> 
     assert(s.writer != nil, "id mark advance needs an open writer")
     assert(ids != Id_Marks{}, "an id mark advance raises at least one family")
 
-    sqlite.execute(&s.binds.bump_ids, &Bump_Ids_Params{session_id = session, ids = ids}) or_return
+    queries.bump_ids(
+        &s.queries,
+        {
+            session_id = session,
+            message_id_high = ids.message_id,
+            run_id_high = ids.run_id,
+            input_id_high = ids.input_id,
+            config_rev_high = ids.config_rev,
+        },
+    ) or_return
     assert(sqlite.changes(s.writer) == 1, "id marks advance an existing session row")
 
     return nil

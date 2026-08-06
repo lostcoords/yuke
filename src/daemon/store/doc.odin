@@ -12,16 +12,14 @@ damaged, foreign, or future-versioned files are refused rather than asserted.
 `Error` is a union: `Store_Error` for outcomes the store decides itself, and the
 `sqlite.Result` / `sqlite.Scan_Error` a lower layer produced, kept verbatim rather
 than collapsed into a store name. `or_return` lifts either into it, so a call site
-propagating a failure needs no conversion.
-Assertions guard internal invariants instead (a dense migration set, a live
-store that owns its writer, and statement ownership).
+propagating a failure needs no conversion. Assertions guard internal invariants instead
+(a dense migration set, a live store that owns its writer, and statement ownership).
 
 Migrations are flat numbered files under `migrations/`, embedded with `#load` and
-applied forward-only, there are no down scripts.
-Each pending step runs in its own `BEGIN IMMEDIATE` transaction that also writes
-the step's hash row and bumps `PRAGMA user_version`, which is the applied-version
-record. A database whose `user_version` exceeds the last embedded step was written
-by a newer daemon and is refused.
+applied forward-only; there are no down scripts. Each pending step runs in its own
+`BEGIN IMMEDIATE` transaction that also writes the step's hash row and bumps `PRAGMA
+user_version`, which is the applied-version record. A database whose `user_version`
+exceeds the last embedded step was written by a newer daemon and is refused.
 
 Shipped migration text is immutable. `migration_hash` records an FNV-1a of each
 step's exact bytes when it is applied, and every open checks that the embedded

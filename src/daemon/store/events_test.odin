@@ -705,12 +705,11 @@ test_session :: proc(tag: byte) -> wire.Session_Id {
     return wire.Session_Id(id)
 }
 
-// Every event and projected message carries a foreign key into `sessions`, so a
-// synthetic id needs its registry row before anything can be appended for it.
 @(private)
 test_session_summary :: proc(id: wire.Session_Id) -> wire.Session {
     return wire.Session {
         id = id,
+        workspace_id = wire.Workspace_Id(test_session(0xf0)),
         profile = "default",
         model = "test/model",
         reasoning = "low",
