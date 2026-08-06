@@ -10,7 +10,6 @@ import wire "src:wire"
 // Why a broadcast never reached the fan-out. A durable broadcast that fails here was
 // neither logged nor delivered, so the stream stays contiguous.
 Pump_Error :: enum {
-    // No error.
     None,
 
     // A durable broadcast was emitted with no database configured; it has nowhere to
@@ -32,9 +31,8 @@ Pump_Error :: enum {
     Frame_Too_Large,
 }
 
-// Emit one broadcast. A `Durable_Gated` broadcast is assigned its seq, committed, and
-// only then fanned out; every other class fans out directly. Runs on the reactor
-// thread, like every other store touch.
+// Emit one broadcast. A `Durable_Gated` broadcast is assigned its seq, committed, and only
+// then fanned out; every other class fans out directly. Runs on the reactor thread.
 broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
     assert(d != nil, "broadcast needs daemon state")
     assert(wire.broadcast_data_validate(data) == .None, "daemon built an invalid broadcast payload")
@@ -94,9 +92,8 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
         pump_frame_check(&frame, name) or_return
     }
 
-    // A removed session mints nothing further, and the mark is pure memoization: an
-    // absent entry is re-read from the store. Dropping it here is what keeps the map
-    // bounded by live sessions instead of by everything the daemon ever sequenced.
+    // The mark is pure memoization (an absent entry is re-read from the store), so
+    // dropping it on removal keeps the map bounded by live sessions, not by history.
     if name == .Session_Removed {
         sid, named := session.?
         assert(named, "session.removed names its session")
@@ -162,9 +159,8 @@ pump_commit :: proc(
     ids := pump_id_marks(data)
 
     if aerr := store.event_append(d.store, session, seq, data, payload, ids); aerr != nil {
-        // Seq_Conflict means our tracked high-water diverged from the log: a daemon
-        // bug, so it crashes here. Other failures drop the cached mark, since it
-        // can't be trusted after a failed append, and degrade.
+        // Seq_Conflict means our high-water mark diverged from the log: a daemon bug,
+        // so it crashes here. Other failures drop the now-untrustworthy mark and degrade.
         assert(aerr != .Seq_Conflict, "the pump minted a seq the log did not continue")
         delete_key(&d.seq_high, session)
 
@@ -182,9 +178,8 @@ pump_commit :: proc(
     return .None
 }
 
-// Next durable seq for `session`: `high_water + 1`. The mark is recovered from the
-// store the first time the daemon touches the session and tracked in memory after; an
-// absent entry is always re-read rather than assumed zero.
+// Next durable seq for `session`: `high_water + 1`. Recovered from the store on first
+// touch and tracked in memory after; an absent entry is re-read, never assumed zero.
 @(private)
 pump_next_seq :: proc(d: ^Daemon, session: wire.Session_Id) -> (seq: wire.Seq, err: Pump_Error) {
     assert(d != nil, "seq minting needs daemon state")
@@ -253,9 +248,9 @@ pump_stamp_seq :: proc(data: wire.Broadcast_Data, seq: wire.Seq) -> wire.Broadca
     unreachable()
 }
 
-// Ids a durable payload proves were handed out, raised in the append's own
-// transaction. The store keeps the larger of the stored and offered mark, so naming an
-// id that already existed costs nothing while missing one lets a restart mint it twice.
+// Ids a durable payload proves were handed out, raised in the append's transaction. The
+// store keeps the larger mark: naming an existing id is free, missing one lets a restart
+// mint it twice.
 @(private)
 pump_id_marks :: proc(data: wire.Broadcast_Data) -> store.Id_Marks {
     assert(data != nil, "id marks are derived from a payload")
@@ -347,9 +342,8 @@ pump_send :: proc(
     pump_fan_out(d, name, session, frame)
 }
 
-// Deliver an encoded broadcast to every connection its class admits. Closing a
-// connection defers its release to the loop, so the connection table is stable across
-// this walk.
+// Deliver an encoded broadcast to every connection its class admits. Closing a connection
+// defers its release to the loop, so the connection table is stable across this walk.
 @(private)
 pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.Session_Id), frame: []byte) {
     assert(d != nil, "fan-out needs daemon state")
@@ -382,9 +376,8 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
             continue
         }
 
-        // Shedding is the droppable class's contract: the receiver sees the offset gap
-        // and resyncs. No other class may skip a frame, so the connection dies instead
-        // and the client reconnects.
+        // Shedding is the droppable class's contract: the receiver sees the offset gap and
+        // resyncs. No other class may skip a frame, so it dies instead and reconnects.
         if send_err == .Send_Queue_Full && wire.broadcast_class_droppable(class) {
             log.debug("daemon: shed a droppable broadcast under send backpressure")
 
@@ -403,10 +396,9 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
     }
 }
 
-// Tell one lagging connection how many of its live deltas were dropped. Point to point:
-// no other connection shares this connection's backpressure. The count is cumulative
-// since the last marker this connection accepted, so a marker that cannot be sent is
-// simply carried into the next shed.
+// Tell one lagging connection how many of its live deltas were dropped; no other
+// connection shares its backpressure. The count is cumulative since the last accepted
+// marker, so a send failure just carries forward into the next shed.
 @(private)
 pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
     assert(d != nil, "a shed marker needs daemon state")
@@ -463,13 +455,12 @@ method_subscription_set :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
 // Whether `conn` subscribed to `session`.
 conn_subscribed :: proc(conn: ^Conn, session: wire.Session_Id) -> bool {
     _, subscribed := conn_subscription_index(conn, session)
-
     return subscribed
 }
 
-// Where `session` sits in the connection's subscription set. The set is a
-// replace-semantics list bounded by `LIMITS.max_subscriptions`, so a linear scan is the
-// membership test, and the position is what the parallel shed counts are keyed on.
+// Where `session` sits in the connection's subscription set: a replace-semantics list
+// bounded by `LIMITS.max_subscriptions`, so a linear scan is the membership test, and the
+// position is what the parallel shed counts key on.
 @(private)
 conn_subscription_index :: proc(conn: ^Conn, session: wire.Session_Id) -> (index: int, subscribed: bool) {
     assert(conn != nil, "subscription test needs connection state")

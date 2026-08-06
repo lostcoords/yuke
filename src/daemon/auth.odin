@@ -37,9 +37,8 @@ Auth_Result :: enum {
     Ambiguous,
 }
 
-// Authenticate a request. Exactly one credential source is accepted; duplicate
-// headers, duplicate query parameters, and header+query combinations are rejected as
-// ambiguous rather than resolved by precedence.
+// Authenticate a request. Exactly one credential source is accepted; duplicates and
+// header+query combinations are rejected as ambiguous rather than resolved by precedence.
 authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth_Result {
     assert(d != nil, "authentication needs a daemon")
 
@@ -113,8 +112,7 @@ Bearer_Parse :: enum {
 }
 
 // Extract credentials from `Authorization: Bearer <token>`. The scheme is
-// case-insensitive and the separator is one or more spaces, as required by the
-// HTTP authentication grammar.
+// case-insensitive and the separator is one or more spaces, per the HTTP auth grammar.
 bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
     separator := strings.index_byte(value, ' ')
     if separator <= 0 {

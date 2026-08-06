@@ -15,7 +15,6 @@ RESYNC_CHUNK :: 512
 // Why a resync cut could not be built. Only `Unknown_Session` names something the
 // client did; the rest are faults in our own log or in the cut we derived from it.
 Resync_Error :: enum {
-    // No error.
     None,
 
     // The session has no durable stream, so nothing ever wrote it.
@@ -34,10 +33,7 @@ Resync_Error :: enum {
 
 // A run the fold left open: a `run.started` no `run.done` closed.
 Resync_Open_Run :: struct {
-    // Run the session is executing.
     run_id:        wire.Run_Id,
-
-    // What kind of run is open.
     kind:          wire.Run_Kind,
 
     // Why compaction is running; present exactly when `kind` is compaction.
@@ -60,8 +56,7 @@ Resync_Fold :: struct {
     configs:  [dynamic]wire.Run_Config,
 
     // Highest message id the log committed; zero until one is, since id 0 is never
-    // minted. Truncation never lowers it, so every later commit must rise past every
-    // id ever committed.
+    // minted. Truncation never lowers it, so every later commit rises past it.
     highest:  wire.Message_Id,
 
     // Run still open at the cut, if any.
@@ -87,8 +82,7 @@ method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
         send_error(conn, req.id, .Unknown_Session, "unknown session", sa)
 
     case .Store_Failed, .Corrupt_Log, .Invalid_Cut:
-        // A cut our own validator rejects, a log row the codec rejects, and a refused
-        // read are all daemon-side faults: report `Internal` and keep the connection,
+        // All three are daemon-side faults: report `Internal`, keep the connection, and
         // never ship a snapshot we do not believe.
         send_error(conn, req.id, .Internal, "resync snapshot unavailable", sa)
     }
@@ -122,10 +116,9 @@ resync_build :: proc(
         return {}, .Store_Failed
     }
 
-    // The high-water is the session's existence test: the log is the only place a
-    // session is ever written, and the pump advances this mark in the same
-    // transaction as the first row. `d.seq_high` is deliberately not consulted — it
-    // is the pump's minting cache and may lag the log it recovers from.
+    // The high-water is the session's existence test: the pump advances it in the same
+    // transaction as the first row. `d.seq_high` is deliberately not consulted — it is
+    // the pump's minting cache and may lag the log it recovers from.
     if hw.seq == 0 {
         return {}, .Unknown_Session
     }
@@ -140,9 +133,8 @@ resync_build :: proc(
         return {}, .Corrupt_Log
     }
 
-    // The finalized boundary is the store's minted mark rather than the fold's own
-    // maximum: truncated ids and compaction dividers are finalized too, and the mark
-    // still covers them once no message in the transcript carries them.
+    // The boundary is the store's minted mark, not the fold's own maximum: truncated
+    // ids and compaction dividers are finalized too, even once no message carries them.
     boundary: Maybe(wire.Message_Id)
 
     if hw.message_id > 0 {
@@ -269,10 +261,9 @@ resync_fold :: proc(
     assert(d.store != nil, "a fold needs an open store")
     assert(base_seq > 0, "a folded session has a committed stream")
 
-    // The frame arena cannot reclaim a superseded backing array, so growth by doubling
-    // strands roughly the final size again. Every row contributes at most one message
-    // and at most one config, so the high-water bounds both; the read chunk caps what a
-    // long log reserves up front.
+    // The frame arena can't reclaim a superseded backing array, so growth by doubling
+    // strands roughly the final size again. Every row contributes at most one message and
+    // one config, so the high-water bounds both; the chunk caps what a long log reserves.
     hint := min(int(base_seq), RESYNC_CHUNK)
     fold.messages = make([dynamic]wire.Message, 0, hint, sa)
     fold.configs = make([dynamic]wire.Run_Config, 0, hint, sa)

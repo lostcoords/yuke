@@ -55,9 +55,8 @@ router_init :: proc(d: ^Daemon) {
 
 }
 
-// A `?token=` credential rides in the URL. RFC 6750 §2.3 asks this only of 2xx; every
-// response the application reaches is marked, since the URL itself is the secret. The
-// driver's framing refusals answer before any middleware and go out unmarked.
+// A `?token=` credential rides in the URL, so every response the application reaches is
+// marked private, not just 2xx as RFC 6750 §2.3 asks; framing refusals answer unmarked.
 middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     // A duplicated `token` still carries a credential, so its 400 is marked too.
     if _, lookup := http.query_value(ctx.request.query, "token"); lookup == .Missing {
@@ -130,8 +129,7 @@ router_not_found :: proc(ctx: ^Http_Context) {
 }
 
 // Path pattern matched a registered route, but not this method. `ctx.allow` borrows router
-// scratch, which `conn_add_header` clones. Pipelining is not refused here: `Allow` says
-// more than a 400 would.
+// scratch, which `conn_add_header` clones. Pipelining isn't refused: `Allow` says more.
 router_method_not_allowed :: proc(ctx: ^Http_Context) {
     if !http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) {
         return
@@ -205,10 +203,9 @@ route_blob_get :: proc(ctx: ^Http_Context) {
         return
     }
 
-    // Close the lstat/open TOCTOU: `nbio.open_sync` has no O_NOFOLLOW, so a path swap
-    // after the lstat could hand back a symlink target. Confirm the opened handle is
-    // the file that was type-checked by comparing serial numbers; `os.File_Info`
-    // exposes only the inode, so that is the identity checked.
+    // Closes the lstat/open TOCTOU: `nbio.open_sync` has no O_NOFOLLOW, so a path swap
+    // could hand back a symlink target. Confirm the opened handle matches by comparing
+    // inodes, the only identity `os.File_Info` exposes.
     opened: posix.stat_t
     if posix.fstat(posix.FD(i32(file)), &opened) != .OK || u128(u64(opened.st_ino)) != info.inode {
         nbio.close(file, l = d.loop)
@@ -238,10 +235,8 @@ blob_not_found :: proc(c: ^http_server.Conn) {
 }
 
 // Stream a blob body to a temp file, verify its digest against the URL hash, and
-// atomically publish it. Content-addressed: a digest mismatch is a client lie about
-// the address. Idempotent: an already-stored hash short-circuits. The body is
-// streamed and bounded by `LIMITS.max_blob_bytes`, never buffered whole.
-// No pipelining check: `pipelined` cannot see past a streamed body.
+// atomically publish it. Bounded by `LIMITS.max_blob_bytes`; skips `reject_pipelined`,
+// which can't see past a streamed body.
 route_blob_put :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     c := ctx.conn

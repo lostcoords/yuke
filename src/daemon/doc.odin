@@ -46,9 +46,15 @@ reaches Ready. A request that arrives after Ready is routed to its handler: the 
 read-only methods (`session.list`, `catalog.list`, `workspace.describe`,
 `workspace.browse`) plus `subscription.set` and `session.resync` run real handlers, and
 every other method is answered with an `Unknown_Method` error rather than silently
-dropped. With no session engine or catalog loaded yet, `session.list` returns an empty
-page and `catalog.list` the empty revision; the workspace methods read the real
-filesystem.
+dropped. `session.list` (`session_list.odin`) reads the registry: the page, its
+continuation, and the total come from `src/daemon/store`, ordered newest first over the
+`(updated_at_ms DESC, id DESC)` keyset the schema indexes. The cursor carries the
+selection it was minted for, so one replayed against a different scope or population is
+`Bad_Request` rather than a position in a set it never described. `revision` stays 0
+because a `Session_Revision` counts this daemon's own index changes and a daemon that has
+just started has made none; every row reads back idle, which also makes the `active` view
+correctly empty rather than stubbed. With no catalog loaded, `catalog.list` still answers
+the empty revision; the workspace methods read the real filesystem.
 
 The pump (`pump.odin`) is the daemon's single seq authority and its only fan-out path.
 `broadcast` derives the name from the closed payload union, then classifies it
@@ -69,14 +75,12 @@ delivery on a subscribed connection also queues `session.deltas_shed`, an adviso
 marker sent point to point to that connection alone; it carries a cumulative shed
 count, is itself droppable, and is never the recovery mechanism — resync remains that.
 A `Seq_Conflict` from the store means our tracked high-water diverged from the log — a
-daemon bug with no recovery, so the pump asserts and crashes rather than limping on
-with a mark it can no longer trust. An append naming a session with no registry row
-degrades the same as any other store failure (`Store_Failed`), since only a genuine
-divergence of a real mark is a daemon bug; a session that was simply never created is
-not one. Any other store failure instead drops the cached
-mark and degrades with `Store_Failed`.
-Exhausting the wire's finite sequence range is an operating limit reported as
-`Sequence_Exhausted`, not an assertion failure.
+daemon bug with no recovery, so the pump asserts and crashes rather than limping on with
+a mark it can no longer trust. Every other store failure, including an append naming a
+session with no registry row, drops the cached mark and degrades with `Store_Failed`:
+only a genuine divergence of a real mark is a daemon bug. Exhausting the wire's finite
+sequence range is an operating limit reported as `Sequence_Exhausted`, not an assertion
+failure.
 
 The event store's writer connection is reactor-thread only (`src/daemon/store`'s
 discipline). Commits are synchronous SQLite calls under `synchronous=NORMAL`, so they
@@ -85,27 +89,41 @@ autocheckpoint policy owns checkpoint scheduling; the daemon adds no maintenance
 connection, timer, worker, or WAL-file lifetime control.
 
 `session.resync` (`resync.odin`) is the protocol's only catch-up. Its available input
-today is the five durable broadcasts. `message.committed` builds
-the transcript, `transcript.truncated` removes its
-tail while leaving the finalized boundary where it stands (a discarded id is finalized
-too), `config.changed` supplies the revisions the page references, and `run.started` /
-`run.done` open and close the activity's run. An open compaction run resyncs as
-`Activity_State_Compacting`, its reason carried from `run.started` and no config
-attached. The session engine will add the live
-draft, queued inputs, and authoritative session summary; their current absence is an
-implementation boundary, not protocol semantics. `base_seq` is the
-session's committed high-water; a session whose high-water is zero has never been
-written and is `Unknown_Session`. The durable log must be contiguous from seq 1 for a
-session that has one: the fold reads from the first row and treats any gap as
-`Corrupt_Log`; any future pruning of the log needs a resync-aware design before rows
-can be dropped. The high-water read, the fold, and the send all run
-to completion on the reactor thread, so the cut is one instant by construction and no
-commit can interleave with it. The finished cut is put through
-`wire.session_resync_result_validate` before it is sent: a cut that fails, a log row the codec
-rejects, and a config revision no `config.changed` announced are all daemon-side faults
-answered with `Internal`, never shipped for the client to catch. Everything except
-the id, message count, and config fields of the returned session summary is temporary
-until a session engine owns that state.
+today is the five durable broadcasts. `message.committed` builds the transcript,
+`transcript.truncated` removes its tail while leaving the finalized boundary where it
+stands (a discarded id is finalized too), `config.changed` supplies the revisions the
+page references, and `run.started` / `run.done` open and close the activity's run. An
+open compaction run resyncs as `Activity_State_Compacting`, its reason carried from
+`run.started` and no config attached. The session engine will add the live draft, queued
+inputs, and authoritative session summary; their current absence is an implementation
+boundary, not protocol semantics. `base_seq` is the session's committed high-water; a
+session whose high-water is zero has never been written and is `Unknown_Session`. The
+durable log must be contiguous from seq 1 for a session that has one: the fold reads
+from the first row and treats any gap as `Corrupt_Log`; any future pruning of the log
+needs a resync-aware design before rows can be dropped. The high-water read, the fold,
+and the send all run to completion on the reactor thread, so the cut is one instant by
+construction and no commit can interleave with it. The finished cut is put through
+`wire.session_resync_result_validate` before it is sent: a cut that fails, a log row the
+codec rejects, and a config revision no `config.changed` announced are all daemon-side
+faults answered with `Internal`, never shipped for the client to catch. Everything
+except the id, message count, and config fields of the returned session summary is
+temporary until a session engine owns that state.
+
+The script tier (`js.odin`, `js_fs.odin`) is one QuickJS runtime for the whole daemon,
+hung off the `Daemon` and recovered through the runtime and context opaque pointers rather
+than a global. Its three safety controls are set at startup — an allocation ceiling, a
+stack ceiling, and an interrupt handler whose deadline bounds how long one entry may hold
+the reactor — because every other connection waits behind a script that will not yield.
+`yuke:fs` is the only host module installed, and only when a `js_root` is configured: with
+nothing to root against, containment cannot be decided, so the module refuses to load
+rather than reaching an unbounded filesystem. Its calls are read-only and return promises;
+the blocking pass runs on the shared worker pool and its completion settles the promise
+back on the loop. Containment is decided on the worker, after canonicalization, so `..` and
+symlinks are resolved before the prefix test. `<js_root>/index.js` is evaluated at startup
+when present, and a script that raises is a start failure for the same reason an unusable
+`blob_dir` is one. The permission gate `docs/architecture-decisions.md` §5 puts at this
+boundary needs a session to gate against and arrives with the tool set; path containment is
+what is honest today.
 
 `subscription.set` replaces a connection's subscription set wholesale, bounded by
 `LIMITS.max_subscriptions`; the set is stored inline on the `Conn`, so gating allocates
@@ -146,6 +164,10 @@ Ownership:
     and closed by `destroy` after the worker pool drains, since a drained
     completion runs on this loop and may still reach the front door. The pump's
     tracked high-water marks live and die with the store.
+  - The QuickJS context is released after the same drain, and for a sharper reason: an
+    in-flight `yuke:fs` job owns the settle functions of a live promise, so a completion
+    running after the context was freed would settle into freed memory. `Js_Host.pending`
+    counts those jobs and `js_destroy` asserts it reached zero.
 */
 
 package daemon

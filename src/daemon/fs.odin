@@ -8,11 +8,8 @@ import "core:time"
 import "core:unicode/utf8"
 import wire "src:wire"
 
-// Truncate `s` to at most `max` bytes, backing off to the previous UTF-8 rune
-// boundary if `max` lands mid-rune. Keeps peer-influenceable strings (git ref
-// names, filesystem basenames) within a wire byte bound. Filesystem bytes are
-// untrusted: an input that is not valid UTF-8 yields "" so no caller can emit an
-// invalid TEXT frame.
+// Truncate `s` to at most `max` bytes, backing off to the previous UTF-8 rune boundary.
+// Filesystem bytes are untrusted: non-UTF-8 input yields "" rather than an invalid frame.
 clamp_utf8_bytes :: proc(s: string, max: int) -> string {
     assert(max >= 0, "clamp_utf8_bytes: max must be non-negative")
 
@@ -61,9 +58,8 @@ parent_dir :: proc(dir: string) -> Maybe(string) {
 }
 
 // List `dir`'s immediate subdirectories as `Dir_Entry`s, case-insensitively sorted,
-// omitting files, the `.git` directory, names past the wire's 256-byte bound, and
-// entries whose name or path is not valid UTF-8, and flagging git repos. Symlinks are
-// followed. Errors only when the directory itself cannot be read.
+// flagging git repos. Omits files, `.git`, names past the wire's 256-byte bound, and
+// non-UTF-8 names or paths; follows symlinks. Errors only when `dir` itself can't read.
 browse_entries :: proc(dir: string, allocator: mem.Allocator) -> (entries: []wire.Dir_Entry, err: os.Error) {
     assert(len(dir) > 0, "browse needs a canonicalized directory")
 
@@ -76,9 +72,8 @@ browse_entries :: proc(dir: string, allocator: mem.Allocator) -> (entries: []wir
         }
 
         if len(info.name) > 256 {
-            // Some filesystems (APFS) allow names up to 255 characters, up to ~1020
-            // UTF-8 bytes, past the wire's 256-byte Dir_Entry.name bound. Such an entry
-            // is unrepresentable on the wire, so it is skipped rather than aborting.
+            // Some filesystems (APFS) allow names up to ~1020 UTF-8 bytes, past the
+            // wire's 256-byte bound; unrepresentable, so skipped rather than aborting.
             continue
         }
 

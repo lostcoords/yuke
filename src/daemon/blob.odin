@@ -47,9 +47,8 @@ Blob_Outcome :: enum {
     Failed,
 }
 
-// Per-request blob-upload state. Owned across the async body receive and the offloaded
-// publish, then freed by the completion. Every field a worker thread reads is owned here
-// rather than borrowed, so the upload outlives its connection.
+// Per-request blob-upload state, owned across the async receive and offloaded publish.
+// Every field a worker reads is owned here, not borrowed, so the upload outlives its connection.
 Blob_Upload :: struct {
     // Publishes off the reactor; carried here so submitting never allocates.
     task:        offload.Task(Blob_Upload),
@@ -93,9 +92,8 @@ Blob_Upload :: struct {
     file:        ^os.File,
 }
 
-// Fold one body chunk into the running digest and the temp file. A write error or
-// shortfall aborts; the server then finalizes via the end callback with `ok = false`,
-// which deletes the partial temp.
+// Folds one body chunk into the digest and temp file. A write error or shortfall aborts;
+// the server finalizes with `ok = false`, deleting the partial temp.
 blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte) -> bool {
     up := (^Blob_Upload)(user_data)
     assert(up != nil && up.file != nil, "blob chunk sink needs an open upload")
@@ -111,10 +109,8 @@ blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte
     return true
 }
 
-// Hand the finished (or abandoned) upload to a worker. `fsync`, `rename`, and `unlink`
-// have no nbio operation, so publishing on the reactor would stall every other
-// connection; the whole finalize runs off it instead. The upload owns every path the
-// worker reads, so it outlives this connection.
+// Hands the finished (or abandoned) upload to a worker: `fsync`/`rename`/`unlink` have no
+// nbio operation, so finalizing on the reactor would stall every other connection.
 blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
     assert(up != nil, "blob end callback needs upload state")
@@ -134,9 +130,8 @@ blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     offload.submit(&up.daemon.workers, up, blob_publish, blob_published)
 }
 
-// Worker thread. Touches only `up`, every path of which is an owned clone. Records an
-// outcome rather than answering or logging: there may be no connection left to answer,
-// and the logger belongs to the loop thread.
+// Worker thread. Records an outcome rather than answering or logging: there may be no
+// connection left to answer, and the logger belongs to the loop thread.
 blob_publish :: proc(up: ^Blob_Upload) {
     assert(up.file != nil, "publish needs the temp file still open")
     assert(up.outcome == nil, "publish ran on a finalized upload")
@@ -155,9 +150,8 @@ blob_publish :: proc(up: ^Blob_Upload) {
 // Close the temp file and decide the upload's fate, without touching the temp path: the
 // single caller removes it for every outcome but `.Stored`. Sets `err` on a failure.
 blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
-    // Flush before the rename publishes a content-addressed name over bytes nothing
-    // re-verifies on read. Narrows the power-loss window rather than closing it: darwin
-    // needs `F_FULLFSYNC` for a media barrier. Directory durability is not forced.
+    // Flush before rename publishes the content-addressed name. Narrows the power-loss
+    // window rather than closing it; darwin needs `F_FULLFSYNC` for a media barrier.
     if up.publish {
         up.err = os.sync(up.file)
     }
@@ -200,10 +194,8 @@ blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
     return .Stored
 }
 
-// Loop thread. Answers the request when the connection is still there, and frees the
-// upload either way: a publish that completed is correct whether or not anyone is left
-// to hear about it. A mismatch, an already-present store, and a fresh store map to 400,
-// 200, and 201. No bodies.
+// Loop thread. Answers the request if the connection is still there and frees the upload
+// either way. Mismatch/already-present/stored map to 400/200/201, no bodies.
 blob_published :: proc(up: ^Blob_Upload) {
     outcome, decided := up.outcome.?
     assert(decided, "publish completed without an outcome")
@@ -264,8 +256,7 @@ blob_paths_build :: proc(up: ^Blob_Upload, blob_dir: string, hash: string) -> me
 }
 
 // `make_directory_all` leaves an existing directory's mode alone, so a store predating
-// `BLOB_DIR_PERMISSIONS` stays exposed. Reported, not tightened: narrowing an
-// operator's directory is theirs to decide.
+// `BLOB_DIR_PERMISSIONS` stays exposed. Reported, not tightened: that's the operator's call.
 warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) {
     assert(len(blob_dir) > 0, "blob dir exposure check needs a configured directory")
 
@@ -284,13 +275,8 @@ warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) 
     }
 }
 
-// Delete upload temp files (`.upload.<hash>.<nonce>`) under `blob_dir` older than
-// `cutoff`: published blobs and other non-temp entries are never matched, and a temp
-// at or after `cutoff` is left alone (an in-flight upload's temp is always fresh).
-//
-// Temp residue only accrues on a crash — a clean shutdown always renames or removes
-// its temp — so a boot-only pass covers the threat model. Best-effort: an unreadable
-// directory is not an error.
+// Deletes upload temps (`.upload.<hash>.<nonce>`) under `blob_dir` older than `cutoff`.
+// Temp residue only accrues on a crash, so a boot-only pass covers it. Best-effort.
 blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) {
     assert(len(blob_dir) > 0, "blob temp sweep needs a configured blob directory")
 

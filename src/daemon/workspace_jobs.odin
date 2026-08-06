@@ -32,10 +32,9 @@ Workspace_Outcome :: enum {
     Unreadable,
 }
 
-// Per-request `workspace.*` state. Owned across the offloaded filesystem pass and freed
-// by the completion. Every field a worker thread touches is owned here rather than
-// borrowed, so the pass outlives both the frame arena it was decoded from and its
-// connection.
+// Per-request `workspace.*` state, owned across the offloaded pass and freed by the
+// completion. Every field a worker touches is owned here, not borrowed, so the pass
+// outlives both the frame arena it was decoded from and its connection.
 Workspace_Job :: struct {
     // Walks the filesystem off the reactor; carried here so submitting never allocates.
     task:        offload.Task(Workspace_Job),
@@ -72,17 +71,16 @@ Workspace_Job :: struct {
     // `workspace.browse` listing, whole and sorted; the loop pages it.
     entries:     []wire.Dir_Entry,
 
-    // Backs every owned allocation above and the response the completion encodes. Its
-    // blocks come from the process heap, not the daemon's allocator: the worker is this
-    // arena's only writer while the loop thread allocates from the daemon's.
+    // Backs every owned allocation above and the response the completion encodes. Blocks
+    // come from the process heap, not the daemon's allocator, since the worker is its
+    // only writer.
     arena:       mem.Dynamic_Arena,
     allocator:   mem.Allocator,
 }
 
-// Clone everything the pass reads out of the frame arena and hand it to a worker.
-// `get_absolute_path`, `stat`, and `readdir` have no nbio operation and are directed by a
-// peer-supplied path, so running them on the reactor would let one request — a FIFO with
-// no writer, a hung mount — stall every other connection.
+// Clone everything the pass reads out of the frame arena and hand it to a worker:
+// `get_absolute_path`/`stat`/`readdir` have no nbio operation, so a bad path (a hung
+// mount, a FIFO with no writer) would stall every connection run on the reactor.
 workspace_job_submit :: proc(
     conn: ^Conn,
     id: wire.Request_Id,
@@ -128,10 +126,9 @@ workspace_job_submit :: proc(
     offload.submit(&d.workers, job, workspace_job_run, workspace_job_done)
 }
 
-// Worker thread. Touches only `job`: its inputs are owned clones and its results are
-// allocated from its own arena. Records an outcome rather than answering or logging —
-// there may be no connection left to answer, and the logger belongs to the loop thread.
-// A filesystem failure is an operating outcome, never an assertion.
+// Worker thread. Records an outcome rather than answering or logging — there may be no
+// connection left to answer, and the logger belongs to the loop thread. A filesystem
+// failure is an operating outcome, never an assertion.
 workspace_job_run :: proc(job: ^Workspace_Job) {
     assert(job.daemon != nil, "workspace pass lost its daemon")
     assert(job.outcome == nil, "workspace pass ran on a finished job")
@@ -167,9 +164,8 @@ workspace_job_run :: proc(job: ^Workspace_Job) {
     job.outcome = .Ready
 }
 
-// Loop thread. Answers the request when the connection is still there, and frees the job
-// either way: a pass that completed for a connection that has since gone simply has
-// nobody to tell.
+// Loop thread. Answers the request if the connection is still there and frees the job
+// either way; a gone connection simply has nobody to tell.
 workspace_job_done :: proc(job: ^Workspace_Job) {
     outcome, decided := job.outcome.?
     assert(decided, "workspace pass completed without an outcome")
@@ -225,8 +221,8 @@ workspace_send_describe :: proc(conn: ^Conn, job: ^Workspace_Job) {
 }
 
 // Emit one page of the `workspace.browse` listing. Paging is pure arithmetic over the
-// sorted listing the pass produced, so it runs here rather than on the worker; an offset
-// past the end is an empty final page, not an error.
+// sorted listing, so it runs here, not on the worker; an offset past the end is an empty
+// final page, not an error.
 workspace_send_browse :: proc(conn: ^Conn, job: ^Workspace_Job) {
     assert(job.kind == .Browse, "browse result built from another job")
     assert(len(job.canonical) > 0, "a completed browse has a canonical directory")
