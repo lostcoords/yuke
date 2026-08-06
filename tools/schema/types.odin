@@ -4,6 +4,8 @@ import "core:odin/ast"
 import "core:slice"
 import "core:strings"
 
+import "tools:gen"
+
 // Types declared in the wire package that are not protocol payloads. They are decoder
 // scaffolding or encoder configuration, and the marker rules do not apply to them.
 @(rodata)
@@ -15,7 +17,7 @@ SCALAR_BASES := [?]string{"string", "bool", "u64", "i64", "u32", "i32", "u16", "
 
 // Walk every declaration and fill the type graph. Enum wire tables are collected first,
 // because an enum is only part of the protocol if a table maps it to wire strings.
-types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     assert(m != nil, "types_collect needs a model")
     assert(ps != nil, "types_collect needs a package source")
 
@@ -148,7 +150,7 @@ struct_read :: proc(
     name: string,
     v: ^ast.Value_Decl,
     t: ^ast.Struct_Type,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> Struct_Def {
     decl_pos := source_pos(s, v.pos.line)
 
@@ -196,14 +198,14 @@ struct_read :: proc(
         }
 
         if own[field_name] && (!has_presence || declared_presence != .Required_Nullable) {
-            diagf(d, pos, "%s.%s uses a required-null emitter but lacks @required-nullable", name, field_name)
+            gen.diagf(d, pos, "%s.%s uses a required-null emitter but lacks @required-nullable", name, field_name)
         }
 
         if has_presence {
             switch declared_presence {
             case .Optional, .Required_Nullable:
                 if !strings.has_prefix(type_expr, "Maybe(") {
-                    diagf(
+                    gen.diagf(
                         d,
                         pos,
                         "%s.%s declares nullable/optional presence on non-Maybe type %s",
@@ -215,12 +217,12 @@ struct_read :: proc(
 
             case .Tristate:
                 if !tristate[type_expr] {
-                    diagf(d, pos, "%s.%s declares @tristate on non-tristate type %s", name, field_name, type_expr)
+                    gen.diagf(d, pos, "%s.%s declares @tristate on non-tristate type %s", name, field_name, type_expr)
                 }
 
             case .Defaulted:
                 if strings.has_prefix(type_expr, "Maybe(") {
-                    diagf(d, pos, "%s.%s declares a decoder default on a Maybe type", name, field_name)
+                    gen.diagf(d, pos, "%s.%s declares a decoder default on a Maybe type", name, field_name)
                 }
 
             case .Required:
@@ -311,10 +313,10 @@ marker_read :: proc(
     m: ^Model,
     docs: ^ast.Comment_Group,
     type_expr: string,
-    pos: Pos,
+    pos: gen.Pos,
     owner: string,
     field: string,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> (
     bound: Bound,
     doc: string,
@@ -326,7 +328,7 @@ marker_read :: proc(
     for line in lines {
         if kind, expr, is_marker := marker_parse(line); is_marker {
             if bound.kind != .Missing {
-                diagf(d, pos, "%s.%s declares more than one bounds marker", owner, field)
+                gen.diagf(d, pos, "%s.%s declares more than one bounds marker", owner, field)
 
                 continue
             }
@@ -359,7 +361,7 @@ marker_read :: proc(
         bound.value = value
 
         if !ok {
-            diagf(
+            gen.diagf(
                 d,
                 pos,
                 "%s.%s has marker `@%s %s` that does not resolve to a constant",
@@ -374,7 +376,7 @@ marker_read :: proc(
     // Strings and arrays are what a length rule applies to; anything else legitimately
     // has none.
     if bound.kind == .Missing && needs_bound(type_expr) {
-        diagf(d, pos, "%s.%s is a %s with no @bounded/@fixed/@unbounded marker", owner, field, type_expr)
+        gen.diagf(d, pos, "%s.%s is a %s with no @bounded/@fixed/@unbounded marker", owner, field, type_expr)
     }
 
     return bound, doc
@@ -384,10 +386,10 @@ marker_read :: proc(
 // Odin type cannot express it, so conflicting markers are a hard diagnostic.
 presence_marker_read :: proc(
     docs: ^ast.Comment_Group,
-    pos: Pos,
+    pos: gen.Pos,
     owner: string,
     field: string,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> (
     presence: Presence,
     default_expr: string,
@@ -401,7 +403,7 @@ presence_marker_read :: proc(
         }
 
         if ok {
-            diagf(d, pos, "%s.%s declares more than one presence marker", owner, field)
+            gen.diagf(d, pos, "%s.%s declares more than one presence marker", owner, field)
 
             continue
         }
@@ -436,10 +438,10 @@ presence_marker_parse :: proc(line: string) -> (presence: Presence, expr: string
 const_marker_read :: proc(
     m: ^Model,
     docs: ^ast.Comment_Group,
-    pos: Pos,
+    pos: gen.Pos,
     owner: string,
     field: string,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> (
     expr: string,
     value: Maybe(int),
@@ -450,7 +452,7 @@ const_marker_read :: proc(
         }
 
         if expr != "" {
-            diagf(d, pos, "%s.%s declares more than one @const marker", owner, field)
+            gen.diagf(d, pos, "%s.%s declares more than one @const marker", owner, field)
 
             continue
         }
@@ -459,7 +461,7 @@ const_marker_read :: proc(
         resolved, ok := bound_resolve(m, expr)
 
         if !ok {
-            diagf(d, pos, "%s.%s has @const expression `%s` that does not resolve", owner, field, expr)
+            gen.diagf(d, pos, "%s.%s has @const expression `%s` that does not resolve", owner, field, expr)
 
             continue
         }
@@ -470,7 +472,13 @@ const_marker_read :: proc(
     return
 }
 
-delivery_role_read :: proc(docs: ^ast.Comment_Group, pos: Pos, owner: string, field: string, d: ^Diags) -> string {
+delivery_role_read :: proc(
+    docs: ^ast.Comment_Group,
+    pos: gen.Pos,
+    owner: string,
+    field: string,
+    d: ^gen.Diags,
+) -> string {
     role := ""
 
     for line in comment_lines(docs, context.temp_allocator) {
@@ -479,7 +487,7 @@ delivery_role_read :: proc(docs: ^ast.Comment_Group, pos: Pos, owner: string, fi
         }
 
         if role != "" {
-            diagf(d, pos, "%s.%s declares more than one @delivery role", owner, field)
+            gen.diagf(d, pos, "%s.%s declares more than one @delivery role", owner, field)
 
             continue
         }
@@ -569,7 +577,7 @@ union_read :: proc(
     name: string,
     v: ^ast.Value_Decl,
     t: ^ast.Union_Type,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> Union_Def {
     known := make(map[string]bool, len(t.variants), context.temp_allocator)
     arms := make([dynamic]Union_Arm, 0, len(t.variants))
@@ -610,7 +618,7 @@ union_read :: proc(
             }
 
             if absent != 1 || nulls != 1 || values != 1 {
-                diagf(
+                gen.diagf(
                     d,
                     source_pos(s, v.pos.line),
                     "%s tristate emitter must expose exactly one absent, null, and value arm",
@@ -625,7 +633,7 @@ union_read :: proc(
             tag, has := tags[arm.type]
 
             if !has {
-                diagf(
+                gen.diagf(
                     d,
                     source_pos(s, v.pos.line),
                     "%s arm %s has no `%s` value in its decoder",
@@ -725,8 +733,8 @@ union_arm_tags :: proc(
     ps: ^Package_Source,
     union_name: string,
     known: map[string]bool,
-    pos: Pos,
-    d: ^Diags,
+    pos: gen.Pos,
+    d: ^gen.Diags,
 ) -> map[string]string {
     out: map[string]string
     reader := strings.concatenate(
@@ -794,7 +802,7 @@ union_arm_tags :: proc(
         }
 
         if len(unclaimed_tags) != 0 || len(unclaimed_arms) != 0 {
-            diagf(
+            gen.diagf(
                 d,
                 pos,
                 "%s has a decoder clause serving %d tags this tool cannot pair with its arms",
@@ -834,7 +842,7 @@ enum_read :: proc(
     v: ^ast.Value_Decl,
     t: ^ast.Enum_Type,
     table: Wire_Table,
-    d: ^Diags,
+    d: ^gen.Diags,
 ) -> Enum_Def {
     decl_pos := source_pos(s, v.pos.line)
 
@@ -863,7 +871,7 @@ enum_read :: proc(
         wire, has := table.entries[member_name]
 
         if !has {
-            diagf(d, source_pos(s, member.pos.line), "%s.%s has no entry in %s", name, member_name, table.name)
+            gen.diagf(d, source_pos(s, member.pos.line), "%s.%s has no entry in %s", name, member_name, table.name)
         }
 
         append(&values, Enum_Value{name = member_name, wire = wire, doc = doc})
@@ -875,7 +883,7 @@ enum_read :: proc(
 }
 
 // Read a `distinct` scalar newtype and the marker on its declaration.
-alias_read :: proc(m: ^Model, s: ^Source, name: string, base: string, v: ^ast.Value_Decl, d: ^Diags) -> Alias_Def {
+alias_read :: proc(m: ^Model, s: ^Source, name: string, base: string, v: ^ast.Value_Decl, d: ^gen.Diags) -> Alias_Def {
     pos := source_pos(s, v.pos.line)
 
     doc_group_check(v.docs, pos, name, "(declaration)", d)

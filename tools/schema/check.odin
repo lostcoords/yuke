@@ -5,6 +5,8 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 
+import "tools:gen"
+
 // Compare declared `@bounded` markers against the bounds the validators read.
 //
 // Only procedures with `_validate` in the name are scanned — the package's convention for a
@@ -17,7 +19,7 @@ import "core:strings"
 // Markers sharing an expression are therefore not individually verified. Per-field pairing
 // is recoverable for the `enforce_bounded` sites that pass `self.<field>` or `v.<field>`,
 // but not for those passing a local unwrapped from a `Maybe`.
-check_bounds :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+check_bounds :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     assert(m != nil, "check_bounds needs a model")
     assert(ps != nil, "check_bounds needs a package source")
 
@@ -26,21 +28,21 @@ check_bounds :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
 
     for expr, pos in enforced {
         if expr not_in declared {
-            diagf(d, pos, "validators enforce bound `%s` but no @bounded marker declares it", expr)
+            gen.diagf(d, pos, "validators enforce bound `%s` but no @bounded marker declares it", expr)
         }
     }
 
     for expr, pos in declared {
         if expr not_in enforced {
-            diagf(d, pos, "marker `@bounded %s` is declared but no validator enforces it", expr)
+            gen.diagf(d, pos, "marker `@bounded %s` is declared but no validator enforces it", expr)
         }
     }
 }
 
 // Every `@bounded` expression declared by a field or alias, with one representative
 // position for the diagnostic.
-declared_bound_exprs :: proc(m: ^Model) -> map[string]Pos {
-    out: map[string]Pos
+declared_bound_exprs :: proc(m: ^Model) -> map[string]gen.Pos {
+    out: map[string]gen.Pos
 
     for s in m.structs {
         for f in s.fields {
@@ -62,8 +64,8 @@ declared_bound_exprs :: proc(m: ^Model) -> map[string]Pos {
 // Every bound expression a validator reads: the first argument of `enforce_bounded`, and
 // the right-hand side of a `len(…) > <bound>` collection cap. Both are matched as AST
 // nodes, so `>=` is not a `>` and a bound inside a comment or string literal is not a bound.
-enforced_bound_exprs :: proc(ps: ^Package_Source) -> map[string]Pos {
-    out: map[string]Pos
+enforced_bound_exprs :: proc(ps: ^Package_Source) -> map[string]gen.Pos {
+    out: map[string]gen.Pos
 
     for name, ref in ps.procs {
         if !strings.contains(name, "_validate") {
@@ -88,7 +90,7 @@ enforced_bound_exprs :: proc(ps: ^Package_Source) -> map[string]Pos {
 
 // Record a bound expression the first time it is seen. A nested call is a computed
 // comparison rather than a declared bound, so it is skipped instead of recorded wrong.
-record_bound :: proc(out: ^map[string]Pos, expr: string, pos: Pos) {
+record_bound :: proc(out: ^map[string]gen.Pos, expr: string, pos: gen.Pos) {
     trimmed := strings.trim_space(expr)
 
     if trimmed == "" || strings.contains(trimmed, "(") {
@@ -103,7 +105,7 @@ record_bound :: proc(out: ^map[string]Pos, expr: string, pos: Pos) {
 // Verify every type the artifact names resolves to something it also defines. A dangling
 // reference is not a protocol defect but it breaks any generator that walks the artifact, so
 // it fails here rather than in someone else's build.
-check_references :: proc(m: ^Model, d: ^Diags) {
+check_references :: proc(m: ^Model, d: ^gen.Diags) {
     assert(m != nil, "check_references needs a model")
 
     known: map[string]bool
@@ -174,23 +176,23 @@ element_type :: proc(type_expr: string) -> string {
     return slice.contains(SCALAR_BASES[:], out) ? "" : out
 }
 
-check_reference :: proc(known: map[string]bool, name: string, d: ^Diags, format: string, args: ..any) {
+check_reference :: proc(known: map[string]bool, name: string, d: ^gen.Diags, format: string, args: ..any) {
     if name == "" || name in known {
         return
     }
 
     site := fmt.tprintf(format, ..args)
-    diagf(d, Pos{}, "%s names `%s`, which the artifact does not define", site, name)
+    gen.diagf(d, gen.Pos{}, "%s names `%s`, which the artifact does not define", site, name)
 }
 
 // Verify every `$ref` in the emitted schema document resolves to a definition it also carries. A
 // dangling reference makes an eager validator refuse to compile the whole document, so it fails
 // here rather than in a consumer's build.
-check_schema_refs :: proc(root: json.Object, d: ^Diags) {
+check_schema_refs :: proc(root: json.Object, d: ^gen.Diags) {
     defs, has := root["$defs"].(json.Object)
 
     if !has {
-        diagf(d, Pos{}, "the schema document has no $defs")
+        gen.diagf(d, gen.Pos{}, "the schema document has no $defs")
 
         return
     }
@@ -200,7 +202,7 @@ check_schema_refs :: proc(root: json.Object, d: ^Diags) {
 
     for name in refs {
         if name not_in defs {
-            diagf(d, Pos{}, "the schema document references `#/$defs/%s`, which it does not define", name)
+            gen.diagf(d, gen.Pos{}, "the schema document references `#/$defs/%s`, which it does not define", name)
         }
     }
 }

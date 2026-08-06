@@ -4,9 +4,11 @@ import "core:odin/ast"
 import "core:strconv"
 import "core:strings"
 
+import "tools:gen"
+
 // Fill `m.consts` from top-level `NAME :: <int>` declarations and `m.limits` from the
 // `LIMITS` composite literal.
-consts_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+consts_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     assert(m != nil, "consts_collect needs a model")
     assert(ps != nil, "consts_collect needs a package source")
 
@@ -20,7 +22,7 @@ consts_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
     if version, ok := m.consts["PROTOCOL_VERSION"]; ok {
         m.protocol_version = version
     } else {
-        diagf(d, Pos{}, "PROTOCOL_VERSION is not a resolvable integer constant")
+        gen.diagf(d, gen.Pos{}, "PROTOCOL_VERSION is not a resolvable integer constant")
     }
 }
 
@@ -54,7 +56,7 @@ consts_scan :: proc(m: ^Model, ps: ^Package_Source) {
 
 // Read a named composite literal of integer members into `out`. `LIMITS` and `CLOSE` are both
 // this shape, and a client needs both.
-consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: ^map[string]int, d: ^Diags) {
+consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: ^map[string]int, d: ^gen.Diags) {
     for &s in ps.files {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
@@ -70,7 +72,7 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
             lit, is_lit := v.values[0].derived.(^ast.Comp_Lit)
 
             if !is_lit {
-                diagf(d, source_pos(&s, v.pos.line), "%s is not a composite literal", name)
+                gen.diagf(d, source_pos(&s, v.pos.line), "%s is not a composite literal", name)
 
                 return
             }
@@ -79,7 +81,7 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
                 fv, is_fv := elem.derived.(^ast.Field_Value)
 
                 if !is_fv {
-                    diagf(d, source_pos(&s, elem.pos.line), "%s has a member that is not `name = value`", name)
+                    gen.diagf(d, source_pos(&s, elem.pos.line), "%s has a member that is not `name = value`", name)
 
                     continue
                 }
@@ -88,7 +90,7 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
                 value, ok := const_eval(m, &s, fv.value)
 
                 if !ok {
-                    diagf(
+                    gen.diagf(
                         d,
                         source_pos(&s, elem.pos.line),
                         "%s.%s is not a resolvable integer expression (%s)",
@@ -107,7 +109,7 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
         }
     }
 
-    diagf(d, Pos{}, "no %s declaration found in the wire package", name)
+    gen.diagf(d, gen.Pos{}, "no %s declaration found in the wire package", name)
 }
 
 // Evaluate the integer subset used by `constants.odin`: decimal and underscored

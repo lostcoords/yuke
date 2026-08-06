@@ -1,13 +1,6 @@
 package schema
 
-// Where a model entry came from, for diagnostics that a human can act on.
-Pos :: struct {
-    // Path as given on the command line.
-    file: string,
-
-    // 1-based line.
-    line: int,
-}
+import "tools:gen"
 
 // Which length rule a field declares. Every wire string and array field carries
 // exactly one; `src/wire` is swept so that absence is a defect, not a default.
@@ -75,7 +68,7 @@ Field :: struct {
     const_expr:    string,
     const_value:   Maybe(int),
     delivery_role: string,
-    pos:           Pos,
+    pos:           gen.Pos,
 }
 
 // A wire object.
@@ -83,7 +76,7 @@ Struct_Def :: struct {
     name:   string,
     doc:    string,
     fields: []Field,
-    pos:    Pos,
+    pos:    gen.Pos,
 }
 
 // A wire union. `discriminator` is the member a decoder scans for; empty means the arm
@@ -93,7 +86,7 @@ Union_Def :: struct {
     doc:           string,
     arms:          []Union_Arm,
     discriminator: string,
-    pos:           Pos,
+    pos:           gen.Pos,
 }
 
 // One arm and the discriminator value that selects it. `tag` is empty for a union whose arm
@@ -145,7 +138,7 @@ Enum_Def :: struct {
 
     // True for `[Enum]i32` tables, where the wire form is a number.
     numeric: bool,
-    pos:     Pos,
+    pos:     gen.Pos,
 }
 
 // A `distinct` newtype over a scalar: the id and revision types.
@@ -154,7 +147,7 @@ Alias_Def :: struct {
     base:  string,
     doc:   string,
     bound: Bound,
-    pos:   Pos,
+    pos:   gen.Pos,
 }
 
 // One request method. `params_type`/`result_type` are the linkage that exists nowhere

@@ -7,6 +7,8 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
+import "tools:gen"
+
 // One parsed file plus the doc index built over it.
 Source :: struct {
     path:     string,
@@ -38,13 +40,13 @@ Package_Source :: struct {
 
 // Parse every `.odin` file in `dir`, skipping `_test.odin`: test files hold no protocol
 // declarations, and parsing them would put fixtures into the model.
-package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> (out: Package_Source, ok: bool) {
+package_load :: proc(dir: string, d: ^gen.Diags, allocator := context.allocator) -> (out: Package_Source, ok: bool) {
     assert(d != nil, "package_load needs a diagnostic sink")
 
     infos, dir_err := os.read_directory_by_path(dir, -1, allocator)
 
     if dir_err != nil {
-        diagf(d, Pos{file = dir}, "cannot read the wire package directory")
+        gen.diagf(d, gen.Pos{file = dir}, "cannot read the wire package directory")
 
         return {}, false
     }
@@ -63,7 +65,7 @@ package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> 
         joined, join_err := filepath.join({dir, info.name}, allocator)
 
         if join_err != nil {
-            diagf(d, Pos{file = dir}, "cannot build a path for %s", info.name)
+            gen.diagf(d, gen.Pos{file = dir}, "cannot build a path for %s", info.name)
 
             continue
         }
@@ -79,7 +81,7 @@ package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> 
         src, read_err := os.read_entire_file_from_path(path, allocator)
 
         if read_err != nil {
-            diagf(d, Pos{file = path}, "cannot read source file")
+            gen.diagf(d, gen.Pos{file = path}, "cannot read source file")
 
             continue
         }
@@ -91,7 +93,7 @@ package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> 
         p := parser.default_parser()
 
         if !parser.parse_file(&p, &s.file) {
-            diagf(d, Pos{file = path}, "the parser rejected this file")
+            gen.diagf(d, gen.Pos{file = path}, "the parser rejected this file")
 
             continue
         }
@@ -101,7 +103,7 @@ package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> 
     }
 
     if len(out.files) == 0 {
-        diagf(d, Pos{file = dir}, "the wire package has no parsable source files")
+        gen.diagf(d, gen.Pos{file = dir}, "the wire package has no parsable source files")
 
         return out, false
     }
@@ -109,7 +111,7 @@ package_load :: proc(dir: string, d: ^Diags, allocator := context.allocator) -> 
     assert(len(out.files) <= cap(out.files), "the file array never reallocates")
     package_index_procs(&out)
 
-    return out, !diags_failed(d)
+    return out, !gen.diags_failed(d)
 }
 
 // Build the end-line -> doc-text index. `parse_file` collects every comment group in
@@ -198,7 +200,7 @@ comment_lines :: proc(g: ^ast.Comment_Group, allocator := context.allocator) -> 
 // separated by one blank line, so a section banner or a floating note above a declaration
 // silently becomes part of its documentation — here and in every ols hover. A doc comment
 // must sit directly on what it documents.
-doc_group_check :: proc(g: ^ast.Comment_Group, pos: Pos, owner: string, field: string, d: ^Diags) {
+doc_group_check :: proc(g: ^ast.Comment_Group, pos: gen.Pos, owner: string, field: string, d: ^gen.Diags) {
     assert(d != nil, "doc_group_check needs a diagnostic sink")
 
     if g == nil {
@@ -209,7 +211,7 @@ doc_group_check :: proc(g: ^ast.Comment_Group, pos: Pos, owner: string, field: s
 
     for i in 1 ..< len(g.list) {
         if g.list[i].pos.line != g.list[i - 1].pos.line + 1 {
-            diagf(
+            gen.diagf(
                 d,
                 pos,
                 "%s.%s has a blank line inside its doc comment; the lines above it document this declaration too",
@@ -232,8 +234,8 @@ comment_text :: proc(g: ^ast.Comment_Group) -> string {
 }
 
 // A line within `s`, for diagnostics.
-source_pos :: proc(s: ^Source, line: int) -> Pos {
+source_pos :: proc(s: ^Source, line: int) -> gen.Pos {
     assert(s != nil, "source_pos needs a source")
 
-    return Pos{file = s.path, line = line}
+    return gen.Pos{file = s.path, line = line}
 }

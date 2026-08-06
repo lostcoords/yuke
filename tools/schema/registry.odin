@@ -4,8 +4,10 @@ import "core:odin/ast"
 import "core:strconv"
 import "core:strings"
 
+import "tools:gen"
+
 // Fill methods, broadcasts, and errors.
-registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     assert(m != nil, "registry_collect needs a model")
     assert(ps != nil, "registry_collect needs a package source")
 
@@ -13,11 +15,11 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
     broadcasts := model_enum(m, "Broadcast_Name")
 
     if methods == nil {
-        diagf(d, Pos{}, "Method_Name is missing from the model, so no method registry can be built")
+        gen.diagf(d, gen.Pos{}, "Method_Name is missing from the model, so no method registry can be built")
     }
 
     if broadcasts == nil {
-        diagf(d, Pos{}, "Broadcast_Name is missing from the model, so no broadcast registry can be built")
+        gen.diagf(d, gen.Pos{}, "Broadcast_Name is missing from the model, so no broadcast registry can be built")
     }
 
     if methods == nil || broadcasts == nil {
@@ -46,11 +48,11 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
         result_type, has_result := results[value.name]
 
         if !has_params {
-            diagf(d, methods.pos, "Method_Name.%s has no case in request_params_from_reader", value.name)
+            gen.diagf(d, methods.pos, "Method_Name.%s has no case in request_params_from_reader", value.name)
         }
 
         if !has_result {
-            diagf(d, methods.pos, "Method_Name.%s has no case in response_result_from_reader", value.name)
+            gen.diagf(d, methods.pos, "Method_Name.%s has no case in response_result_from_reader", value.name)
         }
 
         optional := defaults[value.name]
@@ -73,18 +75,18 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
         class, has_class := classes[value.name]
 
         if !has_payload {
-            diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_data_from_reader", value.name)
+            gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_data_from_reader", value.name)
         }
 
         if !has_class {
-            diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_name_class", value.name)
+            gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_name_class", value.name)
         }
 
         // The forward and reverse maps must agree: the reverse one is what the daemon's
         // pump and resync fold route on, so a disagreement is a live routing bug.
         if has_payload {
             if named, has_named := reverse[payload]; has_named && named != value.name {
-                diagf(
+                gen.diagf(
                     d,
                     broadcasts.pos,
                     "%s decodes into %s but broadcast_data_name maps that payload to %s",
@@ -115,12 +117,12 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
 
 // Read a `switch method { case .X: <lhs> = <reader>(d) or_return }` dispatch into a map of
 // enum member -> payload type.
-dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^Diags) -> map[string]string {
+dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^gen.Diags) -> map[string]string {
     out: map[string]string
     ref, has := ps.procs[proc_name]
 
     if !has {
-        diagf(d, Pos{}, "%s not found; the method/broadcast linkage cannot be read", proc_name)
+        gen.diagf(d, gen.Pos{}, "%s not found; the method/broadcast linkage cannot be read", proc_name)
 
         return out
     }
@@ -128,7 +130,7 @@ dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^Dia
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(
+        gen.diagf(
             d,
             source_pos(ref.source, ref.body.pos.line),
             "%s contains no switch to read the linkage from",
@@ -147,7 +149,7 @@ dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^Dia
         payload, resolved := case_payload_type(m, ps, clause, ref.source)
 
         if !resolved {
-            diagf(d, pos, "%s has a case body this tool cannot read a payload type from", proc_name)
+            gen.diagf(d, pos, "%s has a case body this tool cannot read a payload type from", proc_name)
 
             continue
         }
@@ -156,7 +158,7 @@ dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^Dia
             member := enum_member_name(label)
 
             if member == "" {
-                diagf(d, pos, "%s has a case label that is not an enum member", proc_name)
+                gen.diagf(d, pos, "%s has a case label that is not an enum member", proc_name)
 
                 continue
             }
@@ -260,12 +262,12 @@ call_target_name :: proc(e: ^ast.Expr) -> string {
 // Payload type -> the member carrying its sequence number, read from `broadcast_data_seq`. The
 // accessor names the field per arm, so this is the field the daemon stamps rather than a guess
 // from a field called `seq`.
-broadcast_selector_fields :: proc(ps: ^Package_Source, proc_name: string, d: ^Diags) -> map[string]string {
+broadcast_selector_fields :: proc(ps: ^Package_Source, proc_name: string, d: ^gen.Diags) -> map[string]string {
     out: map[string]string
     ref, has := ps.procs[proc_name]
 
     if !has {
-        diagf(d, Pos{}, "%s not found; broadcast field metadata is incomplete", proc_name)
+        gen.diagf(d, gen.Pos{}, "%s not found; broadcast field metadata is incomplete", proc_name)
 
         return out
     }
@@ -273,7 +275,7 @@ broadcast_selector_fields :: proc(ps: ^Package_Source, proc_name: string, d: ^Di
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(d, source_pos(ref.source, ref.body.pos.line), "%s contains no switch", proc_name)
+        gen.diagf(d, source_pos(ref.source, ref.body.pos.line), "%s contains no switch", proc_name)
 
         return out
     }
@@ -303,12 +305,12 @@ broadcast_selector_fields :: proc(ps: ^Package_Source, proc_name: string, d: ^Di
 
 // Read `broadcast_data_name`'s type switch into payload type -> broadcast member. This is
 // the reverse of `broadcast_data_from_reader` and the pairing the daemon routes on.
-broadcast_name_reverse :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]string {
+broadcast_name_reverse :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]string {
     out: map[string]string
     ref, has := ps.procs["broadcast_data_name"]
 
     if !has {
-        diagf(d, Pos{}, "broadcast_data_name not found; the payload/name pairing cannot be verified")
+        gen.diagf(d, gen.Pos{}, "broadcast_data_name not found; the payload/name pairing cannot be verified")
 
         return out
     }
@@ -316,7 +318,7 @@ broadcast_name_reverse :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]str
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(d, source_pos(ref.source, ref.body.pos.line), "broadcast_data_name contains no switch")
+        gen.diagf(d, source_pos(ref.source, ref.body.pos.line), "broadcast_data_name contains no switch")
 
         return out
     }
@@ -356,12 +358,12 @@ return_first_enum_member :: proc(clause: ^ast.Case_Clause) -> string {
 
 // Read `broadcast_name_class` into broadcast member -> delivery class. Cases list several
 // members at once, so every label in a clause takes the clause's returned class.
-broadcast_classes :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]string {
+broadcast_classes :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]string {
     out: map[string]string
     ref, has := ps.procs["broadcast_name_class"]
 
     if !has {
-        diagf(d, Pos{}, "broadcast_name_class not found; delivery classes cannot be read")
+        gen.diagf(d, gen.Pos{}, "broadcast_name_class not found; delivery classes cannot be read")
 
         return out
     }
@@ -369,7 +371,7 @@ broadcast_classes :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]string {
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(d, source_pos(ref.source, ref.body.pos.line), "broadcast_name_class contains no switch")
+        gen.diagf(d, source_pos(ref.source, ref.body.pos.line), "broadcast_name_class contains no switch")
 
         return out
     }
@@ -382,7 +384,11 @@ broadcast_classes :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]string {
         class := return_first_enum_member(clause)
 
         if class == "" {
-            diagf(d, source_pos(ref.source, clause.pos.line), "broadcast_name_class has a case that returns no class")
+            gen.diagf(
+                d,
+                source_pos(ref.source, clause.pos.line),
+                "broadcast_name_class has a case that returns no class",
+            )
 
             continue
         }
@@ -401,12 +407,12 @@ broadcast_classes :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]string {
 
 // Methods whose `params` member may be omitted, read from `default_params`. The final bare
 // `case:` returns nil for every other method and contributes no labels.
-params_optional_set :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]bool {
+params_optional_set :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]bool {
     out: map[string]bool
     ref, has := ps.procs["default_params"]
 
     if !has {
-        diagf(d, Pos{}, "default_params not found; omitted-params methods cannot be read")
+        gen.diagf(d, gen.Pos{}, "default_params not found; omitted-params methods cannot be read")
 
         return out
     }
@@ -414,7 +420,7 @@ params_optional_set :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]bool {
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(d, source_pos(ref.source, ref.body.pos.line), "default_params contains no switch")
+        gen.diagf(d, source_pos(ref.source, ref.body.pos.line), "default_params contains no switch")
 
         return out
     }
@@ -434,7 +440,7 @@ params_optional_set :: proc(ps: ^Package_Source, d: ^Diags) -> map[string]bool {
 // exhaustive switch in the protocol package, the single statement of each rule. Sequencing is
 // observed from the broadcasts themselves: a class is sequenced when its members carry a sequence
 // field.
-delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     gated := broadcast_class_rule(ps, "broadcast_class_gated", d)
     defer delete(gated)
     droppable := broadcast_class_rule(ps, "broadcast_class_droppable", d)
@@ -462,11 +468,11 @@ delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
         is_droppable, droppable_known := droppable[b.class]
 
         if !gated_known {
-            diagf(d, Pos{}, "delivery class %s has no case in broadcast_class_gated", b.class)
+            gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_gated", b.class)
         }
 
         if !droppable_known {
-            diagf(d, Pos{}, "delivery class %s has no case in broadcast_class_droppable", b.class)
+            gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_droppable", b.class)
         }
 
         append(
@@ -478,12 +484,12 @@ delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
 
 // Delivery class -> the boolean `accessor` returns for it. Each delivery rule has one exhaustive
 // switch in the protocol package, so this reads the rule rather than inferring it from a name.
-broadcast_class_rule :: proc(ps: ^Package_Source, accessor: string, d: ^Diags) -> map[string]bool {
+broadcast_class_rule :: proc(ps: ^Package_Source, accessor: string, d: ^gen.Diags) -> map[string]bool {
     out: map[string]bool
     ref, has := ps.procs[accessor]
 
     if !has {
-        diagf(d, Pos{}, "%s not found; the delivery rule it states cannot be read", accessor)
+        gen.diagf(d, gen.Pos{}, "%s not found; the delivery rule it states cannot be read", accessor)
 
         return out
     }
@@ -491,7 +497,7 @@ broadcast_class_rule :: proc(ps: ^Package_Source, accessor: string, d: ^Diags) -
     clauses, found := switch_clauses(ref.body)
 
     if !found {
-        diagf(d, Pos{}, "%s contains no switch", accessor)
+        gen.diagf(d, gen.Pos{}, "%s contains no switch", accessor)
 
         return out
     }
@@ -502,7 +508,7 @@ broadcast_class_rule :: proc(ps: ^Package_Source, accessor: string, d: ^Diags) -
         value, sole := sole_bool_return(ref, clause)
 
         if !sole {
-            diagf(
+            gen.diagf(
                 d,
                 source_pos(ref.source, clause.pos.line),
                 "%s has a case this tool cannot read a boolean from",
@@ -548,24 +554,24 @@ sole_bool_return :: proc(ref: Proc_Ref, clause: ^ast.Case_Clause) -> (value: boo
 }
 
 // Pair `Error_Code` members with their durable JSON-RPC numbers.
-errors_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^Diags) {
+errors_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     codes := model_enum(m, "Error_Code")
 
     if codes == nil {
-        diagf(d, Pos{}, "Error_Code is missing from the model, so no error registry can be built")
+        gen.diagf(d, gen.Pos{}, "Error_Code is missing from the model, so no error registry can be built")
 
         return
     }
 
     if !codes.numeric {
-        diagf(d, codes.pos, "Error_Code is mapped by %s, which is not the numeric wire table", codes.table)
+        gen.diagf(d, codes.pos, "Error_Code is mapped by %s, which is not the numeric wire table", codes.table)
     }
 
     for value in codes.values {
         number, ok := parse_i32(value.wire)
 
         if !ok {
-            diagf(d, codes.pos, "Error_Code.%s maps to %q, which is not a number", value.name, value.wire)
+            gen.diagf(d, codes.pos, "Error_Code.%s maps to %q, which is not a number", value.name, value.wire)
 
             continue
         }

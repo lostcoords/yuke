@@ -3,6 +3,8 @@ package schema
 import "core:fmt"
 import "core:os"
 
+import "tools:gen"
+
 Options :: struct {
     wire_dir: string,
 
@@ -25,11 +27,11 @@ main :: proc() {
         os.exit(2)
     }
 
-    d: Diags
+    d: gen.Diags
     ps, load_ok := package_load(opts.wire_dir, &d)
 
     if !load_ok {
-        diags_report(&d)
+        gen.diags_report(&d)
         os.exit(1)
     }
 
@@ -40,8 +42,8 @@ main :: proc() {
     check_bounds(&m, &ps, &d)
     check_references(&m, &d)
 
-    if diags_failed(&d) {
-        diags_report(&d)
+    if gen.diags_failed(&d) {
+        gen.diags_report(&d)
         os.exit(1)
     }
 
@@ -56,11 +58,11 @@ main :: proc() {
         os.exit(1)
     }
 
-    artifact_emit(data, opts.out, opts.check, &d)
-    artifact_emit(schema_data, opts.schema, opts.check, &d)
+    gen.emit(data, opts.out, opts.check, &d)
+    gen.emit(schema_data, opts.schema, opts.check, &d)
 
-    if diags_failed(&d) {
-        diags_report(&d)
+    if gen.diags_failed(&d) {
+        gen.diags_report(&d)
         os.exit(1)
     }
 
