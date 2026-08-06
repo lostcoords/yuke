@@ -690,6 +690,24 @@ column_name :: proc(stmt: ^Stmt, col: int) -> string {
     return string(name)
 }
 
+// The declared type of a 0-based result column, exactly as written in its
+// `CREATE TABLE`, or "" if the column is an expression rather than a plain table
+// reference — SQLite reports no declared type for those. Callable at prepare time;
+// unlike `column_type`, this needs no current row.
+column_decltype :: proc(stmt: ^Stmt, col: int) -> string {
+    assert(stmt != nil, "column_decltype needs a statement")
+    assert(col >= 0, "column index is 0-based")
+    assert(col < column_count(stmt), "column index is in range")
+
+    decl := c_column_decltype(stmt, c.int(col))
+
+    if decl == nil {
+        return ""
+    }
+
+    return string(decl)
+}
+
 // Return the SQLite storage class of the current row's 0-based column.
 column_type :: proc(stmt: ^Stmt, col: int) -> Type {
     assert(stmt != nil, "column_type needs a statement")

@@ -399,3 +399,21 @@ test_query_one_reports_arity_and_storage_class :: proc(t: ^testing.T) {
     _, wrong_text := query_one_text(db, "SELECT id FROM t WHERE id = 1")
     testing.expect_value(t, wrong_text, Result.Mismatch)
 }
+
+@(test)
+test_column_decltype_reports_the_schema_type_and_blanks_for_expressions :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    testing.expect_value(t, exec(db, "CREATE TABLE t (a INTEGER)"), Result.Ok)
+    testing.expect_value(t, exec(db, "INSERT INTO t VALUES (1)"), Result.Ok)
+
+    st, prep := prepare(db, "SELECT a, a + 1 FROM t")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    testing.expect_value(t, column_decltype(st, 0), "INTEGER")
+    // An expression column has no declared type.
+    testing.expect_value(t, column_decltype(st, 1), "")
+}

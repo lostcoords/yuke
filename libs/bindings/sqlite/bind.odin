@@ -2,6 +2,7 @@ package sqlite
 
 import "base:intrinsics"
 import "core:reflect"
+import "core:strings"
 
 // The most parameters one bound struct may carry. Outgrowing this is a design decision,
 // not a runtime condition, since a statement is written beside its parameter struct; the
@@ -81,34 +82,7 @@ bind_prepare :: proc(
     info := reflect.type_info_base(type_info_of(P))
     assert(info != nil, "a bind source has type information")
 
-    leaves: Bind_Leaves
-    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves)) or_return
-
-    if leaves.overflow {
-        return {}, .Too_Many_Parameters
-    }
-
-    for i in 0 ..< leaves.count {
-        leaf := leaves.items[i]
-
-        // Both options describe how a scan takes ownership of SQLite's memory;
-        // nothing on this side of the boundary can honor them.
-        if leaf.optional || leaf.borrowed {
-            return {}, .Invalid_Tag
-        }
-
-        matches := 0
-        for j in 0 ..< leaves.count {
-            if leaves.items[j].name == leaf.name {
-                matches += 1
-            }
-        }
-
-        if matches > 1 {
-            return {}, .Parameter_Duplicate
-        }
-    }
-
+    leaves := bind_leaves_collect(info) or_return
     count := bind_parameter_count(statement)
 
     if count > BIND_MAX_PARAMS {
@@ -242,6 +216,87 @@ bind_collect_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     leaves.count += 1
 
     return .None
+}
+
+// Collect and validate `info`'s leaves as a bind source: every option a scan-only
+// destination could carry is refused here, once, so both `bind_prepare` and
+// `insert_all_sql` reject the same malformed structs the same way.
+@(private)
+bind_leaves_collect :: proc(info: ^reflect.Type_Info) -> (leaves: Bind_Leaves, err: Bind_Error) {
+    bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves)) or_return
+
+    if leaves.overflow {
+        return {}, .Too_Many_Parameters
+    }
+
+    for i in 0 ..< leaves.count {
+        leaf := leaves.items[i]
+
+        // Both options describe how a scan takes ownership of SQLite's memory;
+        // nothing on this side of the boundary can honor them.
+        if leaf.optional || leaf.borrowed {
+            return {}, .Invalid_Tag
+        }
+
+        matches := 0
+        for j in 0 ..< leaves.count {
+            if leaves.items[j].name == leaf.name {
+                matches += 1
+            }
+        }
+
+        if matches > 1 {
+            return {}, .Parameter_Duplicate
+        }
+    }
+
+    return leaves, .None
+}
+
+// Build "INSERT INTO table (f1, f2, ...) VALUES (:f1, :f2, ...)" from P's leaves.
+// P's field names must already equal their table's column names.
+@(require_results)
+insert_all_sql :: proc(
+    table: string,
+    $P: typeid,
+    allocator := context.allocator,
+) -> string where intrinsics.type_is_struct(P) {
+    assert(len(table) > 0, "insert_all_sql needs a table name")
+
+    info := reflect.type_info_base(type_info_of(P))
+    assert(info != nil, "an insert source has type information")
+
+    leaves, leaves_err := bind_leaves_collect(info)
+    assert(leaves_err == .None, "insert_all_sql's source struct is a well-formed bind shape")
+    assert(leaves.count > 0, "insert_all_sql needs at least one column")
+
+    b := strings.builder_make(allocator)
+    strings.write_string(&b, "INSERT INTO ")
+    strings.write_string(&b, table)
+    strings.write_string(&b, " (")
+
+    for i in 0 ..< leaves.count {
+        if i > 0 {
+            strings.write_string(&b, ", ")
+        }
+
+        strings.write_string(&b, leaves.items[i].name)
+    }
+
+    strings.write_string(&b, ") VALUES (")
+
+    for i in 0 ..< leaves.count {
+        if i > 0 {
+            strings.write_string(&b, ", ")
+        }
+
+        strings.write_byte(&b, ':')
+        strings.write_string(&b, leaves.items[i].name)
+    }
+
+    strings.write_byte(&b, ')')
+
+    return strings.to_string(b)
 }
 
 // The field walk is shared with scanning and raises only shape errors both

@@ -140,6 +140,8 @@ foreign lib {
     c_column_blob :: proc(stmt: ^Stmt, iCol: c.int) -> rawptr ---
     @(link_name = "sqlite3_column_bytes")
     c_column_bytes :: proc(stmt: ^Stmt, iCol: c.int) -> c.int ---
+    @(link_name = "sqlite3_column_decltype")
+    c_column_decltype :: proc(stmt: ^Stmt, iCol: c.int) -> cstring ---
 
     @(link_name = "sqlite3_errmsg")
     c_errmsg :: proc(db: ^Conn) -> cstring ---

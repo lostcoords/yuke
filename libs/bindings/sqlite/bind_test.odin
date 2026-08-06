@@ -570,3 +570,60 @@ test_bind_rejects_multi_variant_union :: proc(t: ^testing.T) {
     _, err := bind_prepare(st, Params)
     testing.expect_value(t, err, Bind_Error.Unsupported_Type)
 }
+
+@(test)
+test_insert_all_sql_builds_a_statement_bind_prepare_accepts :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    testing.expect_value(t, exec(db, "CREATE TABLE t (a TEXT, b INTEGER, c BLOB)"), Result.Ok)
+
+    Params :: struct {
+        a: string,
+        b: i64,
+        c: [4]u8,
+    }
+
+    sql := insert_all_sql("t", Params, context.allocator)
+    defer delete(sql, context.allocator)
+    testing.expect_value(t, sql, "INSERT INTO t (a, b, c) VALUES (:a, :b, :c)")
+
+    st, prep := prepare(db, sql)
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+
+    mapping, mapping_err := bind_prepare(st, Params)
+    testing.expect_value(t, mapping_err, Bind_Error.None)
+
+    params := Params {
+        a = "hello",
+        b = 7,
+        c = {1, 2, 3, 4},
+    }
+    testing.expect_value(t, execute(&mapping, &params), Result.Ok)
+
+    sel, sel_prep := prepare(db, "SELECT a, b, c FROM t")
+    testing.expect_value(t, sel_prep, Result.Ok)
+    defer testing.expect_value(t, finalize(sel), Result.Ok)
+
+    testing.expect_value(t, step(sel), Result.Row)
+    text, text_rc := column_text(sel, 0)
+    testing.expect_value(t, text_rc, Result.Ok)
+    testing.expect_value(t, text, "hello")
+    testing.expect_value(t, column_i64(sel, 1), i64(7))
+    testing.expect_value(t, step(sel), Result.Done)
+}
+
+@(test)
+test_insert_all_sql_honors_the_sql_tag :: proc(t: ^testing.T) {
+    Params :: struct {
+        a:        string,
+        renamed:  i64 `sql:"b"`,
+        internal: i64 `sql:"-"`,
+    }
+
+    sql := insert_all_sql("t", Params, context.allocator)
+    defer delete(sql, context.allocator)
+    testing.expect_value(t, sql, "INSERT INTO t (a, b) VALUES (:a, :b)")
+}
