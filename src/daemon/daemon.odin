@@ -19,9 +19,8 @@ import wire "src:wire"
 // nbio offload workers, for blocking filesystem calls off the reactor.
 WORKER_COUNT :: 2
 
-// Also the arena's out-of-band threshold, so an oversized field is a direct allocation
-// rather than a block that fits neither it nor the arena's own bookkeeping.
-CONFIG_FIELD_MAX_SIZE :: 1024
+// Backs the three owned config strings; oversized input fails the start.
+CONFIG_ARENA_SIZE :: 2 * mem.Kilobyte
 
 Protocol_State :: enum {
     // Connection is Open; awaiting the client's `initialize` request.
@@ -110,7 +109,7 @@ Daemon :: struct {
     // @private
     // Backs the three owned config strings below, which live for the daemon's whole
     // serving life and are released together in `free_config`.
-    config_arena:   mem.Dynamic_Arena,
+    config_arena:   mem.Arena,
 
     // @private
     // Owned daemon version string, reported in every `initialize` result.
@@ -230,8 +229,13 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         version = "0.0.0"
     }
 
-    mem.dynamic_arena_init(&d.config_arena, allocator, allocator, CONFIG_FIELD_MAX_SIZE, CONFIG_FIELD_MAX_SIZE)
-    ca := mem.dynamic_arena_allocator(&d.config_arena)
+    config_buf, config_aerr := make([]byte, CONFIG_ARENA_SIZE, allocator)
+    if config_aerr != nil {
+        return .Out_Of_Memory
+    }
+
+    mem.arena_init(&d.config_arena, config_buf)
+    ca := mem.arena_allocator(&d.config_arena)
 
     cloned_version, version_aerr := strings.clone(version, ca)
     cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, ca)
@@ -484,7 +488,8 @@ store_close :: proc(d: ^Daemon) {
 free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
-    mem.dynamic_arena_destroy(&d.config_arena)
+    delete(d.config_arena.data, d.allocator)
+    d.config_arena = {}
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
