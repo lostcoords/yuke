@@ -24,9 +24,8 @@ Session_Cursor :: struct {
     id:            wire.Session_Id,
 }
 
-// The four selectors a filter reduces to: `scope` supplies `workspace_id`, `population`
-// supplies at most one of the rest. Not a generated Params struct — `Session_Page` and
-// `Session_Count` name/type this field differently, so no single generated type fits both.
+// The four selectors a filter reduces to: `scope` supplies `workspace_id`, `population` supplies at most
+// one of the rest. Not a generated Params struct — `Session_Page` and `Session_Count` name/type it differently.
 @(private)
 Session_Filter_Values :: struct {
     workspace_id: Maybe(wire.Workspace_Id),
@@ -67,9 +66,8 @@ session_filter_values :: proc(filter: Session_Filter) -> Session_Filter_Values {
     return values
 }
 
-// Write the registry row for a session; events and projected messages carry a foreign
-// key into it. The system prompt lands in the same transaction — nothing else ever sets
-// it, so a half-created session would refuse its own retry while never carrying one.
+// Write the registry row; events and projected messages carry a foreign key into it. The system
+// prompt lands in the same transaction so a half-created session refuses its own retry.
 session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> (err: Error) {
     assert(s != nil, "session_create needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
@@ -213,11 +211,10 @@ session_count :: proc(s: ^Store, filter: Session_Filter) -> (total: u64, err: Er
     return row.total, nil
 }
 
-// Rebuild the wire session a row was flattened from. `ok` is false for a row the
-// protocol refuses: CHECK constraints are weaker than `session_validate`, so a foreign
-// writer can leave one.
+// Rebuild the wire session a row was flattened from. `ok` is false for a row the protocol
+// refuses: CHECK constraints are weaker than `session_validate`, so a foreign writer can leave one.
 @(private)
-session_row_to_wire :: proc(row: queries.Session_Row) -> (session: wire.Session, ok: bool) {
+session_row_to_wire :: proc(row: queries.Session_Page_Row) -> (session: wire.Session, ok: bool) {
     origin := session_origin_from_row(row) or_return
     permission := wire.permission_mode_from_wire(row.permission) or_return
 
@@ -264,7 +261,7 @@ session_row_to_wire :: proc(row: queries.Session_Row) -> (session: wire.Session,
 // Rebuild the origin union from the discriminator and the arm's own ids. Every arm but
 // root carries ids that are non-null exactly for it.
 @(private)
-session_origin_from_row :: proc(row: queries.Session_Row) -> (origin: wire.Session_Origin, ok: bool) {
+session_origin_from_row :: proc(row: queries.Session_Page_Row) -> (origin: wire.Session_Origin, ok: bool) {
     arm := wire.session_origin_type_from_wire(row.origin) or_return
 
     switch _ in arm {

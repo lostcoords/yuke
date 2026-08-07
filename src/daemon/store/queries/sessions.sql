@@ -6,10 +6,9 @@ SELECT 1 FROM sessions WHERE id = :session_id;
 
 -- name: Session_Page :many
 -- Named rather than `SELECT *`: `sessions` also carries the id-minting marks
--- (`seq_high` and siblings), which have no field worth a struct here. The
--- column list and its order deliberately mirror the `Create_Session_Params`/
--- `Session_Row` schema shapes, so this query's row shape dedups against
--- `Session_Row` instead of minting an identical `Session_Page_Row`.
+-- (`seq_high` and siblings) and the open-run projection, none of which belong in a
+-- `session.list` row, so the page selects only the client-facing columns and takes
+-- its own `Session_Page_Row` shape.
 -- `filter_workspace_id` (not `workspace_id`) avoids colliding with the row's
 -- own `workspace_id` column, which is NOT NULL while the filter is optional.
 -- filter_workspace_id: wire.Workspace_Id
@@ -71,3 +70,17 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)
   AND (:job_id       IS NULL OR job_id       = :job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));
+
+-- name: Session_Activity :one
+-- The message count and open-run projection for a known session. resync reads this
+-- after `high_water` has confirmed the session exists, so a row is always present.
+-- session_id: wire.Session_Id!
+-- message_count: u64!
+-- open_run_id: wire.Run_Id
+-- open_run_kind: string
+-- open_run_reason: string
+-- open_run_config_rev: wire.Config_Rev
+-- open_run_started_at_ms: u64
+SELECT message_count,
+       open_run_id, open_run_kind, open_run_reason, open_run_config_rev, open_run_started_at_ms
+    FROM sessions WHERE id = :session_id;

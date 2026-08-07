@@ -1,13 +1,15 @@
 package store
 
+import "core:mem"
+
 import "src:daemon/store/queries"
 import "src:wire"
 
 import "libs:bindings/sqlite"
 
 // Fold one durable event into the config projection, inside the append transaction.
-// Truncation isn't a case: it leaves announced revisions intact. A revision is minted
-// once, so a repeat insert here is drift, not an update.
+// Truncation isn't a case: it leaves announced revisions intact. A revision is minted once,
+// so a repeat insert here is drift, not an update.
 @(private)
 configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_Data) -> Error {
     assert(s != nil, "configs_apply needs a store")
@@ -28,6 +30,41 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
             reasoning = changed.config.reasoning,
         },
     )
+}
+
+// Every announced config revision for the session, oldest first, as `wire.Run_Config`.
+// resync resolves a message's `config_rev` against this instead of folding the log. Row strings live in `allocator`.
+session_configs :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+    allocator: mem.Allocator,
+) -> (
+    configs: []wire.Run_Config,
+    err: Error,
+) {
+    assert(s != nil, "session_configs needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a config read needs an allocator")
+
+    read, sqlite_err := queries.session_configs(&s.queries, {session_id = session}, allocator)
+    if sqlite_err != nil {
+        return nil, read_err(sqlite_err)
+    }
+
+    out, alloc_err := make([]wire.Run_Config, len(read), allocator)
+    if alloc_err != nil {
+        return nil, Store_Error.Alloc_Failed
+    }
+
+    for row, i in read {
+        out[i] = wire.Run_Config {
+            config_rev = row.config_rev,
+            model      = row.model,
+            reasoning  = row.reasoning,
+        }
+    }
+
+    return out, nil
 }
 
 // `Default` is resolved to its text before it reaches here; nil stores nothing

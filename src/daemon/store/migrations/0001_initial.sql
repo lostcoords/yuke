@@ -41,12 +41,28 @@ CREATE TABLE sessions (
     input_id_high   INTEGER NOT NULL DEFAULT 0 CHECK (input_id_high   BETWEEN 0 AND 9007199254740991),
     config_rev_high INTEGER NOT NULL DEFAULT 0 CHECK (config_rev_high BETWEEN 0 AND 9007199254740991),
 
+    -- Open-run projection: the run left unclosed at the cut — `run.started` with no
+    -- matching `run.done`. All null when idle; `runs_apply` maintains them, rebuildable
+    -- by replay. `DEFAULT NULL` keeps them out of the full-row insert, like the marks.
+    open_run_id            INTEGER DEFAULT NULL CHECK (open_run_id            IS NULL OR open_run_id            BETWEEN 1 AND 9007199254740991), -- wire.Run_Id
+    open_run_kind          TEXT    DEFAULT NULL CHECK (open_run_kind          IS NULL OR open_run_kind          IN ('turn', 'compaction')),
+    open_run_reason        TEXT    DEFAULT NULL CHECK (open_run_reason        IS NULL OR open_run_reason        IN ('auto', 'manual')),
+    open_run_config_rev    INTEGER DEFAULT NULL CHECK (open_run_config_rev    IS NULL OR open_run_config_rev    BETWEEN 0 AND 9007199254740991), -- wire.Config_Rev
+    open_run_started_at_ms INTEGER DEFAULT NULL CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms >= 0), -- u64
+
     -- Table constraints follow every column definition; SQLite rejects them interleaved.
     CHECK ((origin = 'child') = (parent_id IS NOT NULL AND parent_message_id IS NOT NULL AND parent_part_id IS NOT NULL)),
     CHECK ((origin = 'fork')  = (source_id IS NOT NULL)),
     CHECK ((origin = 'cron')  = (job_id IS NOT NULL)),
     CHECK ((created_by_name IS NULL) = (created_by_version IS NULL)),
-    CHECK (updated_at_ms >= created_at_ms)
+    CHECK (updated_at_ms >= created_at_ms),
+
+    -- Open-run columns move as a unit: all set for an open run, all null when idle,
+    -- and `reason` is present exactly for a compaction run.
+    CHECK ((open_run_id IS NULL) = (open_run_kind IS NULL)),
+    CHECK ((open_run_id IS NULL) = (open_run_config_rev IS NULL)),
+    CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
+    CHECK ((open_run_reason IS NOT NULL) = (COALESCE(open_run_kind, '') = 'compaction'))
 ) WITHOUT ROWID;
 
 -- Every ORDER BY term is DESC including the trailing id tiebreak; a trailing ASC

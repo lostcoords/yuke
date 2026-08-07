@@ -53,9 +53,8 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
             params.finish = wire.stop_reason_to_wire(finish)
         }
 
-        // `config_rev` records what the turn was *requested* under; provenance
-        // records what answered, which is the only correct source for "which
-        // model produced this".
+        // `config_rev` records what the turn was *requested* under; provenance records what
+        // answered, the only correct source for "which model produced this".
         if prov, ok := m.provenance.?; ok {
             params.model = prov.model
             params.protocol = wire.provider_protocol_to_wire(prov.protocol)
@@ -80,9 +79,8 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
     return messages_count_add(s, session, 1, params.created_at_ms)
 }
 
-// Apply a truncation marker: appended *after* the messages it removes, so the
-// projection deletes the tail rather than mirroring row for row. Id marks deliberately
-// stay put — a discarded id stays spent.
+// Apply a truncation marker: appended *after* the messages it removes, so the projection
+// deletes the tail rather than mirroring row for row. Id marks stay put — a discarded id stays spent.
 @(private)
 messages_truncate :: proc(s: ^Store, session: wire.Session_Id, first_removed_id: wire.Message_Id) -> Error {
     assert(s != nil, "messages_truncate needs a store")
@@ -102,9 +100,8 @@ messages_truncate :: proc(s: ^Store, session: wire.Session_Id, first_removed_id:
     return messages_count_add(s, session, -i64(removed), nil)
 }
 
-// Move `sessions.message_count` by `delta` and raise the update mark. The
-// schema's `message_count >= 0` check is the drift alarm: the projection and the
-// count are written in one transaction, so they cannot disagree.
+// Move `sessions.message_count` by `delta` and raise the update mark. The schema's
+// `message_count >= 0` check is the drift alarm: the projection and count are written in one transaction.
 @(private)
 messages_count_add :: proc(s: ^Store, session: wire.Session_Id, delta: i64, updated_at_ms: Maybe(u64)) -> Error {
     assert(s != nil, "messages_count_add needs a store")
@@ -126,9 +123,8 @@ Messages_Rebuild :: struct {
     err:     Error,
 }
 
-// Drop and rebuild one session's projection by replaying its log. The projection holds
-// no fact the log doesn't, which is why it can reshape without a migration and why
-// `events.payload` must stay verbatim JSON. Runs in one transaction; `sa` is scratch.
+// Drop and rebuild one session's projection by replaying its log; it holds no fact the log
+// doesn't, so `events.payload` must stay verbatim JSON. Runs in one transaction; `sa` is scratch.
 projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.temp_allocator) -> (err: Error) {
     assert(s != nil, "projection_rebuild needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
@@ -141,10 +137,11 @@ projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.te
         }
     }
 
-    // Ids start at 1, so truncating from there clears the session and carries the
-    // count back to zero through the same path a real truncation takes.
+    // Reset all three projections to empty, then replay. Ids start at 1, so truncating from there
+    // clears the transcript and carries the count back to zero through the same path a real truncation takes.
     messages_truncate(s, session, 1) or_return
     queries.clear_configs(&s.queries, {session_id = session}) or_return
+    queries.reset_open_run(&s.queries, {session_id = session}) or_return
 
     rebuild := Messages_Rebuild {
         store   = s,
@@ -186,6 +183,27 @@ projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.te
 @(private)
 REBUILD_PAGE :: 256
 
+// Decode and validate one stored durable event body. A row the codec or validator rejects is
+// on-disk damage — `Invalid_Row`, reported not asserted, matching the guarantee the pump gives the live path.
+@(private)
+durable_decode :: proc(
+    name: wire.Broadcast_Name,
+    payload: string,
+    allocator: mem.Allocator,
+) -> (
+    wire.Broadcast_Data,
+    Error,
+) {
+    dec := wire.decoder_init(payload, allocator)
+
+    data, derr := wire.broadcast_data_from_reader(name, &dec)
+    if derr != .None || wire.broadcast_data_validate(data) != .None {
+        return {}, Store_Error.Invalid_Row
+    }
+
+    return data, nil
+}
+
 @(private)
 projection_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
     rebuild := (^Messages_Rebuild)(user)
@@ -195,21 +213,17 @@ projection_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
 
     rebuild.last = event.seq
 
-    // Only two of the five durable names say anything about the transcript, so the
-    // rest never pay a decode.
+    // Every durable name projects something — transcript, config, or open run — so all
+    // five decode.
     #partial switch event.name {
-    case .Message_Committed, .Transcript_Truncated, .Config_Changed:
+    case .Message_Committed, .Transcript_Truncated, .Config_Changed, .Run_Started, .Run_Done:
     case:
         return .Continue
     }
 
-    d := wire.decoder_init(event.payload, rebuild.scratch)
-    data, derr := wire.broadcast_data_from_reader(event.name, &d)
-
-    // A row the codec refuses is damage, not a programmer error: reported, not asserted.
-    // Validated too, since a replay must match the guarantee the pump gives the live path.
-    if derr != .None || wire.broadcast_data_validate(data) != .None {
-        rebuild.err = Store_Error.Invalid_Row
+    data, decode_err := durable_decode(event.name, event.payload, rebuild.scratch)
+    if decode_err != nil {
+        rebuild.err = decode_err
 
         return .Stop
     }
@@ -226,5 +240,67 @@ projection_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
         return .Stop
     }
 
+    if aerr := runs_apply(rebuild.store, rebuild.session, data); aerr != nil {
+        rebuild.err = aerr
+
+        return .Stop
+    }
+
     return .Continue
+}
+
+// The transcript tail as `session.history` pages it: the newest `limit` messages, decoded from
+// `events` and returned oldest first. A null cursor starts at the newest; a rejected payload is `Invalid_Row`.
+history_page :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+    cursor: Maybe(wire.Message_Id),
+    limit: int,
+    allocator: mem.Allocator,
+) -> (
+    messages: []wire.Message,
+    err: Error,
+) {
+    assert(s != nil, "history_page needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(limit > 0, "a history page is bounded")
+    assert(allocator.procedure != nil, "a history page needs an allocator")
+
+    read, sqlite_err := queries.session_history_page(
+        &s.queries,
+        {session_id = session, cursor_message_id = cursor, limit = limit},
+        allocator,
+    )
+    if sqlite_err != nil {
+        return nil, read_err(sqlite_err)
+    }
+
+    out, alloc_err := make([]wire.Message, len(read), allocator)
+    if alloc_err != nil {
+        return nil, Store_Error.Alloc_Failed
+    }
+
+    // The rows arrive newest first off the keyset; the page ships oldest first.
+    n := len(read)
+    for row, i in read {
+        data, decode_err := durable_decode(.Message_Committed, row.payload, allocator)
+        if decode_err != nil {
+            return nil, decode_err
+        }
+
+        committed, is_committed := data.(wire.Message_Committed_Data)
+        if !is_committed {
+            return nil, Store_Error.Invalid_Row
+        }
+
+        // The projection's id indexes this row; a payload whose id disagrees is damaged,
+        // since the two were written from one event in one transaction.
+        if wire.message_id(committed.message) != row.message_id {
+            return nil, Store_Error.Invalid_Row
+        }
+
+        out[n - 1 - i] = committed.message
+    }
+
+    return out, nil
 }

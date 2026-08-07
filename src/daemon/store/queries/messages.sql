@@ -16,3 +16,22 @@ UPDATE sessions SET
     message_count = message_count + :delta,
     updated_at_ms = MAX(updated_at_ms, COALESCE(:updated_at_ms, 0))
     WHERE id = :session_id;
+
+-- name: Session_History_Page :many
+-- The transcript tail as `session.history` pages it: newest message first, each row
+-- joined to its body in `events` by (session_id, seq). A null cursor starts at the
+-- newest; older pages seek by message id descending. The caller reverses a tail page
+-- back to ascending before it ships.
+-- session_id: wire.Session_Id!
+-- cursor_message_id: wire.Message_Id
+-- limit: int!
+-- message_id: wire.Message_Id!
+-- seq: wire.Seq!
+-- payload: string!
+SELECT m.message_id, m.seq, e.payload
+    FROM messages m
+    JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    WHERE m.session_id = :session_id
+      AND (:cursor_message_id IS NULL OR m.message_id < :cursor_message_id)
+    ORDER BY m.message_id DESC
+    LIMIT :limit;

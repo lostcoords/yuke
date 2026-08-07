@@ -13,11 +13,8 @@ import wire "src:wire"
 
 // --- session.resync cut tests --------------------------------------------------
 //
-// The cut is folded from the durable log alone, so each fixture seeds the log through
-// `broadcast` — the pump entry point the session engine will use — and then
-// builds the cut the handler would send. One test carries a cut over a real
-// connection and installs it into a `src/client` replica, which is the consumer whose
-// invariants the fold exists to satisfy.
+// The cut is folded from the durable log alone; fixtures seed it through `broadcast`.
+// One test carries a cut into a `src/client` replica, the fold's real consumer.
 
 // A committed user message; empty content keeps the fixtures about the fold.
 resync_user :: proc(session: wire.Session_Id, id: wire.Message_Id) -> wire.Broadcast_Data {
@@ -103,9 +100,8 @@ resync_compaction_done :: proc(session: wire.Session_Id, run_id: wire.Run_Id) ->
     }
 }
 
-// Put a codec-valid but semantically impossible historical row directly on the
-// log. Corruption fixtures bypass the pump so they do not model impossible daemon
-// output as an accepted internal operation.
+// Put a codec-valid but semantically impossible historical row directly on the log.
+// Corruption fixtures bypass the pump so they do not model impossible daemon output as accepted.
 resync_append_corrupt_fixture :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broadcast_Data) {
     assert(d != nil, "a corruption fixture needs daemon state")
     assert(d.store != nil, "a corruption fixture needs an open store")
@@ -126,9 +122,8 @@ resync_append_corrupt_fixture :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broa
     testing.expect_value(t, store.event_append(d.store, session, seq, stamped, wire.to_string(&e), {}), nil)
 }
 
-// Overwrite one stored payload without touching seq, marks, or the projection.
-// This models a damaged file: the daemon's own write path could not have produced
-// the replacement, so it is written underneath that path rather than through it.
+// Overwrite one stored payload without touching seq, marks, or the projection. This models
+// a damaged file: the daemon's own write path could not have produced the replacement.
 resync_damage_payload :: proc(
     t: ^testing.T,
     d: ^Daemon,
@@ -154,6 +149,44 @@ resync_damage_payload :: proc(
     testing.expect_value(t, sqlite.bind_i64(st, 3, i64(seq)), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.execute(st), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.changes(d.store.writer), 1)
+}
+
+// Build a cut with resync's own error logging silenced, then restore the testing logger so
+// the caller's `expect` still counts; a corruption path logs an error the test logger would otherwise fail on.
+resync_build_quiet :: proc(
+    t: ^testing.T,
+    d: ^Daemon,
+    params: wire.Session_Resync_Params,
+) -> (
+    wire.Session_Resync_Result,
+    Resync_Error,
+) {
+    saved := context.logger
+    context.logger = log.nil_logger()
+    result, err := resync_build(d, params, context.temp_allocator)
+    context.logger = saved
+
+    return result, err
+}
+
+// Attempt a codec-valid but semantically impossible append and assert the store rejects
+// it at write time — the schema's own CHECK/PK guards, not a read-time fold.
+resync_expect_write_rejected :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broadcast_Data) {
+    session, named := wire.broadcast_data_session_id(data).?
+    assert(named, "a durable corruption fixture names its session")
+
+    hw, herr := store.high_water(d.store, session)
+    testing.expect_value(t, herr, nil)
+    seq := hw.seq + 1
+    stamped := pump_stamp_seq(data, seq)
+
+    e: wire.Emitter
+    wire.emitter_init(&e, d.allocator)
+    defer wire.emitter_destroy(&e)
+    wire.broadcast_data_emit(&e, stamped)
+
+    rejected := store.event_append(d.store, session, seq, stamped, wire.to_string(&e), {}) != nil
+    testing.expect(t, rejected, "the store rejects the corrupt write")
 }
 
 // Bring up a daemon on a real database and run `body` against it.
@@ -446,10 +479,6 @@ test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
 test_daemon_resync_of_an_undeclared_config_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    // The unresolvable revision is logged as an error, which the runner would
-    // otherwise count as a test failure; the assertion below is the check.
-    context.logger = log.nil_logger()
-
     resync_with_daemon(
         t,
         "daemon-resync-unknown-config",
@@ -461,34 +490,34 @@ test_daemon_resync_of_an_undeclared_config_is_refused :: proc(t: ^testing.T) {
             // and an unresolvable cut is our own log's fault, not a peer's.
             resync_append_corrupt_fixture(t, d, pump_run_started(session))
 
-            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            _, err := resync_build_quiet(t, d, {session_id = session})
             testing.expect_value(t, err, Resync_Error.Corrupt_Log)
         },
     )
 }
 
 @(test)
-test_daemon_resync_of_a_conflicting_config_revision_is_refused :: proc(t: ^testing.T) {
+test_daemon_resync_of_a_conflicting_config_revision_is_rejected_at_write :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    context.logger = log.nil_logger()
+    resync_with_daemon(
+        t,
+        "daemon-resync-conflicting-config",
+        proc(t: ^testing.T, d: ^Daemon) {
+            session := pump_test_session('5')
+            daemon_test_session_create(t, d, session)
+            testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
 
-    resync_with_daemon(t, "daemon-resync-conflicting-config", proc(t: ^testing.T, d: ^Daemon) {
-        session := pump_test_session('5')
-        daemon_test_session_create(t, d, session)
-        testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-        resync_append_corrupt_fixture(t, d, resync_config(session, 1, "m2"))
-
-        _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-        testing.expect_value(t, err, Resync_Error.Corrupt_Log)
-    })
+            // A revision is minted once; re-announcing it with different settings is drift the
+            // config projection's primary key refuses at append, not a read-time fold.
+            resync_expect_write_rejected(t, d, resync_config(session, 1, "m2"))
+        },
+    )
 }
 
 @(test)
-test_daemon_resync_of_a_zero_message_id_is_refused :: proc(t: ^testing.T) {
+test_daemon_resync_of_a_damaged_message_payload_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
 
     resync_with_daemon(
         t,
@@ -497,44 +526,20 @@ test_daemon_resync_of_a_zero_message_id_is_refused :: proc(t: ^testing.T) {
             session := pump_test_session('6')
             daemon_test_session_create(t, d, session)
 
-            // Id 0 is never minted, and a cut carrying it would pass our wire validator:
-            // the fold refuses the damaged historical row before it reaches a replica.
-            // The daemon could never emit this, so it is written as on-disk damage to
-            // a well-formed row rather than pushed through the append path.
+            // Id 0 is never minted; the daemon could never emit this, so it is written as
+            // on-disk damage. The projection read validates each payload and refuses it.
             resync_append_corrupt_fixture(t, d, resync_user(session, 1))
             resync_damage_payload(t, d, session, 1, resync_user(session, 0))
 
-            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-            testing.expect_value(t, err, Resync_Error.Corrupt_Log)
+            _, err := resync_build_quiet(t, d, {session_id = session})
+            testing.expect_value(t, err, Resync_Error.Store_Failed)
         },
     )
 }
 
 @(test)
-test_daemon_resync_of_a_reused_truncated_message_id_is_refused :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
-
-    resync_with_daemon(t, "daemon-resync-reused-id", proc(t: ^testing.T, d: ^Daemon) {
-        session := pump_test_session('7')
-        daemon_test_session_create(t, d, session)
-
-        testing.expect_value(t, broadcast(d, resync_user(session, 1)), Pump_Error.None)
-        testing.expect_value(t, broadcast(d, resync_user(session, 2)), Pump_Error.None)
-        testing.expect_value(t, broadcast(d, resync_truncated(session, 2)), Pump_Error.None)
-        resync_append_corrupt_fixture(t, d, resync_user(session, 2))
-
-        _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-        testing.expect_value(t, err, Resync_Error.Corrupt_Log)
-    })
-}
-
-@(test)
 test_daemon_resync_of_a_lagging_message_mark_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
 
     resync_with_daemon(
         t,
@@ -543,12 +548,11 @@ test_daemon_resync_of_a_lagging_message_mark_is_refused :: proc(t: ^testing.T) {
             session := pump_test_session('a')
             daemon_test_session_create(t, d, session)
 
-            // The fixture logs the row without the mark the pump raises in the same
-            // transaction, which is how a damaged `session_meta` reads: the boundary the cut
-            // would report sits below an id the log already committed.
+            // The fixture logs the row without the mark the pump raises in the same transaction,
+            // so the boundary the cut would report sits below an id the log already committed.
             resync_append_corrupt_fixture(t, d, resync_user(session, 1))
 
-            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
+            _, err := resync_build_quiet(t, d, {session_id = session})
             testing.expect_value(t, err, Resync_Error.Corrupt_Log)
         },
     )
@@ -580,25 +584,6 @@ test_daemon_resync_keeps_a_run_open_past_a_mismatched_terminal :: proc(t: ^testi
             testing.expect_value(t, state.run_id, wire.Run_Id(1))
         },
     )
-}
-
-@(test)
-test_daemon_resync_refuses_overlapping_runs :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
-
-    resync_with_daemon(t, "daemon-resync-run-replace", proc(t: ^testing.T, d: ^Daemon) {
-        session := pump_test_session('9')
-        daemon_test_session_create(t, d, session)
-
-        testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
-        testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
-        resync_append_corrupt_fixture(t, d, resync_run_started(session, 2, 20))
-
-        _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-        testing.expect_value(t, err, Resync_Error.Corrupt_Log)
-    })
 }
 
 @(test)
@@ -655,10 +640,8 @@ test_daemon_resync_closes_a_compaction_run_before_the_cut :: proc(t: ^testing.T)
 }
 
 @(test)
-test_daemon_resync_of_a_compaction_run_missing_its_reason_is_refused :: proc(t: ^testing.T) {
+test_daemon_resync_of_a_compaction_run_missing_its_reason_is_rejected_at_write :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
 
     resync_with_daemon(
         t,
@@ -667,9 +650,9 @@ test_daemon_resync_of_a_compaction_run_missing_its_reason_is_refused :: proc(t: 
             session := pump_test_session('c')
             daemon_test_session_create(t, d, session)
 
-            // A compaction row logged without its reason fails the codec's own
-            // kind/reason invariant, which the fold treats as log corruption.
-            resync_append_corrupt_fixture(
+            // A compaction run must carry its reason; the open-run projection's CHECK
+            // refuses the row at append rather than a read-time fold catching it later.
+            resync_expect_write_rejected(
                 t,
                 d,
                 wire.Run_Started_Data {
@@ -680,18 +663,13 @@ test_daemon_resync_of_a_compaction_run_missing_its_reason_is_refused :: proc(t: 
                     started_at_ms = 1,
                 },
             )
-
-            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-            testing.expect_value(t, err, Resync_Error.Corrupt_Log)
         },
     )
 }
 
 @(test)
-test_daemon_resync_of_a_turn_run_carrying_a_reason_is_refused :: proc(t: ^testing.T) {
+test_daemon_resync_of_a_turn_run_carrying_a_reason_is_rejected_at_write :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    context.logger = log.nil_logger()
 
     resync_with_daemon(
         t,
@@ -700,9 +678,9 @@ test_daemon_resync_of_a_turn_run_carrying_a_reason_is_refused :: proc(t: ^testin
             session := pump_test_session('d')
             daemon_test_session_create(t, d, session)
 
-            // A turn row carrying a reason is the same invariant violated the other
-            // way; both are our own log's fault, never a peer's.
-            resync_append_corrupt_fixture(
+            // A turn run carries no reason; the same CHECK refuses the row the other way,
+            // at append, never a peer's fault.
+            resync_expect_write_rejected(
                 t,
                 d,
                 wire.Run_Started_Data {
@@ -714,9 +692,6 @@ test_daemon_resync_of_a_turn_run_carrying_a_reason_is_refused :: proc(t: ^testin
                     started_at_ms = 1,
                 },
             )
-
-            _, err := resync_build(d, {session_id = session}, context.temp_allocator)
-            testing.expect_value(t, err, Resync_Error.Corrupt_Log)
         },
     )
 }
@@ -771,7 +746,7 @@ test_daemon_resync_of_a_config_only_log_has_no_boundary :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_resync_folds_a_log_past_one_chunk :: proc(t: ^testing.T) {
+test_daemon_resync_pages_a_transcript_past_one_page :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     resync_with_daemon(
@@ -781,8 +756,8 @@ test_daemon_resync_folds_a_log_past_one_chunk :: proc(t: ^testing.T) {
             session := pump_test_session('c')
             daemon_test_session_create(t, d, session)
 
-            // One row past the read chunk, so the fold's continuation is exercised.
-            rows := RESYNC_CHUNK + 1
+            // One row past a page, so the tail page is full and `has_more` is set.
+            rows := wire.LIMITS.default_page_size + 1
             for id in 1 ..= rows {
                 testing.expect_value(t, broadcast(d, resync_user(session, wire.Message_Id(id))), Pump_Error.None)
             }
@@ -1013,9 +988,8 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
     session := pump_test_session('0')
     daemon_test_session_create(t, &d, session)
 
-    // The store validates only the class and a non-empty payload, so a payload the
-    // codec rejects reaches the log the way real corruption would. The typed value
-    // still projects, since only the stored row is corrupt.
+    // The store validates only the class and a non-empty payload, so a payload the codec
+    // rejects reaches the log the way real corruption would; only the stored row is corrupt.
     corrupt := wire.Message_Committed_Data {
         session_id = session,
         seq = 1,

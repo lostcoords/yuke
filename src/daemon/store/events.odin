@@ -52,9 +52,8 @@ Event_Visit :: enum {
 // The event payload belongs to the visitor, including when it stops the read.
 Event_Visitor :: #type proc(user: rawptr, event: Event) -> Event_Visit
 
-// One row scanned from the `events` table. `name` is borrowed from SQLite's column
-// memory and dies with this row — it must not be retained. `payload` is owned by the
-// row's allocator and freed by `scan_destroy` unless transferred out first.
+// One row scanned from `events`. `name` is borrowed from SQLite's column memory and dies with
+// this row — do not retain it. `payload` is owned by the row allocator, freed unless transferred out.
 @(private)
 Event_Row :: struct {
     seq:     wire.Seq,
@@ -74,9 +73,8 @@ Events_After_Params :: struct {
 EVENTS_AFTER_SQL :: `SELECT seq, name, payload FROM events
     WHERE session_id = :session_id AND seq > :seq ORDER BY seq LIMIT :limit`
 
-// `Event_Row.name` is borrowed, which `sqlite.Reader` refuses at prepare time — a
-// borrowed field would dangle past the read loop's own step. Hand-rolled bind and
-// scan mirror what `Reader` bundles, minus that restriction.
+// `Event_Row.name` is borrowed, which `sqlite.Reader` refuses at prepare time since it would
+// dangle past the read loop's own step. Hand-rolled bind and scan mirror what `Reader` bundles.
 @(private)
 Events_After_Reader :: struct {
     statement: ^sqlite.Stmt,
@@ -120,9 +118,8 @@ events_after_destroy :: proc(r: ^Events_After_Reader, allocator := context.alloc
     r^ = {}
 }
 
-// Append one durable event and advance the session's seq high-water in a single
-// transaction. `events.seq` and `sessions.seq_high` are bound from the same
-// parameter, so a commit can never leave them disagreeing.
+// Append one durable event and advance the session's seq high-water in a single transaction.
+// `events.seq` and `sessions.seq_high` are bound from the same parameter, so they cannot disagree.
 event_append :: proc(
     s: ^Store,
     session: wire.Session_Id,
@@ -157,6 +154,7 @@ event_append :: proc(
     append_body(s, session, seq, name, payload, ids) or_return
     messages_apply(s, session, seq, data) or_return
     configs_apply(s, session, data) or_return
+    runs_apply(s, session, data) or_return
     sqlite.txn_commit(s.writer) or_return
 
     return nil
@@ -326,8 +324,7 @@ append_body :: proc(
     assert(len(payload) > 0, "append_body receives an encoded payload")
 
     // The guard is the contiguity rule itself: only the row whose high-water is `seq - 1`
-    // advances, so every gap, replay, or never-created session matches nothing — the
-    // existence read then tells them apart.
+    // advances, so every gap, replay, or never-created session matches nothing; the existence read tells them apart.
     queries.advance_seq(&s.queries, {session_id = session, seq = seq}) or_return
 
     changed := sqlite.changes(s.writer)
