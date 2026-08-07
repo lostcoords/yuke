@@ -417,12 +417,11 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
     }
     assert(wire.session_deltas_shed_data_validate(data) == .None, "the pump built an invalid shed marker")
 
-    e: wire.Emitter
-    wire.emitter_init(&e, virtual.arena_allocator(&d.pump_scratch))
+    note := wire.notification_build(.Session_Deltas_Shed, data)
+    e, ok := wire.notification_encode(note, virtual.arena_allocator(&d.pump_scratch))
     defer wire.emitter_destroy(&e)
-    wire.notification_emit(&e, wire.notification_build(.Session_Deltas_Shed, data))
 
-    if wire.emitter_failed(&e) {
+    if !ok {
         log.error("daemon: a shed marker could not be encoded")
 
         return

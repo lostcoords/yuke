@@ -103,6 +103,15 @@ response_emit :: proc(e: ^Emitter, self: Response) {
     object_end(e)
 }
 
+// Encode a response; the caller owns the returned emitter (`to_string` then destroy).
+// `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
+response_encode :: proc(self: Response, allocator := context.allocator) -> (e: Emitter, ok: bool) {
+    emitter_init(&e, allocator)
+    response_emit(&e, self)
+
+    return e, !emitter_failed(&e)
+}
+
 // Verify the id shape and result/error bounds.
 response_validate :: proc(self: Response) -> Validation_Error {
     switch v in self {
@@ -144,6 +153,15 @@ notification_emit :: proc(e: ^Emitter, self: Notification) {
     key(e, "params")
     broadcast_data_emit(e, self.params)
     object_end(e)
+}
+
+// Encode a notification; the caller owns the returned emitter (`to_string` then destroy).
+// `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
+notification_encode :: proc(self: Notification, allocator := context.allocator) -> (e: Emitter, ok: bool) {
+    emitter_init(&e, allocator)
+    notification_emit(&e, self)
+
+    return e, !emitter_failed(&e)
 }
 
 // Write a notification whose `params` are already encoded. The durable path logs the

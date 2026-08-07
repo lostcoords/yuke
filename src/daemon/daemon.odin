@@ -856,17 +856,14 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     assert(conn.state != .Closed, "response sent after protocol close")
     assert(wire.response_validate(resp) == .None, "daemon built an invalid response frame")
 
-    e: wire.Emitter
-    wire.emitter_init(&e, allocator)
+    e, ok := wire.response_encode(resp, allocator)
     defer wire.emitter_destroy(&e)
-    wire.response_emit(&e, resp)
 
     // A truncated response is damaged protocol, not a smaller one: the peer would read a
     // partial JSON value and lose framing, so the connection dies instead.
-    if wire.emitter_failed(&e) {
+    if !ok {
         log.error("daemon: a response could not be encoded")
         conn_abort(conn, .Out_Of_Memory)
-
         return false
     }
 
