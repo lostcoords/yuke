@@ -20,9 +20,6 @@ import wire "src:wire"
 // nbio offload workers, for blocking filesystem calls off the reactor.
 WORKER_COUNT :: 2
 
-// Backs the three owned config strings; oversized input fails the start.
-CONFIG_ARENA_SIZE :: 2 * mem.Kilobyte
-
 Protocol_State :: enum {
     // Connection is Open; awaiting the client's `initialize` request.
     Awaiting_Initialize,
@@ -104,13 +101,9 @@ Daemon :: struct {
     loop:           ^nbio.Event_Loop,
 
     // @private
-    // Backs the string clones and every connection's `Conn`. Must outlive the daemon.
+    // Backs the three owned config strings and every connection's `Conn`. Must outlive
+    // the daemon.
     allocator:      mem.Allocator,
-
-    // @private
-    // Backs the three owned config strings below, which live for the daemon's whole
-    // serving life and are released together in `free_config`.
-    config_arena:   mem.Arena,
 
     // @private
     // Owned daemon version string, reported in every `initialize` result.
@@ -228,24 +221,15 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         version = "0.0.0"
     }
 
-    config_buf, config_aerr := make([]byte, CONFIG_ARENA_SIZE, allocator)
-    if config_aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    mem.arena_init(&d.config_arena, config_buf)
-    ca := mem.arena_allocator(&d.config_arena)
-
-    cloned_version, version_aerr := strings.clone(version, ca)
-    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, ca)
-    cloned_token, token_aerr := strings.clone(options.auth_token, ca)
-    if version_aerr != nil || blob_aerr != nil || token_aerr != nil {
-        return .Out_Of_Memory
-    }
-
+    cloned_version, version_aerr := strings.clone(version, allocator)
+    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
+    cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
     d.daemon_version = cloned_version
     d.blob_dir = cloned_blob_dir
     d.auth_token = cloned_token
+    if version_aerr != nil || blob_aerr != nil || token_aerr != nil {
+        return .Out_Of_Memory
+    }
 
     // Started unconditionally: `workspace.describe` and `workspace.browse` offload their
     // path walks whether or not a blob directory is configured.
@@ -494,13 +478,14 @@ store_close :: proc(d: ^Daemon) {
     d.seq_high = nil
 }
 
-// Release the owned config strings, resetting them to empty. Destroying the arena
-// zeroes it, so every teardown path can call this without knowing how far `start` got.
+// Release the owned config strings, resetting them to empty. Every teardown path can call
+// this without knowing how far `start` got.
 free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
-    delete(d.config_arena.data, d.allocator)
-    d.config_arena = {}
+    delete(d.daemon_version, d.allocator)
+    delete(d.blob_dir, d.allocator)
+    delete(d.auth_token, d.allocator)
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
