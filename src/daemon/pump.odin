@@ -2,6 +2,7 @@ package daemon
 
 import "core:log"
 import "core:mem"
+import "core:mem/virtual"
 
 import ws "libs:websocket"
 import store "src:daemon/store"
@@ -48,8 +49,9 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
 
     // Reset on exit, not freed, so a shed marker the fan-out mints mid-send still shares
     // this arena with the frame already in flight.
-    scratch := mem.dynamic_arena_allocator(&d.pump_scratch)
-    defer mem.dynamic_arena_reset(&d.pump_scratch)
+    temp := virtual.arena_temp_begin(&d.pump_scratch)
+    defer virtual.arena_temp_end(temp)
+    scratch := virtual.arena_allocator(&d.pump_scratch)
 
     // Built before anything is committed: a refusal here must never reach the log.
     frame: wire.Emitter
@@ -416,7 +418,7 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
     assert(wire.session_deltas_shed_data_validate(data) == .None, "the pump built an invalid shed marker")
 
     e: wire.Emitter
-    wire.emitter_init(&e, mem.dynamic_arena_allocator(&d.pump_scratch))
+    wire.emitter_init(&e, virtual.arena_allocator(&d.pump_scratch))
     defer wire.emitter_destroy(&e)
     wire.notification_emit(&e, wire.notification_build(.Session_Deltas_Shed, data))
 

@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
+import "core:mem/virtual"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
@@ -138,10 +139,13 @@ Daemon :: struct {
     seq_high:       map[wire.Session_Id]wire.Seq,
 
     // @private
-    // Encode scratch for one broadcast: the payload, the frame, and any shed marker the
-    // fan-out mints. Reset — not freed — at `broadcast` exit, so the blocks are reused
-    // for the daemon's life and a fan-out to N connections encodes once.
-    pump_scratch:   mem.Dynamic_Arena,
+    // Scratch for one broadcast's encode; a single `Arena_Temp` spans the whole fan-out so
+    // a shed marker minted mid-send shares it with the frame in flight.
+    pump_scratch:   virtual.Arena,
+
+    // @private
+    // Shared scratch for one inbound frame; each `handle_text` wraps it in an `Arena_Temp`.
+    frame_scratch:  virtual.Arena,
 
     // @private
     // Live connections keyed by the ticket that outlives them. Sized for the transport's
@@ -178,11 +182,6 @@ Conn :: struct {
     // Allocator backing `scratch` and the retained client identity (the daemon's).
     allocator:          mem.Allocator,
     state:              Protocol_State,
-
-    // Per-frame scratch, reset after each inbound frame. A frame's borrowed strings and
-    // slices, and the response the handler encodes from them, live here only for that
-    // handler; the blocks are retained across frames and freed with the `Conn`.
-    scratch:            mem.Dynamic_Arena,
 
     // Retained client name from `initialize`; an owned `strings.clone` for
     // identity/logging, freed with the `Conn`. Never the borrowed frame slice.
@@ -334,7 +333,13 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     d.conns = conns
 
-    mem.dynamic_arena_init(&d.pump_scratch, allocator, allocator)
+    if virtual.arena_init_growing(&d.pump_scratch) != nil {
+        return .Out_Of_Memory
+    }
+
+    if virtual.arena_init_growing(&d.frame_scratch) != nil {
+        return .Out_Of_Memory
+    }
 
     router_init(d)
 
@@ -402,7 +407,10 @@ start_rollback :: proc(d: ^Daemon) {
         ws.server_destroy(&d.ws_server)
     }
 
-    mem.dynamic_arena_destroy(&d.pump_scratch)
+    virtual.arena_check_temp(&d.pump_scratch)
+    virtual.arena_destroy(&d.pump_scratch)
+    virtual.arena_check_temp(&d.frame_scratch)
+    virtual.arena_destroy(&d.frame_scratch)
     delete(d.conns)
     d.conns = nil
     free_config(d)
@@ -461,7 +469,10 @@ destroy :: proc(d: ^Daemon) {
     assert(len(d.conns) == 0, "connections outlived the transport that owned them")
 
     store_close(d)
-    mem.dynamic_arena_destroy(&d.pump_scratch)
+    virtual.arena_check_temp(&d.pump_scratch)
+    virtual.arena_destroy(&d.pump_scratch)
+    virtual.arena_check_temp(&d.frame_scratch)
+    virtual.arena_destroy(&d.frame_scratch)
     delete(d.conns)
     d.conns = nil
     free_config(d)
@@ -520,7 +531,6 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     conn.daemon = d
     conn.allocator = d.allocator
     conn.state = .Awaiting_Initialize
-    mem.dynamic_arena_init(&conn.scratch, d.allocator, d.allocator)
 
     d.next_ticket += 1
     conn.ticket = d.next_ticket
@@ -529,7 +539,6 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
         // The table grows past its reserve at high load; out of memory registering
         // the connection refuses it like any other admission failure.
         log.error("daemon: out of memory registering websocket connection")
-        mem.dynamic_arena_destroy(&conn.scratch)
         free(conn, d.allocator)
         ws.server_abort(wsc, .Out_Of_Memory)
         return
@@ -608,18 +617,20 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     assert(conn.wsc.user_data == conn, "text handler crossed transport ownership")
     assert(conn.state != .Closed, "text handler ran after protocol close")
 
-    sa := mem.dynamic_arena_allocator(&conn.scratch)
-    defer mem.dynamic_arena_reset(&conn.scratch)
+    d := conn.daemon
+    temp := virtual.arena_temp_begin(&d.frame_scratch)
+    defer virtual.arena_temp_end(temp)
+    sa := virtual.arena_allocator(&d.frame_scratch)
 
-    d := wire.decoder_init(string(data), sa)
-    req, derr := wire.request_from_reader(&d)
+    decoder := wire.decoder_init(string(data), sa)
+    req, derr := wire.request_from_reader(&decoder)
     if derr != .None {
         conn_protocol_close(conn)
         return
     }
 
     // One JSON value per frame: trailing bytes after the root are a protocol error.
-    if wire.dec_finish(&d) != .None {
+    if wire.dec_finish(&decoder) != .None {
         conn_protocol_close(conn)
         return
     }
@@ -986,7 +997,6 @@ conn_free :: proc(conn: ^Conn) {
 
     delete_key(&conn.daemon.conns, conn.ticket)
     conn.wsc.user_data = nil
-    mem.dynamic_arena_destroy(&conn.scratch)
 
     delete(conn.client_name, conn.allocator)
     delete(conn.client_version, conn.allocator)
