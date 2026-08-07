@@ -14,6 +14,11 @@ IN_BAND_RESIZE_DISABLE :: "\x1b[?2048l"
 MOUSE_TRACKING_ENABLE :: "\x1b[?1003h"
 MOUSE_TRACKING_DISABLE :: "\x1b[?1003l"
 
+// SGR extended coordinates. Orthogonal to 1003, which picks which events are reported.
+// Without it coordinates stop at cell 223 and a release never names its button.
+MOUSE_SGR_ENABLE :: "\x1b[?1006h"
+MOUSE_SGR_DISABLE :: "\x1b[?1006l"
+
 SYNC_UPDATE_BEGIN :: "\x1b[?2026h"
 SYNC_UPDATE_END :: "\x1b[?2026l"
 
@@ -22,6 +27,21 @@ CURSOR_HIDE :: "\x1b[?25l"
 
 KITTY_QUERY :: "\x1b[?u"
 KITTY_POP :: "\x1b[<u"
+
+// Unconditional full restore, emitted from a fatal-signal handler where the per-session
+// `Enabled` set is not reachable. Every disable is a no-op when its mode is already off, so
+// the fixed blob is safe regardless of what the session turned on. Order mirrors `restore`
+// (Kitty popped first, alt screen exited last) then presentation: end any sync update and
+// show the cursor, the safe emergency default.
+SIGNAL_RESTORE_ALL: string :
+    KITTY_POP +
+    MOUSE_SGR_DISABLE +
+    MOUSE_TRACKING_DISABLE +
+    IN_BAND_RESIZE_DISABLE +
+    BRACKETED_PASTE_DISABLE +
+    ALT_SCREEN_EXIT +
+    SYNC_UPDATE_END +
+    CURSOR_SHOW
 
 // Kitty keyboard flags. Alternates and text only reach keys that take the escape path, so
 // the set is pushed whole — but a terminal silently keeps only the bits it implements,

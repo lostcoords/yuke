@@ -54,6 +54,13 @@ Key_Event :: enum {
     Release,
 }
 
+// Canonical string names for each event, for callers projecting keys to text.
+key_event_names := [Key_Event]string {
+    .Press   = "press",
+    .Repeat  = "repeat",
+    .Release = "release",
+}
+
 // Named key, `.Char` for a literal codepoint, `.Unknown` for an unnamed functional key
 // (codepoint in `Key.char`), or `.Text` for a Kitty text-only event with no key at all.
 Key_Code :: enum {
@@ -87,6 +94,40 @@ Key_Code :: enum {
     F10,
     F11,
     F12,
+}
+
+// Canonical string names for each key code.
+key_code_names := [Key_Code]string {
+    .Char      = "char",
+    .Unknown   = "unknown",
+    .Text      = "text",
+    .Up        = "up",
+    .Down      = "down",
+    .Left      = "left",
+    .Right     = "right",
+    .Home      = "home",
+    .End       = "end",
+    .Insert    = "insert",
+    .Delete    = "delete",
+    .Page_Up   = "page_up",
+    .Page_Down = "page_down",
+    .Enter     = "enter",
+    .Tab       = "tab",
+    .Backspace = "backspace",
+    .Esc       = "esc",
+    .Menu      = "menu",
+    .F1        = "f1",
+    .F2        = "f2",
+    .F3        = "f3",
+    .F4        = "f4",
+    .F5        = "f5",
+    .F6        = "f6",
+    .F7        = "f7",
+    .F8        = "f8",
+    .F9        = "f9",
+    .F10       = "f10",
+    .F11       = "f11",
+    .F12       = "f12",
 }
 
 // A decoded key event. `code`/`char` say which key; `text` says what it produced.
@@ -173,24 +214,51 @@ is_text_rune :: proc(cp: rune) -> bool {
 
 // X10 mouse action. `Move`/`Move_Rightclick` are drag reports; scroll wheel maps
 // to `Scroll_Up`/`Scroll_Down`.
-Mouse_Action :: enum {
+// What happened, independent of which button. Mirrors `Key_Event`.
+Mouse_Event :: enum {
+    Press,
+    Release,
+    Move,
+}
+
+// Canonical string names for each mouse event.
+mouse_event_names := [Mouse_Event]string {
+    .Press   = "press",
+    .Release = "release",
+    .Move    = "move",
+}
+
+// Which button the report concerns; the wheel is buttons 4-7 in the protocol. `.None` is
+// motion with nothing held, and an X10 release, which never names the button.
+Mouse_Button :: enum {
+    None,
     Left,
     Middle,
     Right,
-    Release,
-    Scroll_Up,
-    Scroll_Down,
-    Move,
-    Move_Rightclick,
+    Wheel_Up,
+    Wheel_Down,
+    Wheel_Left,
+    Wheel_Right,
+}
+
+// Canonical string names for each mouse button.
+mouse_button_names := [Mouse_Button]string {
+    .None        = "none",
+    .Left        = "left",
+    .Middle      = "middle",
+    .Right       = "right",
+    .Wheel_Up    = "wheel_up",
+    .Wheel_Down  = "wheel_down",
+    .Wheel_Left  = "wheel_left",
+    .Wheel_Right = "wheel_right",
 }
 
 // A decoded mouse report. `x`/`y` are 0-based cell coordinates.
 Mouse :: struct {
-    action: Mouse_Action,
+    event:  Mouse_Event,
+    button: Mouse_Button,
     x, y:   u16,
-    shift:  bool,
-    alt:    bool,
-    ctrl:   bool,
+    mods:   Modifiers,
 }
 
 // Zero-payload parser outcomes, kept as distinct types so they can be union arms.
@@ -400,11 +468,22 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
         return nil // intermediate byte: ignored
     case 'M':
         // Bare `ESC [ M` (no params, no private) is X10 mouse; three bytes follow.
-        // With params it is SGR mouse etc., which this parser does not decode.
         if p.private == 0 && p.param_count == 0 && !p.param_digits {
             p.state = .Mouse
             p.mouse_len = 0
             return nil
+        }
+
+        // `ESC [ < Cb ; Cx ; Cy M` is an SGR press or motion report.
+        if p.private == '<' {
+            if p.param_digits || p.param_count > 0 {
+                parser_push_param(p)
+            }
+
+            ev := parser_dispatch_sgr_mouse(p, b)
+            parser_reset(p)
+
+            return ev
         }
 
         parser_reset(p)
@@ -431,11 +510,51 @@ parser_step_mouse :: proc(p: ^Parser, b: u8) -> Parse_Event {
         return nil
     }
 
-    m := parse_mouse_action(p.mouse[0])
-    m.x = sat_sub_32(p.mouse[1])
-    m.y = sat_sub_32(p.mouse[2])
+    // The bias lands on bit 5, the motion flag, so it must come off before any bit is read.
+    // SGR sends Cb unbiased.
+    m: Mouse
+    m.event, m.button, m.mods = parse_mouse_button(sat_sub_32(p.mouse[0]))
+    m.x = sat_sub_33(p.mouse[1])
+    m.y = sat_sub_33(p.mouse[2])
     parser_reset(p)
+
     return m
+}
+
+// SGR mouse (DEC 1006): `CSI < Cb ; Cx ; Cy M` for press/motion, `m` for release.
+parser_dispatch_sgr_mouse :: proc(p: ^Parser, final: u8) -> Parse_Event {
+    assert(final == 'M' || final == 'm', "SGR mouse dispatch takes only the M/m finals")
+
+    if p.param_count != 3 {
+        return Invalid{}
+    }
+
+    cb := p.params[0]
+    if cb > 255 {
+        return Invalid{}
+    }
+
+    m: Mouse
+    m.event, m.button, m.mods = parse_mouse_button(u8(cb))
+
+    // `m` is release regardless of the button bits, which still name which button.
+    if final == 'm' {
+        m.event = .Release
+    }
+
+    m.x = sgr_coord(p.params[1])
+    m.y = sgr_coord(p.params[2])
+
+    return m
+}
+
+// 1-based decimal to a 0-based cell, clamping rather than wrapping.
+sgr_coord :: proc(v: u32) -> u16 {
+    if v == 0 {
+        return 0
+    }
+
+    return u16(min(v - 1, u32(max(u16))))
 }
 
 // SS3 final byte -> arrows / F1-F4 / home / end. Emitted in cursor-key mode (DECCKM) and
@@ -507,6 +626,11 @@ parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u32, bool) {
 
 // Map a completed CSI sequence (params + final byte) to a key/mouse/resize event.
 parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
+    // SGR release; the `M` form is routed earlier because bare `CSI M` is X10 mouse.
+    if final == 'm' && p.private == '<' {
+        return parser_dispatch_sgr_mouse(p, final)
+    }
+
     // Kitty's own form shares the modifier group but assembles a different key.
     if final == 'u' {
         return parser_dispatch_kitty(p)
@@ -894,48 +1018,70 @@ utf8_seq_len :: proc(b: u8) -> (int, bool) {
     }
 }
 
-// Saturating `byte - 32` widened to u16 (X10 mouse coordinates are bias-32).
-sat_sub_32 :: proc(b: u8) -> u16 {
-    return u16(b) - 32 if b >= 32 else 0
+// Strip the X10 32 bias from a control byte, saturating rather than wrapping.
+sat_sub_32 :: proc(b: u8) -> u8 {
+    return b - 32 if b >= 32 else 0
 }
 
-// Decode an X10 mouse control byte into a Mouse (modifiers + action).
-parse_mouse_action :: proc(cb: u8) -> Mouse {
-    m: Mouse
+// X10 mouse coordinates are 1-based with a 32 bias, so the 0-based cell is `b - 33`.
+// Bytes below the bias saturate to 0 rather than wrapping.
+sat_sub_33 :: proc(b: u8) -> u16 {
+    return u16(b) - 33 if b >= 33 else 0
+}
 
+// Decode a mouse control byte, shared by X10 and SGR. Bit 5 marks motion, bit 6 selects
+// buttons 4-7; the low two bits name the button within whichever set is in force.
+parse_mouse_button :: proc(cb: u8) -> (event: Mouse_Event, button: Mouse_Button, mods: Modifiers) {
     // The xterm-documented modifier bits: shift=4, meta/alt=8, ctrl=16.
-    m.shift = cb & 4 != 0
-    m.alt = cb & 8 != 0
-    m.ctrl = cb & 16 != 0
+    if cb & 4 != 0 {
+        mods += {.Shift}
+    }
 
-    // Bit 6 marks scroll-wheel and drag reports; low two bits pick within the set.
+    if cb & 8 != 0 {
+        mods += {.Alt}
+    }
+
+    if cb & 16 != 0 {
+        mods += {.Ctrl}
+    }
+
+    // A wheel notch is only ever reported as a press.
     if cb & 64 != 0 {
         switch cb & 3 {
         case 0:
-            m.action = .Scroll_Up
+            button = .Wheel_Up
         case 1:
-            m.action = .Scroll_Down
+            button = .Wheel_Down
         case 2:
-            m.action = .Move_Rightclick
+            button = .Wheel_Left
         case:
-            m.action = .Move
+            button = .Wheel_Right
         }
 
-        return m
+        return .Press, button, mods
     }
 
     switch cb & 3 {
     case 0:
-        m.action = .Left
+        button = .Left
     case 1:
-        m.action = .Middle
+        button = .Middle
     case 2:
-        m.action = .Right
+        button = .Right
     case:
-        m.action = .Release
+        button = .None
     }
 
-    return m
+    if cb & 32 != 0 {
+        return .Move, button, mods
+    }
+
+    // Button id 3 outside a motion report is X10's generic release; SGR names it via `m`.
+    if button == .None {
+        return .Release, .None, mods
+    }
+
+    return .Press, button, mods
 }
 
 // Parse one event from the front of `bytes` by walking a fresh parser. `incomplete` false

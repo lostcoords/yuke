@@ -64,10 +64,79 @@ test_reader_bracketed_paste_assembles_raw_content :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Reader_Error.None)
     p, ok := ev.(Paste)
     testing.expect(t, ok)
-    testing.expect_value(t, string(p), "a\nb")
+    testing.expect_value(t, p.text, "a\nb")
+    testing.expect(t, !p.truncated)
 
     none, _ := reader_next(&r)
     testing.expect(t, none == nil)
+}
+
+@(test)
+test_reader_paste_over_cap_reports_truncation :: proc(t: ^testing.T) {
+    r: Reader
+    reader_init(&r, context.allocator)
+    defer reader_destroy(&r)
+
+    // One byte past the cap, pushed in reader-sized batches.
+    testing.expect_value(t, push(&r, "\x1b[200~"), Reader_Error.None)
+
+    chunk := make([]u8, MAX_PUSH_BYTES, context.allocator)
+    defer delete(chunk, context.allocator)
+    for &b in chunk {
+        b = 'x'
+    }
+
+    sent := 0
+    for sent <= MAX_PASTE_BYTES {
+        testing.expect_value(t, reader_push(&r, chunk), Reader_Error.None)
+        ev, err := reader_next(&r)
+        testing.expect_value(t, err, Reader_Error.None)
+        testing.expect(t, ev == nil)
+        sent += len(chunk)
+    }
+
+    testing.expect_value(t, push(&r, "\x1b[201~"), Reader_Error.None)
+    ev, err := reader_next(&r)
+    testing.expect_value(t, err, Reader_Error.None)
+
+    p, ok := ev.(Paste)
+    testing.expect(t, ok)
+    testing.expect(t, p.truncated)
+    testing.expect_value(t, len(p.text), MAX_PASTE_BYTES)
+    testing.expect(t, cap(r.paste) <= MAX_PASTE_BYTES, "paste allocation crossed its hard limit")
+}
+
+@(test)
+test_reader_oversized_paste_releases_capacity :: proc(t: ^testing.T) {
+    r: Reader
+    reader_init(&r, context.allocator)
+    defer reader_destroy(&r)
+
+    chunk := make([]u8, MAX_PUSH_BYTES, context.allocator)
+    defer delete(chunk, context.allocator)
+    for &b in chunk {
+        b = 'x'
+    }
+
+    // A paste past the keep threshold grows the buffer well beyond it.
+    testing.expect_value(t, push(&r, "\x1b[200~"), Reader_Error.None)
+    for _ in 0 ..< (PASTE_KEEP_BYTES / MAX_PUSH_BYTES) + 1 {
+        testing.expect_value(t, reader_push(&r, chunk), Reader_Error.None)
+        _, err := reader_next(&r)
+        testing.expect_value(t, err, Reader_Error.None)
+    }
+
+    testing.expect_value(t, push(&r, "\x1b[201~"), Reader_Error.None)
+    _, err := reader_next(&r)
+    testing.expect_value(t, err, Reader_Error.None)
+    testing.expect(t, cap(r.paste) > PASTE_KEEP_BYTES)
+
+    // The next paste expires the previous borrow and restores the reusable high-water mark.
+    testing.expect_value(t, push(&r, "\x1b[200~ok\x1b[201~"), Reader_Error.None)
+    ev, nerr := reader_next(&r)
+    testing.expect_value(t, nerr, Reader_Error.None)
+    testing.expect_value(t, ev.(Paste).text, "ok")
+    testing.expect_value(t, cap(r.paste), PASTE_KEEP_BYTES)
 }
 
 @(test)
@@ -82,7 +151,7 @@ test_reader_paste_content_split_across_pushes :: proc(t: ^testing.T) {
 
     testing.expect_value(t, push(&r, "lo\x1b[201~"), Reader_Error.None)
     ev, _ := reader_next(&r)
-    testing.expect_value(t, string(ev.(Paste)), "hello")
+    testing.expect_value(t, ev.(Paste).text, "hello")
 }
 
 @(test)
@@ -97,7 +166,7 @@ test_reader_paste_terminator_split_across_pushes :: proc(t: ^testing.T) {
 
     testing.expect_value(t, push(&r, "1~"), Reader_Error.None)
     ev, _ := reader_next(&r)
-    testing.expect_value(t, string(ev.(Paste)), "hello")
+    testing.expect_value(t, ev.(Paste).text, "hello")
 }
 
 @(test)

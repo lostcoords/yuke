@@ -263,19 +263,22 @@ test_machine_partial_sequences_yield_no_event :: proc(t: ^testing.T) {
 
 @(test)
 test_machine_x10_mouse :: proc(t: ^testing.T) {
-    // ESC [ M <button+32> <x+32> <y+32>; left press, x=1, y=2
+    // ESC [ M <button+32> <x+32> <y+32>. Coordinates are 1-based on the wire, so bytes
+    // 0x21/0x22 are columns 1/2 and decode to 0-based cells 0/1.
     m, ok := feed("\x1b[M\x20\x21\x22").(Mouse)
     testing.expect(t, ok)
-    testing.expect_value(t, m.action, Mouse_Action.Left)
-    testing.expect_value(t, m.x, u16(1))
-    testing.expect_value(t, m.y, u16(2))
-    testing.expect(t, !m.shift && !m.alt && !m.ctrl)
+    testing.expect_value(t, m.event, Mouse_Event.Press)
+    testing.expect_value(t, m.button, Mouse_Button.Left)
+    testing.expect_value(t, m.x, u16(0))
+    testing.expect_value(t, m.y, u16(1))
+    testing.expect(t, m.mods == {})
 }
 
 @(test)
 test_machine_x10_mouse_saturates_coords :: proc(t: ^testing.T) {
-    // Payload bytes below the 32 bias saturate to 0.
-    m, ok := feed("\x1b[M\x20\x00\x1f").(Mouse)
+    // Payload bytes below the bias saturate to 0 rather than wrapping. 0x20 is the
+    // out-of-range column 0.
+    m, ok := feed("\x1b[M\x20\x00\x20").(Mouse)
     testing.expect(t, ok)
     testing.expect_value(t, m.x, u16(0))
     testing.expect_value(t, m.y, u16(0))
@@ -286,10 +289,8 @@ test_machine_x10_mouse_shift_only :: proc(t: ^testing.T) {
     // Shift bit is 4. Button 0 + shift = 0x04; +32 bias = 0x24.
     m, ok := feed("\x1b[M\x24\x21\x22").(Mouse)
     testing.expect(t, ok)
-    testing.expect_value(t, m.action, Mouse_Action.Left)
-    testing.expect(t, m.shift)
-    testing.expect(t, !m.alt)
-    testing.expect(t, !m.ctrl)
+    testing.expect_value(t, m.button, Mouse_Button.Left)
+    testing.expect(t, m.mods == {.Shift})
 }
 
 @(test)
@@ -298,10 +299,8 @@ test_machine_x10_mouse_alt_only :: proc(t: ^testing.T) {
     // a shift-only event, which uses bit 4.
     m, ok := feed("\x1b[M\x28\x21\x22").(Mouse)
     testing.expect(t, ok)
-    testing.expect_value(t, m.action, Mouse_Action.Left)
-    testing.expect(t, m.alt)
-    testing.expect(t, !m.shift)
-    testing.expect(t, !m.ctrl)
+    testing.expect_value(t, m.button, Mouse_Button.Left)
+    testing.expect(t, m.mods == {.Alt})
 }
 
 @(test)
@@ -309,36 +308,106 @@ test_machine_x10_mouse_ctrl_only :: proc(t: ^testing.T) {
     // Ctrl bit is 16. Button 0 + ctrl = 0x10; +32 bias = 0x30.
     m, ok := feed("\x1b[M\x30\x21\x22").(Mouse)
     testing.expect(t, ok)
-    testing.expect(t, m.ctrl)
-    testing.expect(t, !m.shift)
-    testing.expect(t, !m.alt)
+    testing.expect(t, m.mods == {.Ctrl})
 }
 
 @(test)
-test_machine_x10_mouse_actions :: proc(t: ^testing.T) {
+test_machine_x10_mouse_buttons :: proc(t: ^testing.T) {
     middle, _ := feed("\x1b[M\x21\x21\x22").(Mouse)
-    testing.expect_value(t, middle.action, Mouse_Action.Middle)
-    right, _ := feed("\x1b[M\x22\x21\x22").(Mouse)
-    testing.expect_value(t, right.action, Mouse_Action.Right)
-    release, _ := feed("\x1b[M\x23\x21\x22").(Mouse)
-    testing.expect_value(t, release.action, Mouse_Action.Release)
+    testing.expect_value(t, middle.event, Mouse_Event.Press)
+    testing.expect_value(t, middle.button, Mouse_Button.Middle)
 
-    // Bit 6 (0x40) marks scroll/drag; +32 bias = 0x60 base.
-    scroll_up, _ := feed("\x1b[M\x60\x21\x22").(Mouse)
-    testing.expect_value(t, scroll_up.action, Mouse_Action.Scroll_Up)
-    scroll_down, _ := feed("\x1b[M\x61\x21\x22").(Mouse)
-    testing.expect_value(t, scroll_down.action, Mouse_Action.Scroll_Down)
-    move_rc, _ := feed("\x1b[M\x62\x21\x22").(Mouse)
-    testing.expect_value(t, move_rc.action, Mouse_Action.Move_Rightclick)
-    move, _ := feed("\x1b[M\x63\x21\x22").(Mouse)
-    testing.expect_value(t, move.action, Mouse_Action.Move)
+    right, _ := feed("\x1b[M\x22\x21\x22").(Mouse)
+    testing.expect_value(t, right.button, Mouse_Button.Right)
+
+    // X10 reports every release with the generic button id 3, so the button that came
+    // up is unknowable here; only SGR names it.
+    release, _ := feed("\x1b[M\x23\x21\x22").(Mouse)
+    testing.expect_value(t, release.event, Mouse_Event.Release)
+    testing.expect_value(t, release.button, Mouse_Button.None)
 }
 
 @(test)
-test_machine_sgr_mouse_unsupported :: proc(t: ^testing.T) {
-    // SGR mouse (`ESC [ < ... M`) is not X10 and stays unsupported.
-    _, ok := feed("\x1b[<0;1;2M").(Invalid)
+test_machine_x10_mouse_wheel :: proc(t: ^testing.T) {
+    // Bit 6 (0x40) selects buttons 4-7; +32 bias = 0x60 base. A notch is always a press.
+    up, _ := feed("\x1b[M\x60\x21\x22").(Mouse)
+    testing.expect_value(t, up.event, Mouse_Event.Press)
+    testing.expect_value(t, up.button, Mouse_Button.Wheel_Up)
+
+    down, _ := feed("\x1b[M\x61\x21\x22").(Mouse)
+    testing.expect_value(t, down.button, Mouse_Button.Wheel_Down)
+
+    // 0x62/0x63 are horizontal wheel, not motion: bit 5 is what marks motion.
+    left, _ := feed("\x1b[M\x62\x21\x22").(Mouse)
+    testing.expect_value(t, left.button, Mouse_Button.Wheel_Left)
+
+    right, _ := feed("\x1b[M\x63\x21\x22").(Mouse)
+    testing.expect_value(t, right.button, Mouse_Button.Wheel_Right)
+}
+
+@(test)
+test_machine_x10_mouse_motion :: proc(t: ^testing.T) {
+    // Bit 5 (0x20) marks motion; +32 bias = 0x40 base. Ignoring it made a drag read as a
+    // fresh press and a bare move read as a release.
+    drag_left, _ := feed("\x1b[M\x40\x21\x22").(Mouse)
+    testing.expect_value(t, drag_left.event, Mouse_Event.Move)
+    testing.expect_value(t, drag_left.button, Mouse_Button.Left)
+
+    drag_right, _ := feed("\x1b[M\x42\x21\x22").(Mouse)
+    testing.expect_value(t, drag_right.event, Mouse_Event.Move)
+    testing.expect_value(t, drag_right.button, Mouse_Button.Right)
+
+    // Motion with button id 3 is a bare move under mode 1003, not a release.
+    bare, _ := feed("\x1b[M\x43\x21\x22").(Mouse)
+    testing.expect_value(t, bare.event, Mouse_Event.Move)
+    testing.expect_value(t, bare.button, Mouse_Button.None)
+}
+
+@(test)
+test_machine_sgr_mouse :: proc(t: ^testing.T) {
+    // `CSI < Cb ; Cx ; Cy M` is press/motion; coordinates are 1-based decimal.
+    press, ok := feed("\x1b[<0;1;2M").(Mouse)
     testing.expect(t, ok)
+    testing.expect_value(t, press.event, Mouse_Event.Press)
+    testing.expect_value(t, press.button, Mouse_Button.Left)
+    testing.expect_value(t, press.x, u16(0))
+    testing.expect_value(t, press.y, u16(1))
+
+    // The `m` final is release, and unlike X10 the low bits still name the button.
+    release, rok := feed("\x1b[<2;1;2m").(Mouse)
+    testing.expect(t, rok)
+    testing.expect_value(t, release.event, Mouse_Event.Release)
+    testing.expect_value(t, release.button, Mouse_Button.Right)
+
+    // Modifiers and the motion bit ride the same Cb layout as X10.
+    drag, dok := feed("\x1b[<36;1;1M").(Mouse)
+    testing.expect(t, dok)
+    testing.expect_value(t, drag.event, Mouse_Event.Move)
+    testing.expect_value(t, drag.button, Mouse_Button.Left)
+    testing.expect(t, drag.mods == {.Shift})
+}
+
+@(test)
+test_machine_sgr_mouse_past_x10_ceiling :: proc(t: ^testing.T) {
+    // The whole point of SGR: bias-32 bytes cannot address past cell 223.
+    m, ok := feed("\x1b[<0;500;300M").(Mouse)
+    testing.expect(t, ok)
+    testing.expect_value(t, m.x, u16(499))
+    testing.expect_value(t, m.y, u16(299))
+}
+
+@(test)
+test_machine_sgr_mouse_rejects_malformed :: proc(t: ^testing.T) {
+    // Wrong parameter count is not a mouse report.
+    _, short := feed("\x1b[<0;1M").(Invalid)
+    testing.expect(t, short)
+
+    _, long := feed("\x1b[<0;1;2;3M").(Invalid)
+    testing.expect(t, long)
+
+    // Cb is a byte; a wider value is not a control byte we can decode.
+    _, wide := feed("\x1b[<300;1;2M").(Invalid)
+    testing.expect(t, wide)
 }
 
 @(test)

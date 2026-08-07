@@ -52,6 +52,15 @@ test_parse_mode_report_mismatch_and_offset :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_parse_mode_report_rejects_integer_overflow :: proc(t: ^testing.T) {
+    // These values wrap to the requested mode/status under unchecked u32 arithmetic.
+    mode_wrap := transmute([]u8)string("\x1b[?4294969344;1$y")
+    status_wrap := transmute([]u8)string("\x1b[?2048;4294967297$y")
+    testing.expect_value(t, parse_mode_report(mode_wrap, 2048), Mode_Status.Not_Recognized)
+    testing.expect_value(t, parse_mode_report(status_wrap, 2048), Mode_Status.Not_Recognized)
+}
+
+@(test)
 test_has_da_response :: proc(t: ^testing.T) {
     // A bare 'c' is not a CSI; a truncated CSI has no final byte.
     testing.expect(t, !has_da_response(transmute([]u8)string("c")))
@@ -219,6 +228,42 @@ test_invalid_query_timeout :: proc(t: ^testing.T) {
     testing.expect_value(t, len(strings.to_string(b)), 0)
 }
 
+@(test)
+test_negotiate_balances_temporary_kitty_push :: proc(t: ^testing.T) {
+    src_r, src_w, ok := inject_open()
+    testing.expect(t, ok, "probe pipe")
+    defer {
+        inject_close(src_r)
+        inject_close(src_w)
+    }
+    testing.expect(t, inject_write(src_w, "\x1b[?31u\x1b[?64;1c"), "probe replies")
+
+    input: Reader
+    reader_init(&input, context.allocator)
+    defer reader_destroy(&input)
+
+    b: strings.Builder
+    strings.builder_init(&b)
+    defer strings.builder_destroy(&b)
+
+    negotiated, err := negotiate(src_r, strings.to_writer(&b), &input, 100, true)
+    testing.expect_value(t, err, Session_Error.None)
+    testing.expect(t, negotiated.kitty_keyboard)
+    testing.expect_value(t, negotiated.kitty_flags, KITTY_FLAGS_WANTED)
+
+    out := strings.to_string(b)
+    push_i := strings.index(out, KITTY_PUSH_FLAGS)
+    query_i := strings.index(out, KITTY_QUERY)
+    da_i := strings.index(out, DA1_REQUEST)
+    pop_i := strings.index(out, KITTY_POP)
+    testing.expect(t, push_i >= 0 && query_i >= 0 && da_i >= 0 && pop_i >= 0)
+    testing.expect(
+        t,
+        push_i < query_i && query_i < da_i && da_i < pop_i,
+        "probe push must be balanced before mode setup",
+    )
+}
+
 // A full `session_enter` needs a real tty for raw mode, so the disable ordering is
 // exercised through `restore` into a builder-backed writer.
 @(test)
@@ -235,6 +280,7 @@ test_restore_disables_in_reverse :: proc(t: ^testing.T) {
         bracketed_paste  = true,
         in_band_resize   = true,
         mouse            = true,
+        mouse_sgr        = true,
         kitty_keyboard   = true,
     }
     restore(w, all)
@@ -248,6 +294,51 @@ test_restore_disables_in_reverse :: proc(t: ^testing.T) {
 
     testing.expect(t, ki >= 0 && mi >= 0 && ri >= 0 && pi >= 0 && ai >= 0)
     testing.expect(t, ki < mi && mi < ri && ri < pi && pi < ai, "disables must be in reverse order")
+}
+
+@(test)
+test_enable_modes_pushes_kitty_after_screen_transition :: proc(t: ^testing.T) {
+    b: strings.Builder
+    strings.builder_init(&b)
+    defer strings.builder_destroy(&b)
+
+    options := DEFAULT_OPTIONS
+    options.mouse = true
+    negotiated := Negotiated {
+        alternate_screen = .Reset,
+        bracketed_paste  = .Reset,
+        in_band_resize   = .Reset,
+        mouse            = .Reset,
+        mouse_sgr        = .Reset,
+        kitty_keyboard   = true,
+    }
+
+    enabled, err := enable_modes(strings.to_writer(&b), options, negotiated)
+    testing.expect_value(t, err, Session_Error.None)
+    testing.expect(t, enabled.alternate_screen && enabled.kitty_keyboard)
+
+    out := strings.to_string(b)
+    alternate := strings.index(out, ALT_SCREEN_ENTER)
+    paste := strings.index(out, BRACKETED_PASTE_ENABLE)
+    resize := strings.index(out, IN_BAND_RESIZE_ENABLE)
+    mouse := strings.index(out, MOUSE_TRACKING_ENABLE)
+    mouse_sgr := strings.index(out, MOUSE_SGR_ENABLE)
+    kitty := strings.index(out, KITTY_PUSH_FLAGS)
+
+    testing.expect(t, alternate >= 0 && paste >= 0 && resize >= 0 && mouse >= 0 && mouse_sgr >= 0 && kitty >= 0)
+    testing.expect(
+        t,
+        alternate < paste && paste < resize && resize < mouse && mouse < mouse_sgr && mouse_sgr < kitty,
+        "Kitty must be pushed on the selected screen",
+    )
+}
+
+@(test)
+test_session_leave_zero_session_is_idempotent :: proc(t: ^testing.T) {
+    session: Session
+    session_leave(&session)
+    session_leave(&session)
+    testing.expect(t, !session.active)
 }
 
 @(test)

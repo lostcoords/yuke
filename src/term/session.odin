@@ -28,6 +28,9 @@ Capabilities :: struct {
     // Bracketed paste, DEC mode 2004.
     bracketed_paste:     bool,
 
+    // SGR extended mouse coordinates, DEC mode 1006.
+    mouse_sgr:           bool,
+
     // Kitty keyboard protocol (queried, not DECRQM).
     kitty_keyboard:      bool,
 
@@ -70,6 +73,7 @@ Enabled :: struct {
     bracketed_paste:  bool,
     in_band_resize:   bool,
     mouse:            bool,
+    mouse_sgr:        bool,
     kitty_keyboard:   bool,
 }
 
@@ -116,6 +120,9 @@ Session :: struct {
     // Saved console-output configuration (Windows: VT-processing mode + code pages),
     // restored last by `session_leave`. Zero-size no-op on POSIX.
     out_mode:                    Output_Mode_State,
+
+    // True between a successful enter and its first leave.
+    active:                      bool,
 }
 
 // Usable: recognized and not permanently disabled (excludes status 0 and 4).
@@ -163,24 +170,18 @@ session_enter :: proc(
         return {}, .Raw_Mode_Failed
     }
 
-    enabled: Enabled
-
     // errdefer analogue (see src/client/session_replica.odin): any failure after raw mode
     // disables what was turned on, flushes, and drops raw mode. The terminal must be clean.
+    enabled: Enabled
     defer if !committed {
         restore(out, enabled)
         _ = flush_out(out)
         _ = disable_raw_mode(raw)
     }
 
-    // Kitty flags are pushed inside the probe batch so the query that follows reports which
-    // took effect. Pushing creates the stack entry, so the pop is owed from here on —
-    // including the failure paths below. A terminal that ignored the push ignores the pop too.
-    // @note(xyaman): always pop kitty, supported or not.
-    enabled.kitty_keyboard = options.negotiate && options.kitty_keyboard
-
     // Negotiate before any screen-mode write, so the probe replies land on the primary
-    // screen rather than the alternate one.
+    // screen rather than the alternate one. `negotiate` balances its temporary Kitty push
+    // on this same screen before returning.
     negotiated: Negotiated
     if options.negotiate {
         n, nerr := negotiate(tty, out, startup_input, options.query_timeout_ms, options.kitty_keyboard)
@@ -192,7 +193,72 @@ session_enter :: proc(
     }
 
     caps := negotiated_capabilities(negotiated)
+    new_enabled, eerr := enable_modes(out, options, negotiated)
+    if eerr != .None {
+        return {}, eerr
+    }
+    enabled = new_enabled
 
+    if flush_out(out) != .None {
+        return {}, .Write_Failed
+    }
+
+    committed = true
+
+    // Restore the terminal from a fatal signal (SIGTERM/SIGHUP/…, or the Windows console
+    // close/logoff/shutdown), the paths that never reach `session_leave`. `size_handle` is
+    // the terminal the escape blob is written to.
+    signal_restore_arm(size_handle, raw, out_mode)
+
+    return Session {
+            caps = caps,
+            tty = tty,
+            out = out,
+            raw = raw,
+            initial_cursor = negotiated.cursor,
+            initial_synchronized_output = negotiated.synchronized_output,
+            enabled = enabled,
+            out_mode = out_mode,
+            active = true,
+        },
+        .None
+}
+
+// Restore the terminal: disable every mode `session_enter` turned on (reverse order),
+// restore presentation modes to the pre-enter snapshot, drop raw mode. Best-effort and
+// idempotent: `active` is cleared after the first leave.
+session_leave :: proc(s: ^Session) {
+    assert(s != nil, "session_leave needs a session")
+
+    if !s.active {
+        return
+    }
+
+    restore(s.out, s.enabled)
+    restore_presentation(s.out, s.initial_cursor, s.initial_synchronized_output)
+    _ = flush_out(s.out)
+    _ = disable_raw_mode(s.raw)
+    output_mode_leave(s.out_mode)
+
+    // Disarm last: kept armed through the restore writes above so a signal mid-leave still
+    // gets a full handler restore before re-raising.
+    signal_restore_disarm()
+
+    s.enabled = {}
+    s.out_mode = {}
+    s.active = false
+}
+
+// Enable terminal modes in their lifetime order. Kitty is last so its screen-local stack
+// entry belongs to the screen selected above and is the first thing `restore` pops.
+enable_modes :: proc(
+    out: io.Writer,
+    options: Options,
+    negotiated: Negotiated,
+) -> (
+    enabled: Enabled,
+    err: Session_Error,
+) {
     // The two enable gates differ: alt-screen and mouse tracking predate DECRQM, so they
     // enable whenever the mode is off OR unqueryable (`unprobed_mode_needs_enable`).
     // Bracketed paste and in-band resize enable only on a positive `.Reset`.
@@ -217,36 +283,18 @@ session_enter :: proc(
         enabled.mouse = true
     }
 
-    if flush_out(out) != .None {
-        return {}, .Write_Failed
+    // Only meaningful alongside tracking, and takes tracking's looser gate.
+    if enabled.mouse && unprobed_mode_needs_enable(negotiated.mouse_sgr) {
+        write_out(out, MOUSE_SGR_ENABLE) or_return
+        enabled.mouse_sgr = true
     }
 
-    committed = true
+    if options.kitty_keyboard && negotiated.kitty_keyboard {
+        write_out(out, KITTY_PUSH_FLAGS) or_return
+        enabled.kitty_keyboard = true
+    }
 
-    return Session {
-            caps = caps,
-            tty = tty,
-            out = out,
-            raw = raw,
-            initial_cursor = negotiated.cursor,
-            initial_synchronized_output = negotiated.synchronized_output,
-            enabled = enabled,
-            out_mode = out_mode,
-        },
-        .None
-}
-
-// Restore the terminal: disable every mode `session_enter` turned on (reverse order),
-// restore presentation modes to the pre-enter snapshot, drop raw mode. Best-effort and
-// idempotent: `enabled` is cleared, so a second call disables nothing.
-session_leave :: proc(s: ^Session) {
-    restore(s.out, s.enabled)
-    restore_presentation(s.out, s.initial_cursor, s.initial_synchronized_output)
-    _ = flush_out(s.out)
-    _ = disable_raw_mode(s.raw)
-    output_mode_leave(s.out_mode)
-    s.enabled = {}
-    s.out_mode = {}
+    return enabled, .None
 }
 
 // Disable the enabled modes in reverse order of enabling. Writes only, best-effort; the
@@ -254,6 +302,10 @@ session_leave :: proc(s: ^Session) {
 restore :: proc(out: io.Writer, enabled: Enabled) {
     if enabled.kitty_keyboard {
         _, _ = io.write_string(out, KITTY_POP)
+    }
+
+    if enabled.mouse_sgr {
+        _, _ = io.write_string(out, MOUSE_SGR_DISABLE)
     }
 
     if enabled.mouse {
@@ -313,6 +365,7 @@ Negotiated :: struct {
     in_band_resize:      Mode_Status,
     bracketed_paste:     Mode_Status,
     mouse:               Mode_Status,
+    mouse_sgr:           Mode_Status,
     kitty_keyboard:      bool,
 
     // Flags in force after the push, read back from the terminal rather than assumed.
@@ -325,6 +378,7 @@ negotiated_capabilities :: proc(n: Negotiated) -> Capabilities {
         synchronized_output = mode_status_supported(n.synchronized_output),
         in_band_resize = mode_status_supported(n.in_band_resize),
         bracketed_paste = mode_status_supported(n.bracketed_paste),
+        mouse_sgr = mode_status_supported(n.mouse_sgr),
         kitty_keyboard = n.kitty_keyboard,
         kitty_text = n.kitty_flags & KITTY_FLAG_ASSOCIATED_TEXT != 0,
     }
@@ -358,6 +412,13 @@ negotiate :: proc(
     result: Negotiated,
     err: Session_Error,
 ) {
+    kitty_pushed := false
+    kitty_popped := false
+    defer if kitty_pushed && !kitty_popped {
+        _, _ = io.write_string(out, KITTY_POP)
+        _ = flush_out(out)
+    }
+
     // One batched write: DECRQM for each mode, the Kitty push, the Kitty query, then DA1
     // as the end-sentinel whose reply follows all the others.
     buf: [16]u8
@@ -367,11 +428,13 @@ negotiate :: proc(
     write_out(out, decrqm_request(buf[:], 2048)) or_return
     write_out(out, decrqm_request(buf[:], 2004)) or_return
     write_out(out, decrqm_request(buf[:], 1003)) or_return
+    write_out(out, decrqm_request(buf[:], 1006)) or_return
 
     // The push goes before the query so the reply reports the flags actually in force. A
     // terminal without the protocol ignores both and creates no stack entry to pop.
     if push_kitty {
         write_out(out, KITTY_PUSH_FLAGS) or_return
+        kitty_pushed = true
     }
 
     write_out(out, KITTY_QUERY) or_return
@@ -420,6 +483,18 @@ negotiate :: proc(
     }
 
     received := scratch[:n]
+
+    // Kitty keyboard stacks are independent per main/alternate screen. Balance the probe
+    // push before `session_enter` can switch screens; the selected screen gets its own push
+    // later in `enable_modes`.
+    if kitty_pushed {
+        write_out(out, KITTY_POP) or_return
+        kitty_popped = true
+        if flush_out(out) != .None {
+            return {}, .Write_Failed
+        }
+    }
+
     kitty_flags, kitty_ok := kitty_query_reply(received)
     result = Negotiated {
         cursor              = parse_mode_report(received, 25),
@@ -428,6 +503,7 @@ negotiate :: proc(
         in_band_resize      = parse_mode_report(received, 2048),
         bracketed_paste     = parse_mode_report(received, 2004),
         mouse               = parse_mode_report(received, 1003),
+        mouse_sgr           = parse_mode_report(received, 1006),
         kitty_keyboard      = kitty_ok,
         kitty_flags         = kitty_flags,
     }
@@ -504,13 +580,19 @@ parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
         j := i + 3
         m: u32 = 0
         got_mode := false
+        mode_overflow := false
         for j < len(bytes) && bytes[j] >= '0' && bytes[j] <= '9' {
-            m = m * 10 + u32(bytes[j] - '0')
+            digit := u32(bytes[j] - '0')
+            if m > (max(u32) - digit) / 10 {
+                mode_overflow = true
+            } else if !mode_overflow {
+                m = m * 10 + digit
+            }
             got_mode = true
             j += 1
         }
 
-        if !got_mode || m != u32(mode) || j >= len(bytes) || bytes[j] != ';' {
+        if !got_mode || mode_overflow || m != u32(mode) || j >= len(bytes) || bytes[j] != ';' {
             i += 1
             continue
         }
@@ -518,13 +600,19 @@ parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
         j += 1
         s: u32 = 0
         got_status := false
+        status_overflow := false
         for j < len(bytes) && bytes[j] >= '0' && bytes[j] <= '9' {
-            s = s * 10 + u32(bytes[j] - '0')
+            digit := u32(bytes[j] - '0')
+            if s > (max(u32) - digit) / 10 {
+                status_overflow = true
+            } else if !status_overflow {
+                s = s * 10 + digit
+            }
             got_status = true
             j += 1
         }
 
-        if !got_status || j + 1 >= len(bytes) || bytes[j] != '$' || bytes[j + 1] != 'y' {
+        if !got_status || status_overflow || j + 1 >= len(bytes) || bytes[j] != '$' || bytes[j + 1] != 'y' {
             i += 1
             continue
         }

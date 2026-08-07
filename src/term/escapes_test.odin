@@ -30,6 +30,17 @@ test_escape_constants_exact_bytes :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_signal_restore_all_bytes :: proc(t: ^testing.T) {
+    // Pins content and order: Kitty popped first, alt screen exited last among the disables,
+    // then sync ended and the cursor shown. A drift in any component constant fails here.
+    testing.expect_value(
+        t,
+        SIGNAL_RESTORE_ALL,
+        "\x1b[<u\x1b[?1006l\x1b[?1003l\x1b[?2048l\x1b[?2004l\x1b[?1049l\x1b[?2026l\x1b[?25h",
+    )
+}
+
+@(test)
 test_decrqm_request_formats_mode :: proc(t: ^testing.T) {
     buf: [32]u8
     testing.expect_value(t, decrqm_request(buf[:], 2026), "\x1b[?2026$p")
