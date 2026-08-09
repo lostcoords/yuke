@@ -56,7 +56,7 @@ test_generate_queries_emits_shape_and_query_structs :: proc(t: ^testing.T) {
         t,
         strings.contains(
             text,
-            "get_many :: proc(q: ^Queries, params_in: Get_Many_Params, allocator := context.allocator) -> ([]Get_Many_Row, sqlite.Error) {",
+            "get_many :: proc(q: ^Queries, params_in: Get_Many_Params, allocator := context.allocator, cap_hint := 0) -> ([]Get_Many_Row, sqlite.Error) {",
         ),
         "a :many query gets a generated wrapper returning the raw sqlite.Error",
     )

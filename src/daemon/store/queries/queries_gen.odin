@@ -536,12 +536,13 @@ session_configs :: proc(
     q: ^Queries,
     params_in: Session_Configs_Params,
     allocator := context.allocator,
+    cap_hint := 0,
 ) -> (
     []Session_Configs_Row,
     sqlite.Error,
 ) {
     params := params_in
-    return sqlite.read_all(&q.session_configs, &params, allocator)
+    return sqlite.read_all(&q.session_configs, &params, allocator, cap_hint)
 }
 
 append_event :: proc(q: ^Queries, params_in: Append_Event_Params) -> sqlite.Result {
@@ -573,12 +574,13 @@ session_history_page :: proc(
     q: ^Queries,
     params_in: Session_History_Page_Params,
     allocator := context.allocator,
+    cap_hint := 0,
 ) -> (
     []Session_History_Page_Row,
     sqlite.Error,
 ) {
     params := params_in
-    return sqlite.read_all(&q.session_history_page, &params, allocator)
+    return sqlite.read_all(&q.session_history_page, &params, allocator, cap_hint)
 }
 
 set_open_run :: proc(q: ^Queries, params_in: Set_Open_Run_Params) -> sqlite.Result {
@@ -600,12 +602,13 @@ session_page :: proc(
     q: ^Queries,
     params_in: Session_Page_Params,
     allocator := context.allocator,
+    cap_hint := 0,
 ) -> (
     []Session_Page_Row,
     sqlite.Error,
 ) {
     params := params_in
-    return sqlite.read_all(&q.session_page, &params, allocator)
+    return sqlite.read_all(&q.session_page, &params, allocator, cap_hint)
 }
 
 session_count :: proc(

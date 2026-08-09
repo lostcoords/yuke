@@ -51,20 +51,13 @@ session_configs :: proc(
         return nil, read_err(sqlite_err)
     }
 
-    out, alloc_err := make([]wire.Run_Config, len(read), allocator)
-    if alloc_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    // The generated row is `wire.Run_Config` field-for-field. So we can reuse the scanned array.
+    #assert(size_of(queries.Session_Configs_Row) == size_of(wire.Run_Config))
+    #assert(offset_of(queries.Session_Configs_Row, config_rev) == offset_of(wire.Run_Config, config_rev))
+    #assert(offset_of(queries.Session_Configs_Row, model) == offset_of(wire.Run_Config, model))
+    #assert(offset_of(queries.Session_Configs_Row, reasoning) == offset_of(wire.Run_Config, reasoning))
 
-    for row, i in read {
-        out[i] = wire.Run_Config {
-            config_rev = row.config_rev,
-            model      = row.model,
-            reasoning  = row.reasoning,
-        }
-    }
-
-    return out, nil
+    return transmute([]wire.Run_Config)read, nil
 }
 
 // `Default` is resolved to its text before it reaches here; nil stores nothing
@@ -73,6 +66,5 @@ session_configs :: proc(
 session_prompt_set :: proc(s: ^Store, session: wire.Session_Id, prompt: Maybe(string)) -> Error {
     assert(s != nil, "session_prompt_set needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
-
     return queries.set_prompt(&s.queries, {session_id = session, prompt = prompt})
 }

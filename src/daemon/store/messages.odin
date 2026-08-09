@@ -270,6 +270,7 @@ history_page :: proc(
         &s.queries,
         {session_id = session, cursor_message_id = cursor, limit = limit},
         allocator,
+        cap_hint = limit,
     )
     if sqlite_err != nil {
         return nil, read_err(sqlite_err)

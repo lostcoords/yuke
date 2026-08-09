@@ -365,13 +365,13 @@ emit_query_wrapper :: proc(b: ^strings.Builder, q: Resolved_Query, alias: map[st
         row_type := resolved_name(alias, fmt.tprintf("%s_Row", q.def.name))
         fmt.sbprintfln(
             b,
-            "%s :: proc(q: ^Queries, params_in: %s, allocator := context.allocator) -> ([]%s, sqlite.Error) {{",
+            "%s :: proc(q: ^Queries, params_in: %s, allocator := context.allocator, cap_hint := 0) -> ([]%s, sqlite.Error) {{",
             field,
             params_type,
             row_type,
         )
         fmt.sbprintln(b, "    params := params_in")
-        fmt.sbprintfln(b, "    return sqlite.read_all(&q.%s, &params, allocator)", field)
+        fmt.sbprintfln(b, "    return sqlite.read_all(&q.%s, &params, allocator, cap_hint)", field)
         fmt.sbprintln(b, "}")
         fmt.sbprintln(b)
 

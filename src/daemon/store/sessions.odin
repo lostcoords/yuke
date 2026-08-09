@@ -159,7 +159,7 @@ session_page :: proc(
         params.cursor_id = resume.id
     }
 
-    read, sqlite_err := queries.session_page(&s.queries, params, allocator)
+    read, sqlite_err := queries.session_page(&s.queries, params, allocator, cap_hint = limit)
     if sqlite_err != nil {
         return nil, read_err(sqlite_err)
     }
