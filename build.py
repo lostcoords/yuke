@@ -184,6 +184,33 @@ def yuke(args):
     odin("build", package.path, "-o:speed", f"-out:{BUILD / 'yuke'}")
 
 
+def install_dir(args):
+    if args:
+        return Path(args[0]).expanduser()
+
+    prefix = os.environ.get("PREFIX")
+    if prefix:
+        return Path(prefix).expanduser() / "bin"
+
+    return Path.home() / ".local" / "bin"
+
+
+@command
+def install(args):
+    """build and install yuke into ~/.local/bin (a dir arg or $PREFIX/bin overrides)"""
+    yuke([])
+
+    dest_dir = install_dir(args)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "yuke"
+    shutil.copy2(BUILD / "yuke", dest)
+    dest.chmod(0o755)
+    print(f"installed yuke -> {dest}")
+
+    if str(dest_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(f"note: {dest_dir} is not on PATH")
+
+
 @command
 def test_windows(args):
     """run the Windows-arm tests on a Windows Odin (WIN_ODIN)"""
