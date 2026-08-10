@@ -155,6 +155,17 @@ str_width :: proc(str: string) -> int {
     return width
 }
 
+// UTF-16 code-unit count of `str` (JS String#length): astral runes count 2, else 1. The
+// host reports grapheme offsets in these units so JS can index the original string.
+str_utf16_len :: proc(str: string) -> int {
+    n := 0
+    for r in str {
+        n += 2 if r > 0xFFFF else 1
+    }
+
+    return n
+}
+
 // Display width of one grapheme cluster in cells (zg's graphemeWidth): the first
 // codepoint with nonzero per-codepoint width governs, unless the codepoint
 // immediately after it is a variation selector or skin-tone modifier, in which

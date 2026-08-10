@@ -139,6 +139,8 @@ host_term_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.i
     _ = qjs.set_property(ctx, term_obj, "endFrame", qjs.new_function(ctx, host_term_end_frame, "endFrame", 0))
     _ = qjs.set_property(ctx, term_obj, "fill", qjs.new_function(ctx, host_term_fill, "fill", 4))
     _ = qjs.set_property(ctx, term_obj, "text", qjs.new_function(ctx, host_term_text, "text", 3))
+    _ = qjs.set_property(ctx, term_obj, "measure", qjs.new_function(ctx, host_term_measure, "measure", 1))
+    _ = qjs.set_property(ctx, term_obj, "graphemes", qjs.new_function(ctx, host_term_graphemes, "graphemes", 1))
     _ = qjs.set_property(ctx, term_obj, "cursor", qjs.new_function(ctx, host_term_cursor, "cursor", 3))
     _ = qjs.set_property(ctx, term_obj, "size", qjs.new_function(ctx, host_term_size, "size", 0))
     _ = qjs.set_property(
@@ -281,6 +283,59 @@ host_term_text :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, arg
     _, _ = ui.buffer_put_str(&h.buf, u16(x), u16(y), s, style)
     h.dirty = true
     return qjs.undefined()
+}
+
+// Display width of `s` in terminal cells. Pure — no buffer, usable before the first frame.
+host_term_measure :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+    _ = this
+
+    if argc < 1 {
+        return qjs.throw_type_error(ctx, "term.measure(s)")
+    }
+
+    s, sok := qjs.to_string(ctx, argv[0])
+    if !sok {
+        return qjs.exception()
+    }
+    defer qjs.free_string(ctx, s)
+
+    return qjs.new_i32(i32(ui.str_width(s)))
+}
+
+// Grapheme clusters of `s` as a flat Int32Array of [i, n, w] triples: UTF-16 offset, UTF-16
+// length (JS slices s.slice(i, i+n)), and cell width. Contiguous over the whole string.
+host_term_graphemes :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+    _ = this
+
+    if argc < 1 {
+        return qjs.throw_type_error(ctx, "term.graphemes(s)")
+    }
+
+    s, sok := qjs.to_string(ctx, argv[0])
+    if !sok {
+        return qjs.exception()
+    }
+    defer qjs.free_string(ctx, s)
+
+    triples := make([dynamic]i32, 0, 48)
+    defer delete(triples)
+
+    u16_off: i32 = 0
+    it := ui.clusters(s)
+    for {
+        cl, ok := ui.iter_next(&it)
+        if !ok {
+            break
+        }
+
+        n := i32(ui.str_utf16_len(ui.cluster_bytes(cl, s)))
+        append(&triples, u16_off, n, i32(ui.cluster_width(cl, s)))
+        u16_off += n
+    }
+
+    return qjs.new_int32_array(ctx, triples[:])
 }
 
 host_term_cursor :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {

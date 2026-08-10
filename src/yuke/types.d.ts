@@ -125,6 +125,9 @@ declare module "yuke:term" {
     endFrame(): void;
     fill(x: number, y: number, w: number, h: number, style?: Style): void;
     text(x: number, y: number, s: string, style?: Style): void;
+    measure(s: string): number;
+    // Flat [i, n, w] triples per grapheme cluster: UTF-16 offset, UTF-16 length, cell width.
+    graphemes(s: string): Int32Array;
     cursor(x: number, y: number, visible: boolean): void;
     setNeedsTick(enabled: boolean, periodMs?: number): void;
     quit(): void;
@@ -165,6 +168,7 @@ declare module "yuke:core" {
   export function fill(x: number, y: number, w: number, h: number, group: string): void;
   export function text(x: number, y: number, s: string, group: string): void;
   export function clip(s: string, max: number): string;
+  export function wrap(s: string, width: number): string[];
 
   export type CommandPredicateResult = boolean | [boolean, ...unknown[]];
   export type CommandPredicate =

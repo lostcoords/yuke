@@ -13,6 +13,16 @@ test_str_width_ascii_wide_emoji_combining :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_str_utf16_len :: proc(t: ^testing.T) {
+    testing.expect_value(t, str_utf16_len(""), 0)
+    testing.expect_value(t, str_utf16_len("Hello"), 5) // ASCII: one unit each
+    testing.expect_value(t, str_utf16_len("漢"), 1) // BMP: one unit though three UTF-8 bytes
+    testing.expect_value(t, str_utf16_len("\U0001F60A"), 2) // astral: a surrogate pair
+    testing.expect_value(t, str_utf16_len("a\U0001F60Ab"), 4) // 1 + 2 + 1
+    testing.expect_value(t, str_utf16_len("H" + "e" + "́"), 3) // counts code units, not clusters
+}
+
+@(test)
 test_str_width_zwj_family_and_flag_pair :: proc(t: ^testing.T) {
     // man ZWJ woman ZWJ girl ZWJ girl: one grapheme cluster via GB11.
     family := "\U0001F468" + "‍" + "\U0001F469" + "‍" + "\U0001F467" + "‍" + "\U0001F467"

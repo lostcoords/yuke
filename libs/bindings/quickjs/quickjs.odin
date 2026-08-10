@@ -197,6 +197,21 @@ new_array :: proc(ctx: ^Context) -> Value {
     return c_new_array(ctx)
 }
 
+// A JS Int32Array copy of `values`. Wraps a fresh ArrayBuffer, released once the view refs it.
+new_int32_array :: proc(ctx: ^Context, values: []i32) -> Value {
+    assert(ctx != nil, "new_int32_array needs a context")
+
+    ab := c_new_array_buffer_copy(ctx, cast([^]u8)raw_data(values), c.size_t(len(values) * size_of(i32)))
+
+    // The constructor reads argv[0..2] (buffer, offset, length) regardless of argc; undefined
+    // offset/length gives a view over the whole buffer.
+    args := [3]Value{ab, undefined(), undefined()}
+    ta := c_new_typed_array(ctx, 3, raw_data(args[:]), .Int32)
+    free_value(ctx, ab)
+
+    return ta
+}
+
 // Caller owns the result.
 get_property :: proc(ctx: ^Context, obj: Value, name: string) -> Value {
     assert(ctx != nil, "get_property needs a context")

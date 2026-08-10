@@ -81,22 +81,112 @@ export function text(x, y, s, group) {
   term.text(x, y, s, style.resolve(group));
 }
 
-// Largest cut at or before `at` that does not split a surrogate pair — splitting one yields
-// invalid UTF-8, which the host rejects, dropping the whole write.
-function cutBefore(s, at) {
-  const c = s.charCodeAt(at - 1);
-  return c >= 0xd800 && c <= 0xdbff ? at - 1 : at;
-}
-
-// Trim to `max` columns, counted in UTF-16 units — a wide or astral glyph still measures short,
-// since the host exposes no cell width.
+// Trim `s` to `max` display columns (cell-accurate via term.graphemes, so a wide/astral glyph
+// costs its real width). Adds a one-cell ellipsis when truncated, unless max is 1.
 export function clip(s, max) {
   if (max <= 0) return "";
   s = String(s);
-  if (s.length <= max) return s;
-  if (max <= 1) return s.slice(0, cutBefore(s, max));
+  if (term.measure(s) <= max) return s;
 
-  return s.slice(0, cutBefore(s, max - 1)) + "…";
+  const ell = max > 1 ? 1 : 0;
+  const budget = max - ell;
+  const gs = term.graphemes(s);
+  let cut = 0;
+  let w = 0;
+  for (let k = 0; k < gs.length; k += 3) {
+    if (w + gs[k + 2] > budget) break;
+    w += gs[k + 2];
+    cut = gs[k] + gs[k + 1];
+  }
+
+  return s.slice(0, cut) + (ell ? "…" : "");
+}
+
+// Word-wrap `s` to lines no wider than `width` cells. Explicit "\n" force breaks; runs of
+// spaces collapse to one at a wrap; a word wider than `width` hard-breaks by grapheme cluster.
+export function wrap(s, width) {
+  s = String(s);
+  if (width <= 0) return [""];
+
+  const lines = [];
+  for (const para of s.split("\n")) {
+    wrapParagraph(para, width, lines);
+  }
+
+  return lines;
+}
+
+// Non-space grapheme runs with their cell widths; spaces delimit, blank runs vanish.
+function splitWords(para) {
+  const gs = term.graphemes(para);
+  const words = [];
+  let text = "";
+  let w = 0;
+  for (let k = 0; k < gs.length; k += 3) {
+    const ch = para.slice(gs[k], gs[k] + gs[k + 1]);
+    if (ch === " ") {
+      if (text) words.push({ text, w });
+      text = "";
+      w = 0;
+    } else {
+      text += ch;
+      w += gs[k + 2];
+    }
+  }
+  if (text) words.push({ text, w });
+
+  return words;
+}
+
+// Split a too-wide token into pieces each within `width` (last piece is the remainder). A lone
+// cluster wider than `width` still stands alone — a grapheme is never split.
+function hardBreak(text, width) {
+  const gs = term.graphemes(text);
+  const pieces = [];
+  let piece = "";
+  let w = 0;
+  for (let k = 0; k < gs.length; k += 3) {
+    if (w + gs[k + 2] > width && piece !== "") {
+      pieces.push({ text: piece, w });
+      piece = "";
+      w = 0;
+    }
+    piece += text.slice(gs[k], gs[k] + gs[k + 1]);
+    w += gs[k + 2];
+  }
+  pieces.push({ text: piece, w });
+
+  return pieces;
+}
+
+function wrapParagraph(para, width, out) {
+  const words = splitWords(para);
+  if (words.length === 0) {
+    out.push("");
+    return;
+  }
+
+  let line = "";
+  let lineW = 0;
+  for (const word of words) {
+    if (line !== "" && lineW + 1 + word.w > width) {
+      out.push(line);
+      line = "";
+      lineW = 0;
+    }
+
+    if (word.w > width) {
+      const pieces = hardBreak(word.text, width);
+      for (let i = 0; i < pieces.length - 1; i++) out.push(pieces[i].text);
+      line = pieces[pieces.length - 1].text;
+      lineW = pieces[pieces.length - 1].w;
+    } else {
+      const sep = line === "" ? 0 : 1;
+      line += (sep ? " " : "") + word.text;
+      lineW += sep + word.w;
+    }
+  }
+  out.push(line);
 }
 
 // --- commands -----------------------------------------------------------------------------
