@@ -91,6 +91,9 @@ Link :: struct {
     // @private
     // Scratch for one inbound CONTROL decode, reset per message.
     scratch:   virtual.Arena,
+
+    // Owner pointer, set by `link_dial` and recovered by the owner's callbacks. Borrowed.
+    user_data: rawptr,
 }
 
 // What an inbound link message means, decided from its kind and bytes. `.Fail` names a
@@ -224,6 +227,7 @@ link_dial :: proc(
     route: Link_Route,
     ticket: string,
     cbs: Link_Callbacks,
+    user_data: rawptr = nil,
     allocator := context.allocator,
 ) -> ws.Client_Error {
     assert(l != nil, "link_dial needs link storage")
@@ -234,6 +238,7 @@ link_dial :: proc(
     l.allocator = allocator
     l.cbs = cbs
     l.route = route
+    l.user_data = user_data
 
     if virtual.arena_init_growing(&l.scratch) != nil {
         return .Out_Of_Memory
@@ -264,6 +269,29 @@ link_dial :: proc(
     }
 
     return err
+}
+
+// Queue one SEALED (or handshake) frame on the link. The bytes are copied into the
+// client's send queue, so the caller may free them once this returns.
+link_send_binary :: proc(l: ^Link, bytes: []u8) -> ws.Client_Error {
+    assert(l != nil, "link_send_binary needs a link")
+
+    return ws.client_send_binary(&l.sock, bytes)
+}
+
+// Whether the link's socket is Open — the liveness a bridged connection reports.
+link_open :: proc(l: ^Link) -> bool {
+    assert(l != nil, "link_open needs a link")
+
+    return l.sock.state == .Open
+}
+
+// Cancel an in-flight dial or upgrade before the link opens; the terminal callback reports
+// the cancellation. Valid only while the link is still opening — use `link_close` once Open.
+link_cancel :: proc(l: ^Link) {
+    assert(l != nil, "link_cancel needs a link")
+
+    ws.client_cancel(&l.sock)
 }
 
 // Begin a graceful close. Fails with `.Not_Open` when the link has not reached Open,

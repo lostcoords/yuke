@@ -19,6 +19,10 @@ NOISE_PROTOCOL :: "Noise_IK_25519_ChaChaPoly_SHA256"
 // The X25519 static public key size, in bytes.
 NOISE_STATIC_KEY_SIZE :: 32
 
+// The v1 handshake prologue both ends bind into the transcript. Version-only for now; the
+// device_id is folded in once the control plane assigns one. Both ends must match exactly.
+NOISE_PROLOGUE_V1 :: "yuke-relay v1"
+
 // A relay session failure. Handshake and transport bytes arrive from the peer through the
 // relay, so a bad one degrades to an error rather than crashing the daemon.
 Noise_Error :: enum {
