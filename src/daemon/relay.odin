@@ -250,8 +250,8 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
     scratch := virtual.arena_allocator(&r.send_scratch)
 
     // A frame larger than one Noise packet rides several SEALED frames, each a header byte then a
-    // slice of the plaintext. A mid-frame send failure closes the connection anyway, and the
-    // receiver drops the partial at the next frame's FIRST chunk.
+    // slice of the plaintext. Each chunk is sealed before it is queued, so the Noise nonce advances
+    // per chunk; a send that fails after sealing cannot be shed (see below).
     count := relay.transport_chunk_count(len(plaintext))
 
     for i in 0 ..< count {
@@ -270,9 +270,23 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
         }
 
         frame := relay.frame_encode(relay.Frame{type = .Sealed, payload = sealed}, scratch)
-        if send_err := tx_error_client(relay.link_send_binary(&r.link, frame)); send_err != .None {
-            return send_err
+        send_err := tx_error_client(relay.link_send_binary(&r.link, frame))
+        if send_err == .None {
+            continue
         }
+
+        // The link is already closing; its terminal tears down the session and reconnects.
+        if send_err == .Not_Open {
+            return .Not_Open
+        }
+
+        // Any other failure — a full send queue included — is fatal here. The chunk is already
+        // sealed, so the Noise nonce advanced; unlike a stateless WebSocket frame, a sealed frame
+        // cannot be dropped without desyncing the cipher and breaking every later frame. Report a
+        // hard failure so the pump aborts and the link reconnects and resyncs, instead of shedding
+        // this frame (which the droppable class would otherwise do) and silently corrupting the
+        // session.
+        return .Send_Failed
     }
 
     return .None
