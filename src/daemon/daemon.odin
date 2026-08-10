@@ -99,6 +99,9 @@ Options :: struct {
     // Control-plane base URL the relay fetches link tickets from. Empty defaults to
     // `RELAY_CLOUD_URL_DEFAULT` in `start`.
     relay_cloud_url: string,
+
+    // Browser origins the front door admits, each a full `scheme://host[:port]`. Empty admits none.
+    allowed_origins: []string,
 }
 
 // A listening yuke daemon on a caller-supplied nbio loop. Owns the HTTP front door, the
@@ -140,6 +143,10 @@ Daemon :: struct {
     // @private
     // Owned bearer token; empty when authorization is disabled.
     auth_token:          string,
+
+    // @private
+    // Owned browser-origin allowlist consulted by `middleware_admit`. Empty admits none.
+    allowed_origins:     []string,
 
     // @private
     // Event log of record, open for the daemon's whole serving life. Nil when no
@@ -348,11 +355,16 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         d.config_json = ""
 
         options.host = config.host
-        options.port = config.port
+        // A zero from the manifest (omitted, or an explicit 0) does not clobber the port the
+        // launcher already chose — its `DEFAULT_PORT`, or a test's OS-assigned 0.
+        if config.port != 0 {
+            options.port = config.port
+        }
         options.db_path = paths.expand_home(config.db_path, sa)
         options.blob_dir = paths.expand_home(config.blob_dir, sa)
         options.auth_token = config.auth_token
         options.relay_cloud_url = config.relay_cloud_url
+        options.allowed_origins = config.allowed_origins
 
         d.log_level = config_log_level(config.log_level)
     } else if evaluated {
@@ -376,10 +388,12 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
     cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
     cloned_cloud, cloud_aerr := strings.clone(options.relay_cloud_url, allocator)
+    cloned_origins, origins_ok := clone_string_slice(options.allowed_origins, allocator)
     d.blob_dir = cloned_blob_dir
     d.auth_token = cloned_token
     d.relay_cloud_url = cloned_cloud
-    if blob_aerr != nil || token_aerr != nil || cloud_aerr != nil {
+    d.allowed_origins = cloned_origins
+    if blob_aerr != nil || token_aerr != nil || cloud_aerr != nil || !origins_ok {
         return .Out_Of_Memory
     }
 
@@ -634,6 +648,33 @@ store_close :: proc(d: ^Daemon) {
     d.seq_high = nil
 }
 
+// Deep-clone a string slice into `allocator`, outliving the decode arena. Returns nil/false on an
+// allocation failure, freeing the partial clone.
+clone_string_slice :: proc(src: []string, allocator: mem.Allocator) -> (out: []string, ok: bool) {
+    if len(src) == 0 {
+        return nil, true
+    }
+
+    dst, aerr := make([]string, len(src), allocator)
+    if aerr != nil {
+        return nil, false
+    }
+
+    for s, i in src {
+        clone, cerr := strings.clone(s, allocator)
+        if cerr != nil {
+            for j in 0 ..< i {
+                delete(dst[j], allocator)
+            }
+            delete(dst, allocator)
+            return nil, false
+        }
+        dst[i] = clone
+    }
+
+    return dst, true
+}
+
 // Release the owned config strings, resetting them to empty. Every teardown path can call
 // this without knowing how far `start` got.
 free_config :: proc(d: ^Daemon) {
@@ -645,12 +686,17 @@ free_config :: proc(d: ^Daemon) {
     delete(d.auth_path, d.allocator)
     delete(d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
+    for o in d.allowed_origins {
+        delete(o, d.allocator)
+    }
+    delete(d.allowed_origins, d.allocator)
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
     d.auth_path = ""
     d.config_json = ""
     d.relay_cloud_url = ""
+    d.allowed_origins = nil
 }
 
 // Allocate and register a `Conn` for a transport, entering Awaiting_Initialize. Shared by

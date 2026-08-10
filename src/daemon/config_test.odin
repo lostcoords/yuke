@@ -197,3 +197,88 @@ test_define_config_rejects_a_mistyped_value :: proc(t: ^testing.T) {
 
     testing.expect_value(t, err, Error.Invalid_Options)
 }
+
+// `allowedOrigins` decodes into the owned string slice, surviving the decode arena as clones.
+@(test)
+test_define_config_reads_allowed_origins :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    root := test_make_dir("cfg-origins")
+    defer os.remove_all(root)
+
+    write_entry(
+        t,
+        root,
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({
+                allowedOrigins: ["http://localhost:5173", "https://client.yuke.sh"],
+            })
+        `,
+    )
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    if testing.expect_value(t, len(d.allowed_origins), 2) {
+        testing.expect_value(t, d.allowed_origins[0], "http://localhost:5173")
+        testing.expect_value(t, d.allowed_origins[1], "https://client.yuke.sh")
+    }
+}
+
+// A mistyped `allowedOrigins` (a string, not an array) fails the strict decode.
+@(test)
+test_define_config_rejects_mistyped_allowed_origins :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    err := entry_start(
+        t,
+        "cfg-origins-mistyped",
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({ allowedOrigins: "nope" })
+        `,
+    )
+
+    testing.expect_value(t, err, Error.Invalid_Options)
+}
+
+// A manifest that omits `port` keeps the port the launcher set, rather than resetting to an
+// OS-assigned one: a zero from the manifest does not clobber the incoming value.
+@(test)
+test_define_config_keeps_the_launcher_port :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    root := test_make_dir("cfg-port")
+    defer os.remove_all(root)
+
+    write_entry(
+        t,
+        root,
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({ logLevel: "warn" })
+        `,
+    )
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    // An arbitrary free port, not DEFAULT_PORT, so the assertion checks retention rather than a
+    // coincidental default.
+    PORT :: 43219
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = PORT, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    testing.expect_value(t, bound_port(&d), PORT)
+}

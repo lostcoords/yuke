@@ -2,6 +2,7 @@ package daemon
 
 import "core:crypto/sha2"
 import "core:encoding/hex"
+import "core:encoding/json"
 import "core:log"
 import "core:nbio"
 import "core:os"
@@ -28,6 +29,8 @@ FRONT_DOOR_MIDDLEWARE := [?]Http_Middleware{{middleware_mark_private}, {middlewa
 @(rodata)
 FRONT_DOOR_ROUTES := [?]Http_Route {
     {method = "GET", pattern = "/ws", handler = route_ws},
+    {method = "GET", pattern = "/identity", handler = route_identity},
+    {method = "OPTIONS", pattern = "/identity", handler = route_identity_preflight},
     {method = "GET", pattern = "/blob/*", handler = route_blob_get},
     {method = "HEAD", pattern = "/blob/*", handler = route_blob_get},
     {method = "PUT", pattern = "/blob/*", handler = route_blob_put},
@@ -70,8 +73,18 @@ middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middleware_Re
     return .Continue
 }
 
-// Refuse browser-originated or DNS-rebound requests before any credential check.
+// Refuse browser-originated or DNS-rebound requests before any credential check. An `allowedOrigins`
+// entry exempts a matching `Origin`, admitting it past both the origin and Host checks.
 middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
+    d := ctx.user_data
+
+    // Exact-match against operator config; a duplicated Origin falls through to the refusal.
+    if origin, lookup := http.request_header(ctx.request.head, "origin"); lookup == .One {
+        if origin_allowed(d.allowed_origins, origin) {
+            return .Continue
+        }
+    }
+
     if !http_server.request_is_local(ctx.conn, ctx.request.head) {
         log.warnf(
             "daemon: refused browser-originated or rebound request %s %s",
@@ -86,8 +99,31 @@ middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     return .Continue
 }
 
+// The official web client's origin, admitted by default so a stock daemon serves it without
+// per-install configuration. Other origins must be listed in `allowedOrigins`.
+OFFICIAL_ORIGIN :: "https://client.yuke.sh"
+
+// Whether `origin` is the official client or an operator-configured allowlist entry.
+origin_allowed :: proc(allowed: []string, origin: string) -> bool {
+    if origin == OFFICIAL_ORIGIN {
+        return true
+    }
+    for entry in allowed {
+        if entry == origin {
+            return true
+        }
+    }
+    return false
+}
+
 // Authenticate before route or method disclosure. Missing/invalid → 401; ambiguous → 400.
 middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
+    // /identity is a public discovery endpoint: no secret, and it must answer before a client holds
+    // any credential, so it skips authentication. Admission still gates its origin.
+    if ctx.request.path == "/identity" {
+        return .Continue
+    }
+
     d := ctx.user_data
 
     auth := authenticate(d, ctx.request.head, ctx.request.query)
@@ -157,6 +193,51 @@ route_ws :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     assert(len(ctx.params.path_rest) == 0, "websocket route has no path capture")
     ws.accept_upgrade(&d.ws_server, ctx.conn, ctx.request.head, ctx.request.trailing)
+}
+
+// The /identity response: service name and build version, no secret.
+Identity_Info :: struct {
+    service: string `json:"service"`,
+    version: string `json:"version"`,
+}
+
+// Public discovery endpoint a browser probes to detect a local daemon before any WebSocket upgrade.
+// No secret, answers without a credential (admission still gates the origin); CORS lets it be read.
+route_identity :: proc(ctx: ^Http_Context) {
+    d := ctx.user_data
+    identity_cors(ctx)
+
+    body, merr := json.marshal(Identity_Info{service = "yuke", version = d.daemon_version}, {}, context.temp_allocator)
+    if merr != nil {
+        http_server.respond_text(ctx.conn, .Internal_Server_Error, "identity encode failed")
+        return
+    }
+
+    http_server.respond(ctx.conn, .Ok, "application/json", body)
+}
+
+// Answer the CORS + Private Network Access preflight for /identity: Chrome sends this `OPTIONS`
+// before a public page may reach a loopback address.
+route_identity_preflight :: proc(ctx: ^Http_Context) {
+    identity_cors(ctx)
+    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Methods", "GET, OPTIONS") {
+        return
+    }
+    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Private-Network", "true") {
+        return
+    }
+    http_server.respond_text(ctx.conn, .No_Content, "")
+}
+
+// Echo the request Origin into the CORS allow headers so an admitted browser can read /identity.
+// Admission has already vetted the origin, so this reflects an allowed value, not an arbitrary one.
+identity_cors :: proc(ctx: ^Http_Context) {
+    origin, lookup := http.request_header(ctx.request.head, "origin")
+    if lookup != .One {
+        return
+    }
+    _ = http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Origin", origin)
+    _ = http_server.conn_add_header(ctx.conn, "Vary", "Origin")
 }
 
 // Serve one content-addressed blob without reading it into the reactor's heap.

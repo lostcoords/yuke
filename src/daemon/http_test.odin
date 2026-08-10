@@ -968,6 +968,147 @@ test_daemon_refuses_an_origin_before_authenticating :: proc(t: ^testing.T) {
     )
 }
 
+// A configured `allowedOrigins` entry is admitted: with a token set and no credential, an admitted
+// request reaches auth and answers 401 — 401 (not 403) proves the origin was allowed.
+@(test)
+test_daemon_admits_an_allowlisted_origin :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: http://localhost:5173\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000", allowed_origins = {"http://localhost:5173"}},
+    )
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"),
+        "an allowlisted Origin is admitted to the auth stage, got %q",
+        got,
+    )
+}
+
+// An origin absent from `allowedOrigins` stays refused even with an allowlist configured.
+@(test)
+test_daemon_refuses_an_unlisted_origin :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n",
+        {allowed_origins = {"http://localhost:5173"}},
+    )
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+        "an unlisted Origin stays refused, got %q",
+        got,
+    )
+}
+
+// A duplicated Origin is refused even when its value is allowlisted.
+@(test)
+test_daemon_refuses_a_duplicated_allowlisted_origin :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: http://localhost:5173\r\norigin: http://localhost:5173\r\n\r\n",
+        {allowed_origins = {"http://localhost:5173"}},
+    )
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+        "a duplicated Origin is refused, got %q",
+        got,
+    )
+}
+
+// The official web client's origin is admitted without any configuration: with a token set and no
+// credential the request reaches auth and answers 401, not the 403 an unknown origin gets.
+@(test)
+test_daemon_admits_the_official_origin_by_default :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        "GET /ws HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://client.yuke.sh\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 401 Unauthorized\r\n"),
+        "the official origin is admitted by default, got %q",
+        got,
+    )
+}
+
+// /identity is a public discovery probe: an admitted origin reads a service/version body without a
+// credential, and the response carries the CORS header that lets the browser read it.
+@(test)
+test_daemon_identity_is_public :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(t, "GET /identity HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://client.yuke.sh\r\n\r\n")
+
+    testing.expectf(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "identity answers 200, got %q", got)
+    testing.expect(t, strings.contains(got, `"service":"yuke"`), "identity names the service")
+    testing.expect(
+        t,
+        strings.contains(got, "Access-Control-Allow-Origin: https://client.yuke.sh"),
+        "identity echoes the origin for CORS",
+    )
+}
+
+// /identity answers even when a token is configured and none is presented: it skips authentication.
+@(test)
+test_daemon_identity_needs_no_credential :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(
+        t,
+        "GET /identity HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://client.yuke.sh\r\n\r\n",
+        {auth_token = "s3cret00000000000000000000000000"},
+    )
+
+    testing.expectf(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "identity skips auth, got %q", got)
+}
+
+// The CORS + Private Network Access preflight is answered so a public page may reach this loopback
+// service under Chrome's PNA.
+@(test)
+test_daemon_identity_preflight_allows_private_network :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(t, "OPTIONS /identity HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://client.yuke.sh\r\n\r\n")
+
+    testing.expectf(t, strings.has_prefix(got, "HTTP/1.1 204 No Content\r\n"), "preflight answers 204, got %q", got)
+    testing.expect(
+        t,
+        strings.contains(got, "Access-Control-Allow-Private-Network: true"),
+        "preflight grants private-network access",
+    )
+}
+
+// Admission still gates /identity: an unlisted origin is refused before the route, so a random page
+// cannot probe for a local daemon.
+@(test)
+test_daemon_identity_refuses_an_unlisted_origin :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    got := run_http(t, "GET /identity HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://evil.example\r\n\r\n")
+
+    testing.expectf(
+        t,
+        strings.has_prefix(got, "HTTP/1.1 403 Forbidden\r\n"),
+        "identity's origin is gated, got %q",
+        got,
+    )
+}
+
 @(test)
 test_daemon_refuses_a_named_host :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)

@@ -3,6 +3,10 @@ package daemon
 import "core:encoding/json"
 import "core:log"
 
+// Well-known port a launcher binds when the operator configures none, so the web client can probe
+// for a local daemon. Applied by the launcher, not `start` (which keeps 0 meaning OS-assigned).
+DEFAULT_PORT :: 9853
+
 // The config object `yuked.js` hands to `defineConfig`, camelCase to match the JS surface.
 // A partial: every absent member defaults in `start`, so `defineConfig({})` is a valid
 // no-op. Superseded field-for-field over the caller's `Options` only when a manifest calls
@@ -30,6 +34,9 @@ Script_Config :: struct {
     // Control-plane base URL the relay exchanges the device credential for link tickets at.
     // Empty means the hosted default (`start` fills it in).
     relay_cloud_url: string `json:"relayCloudUrl"`,
+
+    // Browser origins the front door admits, each a full `scheme://host[:port]`. Empty admits none.
+    allowed_origins: []string `json:"allowedOrigins"`,
 }
 
 // Decode the JSON captured from `defineConfig`. A malformed value or an unknown member fails
