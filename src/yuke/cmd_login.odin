@@ -20,9 +20,12 @@ import relay "src:relay"
 
 import curl "libs:bindings/curl"
 
-// Control-plane base URL when neither `--cloud` nor `YUKE_CLOUD_URL` is set. The yuke-cloud dev
-// server listens here; a hosted deployment overrides it.
-DEFAULT_CLOUD_URL :: "http://localhost:3000"
+// Control-plane base URL when neither `--cloud` nor `YUKE_CLOUD_URL` is set. The device API is
+// served only under the `platform` subdomain (yuke-cloud `config/routes.rb`), so the base must
+// carry it. Defaults to the hosted control plane; a local dev server is selected with
+// `--cloud http://platform.lvh.me:3000` (or `YUKE_CLOUD_URL`), where `platform.lvh.me` resolves
+// to 127.0.0.1.
+DEFAULT_CLOUD_URL :: "https://platform.yuke.sh"
 
 // Environment override for the control-plane base URL.
 CLOUD_URL_ENV :: "YUKE_CLOUD_URL"
