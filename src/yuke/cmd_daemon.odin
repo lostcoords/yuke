@@ -89,10 +89,10 @@ daemon_run :: proc() {
     logger.lowest_level = d.log_level
     context.logger = logger
 
-    // Optional relay link, dialed after the front door binds so a relay failure never
-    // blocks the local daemon. The daemon owns it from here: `shutdown` and `destroy`
-    // close and free it alongside the front door.
-    relay_start(&d)
+    // Optional relay link from the enrolled device identity, started after the front door binds
+    // so a relay failure never blocks the local daemon. The daemon owns it from here: `shutdown`
+    // and `destroy` close and free it alongside the front door.
+    daemon.relay_autostart(&d)
 
     serve()
 

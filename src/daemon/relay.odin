@@ -19,6 +19,9 @@ import "core:nbio"
 import "core:strings"
 import "core:time"
 
+import "src:paths"
+
+import curl "libs:bindings/curl"
 import ws "libs:websocket"
 import relay "src:relay"
 
@@ -27,9 +30,19 @@ import relay "src:relay"
 RELAY_BACKOFF_MIN :: 1 * time.Second
 RELAY_BACKOFF_MAX :: 30 * time.Second
 
+// Bounds for one link-ticket fetch on the relay's own curl client.
+RELAY_TICKET_CONNECT_TIMEOUT :: 15 * time.Second
+RELAY_TICKET_TOTAL_TIMEOUT :: 30 * time.Second
+
+// The control-plane path a daemon POSTs its device credential to for a link ticket.
+RELAY_LINK_TICKETS_PATH :: "/api/v1/link_tickets"
+
 // The relay link's lifecycle. Exactly one state at a time; `shutdown_complete` waits for
 // `.Closed`.
 Relay_State :: enum {
+    // A link-ticket fetch is in flight on the curl client; awaiting the control plane.
+    Fetching,
+
     // `link_dial` is in flight; awaiting on_parked/on_error.
     Dialing,
 
@@ -57,12 +70,23 @@ Relay :: struct {
     link:            relay.Link,
     link_live:       bool,
 
-    // Owned dial parameters, kept for re-dial.
-    url:             string,
+    // Owned control-plane endpoint and device credential, exchanged for a fresh link ticket on
+    // every (re)dial. `credential` is secret — never log it.
+    cloud_url:       string,
+    credential:      string,
+
+    // The relay's own curl client for ticket fetches and the in-flight fetch + bounded response.
+    curl_client:     curl.Client,
+    curl_ready:      bool,
+    ticket_xfer:     curl.Transfer,
+    ticket_resp:     Auth_Response,
+
+    // The relay endpoint and ticket the last fetch produced, owned and refreshed per fetch.
+    relay_url:       string,
     ticket:          string,
 
-    // The daemon's static identity: the responder key the client pins. Generated at connect
-    // for now; the control plane provides a persisted one later.
+    // The daemon's static identity: the responder key a client pins, loaded from the device
+    // identity's `identity.key`.
     static_key:      ecdh.Private_Key,
 
     // The live Noise session with the current peer, valid between peer_attached and the peer
@@ -88,18 +112,19 @@ Relay :: struct {
     reconnect_timer: ^nbio.Operation,
 }
 
-// Dial the relay's /link route and park, keeping the link up for the daemon's serving life.
-// `url` is `ws://host[:port]` or `wss://…`; `ticket` is presented on the upgrade;
-// `static_seed`, when 32 bytes, is the daemon's static private key (a test hook — real
-// identity comes from the control plane), else one is generated. Call once, after `start`. A
-// malformed url is logged and left disabled; a failed dial retries with backoff.
-relay_connect :: proc(d: ^Daemon, url: string, ticket: string, static_seed: []u8 = nil) -> Error {
+// Connect the daemon's relay: exchange the device `credential` for a fresh link ticket at
+// `cloud_url`, then dial the relay endpoint the ticket names and park, keeping the link up for the
+// daemon's serving life. `static_seed` is the device's 32-byte X25519 static private key — the
+// responder identity a client pins. Call once, after `start`. A fetch or dial failure retries with
+// backoff. `cloud_url`/`credential` are borrowed for this call and cloned.
+relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_seed: []u8) -> Error {
     assert(d != nil, "relay_connect needs daemon state")
     assert(d.relay == nil, "relay_connect called twice")
     assert(d.loop != nil, "relay_connect needs the daemon loop")
+    assert(len(static_seed) == relay.NOISE_STATIC_KEY_SIZE, "relay_connect needs a 32-byte static key")
 
-    if _, ok := relay.endpoint_parse(url); !ok {
-        log.errorf("daemon: ignoring malformed relay url %q", url)
+    if cloud_url == "" || credential == "" {
+        log.error("daemon: relay not started (no control-plane url or credential)")
 
         return .None
     }
@@ -110,21 +135,14 @@ relay_connect :: proc(d: ^Daemon, url: string, ticket: string, static_seed: []u8
     }
 
     r.daemon = d
-    r.state = .Dialing
+    r.state = .Fetching
     r.backoff = RELAY_BACKOFF_MIN
 
-    if len(static_seed) == relay.NOISE_STATIC_KEY_SIZE {
-        if !ecdh.private_key_set_bytes(&r.static_key, .X25519, static_seed) {
-            log.error("daemon: invalid relay static key")
-            free(r, d.allocator)
-
-            return .None
-        }
-    } else if !ecdh.private_key_generate(&r.static_key, .X25519) {
-        log.error("daemon: could not generate a relay static key")
+    if !ecdh.private_key_set_bytes(&r.static_key, .X25519, static_seed) {
+        log.error("daemon: invalid relay static key")
         free(r, d.allocator)
 
-        return .Out_Of_Memory
+        return .None
     }
 
     if virtual.arena_init_growing(&r.recv_scratch) != nil || virtual.arena_init_growing(&r.send_scratch) != nil {
@@ -135,10 +153,18 @@ relay_connect :: proc(d: ^Daemon, url: string, ticket: string, static_seed: []u8
 
     relay.reassembler_init(&r.recv_reasm, d.allocator)
 
+    if curl.client_init(&r.curl_client, d.loop, d.allocator) != .None {
+        relay_free_partial(r)
+
+        return .Out_Of_Memory
+    }
+
+    r.curl_ready = true
+
     clone_err: mem.Allocator_Error
-    r.url, clone_err = strings.clone(url, d.allocator)
+    r.cloud_url, clone_err = strings.clone(cloud_url, d.allocator)
     if clone_err == nil {
-        r.ticket, clone_err = strings.clone(ticket, d.allocator)
+        r.credential, clone_err = strings.clone(credential, d.allocator)
     }
     if clone_err != nil {
         relay_free_partial(r)
@@ -147,10 +173,51 @@ relay_connect :: proc(d: ^Daemon, url: string, ticket: string, static_seed: []u8
     }
 
     d.relay = r
-    log.infof("daemon: connecting relay %s (route /link)", url)
-    relay_dial(r)
+    log.infof("daemon: relay enabled via %s", cloud_url)
+    relay_fetch_ticket(r)
 
     return .None
+}
+
+// Start the relay from the enrolled device identity, if there is one. Loads `identity.key` as the
+// responder static key and the credential the ticket fetch presents; with no identity the relay
+// stays off. Call once, after `start`, so a relay failure never blocks the local daemon.
+relay_autostart :: proc(d: ^Daemon) {
+    assert(d != nil, "relay autostart needs daemon state")
+
+    dir := paths.config_dir(d.allocator)
+    if dir == "" {
+        log.warn("daemon: no config directory; relay disabled")
+
+        return
+    }
+
+    defer delete(dir, d.allocator)
+
+    id, ierr := relay.identity_load(dir, d.allocator)
+    switch ierr {
+    case .None:
+
+    case .Absent:
+        log.info("daemon: no device identity; relay disabled (run `yuke login`)")
+
+        return
+
+    case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+        log.errorf("daemon: device identity unusable (%v); relay disabled", ierr)
+
+        return
+    }
+
+    defer relay.identity_destroy(&id)
+
+    key_bytes: [relay.NOISE_STATIC_KEY_SIZE]u8
+    ecdh.private_key_bytes(&id.static_key, key_bytes[:])
+    defer mem.zero_slice(key_bytes[:])
+
+    if err := relay_connect(d, d.relay_cloud_url, id.credential, key_bytes[:]); err != .None {
+        log.errorf("daemon: relay connect failed: %v", err)
+    }
 }
 
 // Whether the relay link has finished, or was never up — so a shutdown may stop waiting.
@@ -175,6 +242,14 @@ relay_begin_close :: proc(d: ^Daemon) {
     r.state = .Stopping
 
     switch prior {
+    case .Fetching:
+        // A ticket fetch is in flight; cancel it (its completion never fires after) and finish.
+        if r.curl_ready && r.ticket_xfer.state == .Running {
+            curl.transfer_cancel(&r.ticket_xfer)
+        }
+
+        r.state = .Closed
+
     case .Waiting:
         if r.reconnect_timer != nil {
             nbio.remove(r.reconnect_timer)
@@ -209,6 +284,10 @@ relay_destroy :: proc(d: ^Daemon) {
 
     relay.session_destroy(&r.session)
     relay.reassembler_destroy(&r.recv_reasm)
+    if r.curl_ready {
+        curl.client_destroy(&r.curl_client)
+    }
+
     if r.link_live {
         relay.link_destroy(&r.link)
     }
@@ -216,24 +295,12 @@ relay_destroy :: proc(d: ^Daemon) {
     ecdh.private_key_clear(&r.static_key)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
-    delete(r.url, d.allocator)
+    delete(r.cloud_url, d.allocator)
+    delete(r.credential, d.allocator)
+    delete(r.relay_url, d.allocator)
     delete(r.ticket, d.allocator)
     free(r, d.allocator)
     d.relay = nil
-}
-
-// The daemon's relay static public key — what a client pins to reach this daemon. `ok` is
-// false when no relay is configured. A test hook until the control plane publishes it.
-relay_static_public :: proc(d: ^Daemon) -> (key: [relay.NOISE_STATIC_KEY_SIZE]u8, ok: bool) {
-    if d.relay == nil {
-        return {}, false
-    }
-
-    pub: ecdh.Public_Key
-    ecdh.public_key_set_priv(&pub, &d.relay.static_key)
-    ecdh.public_key_bytes(&pub, key[:])
-
-    return key, true
 }
 
 // Seal one plaintext wire frame and queue it on the link — the relay half of
@@ -308,16 +375,124 @@ relay_conn_close :: proc(r: ^Relay) {
     _ = relay.link_close(&r.link)
 }
 
-// Free a partly-built relay during `relay_connect` rollback.
+// Free a partly-built relay during `relay_connect` rollback. Safe on any prefix of the fields
+// `relay_connect` sets, in the order it sets them.
 @(private = "file")
 relay_free_partial :: proc(r: ^Relay) {
-    delete(r.url, r.daemon.allocator)
-    delete(r.ticket, r.daemon.allocator)
+    if r.curl_ready {
+        curl.client_destroy(&r.curl_client)
+    }
+
+    delete(r.cloud_url, r.daemon.allocator)
+    delete(r.credential, r.daemon.allocator)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
     relay.reassembler_destroy(&r.recv_reasm)
     ecdh.private_key_clear(&r.static_key)
     free(r, r.daemon.allocator)
+}
+
+// Fetch a fresh link ticket from the control plane, then dial. Async on the relay curl client: the
+// completion dials on a 2xx or schedules a reconnect on any failure. A fresh ticket is fetched for
+// every dial — the control plane issues short-lived, single-use link tickets.
+@(private = "file")
+relay_fetch_ticket :: proc(r: ^Relay) {
+    assert(r.curl_ready, "relay ticket fetch needs a curl client")
+
+    r.state = .Fetching
+    r.ticket_resp = {}
+
+    url := strings.concatenate({r.cloud_url, RELAY_LINK_TICKETS_PATH}, context.temp_allocator)
+    bearer := strings.concatenate({"Bearer ", r.credential}, context.temp_allocator)
+
+    headers := [?]curl.Header{{name = "authorization", value = bearer}, {name = "accept", value = "application/json"}}
+    request := curl.Request {
+        url             = strings.clone_to_cstring(url, context.temp_allocator),
+        headers         = headers[:],
+        method          = .Post,
+        connect_timeout = RELAY_TICKET_CONNECT_TIMEOUT,
+        total_timeout   = RELAY_TICKET_TOTAL_TIMEOUT,
+    }
+    callbacks := curl.Callbacks {
+        on_body = relay_ticket_on_body,
+        on_done = relay_ticket_on_done,
+    }
+
+    if err := curl.transfer_start(&r.ticket_xfer, &r.curl_client, request, callbacks, r); err != .None {
+        log.errorf("daemon: relay ticket request setup failed: %v", err)
+        relay_schedule_reconnect(r)
+    }
+}
+
+@(private = "file")
+relay_ticket_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
+    r := (^Relay)(user)
+
+    return auth_response_accumulate(&r.ticket_resp, chunk)
+}
+
+// The ticket fetch finished. On a 2xx with a well-formed body, adopt the ticket and dial; any
+// failure — transport, non-2xx, overflow, or malformed — retries with backoff.
+@(private = "file")
+relay_ticket_on_done :: proc(user: rawptr, result: curl.Result) {
+    r := (^Relay)(user)
+    assert(r.ticket_xfer.state == .Done, "relay ticket completion needs a terminal transfer")
+
+    if r.state == .Stopping {
+        r.state = .Closed
+
+        return
+    }
+
+    if result.code != .Ok || result.status < 200 || result.status >= 300 || r.ticket_resp.overflow {
+        log.errorf("daemon: relay ticket fetch failed: curl=%v status=%d", result.code, result.status)
+        relay_schedule_reconnect(r)
+
+        return
+    }
+
+    if !relay_ticket_store(r, auth_response_body(&r.ticket_resp)) {
+        log.error("daemon: relay ticket response was malformed")
+        relay_schedule_reconnect(r)
+
+        return
+    }
+
+    relay_dial(r)
+}
+
+// Decode a link-ticket response and adopt its ticket and relay endpoint, replacing the previous
+// pair. Validates the endpoint so `relay_dial` may assume it parses. Control-plane input, so a bad
+// body degrades to false rather than asserting.
+@(private = "file")
+relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
+    parsed, cerr := relay.ticket_decode(transmute([]u8)body, context.temp_allocator)
+    if cerr != .None {
+        return false
+    }
+
+    if _, ok := relay.endpoint_parse(parsed.relay_url); !ok {
+        return false
+    }
+
+    ticket, t_aerr := strings.clone(parsed.ticket, r.daemon.allocator)
+    if t_aerr != nil {
+        return false
+    }
+
+    url, u_aerr := strings.clone(parsed.relay_url, r.daemon.allocator)
+    if u_aerr != nil {
+        delete(ticket, r.daemon.allocator)
+
+        return false
+    }
+
+    delete(r.ticket, r.daemon.allocator)
+    delete(r.relay_url, r.daemon.allocator)
+    r.ticket = ticket
+    r.relay_url = url
+
+    return true
 }
 
 // (Re)dial the relay link. Frees the previous link's buffers first when one is live, so a
@@ -329,8 +504,8 @@ relay_dial :: proc(r: ^Relay) {
         r.link_live = false
     }
 
-    endpoint, ok := relay.endpoint_parse(r.url)
-    assert(ok, "relay url was validated at connect")
+    endpoint, ok := relay.endpoint_parse(r.relay_url)
+    assert(ok, "relay url was validated when its ticket was fetched")
 
     r.state = .Dialing
 
@@ -383,7 +558,7 @@ relay_reconnect_on_timer :: proc(op: ^nbio.Operation, r: ^Relay) {
         return
     }
 
-    relay_dial(r)
+    relay_fetch_ticket(r)
 }
 
 // The link went down (closed or errored): tear the bridged session down, then reconnect
