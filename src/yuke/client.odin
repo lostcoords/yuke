@@ -32,6 +32,8 @@ Client_Connect_Options :: struct {
     port:   int `json:"port"`,
     secure: bool `json:"secure"`,
     token:  string `json:"token"`,
+    remote: bool `json:"remote"`,
+    device: string `json:"device"`,
 }
 
 Client_Promise :: struct {
@@ -94,7 +96,7 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         h.daemon = {}
     }
 
-    if h.daemon.live {
+    if h.remote != nil || h.daemon.live {
         return qjs.throw_type_error(ctx, "a daemon connection already exists")
     }
 
@@ -110,6 +112,13 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         }
 
         return qjs.throw_type_error(ctx, "out of memory")
+    }
+
+    // A remote connect fetches the roster and a connect ticket asynchronously, then builds the
+    // relay transport; the promise settles through the same client callbacks as the local path.
+    if options.remote {
+        remote_connect_start(h, job, options.device)
+        return promise
     }
 
     headers := ""
@@ -167,6 +176,12 @@ client_js_disconnect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.in
     h := host_from_ctx(ctx)
     if h == nil {
         return qjs.throw_type_error(ctx, "yuke:client has no host")
+    }
+
+    // Cancel a remote connect still fetching its roster/ticket; its promise rejects.
+    if h.remote != nil {
+        remote_connect_cancel(h)
+        return qjs.undefined()
     }
 
     if !h.daemon.live || h.daemon.client.state == .Closed || h.daemon.client.state == .Closing {
@@ -238,7 +253,17 @@ client_js_state :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, ar
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.daemon.live {
+    if h == nil {
+        return qjs.new_string(ctx, "disconnected")
+    }
+
+    // A remote connect reports "connecting" through its whole roster/ticket/dial phase, before
+    // a daemon client exists.
+    if h.remote != nil {
+        return qjs.new_string(ctx, "connecting")
+    }
+
+    if !h.daemon.live {
         return qjs.new_string(ctx, "disconnected")
     }
 
@@ -263,6 +288,15 @@ client_connect_options :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (options:
 
     if json.unmarshal(transmute([]byte)text, &options, .JSON, context.temp_allocator) != nil {
         return {}, false
+    }
+
+    // A remote connect selects the daemon by device name; host/port are unused.
+    if options.remote {
+        if options.device == "" {
+            return {}, false
+        }
+
+        return options, true
     }
 
     if options.host == "" {

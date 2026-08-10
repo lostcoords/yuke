@@ -266,8 +266,10 @@ declare module "yuke:client" {
   export type ConnectionState = "disconnected" | "connecting" | "ready" | "closing";
 
   export interface ConnectOptions {
+    remote?: boolean;
+    device?: string;
     host?: string;
-    port: number;
+    port?: number;
     secure?: boolean;
     token?: string;
   }
@@ -282,7 +284,13 @@ declare module "yuke:client" {
     | "request_id_exhausted"
     | "too_many_pending"
     | "not_ready"
-    | "connection_closed";
+    | "connection_closed"
+    | "not_enrolled"
+    | "identity_unreadable"
+    | "roster_failed"
+    | "device_not_found"
+    | "device_ambiguous"
+    | "ticket_failed";
 
   export class ClientError extends Error {
     code: ClientErrorCode;

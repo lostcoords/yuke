@@ -17,6 +17,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
+import curl "libs:bindings/curl"
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
 import js "src:js"
@@ -53,44 +54,55 @@ FS_WORKERS :: 1
 
 Host :: struct {
     // Runtime, limits, module loading, and `yuke:fs`, shared with the daemon.
-    js:          js.Host,
+    js:               js.Host,
 
     // Blocking `yuke:fs` passes. Must be drained before `js` is released: an in-flight job
     // owns the settle functions of a live promise in that context.
-    pool:        offload.Pool,
-    has_pool:    bool,
-    on_event:    qjs.Value,
+    pool:             offload.Pool,
+    has_pool:         bool,
+    on_event:         qjs.Value,
     // Retained `term` export; width/height numbers updated in place on resize.
-    term_obj:    qjs.Value,
+    term_obj:         qjs.Value,
     // Reused {w,h} for term.size() to avoid per-call object alloc.
-    size_obj:    qjs.Value,
-    buf:         ui.Buffer,
-    has_buf:     bool,
-    out:         io.Writer,
-    drive:       ^term.Drive,
-    sync:        bool,
+    size_obj:         qjs.Value,
+    buf:              ui.Buffer,
+    has_buf:          bool,
+    out:              io.Writer,
+    drive:            ^term.Drive,
+    sync:             bool,
     // True after any draw into the current grid since last successful endFrame.
-    dirty:       bool,
+    dirty:            bool,
     // True between beginFrame and endFrame (auto begin on first draw if needed).
-    in_frame:    bool,
-    done:        bool,
-    last_err:    string,
+    in_frame:         bool,
+    done:             bool,
+    last_err:         string,
     // Owned canonical config directory (`~/.config/yuke`); the containment root for user module
     // files. Empty when no config dir resolves — then only the baked modules load.
-    config_root: string,
-    allocator:   mem.Allocator,
+    config_root:      string,
+    allocator:        mem.Allocator,
     // Cached dimensions for term.width / term.height.
-    width:       u16,
-    height:      u16,
+    width:            u16,
+    height:           u16,
 
     // Demand-driven anim ticks (lite-xl-style deadline, not a permanent FPS loop).
-    needs_tick:  bool,
-    tick_period: time.Duration,
-    tick_op:     ^nbio.Operation,
+    needs_tick:       bool,
+    tick_period:      time.Duration,
+    tick_op:          ^nbio.Operation,
 
     // One daemon connection shared by the client script tier. Its request completions own
     // QuickJS promise functions, so it must be closed before `js` is released.
-    daemon:      Daemon_Connection,
+    daemon:           Daemon_Connection,
+
+    // One in-flight remote (relay) connect attempt, or nil. Owns the control-plane fetch state
+    // until it hands a live transport to `daemon`; canceled before `js` is released so its
+    // promise settles while the context is alive.
+    remote:           ^Remote_Connect,
+
+    // Control-plane HTTP client for remote connects (roster + connect tickets), created on the
+    // first remote connect and reused. `client_destroy` may not run in a curl callback, so it
+    // is destroyed only at teardown, once idle.
+    cloud_curl:       curl.Client,
+    cloud_curl_ready: bool,
 }
 
 host_init :: proc(
@@ -205,6 +217,14 @@ host_destroy :: proc(h: ^Host) {
     host_cancel_tick(h)
     h.needs_tick = false
     h.done = true
+
+    // Settle any in-flight remote connect while the context is still alive, then drop the
+    // control-plane client (idle now that its transfer is canceled).
+    remote_connect_cancel(h)
+    if h.cloud_curl_ready {
+        curl.client_destroy(&h.cloud_curl)
+        h.cloud_curl_ready = false
+    }
 
     daemon_connection_destroy(h)
 
