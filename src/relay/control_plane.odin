@@ -78,6 +78,24 @@ Connect_Body :: struct {
     device_id: string `json:"device_id"`,
 }
 
+// One device in the account roster (`GET /api/v1/devices`). Only the fields the client acts
+// on are modeled; the rest of each entry is ignored. `static_public_key` is base64 — decode
+// it to 32 raw bytes with `roster_pin_decode` before pinning the Noise handshake. `is_self`
+// flags the calling device so the menu can skip it. Strings owned by the decode allocator.
+Roster_Device :: struct {
+    device_id:         string `json:"device_id"`,
+    name:              string `json:"name"`,
+    static_public_key: string `json:"static_public_key"`,
+    online:            bool `json:"online"`,
+    is_self:           bool `json:"is_self"`,
+}
+
+// GET /api/v1/devices response envelope.
+@(private = "file")
+Roster_Body :: struct {
+    devices: []Roster_Device `json:"devices"`,
+}
+
 // Encode a device_codes start request. `static_public_key` is the raw 32-byte X25519 public
 // key, base64-encoded into the body.
 enroll_start_encode :: proc(
@@ -192,4 +210,39 @@ ticket_decode :: proc(body: []u8, allocator := context.allocator) -> (Control_Ti
     }
 
     return out, .None
+}
+
+// Decode a `GET /api/v1/devices` response into the account roster. The slice and its strings
+// are owned by `allocator`. A body that is not `{devices:[…]}`, or any entry missing its
+// device_id or static key, is `.Malformed` — the control plane is authoritative, so a
+// well-formed roster always carries both on every device.
+roster_decode :: proc(body: []u8, allocator := context.allocator) -> ([]Roster_Device, Control_Error) {
+    out: Roster_Body
+    if json.unmarshal(body, &out, .JSON, allocator) != nil {
+        return nil, .Malformed
+    }
+
+    for device in out.devices {
+        if device.device_id == "" || device.static_public_key == "" {
+            return nil, .Malformed
+        }
+    }
+
+    return out.devices, .None
+}
+
+// Decode a roster entry's base64 `static_public_key` into the 32 raw bytes a client pins.
+// Returns false on bad base64 or a length other than 32. Control-plane input, so a bad key
+// degrades rather than asserting.
+roster_pin_decode :: proc(static_public_key: string, out: []u8) -> bool {
+    assert(len(out) == NOISE_STATIC_KEY_SIZE, "roster pin needs a 32-byte buffer")
+
+    raw, err := base64.decode(static_public_key, base64.DEC_TABLE, nil, context.temp_allocator)
+    if err != nil || len(raw) != NOISE_STATIC_KEY_SIZE {
+        return false
+    }
+
+    copy(out, raw)
+
+    return true
 }

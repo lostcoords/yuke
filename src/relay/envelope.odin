@@ -44,6 +44,10 @@ Error :: enum {
 
     // A CONTROL message whose `type` is not one this contract defines.
     Control_Unknown,
+
+    // A CONTROL frame on the client's /connect link. CONTROL is relay→daemon only; a
+    // client must never receive one, so it fails the link rather than acting on it.
+    Control_Unexpected,
 }
 
 // A decoded link message: a known type and a non-empty payload. On decode the

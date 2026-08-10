@@ -64,9 +64,9 @@ Session :: struct {
     initiator:   bool,
 
     // @private
-    // The peer's static public key, captured at split before the handshake is wiped. The
-    // daemon logs the client's key; v1 trusts the relay's account-scoping rather than
-    // gating on it.
+    // The peer's static public key, captured at split before the handshake is wiped, and read
+    // back via `session_peer_static`. v1 trusts the relay's account-scoping rather than gating
+    // on a specific peer key; the capture is what a later gate would consume.
     peer_static: [NOISE_STATIC_KEY_SIZE]u8,
 
     // @private

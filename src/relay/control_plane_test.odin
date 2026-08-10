@@ -1,6 +1,8 @@
 package relay
 
+import "core:encoding/base64"
 import "core:encoding/json"
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -119,4 +121,60 @@ test_ticket_codec :: proc(t: ^testing.T) {
     testing.expect(t, parsed.device_id == "target-dev", "device_id")
 
     free_all(context.temp_allocator)
+}
+
+@(test)
+test_roster_decode :: proc(t: ^testing.T) {
+    // A base64 32-byte key for the pin round-trip.
+    key: [NOISE_STATIC_KEY_SIZE]u8
+    for i in 0 ..< NOISE_STATIC_KEY_SIZE {
+        key[i] = u8(i)
+    }
+
+    encoded := base64.encode(key[:], base64.ENC_TABLE, context.temp_allocator)
+
+    body := fmt_roster(encoded)
+    roster, err := roster_decode(transmute([]u8)body, context.temp_allocator)
+    testing.expect_value(t, err, Control_Error.None)
+    testing.expect(t, len(roster) == 2, "two devices")
+    testing.expect(t, roster[0].device_id == "dev-server", "device_id")
+    testing.expect(t, roster[0].name == "server", "name")
+    testing.expect(t, roster[0].online, "online flag")
+    testing.expect(t, !roster[0].is_self, "not self")
+    testing.expect(t, roster[1].is_self, "self flag")
+
+    // The pinned key round-trips to the raw 32 bytes.
+    pin: [NOISE_STATIC_KEY_SIZE]u8
+    testing.expect(t, roster_pin_decode(roster[0].static_public_key, pin[:]), "pin decodes")
+    testing.expect(t, pin == key, "pin matches the original key")
+
+    // A garbage or wrong-length key is rejected, not asserted.
+    testing.expect(t, !roster_pin_decode("!!!!", pin[:]), "bad base64 rejected")
+    short := base64.encode([]u8{1, 2, 3}, base64.ENC_TABLE, context.temp_allocator)
+    testing.expect(t, !roster_pin_decode(short, pin[:]), "wrong-length key rejected")
+
+    // A shape that is not `{devices:[…]}`, or an entry missing a required field, is malformed.
+    _, e1 := roster_decode(transmute([]u8)string(`{"devices":"nope"}`), context.temp_allocator)
+    testing.expect_value(t, e1, Control_Error.Malformed)
+
+    _, e2 := roster_decode(transmute([]u8)string(`{"devices":[{"name":"x"}]}`), context.temp_allocator)
+    testing.expect_value(t, e2, Control_Error.Malformed)
+
+    free_all(context.temp_allocator)
+}
+
+// Build a two-device roster body with `key` as the first device's base64 static key.
+@(private = "file")
+fmt_roster :: proc(key: string) -> string {
+    parts := []string {
+        `{"devices":[`,
+        `{"device_id":"dev-server","name":"server","static_public_key":"`,
+        key,
+        `","online":true,"is_self":false},`,
+        `{"device_id":"dev-laptop","name":"laptop","static_public_key":"`,
+        key,
+        `","online":false,"is_self":true}]}`,
+    }
+
+    return strings.concatenate(parts, context.temp_allocator)
 }

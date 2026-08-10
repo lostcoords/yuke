@@ -85,6 +85,61 @@ transport_chunk_header :: proc(index, count: int) -> u8 {
     return flags
 }
 
+// Seal one chunk of a fragmented frame into a ready-to-send SEALED envelope: prepend the
+// 1-byte FIRST/LAST header to `body`, seal it, and encode the `.Sealed` frame — the single
+// per-chunk operation both roles' send loops share, so the nonce-advancing framing lives in one
+// place. The bytes are allocated from `allocator`; the caller queues them on its link and maps a
+// seal failure to its own send policy (a sealed chunk cannot be shed, so that mapping differs by
+// role and stays with the caller).
+transport_seal_chunk :: proc(
+    sess: ^Session,
+    body: []u8,
+    index, count: int,
+    allocator := context.allocator,
+) -> (
+    []u8,
+    Noise_Error,
+) {
+    chunk := make([]u8, 1 + len(body), allocator)
+    chunk[0] = transport_chunk_header(index, count)
+    copy(chunk[1:], body)
+
+    sealed, serr := session_seal(sess, chunk, allocator)
+    if serr != .None {
+        return nil, serr
+    }
+
+    return frame_encode(Frame{type = .Sealed, payload = sealed}, allocator), .None
+}
+
+// Open one inbound SEALED payload and feed it to the reassembler — the per-frame receive step
+// both roles share. `ok` is false when the payload failed to decrypt or the chunk violated the
+// framing, both of which the caller closes the link on; on `ok && done`, `frame` is the complete
+// wire frame, aliasing the reassembler or the opened chunk until the next push or reset.
+transport_open_fragment :: proc(
+    sess: ^Session,
+    reasm: ^Reassembler,
+    payload: []u8,
+    allocator := context.allocator,
+) -> (
+    frame: []u8,
+    done: bool,
+    ok: bool,
+) {
+    chunk, oerr := session_open(sess, payload, allocator)
+    if oerr != .None {
+        return nil, false, false
+    }
+
+    rerr: Transport_Error
+    frame, done, rerr = reassembler_push(reasm, chunk)
+    if rerr != .None {
+        return nil, false, false
+    }
+
+    return frame, done, true
+}
+
 // Prepare a reassembler backed by `allocator`. Its buffer grows on demand and is bounded by
 // `TRANSPORT_FRAME_MAX`.
 reassembler_init :: proc(r: ^Reassembler, allocator := context.allocator) {

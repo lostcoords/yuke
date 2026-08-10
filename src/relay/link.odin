@@ -117,9 +117,11 @@ Link_Action :: enum {
 
 // Decide what an inbound message means. Pure — no socket, no callbacks — so the pump's
 // rules are testable directly: text is fatal, a SEALED needs a live peer, CONTROL routes
-// by type. On `.Sealed` the returned payload aliases `msg`; on `.Peer_Gone` `reason` is
+// by type. CONTROL is relay→daemon only, so on the client's `.Connect` route it is a
+// violation. On `.Sealed` the returned payload aliases `msg`; on `.Peer_Gone` `reason` is
 // allocated from `allocator`. `err` is set only for `.Fail`, naming why the link closes.
 link_dispatch :: proc(
+    route: Link_Route,
     kind: ws.Message_Kind,
     msg: []u8,
     attached: bool,
@@ -150,6 +152,10 @@ link_dispatch :: proc(
         return .Sealed, frame.payload, "", .None
 
     case .Control:
+        if route == .Connect {
+            return .Fail, nil, "", .Control_Unexpected
+        }
+
         ctrl, cerr := control_decode(frame.payload, allocator)
         if cerr != .None {
             return .Fail, nil, "", cerr
@@ -302,6 +308,15 @@ link_close :: proc(l: ^Link, code := ws.Close_Code.Normal_Closure) -> ws.Client_
     return ws.client_close(&l.sock, code)
 }
 
+// Fail the link without a close handshake, reporting `err` through `on_error`. The terminal
+// fallback when the owner cannot continue safely (a seal or queue failure). `err` must be a
+// real failure, never `.None` or `.Not_Open`.
+link_abort :: proc(l: ^Link, err: ws.Client_Error) {
+    assert(l != nil, "link_abort needs a link")
+
+    ws.client_abort(&l.sock, err)
+}
+
 // Release the link's storage. Call once, after it has closed (post on_closed/on_error).
 link_destroy :: proc(l: ^Link) {
     assert(l != nil, "link_destroy needs a link")
@@ -327,6 +342,13 @@ link_on_open :: proc(sock: ^ws.Client) {
     l := link_from_socket(sock)
     assert(!l.attached, "link opened with a peer already attached")
 
+    // The client's /connect link is spliced onto the parked daemon the instant it opens —
+    // no peer_attached CONTROL arrives, so it is attached from open and may seal at once.
+    // The daemon's /link waits for peer_attached to flip `attached`.
+    if l.route == .Connect {
+        l.attached = true
+    }
+
     log.debugf("relay link: parked on %s", "/link" if l.route == .Link else "/connect")
 
     if l.cbs.on_parked != nil {
@@ -341,7 +363,7 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
     temp := virtual.arena_temp_begin(&l.scratch)
     defer virtual.arena_temp_end(temp)
 
-    action, payload, reason, err := link_dispatch(kind, data, l.attached, virtual.arena_allocator(&l.scratch))
+    action, payload, reason, err := link_dispatch(l.route, kind, data, l.attached, virtual.arena_allocator(&l.scratch))
 
     switch action {
     case .Peer_Attached:
