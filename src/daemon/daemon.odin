@@ -60,37 +60,45 @@ Error :: enum {
     Script_Failed,
 }
 
+// Hosted control plane the relay fetches link tickets from when `yuked.js` sets no `relayCloudUrl`.
+RELAY_CLOUD_URL_DEFAULT :: "https://platform.yuke.sh"
+
 // Listen and identity options. Zero-valued fields default in `start`. When `yuked.js` in the
 // script root calls `defineConfig`, its values supersede `host`, `port`, `db_path`, `blob_dir`,
-// and `auth_token` here; `daemon_version`, `js_root`, and `auth_path` are always the caller's.
+// `auth_token`, and `relay_cloud_url` here; `daemon_version`, `js_root`, and `auth_path` are
+// always the caller's.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
-    host:           string,
+    host:            string,
 
     // TCP port to bind; `/ws` and `/blob/<hash>` share it.
-    port:           int,
+    port:            int,
 
     // Daemon build/version string reported in `initialize`. Defaults to `"0.0.0"`.
-    daemon_version: string,
+    daemon_version:  string,
 
     // Directory holding content-addressed blobs, created if absent. Empty disables
     // `/blob`.
-    blob_dir:       string,
+    blob_dir:        string,
 
     // Required bearer token. Empty disables authorization; non-empty values use
     // the RFC 3986 unreserved alphabet so the same token is safe in a query.
-    auth_token:     string,
+    auth_token:      string,
 
     // SQLite database holding the event log, created if absent. Empty disables the
     // store, and with it every durable broadcast.
-    db_path:        string,
+    db_path:         string,
 
     // Private provider credential file. Empty disables WebSocket OAuth methods.
-    auth_path:      string,
+    auth_path:       string,
 
     // Directory the script tier reads: `yuked.js` is evaluated at startup and every
     // `yuke:fs` path must resolve inside it. Empty disables `yuke:fs` and runs no script.
-    js_root:        string,
+    js_root:         string,
+
+    // Control-plane base URL the relay fetches link tickets from. Empty defaults to
+    // `RELAY_CLOUD_URL_DEFAULT` in `start`.
+    relay_cloud_url: string,
 }
 
 // A listening yuke daemon on a caller-supplied nbio loop. Owns the HTTP front door, the
@@ -194,6 +202,11 @@ Daemon :: struct {
     // The outbound relay link, or nil when no relay is configured. Shares this daemon's
     // loop, store, and connection table; connected after `start` via `relay_connect`.
     relay:               ^Relay,
+
+    // @private
+    // Control-plane base URL the relay fetches link tickets from, resolved in `start` from the
+    // manifest's `relayCloudUrl` or the hosted default. Owned; freed in the config cleanup.
+    relay_cloud_url:     string,
 
     // @private
     // Script tier: one QuickJS runtime for the whole daemon. Torn down after the worker
@@ -339,6 +352,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         options.db_path = paths.expand_home(config.db_path, sa)
         options.blob_dir = paths.expand_home(config.blob_dir, sa)
         options.auth_token = config.auth_token
+        options.relay_cloud_url = config.relay_cloud_url
 
         d.log_level = config_log_level(config.log_level)
     } else if evaluated {
@@ -354,12 +368,18 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         log.warn("daemon: no db_path configured; durable broadcasts and the session index are disabled")
     }
 
+    if options.relay_cloud_url == "" {
+        options.relay_cloud_url = RELAY_CLOUD_URL_DEFAULT
+    }
+
     // Clone the owned config strings whose source may be the manifest, now that it has run.
     cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
     cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
+    cloned_cloud, cloud_aerr := strings.clone(options.relay_cloud_url, allocator)
     d.blob_dir = cloned_blob_dir
     d.auth_token = cloned_token
-    if blob_aerr != nil || token_aerr != nil {
+    d.relay_cloud_url = cloned_cloud
+    if blob_aerr != nil || token_aerr != nil || cloud_aerr != nil {
         return .Out_Of_Memory
     }
 
@@ -624,11 +644,13 @@ free_config :: proc(d: ^Daemon) {
     delete(d.auth_token, d.allocator)
     delete(d.auth_path, d.allocator)
     delete(d.config_json, d.allocator)
+    delete(d.relay_cloud_url, d.allocator)
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
     d.auth_path = ""
     d.config_json = ""
+    d.relay_cloud_url = ""
 }
 
 // Allocate and register a `Conn` for a transport, entering Awaiting_Initialize. Shared by

@@ -10,6 +10,7 @@ declare module "yuke:daemon" {
     blobDir?: string;
     authToken?: string;
     logLevel?: "debug" | "info" | "warn" | "error";
+    relayCloudUrl?: string;
   }
 
   // Register the daemon configuration, returning it so `export default defineConfig({...})` reads

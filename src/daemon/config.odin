@@ -9,23 +9,27 @@ import "core:log"
 // `defineConfig`; a script that never calls it leaves `Options` untouched.
 Script_Config :: struct {
     // Dotted IPv4 bind address. Empty binds the front door's `127.0.0.1`.
-    host:       string `json:"host"`,
+    host:            string `json:"host"`,
 
     // TCP port for `/ws` and `/blob`. Zero binds an OS-assigned port.
-    port:       int `json:"port"`,
+    port:            int `json:"port"`,
 
     // SQLite database holding the event log. Empty disables the store, and with it every
     // durable broadcast.
-    db_path:    string `json:"dbPath"`,
+    db_path:         string `json:"dbPath"`,
 
     // Directory holding content-addressed blobs.
-    blob_dir:   string `json:"blobDir"`,
+    blob_dir:        string `json:"blobDir"`,
 
     // Bearer token; at least 32 bytes when set. Empty disables authorization.
-    auth_token: string `json:"authToken"`,
+    auth_token:      string `json:"authToken"`,
 
     // One of `debug`, `info`, `warn`, `error`. Empty means `info`.
-    log_level:  string `json:"logLevel"`,
+    log_level:       string `json:"logLevel"`,
+
+    // Control-plane base URL the relay exchanges the device credential for link tickets at.
+    // Empty means the hosted default (`start` fills it in).
+    relay_cloud_url: string `json:"relayCloudUrl"`,
 }
 
 // Decode the JSON captured from `defineConfig`. A malformed value or an unknown member fails
