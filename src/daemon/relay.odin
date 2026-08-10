@@ -325,18 +325,13 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
         lo := i * relay.TRANSPORT_CHUNK_MAX
         hi := min(lo + relay.TRANSPORT_CHUNK_MAX, len(plaintext))
 
-        chunk := make([]u8, 1 + (hi - lo), scratch)
-        chunk[0] = relay.transport_chunk_header(i, count)
-        copy(chunk[1:], plaintext[lo:hi])
-
-        sealed, serr := relay.session_seal(&r.session, chunk, scratch)
+        frame, serr := relay.transport_seal_chunk(&r.session, plaintext[lo:hi], i, count, scratch)
         if serr != .None {
             log.errorf("daemon: relay seal failed: %v", serr)
 
             return .Send_Failed
         }
 
-        frame := relay.frame_encode(relay.Frame{type = .Sealed, payload = sealed}, scratch)
         send_err := tx_error_client(relay.link_send_binary(&r.link, frame))
         if send_err == .None {
             continue
@@ -686,18 +681,10 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
         return
     }
 
-    chunk, oerr := relay.session_open(&r.session, payload, scratch)
-    if oerr != .None {
-        log.errorf("daemon: relay frame failed to open: %v", oerr)
-        _ = relay.link_close(l, ws.Close_Code(1002))
-
-        return
-    }
-
-    frame, done, rerr := relay.reassembler_push(&r.recv_reasm, chunk)
-    if rerr != .None {
-        log.errorf("daemon: relay frame reassembly failed: %v", rerr)
-        _ = relay.link_close(l, ws.Close_Code(1002))
+    frame, done, ok := relay.transport_open_fragment(&r.session, &r.recv_reasm, payload, scratch)
+    if !ok {
+        log.error("daemon: relay frame rejected")
+        _ = relay.link_close(l, .Protocol_Error)
 
         return
     }
