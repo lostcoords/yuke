@@ -4,7 +4,6 @@ import "core:log"
 import "core:mem"
 import "core:mem/virtual"
 
-import ws "libs:websocket"
 import store "src:daemon/store"
 import wire "src:wire"
 
@@ -353,9 +352,8 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
 
     class := wire.broadcast_name_class(name)
 
-    for wsc in d.ws_server.conns {
-        conn := (^Conn)(wsc.user_data)
-        if conn == nil || conn.state != .Ready {
+    for _, conn in d.conns {
+        if conn.state != .Ready {
             continue
         }
 
@@ -368,7 +366,7 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
             }
         }
 
-        send_err := ws.server_send_text(wsc, frame)
+        send_err := conn_send_text(conn, frame)
         if send_err == .None {
             continue
         }
@@ -427,7 +425,7 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
         return
     }
 
-    if ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)) != .None {
+    if conn_send_text(conn, transmute([]byte)wire.to_string(&e)) != .None {
         return
     }
 

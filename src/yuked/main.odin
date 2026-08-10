@@ -87,9 +87,9 @@ main :: proc() {
     context.logger = logger
 
     // Optional relay link, dialed after the front door binds so a relay failure never
-    // blocks the local daemon. Driven from here rather than the daemon package: parking
-    // needs only the loop, and the front-door bridge lands in a later stage.
-    relay_start(loop)
+    // blocks the local daemon. The daemon owns it from here: `shutdown` and `destroy`
+    // close and free it alongside the front door.
+    relay_start(&d)
 
     serve()
 
@@ -101,7 +101,6 @@ main :: proc() {
     }
 
     daemon.destroy(&d)
-    relay_finish()
     log.info("yuked: stopped")
 }
 
@@ -123,12 +122,11 @@ serve :: proc() {
 stop :: proc(d: ^daemon.Daemon) -> bool {
     log.info("yuked: stopping")
     daemon.shutdown(d)
-    relay_begin_close()
 
     deadline := time.time_add(time.now(), SHUTDOWN_TIMEOUT)
     first := signals_seen()
 
-    for !daemon.shutdown_complete(d) || !relay_closed() {
+    for !daemon.shutdown_complete(d) {
         if time.now()._nsec >= deadline._nsec {
             return false
         }

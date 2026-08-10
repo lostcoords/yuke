@@ -191,6 +191,11 @@ Daemon :: struct {
     next_ticket:         Conn_Ticket,
 
     // @private
+    // The outbound relay link, or nil when no relay is configured. Shares this daemon's
+    // loop, store, and connection table; connected after `start` via `relay_connect`.
+    relay:               ^Relay,
+
+    // @private
     // Script tier: one QuickJS runtime for the whole daemon. Torn down after the worker
     // pool drains, since an in-flight host op owns a promise in its context.
     js:                  js.Host,
@@ -212,11 +217,21 @@ Daemon :: struct {
 // `nil` rather than a later connection.
 Conn_Ticket :: distinct u64
 
-// One accepted connection past the WebSocket handshake. Allocated in the transport
-// `ws_on_open` and freed in the terminal callback.
+// The transport a `Conn` rides. A local client rides the WebSocket server; a relay client
+// rides the daemon's single relay link, whose session and socket live on `d.relay`. Exactly
+// one variant is set. The session, store, and pump below the transport are identical for
+// both — only the send/close/liveness ops differ.
+Conn_Transport :: union {
+    ^ws.Server_Conn,
+    ^Relay,
+}
+
+// One accepted connection, local or relay. A local connection is created in `ws_on_open`
+// and freed from its transport terminal callback; a relay connection is created by the
+// bridge once the client's handshake completes and freed when the peer leaves.
 Conn :: struct {
-    // Transport connection this wraps; borrowed, owned by the WebSocket server.
-    wsc:                ^ws.Server_Conn,
+    // The transport this connection rides. Exactly one variant is set for its whole life.
+    tx:                 Conn_Transport,
 
     // Owning daemon, for the version string and allocator.
     daemon:             ^Daemon,
@@ -539,6 +554,7 @@ shutdown :: proc(d: ^Daemon) {
     http_server.shutdown(&d.front_door)
     provider_auth_shutdown(d)
     ws.server_shutdown(&d.ws_server)
+    relay_begin_close(d)
 }
 
 // Whether both halves have finished closing — the precondition `destroy` asserts. A process
@@ -548,7 +564,7 @@ shutdown_complete :: proc(d: ^Daemon) -> bool {
 
     callback_done := d.auth_callback.state == .Idle || d.auth_callback.shutdown_complete
 
-    return d.front_door.shutdown_complete && callback_done && d.ws_server.shutdown_complete
+    return d.front_door.shutdown_complete && callback_done && d.ws_server.shutdown_complete && relay_closed(d)
 }
 
 // Release both connection sets and the owned clones. Call only once both halves
@@ -568,6 +584,7 @@ destroy :: proc(d: ^Daemon) {
     provider_auth_destroy(d)
     js.destroy(&d.js)
     ws.server_destroy(&d.ws_server)
+    relay_destroy(d)
     http_server.destroy(&d.front_door)
     assert(len(d.conns) == 0, "connections outlived the transport that owned them")
 
@@ -614,6 +631,44 @@ free_config :: proc(d: ^Daemon) {
     d.config_json = ""
 }
 
+// Allocate and register a `Conn` for a transport, entering Awaiting_Initialize. Shared by
+// the WebSocket accept path and the relay bridge. Returns nil on an allocation failure — the
+// caller refuses the connection. The caller wires the transport's back-reference.
+conn_register :: proc(d: ^Daemon, tx: Conn_Transport) -> ^Conn {
+    assert(d != nil, "connection registration needs daemon state")
+    assert(tx != nil, "connection registration needs a transport")
+
+    conn, err := new(Conn, d.allocator)
+    if err != nil {
+        return nil
+    }
+
+    conn^ = {}
+    conn.tx = tx
+    conn.daemon = d
+    conn.allocator = d.allocator
+    conn.state = .Awaiting_Initialize
+
+    d.next_ticket += 1
+    conn.ticket = d.next_ticket
+    if map_insert(&d.conns, conn.ticket, conn) == nil {
+        free(conn, d.allocator)
+        return nil
+    }
+
+    return conn
+}
+
+// The WebSocket transport of a local `Conn`; asserts the connection is ws-backed. Used by
+// the transport callbacks, which only ever run for local connections.
+@(private = "file")
+conn_ws :: proc(conn: ^Conn) -> ^ws.Server_Conn {
+    t, ok := conn.tx.(^ws.Server_Conn)
+    assert(ok, "expected a websocket-backed connection")
+
+    return t
+}
+
 // A connection reached Open: allocate its `Conn`, enter Awaiting_Initialize, and attach
 // it to the transport connection.
 ws_on_open :: proc(wsc: ^ws.Server_Conn) {
@@ -625,8 +680,8 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     assert(d != nil, "open callback needs daemon state")
     assert(&d.ws_server == wsc.server, "open callback crossed daemon ownership")
 
-    conn, err := new(Conn, d.allocator)
-    if err != nil {
+    conn := conn_register(d, wsc)
+    if conn == nil {
         // Out of memory admitting the connection: refuse it cleanly. It opened, so a
         // terminal fires — with no `Conn` attached, the terminal callbacks no-op.
         log.error("daemon: out of memory admitting websocket connection")
@@ -634,26 +689,8 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
         return
     }
 
-    conn^ = {}
-    conn.wsc = wsc
-    conn.daemon = d
-    conn.allocator = d.allocator
-    conn.state = .Awaiting_Initialize
-
-    d.next_ticket += 1
-    conn.ticket = d.next_ticket
-    registered := map_insert(&d.conns, conn.ticket, conn)
-    if registered == nil {
-        // The table grows past its reserve at high load; out of memory registering
-        // the connection refuses it like any other admission failure.
-        log.error("daemon: out of memory registering websocket connection")
-        free(conn, d.allocator)
-        ws.server_abort(wsc, .Out_Of_Memory)
-        return
-    }
-
     wsc.user_data = conn
-    assert(conn.wsc.user_data == conn, "connection state was not attached to its transport")
+    assert(conn_ws(conn) == wsc, "connection state was not attached to its transport")
     log.debug("daemon: websocket connection open, awaiting initialize")
 }
 
@@ -666,7 +703,7 @@ ws_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []byte)
 
     conn := (^Conn)(wsc.user_data)
     assert(conn != nil, "message callback lost its daemon connection")
-    assert(conn.wsc == wsc, "message callback crossed connection ownership")
+    assert(conn_ws(conn) == wsc, "message callback crossed connection ownership")
     if conn.state == .Closed {
         return
     }
@@ -692,7 +729,7 @@ ws_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
         return
     }
 
-    assert(conn.wsc == wsc, "close callback crossed connection ownership")
+    assert(conn_ws(conn) == wsc, "close callback crossed connection ownership")
     log.debugf("daemon: websocket closed code=%v client=%s", code, conn.client_name)
     conn.state = .Closed
     conn_free(conn)
@@ -710,7 +747,7 @@ ws_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
         return
     }
 
-    assert(conn.wsc == wsc, "error callback crossed connection ownership")
+    assert(conn_ws(conn) == wsc, "error callback crossed connection ownership")
     log.warnf("daemon: websocket error %v client=%s", err, conn.client_name)
     conn.state = .Closed
     conn_free(conn)
@@ -720,9 +757,8 @@ ws_on_error :: proc(wsc: ^ws.Server_Conn, err: ws.Server_Error) {
 // closes the connection.
 handle_text :: proc(conn: ^Conn, data: []byte) {
     assert(conn != nil, "text handler needs connection state")
-    assert(conn.wsc != nil, "text handler needs transport state")
+    assert(conn.tx != nil, "text handler needs transport state")
     assert(conn.daemon != nil, "text handler needs daemon state")
-    assert(conn.wsc.user_data == conn, "text handler crossed transport ownership")
     assert(conn.state != .Closed, "text handler ran after protocol close")
 
     d := conn.daemon
@@ -827,7 +863,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 // with its snapshot, and reaches Ready.
 method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "initialize handler needs connection state")
-    assert(conn.wsc != nil, "initialize handler needs transport state")
+    assert(conn.tx != nil, "initialize handler needs transport state")
     assert(conn.state == .Awaiting_Initialize, "initialize ran outside Awaiting_Initialize")
 
     // `request_validate` already checked the params, including the protocol version.
@@ -986,7 +1022,7 @@ send_error :: proc(
 // the lifetime that asked for the response, never a longer-lived one.
 send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "response send needs connection state")
-    assert(conn.wsc != nil, "response send needs transport state")
+    assert(conn.tx != nil, "response send needs transport state")
     // `initialize` is answered while still Awaiting_Initialize; every other response is Ready.
     assert(conn.state != .Closed, "response sent after protocol close")
     assert(wire.response_validate(resp) == .None, "daemon built an invalid response frame")
@@ -1002,7 +1038,7 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
         return false
     }
 
-    if send_err := ws.server_send_text(conn.wsc, transmute([]byte)wire.to_string(&e)); send_err != .None {
+    if send_err := conn_send_text(conn, transmute([]byte)wire.to_string(&e)); send_err != .None {
         conn_abort(conn, send_err)
         return false
     }
@@ -1015,7 +1051,7 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
 send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "initialize send needs connection state")
     assert(conn.daemon != nil, "initialize send needs daemon state")
-    assert(conn.wsc != nil, "initialize send needs transport state")
+    assert(conn.tx != nil, "initialize send needs transport state")
     assert(conn.state == .Awaiting_Initialize, "initialize result sent outside Awaiting_Initialize")
 
     capabilities: bit_set[wire.Capability]
@@ -1052,22 +1088,30 @@ conn_protocol_close :: proc(conn: ^Conn) {
 // from the transport terminal callback. Idempotent.
 conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
     assert(conn != nil, "connection close needs connection state")
-    assert(conn.wsc != nil, "connection close needs transport state")
+    assert(conn.tx != nil, "connection close needs transport state")
 
     if conn.state == .Closed {
         return
     }
 
     conn.state = .Closed
-    if close_err := ws.server_close(conn.wsc, code); close_err != .None {
-        ws.server_abort(conn.wsc, close_err)
+
+    switch t in conn.tx {
+    case ^ws.Server_Conn:
+        if close_err := ws.server_close(t, code); close_err != .None {
+            ws.server_abort(t, close_err)
+        }
+
+    case ^Relay:
+        relay_conn_close(t)
     }
 }
 
-// Hard-fail the transport after an internal error made a correct frame impossible.
+// Hard-fail the transport after an internal error made a correct frame impossible. `err` is
+// the send outcome that forced it, reported to the local transport's terminal callback.
 conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     assert(conn != nil, "connection abort needs connection state")
-    assert(conn.wsc != nil, "connection abort needs transport state")
+    assert(conn.tx != nil, "connection abort needs transport state")
     assert(err != .None, "connection abort needs an error")
     assert(err != .Not_Open, "Not_Open is already terminal")
 
@@ -1076,7 +1120,50 @@ conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     }
 
     conn.state = .Closed
-    ws.server_abort(conn.wsc, err)
+
+    switch t in conn.tx {
+    case ^ws.Server_Conn:
+        ws.server_abort(t, err)
+
+    case ^Relay:
+        relay_conn_close(t)
+    }
+}
+
+// Queue one text frame to the connection's transport — the single write choke point. A
+// local connection writes to the WebSocket server; a relay connection seals the frame and
+// writes it to the link. Both report a `ws.Server_Error`, the outcome the daemon's send
+// policy speaks; the relay link's client-side result is mapped onto it.
+conn_send_text :: proc(conn: ^Conn, bytes: []byte) -> ws.Server_Error {
+    assert(conn != nil, "send needs connection state")
+    assert(conn.tx != nil, "send needs transport state")
+
+    switch t in conn.tx {
+    case ^ws.Server_Conn:
+        return ws.server_send_text(t, bytes)
+
+    case ^Relay:
+        return relay_conn_send(t, bytes)
+    }
+
+    unreachable()
+}
+
+// Whether the connection's transport can still accept a frame — the liveness half of
+// `conn_resolve`, alongside the daemon-side `Closed` latch.
+conn_tx_open :: proc(conn: ^Conn) -> bool {
+    assert(conn != nil, "liveness needs connection state")
+    assert(conn.tx != nil, "liveness needs transport state")
+
+    switch t in conn.tx {
+    case ^ws.Server_Conn:
+        return t.state == .Open
+
+    case ^Relay:
+        return relay_conn_open(t)
+    }
+
+    unreachable()
 }
 
 // The connection `ticket` names, if it can still be answered, else `nil` — the safe way
@@ -1094,26 +1181,36 @@ conn_resolve :: proc(d: ^Daemon, ticket: Conn_Ticket) -> ^Conn {
     }
 
     assert(conn.ticket == ticket, "connection table returned a mismatched ticket")
-    assert(conn.wsc != nil, "a registered connection has transport state")
+    assert(conn.tx != nil, "a registered connection has transport state")
 
     // A connection stays registered until its terminal callback runs, so both halves have
     // to agree it can still be answered: a peer close latches the transport out of Open
     // well before the `Conn` is freed, and a send there fails as `Not_Open`.
-    return conn.state != .Closed && conn.wsc.state == .Open ? conn : nil
+    return conn.state != .Closed && conn_tx_open(conn) ? conn : nil
 }
 
-// Free the connection's owned state and the `Conn` itself. Called once from the
-// transport terminal callback, after which the transport frees `wsc`.
+// Free the connection's owned state and the `Conn` itself. For a local connection this is
+// called once from the transport terminal callback, after which the transport frees `wsc`;
+// for a relay connection the bridge calls it when the peer leaves. It severs the transport's
+// back-reference so nothing resolves this `Conn` after it is gone.
 conn_free :: proc(conn: ^Conn) {
     assert(conn != nil, "connection cleanup needs connection state")
-    assert(conn.wsc != nil, "connection cleanup needs transport state")
+    assert(conn.tx != nil, "connection cleanup needs transport state")
     assert(conn.state == .Closed, "connection cleanup before Closed")
-    assert(conn.wsc.user_data == conn, "connection cleanup crossed transport ownership")
     assert(conn.daemon != nil, "connection cleanup needs daemon state")
     assert(conn.ticket in conn.daemon.conns, "connection cleanup on an unregistered connection")
 
     delete_key(&conn.daemon.conns, conn.ticket)
-    conn.wsc.user_data = nil
+
+    switch t in conn.tx {
+    case ^ws.Server_Conn:
+        assert(t.user_data == conn, "connection cleanup crossed transport ownership")
+        t.user_data = nil
+
+    case ^Relay:
+        assert(t.conn == conn, "relay cleanup crossed connection ownership")
+        t.conn = nil
+    }
 
     delete(conn.client_name, conn.allocator)
     delete(conn.client_version, conn.allocator)
