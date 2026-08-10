@@ -65,6 +65,27 @@ test_responses_request_builds_basic_body_with_default_instructions :: proc(t: ^t
 }
 
 @(test)
+test_responses_request_codex_dialect_omits_api_only_limits :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    parts := [?]wire.Content_Part{wire.Content_Text{text = "hi"}}
+    messages := [?]wire.Message{test_responses_user_message(parts[:])}
+    request := test_responses_request(messages[:])
+
+    got := test_responses_build(t, request, {dialect = .Codex})
+    testing.expect_value(
+        t,
+        got,
+        `{"model":"gpt-test","instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"store":false,"stream":true}`,
+    )
+
+    request.temperature = 0.5
+    test_responses_expect_invalid(t, request, {dialect = .Codex})
+    request.temperature = nil
+    test_responses_expect_invalid(t, request, {dialect = .Codex, store = true})
+}
+
+@(test)
 test_responses_request_folds_system_prompt_and_temperature :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 

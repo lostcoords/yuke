@@ -82,6 +82,10 @@ Request :: struct {
     // Time allowed for connect only, rounded up to whole seconds.
     connect_timeout: time.Duration,
 
+    // Absolute transfer duration, rounded up to whole seconds. Zero leaves the
+    // transfer unbounded for healthy long-lived streams.
+    total_timeout:   time.Duration,
+
     // Bytes per second below which the transfer counts as stalled.
     low_speed_limit: int,
 
@@ -695,9 +699,13 @@ easy_configure :: proc(t: ^Transfer, req: Request) -> Code {
     // is unsafe in a process with worker threads.
     setopt_long(e, .No_Signal, 1) or_return
 
-    // Never CURLOPT_TIMEOUT: it would kill a long but healthy generation. The
-    // low-speed pair bounds idle gaps instead.
+    // Provider streams leave the total timeout at zero; bounded control-plane
+    // requests opt in explicitly.
     setopt_long(e, .Connect_Timeout, seconds_ceil(req.connect_timeout, DEFAULT_CONNECT_TIMEOUT)) or_return
+    if req.total_timeout > 0 {
+        setopt_long(e, .Timeout, seconds_ceil(req.total_timeout, req.total_timeout)) or_return
+    }
+
     setopt_long(
         e,
         .Low_Speed_Limit,

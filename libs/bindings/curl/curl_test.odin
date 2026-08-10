@@ -31,6 +31,7 @@ test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Ssl_Cert_Blob), 40291)
     testing.expect_value(t, int(Option.Low_Speed_Limit), 19)
     testing.expect_value(t, int(Option.Low_Speed_Time), 20)
+    testing.expect_value(t, int(Option.Timeout), 13)
     testing.expect_value(t, int(Option.Post), 47)
     testing.expect_value(t, int(Option.Follow_Location), 52)
     testing.expect_value(t, int(Option.Post_Field_Size), 60)

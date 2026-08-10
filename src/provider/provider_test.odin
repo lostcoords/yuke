@@ -176,6 +176,74 @@ test_auth_headers_openai_family_is_always_bearer :: proc(t: ^testing.T) {
     }
 }
 
+@(test)
+test_auth_headers_codex_oauth_is_bound_to_first_party_responses :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    auth := Codex_OAuth {
+        access_token = "access-token",
+        account_id   = "workspace-123",
+    }
+    connection := Connection {
+        endpoint = Endpoint{base_url = CODEX_BASE_URL, protocol = .Openai_Responses},
+        auth = auth,
+    }
+    got := test_auth_headers(t, connection)
+    testing.expect_value(t, len(got), 2)
+    testing.expect_value(t, got[0], curl.Header{name = "Authorization", value = "Bearer access-token"})
+    testing.expect_value(t, got[1], curl.Header{name = "ChatGPT-Account-ID", value = "workspace-123"})
+
+    for endpoint in ([?]Endpoint {
+            {base_url = "https://api.openai.com/v1", protocol = .Openai_Responses},
+            {base_url = CODEX_BASE_URL, protocol = .Openai_Chat},
+        }) {
+        out: [MAX_REQUEST_HEADERS]curl.Header
+        n, err := auth_headers(Connection{endpoint = endpoint, auth = auth}, out[:], context.temp_allocator)
+        testing.expect_value(t, err, Transport_Error.Invalid_Request)
+        testing.expect_value(t, n, 0)
+    }
+}
+
+// The xAI subscription OAuth token is a plain bearer bound to xAI's API host and
+// the OpenAI-family protocols; anywhere else is a configuration error.
+@(test)
+test_auth_headers_xai_oauth_is_bound_to_subscription_api :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    auth := Xai_OAuth {
+        access_token = "xai-access",
+    }
+
+    for protocol in ([?]wire.Provider_Protocol{.Openai_Chat, .Openai_Responses}) {
+        connection := Connection {
+            endpoint = Endpoint{base_url = XAI_API_BASE_URL, protocol = protocol},
+            auth = auth,
+        }
+        got := test_auth_headers(t, connection)
+        testing.expect_value(t, len(got), 1)
+        testing.expect_value(t, got[0], curl.Header{name = "Authorization", value = "Bearer xai-access"})
+    }
+
+    for endpoint in ([?]Endpoint {
+            {base_url = "https://api.openai.com/v1", protocol = .Openai_Responses},
+            {base_url = XAI_API_BASE_URL, protocol = .Anthropic_Messages},
+        }) {
+        out: [MAX_REQUEST_HEADERS]curl.Header
+        n, err := auth_headers(Connection{endpoint = endpoint, auth = auth}, out[:], context.temp_allocator)
+        testing.expect_value(t, err, Transport_Error.Invalid_Request)
+        testing.expect_value(t, n, 0)
+    }
+
+    out: [MAX_REQUEST_HEADERS]curl.Header
+    empty := Connection {
+        endpoint = Endpoint{base_url = XAI_API_BASE_URL, protocol = .Openai_Chat},
+        auth = Xai_OAuth{},
+    }
+    n, err := auth_headers(empty, out[:], context.temp_allocator)
+    testing.expect_value(t, err, Transport_Error.Invalid_Request)
+    testing.expect_value(t, n, 0)
+}
+
 // The OpenAI protocols never send the Anthropic version pin, even when pointed
 // at Anthropic's host.
 @(test)

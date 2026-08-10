@@ -20,8 +20,18 @@ Openai_Text_Verbosity :: enum {
     High,
 }
 
+// Request-shape variant spoken by an OpenAI Responses endpoint. The
+// ChatGPT-account Codex backend deliberately rejects API-only sampling limits.
+Openai_Responses_Dialect :: enum {
+    Standard,
+    Codex,
+}
+
 // OpenAI Responses controls chosen after catalog/model resolution.
 Openai_Responses_Options :: struct {
+    // Endpoint-specific request shape.
+    dialect:   Openai_Responses_Dialect,
+
     // Reasoning effort; absent omits the reasoning control and its include.
     effort:    Maybe(Openai_Effort),
 
@@ -120,13 +130,14 @@ openai_responses_request_body :: proc(
     json_write(writer, options.store ? `,"store":true` : `,"store":false`) or_return
     json_write(writer, `,"stream":true`) or_return
 
-    // @todo: ChatGPT-account Codex backend rejects max_output_tokens/temperature; gate when the OAuth transport lands.
-    json_write(writer, `,"max_output_tokens":`) or_return
-    json_write_u64(writer, request.max_output_tokens) or_return
+    if options.dialect == .Standard {
+        json_write(writer, `,"max_output_tokens":`) or_return
+        json_write_u64(writer, request.max_output_tokens) or_return
 
-    if temperature, present := request.temperature.?; present {
-        json_write(writer, `,"temperature":`) or_return
-        json_write_f64(writer, temperature) or_return
+        if temperature, present := request.temperature.?; present {
+            json_write(writer, `,"temperature":`) or_return
+            json_write_f64(writer, temperature) or_return
+        }
     }
 
     if effort, present := options.effort.?; present {
@@ -162,6 +173,21 @@ openai_responses_request_validate :: proc(
 ) -> Transport_Error {
     if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) {
         return .Invalid_Request
+    }
+
+    dialect_index := int(options.dialect)
+    if dialect_index < 0 || dialect_index >= 2 {
+        return .Invalid_Request
+    }
+
+    if options.dialect == .Codex {
+        if options.store {
+            return .Invalid_Request
+        }
+
+        if _, temperature_present := request.temperature.?; temperature_present {
+            return .Invalid_Request
+        }
     }
 
     if request.max_output_tokens == 0 || request.max_output_tokens > MAX_EXACT_JSON_INTEGER {

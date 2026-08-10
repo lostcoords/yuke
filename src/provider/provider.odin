@@ -21,6 +21,12 @@ ANTHROPIC_VERSION :: "2023-06-01"
 // The only host that takes the `x-api-key` credential form; every other host
 // speaking Anthropic Messages is a compatible third party and takes Bearer.
 ANTHROPIC_HOST :: "api.anthropic.com"
+CODEX_BASE_URL :: "https://chatgpt.com/backend-api/codex"
+
+// xAI's OpenAI-compatible API. The Grok/X subscription OAuth token authenticates
+// here directly as a bearer with no account header; this pins the only host the
+// token may be sent to.
+XAI_API_BASE_URL :: "https://api.x.ai/v1"
 
 // API key credential. The value is a resolved secret and never leaves this
 // package except as a request header.
@@ -29,10 +35,25 @@ Api_Key :: struct {
     key: string,
 }
 
-// Resolved credential for an endpoint. OAuth is deferred; a nil `Auth` is an
-// endpoint that takes no credential at all (a local runtime).
+// ChatGPT-account OAuth credential for the first-party Codex backend. Both
+// values come from the private daemon credential store.
+Codex_OAuth :: struct {
+    access_token: string,
+    account_id:   string,
+}
+
+// Grok/X subscription OAuth credential for xAI's API. The access token comes from
+// the private daemon credential store; unlike Codex it carries no account id.
+Xai_OAuth :: struct {
+    access_token: string,
+}
+
+// Resolved credential for an endpoint. A nil `Auth` is an endpoint that takes
+// no credential at all (a local runtime).
 Auth :: union {
     Api_Key,
+    Codex_OAuth,
+    Xai_OAuth,
 }
 
 // A resolved provider endpoint. Model selection happens above the transport, so
@@ -281,6 +302,54 @@ auth_headers :: proc(
 
         assert(len(credential.value) > 0, "a resolved credential produces a non-empty header value")
         out[n] = credential
+        n += 1
+
+    case Codex_OAuth:
+        if ep.protocol != .Openai_Responses ||
+           ep.base_url != CODEX_BASE_URL ||
+           a.access_token == "" ||
+           a.account_id == "" {
+            return 0, .Invalid_Request
+        }
+
+        authorization, authorization_err := strings.concatenate({"Bearer ", a.access_token}, allocator)
+        if authorization_err != nil {
+            return 0, .Resource_Exhausted
+        }
+
+        account, account_err := strings.clone(a.account_id, allocator)
+        if account_err != nil {
+            delete(authorization, allocator)
+            return 0, .Resource_Exhausted
+        }
+
+        out[n] = {
+            name  = "Authorization",
+            value = authorization,
+        }
+        n += 1
+        out[n] = {
+            name  = "ChatGPT-Account-ID",
+            value = account,
+        }
+        n += 1
+
+    case Xai_OAuth:
+        if (ep.protocol != .Openai_Chat && ep.protocol != .Openai_Responses) ||
+           ep.base_url != XAI_API_BASE_URL ||
+           a.access_token == "" {
+            return 0, .Invalid_Request
+        }
+
+        value, concat_err := strings.concatenate({"Bearer ", a.access_token}, allocator)
+        if concat_err != nil {
+            return 0, .Resource_Exhausted
+        }
+
+        out[n] = {
+            name  = "Authorization",
+            value = value,
+        }
         n += 1
 
     case:
