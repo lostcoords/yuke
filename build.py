@@ -80,14 +80,7 @@ PACKAGES = (
     Package(
         "yuke",
         "src/yuke",
-        "client binary: term drive + QuickJS + ui paint",
-        in_aggregate=False,
-        needs=BINDINGS,
-    ),
-    Package(
-        "yuked",
-        "src/yuked",
-        "daemon binary and config resolution",
+        "unified binary: client TUI, daemon, and login subcommands",
         in_aggregate=False,
         needs=BINDINGS,
     ),
@@ -183,20 +176,12 @@ def test(args):
 
 @command
 def yuke(args):
-    """build the client binary into build/yuke"""
+    """build the unified binary into build/yuke"""
     package = BY_NAME["yuke"]
     ensure(package.needs)
 
     # Odin defaults to -o:minimal, which costs this paint loop ~8x.
     odin("build", package.path, "-o:speed", f"-out:{BUILD / 'yuke'}")
-
-
-@command
-def yuked(args):
-    """build the daemon binary into build/yuked"""
-    package = BY_NAME["yuked"]
-    ensure(package.needs)
-    odin("build", package.path, "-o:speed", f"-out:{BUILD / 'yuked'}")
 
 
 @command

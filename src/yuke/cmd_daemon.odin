@@ -1,7 +1,8 @@
 /*
-yuke daemon: the front door, the WebSocket protocol, the event store, and the script tier.
+yuke daemon (`yuke daemon`): the front door, the WebSocket protocol, the event store, and the
+script tier.
 
-This process owns two things the `daemon` package deliberately does not. It owns the
+This subcommand owns two things the `daemon` package deliberately does not. It owns the
 logger — `src/daemon/doc.odin` is explicit that whoever drives the loop installs it, since
 nbio callbacks inherit that context — and it owns the loop itself, because a signal handler
 cannot wake a loop on its own thread: `nbio.wake_up` returns immediately when the loop
@@ -46,7 +47,9 @@ signals_seen :: proc() -> int {
     return int(intrinsics.atomic_load(&g_signals))
 }
 
-main :: proc() {
+// The `daemon` subcommand: install the logger and signal handlers, drive the daemon's serve loop
+// until a signal, then shut down gracefully.
+daemon_run :: proc() {
     // Installed before anything else so a start failure is reported through the same channel as
     // everything after it. The manifest's log level is not known until `start` has evaluated it,
     // so the daemon's own startup runs at info and the level is reinstalled below.
@@ -59,11 +62,11 @@ main :: proc() {
     options := boot_options(DAEMON_VERSION)
 
     if options.auth_path == "" {
-        log.warn("yuked: no config directory could be resolved; provider OAuth is disabled")
+        log.warn("yuke: no config directory could be resolved; provider OAuth is disabled")
     }
 
     if err := nbio.acquire_thread_event_loop(); err != nil {
-        log.errorf("yuked: event loop unavailable: %v", err)
+        log.errorf("yuke: event loop unavailable: %v", err)
         os.exit(1)
     }
 
@@ -77,7 +80,7 @@ main :: proc() {
 
     d: daemon.Daemon
     if err := daemon.start(&d, loop, options); err != .None {
-        log.errorf("yuked: %v", err)
+        log.errorf("yuke: %v", err)
         os.exit(1)
     }
 
@@ -96,12 +99,12 @@ main :: proc() {
     if !stop(&d) {
         // The transport did not finish closing; `destroy` asserts that it did, so the
         // process leaves its memory to the OS instead of tripping that assertion on exit.
-        log.error("yuked: shutdown did not complete; exiting without releasing the daemon")
+        log.error("yuke: shutdown did not complete; exiting without releasing the daemon")
         os.exit(1)
     }
 
     daemon.destroy(&d)
-    log.info("yuked: stopped")
+    log.info("yuke: stopped")
 }
 
 // Drive the loop until a signal arrives. `num_waiting` is the second exit: the front door
@@ -110,7 +113,7 @@ main :: proc() {
 serve :: proc() {
     for signals_seen() == 0 && nbio.num_waiting() > 0 {
         if err := nbio.tick(TICK_TIMEOUT); err != nil {
-            log.errorf("yuked: event loop failed: %v", err)
+            log.errorf("yuke: event loop failed: %v", err)
             return
         }
     }
@@ -120,7 +123,7 @@ serve :: proc() {
 // passes first, or when a second signal says the operator is done waiting.
 @(private = "file")
 stop :: proc(d: ^daemon.Daemon) -> bool {
-    log.info("yuked: stopping")
+    log.info("yuke: stopping")
     daemon.shutdown(d)
 
     deadline := time.time_add(time.now(), SHUTDOWN_TIMEOUT)
@@ -132,12 +135,12 @@ stop :: proc(d: ^daemon.Daemon) -> bool {
         }
 
         if signals_seen() > first {
-            log.warn("yuked: second signal; abandoning the graceful shutdown")
+            log.warn("yuke: second signal; abandoning the graceful shutdown")
             return false
         }
 
         if err := nbio.tick(TICK_TIMEOUT); err != nil {
-            log.errorf("yuked: event loop failed during shutdown: %v", err)
+            log.errorf("yuke: event loop failed during shutdown: %v", err)
             return false
         }
     }

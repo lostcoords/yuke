@@ -34,11 +34,11 @@ relay_start :: proc(d: ^daemon.Daemon) {
     }
 
     if !has_ticket {
-        log.warnf("yuked: %s is unset; the relay will refuse the link", RELAY_TICKET_ENV)
+        log.warnf("yuke: %s is unset; the relay will refuse the link", RELAY_TICKET_ENV)
     }
 
     if err := daemon.relay_connect(d, url, ticket); err != .None {
-        log.errorf("yuked: relay connect failed: %v", err)
+        log.errorf("yuke: relay connect failed: %v", err)
 
         return
     }
@@ -47,7 +47,7 @@ relay_start :: proc(d: ^daemon.Daemon) {
         defer delete(out)
 
         if pub, ok := daemon.relay_static_public(d); ok && os.write_entire_file(out, pub[:]) != nil {
-            log.errorf("yuked: could not write relay static key to %q", out)
+            log.errorf("yuke: could not write relay static key to %q", out)
         }
     }
 }
