@@ -1,13 +1,16 @@
 package tests
 
+import _ "src:auth"
 import _ "src:client"
 import _ "src:daemon"
 import _ "src:daemon/store"
 import _ "src:daemon/store/queries"
 import _ "src:js"
+import _ "src:paths"
 import _ "src:provider"
+import _ "src:relay"
 import _ "src:term"
-import _ "src:ui"
+import _ "src:term/ui"
 import _ "src:wire"
 
 import _ "libs:bindings/curl"

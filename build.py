@@ -2,7 +2,7 @@
 """Build, test, format, and lint driver for yuke-odin.
 
 Every Odin invocation is derived from the PACKAGES table, so a package is declared
-once and the test, cross-target check, and Windows-test gates all pick it up.
+once and every gate that consumes it picks it up.
 """
 
 import filecmp
@@ -45,9 +45,7 @@ class Package:
         note="",
         tests=True,
         in_aggregate=True,  # reached by tests/all.odin
-        windows=False,
-        windows_test=False,  # runs under test-windows, a subset of the check gate
-        entry_point=False,
+        windows_test=False,  # runs under test-windows
         needs=(),
     ):
         self.name = name
@@ -55,9 +53,7 @@ class Package:
         self.note = note
         self.tests = tests
         self.in_aggregate = in_aggregate
-        self.windows = windows
         self.windows_test = windows_test
-        self.entry_point = entry_point
         self.needs = needs
 
     def __str__(self):
@@ -65,42 +61,49 @@ class Package:
 
 
 PACKAGES = (
+    Package("auth", "src/auth", "private credential store and provider OAuth adapters"),
     Package("wire", "src/wire", "protocol types, JSON codec, registries, validation"),
-    Package("client", "src/client", "session replica", windows=True),
+    Package("paths", "src/paths", "shared platform config-directory resolution"),
+    Package("client", "src/client", "session replica"),
     Package("daemon", "src/daemon", "front-door routes plus the initialize exchange"),
-    Package("js", "src/js", "shared QuickJS host plus the yuke:fs module", windows=True),
-    Package("store", "src/daemon/store", "open/configure plus the migration runner", windows=True),
+    Package("js", "src/js", "shared QuickJS host plus the yuke:fs module"),
+    Package("store", "src/daemon/store", "open/configure plus the migration runner"),
     Package(
         "store-queries",
         "src/daemon/store/queries",
         "generated Params/Row structs and the Queries registry, decoupled from Store",
-        windows=True,
     ),
-    Package("provider", "src/provider", "requests, decoding, turn lifecycle, retry policy", windows=True),
-    Package("term", "src/term", "terminal input, session, and the nbio driver", windows=True, windows_test=True),
-    Package("ui", "src/term/ui", "cells, grapheme pool, paint", windows=True, windows_test=True),
+    Package("provider", "src/provider", "requests, decoding, turn lifecycle, retry policy"),
+    Package("relay", "src/relay", "link envelope, control-plane client, Noise session, dial/pump"),
+    Package("term", "src/term", "terminal input, session, and the nbio driver", windows_test=True),
+    Package("ui", "src/term/ui", "cells, grapheme pool, paint", windows_test=True),
     Package(
         "yuke",
         "src/yuke",
         "client binary: term drive + QuickJS + ui paint",
         tests=False,
         in_aggregate=False,
-        windows=True,
-        entry_point=True,
         needs=BINDINGS,
     ),
-    Package("ws", "libs/websocket", "both drivers plus the sans-I/O core", windows=True),
+    Package(
+        "yuked",
+        "src/yuked",
+        "daemon binary and config resolution",
+        in_aggregate=False,
+        needs=BINDINGS,
+    ),
+    Package("ws", "libs/websocket", "both drivers plus the sans-I/O core"),
     Package("http", "libs/http", "sans-I/O HTTP"),
     Package("http-server", "libs/http/server", "nbio front door"),
     Package("http-sse", "libs/http/sse", "sans-I/O SSE parser"),
-    Package("offload", "libs/offload", "worker pool: blocking work off the reactor", windows=True),
+    Package("offload", "libs/offload", "worker pool: blocking work off the reactor"),
     Package("testsupport", "libs/testsupport", "shared test helpers"),
-    Package("curl", "libs/bindings/curl", "libcurl binding and multi-on-nbio driver", windows=True),
-    Package("quickjs", "libs/bindings/quickjs", "QuickJS binding", windows=True, needs=("quickjs",)),
-    Package("sqlite", "libs/bindings/sqlite", "binding over system libsqlite3", windows=True),
+    Package("curl", "libs/bindings/curl", "libcurl binding and multi-on-nbio driver"),
+    Package("quickjs", "libs/bindings/quickjs", "QuickJS binding", needs=("quickjs",)),
+    Package("sqlite", "libs/bindings/sqlite", "binding over system libsqlite3"),
     Package("gen", "tools/gen", "shared diagnostics and write-or-check codegen helpers", in_aggregate=False),
-    Package("schema", "tools/schema", "wire.json and wire.schema.json generator", in_aggregate=False, entry_point=True),
-    Package("sqlgen", "tools/sqlgen", "queries_gen.odin generator from the real schema", in_aggregate=False, entry_point=True),
+    Package("schema", "tools/schema", "wire.json and wire.schema.json generator", in_aggregate=False),
+    Package("sqlgen", "tools/sqlgen", "queries_gen.odin generator from the real schema", in_aggregate=False),
 )
 
 BY_NAME = {p.name: p for p in PACKAGES}
@@ -190,13 +193,11 @@ def yuke(args):
 
 
 @command
-def check_windows(args):
-    """cross-compile type-check of the Windows arms from the host"""
-    # Compiles *_test.odin, so POSIX-only test files need `#+build` tags.
-    for package in PACKAGES:
-        if package.windows:
-            entry = [] if package.entry_point else ["-no-entry-point"]
-            odin("check", package.path, "-target:windows_amd64", *entry)
+def yuked(args):
+    """build the daemon binary into build/yuked"""
+    package = BY_NAME["yuked"]
+    ensure(package.needs)
+    odin("build", package.path, "-o:speed", f"-out:{BUILD / 'yuked'}")
 
 
 @command

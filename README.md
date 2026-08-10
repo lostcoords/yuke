@@ -6,8 +6,8 @@ and Anthropic provider request builder/decoder/turn driver have landed. The agen
 OpenAI provider implementations, real-model integration, and a `yuked` process entrypoint remain
 under construction.
 
-**Client (`yuke`):** TUI + QuickJS (`yuke:term` double-buffer paint). See
-[`docs/client.md`](docs/client.md) and [`src/yuke/term_api.md`](src/yuke/term_api.md).
+**Client (`yuke`):** TUI + QuickJS (`yuke:term` double-buffer paint). The `yuke:term` draw
+contract lives in its host (`src/yuke/host.odin`, `js.odin`).
 
 Provider work: [`docs/llm-transport-design.md`](docs/llm-transport-design.md).
 
