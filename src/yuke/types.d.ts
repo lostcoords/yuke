@@ -510,6 +510,52 @@ declare module "yuke:ui" {
     draw(rect: Rect): void;
   }
 
+  export interface PagerRow {
+    text: string;
+    group?: string;
+    bg?: string;
+    marker?: string | null;
+    markerGroup?: string;
+    indent?: number;
+    key?: unknown;
+  }
+
+  export class Pager {
+    rows: PagerRow[];
+    scroll: number;
+    stuck: boolean;
+    constructor();
+    atBottom(): boolean;
+    toBottom(): void;
+    toTop(): void;
+    scrollBy(delta: number): void;
+    setRows(rows: PagerRow[]): void;
+    draw(rect: Rect): void;
+    onKey(ev: KeyEvent): boolean;
+  }
+
+  export interface TranscriptPart {
+    type: string;
+    text?: string;
+  }
+
+  export interface TranscriptMessage {
+    type: "user" | "assistant";
+    id: string;
+    rev: number;
+    content: TranscriptPart[];
+  }
+
+  export class Transcript {
+    messages: TranscriptMessage[];
+    pager: Pager;
+    constructor();
+    setMessages(messages: TranscriptMessage[]): void;
+    touch(): void;
+    draw(rect: Rect): void;
+    onKey(ev: KeyEvent): boolean;
+  }
+
   export interface BorderSet {
     tl: string;
     t: string;
