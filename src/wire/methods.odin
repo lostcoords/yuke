@@ -57,6 +57,18 @@ Method_Name :: enum {
     // Re-read provider and credential configuration from disk.
     Catalog_Refresh,
 
+    // Read public authentication state and supported login mechanisms.
+    Auth_List,
+
+    // Start a daemon-owned provider login attempt.
+    Auth_Login,
+
+    // Cancel a daemon-owned provider login attempt.
+    Auth_Cancel_Login,
+
+    // Remove one provider's durable credentials.
+    Auth_Logout,
+
     // Describe an arbitrary path as a workspace.
     Workspace_Describe,
 
@@ -113,6 +125,10 @@ method_name_wire := [Method_Name]string {
     .Subscription_Set     = "subscription.set",
     .Catalog_List         = "catalog.list",
     .Catalog_Refresh      = "catalog.refresh",
+    .Auth_List            = "auth.list",
+    .Auth_Login           = "auth.login",
+    .Auth_Cancel_Login    = "auth.cancel_login",
+    .Auth_Logout          = "auth.logout",
     .Workspace_Describe   = "workspace.describe",
     .Workspace_Browse     = "workspace.browse",
     .Workspace_Remove     = "workspace.remove",
@@ -253,6 +269,9 @@ Request_Params :: union {
     Subscription_Set_Params,
     Catalog_List_Params,
     Empty,
+    Auth_Login_Params,
+    Auth_Cancel_Login_Params,
+    Auth_Logout_Params,
     Workspace_Describe_Params,
     Workspace_Browse_Params,
     Workspace_Ref,
@@ -278,6 +297,8 @@ Response_Result :: union {
     Session_Config_Result,
     Catalog_List_Result,
     Catalog_Refresh_Result,
+    Auth_List_Result,
+    Auth_Login_Result,
     Workspace_Describe_Result,
     Workspace_Browse_Result,
     Workspace_Remove_Result,
@@ -344,6 +365,15 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
 
     case Empty:
         empty_emit(e)
+
+    case Auth_Login_Params:
+        auth_login_params_emit(e, p)
+
+    case Auth_Cancel_Login_Params:
+        auth_cancel_login_params_emit(e, p)
+
+    case Auth_Logout_Params:
+        auth_logout_params_emit(e, p)
 
     case Workspace_Describe_Params:
         workspace_describe_params_emit(e, p)
@@ -413,6 +443,12 @@ response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
     case Catalog_Refresh_Result:
         catalog_refresh_result_emit(e, r)
 
+    case Auth_List_Result:
+        auth_list_result_emit(e, r)
+
+    case Auth_Login_Result:
+        auth_login_result_emit(e, r)
+
     case Workspace_Describe_Result:
         workspace_describe_result_emit(e, r)
 
@@ -475,6 +511,15 @@ request_params_validate :: proc(params: Request_Params) -> Validation_Error {
     case Subscription_Set_Params:
         return subscription_set_params_validate(p)
 
+    case Auth_Login_Params:
+        return auth_login_params_validate(p)
+
+    case Auth_Cancel_Login_Params:
+        return auth_cancel_login_params_validate(p)
+
+    case Auth_Logout_Params:
+        return auth_logout_params_validate(p)
+
     case Workspace_Browse_Params:
         return workspace_browse_params_validate(p)
 
@@ -526,6 +571,12 @@ response_result_validate :: proc(result: Response_Result) -> Validation_Error {
 
     case Catalog_Refresh_Result:
         return catalog_refresh_result_validate(r)
+
+    case Auth_List_Result:
+        return auth_list_result_validate(r)
+
+    case Auth_Login_Result:
+        return auth_login_result_validate(r)
 
     case Workspace_Describe_Result:
         return workspace_describe_result_validate(r)
@@ -600,7 +651,7 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
     case .Catalog_List:
         params = Catalog_List_Params{}
 
-    case .Catalog_Refresh:
+    case .Catalog_Refresh, .Auth_List:
         params = Empty{}
 
     case .Workspace_Browse:
@@ -804,6 +855,18 @@ request_params_from_reader :: proc(
     case .Catalog_Refresh:
         params = empty_from_reader(d) or_return
 
+    case .Auth_List:
+        params = empty_from_reader(d) or_return
+
+    case .Auth_Login:
+        params = auth_login_params_from_reader(d) or_return
+
+    case .Auth_Cancel_Login:
+        params = auth_cancel_login_params_from_reader(d) or_return
+
+    case .Auth_Logout:
+        params = auth_logout_params_from_reader(d) or_return
+
     case .Workspace_Describe:
         params = workspace_describe_params_from_reader(d) or_return
 
@@ -903,6 +966,18 @@ response_result_from_reader :: proc(
 
     case .Catalog_Refresh:
         result = catalog_refresh_result_from_reader(d) or_return
+
+    case .Auth_List:
+        result = auth_list_result_from_reader(d) or_return
+
+    case .Auth_Login:
+        result = auth_login_result_from_reader(d) or_return
+
+    case .Auth_Cancel_Login:
+        result = empty_from_reader(d) or_return
+
+    case .Auth_Logout:
+        result = empty_from_reader(d) or_return
 
     case .Workspace_Describe:
         result = workspace_describe_result_from_reader(d) or_return

@@ -8,6 +8,10 @@
     "default_workspace_browse_page_size": 100,
     "max_activity_retry_message_bytes": 1024,
     "max_agents": 256,
+    "max_auth_flows": 8,
+    "max_auth_providers": 64,
+    "max_auth_url_bytes": 4096,
+    "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 67108864,
     "max_catalog_models": 4096,
     "max_cron_jobs": 1024,
@@ -227,6 +231,42 @@
       "paramsOptional": true
     },
     {
+      "name": "auth.list",
+      "odinName": "Auth_List",
+      "direction": "clientToServer",
+      "doc": "Read public authentication state and supported login mechanisms.",
+      "params": "Empty",
+      "result": "Auth_List_Result",
+      "paramsOptional": true
+    },
+    {
+      "name": "auth.login",
+      "odinName": "Auth_Login",
+      "direction": "clientToServer",
+      "doc": "Start a daemon-owned provider login attempt.",
+      "params": "Auth_Login_Params",
+      "result": "Auth_Login_Result",
+      "paramsOptional": false
+    },
+    {
+      "name": "auth.cancel_login",
+      "odinName": "Auth_Cancel_Login",
+      "direction": "clientToServer",
+      "doc": "Cancel a daemon-owned provider login attempt.",
+      "params": "Auth_Cancel_Login_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
+      "name": "auth.logout",
+      "odinName": "Auth_Logout",
+      "direction": "clientToServer",
+      "doc": "Remove one provider's durable credentials.",
+      "params": "Auth_Logout_Params",
+      "result": "Empty",
+      "paramsOptional": false
+    },
+    {
       "name": "workspace.describe",
       "odinName": "Workspace_Describe",
       "direction": "clientToServer",
@@ -384,6 +424,22 @@
       "direction": "serverToClient",
       "doc": "Catalog content hash or health changed.",
       "params": "Catalog_Changed_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "auth.login_finished",
+      "odinName": "Auth_Login_Finished",
+      "direction": "serverToClient",
+      "doc": "A daemon-owned authentication login attempt reached a terminal outcome.",
+      "params": "Auth_Login_Finished_Data",
+      "class": "ungated"
+    },
+    {
+      "name": "auth.changed",
+      "odinName": "Auth_Changed",
+      "direction": "serverToClient",
+      "doc": "Public authentication state for a provider changed.",
+      "params": "Auth_Changed_Data",
       "class": "ungated"
     },
     {
@@ -709,6 +765,242 @@
     }
   ],
   "structures": [
+    {
+      "name": "Auth_Login_Summary",
+      "doc": "Public locator for one daemon-owned login attempt. It contains no OAuth secret.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "Login_Id",
+          "doc": "Daemon-minted login attempt id.",
+          "presence": "required"
+        },
+        {
+          "name": "flow",
+          "type": "Auth_Flow",
+          "doc": "Mechanism used by the attempt.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Provider",
+      "doc": "Public authentication state and capabilities for one provider.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "Provider_Id",
+          "doc": "Stable configuration identifier.",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "Auth_State",
+          "doc": "Whether durable credentials are available.",
+          "presence": "required"
+        },
+        {
+          "name": "login_flows",
+          "type": "[]Auth_Flow",
+          "doc": "Login mechanisms currently supported by this provider.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_auth_flows",
+            "value": 8
+          }
+        },
+        {
+          "name": "pending_login",
+          "type": "Maybe(Auth_Login_Summary)",
+          "doc": "Current daemon-owned attempt, if one is running.",
+          "presence": "requiredNullable"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Params",
+      "doc": "Params for `auth.login`.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "Provider_Id",
+          "doc": "Provider to authenticate.",
+          "presence": "required"
+        },
+        {
+          "name": "flow",
+          "type": "Auth_Flow",
+          "doc": "Requested login mechanism.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Result_Browser",
+      "doc": "Browser authorization details returned only to the requesting connection.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "Login_Id",
+          "doc": "Daemon-owned attempt id.",
+          "presence": "required"
+        },
+        {
+          "name": "auth_url",
+          "type": "string",
+          "doc": "Authorization URL to open in a browser.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_auth_url_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Result_Device_Code",
+      "doc": "Device authorization details returned only to the requesting connection.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "Login_Id",
+          "doc": "Daemon-owned attempt id.",
+          "presence": "required"
+        },
+        {
+          "name": "verification_url",
+          "type": "string",
+          "doc": "Page where the user enters `user_code`.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_auth_url_bytes",
+            "value": 4096
+          }
+        },
+        {
+          "name": "user_code",
+          "type": "string",
+          "doc": "Short-lived code entered by the user, not the provider's device machine code.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_auth_user_code_bytes",
+            "value": 128
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth_Cancel_Login_Params",
+      "doc": "Params for `auth.cancel_login`.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "Login_Id",
+          "doc": "Daemon-owned attempt to cancel.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Logout_Params",
+      "doc": "Params for `auth.logout`.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "Provider_Id",
+          "doc": "Provider whose durable credentials are removed.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_List_Result",
+      "doc": "Result of `auth.list`.",
+      "fields": [
+        {
+          "name": "providers",
+          "type": "[]Auth_Provider",
+          "doc": "Authentication-capable providers known to the daemon.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_auth_providers",
+            "value": 64
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Outcome_Succeeded",
+      "doc": "Login completed successfully and credentials were durably stored.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Auth_Login_Outcome_Canceled",
+      "doc": "Login was explicitly canceled.",
+      "fields": [
+
+      ]
+    },
+    {
+      "name": "Auth_Login_Outcome_Failed",
+      "doc": "Login failed without changing durable credentials.",
+      "fields": [
+        {
+          "name": "message",
+          "type": "string",
+          "doc": "Human-readable failure detail with no credential material.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_error_message_bytes",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Finished_Data",
+      "doc": "Payload for `auth.login_finished`.",
+      "fields": [
+        {
+          "name": "login_id",
+          "type": "Login_Id",
+          "doc": "Completed daemon-owned attempt.",
+          "presence": "required"
+        },
+        {
+          "name": "provider_id",
+          "type": "Provider_Id",
+          "doc": "Provider the attempt targeted.",
+          "presence": "required"
+        },
+        {
+          "name": "outcome",
+          "type": "Auth_Login_Outcome",
+          "doc": "Terminal outcome.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Changed_Data",
+      "doc": "Payload for `auth.changed`.",
+      "fields": [
+        {
+          "name": "provider",
+          "type": "Auth_Provider",
+          "doc": "Complete current public provider state.",
+          "presence": "required"
+        }
+      ]
+    },
     {
       "name": "Session_Summary_Changed_Data",
       "doc": "Payload for `session.summary_changed`.",
@@ -5277,6 +5569,40 @@
   ],
   "unions": [
     {
+      "name": "Auth_Login_Result",
+      "doc": "Result of `auth.login`, tagged by the mechanism actually started.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Auth_Login_Result_Browser",
+          "tag": "browser"
+        },
+        {
+          "type": "Auth_Login_Result_Device_Code",
+          "tag": "device_code"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Login_Outcome",
+      "doc": "Terminal outcome for a daemon-owned login attempt.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "type": "Auth_Login_Outcome_Succeeded",
+          "tag": "succeeded"
+        },
+        {
+          "type": "Auth_Login_Outcome_Canceled",
+          "tag": "canceled"
+        },
+        {
+          "type": "Auth_Login_Outcome_Failed",
+          "tag": "failed"
+        }
+      ]
+    },
+    {
       "name": "Broadcast_Data",
       "doc": "Typed broadcast payload, tagged by broadcast name on the frame. A broadcast frame's data is always exactly one of these variants.",
       "discriminator": "",
@@ -5301,6 +5627,12 @@
         },
         {
           "type": "Catalog_Changed_Data"
+        },
+        {
+          "type": "Auth_Login_Finished_Data"
+        },
+        {
+          "type": "Auth_Changed_Data"
         },
         {
           "type": "Cron_Created_Data"
@@ -5556,6 +5888,15 @@
           "type": "Empty"
         },
         {
+          "type": "Auth_Login_Params"
+        },
+        {
+          "type": "Auth_Cancel_Login_Params"
+        },
+        {
+          "type": "Auth_Logout_Params"
+        },
+        {
           "type": "Workspace_Describe_Params"
         },
         {
@@ -5624,6 +5965,12 @@
         },
         {
           "type": "Catalog_Refresh_Result"
+        },
+        {
+          "type": "Auth_List_Result"
+        },
+        {
+          "type": "Auth_Login_Result"
         },
         {
           "type": "Workspace_Describe_Result"
@@ -5940,6 +6287,40 @@
   ],
   "enumerations": [
     {
+      "name": "Auth_Flow",
+      "doc": "OAuth login mechanisms a provider exposes.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Browser",
+          "wire": "browser",
+          "doc": "Authorization-code login using a loopback browser callback."
+        },
+        {
+          "name": "Device_Code",
+          "wire": "device_code",
+          "doc": "Device authorization login using a verification page and user code."
+        }
+      ]
+    },
+    {
+      "name": "Auth_State",
+      "doc": "Coarse persisted authentication state for a provider.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "Signed_Out",
+          "wire": "signed_out",
+          "doc": "No durable credentials are available."
+        },
+        {
+          "name": "Signed_In",
+          "wire": "signed_in",
+          "doc": "Durable credentials are available."
+        }
+      ]
+    },
+    {
       "name": "Broadcast_Name",
       "doc": "Closed enum of broadcast names. Source of truth for the broadcast set.",
       "numeric": false,
@@ -5978,6 +6359,16 @@
           "name": "Catalog_Changed",
           "wire": "catalog.changed",
           "doc": "Catalog content hash or health changed."
+        },
+        {
+          "name": "Auth_Login_Finished",
+          "wire": "auth.login_finished",
+          "doc": "A daemon-owned authentication login attempt reached a terminal outcome."
+        },
+        {
+          "name": "Auth_Changed",
+          "wire": "auth.changed",
+          "doc": "Public authentication state for a provider changed."
         },
         {
           "name": "Cron_Created",
@@ -6471,6 +6862,26 @@
           "doc": "Re-read provider and credential configuration from disk."
         },
         {
+          "name": "Auth_List",
+          "wire": "auth.list",
+          "doc": "Read public authentication state and supported login mechanisms."
+        },
+        {
+          "name": "Auth_Login",
+          "wire": "auth.login",
+          "doc": "Start a daemon-owned provider login attempt."
+        },
+        {
+          "name": "Auth_Cancel_Login",
+          "wire": "auth.cancel_login",
+          "doc": "Cancel a daemon-owned provider login attempt."
+        },
+        {
+          "name": "Auth_Logout",
+          "wire": "auth.logout",
+          "doc": "Remove one provider's durable credentials."
+        },
+        {
           "name": "Workspace_Describe",
           "wire": "workspace.describe",
           "doc": "Describe an arbitrary path as a workspace."
@@ -6811,6 +7222,16 @@
   ],
   "aliases": [
     {
+      "name": "Provider_Id",
+      "base": "string",
+      "doc": "Stable provider identifier used by auth and catalog configuration.",
+      "bound": {
+        "kind": "bounded",
+        "expr": "64",
+        "value": 64
+      }
+    },
+    {
       "name": "Message_Part_Delta_Data",
       "base": "Part_Delta",
       "doc": "Payload for `message.part_delta`: incremental draft bytes folded by UTF-8 offset."
@@ -6878,6 +7299,16 @@
         "kind": "fixed",
         "expr": "16",
         "value": 16
+      }
+    },
+    {
+      "name": "Login_Id",
+      "base": "[32]u8",
+      "doc": "32 lowercase hex chars. Identifies one daemon-owned OAuth login attempt.",
+      "bound": {
+        "kind": "fixed",
+        "expr": "32",
+        "value": 32
       }
     },
     {

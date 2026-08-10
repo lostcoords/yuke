@@ -25,6 +25,12 @@ Broadcast_Name :: enum {
     // Catalog content hash or health changed.
     Catalog_Changed,
 
+    // A daemon-owned authentication login attempt reached a terminal outcome.
+    Auth_Login_Finished,
+
+    // Public authentication state for a provider changed.
+    Auth_Changed,
+
     // Cron job was created.
     Cron_Created,
 
@@ -90,6 +96,8 @@ broadcast_name_wire := [Broadcast_Name]string {
     .Workspace_Removed        = "workspace.removed",
     .Permission_Rules_Changed = "permission.rules_changed",
     .Catalog_Changed          = "catalog.changed",
+    .Auth_Login_Finished      = "auth.login_finished",
+    .Auth_Changed             = "auth.changed",
     .Cron_Created             = "cron.created",
     .Cron_Updated             = "cron.updated",
     .Cron_Removed             = "cron.removed",
@@ -159,6 +167,8 @@ broadcast_name_class :: proc(name: Broadcast_Name) -> Broadcast_Class {
          .Workspace_Removed,
          .Permission_Rules_Changed,
          .Catalog_Changed,
+         .Auth_Login_Finished,
+         .Auth_Changed,
          .Cron_Created,
          .Cron_Updated,
          .Cron_Removed,
@@ -868,6 +878,8 @@ Broadcast_Data :: union {
     Workspace_Removed_Data,
     Permission_Rules_Changed_Data,
     Catalog_Changed_Data,
+    Auth_Login_Finished_Data,
+    Auth_Changed_Data,
     Cron_Created_Data,
     Cron_Updated_Data,
     Cron_Removed_Data,
@@ -911,6 +923,12 @@ broadcast_data_emit :: proc(e: ^Emitter, self: Broadcast_Data) {
 
     case Catalog_Changed_Data:
         catalog_changed_data_emit(e, v)
+
+    case Auth_Login_Finished_Data:
+        auth_login_finished_data_emit(e, v)
+
+    case Auth_Changed_Data:
+        auth_changed_data_emit(e, v)
 
     case Cron_Created_Data:
         cron_created_data_emit(e, v)
@@ -991,6 +1009,12 @@ broadcast_data_validate :: proc(self: Broadcast_Data) -> Validation_Error {
 
     case Catalog_Changed_Data:
         return catalog_changed_data_validate(v)
+
+    case Auth_Login_Finished_Data:
+        return auth_login_finished_data_validate(v)
+
+    case Auth_Changed_Data:
+        return auth_changed_data_validate(v)
 
     case Cron_Created_Data:
         return cron_created_data_validate(v)
@@ -1080,6 +1104,12 @@ broadcast_data_clone :: proc(self: Broadcast_Data, allocator := context.allocato
 
     case Catalog_Changed_Data:
         return Catalog_Changed_Data{catalog_rev = v.catalog_rev, health = catalog_health_clone(v.health, allocator)}
+
+    case Auth_Login_Finished_Data:
+        return auth_login_finished_data_clone(v, allocator)
+
+    case Auth_Changed_Data:
+        return auth_changed_data_clone(v, allocator)
 
     case Cron_Created_Data:
         return Cron_Created_Data{revision = v.revision, job = cron_job_clone(v.job, allocator)}
@@ -1196,6 +1226,12 @@ broadcast_data_name :: proc(self: Broadcast_Data) -> (Broadcast_Name, bool) {
 
     case Catalog_Changed_Data:
         return .Catalog_Changed, true
+
+    case Auth_Login_Finished_Data:
+        return .Auth_Login_Finished, true
+
+    case Auth_Changed_Data:
+        return .Auth_Changed, true
 
     case Cron_Created_Data:
         return .Cron_Created, true
@@ -2205,6 +2241,12 @@ broadcast_data_from_reader :: proc(
 
     case .Catalog_Changed:
         data = catalog_changed_data_from_reader(d) or_return
+
+    case .Auth_Login_Finished:
+        data = auth_login_finished_data_from_reader(d) or_return
+
+    case .Auth_Changed:
+        data = auth_changed_data_from_reader(d) or_return
 
     case .Cron_Created:
         data = cron_created_data_from_reader(d) or_return

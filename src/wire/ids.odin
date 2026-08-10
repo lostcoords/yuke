@@ -18,6 +18,10 @@ Job_Id :: distinct [16]u8
 // 16 lowercase hex chars. Identifies one remembered permission rule.
 Rule_Id :: distinct [16]u8
 
+// @fixed 32
+// 32 lowercase hex chars. Identifies one daemon-owned OAuth login attempt.
+Login_Id :: distinct [32]u8
+
 // @bounded MAX_REQUEST_ID_BYTES
 // Correlation id as its verbatim JSON token — `7`, `"abc"` with quotes, or `null`.
 // Opaque: JSON-RPC requires the response id to equal the request id.

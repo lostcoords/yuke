@@ -641,6 +641,355 @@
         }
       ]
     },
+    "Auth_Cancel_Login_Params": {
+      "description": "Params for `auth.cancel_login`.",
+      "properties": {
+        "login_id": {
+          "$ref": "#/$defs/Login_Id"
+        }
+      },
+      "required": [
+        "login_id"
+      ],
+      "type": "object"
+    },
+    "Auth_Changed_Data": {
+      "description": "Payload for `auth.changed`.",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/Auth_Provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "Auth_Flow": {
+      "description": "OAuth login mechanisms a provider exposes.",
+      "enum": [
+        "browser",
+        "device_code"
+      ],
+      "type": "string"
+    },
+    "Auth_List_Result": {
+      "description": "Result of `auth.list`.",
+      "properties": {
+        "providers": {
+          "description": "Authentication-capable providers known to the daemon.",
+          "items": {
+            "$ref": "#/$defs/Auth_Provider"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Finished_Data": {
+      "description": "Payload for `auth.login_finished`.",
+      "properties": {
+        "login_id": {
+          "$ref": "#/$defs/Login_Id"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Auth_Login_Outcome"
+        },
+        "provider_id": {
+          "$ref": "#/$defs/Provider_Id"
+        }
+      },
+      "required": [
+        "login_id",
+        "provider_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Outcome": {
+      "description": "Terminal outcome for a daemon-owned login attempt.",
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "succeeded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Auth_Login_Outcome_Succeeded",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "canceled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Auth_Login_Outcome_Canceled",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "description": "Human-readable failure detail with no credential material.",
+              "maxLength": 4096,
+              "type": "string",
+              "x-maxUtf8Bytes": 4096
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "title": "Auth_Login_Outcome_Failed",
+          "type": "object"
+        }
+      ]
+    },
+    "Auth_Login_Outcome_Canceled": {
+      "description": "Login was explicitly canceled.",
+      "properties": {
+
+      },
+      "required": [
+
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Outcome_Failed": {
+      "description": "Login failed without changing durable credentials.",
+      "properties": {
+        "message": {
+          "description": "Human-readable failure detail with no credential material.",
+          "maxLength": 4096,
+          "type": "string",
+          "x-maxUtf8Bytes": 4096
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Outcome_Succeeded": {
+      "description": "Login completed successfully and credentials were durably stored.",
+      "properties": {
+
+      },
+      "required": [
+
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Params": {
+      "description": "Params for `auth.login`.",
+      "properties": {
+        "flow": {
+          "$ref": "#/$defs/Auth_Flow"
+        },
+        "provider_id": {
+          "$ref": "#/$defs/Provider_Id"
+        }
+      },
+      "required": [
+        "provider_id",
+        "flow"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Result": {
+      "description": "Result of `auth.login`, tagged by the mechanism actually started.",
+      "oneOf": [
+        {
+          "properties": {
+            "auth_url": {
+              "description": "Authorization URL to open in a browser.",
+              "maxLength": 4096,
+              "type": "string",
+              "x-maxUtf8Bytes": 4096
+            },
+            "login_id": {
+              "$ref": "#/$defs/Login_Id"
+            },
+            "type": {
+              "const": "browser",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "login_id",
+            "auth_url"
+          ],
+          "title": "Auth_Login_Result_Browser",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "login_id": {
+              "$ref": "#/$defs/Login_Id"
+            },
+            "type": {
+              "const": "device_code",
+              "type": "string"
+            },
+            "user_code": {
+              "description": "Short-lived code entered by the user, not the provider's device machine code.",
+              "maxLength": 128,
+              "type": "string",
+              "x-maxUtf8Bytes": 128
+            },
+            "verification_url": {
+              "description": "Page where the user enters `user_code`.",
+              "maxLength": 4096,
+              "type": "string",
+              "x-maxUtf8Bytes": 4096
+            }
+          },
+          "required": [
+            "type",
+            "login_id",
+            "verification_url",
+            "user_code"
+          ],
+          "title": "Auth_Login_Result_Device_Code",
+          "type": "object"
+        }
+      ]
+    },
+    "Auth_Login_Result_Browser": {
+      "description": "Browser authorization details returned only to the requesting connection.",
+      "properties": {
+        "auth_url": {
+          "description": "Authorization URL to open in a browser.",
+          "maxLength": 4096,
+          "type": "string",
+          "x-maxUtf8Bytes": 4096
+        },
+        "login_id": {
+          "$ref": "#/$defs/Login_Id"
+        }
+      },
+      "required": [
+        "login_id",
+        "auth_url"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Result_Device_Code": {
+      "description": "Device authorization details returned only to the requesting connection.",
+      "properties": {
+        "login_id": {
+          "$ref": "#/$defs/Login_Id"
+        },
+        "user_code": {
+          "description": "Short-lived code entered by the user, not the provider's device machine code.",
+          "maxLength": 128,
+          "type": "string",
+          "x-maxUtf8Bytes": 128
+        },
+        "verification_url": {
+          "description": "Page where the user enters `user_code`.",
+          "maxLength": 4096,
+          "type": "string",
+          "x-maxUtf8Bytes": 4096
+        }
+      },
+      "required": [
+        "login_id",
+        "verification_url",
+        "user_code"
+      ],
+      "type": "object"
+    },
+    "Auth_Login_Summary": {
+      "description": "Public locator for one daemon-owned login attempt. It contains no OAuth secret.",
+      "properties": {
+        "flow": {
+          "$ref": "#/$defs/Auth_Flow"
+        },
+        "login_id": {
+          "$ref": "#/$defs/Login_Id"
+        }
+      },
+      "required": [
+        "login_id",
+        "flow"
+      ],
+      "type": "object"
+    },
+    "Auth_Logout_Params": {
+      "description": "Params for `auth.logout`.",
+      "properties": {
+        "provider_id": {
+          "$ref": "#/$defs/Provider_Id"
+        }
+      },
+      "required": [
+        "provider_id"
+      ],
+      "type": "object"
+    },
+    "Auth_Provider": {
+      "description": "Public authentication state and capabilities for one provider.",
+      "properties": {
+        "login_flows": {
+          "description": "Login mechanisms currently supported by this provider.",
+          "items": {
+            "$ref": "#/$defs/Auth_Flow"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "pending_login": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Auth_Login_Summary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current daemon-owned attempt, if one is running."
+        },
+        "provider_id": {
+          "$ref": "#/$defs/Provider_Id"
+        },
+        "state": {
+          "$ref": "#/$defs/Auth_State"
+        }
+      },
+      "required": [
+        "provider_id",
+        "state",
+        "login_flows",
+        "pending_login"
+      ],
+      "type": "object"
+    },
+    "Auth_State": {
+      "description": "Coarse persisted authentication state for a provider.",
+      "enum": [
+        "signed_out",
+        "signed_in"
+      ],
+      "type": "string"
+    },
     "Broadcast_Data": {
       "anyOf": [
         {
@@ -663,6 +1012,12 @@
         },
         {
           "$ref": "#/$defs/Catalog_Changed_Data"
+        },
+        {
+          "$ref": "#/$defs/Auth_Login_Finished_Data"
+        },
+        {
+          "$ref": "#/$defs/Auth_Changed_Data"
         },
         {
           "$ref": "#/$defs/Cron_Created_Data"
@@ -731,6 +1086,8 @@
         "workspace.removed",
         "permission.rules_changed",
         "catalog.changed",
+        "auth.login_finished",
+        "auth.changed",
         "cron.created",
         "cron.updated",
         "cron.removed",
@@ -2248,6 +2605,13 @@
       "pattern": "^[0-9a-f]{16}$",
       "type": "string"
     },
+    "Login_Id": {
+      "description": "32 lowercase hex chars. Identifies one daemon-owned OAuth login attempt.",
+      "maxLength": 32,
+      "minLength": 32,
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
     "Max_Rounds_Default": {
       "description": "Request-time max-rounds override; the default arm means the field was omitted.",
       "properties": {
@@ -2774,6 +3138,10 @@
         "subscription.set",
         "catalog.list",
         "catalog.refresh",
+        "auth.list",
+        "auth.login",
+        "auth.cancel_login",
+        "auth.logout",
         "workspace.describe",
         "workspace.browse",
         "workspace.remove",
@@ -3107,6 +3475,60 @@
             },
             "params": {
               "$ref": "#/$defs/Catalog_Changed_Data"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A daemon-owned authentication login attempt reached a terminal outcome.",
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.login_finished",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Login_Finished_Data"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Public authentication state for a provider changed.",
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.changed",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Changed_Data"
             }
           },
           "required": [
@@ -3993,6 +4415,12 @@
       ],
       "type": "object"
     },
+    "Provider_Id": {
+      "description": "Stable provider identifier used by auth and catalog configuration.",
+      "maxLength": 64,
+      "type": "string",
+      "x-maxUtf8Bytes": 64
+    },
     "Provider_Protocol": {
       "description": "Provider request/response protocol a turn was produced under. Closed set; the transport picks a decoder from it, and persisted provenance names it so a later replay can tell whether opaque provider data still applies.",
       "enum": [
@@ -4538,6 +4966,109 @@
           "type": "object"
         },
         {
+          "description": "Read public authentication state and supported login mechanisms.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Request_Id"
+            },
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Empty"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Start a daemon-owned provider login attempt.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Request_Id"
+            },
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.login",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Login_Params"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a daemon-owned provider login attempt.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Request_Id"
+            },
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.cancel_login",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Cancel_Login_Params"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Remove one provider's durable credentials.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Request_Id"
+            },
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.logout",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Logout_Params"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Describe an arbitrary path as a workspace.",
           "properties": {
             "id": {
@@ -4894,6 +5425,15 @@
           "$ref": "#/$defs/Empty"
         },
         {
+          "$ref": "#/$defs/Auth_Login_Params"
+        },
+        {
+          "$ref": "#/$defs/Auth_Cancel_Login_Params"
+        },
+        {
+          "$ref": "#/$defs/Auth_Logout_Params"
+        },
+        {
           "$ref": "#/$defs/Workspace_Describe_Params"
         },
         {
@@ -4930,6 +5470,110 @@
         }
       ],
       "description": "Server response frame. One frame shape carrying exactly one of `result` / `error`; the outcome is which member is present."
+    },
+    "Response_Auth_Cancel_Login": {
+      "description": "Success response to `auth.cancel_login`.",
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Request_Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Response_Auth_List": {
+      "description": "Success response to `auth.list`.",
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Request_Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Auth_List_Result"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Response_Auth_Login": {
+      "description": "Success response to `auth.login`.",
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Request_Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Auth_Login_Result"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Response_Auth_Logout": {
+      "description": "Success response to `auth.logout`.",
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Request_Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
     },
     "Response_Catalog_List": {
       "description": "Success response to `catalog.list`.",
@@ -5299,6 +5943,12 @@
         },
         {
           "$ref": "#/$defs/Catalog_Refresh_Result"
+        },
+        {
+          "$ref": "#/$defs/Auth_List_Result"
+        },
+        {
+          "$ref": "#/$defs/Auth_Login_Result"
         },
         {
           "$ref": "#/$defs/Workspace_Describe_Result"

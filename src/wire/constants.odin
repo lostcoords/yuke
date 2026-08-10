@@ -90,6 +90,18 @@ Limits :: struct {
     // Max skipped-provider records in catalog health.
     max_skipped_providers:               int,
 
+    // Max authentication-capable providers returned by auth.list.
+    max_auth_providers:                  int,
+
+    // Max login mechanisms exposed by one authentication provider.
+    max_auth_flows:                      int,
+
+    // Max bytes in a browser or device verification URL.
+    max_auth_url_bytes:                  int,
+
+    // Max bytes in a human-entered device authorization code.
+    max_auth_user_code_bytes:            int,
+
     // Max discovered skills returned for one workspace.
     max_skills:                          int,
 
@@ -162,6 +174,10 @@ LIMITS :: Limits {
     max_catalog_models                  = 4096,
     max_reasoning_levels                = 32,
     max_skipped_providers               = 256,
+    max_auth_providers                  = 64,
+    max_auth_flows                      = 8,
+    max_auth_url_bytes                  = 4096,
+    max_auth_user_code_bytes            = 128,
     max_skills                          = 1024,
     max_permission_rules                = 4096,
     max_permission_options              = 32,
