@@ -333,7 +333,12 @@ cloud_post :: proc(
 
     for !rx.done {
         if terr := nbio.tick(50 * time.Millisecond); terr != nil {
-            curl.transfer_cancel(&transfer)
+            // The transfer may have completed in the same tick that reported the loop error;
+            // `transfer_cancel` requires a still-running transfer, so only cancel a live one.
+            if !rx.done {
+                curl.transfer_cancel(&transfer)
+            }
+
             delete(rx.body)
 
             return 0, nil, false
