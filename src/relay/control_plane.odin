@@ -120,6 +120,22 @@ enroll_start_decode :: proc(body: []u8, allocator := context.allocator) -> (Enro
     return out, .None
 }
 
+// POST /api/v1/device_codes/token request body.
+@(private = "file")
+Poll_Body :: struct {
+    device_code: string `json:"device_code"`,
+}
+
+// Encode a device_codes/token poll request for `device_code`.
+enroll_poll_encode :: proc(device_code: string, allocator := context.allocator) -> ([]u8, Control_Error) {
+    out, err := json.marshal(Poll_Body{device_code = device_code}, {}, allocator)
+    if err != nil {
+        return nil, .Out_Of_Memory
+    }
+
+    return out, .None
+}
+
 // Decode a device_codes/token poll by its HTTP status: 201 approved (with the credential),
 // 428 pending, 403 denied, anything else (400/expired/invalid) start over.
 enroll_poll_decode :: proc(

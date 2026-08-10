@@ -29,6 +29,21 @@ test_enroll_start_encode :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_enroll_poll_encode :: proc(t: ^testing.T) {
+    body, err := enroll_poll_encode("dc-abc", context.temp_allocator)
+    testing.expect_value(t, err, Control_Error.None)
+
+    Parsed :: struct {
+        device_code: string `json:"device_code"`,
+    }
+    parsed: Parsed
+    testing.expect(t, json.unmarshal(body, &parsed, .JSON, context.temp_allocator) == nil, "request is valid JSON")
+    testing.expect(t, parsed.device_code == "dc-abc", "device_code round-trips")
+
+    free_all(context.temp_allocator)
+}
+
+@(test)
 test_enroll_start_decode :: proc(t: ^testing.T) {
     body := `{
         "device_code": "dc-abc",
