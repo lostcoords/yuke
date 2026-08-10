@@ -301,11 +301,15 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return js_err
     }
 
+    // Backs the config decode; proc-scoped because `host`/`db_path` are read later in `start`.
+    config_scratch: [16 * mem.Kilobyte]byte
+
     if d.config_seen {
-        // Scratch-decoded: `host`/`db_path` are consumed within `start` (the bind and
-        // `store.open`, which clones the path), and `blob_dir`/`auth_token` are cloned into
-        // owned fields below, so nothing here needs to outlive the daemon allocator.
-        config, ok := config_decode(d.config_json, context.temp_allocator)
+        scratch := mem.Arena{}
+        mem.arena_init(&scratch, config_scratch[:])
+        sa := mem.arena_allocator(&scratch)
+
+        config, ok := config_decode(d.config_json, sa)
         if !ok {
             log.error("daemon: yuked.js defineConfig is not valid configuration")
 
@@ -317,8 +321,8 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
         options.host = config.host
         options.port = config.port
-        options.db_path = paths.expand_home(config.db_path, context.temp_allocator)
-        options.blob_dir = paths.expand_home(config.blob_dir, context.temp_allocator)
+        options.db_path = paths.expand_home(config.db_path, sa)
+        options.blob_dir = paths.expand_home(config.blob_dir, sa)
         options.auth_token = config.auth_token
 
         d.log_level = config_log_level(config.log_level)
