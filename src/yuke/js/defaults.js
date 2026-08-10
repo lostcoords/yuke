@@ -2,8 +2,8 @@
 // built on yuke:core as View subclasses with commands and keymaps. A user's yuke.js layers on
 // top of this (adds keymaps, patches these prototypes, swaps the active view).
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, View, root, quit } from "yuke:core";
-import { ui, List } from "yuke:ui";
+import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit } from "yuke:core";
+import { ui, List, Transcript } from "yuke:ui";
 
 // Brand banner; falls back to plain "yuke" when the terminal is too narrow or short.
 const YUKE_BANNER = [
@@ -414,34 +414,122 @@ class HomeView extends View {
 }
 
 // --- shell view ---------------------------------------------------------------------------
+// A stubbed session transcript for exercising the Transcript pager without a daemon: seeded
+// user/assistant text messages, plus a keyboard-toggled fake stream that appends words to the
+// last assistant message so follow-bottom, re-wrap, and resize reflow can be tested live.
+const LOREM =
+  "The quick brown fox jumps over the lazy dog. Word wrapping has to stay cell-accurate for wide 漢字 and emoji 😊 runs. " +
+  "Paragraphs wrap greedily at spaces; a single word longer than the width hard-breaks by grapheme cluster. ";
+
+const STREAM_WORDS = "streaming a delta here appends one token at a time to watch the tail follow the bottom edge".split(" ");
+let streamPhase = 0;
+
+function stubMessages() {
+  const msgs = [];
+  for (let i = 0; i < 150; i++) {
+    msgs.push({ type: "user", id: "u" + i, rev: 0, content: [{ type: "text", text: "Question " + i + ": " + LOREM.slice(0, 30 + ((i * 37) % 160)) }] });
+    msgs.push({ type: "assistant", id: "a" + i, rev: 0, content: [{ type: "text", text: "Answer " + i + ". " + LOREM.repeat(1 + (i % 3)) }] });
+  }
+  return msgs;
+}
+
 class ShellView extends View {
+  constructor() {
+    super();
+    this.transcript = new Transcript();
+    this.streaming = false;
+    this._seeded = false;
+  }
+
   get name() {
     return "shell";
   }
 
+  _ensure() {
+    if (this._seeded) return;
+    this.transcript.setMessages(stubMessages());
+    this._seeded = true;
+  }
+
+  needsTick() {
+    return this.streaming ? { periodMs: 60 } : null;
+  }
+
+  tick() {
+    if (!this.streaming) return;
+
+    const msgs = this.transcript.messages;
+    const last = msgs[msgs.length - 1];
+    if (last && last.type === "assistant") {
+      last.content[0].text += " " + STREAM_WORDS[streamPhase++ % STREAM_WORDS.length];
+      last.rev++;
+      this.transcript.touch();
+    }
+  }
+
+  // Scroll through every position painting each frame, to time worst-case scroll throughput
+  // (layout is cached, so this measures paint + buffer diff + flush).
+  runBenchmark() {
+    const pager = this.transcript.pager;
+    const saved = { scroll: pager.scroll, stuck: pager.stuck };
+    const span = Math.max(1, pager._maxScroll());
+    const N = 1000;
+
+    pager.stuck = false;
+    const t0 = Date.now();
+    for (let i = 0; i < N; i++) {
+      pager.scroll = i % span;
+      root.draw();
+    }
+    const dt = Math.max(1, Date.now() - t0);
+
+    pager.scroll = saved.scroll;
+    pager.stuck = saved.stuck;
+    this.benchFps = Math.round((N * 1000) / dt);
+    this.benchMs = (dt / N).toFixed(2);
+  }
+
   draw() {
+    this._ensure();
+
     const w = term.width;
     const h = term.height;
     const title = openSession ? openSession.title : "session";
     const padX = w >= 48 ? 3 : w >= 32 ? 2 : 1;
     const innerW = Math.max(0, w - padX * 2);
     const footerY = h > 0 ? h - 1 : 0;
-    const bodyY0 = 4;
-    const bodyY1 = 5;
+    const bodyTop = 3;
+    const bodyH = Math.max(0, footerY - bodyTop);
 
     fill(0, 0, w, h, "Normal");
     if (h > 0) text(padX, 0, "yuke", "YukeBrand");
     if (h > 1) text(padX, 1, clip(title, innerW), "YukeShellTitle");
     if (h > 2) paintRule(2, padX, innerW);
-    if (bodyY0 < footerY) {
-      text(padX, bodyY0, clip("no daemon yet — this is a dummy shell", innerW), "YukeEmpty");
-    }
-    if (bodyY1 < footerY) {
-      text(padX, bodyY1, clip("esc returns home", innerW), "YukeHint");
-    }
+
+    if (bodyH > 0) this.transcript.draw({ x: padX, y: bodyTop, w: innerW, h: bodyH });
+
     if (h > 0) {
-      text(padX, footerY, clip("esc back · q quit", innerW), "YukeFooter");
+      const left = "j/k · ^d/^u · g/end · s stream" + (this.streaming ? " ●" : "") + " · b bench · esc back · q quit";
+      const bench = this.benchFps ? this.benchFps + "fps " + this.benchMs + "ms · " : "";
+      const right = bench + this.transcript.pager.rows.length + "rows " + w + "×" + h;
+      text(padX, footerY, clip(left, innerW), "YukeFooter");
+      if (innerW > left.length + right.length + 2) {
+        text(w - padX - right.length, footerY, right, "YukeStatus");
+      }
     }
+  }
+
+  onKey(ev) {
+    switch (strokeOf(ev)) {
+      case "s":
+        this.streaming = !this.streaming;
+        return true;
+      case "b":
+        this.runBenchmark();
+        return true;
+    }
+
+    return this.transcript.onKey(ev);
   }
 }
 

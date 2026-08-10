@@ -2,7 +2,7 @@
 // List and (later) Window are classes you subclass or patch; ui.select will be a swappable
 // method on the exported `ui` object. Editor policy stays in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, root, strokeOf, style } from "yuke:core";
+import { text, fill, clip, wrap, root, strokeOf, style } from "yuke:core";
 
 // The kit seeds its own highlight groups over the core palette — presentation lives with the
 // widgets, not in core. A theme overrides these by mutating style.groups then invalidating.
@@ -14,11 +14,20 @@ Object.assign(style.groups, {
   UIItemSel: { fg: "fg", bg: "sel" },
   UIDim: { fg: "muted" },
   UIDimSel: { fg: "muted", bg: "sel" },
+  // Transcript: assistant text is plain; a user turn gets a full-width tinted band so the two
+  // read apart without role labels. The user marker is a thin gutter cue, not a label.
+  TxText: { fg: "fg" },
+  TxUser: { fg: "fg", bg: "userbg" },
+  TxUserMarker: { fg: "accent", bg: "userbg" },
 });
+style.palette.userbg = 236;
 style.invalidate();
 
 // Default page jump for page_up/page_down before a draw establishes the real page height.
 const PAGE_FALLBACK = 10;
+
+// Left gutter reserved for a transcript row's marker; body text is indented past it.
+const TX_GUTTER = 2;
 
 // A scrollable, selectable list rendered into a caller-assigned rect. Items are opaque
 // values; `format(item, i)` maps each to a display row and `key(item)` gives a stable
@@ -194,6 +203,181 @@ function normalizeCell(cell) {
   if (cell == null) return { text: "" };
   if (typeof cell === "string") return { text: cell };
   return { text: cell.text != null ? String(cell.text) : "", ...cell };
+}
+
+// A vertical pager over pre-wrapped visual rows. Rows are a derived projection of some source at
+// the current width; the owner rebuilds them and calls setRows. Scroll is a row offset; `stuck`
+// follows the tail (chat behavior), and a re-wrap re-anchors on the top row's `key` so the view
+// does not jump. A row is { text, group?, key?, bg?, marker?, markerGroup?, indent? }: bg fills
+// the row, marker paints at the left edge, and text is drawn indented past it — all optional.
+export class Pager {
+  constructor() {
+    this.rows = [];
+    this.scroll = 0;
+    this.stuck = true; // follow the bottom
+    this._h = 0; // last drawn height
+  }
+
+  _maxScroll() {
+    return Math.max(0, this.rows.length - this._h);
+  }
+
+  atBottom() {
+    return this.scroll >= this._maxScroll();
+  }
+
+  toBottom() {
+    this.scroll = this._maxScroll();
+    this.stuck = true;
+  }
+
+  toTop() {
+    this.scroll = 0;
+    this.stuck = false;
+  }
+
+  scrollBy(delta) {
+    this.scroll = Math.min(Math.max(0, this.scroll + delta), this._maxScroll());
+    this.stuck = this.atBottom();
+  }
+
+  // Replace the rows. Following the tail snaps to bottom; otherwise keep the top row's `key` in
+  // place across the re-wrap, landing on the first row that carries it.
+  setRows(rows) {
+    const anchor = this.stuck || !this.rows[this.scroll] ? null : this.rows[this.scroll].key;
+    this.rows = rows;
+
+    if (this.stuck) {
+      this.toBottom();
+      return;
+    }
+
+    if (anchor != null) {
+      const i = rows.findIndex((r) => r.key === anchor);
+      if (i >= 0) this.scroll = i;
+    }
+    this.scroll = Math.min(Math.max(0, this.scroll), this._maxScroll());
+  }
+
+  draw(rect) {
+    const { x, y, w, h } = rect;
+    this._h = h;
+    if (this.stuck) this.scroll = this._maxScroll();
+
+    for (let row = 0; row < h; row++) {
+      const r = this.rows[this.scroll + row];
+      if (!r) break;
+
+      const sy = y + row;
+      if (r.bg) fill(x, sy, w, 1, r.bg);
+      if (r.marker) text(x, sy, r.marker, r.markerGroup);
+
+      const ind = r.indent || 0;
+      if (r.text) text(x + ind, sy, clip(r.text, Math.max(0, w - ind)), r.group);
+    }
+  }
+
+  onKey(ev) {
+    const page = Math.max(1, this._h - 1);
+    switch (strokeOf(ev)) {
+      case "j":
+      case "down":
+        this.scrollBy(1);
+        return true;
+      case "k":
+      case "up":
+        this.scrollBy(-1);
+        return true;
+      case "ctrl+d":
+      case "page_down":
+        this.scrollBy(page);
+        return true;
+      case "ctrl+u":
+      case "page_up":
+        this.scrollBy(-page);
+        return true;
+      case "g":
+      case "home":
+        this.toTop();
+        return true;
+      case "end":
+        this.toBottom();
+        return true;
+    }
+    return false;
+  }
+}
+
+// Renders an ordered message list into a Pager. Messages mirror a subset of the wire shapes:
+// { type:"user"|"assistant", id, rev, content:[{ type:"text", text }] }. Text parts wrap to the
+// content width; wrapped rows are cached per message keyed by (rev, width) so a streaming delta
+// re-wraps only its own message. Non-text parts are not rendered yet.
+export class Transcript {
+  constructor() {
+    this.messages = [];
+    this.pager = new Pager();
+    this._width = -1;
+    this._cache = new WeakMap(); // msg -> { rev, width, rows }; keeps view cache off the data
+  }
+
+  setMessages(messages) {
+    this.messages = messages || [];
+    this._relayout();
+  }
+
+  // A streaming delta bumped a message's rev; rebuild on the next layout.
+  touch() {
+    this._relayout();
+  }
+
+  _relayout() {
+    if (this._width > 0) this._layout(this._width);
+  }
+
+  // Wrapped rows for one message, cached by (rev, width). The key is baked in so _layout can
+  // push the cached rows straight into the flat array with no per-row allocation.
+  _messageRows(msg, width) {
+    const hit = this._cache.get(msg);
+    if (hit && hit.rev === msg.rev && hit.width === width) return hit.rows;
+
+    const user = msg.type === "user";
+    const contentW = Math.max(1, width - TX_GUTTER);
+    const group = user ? "TxUser" : "TxText";
+    const bg = user ? "TxUser" : null;
+    const key = msg.id;
+
+    const body = [];
+    for (const part of msg.content || []) {
+      if (part.type !== "text") continue;
+      for (const line of wrap(part.text, contentW)) body.push(line);
+    }
+    if (body.length === 0) body.push("");
+
+    const rows = body.map((line, i) => ({ text: line, group, bg, indent: TX_GUTTER, marker: user && i === 0 ? "⟩" : null, markerGroup: "TxUserMarker", key }));
+    rows.push({ text: "", key }); // separator, no band
+
+    this._cache.set(msg, { rev: msg.rev, width, rows });
+    return rows;
+  }
+
+  _layout(width) {
+    this._width = width;
+    const rows = [];
+    for (const msg of this.messages) {
+      const mr = this._messageRows(msg, width);
+      for (let i = 0; i < mr.length; i++) rows.push(mr[i]);
+    }
+    this.pager.setRows(rows);
+  }
+
+  draw(rect) {
+    if (rect.w !== this._width) this._layout(rect.w);
+    this.pager.draw(rect);
+  }
+
+  onKey(ev) {
+    return this.pager.onKey(ev);
+  }
 }
 
 // Border glyph sets, keyed by name. Extend by adding an entry (each is 8 corner/edge glyphs).
