@@ -485,3 +485,13 @@ eval_function :: proc(ctx: ^Context, fun_obj: Value) -> Value {
 
     return c_eval_function(ctx, fun_obj)
 }
+
+// Serialize `v` to a compact JSON string value (the `JSON.stringify` builtin: runs
+// getters/`toJSON`, drops function- and `undefined`-valued members). Satisfies
+// `is_exception` on a cyclic value or a throwing `toJSON`; yields the JS `undefined`
+// value when `v` itself is not serializable. Caller owns the result.
+json_stringify :: proc(ctx: ^Context, v: Value) -> Value {
+    assert(ctx != nil, "json_stringify needs a context")
+
+    return c_json_stringify(ctx, v, undefined(), undefined())
+}

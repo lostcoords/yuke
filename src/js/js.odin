@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:mem"
+import "core:nbio"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -12,111 +13,80 @@ import "core:time"
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
 
-// Allocation ceiling for a runtime. Overrun raises a catchable exception rather than
-// aborting, so a runaway script fails its own turn instead of the process.
+// Allocation ceiling; overrun raises a catchable exception, not abort.
 DEFAULT_MEMORY_LIMIT :: 64 * mem.Megabyte
 
-// Stack ceiling, which bounds recursion depth the same way.
 DEFAULT_STACK_LIMIT :: 1 * mem.Megabyte
 
-// Wall clock one entry into JS may hold the thread before the interrupt handler reclaims it.
-// Work that needs longer belongs off the reactor; exceeding this is a bug either way.
+// Wall-clock cap for one JS entry; longer work belongs off the reactor.
 DEFAULT_DEADLINE :: 5 * time.Second
+
+// Per-tick wait while TLA awaits host ops; matches offload drain cadence.
+MODULE_AWAIT_TICK :: 10 * time.Millisecond
 
 Error :: enum {
     None,
-
-    // The runtime, context, or an owned string could not be allocated.
     Out_Of_Memory,
-
-    // The configured root does not resolve, or is not a directory.
     Invalid_Root,
 }
 
-// One host module and the exports it installs. Registration is data rather than a branch in
-// the loader, so an embedder's module set is a value it owns.
+// Host module registration; the set is a value the embedder owns.
 Module :: struct {
-    // Specifier scripts import, `yuke:`-scheme by convention.
     name:    string,
-
-    // Installs the exports when the module is first imported.
     init:    qjs.Module_Init_Func,
-
-    // Every name `init` will set. Declared up front because ES modules resolve their
-    // bindings before any module body runs.
+    // Declared up front: ES modules resolve bindings before any module body runs.
     exports: []string,
 }
 
-// Where a script fault goes; policy differs per embedder (daemon logs, TUI latches) and does
-// not belong here. A TUI in particular must not write to stderr while the alternate screen is up.
+// Script-fault reporting; policy is embedder-owned (TUI must not write stderr on alt screen).
 Report :: #type proc(user: rawptr, source: string, text: string)
 
+// Resolves non-native import specs to ES source. `owned` true: loader frees `source` after compile.
+Resolve :: #type proc(user: rawptr, name: string, allocator: mem.Allocator) -> (source: string, owned: bool, ok: bool)
+
 Options :: struct {
-    // The modules this embedder installs, chosen at the call site. Copied by `init`, so a
-    // temporary is fine; each module's own `name` and `exports` must still outlive the host.
+    // Copied by `init`; each module's `name`/`exports` must still outlive the host.
     modules:      []Module,
-
-    // Directory every `yuke:fs` path must resolve inside, canonicalized at init. Empty
-    // leaves the module uninstalled — containment cannot be decided without a root to check against.
+    // Canonicalized at init; empty leaves fs uninstalled (containment needs a root).
     root:         string,
-
-    // Where `yuke:fs` runs its blocking passes. Nil leaves the module uninstalled: a blocking
-    // read on the loop thread would stall everything else the embedder is driving.
+    // Nil leaves fs uninstalled: blocking IO must not run on the loop thread.
     pool:         ^offload.Pool,
-
-    // Embedder state, recovered inside module callbacks with `user_of`.
     user:         rawptr,
-
-    // Reporting seam; nil discards.
     report:       Report,
-
+    // Nil keeps the loader closed — unknown specifier throws.
+    resolve:      Resolve,
     // Zero takes the matching `DEFAULT_*`.
     memory_limit: int,
     stack_limit:  int,
     deadline:     time.Duration,
-
-    // Backs the owned root and every in-flight host operation.
     allocator:    mem.Allocator,
 }
 
-// One QuickJS runtime and context, recovered via opaque pointers rather than a global so a
-// process may hold several. Teardown is ordered: the pool drains before `destroy` (see `pending`).
+// One QuickJS runtime+context via opaques (not globals). Drain the pool before destroy.
 Host :: struct {
-    // Nil until `init` succeeds; every entry point tolerates that.
     rt:          ^qjs.Runtime,
     ctx:         ^qjs.Context,
-
-    // Owned canonical `yuke:fs` root; empty when the module is not installed.
+    // Owned canonical yuke:fs root; empty when fs is not installed.
     root:        string,
-
-    // Borrowed pool the fs module offloads onto.
     pool:        ^offload.Pool,
-
-    // Borrowed embedder state and its reporting policy.
     user:        rawptr,
     report:      Report,
-
-    // Installed modules, owned: a caller composes its set at the call site, so borrowing
-    // would leave the loader reading a temporary after `init` returned.
+    resolve:     Resolve,
+    // Owned copy of the caller's module set.
     modules:     []Module,
     deadline:    time.Duration,
-
-    // When the current entry must yield; zero outside an entry, which makes the interrupt
-    // handler a no-op for work this host isn't driving.
+    // Zero outside an entry; interrupt is a no-op then.
     deadline_at: time.Time,
-
-    // Latched when the interrupt handler fired, so a deadline is distinguishable from an
-    // ordinary exception.
+    // Latched when the interrupt handler fired (vs ordinary exception).
     interrupted: bool,
-
-    // In-flight host operations. Each owns a live promise, so this must reach zero before
-    // the context is freed; `destroy` asserts it.
+    // In-flight host ops owning live promises; must be 0 before destroy.
     pending:     int,
+    // False while abandoning a failed eval so settled continuations cannot submit new host ops.
+    ops_open:    bool,
     allocator:   mem.Allocator,
 }
 
-// Bring up the runtime, its limits, and the module loader. `yuke:fs` is installed exactly
-// when both a root and a pool are supplied.
+// Bring up runtime, limits, and loader. `yuke:fs` needs both a root and a pool.
 init :: proc(h: ^Host, options: Options) -> Error {
     assert(h != nil, "init needs host storage")
     assert(h.rt == nil, "a host is initialized once")
@@ -124,14 +94,13 @@ init :: proc(h: ^Host, options: Options) -> Error {
 
     h.user = options.user
     h.report = options.report
+    h.resolve = options.resolve
     h.allocator = options.allocator
     h.deadline = options.deadline if options.deadline > 0 else DEFAULT_DEADLINE
+    h.ops_open = true
 
-    // Both halves or neither: a root with no pool would have to run blocking IO on the
-    // caller's thread, and a pool with no root has nothing to contain paths against.
+    // Both halves or neither: root without pool would block the caller; pool without root cannot contain.
     if options.root != "" && options.pool != nil {
-        // Resolved once here so every later containment check is a prefix test rather than
-        // a filesystem call.
         canonical, cerr := os.get_absolute_path(options.root, options.allocator)
         if cerr != nil {
             return .Invalid_Root
@@ -188,8 +157,7 @@ init :: proc(h: ^Host, options: Options) -> Error {
     return .None
 }
 
-// Release the runtime. The embedder must have drained its pool first: a completion still in
-// flight owns the settle functions of a promise in this context.
+// Embedder must drain its pool first: in-flight completions own settle functions in this context.
 destroy :: proc(h: ^Host) {
     assert(h != nil, "destroy needs host storage")
     assert(h.pending == 0, "a host operation outlived the context that owns its promise")
@@ -218,20 +186,20 @@ destroy :: proc(h: ^Host) {
     h.user = nil
 }
 
-// The embedder state a module callback belongs to.
 user_of :: proc(ctx: ^qjs.Context) -> rawptr {
     h := host_of(ctx)
 
     return h.user if h != nil else nil
 }
 
-// The host owning `ctx`.
 host_of :: proc(ctx: ^qjs.Context) -> ^Host {
     return (^Host)(qjs.get_context_opaque(ctx))
 }
 
-// Evaluate `source` as an ES module; false on failure, reported. A throwing top level rejects
-// the returned promise rather than raising `is_exception`, so that check alone can't detect it.
+// Eval as ES module; false on failure. TLA drains microtasks and ticks the pool until settle or deadline;
+// pending with nothing in flight fails so a half-evaluated entry is never treated as loaded.
+// Failure paths with in-flight host ops close ops and wait them out so abandoned continuations
+// cannot submit after the pool stops accepting.
 eval_module :: proc(h: ^Host, name: string, source: string, allocator: mem.Allocator) -> bool {
     assert(h != nil, "a module evaluation needs a host")
 
@@ -258,37 +226,125 @@ eval_module :: proc(h: ^Host, name: string, source: string, allocator: mem.Alloc
     if qjs.is_exception(result) {
         report_exception(h, name)
 
-        return false
+        return eval_module_fail(h)
     }
 
-    // The module body runs on the job queue, so nothing has executed yet.
+    // Module body runs on the job queue; nothing has executed yet.
     drain(h)
 
-    switch qjs.promise_state(h.ctx, result) {
-    case .Not_A_Promise, .Fulfilled:
-        return true
+    // Same budget as one JS entry for how long TLA may stall load.
+    deadline_at := time.time_add(time.now(), h.deadline)
 
-    case .Pending:
-        // A top-level `await` that never settled. Reporting success would leave the
-        // embedder believing a module is loaded while its body has not finished.
-        report(h, name, "module did not finish evaluating")
+    for {
+        switch qjs.promise_state(h.ctx, result) {
+        case .Not_A_Promise, .Fulfilled:
+            return true
 
-        return false
+        case .Rejected:
+            reason := qjs.promise_result(h.ctx, result)
+            defer qjs.free_value(h.ctx, reason)
 
-    case .Rejected:
-        reason := qjs.promise_result(h.ctx, result)
-        defer qjs.free_value(h.ctx, reason)
+            report_value(h, name, reason)
 
-        report_value(h, name, reason)
+            return eval_module_fail(h)
 
-        return false
+        case .Pending:
+            remaining := module_await_remaining(deadline_at)
+            if remaining <= 0 {
+                report(h, name, "module did not finish evaluating")
+
+                return eval_module_fail(h)
+            }
+
+            // Nothing left that can settle the module: no host ops and no microtasks.
+            if h.pending == 0 {
+                if qjs.job_pending(h.rt) {
+                    drain(h, remaining)
+                    continue
+                }
+
+                report(h, name, "module did not finish evaluating")
+
+                return eval_module_fail(h)
+            }
+
+            if h.pool == nil {
+                report(h, name, "module did not finish evaluating")
+
+                return eval_module_fail(h)
+            }
+
+            assert(
+                h.pool.loop == nbio.current_thread_event_loop(),
+                "module await must run on the pool's event-loop thread",
+            )
+
+            tick_timeout := min(MODULE_AWAIT_TICK, remaining)
+            if err := nbio.tick(tick_timeout); err != nil {
+                report(h, name, "event loop failed while evaluating module")
+
+                return eval_module_fail(h)
+            }
+
+            // Completions drain themselves; catch leftover microtasks before re-check.
+            remaining = module_await_remaining(deadline_at)
+            if remaining > 0 {
+                drain(h, remaining)
+            } else {
+                drain(h, 1 * time.Millisecond)
+            }
+        }
     }
+}
+
+@(private)
+module_await_remaining :: proc(deadline_at: time.Time) -> time.Duration {
+    left := deadline_at._nsec - time.now()._nsec
+
+    return time.Duration(left) if left > 0 else 0
+}
+
+// After a failed eval: refuse new host ops, wait in-flight ones out, then reopen.
+// Prevents abandoned TLA continuations from submit-after-drain during embedder teardown.
+@(private)
+eval_module_fail :: proc(h: ^Host) -> bool {
+    wait_host_ops_idle(h)
 
     return false
 }
 
-// Invoke `fn` under the deadline, reporting against `source` on exception. Result is owned
-// by the caller and undefined when `ok` is false; draining is left to the caller.
+// Tick until pending host ops finish. ops_open is false so resumed script cannot submit more.
+@(private)
+wait_host_ops_idle :: proc(h: ^Host) {
+    assert(h != nil, "wait_host_ops_idle needs a host")
+
+    if h.pending == 0 {
+        drain(h)
+
+        return
+    }
+
+    assert(h.ops_open, "ops_open is only closed by wait_host_ops_idle")
+    h.ops_open = false
+    defer h.ops_open = true
+
+    assert(h.pool != nil, "pending host ops always have a pool")
+    assert(
+        h.pool.loop == nbio.current_thread_event_loop(),
+        "wait_host_ops_idle must run on the pool's event-loop thread",
+    )
+
+    for h.pending > 0 {
+        if err := nbio.tick(MODULE_AWAIT_TICK); err != nil {
+            // Same policy as pool_drain: keep reaping completions despite backend errors.
+            continue
+        }
+    }
+
+    drain(h)
+}
+
+// Invoke `fn` under the deadline; result owned by caller, undefined when `ok` is false.
 call :: proc(
     h: ^Host,
     fn: qjs.Value,
@@ -316,16 +372,16 @@ call :: proc(
     return result, true
 }
 
-// Run whatever microtasks the last entry queued. Every JS entry path ends here, so a promise
-// settled by a host operation reaches its continuations before the embedder moves on.
-drain :: proc(h: ^Host) {
+// Run microtasks the last entry queued so host-settled promises reach continuations.
+// `budget` > 0 clips the interrupt deadline (used so TLA wait drains cannot overrun the load budget).
+drain :: proc(h: ^Host, budget: time.Duration = 0) {
     assert(h != nil, "a job drain needs a host")
 
     if h.ctx == nil || !qjs.job_pending(h.rt) {
         return
     }
 
-    enter(h)
+    enter(h, budget)
     _, failed := qjs.run_pending_jobs(h.rt)
     leave(h)
 
@@ -334,13 +390,18 @@ drain :: proc(h: ^Host) {
     }
 }
 
-// Arm the deadline for one entry into JS. Entries do not nest: a host operation's
-// completion runs from the embedder's loop, never from inside a script.
+// Arm the interrupt deadline for one JS entry. Entries do not nest.
+// `budget` > 0 uses min(budget, h.deadline); zero uses the host default.
 @(private)
-enter :: proc(h: ^Host) {
+enter :: proc(h: ^Host, budget: time.Duration = 0) {
     assert(h.deadline_at == {}, "an entry into js is never re-entered")
 
-    h.deadline_at = time.time_add(time.now(), h.deadline)
+    limit := h.deadline
+    if budget > 0 {
+        limit = min(budget, h.deadline)
+    }
+
+    h.deadline_at = time.time_add(time.now(), limit)
     h.interrupted = false
 }
 
@@ -349,8 +410,7 @@ leave :: proc(h: ^Host) {
     h.deadline_at = {}
 }
 
-// Reclaims the thread from a script that will not yield. Runs inside the engine — may read
-// the clock but must not allocate or report — and only interrupts between interpreter steps.
+// Engine interrupt: may read the clock but must not allocate or report.
 @(private)
 interrupt :: proc "c" (rt: ^qjs.Runtime, user: rawptr) -> c.int {
     h := (^Host)(user)
@@ -368,8 +428,7 @@ interrupt :: proc "c" (rt: ^qjs.Runtime, user: rawptr) -> c.int {
     return 1
 }
 
-// Resolve an installed module. The set is closed: an unknown specifier is a script error,
-// never a filesystem lookup.
+// Closed module set: unknown specifier is a script error, never a filesystem lookup.
 @(private)
 module_loader :: proc "c" (ctx: ^qjs.Context, module_name: cstring, opaque: rawptr) -> ^qjs.Module_Def {
     context = runtime.default_context()
@@ -383,10 +442,20 @@ module_loader :: proc "c" (ctx: ^qjs.Context, module_name: cstring, opaque: rawp
                 return module_define(ctx, module_name, module.init, module.exports)
             }
         }
+
+        // Embedder resolve for non-native specs; compile error leaves the pending exception.
+        if h.resolve != nil {
+            if source, owned, ok := h.resolve(h.user, name, h.allocator); ok {
+                m := compile_module(ctx, module_name, source)
+                if owned {
+                    delete(source, h.allocator)
+                }
+
+                return m
+            }
+        }
     }
 
-    // Naming the specifier is what tells a script author "you asked for a module this
-    // embedder does not install" apart from a typo, without privileging any one name.
     message, err := strings.clone_to_cstring(
         fmt.tprintf("module %q is not installed here", name),
         context.temp_allocator,
@@ -429,8 +498,33 @@ module_define :: proc(
     return m
 }
 
-// Hand the embedder the pending exception's text. A script fault is an operating outcome —
-// a bad tool, a bad widget — never an assertion.
+// Compile-only eval yields Module_Def via heap pointer (quickjs-libc). Syntax error: nil + pending exception.
+@(private)
+compile_module :: proc(ctx: ^qjs.Context, name: cstring, source: string) -> ^qjs.Module_Def {
+    h := host_of(ctx)
+
+    csource, err := strings.clone_to_cstring(source, h.allocator)
+    if err != nil {
+        _ = qjs.throw_type_error(ctx, "module source could not be prepared")
+
+        return nil
+    }
+
+    defer delete(csource, h.allocator)
+
+    compiled := qjs.eval(ctx, csource, len(source), name, .Module, {.Compile_Only})
+    if qjs.is_exception(compiled) {
+        return nil
+    }
+
+    assert(qjs.is_module(compiled), "a compile-only module eval must yield a module")
+    m := (^qjs.Module_Def)(qjs.get_ptr(compiled))
+    qjs.free_value(ctx, compiled)
+
+    return m
+}
+
+// Script fault is an operating outcome, never an assertion.
 @(private)
 report_exception :: proc(h: ^Host, source: string) {
     text := qjs.exception_text(h.ctx, context.temp_allocator)
@@ -444,8 +538,7 @@ report_exception :: proc(h: ^Host, source: string) {
     report(h, source, text)
 }
 
-// Report a value rather than the pending exception: a rejected promise's reason is a value
-// in hand, and reading it does not make it the current exception.
+// Report a value in hand (e.g. rejection reason), not the pending exception.
 @(private)
 report_value :: proc(h: ^Host, source: string, value: qjs.Value) {
     text, readable := qjs.to_string(h.ctx, value)

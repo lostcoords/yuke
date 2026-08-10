@@ -2,17 +2,18 @@ package js
 
 import "base:runtime"
 import "core:c"
+import "core:mem"
 import "core:nbio"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
 import "libs:testsupport"
 
-// Embedder state these tests hang off the host, so a module callback reading it proves the
-// host reached the right embedder rather than a global.
+// Embedder state hung off the host so a module callback proves the right embedder was reached.
 @(private = "file")
 Probe :: struct {
     tag:     string,
@@ -28,7 +29,6 @@ PROBE_EXPORTS := []string{"probe"}
 @(private = "file")
 PROBE_MODULES := []Module{{name = PROBE_MODULE, init = probe_module_init, exports = PROBE_EXPORTS}}
 
-// A module only these tests install, covering the registry any embedder composes.
 @(private = "file")
 probe_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
@@ -54,8 +54,7 @@ probe_report :: proc(user: rawptr, source: string, text: string) {
     append(&p.reports, strings.concatenate({source, ": ", text}, context.temp_allocator))
 }
 
-// Scripts report through `globalThis.result`; a promise's value is not otherwise reachable
-// from Odin.
+// Scripts report through `globalThis.result`; a promise value is not otherwise reachable from Odin.
 @(private = "file")
 result_of :: proc(t: ^testing.T, h: ^Host) -> string {
     global := qjs.global_object(h.ctx)
@@ -71,12 +70,10 @@ result_of :: proc(t: ^testing.T, h: ^Host) -> string {
 
     defer qjs.free_string(h.ctx, text)
 
-    // The engine owns `text`; clone it out before the frame that borrows it ends.
+    // Engine owns `text`; clone out before the borrow ends.
     return strings.clone(text, context.temp_allocator)
 }
 
-// An embedder's own module resolves through the shared loader, and its callback reaches
-// that embedder's state.
 @(test)
 test_embedder_module_resolves_with_its_own_state :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -99,8 +96,7 @@ test_embedder_module_resolves_with_its_own_state :: proc(t: ^testing.T) {
     testing.expect_value(t, result_of(t, &h), "alpha")
 }
 
-// Two hosts at once, each reaching its own embedder. The daemon's tests run one host at a
-// time; this is what says the design carries no global.
+// Two hosts at once, each with its own embedder — no global host state.
 @(test)
 test_hosts_do_not_share_embedder_state :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -137,8 +133,6 @@ test_hosts_do_not_share_embedder_state :: proc(t: ^testing.T) {
     testing.expect_value(t, result_of(t, &b), "second")
 }
 
-// Nothing is installed behind the caller's back: a module it did not list is absent, and
-// the message names the specifier.
 @(test)
 test_an_unlisted_module_is_not_installed :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -165,7 +159,7 @@ test_an_unlisted_module_is_not_installed :: proc(t: ^testing.T) {
     }
 }
 
-// The module set is closed: an unknown specifier is a script error, never a lookup on disk.
+// Closed module set: unknown specifier is a script error, never a disk lookup.
 @(test)
 test_unknown_module_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -189,8 +183,189 @@ test_unknown_module_is_refused :: proc(t: ^testing.T) {
     testing.expect(t, len(probe.reports) == 1, "the failure should be reported once")
 }
 
-// A module whose top level throws rejects the promise `eval` returns rather than raising
-// out of it. Reporting success there would call a script that threw a success.
+// TLA of an already-settled promise finishes in the first microtask drain.
+@(test)
+test_top_level_await_resolved_promise :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    h: Host
+    testing.expect_value(t, init(&h, {allocator = context.allocator}), Error.None)
+    defer destroy(&h)
+
+    source := `
+        const v = await Promise.resolve("ready")
+        globalThis.result = v
+    `
+    testing.expect(
+        t,
+        eval_module(&h, "tla-resolved.js", source, context.temp_allocator),
+        "top-level await of a resolved promise should finish",
+    )
+    testing.expect_value(t, result_of(t, &h), "ready")
+}
+
+// Never-settling TLA with no host op must fail so a suspended module is not treated as loaded.
+// Hang path fails immediately (pending == 0), not by burning the deadline.
+@(test)
+test_top_level_await_never_settling_fails :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    probe: Probe
+    defer delete(probe.reports)
+
+    h: Host
+    testing.expect_value(
+        t,
+        init(&h, {user = &probe, report = probe_report, deadline = 5 * time.Second, allocator = context.allocator}),
+        Error.None,
+    )
+    defer destroy(&h)
+
+    started := time.tick_now()
+    source := `await new Promise(() => {})`
+    testing.expect(
+        t,
+        !eval_module(&h, "tla-hang.js", source, context.temp_allocator),
+        "a never-settling top-level await should fail evaluation",
+    )
+    elapsed := time.tick_diff(started, time.tick_now())
+    testing.expect(t, elapsed < 500 * time.Millisecond, "hang path must not wait out the full deadline")
+    if testing.expect(t, len(probe.reports) >= 1, "the unfinished module should be reported") {
+        testing.expect(t, strings.contains(probe.reports[0], "did not finish evaluating"), probe.reports[0])
+    }
+}
+
+// Rejected host op under TLA rejects the module (eval_module returns false).
+@(test)
+test_top_level_await_fs_rejection :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    pool: offload.Pool
+    testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
+
+    base, has := os.lookup_env("TMPDIR", context.temp_allocator)
+    if !has {
+        base = "/tmp"
+    }
+    dir, join_err := os.join_path({base, "yuke-js-tla-reject"}, context.temp_allocator)
+    testing.expect(t, join_err == nil, "temp root path joins")
+    os.remove_all(dir)
+    testing.expect_value(t, os.make_directory_all(dir), nil)
+    defer os.remove_all(dir)
+
+    probe: Probe
+    defer delete(probe.reports)
+
+    modules := [1]Module{fs_module()}
+    h: Host
+    testing.expect_value(
+        t,
+        init(
+            &h,
+            {
+                modules = modules[:],
+                root = dir,
+                pool = &pool,
+                user = &probe,
+                report = probe_report,
+                allocator = context.allocator,
+            },
+        ),
+        Error.None,
+    )
+
+    source := `
+        import { fs } from "yuke:fs"
+        await fs.readFile("missing.txt")
+    `
+    testing.expect(
+        t,
+        !eval_module(&h, "tla-reject.js", source, context.temp_allocator),
+        "top-level await of a rejected host op should fail evaluation",
+    )
+    testing.expect(t, h.pending == 0, "failed eval must idle host ops")
+    testing.expect(t, h.ops_open, "ops must reopen after failed eval")
+
+    testing.expect_value(t, offload.pool_drain(&pool), nil)
+    offload.pool_destroy(&pool)
+    destroy(&h)
+}
+
+// Multi-step TLA + expired deadline must not leave pending ops or assert on pool drain:
+// abandoned continuations are refused via ops_open until in-flight work settles.
+@(test)
+test_top_level_await_deadline_abandons_without_pending :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    pool: offload.Pool
+    testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
+
+    base, has := os.lookup_env("TMPDIR", context.temp_allocator)
+    if !has {
+        base = "/tmp"
+    }
+    dir, join_err := os.join_path({base, "yuke-js-tla-deadline"}, context.temp_allocator)
+    testing.expect(t, join_err == nil, "temp root path joins")
+    os.remove_all(dir)
+    testing.expect_value(t, os.make_directory_all(dir), nil)
+    defer os.remove_all(dir)
+
+    names := [2]string{"a.txt", "b.txt"}
+    for name in names {
+        path, perr := os.join_path({dir, name}, context.temp_allocator)
+        testing.expect(t, perr == nil, "fixture path joins")
+        testing.expect_value(t, os.write_entire_file(path, transmute([]byte)string(name)), nil)
+    }
+
+    probe: Probe
+    defer delete(probe.reports)
+
+    modules := [1]Module{fs_module()}
+    h: Host
+    testing.expect_value(
+        t,
+        init(
+            &h,
+            {
+                modules   = modules[:],
+                root      = dir,
+                pool      = &pool,
+                user      = &probe,
+                report    = probe_report,
+                // Tight enough that multi-step TLA often abandons before both awaits finish.
+                deadline  = 1 * time.Nanosecond,
+                allocator = context.allocator,
+            },
+        ),
+        Error.None,
+    )
+
+    source := `
+        import { fs } from "yuke:fs"
+        await fs.readFile("a.txt")
+        await fs.readFile("b.txt")
+        globalThis.result = "done"
+    `
+    // May succeed on a very fast machine if both awaits finish before the deadline check;
+    // either way pending must be 0 and pool drain must not assert.
+    _ = eval_module(&h, "tla-deadline.js", source, context.temp_allocator)
+    testing.expect_value(t, h.pending, 0)
+    testing.expect(t, h.ops_open, "ops must reopen after eval")
+
+    testing.expect_value(t, offload.pool_drain(&pool), nil)
+    offload.pool_destroy(&pool)
+    destroy(&h)
+}
+
+// Top-level throw rejects the module promise rather than raising out of eval.
 @(test)
 test_top_level_throw_is_reported :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -217,8 +392,6 @@ test_top_level_throw_is_reported :: proc(t: ^testing.T) {
     }
 }
 
-// A syntax error is the one failure `eval` does raise directly, and it must be reported the
-// same way a rejection is.
 @(test)
 test_syntax_error_is_reported :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -242,8 +415,6 @@ test_syntax_error_is_reported :: proc(t: ^testing.T) {
     testing.expect(t, len(probe.reports) == 1, "the syntax error should be reported once")
 }
 
-// `call` is the seam an embedder drives its own callbacks through, so a throwing callback
-// reports and reports as failed rather than handing back an exception value.
 @(test)
 test_call_reports_a_throwing_callback :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -276,8 +447,6 @@ test_call_reports_a_throwing_callback :: proc(t: ^testing.T) {
     }
 }
 
-// The client's configuration: an embedder module and the built-in one installed together.
-// Neither hides the other, and a host op still settles.
 @(test)
 test_embedder_module_and_fs_coexist :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -331,14 +500,66 @@ test_embedder_module_and_fs_coexist :: proc(t: ^testing.T) {
 
     testing.expect_value(t, result_of(t, &h), "client:true")
 
-    // The ordering every embedder owes this host: drain, then release.
+    // Drain, then release — ordering every embedder owes this host.
     testing.expect_value(t, offload.pool_drain(&pool), nil)
     offload.pool_destroy(&pool)
     destroy(&h)
 }
 
-// Listing `yuke:fs` without a root installs a module that refuses every call: the import
-// resolves, and the throw arrives where the script asks for a path.
+// TLA of a host op: eval_module pumps until the body finishes (not left suspended).
+@(test)
+test_top_level_await_fs_read_file :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    pool: offload.Pool
+    testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
+
+    base, has := os.lookup_env("TMPDIR", context.temp_allocator)
+    if !has {
+        base = "/tmp"
+    }
+    dir, join_err := os.join_path({base, "yuke-js-tla-fs"}, context.temp_allocator)
+    testing.expect(t, join_err == nil, "temp root path joins")
+    os.remove_all(dir)
+    testing.expect_value(t, os.make_directory_all(dir), nil)
+    defer os.remove_all(dir)
+
+    path, path_err := os.join_path({dir, "note.txt"}, context.temp_allocator)
+    testing.expect(t, path_err == nil, "fixture path joins")
+    testing.expect_value(t, os.write_entire_file(path, transmute([]byte)string("from tla")), nil)
+
+    modules := [1]Module{fs_module()}
+
+    h: Host
+    testing.expect_value(
+        t,
+        init(&h, {modules = modules[:], root = dir, pool = &pool, allocator = context.allocator}),
+        Error.None,
+    )
+
+    source := `
+        import { fs } from "yuke:fs"
+        const text = await fs.readFile("note.txt")
+        globalThis.result = text
+    `
+    testing.expect(
+        t,
+        eval_module(&h, "tla-fs.js", source, context.temp_allocator),
+        "top-level await of yuke:fs should finish during eval_module",
+    )
+    testing.expect_value(t, result_of(t, &h), "from tla")
+    testing.expect_value(t, h.pending, 0)
+
+    testing.expect_value(t, offload.pool_drain(&pool), nil)
+    offload.pool_destroy(&pool)
+    destroy(&h)
+}
+
+// Listing yuke:fs without a root installs a module that refuses every call.
 @(test)
 test_listed_fs_without_a_root_refuses_calls :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -365,8 +586,7 @@ test_listed_fs_without_a_root_refuses_calls :: proc(t: ^testing.T) {
     testing.expect_value(t, result_of(t, &h), "threw")
 }
 
-// A caller's list is copied, so composing it from a temporary is safe — which is how both
-// embedders build theirs.
+// Caller's module list is copied, so composing from a temporary is safe.
 @(test)
 test_module_list_may_be_a_temporary :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -389,8 +609,103 @@ test_module_list_may_be_a_temporary :: proc(t: ^testing.T) {
 
     defer destroy(&h)
 
-    // Resolved after the caller's slice went out of scope.
     source := `import { probe } from "test:probe"; globalThis.result = probe.tag`
     testing.expect(t, eval_module(&h, "probe.js", source, context.temp_allocator), "the module resolves")
     testing.expect_value(t, result_of(t, &h), "copied")
+}
+
+// Two ES modules via the resolve seam — loader compiles embedder source, not just native modules.
+@(private = "file")
+RESOLVED_A :: `import { b } from "test:resolved-b"; export const a = "A+" + b`
+
+@(private = "file")
+RESOLVED_B :: `export const b = "B"`
+
+@(private = "file")
+probe_resolve :: proc(user: rawptr, name: string, allocator: mem.Allocator) -> (string, bool, bool) {
+    switch name {
+    case "test:resolved-a":
+        return RESOLVED_A, false, true
+
+    case "test:resolved-b":
+        return RESOLVED_B, false, true
+
+    case "test:owned":
+        // Host allocator; loader owns the free. A leak fails the memory tracker.
+        source, _ := strings.clone(`export const v = "owned"`, allocator)
+        return source, true, true
+    }
+
+    return "", false, false
+}
+
+@(test)
+test_resolved_source_module_imports_another :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    probe := Probe {
+        tag = "resolve",
+    }
+    defer delete(probe.reports)
+
+    h: Host
+    testing.expect_value(
+        t,
+        init(&h, {user = &probe, report = probe_report, resolve = probe_resolve, allocator = context.allocator}),
+        Error.None,
+    )
+    defer destroy(&h)
+
+    source := `import { a } from "test:resolved-a"; globalThis.result = a`
+    testing.expect(t, eval_module(&h, "resolve.js", source, context.temp_allocator), "the resolved chain evaluates")
+    testing.expect_value(t, result_of(t, &h), "A+B")
+}
+
+// Owned resolved source is freed by the loader after compile (memory tracker).
+@(test)
+test_owned_resolved_source_is_freed :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    probe := Probe {
+        tag = "owned",
+    }
+    defer delete(probe.reports)
+
+    h: Host
+    testing.expect_value(
+        t,
+        init(&h, {user = &probe, report = probe_report, resolve = probe_resolve, allocator = context.allocator}),
+        Error.None,
+    )
+    defer destroy(&h)
+
+    source := `import { v } from "test:owned"; globalThis.result = v`
+    testing.expect(t, eval_module(&h, "owned.js", source, context.temp_allocator), "the owned module evaluates")
+    testing.expect_value(t, result_of(t, &h), "owned")
+}
+
+// Declining resolver leaves the loader closed: import throws as with no resolver.
+@(test)
+test_resolver_declining_still_throws :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    probe := Probe {
+        tag = "decline",
+    }
+    defer delete(probe.reports)
+
+    h: Host
+    testing.expect_value(
+        t,
+        init(&h, {user = &probe, report = probe_report, resolve = probe_resolve, allocator = context.allocator}),
+        Error.None,
+    )
+    defer destroy(&h)
+
+    testing.expect(
+        t,
+        !eval_module(&h, "nope.js", `import "test:absent"`, context.temp_allocator),
+        "an unresolved specifier fails to evaluate",
+    )
+    testing.expect(t, len(probe.reports) > 0, "the failure is reported")
 }

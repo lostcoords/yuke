@@ -13,7 +13,7 @@ run_session_list :: proc(t: ^testing.T, name: string, obs: ^Handler_Obs, session
     path := testsupport.sqlite_db_path(t, name)
     defer testsupport.sqlite_db_remove(path)
 
-    run_handler(t, obs, path, ..sessions)
+    run_handler(t, obs, path, "", ..sessions)
 }
 
 // A registry row differing only in what `session.list` orders and displays.

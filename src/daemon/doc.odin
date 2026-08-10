@@ -17,6 +17,15 @@ A credential in the URL marks every response the application reaches private.
 directory. An unmatched path is a 404; a known path pattern with the wrong method is
 a 405 carrying `Allow`.
 
+Provider OAuth (`provider_auth.odin`) is also reactor-owned. WebSocket methods start,
+cancel, list, and remove daemon-owned Codex credentials without putting a token on the
+wire. Browser login temporarily binds Codex's loopback callback port; device login polls
+with the provider-supplied interval. A single timer refreshes durable credentials five
+minutes before expiry, merges optional rotated tokens, then offloads the atomic
+`auth.json` replacement before publishing the new snapshot. Login, logout, refresh, and
+credential writes are mutually exclusive, and shutdown cancels both the timer and any
+secret-bearing transfer before destroying curl.
+
 `blob.odin` holds the store behind those routes: the streamed upload, its digest
 check against the URL hash, and the atomic publish, whose `fsync` and `rename` run on
 a worker pool because neither has an nbio operation. `workspace.odin`, `git.odin`, and
@@ -119,7 +128,7 @@ nothing to root against, containment cannot be decided, so the module refuses to
 rather than reaching an unbounded filesystem. Its calls are read-only and return promises;
 the blocking pass runs on the shared worker pool and its completion settles the promise
 back on the loop. Containment is decided on the worker, after canonicalization, so `..` and
-symlinks are resolved before the prefix test. `<js_root>/index.js` is evaluated at startup
+symlinks are resolved before the prefix test. `<js_root>/yuked.js` is evaluated at startup
 when present, and a script that raises is a start failure for the same reason an unusable
 `blob_dir` is one. The permission gate `docs/architecture-decisions.md` §5 puts at this
 boundary needs a session to gate against and arrives with the tool set; path containment is

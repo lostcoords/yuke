@@ -71,12 +71,9 @@ resync_build :: proc(
         return {}, .Unknown_Session
     }
 
-    session := params.session_id
-
-    hw, herr := store.high_water(d.store, session)
+    hw, herr := store.high_water(d.store, params.session_id)
     if herr != nil {
         log.errorf("daemon: resync high-water read failed: %v", herr)
-
         return {}, .Store_Failed
     }
 
@@ -87,23 +84,20 @@ resync_build :: proc(
     }
 
     // Message count and open-run activity, from the session row the projections maintain.
-    activity_row, aerr := store.session_activity(d.store, session, sa)
+    activity_row, aerr := store.session_activity(d.store, params.session_id, sa)
     if aerr != nil {
         log.errorf("daemon: resync activity read failed: %v", aerr)
-
         return {}, .Store_Failed
     }
 
     // Every announced config revision, so a message's `config_rev` resolves without a fold.
-    known, cerr := store.session_configs(d.store, session, sa)
+    known, cerr := store.session_configs(d.store, params.session_id, sa)
     if cerr != nil {
         log.errorf("daemon: resync config read failed: %v", cerr)
-
         return {}, .Store_Failed
     }
 
     page_size := wire.LIMITS.default_page_size
-
     if limit, ok := params.limit.?; ok {
         page_size = int(limit)
     }
@@ -112,10 +106,9 @@ resync_build :: proc(
     assert(page_size <= wire.LIMITS.max_page_size, "the page size stays within the wire bound")
 
     // The page is the transcript's tail, oldest first; anything older is `has_more`.
-    messages, merr := store.history_page(d.store, session, nil, page_size, sa)
+    messages, merr := store.history_page(d.store, params.session_id, nil, page_size, sa)
     if merr != nil {
         log.errorf("daemon: resync history read failed: %v", merr)
-
         return {}, .Store_Failed
     }
 
@@ -124,7 +117,6 @@ resync_build :: proc(
     // The boundary is the store's minted mark, not the page's own maximum: truncated ids
     // and compaction dividers are finalized too, even once no message carries them.
     boundary: Maybe(wire.Message_Id)
-
     if hw.message_id > 0 {
         boundary = hw.message_id
     }
@@ -167,7 +159,6 @@ resync_build :: proc(
 
     for message in messages {
         assistant, is_assistant := message.(wire.Assistant_Message)
-
         if !is_assistant {
             continue
         }
@@ -180,7 +171,7 @@ resync_build :: proc(
     current := resync_current_config(known)
     item := wire.Session_List_Item {
         session = wire.Session {
-            id = session,
+            id = params.session_id,
             workspace_id = wire.Workspace_Id(resync_unset_id()),
             model = current.model,
             reasoning = current.reasoning,
@@ -209,14 +200,12 @@ resync_build :: proc(
 
         if !finalized || wire.message_id(messages[len(messages) - 1]) > highest {
             log.errorf("daemon: resync page tail rises above finalized mark %v", boundary)
-
             return {}, .Corrupt_Log
         }
     }
 
     if verr := wire.session_resync_result_validate(result); verr != .None {
         log.errorf("daemon: built an invalid resync cut: %v", verr)
-
         return {}, .Invalid_Cut
     }
 
@@ -238,15 +227,12 @@ resync_config_add :: proc(
     }
 
     cfg, found := resync_config_find(known, rev)
-
     if !found {
         log.errorf("daemon: resync found no config.changed for revision %v", rev)
-
         return .Corrupt_Log
     }
 
     append(out, cfg)
-
     return .None
 }
 

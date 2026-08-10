@@ -423,12 +423,41 @@ listen :: proc(
 }
 
 // Stop accepting and close every owned connection. Idempotent and asynchronous.
+// Calling this while a graceful drain is in progress escalates it immediately.
 shutdown :: proc(s: ^Server) {
     assert(s != nil, "shutdown needs a server")
+
+    if s.state == .Serving {
+        shutdown_begin(s)
+    } else if s.state != .Closing {
+        return
+    }
+
+    for _, c in s.conns {
+        if c.state != .Hijacked {
+            conn_finalize(c)
+        }
+    }
+
+    maybe_finish_shutdown(s)
+}
+
+// Stop accepting while allowing owned connections to finish their current
+// response. Hijacked connections remain application-owned, as with shutdown.
+drain :: proc(s: ^Server) {
+    assert(s != nil, "drain needs a server")
 
     if s.state != .Serving {
         return
     }
+
+    shutdown_begin(s)
+    maybe_finish_shutdown(s)
+}
+
+@(private)
+shutdown_begin :: proc(s: ^Server) {
+    assert(s != nil && s.state == .Serving, "shutdown begin needs a serving server")
 
     log.debug("http_server: shutdown started")
     s.state = .Closing
@@ -438,13 +467,6 @@ shutdown :: proc(s: ^Server) {
     }
 
     nbio.close_poly(s.socket, s, on_listen_closed, s.loop)
-    for _, c in s.conns {
-        if c.state != .Hijacked {
-            conn_finalize(c)
-        }
-    }
-
-    maybe_finish_shutdown(s)
 }
 
 // Release the connection map after shutdown completes.

@@ -206,6 +206,52 @@ test_js_fs_settles_concurrent_calls :: proc(t: ^testing.T) {
     testing.expect_value(t, js_run(t, "js-concurrent", source, files), "abc")
 }
 
+// Top-level await of yuke:fs finishes inside eval_module (loop pumped until the module
+// promise settles), so globalThis.result is set before the caller continues.
+@(test)
+test_js_top_level_await_fs :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    files := []Js_Fixture{{"note.txt", "tla-ok"}}
+
+    source := `
+        import { fs } from "yuke:fs"
+        globalThis.result = await fs.readFile("note.txt")
+    `
+
+    testing.expect_value(t, js_run(t, "js-tla-fs", source, files), "tla-ok")
+}
+
+// yuked.js may top-level-await host I/O at startup; start fails only if evaluation fails.
+@(test)
+test_js_entry_top_level_await_fs :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    root := test_make_dir("js-entry-tla")
+    defer os.remove_all(root)
+
+    js_write(t, root, "note.txt", "entry-tla")
+    js_write(
+        t,
+        root,
+        JS_ENTRY_FILE,
+        `
+            import { fs } from "yuke:fs"
+            globalThis.result = await fs.readFile("note.txt")
+        `,
+    )
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    testing.expect_value(t, js_result(t, &d), "entry-tla")
+}
+
 // The module set is closed: an unknown specifier is a script error, and the daemon never
 // goes looking for it on disk.
 @(test)
@@ -230,11 +276,12 @@ test_js_unknown_module_is_refused :: proc(t: ^testing.T) {
     testing.expect(t, !evaluated, "an unknown module should fail to evaluate")
 }
 
-// `index.js` is the script tier's production entry point. A root that has one runs it at
+// `yuked.js` is the script tier's production entry point. A root that has one runs it at
 // startup, before the transport adopts anything.
 @(test)
 test_js_entry_script_runs_at_startup :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+    testing.expect_value(t, JS_ENTRY_FILE, "yuked.js")
 
     root := test_make_dir("js-entry")
     defer os.remove_all(root)

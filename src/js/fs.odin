@@ -10,90 +10,56 @@ import "core:strings"
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
 
-// Read-only filesystem access, rooted at `Host.root`. Installed for any embedder that
-// supplies both a root and a pool; `yuke:term` and the rest stay embedder-specific.
+// Read-only filesystem access rooted at `Host.root`; needs root and pool.
 FS_MODULE :: "yuke:fs"
 
 // Declared up front because ES modules resolve bindings before any module body runs.
 @(rodata)
 FS_EXPORTS := []string{"fs"}
 
-// `yuke:fs` for a caller's module list. Calls throw unless the host was given a root and a
-// pool, so listing it without configuring one installs a module that refuses every request.
+// Throws unless the host was given a root and a pool.
 fs_module :: proc() -> Module {
     return {name = FS_MODULE, init = fs_module_init, exports = FS_EXPORTS}
 }
 
-// Largest file `readFile` will materialize. A host op holds its result in memory until the
-// promise settles, so this bounds one script's reach into the runtime's allocation ceiling.
+// Max file `readFile` materializes; result is held until the promise settles.
 FS_MAX_FILE_BYTES :: 8 * mem.Megabyte
 
-// Job arena block size and its out-of-band threshold, kept equal on purpose: a job larger
-// than the block but under a bigger threshold would fit neither path and fail every mid-sized read.
+// Job arena block size equals OOB threshold so mid-sized reads fit one path.
 FS_JOB_BLOCK_BYTES :: 2 * mem.Kilobyte
 
-// Which `yuke:fs` call a job answers.
 Fs_Op :: enum {
     Read_File,
     Stat,
     Read_Dir,
 }
 
-// Why a `yuke:fs` call could not be answered. Every one of these is peer-supplied input or
-// an operating condition, so each becomes a rejected promise rather than an assertion.
+// Peer/input failures become rejected promises, never assertions.
 Fs_Error :: enum {
-    // The pass completed; the result fields are populated.
     None,
-
-    // The path did not resolve, or resolved outside the configured root.
     Denied,
-
-    // The path does not exist or could not be opened.
     Unreadable,
-
-    // `readFile` found more bytes than it will materialize.
     Too_Large,
 }
 
-// One in-flight `yuke:fs` call, owned across the offloaded pass and freed by the completion.
-// Its settle functions are owned `Value`s in a live context, so `Host.pending` counts these jobs.
+// One in-flight yuke:fs call; Host.pending counts these (settle Values live in the context).
 Fs_Job :: struct {
-    // Runs the filesystem pass off the reactor; carried inline so submitting never allocates.
     task:      offload.Task(Fs_Job),
-
-    // Owning host, for the context the completion settles into.
     host:      ^Host,
-
-    // Which call this answers.
     op:        Fs_Op,
-
-    // Owned clone of the requested path, already joined to the root.
     path:      string,
-
-    // Promise settle functions, owned until the completion calls and frees them.
     resolve:   qjs.Value,
     reject:    qjs.Value,
-
-    // What the pass decided. Nil until the worker finishes; `.None` is success.
     outcome:   Maybe(Fs_Error),
-
-    // `readFile` contents.
     contents:  []byte,
-
-    // `stat` findings.
     info:      os.File_Info,
-
-    // `readDir` listing.
     entries:   []os.File_Info,
-
-    // Backs every owned allocation above, from the process heap rather than the host's
-    // allocator: the worker is this arena's only writer while the loop thread uses the host's.
+    // Process heap, not host allocator: worker is sole writer while loop uses host's.
     arena:     mem.Dynamic_Arena,
     allocator: mem.Allocator,
 }
 
-// Install the module's single export. Every function returns a promise: a synchronous host
-// op would block the one runtime, and with it every other session.
+// Every export returns a promise so the single runtime is never blocked.
 fs_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
@@ -128,14 +94,18 @@ fs_read_dir :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: 
     return fs_begin(ctx, .Read_Dir, argc, argv)
 }
 
-// Turn one host call into a pending promise plus an offloaded pass. A bad argument throws
-// synchronously (a script bug); a path that merely can't be read rejects instead.
+// Bad argument throws synchronously; unreadable path rejects instead.
 @(private = "file")
 fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     h := (^Host)(qjs.get_context_opaque(ctx))
 
     if h == nil || h.root == "" {
         return qjs.throw_type_error(ctx, "yuke:fs needs a configured js root")
+    }
+
+    // Closed while abandoning a failed eval_module so TLA continuations cannot re-submit.
+    if !h.ops_open {
+        return qjs.throw_type_error(ctx, "yuke:fs is closed")
     }
 
     if argc < 1 || !qjs.is_string(argv[0]) {
@@ -168,8 +138,7 @@ fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) 
     )
     job.allocator = mem.dynamic_arena_allocator(&job.arena)
 
-    // Joined here so the pass receives one concrete path. `filepath.join` keeps even an
-    // absolute argument under the root, leaving the containment check below as the only escape hatch.
+    // join keeps even absolute args under root; containment below is the only escape hatch.
     joined, join_err := filepath.join({h.root, requested}, job.allocator)
 
     if join_err != nil {
@@ -194,8 +163,7 @@ fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) 
     return promise
 }
 
-// Worker thread; touches only `job`, never the context, since building a JS value off the
-// loop would race the engine. Canonicalization happens here, resolving `..` and symlinks before the containment check.
+// Worker: touch only `job`, never the context. Canonicalize before containment.
 @(private = "file")
 fs_job_run :: proc(job: ^Fs_Job) {
     assert(job.host != nil, "a host op lost its host")
@@ -204,8 +172,6 @@ fs_job_run :: proc(job: ^Fs_Job) {
     job.outcome = fs_pass(job)
 }
 
-// The pass itself, so every exit reports an outcome rather than relying on each branch to
-// remember to set one.
 @(private = "file")
 fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
     canonical, cerr := os.get_absolute_path(job.path, job.allocator)
@@ -213,14 +179,13 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
         return .Denied
     }
 
-    if !fs_contained(job.host.root, canonical) {
+    if !path_contained(job.host.root, canonical) {
         return .Denied
     }
 
     switch job.op {
     case .Read_File:
-        // Opened once and reused: `read_entire_file` on a path would resolve and stat it a
-        // second time, and the size guard has to run before the read either way.
+        // Open once: size guard must run before materializing the read.
         handle, oerr := os.open(canonical)
         if oerr != nil {
             return .Unreadable
@@ -271,10 +236,9 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
     return .None
 }
 
-// Whether `path` is `root` or sits beneath it. The separator test is what stops a sibling
-// directory whose name merely starts with the root's from passing.
-@(private = "file")
-fs_contained :: proc(root: string, path: string) -> bool {
+// Path is root or beneath it; separator test stops sibling prefix matches.
+// Shared by yuke:fs (canonical) and the module loader resolver (normalized).
+path_contained :: proc(root: string, path: string) -> bool {
     assert(root != "", "containment needs a root")
 
     if path == root {
@@ -290,8 +254,7 @@ fs_contained :: proc(root: string, path: string) -> bool {
     return len(rest) > 0 && rest[0] == filepath.SEPARATOR
 }
 
-// Loop thread: settles the promise, releases the job, and drains the queued continuations.
-// The context is guaranteed live — the embedder drains its pool before calling `destroy`.
+// Loop thread: settle, free job, drain. Context is live — embedder drains before destroy.
 @(private = "file")
 fs_job_done :: proc(job: ^Fs_Job) {
     outcome, decided := job.outcome.?
@@ -307,12 +270,11 @@ fs_job_done :: proc(job: ^Fs_Job) {
     h.pending -= 1
     fs_settle(job, outcome)
 
-    // Settling only queues the reaction; the continuations run here.
+    // Settling only queues the reaction; continuations run here.
     drain(h)
 }
 
-// Call resolve or reject with what the pass decided. A settle call can only except if the
-// promise was already settled, which can't happen for one this job alone owns.
+// Settle can only except if already settled, which cannot happen for a job-owned promise.
 @(private = "file")
 fs_settle :: proc(job: ^Fs_Job, outcome: Fs_Error) {
     ctx := job.host.ctx
@@ -320,8 +282,7 @@ fs_settle :: proc(job: ^Fs_Job, outcome: Fs_Error) {
     defer qjs.free_value(ctx, job.resolve)
     defer qjs.free_value(ctx, job.reject)
 
-    // The success value is built only on the success path: on a failed pass the result
-    // fields were never populated.
+    // Success value only on success: failed passes never populated result fields.
     settle := job.reject
     value := qjs.new_string(ctx, fs_error_message(outcome)) if outcome != .None else fs_value(job)
 
@@ -335,7 +296,6 @@ fs_settle :: proc(job: ^Fs_Job, outcome: Fs_Error) {
     qjs.free_value(ctx, qjs.call(ctx, settle, qjs.undefined(), args[:]))
 }
 
-// Build the JS value a successful pass resolves to.
 @(private = "file")
 fs_value :: proc(job: ^Fs_Job) -> qjs.Value {
     ctx := job.host.ctx
@@ -360,8 +320,7 @@ fs_value :: proc(job: ^Fs_Job) -> qjs.Value {
     unreachable()
 }
 
-// One `File_Info` as a plain object. `name` is the basename, not the absolute path — that
-// would leak the root's location into the sandbox.
+// `name` is basename only — absolute paths would leak the root into the sandbox.
 @(private = "file")
 fs_info_object :: proc(ctx: ^qjs.Context, info: os.File_Info) -> qjs.Value {
     obj := qjs.new_object(ctx)
@@ -393,8 +352,7 @@ fs_error_message :: proc(err: Fs_Error) -> string {
     unreachable()
 }
 
-// Release the job's arena and the job. Every owned path, buffer, and entry lives in the
-// arena, so nothing is reachable afterwards.
+// Arena owns every path/buffer/entry; nothing is reachable after destroy.
 @(private = "file")
 fs_job_free :: proc(job: ^Fs_Job) {
     assert(job != nil, "host op cleanup needs job state")

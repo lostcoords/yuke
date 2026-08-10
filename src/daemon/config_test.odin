@@ -1,0 +1,199 @@
+package daemon
+
+import "core:log"
+import "core:nbio"
+import "core:os"
+import "core:path/filepath"
+import "core:testing"
+
+// A 32-byte unreserved token: the minimum `auth_token_valid` accepts, so the manifest can set
+// authorization and the test can read it back off the daemon.
+@(private = "file")
+TEST_TOKEN :: "0123456789abcdef0123456789abcdef"
+
+@(private = "file")
+write_entry :: proc(t: ^testing.T, dir: string, source: string) {
+    path, join_err := filepath.join({dir, JS_ENTRY_FILE}, context.temp_allocator)
+    testing.expect(t, join_err == nil, "the entry path joins")
+    testing.expect_value(t, os.write_entire_file(path, transmute([]byte)source), nil)
+}
+
+// Start a daemon rooted at a fresh directory holding `source` as `yuked.js`, and return the
+// start outcome. Rolls the daemon down on success; a failed start already rolled itself back.
+// The logger is silenced because the error cases drive error-level logs the runner fails on.
+@(private = "file")
+entry_start :: proc(t: ^testing.T, name: string, source: string) -> Error {
+    context.logger = log.nil_logger()
+
+    root := test_make_dir(name)
+    defer os.remove_all(root)
+
+    write_entry(t, root, source)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    err := start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root})
+    if err == .None {
+        test_teardown(&d)
+    }
+
+    return err
+}
+
+// The core of the feature: `export default defineConfig({...})` supersedes the caller's options,
+// so the daemon takes host/port/auth_token/log_level straight from `yuked.js`.
+@(test)
+test_define_config_supersedes_options :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    root := test_make_dir("cfg-supersede")
+    defer os.remove_all(root)
+
+    write_entry(
+        t,
+        root,
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({
+                authToken: "` +
+        TEST_TOKEN +
+        `",
+                logLevel: "debug",
+            })
+        `,
+    )
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    testing.expect(t, d.config_seen, "defineConfig was recorded")
+    testing.expect_value(t, d.auth_token, TEST_TOKEN)
+    testing.expect_value(t, d.log_level, log.Level.Debug)
+}
+
+// The async path: a manifest may `await` a host op — reading a secret off disk — before it
+// defines config. Top-level await settles before the entry is treated as loaded.
+@(test)
+test_define_config_reads_a_secret_with_top_level_await :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    root := test_make_dir("cfg-async")
+    defer os.remove_all(root)
+
+    token_path, join_err := filepath.join({root, "token"}, context.temp_allocator)
+    testing.expect(t, join_err == nil, "the token path joins")
+    testing.expect_value(t, os.write_entire_file(token_path, transmute([]byte)string(TEST_TOKEN + "\n")), nil)
+
+    write_entry(
+        t,
+        root,
+        `
+            import { defineConfig } from "yuke:daemon"
+            import { fs } from "yuke:fs"
+
+            const token = (await fs.readFile("token")).trim()
+            export default defineConfig({ authToken: token })
+        `,
+    )
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    testing.expect_value(t, d.auth_token, TEST_TOKEN)
+}
+
+// A manifest that runs but never calls `defineConfig` leaves the caller's options in place and
+// starts on defaults, rather than silently dropping a config the operator forgot to register.
+@(test)
+test_entry_without_define_config_runs_on_defaults :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+    // The "did not call defineConfig" path warns; keep the runner quiet.
+    context.logger = log.nil_logger()
+
+    root := test_make_dir("cfg-none")
+    defer os.remove_all(root)
+
+    write_entry(t, root, `globalThis.x = 1`)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    defer test_teardown(&d)
+
+    testing.expect(t, !d.config_seen, "no defineConfig call was recorded")
+    testing.expect_value(t, d.log_level, log.Level.Info)
+}
+
+// Pure registration: a second `defineConfig` throws, and the throw fails the entry, which fails
+// the start.
+@(test)
+test_define_config_twice_refuses_the_start :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    err := entry_start(
+        t,
+        "cfg-twice",
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            defineConfig({ port: 1 })
+            defineConfig({ port: 2 })
+        `,
+    )
+
+    testing.expect_value(t, err, Error.Script_Failed)
+}
+
+// A non-object argument throws at the boundary rather than being coerced, so the start fails.
+@(test)
+test_define_config_rejects_a_non_object :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    err := entry_start(
+        t,
+        "cfg-non-object",
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            defineConfig(42)
+        `,
+    )
+
+    testing.expect_value(t, err, Error.Script_Failed)
+}
+
+// A well-formed call carrying a mistyped value decodes-fails, which is a configuration error
+// (not a script fault): the same strictness the file loader enforced, now at the JS boundary.
+@(test)
+test_define_config_rejects_a_mistyped_value :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    err := entry_start(
+        t,
+        "cfg-mistyped",
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({ port: "nope" })
+        `,
+    )
+
+    testing.expect_value(t, err, Error.Invalid_Options)
+}

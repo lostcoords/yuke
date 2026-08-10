@@ -11,21 +11,24 @@ import js "src:js"
 // Daemon-global manifest evaluated from the script root at startup, when a root is configured.
 // This is the shared-runtime tier; per-session tool contexts attach here once a session engine
 // owns their lifetime.
-JS_ENTRY_FILE :: "index.js"
+JS_ENTRY_FILE :: "yuked.js"
 
 // Bring up the script tier. The daemon takes every limit `src/js` defaults to and installs
-// no module of its own — `yuke:fs` is all that's exposed to a daemon script yet.
+// `yuke:fs` plus its own `yuke:daemon` (`defineConfig`) — both only when a root gives an entry
+// script to evaluate.
 js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     assert(d != nil, "js_init needs daemon state")
     assert(offload.pool_is_running(&d.workers), "the script tier offloads onto a running pool")
 
     // Only when a root gives it something to contain paths against — an unrooted import
     // fails rather than throwing on first call. `init` copies the list, so a local is fine.
-    modules: [1]js.Module
+    modules: [2]js.Module
     count := 0
 
     if root != "" {
         modules[count] = js.fs_module()
+        count += 1
+        modules[count] = config_module()
         count += 1
     }
 
@@ -60,18 +63,20 @@ js_report :: proc(user: rawptr, source: string, text: string) {
     log.errorf("daemon: js %s: %s", source, text)
 }
 
-// Evaluate `<root>/index.js` when configured and present. A root with no entry script is
-// normal; one that won't evaluate is a start failure, like an unusable `blob_dir`.
-js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> Error {
+// Evaluate `<root>/yuked.js` when configured and present. A root with no entry script is
+// normal; one that won't evaluate is a start failure, like an unusable `blob_dir`. `evaluated`
+// distinguishes "ran an entry" from "no entry to run", so `start` can tell a script that forgot
+// `defineConfig` from a daemon with no script at all.
+js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, err: Error) {
     assert(d != nil, "js entry needs daemon state")
 
     if d.js.root == "" {
-        return .None
+        return false, .None
     }
 
     path, join_err := filepath.join({d.js.root, JS_ENTRY_FILE}, allocator)
     if join_err != nil {
-        return .Out_Of_Memory
+        return false, .Out_Of_Memory
     }
 
     defer delete(path, allocator)
@@ -79,16 +84,16 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> Error {
     // A root with no entry script is normal, so an unreadable path is not an error here.
     source, read_err := os.read_entire_file(path, allocator)
     if read_err != nil {
-        return .None
+        return false, .None
     }
 
     defer delete(source, allocator)
 
     if !js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator) {
-        return .Script_Failed
+        return false, .Script_Failed
     }
 
     log.infof("daemon: evaluated %s", path)
 
-    return .None
+    return true, .None
 }

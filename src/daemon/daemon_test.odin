@@ -17,6 +17,7 @@ import "core:unicode/utf8"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
+import provider_auth "src:auth"
 import client "src:client"
 import store "src:daemon/store"
 import wire "src:wire"
@@ -40,6 +41,9 @@ test_teardown :: proc(d: ^Daemon) {
     shutdown(d)
     nbio.run_until(&d.ws_server.shutdown_complete)
     nbio.run_until(&d.front_door.shutdown_complete)
+    if d.auth_callback.state == .Closing {
+        nbio.run_until(&d.auth_callback.shutdown_complete)
+    }
     destroy(d)
 }
 
@@ -224,43 +228,46 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
 // Per-test observation and context reached through the driver's `user_data`.
 Handler_Obs :: struct {
     // Method the request drives.
-    method:    wire.Method_Name,
+    method:     wire.Method_Name,
 
     // Params for that request.
-    params:    wire.Request_Params,
+    params:     wire.Request_Params,
 
     // Assertions run against each delivered response; returns true when finished.
-    check:     proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool,
+    check:      proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool,
 
     // A filesystem path the test set up, read by describe/browse checks.
-    dir:       string,
+    dir:        string,
 
     // Response counter, for multi-page exchanges.
-    page:      int,
+    page:       int,
 
     // The active testing context, so checks can assert from inside the callback.
-    t:         ^testing.T,
+    t:          ^testing.T,
 
     // Terminal callback fired.
-    done:      bool,
+    done:       bool,
 
     // The check declared the exchange complete and initiated the client close.
-    finished:  bool,
+    finished:   bool,
 
     // Either a terminal callback or the harness timeout fired.
-    wait_done: bool,
+    wait_done:  bool,
 
     // The harness timeout fired before a terminal callback.
-    timed_out: bool,
+    timed_out:  bool,
 
     // At least one response was delivered to `handler_on_response`. Without this, a
     // daemon that closes the connection instead of answering would still leave
     // `done` set (by `handler_on_close`) and no `check` ever runs, so the test would
     // vacuously pass.
-    responded: bool,
+    responded:  bool,
 
     // Terminal driver error, if any.
-    err:       client.Protocol_Error,
+    err:        client.Protocol_Error,
+
+    // Multi-request auth test state.
+    auth_stage: int,
 }
 
 handler_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
@@ -308,7 +315,7 @@ handler_callbacks :: proc() -> client.Client_Callbacks {
 
 // Bring up a daemon, drive `obs`'s single request through the client driver, and run its
 // check(s). `db_path`/`sessions` seed a store; both default to the storeless daemon most methods need.
-run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: ..wire.Session) {
+run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", auth_path := "", sessions: ..wire.Session) {
     obs.t = t
 
     nbio.acquire_thread_event_loop()
@@ -316,7 +323,7 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: .
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path})
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path, auth_path = auth_path})
     testing.expect_value(t, derr, Error.None)
 
     for session in sessions {
@@ -485,6 +492,246 @@ test_daemon_catalog_list_unchanged_when_since_rev_matches :: proc(t: ^testing.T)
         check = check_catalog_unchanged,
     }
     run_handler(t, &obs)
+}
+
+check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.list should succeed") {
+        return true
+    }
+
+    result, is_list := ok.result.(wire.Auth_List_Result)
+    if !testing.expect(t, is_list, "result is an auth provider list") {
+        return true
+    }
+
+    if !testing.expect_value(t, len(result.providers), 2) {
+        return true
+    }
+
+    codex_entry: Maybe(wire.Auth_Provider)
+    xai_entry: Maybe(wire.Auth_Provider)
+    for entry in result.providers {
+        switch string(entry.provider_id) {
+        case provider_auth.CODEX_PROVIDER_ID:
+            codex_entry = entry
+
+        case provider_auth.XAI_PROVIDER_ID:
+            xai_entry = entry
+        }
+    }
+
+    codex, codex_ok := codex_entry.?
+    if !testing.expect(t, codex_ok, "codex provider is listed") {
+        return true
+    }
+    testing.expect_value(t, codex.state, wire.Auth_State.Signed_Out)
+    _, codex_pending := codex.pending_login.?
+    testing.expect(t, !codex_pending, "fresh auth has no pending login")
+
+    codex_device := false
+    for flow in codex.login_flows {
+        codex_device = codex_device || flow == .Device_Code
+    }
+    testing.expect(t, codex_device, "codex device login remains available without a callback port")
+
+    xai, xai_ok := xai_entry.?
+    if !testing.expect(t, xai_ok, "xai provider is listed") {
+        return true
+    }
+    testing.expect_value(t, xai.state, wire.Auth_State.Signed_Out)
+
+    // xAI offers both browser (PKCE) and device (RFC 8628) login.
+    xai_browser := false
+    xai_device := false
+    for flow in xai.login_flows {
+        xai_browser = xai_browser || flow == .Browser
+        xai_device = xai_device || flow == .Device_Code
+    }
+    testing.expect(t, xai_browser, "xai browser login is available")
+    testing.expect(t, xai_device, "xai device login is available")
+
+    return true
+}
+
+@(test)
+test_daemon_auth_list_uses_configured_auth_json :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-list")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Auth_List,
+        params = wire.Empty{},
+        check  = check_auth_list,
+    }
+    run_handler(t, &obs, auth_path = path)
+}
+
+@(test)
+test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-refresh-timer")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    auth_store, open_err := provider_auth.open(path)
+    testing.expect_value(t, open_err, provider_auth.Error.None)
+    credentials := provider_auth.OAuth_Credentials {
+        access_token  = "access",
+        refresh_token = "refresh",
+        expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
+        account_id    = "account",
+    }
+    testing.expect_value(
+        t,
+        provider_auth.credentials_put(auth_store, provider_auth.CODEX_PROVIDER_ID, credentials),
+        provider_auth.Error.None,
+    )
+    provider_auth.close(auth_store)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    testing.expect(t, d.auth_refresh_timer != nil, "future credentials arm proactive refresh")
+    testing.expect(t, d.auth_refresh == nil, "future credentials do not refresh early")
+
+    shutdown(&d)
+    testing.expect(t, d.auth_refresh_timer == nil, "shutdown cancels proactive refresh")
+    nbio.run_until(&d.ws_server.shutdown_complete)
+    nbio.run_until(&d.front_door.shutdown_complete)
+    destroy(&d)
+}
+
+check_auth_logout :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.logout should succeed") {
+        return true
+    }
+
+    _, is_empty := ok.result.(wire.Empty)
+    testing.expect(t, is_empty, "auth.logout returns an empty result")
+
+    return true
+}
+
+@(test)
+test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-logout")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    auth_store, open_err := provider_auth.open(path)
+    testing.expect_value(t, open_err, provider_auth.Error.None)
+    credentials := provider_auth.OAuth_Credentials {
+        access_token  = "access",
+        refresh_token = "refresh",
+        expires_at_ms = 1_900_000_000_000,
+        account_id    = "account",
+    }
+    testing.expect_value(
+        t,
+        provider_auth.credentials_put(auth_store, provider_auth.CODEX_PROVIDER_ID, credentials),
+        provider_auth.Error.None,
+    )
+    provider_auth.close(auth_store)
+
+    obs := Handler_Obs {
+        method = .Auth_Logout,
+        params = wire.Auth_Logout_Params{provider_id = provider_auth.CODEX_PROVIDER_ID},
+        check = check_auth_logout,
+    }
+    run_handler(t, &obs, auth_path = path)
+
+    reopened, reopen_err := provider_auth.open(path)
+    testing.expect_value(t, reopen_err, provider_auth.Error.None)
+    defer provider_auth.close(reopened)
+    testing.expect(
+        t,
+        !provider_auth.credentials_present(reopened, provider_auth.CODEX_PROVIDER_ID),
+        "logout is durable before its response",
+    )
+}
+
+check_auth_browser_start_cancel :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+
+    if o.auth_stage == 0 {
+        if unavailable, is_error := resp.(wire.Response_Error); is_error {
+            testing.expect_value(t, unavailable.error.code, wire.Error_Code.Overloaded)
+            return true
+        }
+
+        ok, is_ok := resp.(wire.Response_Ok)
+        if !testing.expect(t, is_ok, "browser auth.login should succeed") {
+            return true
+        }
+
+        login_result, is_login := ok.result.(wire.Auth_Login_Result)
+        if !testing.expect(t, is_login, "auth.login returns login details") {
+            return true
+        }
+
+        result, is_browser := login_result.(wire.Auth_Login_Result_Browser)
+        if !testing.expect(t, is_browser, "auth.login returns browser details") {
+            return true
+        }
+        testing.expect(
+            t,
+            strings.has_prefix(result.auth_url, provider_auth.CODEX_AUTHORIZE_URL),
+            "Codex authorize URL",
+        )
+        testing.expect(t, strings.contains(result.auth_url, "code_challenge_method=S256"), "browser login uses PKCE")
+
+        o.auth_stage = 1
+        client.client_send_request(
+            c,
+            .Auth_Cancel_Login,
+            wire.Auth_Cancel_Login_Params{login_id = result.login_id},
+            handler_on_response,
+        )
+        return false
+    }
+
+    testing.expect_value(t, o.auth_stage, 1)
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.cancel_login should succeed") {
+        return true
+    }
+    _, is_empty := ok.result.(wire.Empty)
+    testing.expect(t, is_empty, "auth.cancel_login returns an empty result")
+
+    return true
+}
+
+@(test)
+test_daemon_browser_login_starts_and_cancels_over_websocket :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-browser")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Auth_Login,
+        params = wire.Auth_Login_Params{provider_id = provider_auth.CODEX_PROVIDER_ID, flow = .Browser},
+        check = check_auth_browser_start_cancel,
+    }
+    run_handler(t, &obs, auth_path = path)
 }
 
 check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {

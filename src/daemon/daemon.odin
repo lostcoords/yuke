@@ -10,11 +10,14 @@ import "core:strings"
 import "core:time"
 
 import "core:mem/virtual"
+import curl "libs:bindings/curl"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
+import provider_auth "src:auth"
 import store "src:daemon/store"
 import js "src:js"
+import "src:paths"
 import wire "src:wire"
 
 // nbio offload workers, for blocking filesystem calls off the reactor.
@@ -48,12 +51,18 @@ Error :: enum {
     // newer daemon.
     Store_Failed,
 
+    // The private credential store, OAuth client, or loopback callback listener
+    // could not be initialized.
+    Auth_Failed,
+
     // The configured script root's entry script raised. Serving with a script tier the
     // operator believes is loaded would be worse than refusing to start.
     Script_Failed,
 }
 
-// Listen and identity options. Zero-valued fields default in `start`.
+// Listen and identity options. Zero-valued fields default in `start`. When `yuked.js` in the
+// script root calls `defineConfig`, its values supersede `host`, `port`, `db_path`, `blob_dir`,
+// and `auth_token` here; `daemon_version`, `js_root`, and `auth_path` are always the caller's.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:           string,
@@ -76,7 +85,10 @@ Options :: struct {
     // store, and with it every durable broadcast.
     db_path:        string,
 
-    // Directory the script tier reads: `index.js` is evaluated at startup and every
+    // Private provider credential file. Empty disables WebSocket OAuth methods.
+    auth_path:      string,
+
+    // Directory the script tier reads: `yuked.js` is evaluated at startup and every
     // `yuke:fs` path must resolve inside it. Empty disables `yuke:fs` and runs no script.
     js_root:        string,
 }
@@ -86,73 +98,113 @@ Options :: struct {
 // `start`/`shutdown`/`destroy`.
 Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
-    front_door:     http_server.Server,
+    front_door:          http_server.Server,
 
     // HTTP routes and pre-match middleware for the front door. `user_data` is this
     // `^Daemon`, and every callback receives it typed as `Http_Context.user_data`.
-    router:         Http_Router,
+    router:              Http_Router,
 
     // WebSocket server fed by `http`, driven through `ws.server_*`. Its
     // per-connection callbacks recover this `^Daemon` via `wsc.server.user_data`.
-    ws_server:      ws.Server,
+    ws_server:           ws.Server,
 
     // @private
     // Borrowed event loop the transport submits ops to; never run here.
-    loop:           ^nbio.Event_Loop,
+    loop:                ^nbio.Event_Loop,
 
     // @private
-    // Backs the three owned config strings and every connection's `Conn`. Must outlive
+    // Backs the owned config strings and every connection's `Conn`. Must outlive
     // the daemon.
-    allocator:      mem.Allocator,
+    allocator:           mem.Allocator,
 
     // @private
     // Owned daemon version string, reported in every `initialize` result.
-    daemon_version: string,
+    daemon_version:      string,
 
     // @private
     // Owned blob directory; empty when `/blob` is disabled.
-    blob_dir:       string,
+    blob_dir:            string,
 
     // @private
     // See `WORKER_COUNT`.
-    workers:        offload.Pool,
+    workers:             offload.Pool,
 
     // @private
     // Owned bearer token; empty when authorization is disabled.
-    auth_token:     string,
+    auth_token:          string,
 
     // @private
     // Event log of record, open for the daemon's whole serving life. Nil when no
     // database is configured, which is what makes a durable broadcast impossible.
-    store:          ^store.Store,
+    store:               ^store.Store,
+
+    // @private
+    // Owned credential-file path; empty when WebSocket OAuth is disabled.
+    auth_path:           string,
+
+    // @private
+    // Current private credential snapshot; nil exactly when `auth_path` is empty.
+    auth_store:          ^provider_auth.Store,
+
+    // @private
+    // Loopback-only OAuth callback listener and its route table. The single route
+    // is filled per browser login with that provider's registered callback path.
+    auth_callback:       http_server.Server,
+    auth_router:         Http_Router,
+    auth_callback_route: [1]Http_Route,
+
+    // @private
+    // Bounded OAuth control-plane HTTP transfers on the daemon loop.
+    auth_curl:           curl.Client,
+    auth_curl_ready:     bool,
+
+    // @private
+    // At most one login/refresh/credential-write is active across all providers.
+    // Refresh is daemon-owned and never appears on the wire.
+    auth_login:          ^Provider_Login,
+    auth_refresh:        ^Provider_Refresh,
+    auth_refresh_timer:  ^nbio.Operation,
+    auth_write_job:      ^Credential_Job,
+    auth_stopping:       bool,
 
     // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
-    seq_high:       map[wire.Session_Id]wire.Seq,
+    seq_high:            map[wire.Session_Id]wire.Seq,
 
     // @private
     // Scratch for one broadcast's encode; a single `Arena_Temp` spans the whole fan-out so
     // a shed marker minted mid-send shares it with the frame in flight.
-    pump_scratch:   virtual.Arena,
+    pump_scratch:        virtual.Arena,
 
     // @private
     // Shared scratch for one inbound frame; each `handle_text` wraps it in an `Arena_Temp`.
-    frame_scratch:  virtual.Arena,
+    frame_scratch:       virtual.Arena,
 
     // @private
     // Live connections keyed by the ticket that outlives them. Sized for the transport's
     // connection cap in `start`, so an admitted connection never allocates to register.
-    conns:          map[Conn_Ticket]^Conn,
+    conns:               map[Conn_Ticket]^Conn,
 
     // @private
     // Monotonic ticket source; incremented before use so zero is never issued.
-    next_ticket:    Conn_Ticket,
+    next_ticket:         Conn_Ticket,
 
     // @private
     // Script tier: one QuickJS runtime for the whole daemon. Torn down after the worker
     // pool drains, since an in-flight host op owns a promise in its context.
-    js:             js.Host,
+    js:                  js.Host,
+
+    // @private
+    // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
+    // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
+    // before serving, leaving both zero.
+    config_json:         string,
+    config_seen:         bool,
+
+    // Log level resolved from the manifest (`info` when unset or storeless). The caller owns
+    // the logger, so it reads this after `start` and installs the matching one.
+    log_level:           log.Level,
 }
 
 // Connection identity that outlives the `Conn`, so async work can resolve it later
@@ -204,13 +256,12 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return .Invalid_Options
     }
 
-    if !auth_token_valid(options.auth_token) {
-        return .Invalid_Options
-    }
+    options := options
 
     d^ = {}
     d.loop = loop
     d.allocator = allocator
+    d.log_level = .Info
 
     defer if err != .None {
         start_rollback(d)
@@ -221,20 +272,80 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         version = "0.0.0"
     }
 
+    // Bootstrap clones: version and the credential path do not come from the manifest — the
+    // path is where the manifest itself lives, and secrets stay out of it.
     cloned_version, version_aerr := strings.clone(version, allocator)
-    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
-    cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
+    cloned_auth_path, auth_path_aerr := strings.clone(options.auth_path, allocator)
     d.daemon_version = cloned_version
-    d.blob_dir = cloned_blob_dir
-    d.auth_token = cloned_token
-    if version_aerr != nil || blob_aerr != nil || token_aerr != nil {
+    d.auth_path = cloned_auth_path
+    if version_aerr != nil || auth_path_aerr != nil {
         return .Out_Of_Memory
     }
 
-    // Started unconditionally: `workspace.describe` and `workspace.browse` offload their
-    // path walks whether or not a blob directory is configured.
+    // Started before the script tier: `yuke:fs` offloads onto it, and `workspace.describe`
+    // walks paths on it whether or not a blob directory is configured.
     if perr := offload.pool_init(&d.workers, loop, WORKER_COUNT); perr != .None {
         return .Invalid_Options
+    }
+
+    // The manifest runs before anything consumes config: `yuked.js`'s `defineConfig` is the
+    // source of host/port/db/blob/auth_token/log_level, superseding `options` when it is called.
+    // A script tier that won't come up is a start failure, not a surprise the first request finds.
+    js_err := js_init(d, options.js_root, allocator)
+    evaluated := false
+    if js_err == .None {
+        evaluated, js_err = js_run_entry(d, allocator)
+    }
+
+    if js_err != .None {
+        return js_err
+    }
+
+    if d.config_seen {
+        // Scratch-decoded: `host`/`db_path` are consumed within `start` (the bind and
+        // `store.open`, which clones the path), and `blob_dir`/`auth_token` are cloned into
+        // owned fields below, so nothing here needs to outlive the daemon allocator.
+        config, ok := config_decode(d.config_json, context.temp_allocator)
+        if !ok {
+            log.error("daemon: yuked.js defineConfig is not valid configuration")
+
+            return .Invalid_Options
+        }
+
+        delete(d.config_json, allocator)
+        d.config_json = ""
+
+        options.host = config.host
+        options.port = config.port
+        options.db_path = paths.expand_home(config.db_path, context.temp_allocator)
+        options.blob_dir = paths.expand_home(config.blob_dir, context.temp_allocator)
+        options.auth_token = config.auth_token
+
+        d.log_level = config_log_level(config.log_level)
+    } else if evaluated {
+        log.warn("daemon: yuked.js did not call defineConfig; running on defaults")
+    }
+
+    // The token's source is now final — the manifest's when it defined one, else `options`.
+    if !auth_token_valid(options.auth_token) {
+        return .Invalid_Options
+    }
+
+    if options.db_path == "" {
+        log.warn("daemon: no db_path configured; durable broadcasts and the session index are disabled")
+    }
+
+    // Clone the owned config strings whose source may be the manifest, now that it has run.
+    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
+    cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
+    d.blob_dir = cloned_blob_dir
+    d.auth_token = cloned_token
+    if blob_aerr != nil || token_aerr != nil {
+        return .Out_Of_Memory
+    }
+
+    if auth_err := provider_auth_init(d); auth_err != .None {
+        return auth_err
     }
 
     // The `initialize` result advertises `blob_upload` from this field alone, so an
@@ -264,17 +375,6 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
         d.store = opened
         d.seq_high = marks
-    }
-
-    // Before the transport adopts anything: a script tier that won't come up is a start
-    // failure, not a surprise the first tool call discovers. The pool is already up for this.
-    js_err := js_init(d, options.js_root, allocator)
-    if js_err == .None {
-        js_err = js_run_entry(d, allocator)
-    }
-
-    if js_err != .None {
-        return js_err
     }
 
     callbacks := ws.Server_Callbacks {
@@ -381,8 +481,15 @@ start_rollback :: proc(d: ^Daemon) {
     assert(d != nil, "daemon rollback needs daemon state")
     assert(d.front_door.state == .Idle, "failed front door retained active state")
 
+    provider_auth_shutdown(d)
+
+    if d.auth_callback.state != .Idle {
+        nbio.run_until(&d.auth_callback.shutdown_complete)
+    }
+
     // Drain first: a completion in flight settles a promise in the context js.destroy frees.
     workers_stop(d)
+    provider_auth_destroy(d)
     js.destroy(&d.js)
     store_close(d)
 
@@ -426,6 +533,7 @@ shutdown :: proc(d: ^Daemon) {
 
     log.info("daemon: shutdown started")
     http_server.shutdown(&d.front_door)
+    provider_auth_shutdown(d)
     ws.server_shutdown(&d.ws_server)
 }
 
@@ -434,7 +542,9 @@ shutdown :: proc(d: ^Daemon) {
 shutdown_complete :: proc(d: ^Daemon) -> bool {
     assert(d != nil, "a shutdown check needs daemon state")
 
-    return d.front_door.shutdown_complete && d.ws_server.shutdown_complete
+    callback_done := d.auth_callback.state == .Idle || d.auth_callback.shutdown_complete
+
+    return d.front_door.shutdown_complete && callback_done && d.ws_server.shutdown_complete
 }
 
 // Release both connection sets and the owned clones. Call only once both halves
@@ -442,11 +552,16 @@ shutdown_complete :: proc(d: ^Daemon) -> bool {
 destroy :: proc(d: ^Daemon) {
     assert(d != nil, "destroy needs daemon state")
     assert(d.front_door.shutdown_complete, "destroy before HTTP shutdown completed")
+    assert(
+        d.auth_callback.state == .Idle || d.auth_callback.shutdown_complete,
+        "destroy before auth callback shutdown completed",
+    )
     assert(d.ws_server.shutdown_complete, "destroy before WebSocket shutdown completed")
 
     // Order matters: draining runs every outstanding completion on this loop, and a
     // `yuke:fs` completion settles a promise in the context released just below.
     workers_stop(d)
+    provider_auth_destroy(d)
     js.destroy(&d.js)
     ws.server_destroy(&d.ws_server)
     http_server.destroy(&d.front_door)
@@ -486,9 +601,13 @@ free_config :: proc(d: ^Daemon) {
     delete(d.daemon_version, d.allocator)
     delete(d.blob_dir, d.allocator)
     delete(d.auth_token, d.allocator)
+    delete(d.auth_path, d.allocator)
+    delete(d.config_json, d.allocator)
     d.daemon_version = ""
     d.blob_dir = ""
     d.auth_token = ""
+    d.auth_path = ""
+    d.config_json = ""
 }
 
 // A connection reached Open: allocate its `Conn`, enter Awaiting_Initialize, and attach
@@ -649,6 +768,18 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 
     case .Catalog_List:
         method_catalog_list(conn, req, sa)
+
+    case .Auth_List:
+        method_auth_list(conn, req, sa)
+
+    case .Auth_Login:
+        method_auth_login(conn, req, sa)
+
+    case .Auth_Cancel_Login:
+        method_auth_cancel_login(conn, req, sa)
+
+    case .Auth_Logout:
+        method_auth_logout(conn, req, sa)
 
     case .Workspace_Describe:
         method_workspace_describe(conn, req)

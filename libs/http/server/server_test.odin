@@ -25,6 +25,9 @@ Obs :: struct {
     // Shut the front door down from inside the request callback after answering.
     shutdown:                bool,
 
+    // Gracefully drain the front door from inside the handler after answering.
+    drain:                   bool,
+
     // Number of `on_request` calls.
     request_count:           int,
 
@@ -142,6 +145,8 @@ test_on_request :: proc(c: ^Conn, req: Request) {
 
         if o.shutdown {
             shutdown(c.server)
+        } else if o.drain {
+            drain(c.server)
         }
 
         return
@@ -891,6 +896,19 @@ test_http_shutdown_from_responding_handler :: proc(t: ^testing.T) {
     run_exchange(t, "GET /stop HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
 
     testing.expect_value(t, obs.request_count, 1)
+}
+
+@(test)
+test_http_drain_from_responding_handler_delivers_response :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Obs {
+        drain = true,
+    }
+    got := run_exchange(t, "GET /stop HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n", &obs)
+
+    testing.expect_value(t, obs.request_count, 1)
+    testing.expect(t, strings.has_suffix(got, "hello"), "drain must let the active response finish")
 }
 
 @(test)
