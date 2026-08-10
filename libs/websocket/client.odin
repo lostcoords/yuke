@@ -64,6 +64,9 @@ Client_Error :: enum {
 
     // The client is not in a state that accepts this operation.
     Not_Open,
+
+    // The application canceled a dial or upgrade before the connection opened.
+    Canceled,
 }
 
 // How the connection reaches the server. `Ws` is a plain socket this package drives on
@@ -523,6 +526,15 @@ client_abort :: proc(c: ^Client, err: Client_Error) {
     assert(err != .None && err != .Not_Open, "client_abort needs a terminal error")
 
     conn_fail(&c.core, conn_error_from_client(err))
+}
+
+// Cancel a dial or upgrade before it opens. The terminal callback reports `.Canceled`;
+// no WebSocket close frame exists before the upgrade completes.
+client_cancel :: proc(c: ^Client) {
+    assert(c != nil, "client_cancel needs a client")
+    assert(c.state == .Dialing || c.state == .Upgrading, "client_cancel needs an opening connection")
+
+    conn_fail(&c.core, .Canceled)
 }
 
 // Resolve `host` to an endpoint: literal IPv4 first, else DNS. DNS is blocking,

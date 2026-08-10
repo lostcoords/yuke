@@ -50,7 +50,9 @@ main :: proc() {
     // Installed before anything else so a start failure is reported through the same channel as
     // everything after it. The manifest's log level is not known until `start` has evaluated it,
     // so the daemon's own startup runs at info and the level is reinstalled below.
-    context.logger = log.create_console_logger(.Info)
+    logger := log.create_console_logger(.Info)
+    defer log.destroy_console_logger(logger)
+    context.logger = logger
 
     // Bootstrap only: `yuked.js` supplies host, port, db_path, blob_dir, auth_token, and the
     // log level. `start` reads the manifest and fills them in before it binds anything.
@@ -79,13 +81,10 @@ main :: proc() {
         os.exit(1)
     }
 
-    // Install the level the manifest chose, now that `start` has resolved it. The daemon runs
-    // on this process's context, so nbio callbacks during `serve` inherit this logger.
-    if d.log_level != .Info {
-        log.destroy_console_logger(context.logger)
-        context.logger = log.create_console_logger(d.log_level)
-    }
-    defer log.destroy_console_logger(context.logger)
+    // Install the level the manifest chose, now that `start` has resolved it. Keep the same
+    // owned backing for the process lifetime; callbacks during `serve` inherit this logger.
+    logger.lowest_level = d.log_level
+    context.logger = logger
 
     // Optional relay link, dialed after the front door binds so a relay failure never
     // blocks the local daemon. Driven from here rather than the daemon package: parking

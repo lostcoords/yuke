@@ -111,12 +111,15 @@ durable log must be contiguous from seq 1 for a session that has one: the fold r
 from the first row and treats any gap as `Corrupt_Log`; any future pruning of the log
 needs a resync-aware design before rows can be dropped. The high-water read, the fold,
 and the send all run to completion on the reactor thread, so the cut is one instant by
-construction and no commit can interleave with it. The finished cut is put through
-`wire.session_resync_result_validate` before it is sent: a cut that fails, a log row the
-codec rejects, and a config revision no `config.changed` announced are all daemon-side
-faults answered with `Internal`, never shipped for the client to catch. Everything
-except the id, message count, and config fields of the returned session summary is
-temporary until a session engine owns that state.
+construction and no commit can interleave with it. The connection's WebSocket send queue
+preserves whole-frame order, making the successful response a barrier: every session
+broadcast queued before it is represented by the cut, while every broadcast queued after
+it is newer and applies directly. Session state must therefore mutate before its broadcast
+is queued. The finished cut is put through `wire.session_resync_result_validate` before it
+is sent: a cut that fails, a log row the codec rejects, and a config revision no
+`config.changed` announced are all daemon-side faults answered with `Internal`, never
+shipped for the client to catch. Everything except the id, message count, and config fields
+of the returned session summary is temporary until a session engine owns that state.
 
 The script tier (`js.odin`, `js_fs.odin`) is one QuickJS runtime for the whole daemon,
 hung off the `Daemon` and recovered through the runtime and context opaque pointers rather

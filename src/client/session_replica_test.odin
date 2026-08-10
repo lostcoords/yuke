@@ -103,12 +103,10 @@ test_replica_init_deinit :: proc(t: ^testing.T) {
 
     testing.expect_value(t, r.session_id, sid)
     testing.expect(t, r.active == nil, "no active draft")
-    testing.expect(t, r.resync == nil, "starts live")
     testing.expect_value(t, len(r.messages), 0)
     testing.expect_value(t, len(r.queued), 0)
     testing.expect_value(t, len(r.configs), 0)
     testing.expect(t, r.highest_finalized_id == nil, "nothing finalized")
-    testing.expect(t, r.pending_permission == nil, "no pending permission")
 }
 
 @(test)
@@ -525,6 +523,40 @@ test_tool_state_broadcasts_converge_pending_permission :: proc(t: ^testing.T) {
 
     _, still := replica_pending_permission(&r)
     testing.expect(t, !still, "pending permission cleared")
+}
+
+@(test)
+test_pending_permission_is_derived_from_added_tool_part :: proc(t: ^testing.T) {
+    r: Session_Replica
+    replica_init(&r, context.allocator, _sid())
+    defer replica_destroy(&r)
+
+    _, _ = replica_on_started(&r, _started(3))
+
+    options := []wire.Permission_Option{{id = "once", kind = .Allow_Once, label = "Allow"}}
+    first := wire.Tool_Part {
+        id = 0,
+        name = "read",
+        arguments = "{}",
+        state = wire.Tool_State_Waiting_Permission{},
+        permission_state = wire.Permission_State{requested_at_ms = 9, options = options},
+    }
+    added, aerr := replica_on_part_added(&r, _part_added(3, first))
+    testing.expect_value(t, aerr, Replica_Error.None)
+    testing.expect_value(t, added.kind, Apply_Kind.Changed)
+
+    pending, ok := replica_pending_permission(&r)
+    testing.expect(t, ok, "added waiting tool is authoritative")
+    testing.expect_value(t, pending.part_id, wire.Part_Id(0))
+
+    second := first
+    second.id = 1
+    conflict, cerr := replica_on_part_added(&r, _part_added(3, second))
+    testing.expect_value(t, cerr, Replica_Error.None)
+    testing.expect_value(t, conflict.kind, Apply_Kind.Gap)
+
+    info, _ := replica_active_info(&r)
+    testing.expect_value(t, info.part_count, 1)
 }
 
 @(test)
@@ -1321,13 +1353,15 @@ test_durable_events_gate_on_sequence :: proc(t: ^testing.T) {
     testing.expect_value(t, next.kind, Apply_Kind.Committed)
     testing.expect_value(t, r.base_seq, wire.Seq(6))
 
-    // A hole (> base_seq + 1) starts a resync; further events buffer.
+    // A hole (> base_seq + 1) asks the controller to resync without changing state.
     gap, _ := replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(2)))
     testing.expect_value(t, gap.kind, Apply_Kind.Gap)
-    testing.expect(t, r.resync != nil, "resyncing after gap")
+    testing.expect_value(t, r.base_seq, wire.Seq(6))
+    testing.expect_value(t, len(r.messages), 1)
 
-    buffered, _ := replica_apply_broadcast(&r, _committed_bc(9, _assistant_msg(3)))
-    testing.expect_value(t, buffered.kind, Apply_Kind.Buffered)
+    later, _ := replica_apply_broadcast(&r, _committed_bc(9, _assistant_msg(3)))
+    testing.expect_value(t, later.kind, Apply_Kind.Gap)
+    testing.expect_value(t, r.base_seq, wire.Seq(6))
 }
 
 @(test)
@@ -1358,38 +1392,17 @@ test_live_broadcasts_route_to_their_folders :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_begin_resync_buffers_subsequent_events_and_coalesces :: proc(t: ^testing.T) {
+test_a_live_gap_leaves_the_replica_unchanged :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    b1, _ := replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
-    testing.expect_value(t, b1.kind, Apply_Kind.Buffered)
-
-    // A second begin does not open a new buffer.
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    b2, _ := replica_apply_broadcast(&r, _bc(.Message_Part_Delta, _delta(3, 0, 0, "x")))
-    testing.expect_value(t, b2.kind, Apply_Kind.Buffered)
-    testing.expect_value(t, len(r.resync.events), 2)
-}
-
-@(test)
-test_a_live_gap_starts_a_resync :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    // A delta for an unseen message is a gap and enters resyncing.
+    // A delta for an unseen message asks the controller to resync. The controller owns
+    // Syncing and drops later broadcasts until the ordered snapshot response arrives.
     gap, _ := replica_apply_broadcast(&r, _bc(.Message_Part_Delta, _delta(3, 0, 0, "x")))
     testing.expect_value(t, gap.kind, Apply_Kind.Gap)
-    testing.expect(t, r.resync != nil, "resyncing after live gap")
-
-    // Now resyncing: a following live event is buffered, not applied.
-    buf, _ := replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
-    testing.expect_value(t, buf.kind, Apply_Kind.Buffered)
     _, has := replica_active_info(&r)
-    testing.expect(t, !has, "no draft materialized while resyncing")
+    testing.expect(t, !has, "gap did not materialize a draft")
 }
 
 @(test)
@@ -1498,7 +1511,6 @@ test_activity_locators_matching_draft_are_a_no_op :: proc(t: ^testing.T) {
         ),
     )
     testing.expect_value(t, waiting.kind, Apply_Kind.Ignored)
-    testing.expect(t, r.resync == nil, "agreeing locators never resync")
 }
 
 @(test)
@@ -1522,7 +1534,6 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
         ),
     )
     testing.expect_value(t, wrong_name.kind, Apply_Kind.Gap)
-    testing.expect(t, name.resync != nil, "locator disagreement starts a resync")
 
     // So does a part kind that contradicts the activity's own tag.
     kind: Session_Replica
@@ -1535,7 +1546,6 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
         _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 1}),
     )
     testing.expect_value(t, wrong_kind.kind, Apply_Kind.Gap)
-    testing.expect(t, kind.resync != nil, "locator disagreement starts a resync")
 
     perm: Session_Replica
     replica_init(&perm, context.allocator, _sid())
@@ -1555,7 +1565,6 @@ test_activity_locators_contradicting_draft_resync :: proc(t: ^testing.T) {
         ),
     )
     testing.expect_value(t, wrong_perm.kind, Apply_Kind.Gap)
-    testing.expect(t, perm.resync != nil, "locator disagreement starts a resync")
 }
 
 // Fold a draft for message 5 whose tool part 2 is named `tool_name`, mirroring the shape of
@@ -1577,11 +1586,10 @@ _replica_with_draft_5 :: proc(r: ^Session_Replica, tool_name: string) {
     )
 }
 
-// The activity that revealed the divergence is buffered and replayed after install. It must
-// settle against the installed draft rather than re-gapping, or a replica would loop.
+// A divergent activity does not mutate the replica. The controller drops subsequent
+// broadcasts while Syncing, then the response barrier installs the authoritative cut.
 @(test)
-test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
-    // The snapshot's draft names the tool the activity named all along.
+test_divergent_activity_settles_by_snapshot_replacement :: proc(t: ^testing.T) {
     matching: Session_Replica
     replica_init(&matching, context.allocator, _sid())
     defer replica_destroy(&matching)
@@ -1599,30 +1607,15 @@ test_buffered_divergent_activity_settles_after_install :: proc(t: ^testing.T) {
 
     gap, _ := replica_apply_broadcast(&matching, divergent)
     testing.expect_value(t, gap.kind, Apply_Kind.Gap)
-    testing.expect(t, matching.resync != nil, "divergence buffered the activity")
+    testing.expect_value(t, replica_tool_part(&matching, 2).name, "write")
 
     snap := _empty_resync(0)
     snap.active = _active_draft(5, _sample_active_content[:])
     snap.item.activity = _running_activity()
 
-    out, err := replica_install_snapshot(&matching, snap)
+    err := replica_install_snapshot(&matching, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
-    testing.expect(t, matching.resync == nil, "replayed activity agreed with the installed draft")
-
-    // A snapshot that ends the draft leaves the locator unresolvable, which also settles.
-    resolved: Session_Replica
-    replica_init(&resolved, context.allocator, _sid())
-    defer replica_destroy(&resolved)
-    _replica_with_draft_5(&resolved, "write")
-
-    gap2, _ := replica_apply_broadcast(&resolved, divergent)
-    testing.expect_value(t, gap2.kind, Apply_Kind.Gap)
-
-    out2, err2 := replica_install_snapshot(&resolved, _empty_resync(0))
-    testing.expect_value(t, err2, Replica_Error.None)
-    testing.expect_value(t, out2, Install_Outcome.Live)
-    testing.expect(t, resolved.resync == nil, "replayed activity resolved to no draft")
+    testing.expect_value(t, replica_tool_part(&matching, 2).name, "read")
 }
 
 // `session.activity_changed` carries no sequence, so a locator the replica cannot resolve
@@ -1655,7 +1648,6 @@ test_unresolvable_activity_locators_do_not_resync :: proc(t: ^testing.T) {
         _activity_state_bc(wire.Activity_State_Reasoning{run_id = 7, message_id = 3, part_id = 9}),
     )
     testing.expect_value(t, unfolded.kind, Apply_Kind.Ignored)
-    testing.expect(t, r.resync == nil, "an unresolvable locator never resyncs")
 }
 
 @(test)
@@ -1704,61 +1696,7 @@ test_matching_run_events_clear_pending_compaction :: proc(t: ^testing.T) {
     testing.expect(t, r.pending_compaction == nil, "cleared by canceled terminal")
 }
 
-@(test)
-test_resync_event_count_overflow_resets_buffer :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    for i in 0 ..< u64(MAX_BUFFERED_EVENTS + 5) {
-        _, _ = replica_apply_broadcast(
-            &r,
-            _bc(.Input_Canceled, wire.Input_Canceled_Data{session_id = _sid(), input_id = wire.Input_Id(i)}),
-        )
-    }
-
-    testing.expect(t, r.resync.overflow, "crossing the event cap sets overflow")
-    testing.expect_value(t, len(r.resync.events), 0)
-}
-
-@(test)
-test_resync_byte_overflow_discards_the_entire_prefix :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
-
-    big := make([]u8, MAX_BUFFERED_BYTES + 1, context.allocator)
-    defer delete(big, context.allocator)
-    for &c in big {
-        c = 'x'
-    }
-
-    _, _ = replica_apply_broadcast(&r, _bc(.Message_Part_Delta, _delta(3, 0, 0, string(big))))
-    testing.expect(t, r.resync.overflow, "an oversized event trips the byte cap")
-    testing.expect_value(t, len(r.resync.events), 0)
-
-    // A following event buffers cheaply into the fresh empty overflow buffer.
-    after, _ := replica_apply_broadcast(&r, _bc(.Message_Started, _started(4)))
-    testing.expect_value(t, after.kind, Apply_Kind.Buffered)
-    testing.expect_value(t, len(r.resync.events), 0)
-}
-
-@(test)
-test_deinit_while_resyncing_frees_the_buffer :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
-    // The deferred deinit must free the buffer arena; the tracking allocator catches a leak.
-}
-
-// --- resync install / replay test fixtures ---
+// --- resync install test fixtures ---
 
 @(private = "file")
 _sample_configs := [1]wire.Run_Config{{config_rev = 1, model = "model", reasoning = "high"}}
@@ -1822,6 +1760,7 @@ _resync_msgs :: proc(
     highest: wire.Message_Id,
 ) -> wire.Session_Resync_Result {
     r := _empty_resync(base_seq)
+    r.item.session.message_count = u64(len(msgs))
     r.messages = msgs
     r.highest_finalized_message_id = highest
     return r
@@ -1859,9 +1798,8 @@ test_resync_installs_empty_snapshot :: proc(t: ^testing.T) {
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    out, err := replica_install_snapshot(&r, _empty_resync(42))
+    err := replica_install_snapshot(&r, _empty_resync(42))
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
     testing.expect_value(t, len(r.messages), 0)
     _, has := replica_active_info(&r)
     testing.expect(t, !has, "no active draft")
@@ -1874,20 +1812,20 @@ test_resync_installs_mixed_committed_window :: proc(t: ^testing.T) {
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    msgs := []wire.Message{_user_msg(1), _assistant_msg(2), _compaction_msg(3)}
-    snap := _resync_msgs(50, msgs, 3)
+    msgs := []wire.Message{_user_msg(2), _assistant_msg(3), _compaction_msg(4)}
+    snap := _resync_msgs(50, msgs, 4)
+    snap.item.session.message_count = 4
     snap.has_more = true
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
 
     testing.expect_value(t, len(r.messages), 3)
     testing.expect(t, r.has_more, "older messages exist")
-    testing.expect_value(t, wire.message_id(r.messages[0].message), wire.Message_Id(1))
-    testing.expect_value(t, wire.message_id(r.messages[2].message), wire.Message_Id(3))
+    testing.expect_value(t, wire.message_id(r.messages[0].message), wire.Message_Id(2))
+    testing.expect_value(t, wire.message_id(r.messages[2].message), wire.Message_Id(4))
 
-    msg, ok := replica_committed_by_id(&r, 2)
-    testing.expect(t, ok, "id 2 present")
+    msg, ok := replica_committed_by_id(&r, 3)
+    testing.expect(t, ok, "id 3 present")
     assistant, is_a := msg.(wire.Assistant_Message)
     testing.expect(t, is_a, "assistant")
     text, _ := assistant.content[0].(wire.Text_Part)
@@ -1903,9 +1841,8 @@ test_resync_installs_active_draft_and_next_delta_applies :: proc(t: ^testing.T) 
     snap := _empty_resync(10)
     snap.active = _active_draft(5, _sample_active_content[:])
     snap.item.activity = _running_activity()
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
 
     info, has := replica_active_info(&r)
     testing.expect(t, has, "active draft installed")
@@ -1987,6 +1924,7 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
     }
 
     snap := _empty_resync(10)
+    snap.item.session.message_count = 1
     snap.messages = msgs
     snap.highest_finalized_message_id = 2
     snap.configs = cfgs
@@ -2014,9 +1952,8 @@ test_installed_snapshot_outlives_its_source_arena :: proc(t: ^testing.T) {
         queued = 1,
     }
 
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
 
     // Drop the source: everything read below must come from the replica's own arenas.
     mem.dynamic_arena_destroy(&src)
@@ -2055,7 +1992,7 @@ test_resync_rejects_response_above_window :: proc(t: ^testing.T) {
         msgs[i] = _user_msg(wire.Message_Id(i + 1))
     }
 
-    _, err := replica_install_snapshot(&r, _resync_msgs(1, msgs, wire.Message_Id(len(msgs))))
+    err := replica_install_snapshot(&r, _resync_msgs(1, msgs, wire.Message_Id(len(msgs))))
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2067,7 +2004,7 @@ test_resync_rejects_session_mismatch :: proc(t: ^testing.T) {
 
     snap := _empty_resync(0)
     snap.item.session.id = _session_id("fedcba9876543210")
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Session_Mismatch)
 }
 
@@ -2078,7 +2015,7 @@ test_resync_rejects_unordered_ids :: proc(t: ^testing.T) {
     defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(5), _assistant_msg(3)}
-    _, err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 5))
+    err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 5))
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2089,7 +2026,7 @@ test_resync_rejects_id_above_highest_finalized :: proc(t: ^testing.T) {
     defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(2)}
-    _, err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 1))
+    err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 1))
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2101,7 +2038,7 @@ test_resync_rejects_missing_config_rev :: proc(t: ^testing.T) {
 
     // Assistant references config_rev 2, but the snapshot only carries rev 1.
     msgs := []wire.Message{_assistant_msg_cfg(2, 2)}
-    _, err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 2))
+    err := replica_install_snapshot(&r, _resync_msgs(0, msgs, 2))
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2116,7 +2053,7 @@ test_resync_rejects_duplicate_config :: proc(t: ^testing.T) {
         {config_rev = 1, model = "a", reasoning = "x"},
         {config_rev = 1, model = "a", reasoning = "x"},
     }
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2131,10 +2068,9 @@ test_resync_rejects_duplicate_queued_input :: proc(t: ^testing.T) {
         {input_id = 1, content = _sample_user_content[:], queued_at_ms = 1},
         {input_id = 1, content = _sample_user_content[:], queued_at_ms = 2},
     }
-    // Match the activity count so the wire validator passes and the replica's own
-    // duplicate-input check is what rejects the snapshot.
+    // Match the activity count so uniqueness is the rejected invariant.
     snap.item.activity.queued = 2
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2144,14 +2080,12 @@ test_resync_rejects_active_draft_ordinal_hole :: proc(t: ^testing.T) {
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    // A draft part whose ordinal (1) does not match its index (0) is malformed. The
-    // activity matches so the wire validator passes and the replica's own ordinal check
-    // rejects it.
+    // A draft part whose ordinal (1) does not match its index (0) is malformed.
     holed := []wire.Assistant_Part{wire.Text_Part{id = 1, text = "x"}}
     snap := _empty_resync(0)
     snap.active = _active_draft(5, holed)
     snap.item.activity = _running_activity()
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2162,12 +2096,12 @@ test_malformed_snapshot_preserves_previous_state :: proc(t: ^testing.T) {
     defer replica_destroy(&r)
 
     good := []wire.Message{_assistant_msg(2), _assistant_msg(4)}
-    _, err := replica_install_snapshot(&r, _resync_msgs(10, good, 4))
+    err := replica_install_snapshot(&r, _resync_msgs(10, good, 4))
     testing.expect_value(t, err, Replica_Error.None)
 
     // Not oldest-first: id 3 after id 5 is rejected mid-build, after id 5 was cloned.
     bad := []wire.Message{_assistant_msg(5), _assistant_msg(3)}
-    _, berr := replica_install_snapshot(&r, _resync_msgs(99, bad, 5))
+    berr := replica_install_snapshot(&r, _resync_msgs(99, bad, 5))
     testing.expect_value(t, berr, Replica_Error.Malformed_Snapshot)
 
     // The previous snapshot is untouched.
@@ -2183,10 +2117,10 @@ test_second_resync_fully_replaces_first :: proc(t: ^testing.T) {
     defer replica_destroy(&r)
 
     first := []wire.Message{_user_msg(1), _assistant_msg(2)}
-    _, _ = replica_install_snapshot(&r, _resync_msgs(10, first, 2))
+    _ = replica_install_snapshot(&r, _resync_msgs(10, first, 2))
 
     second := []wire.Message{_assistant_msg(9)}
-    _, _ = replica_install_snapshot(&r, _resync_msgs(20, second, 9))
+    _ = replica_install_snapshot(&r, _resync_msgs(20, second, 9))
 
     testing.expect_value(t, len(r.messages), 1)
     testing.expect_value(t, wire.message_id(r.messages[0].message), wire.Message_Id(9))
@@ -2201,22 +2135,20 @@ test_snapshot_seal_boundary_covers_finalized_ids :: proc(t: ^testing.T) {
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
     _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(7)))
 
     snap := _empty_resync(4)
     snap.highest_finalized_message_id = 7
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
 
-    // Replayed started(7) is at/below the seal boundary, so it is ignored.
+    // Snapshot replacement removes the now-finalized draft.
     _, has := replica_active_info(&r)
     testing.expect(t, !has, "sealed start not materialized")
 }
 
 @(test)
-test_buffered_broadcasts_replay_after_resync :: proc(t: ^testing.T) {
+test_post_barrier_broadcast_applies_after_snapshot :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
@@ -2224,92 +2156,14 @@ test_buffered_broadcasts_replay_after_resync :: proc(t: ^testing.T) {
 
     gap, _ := replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
     testing.expect_value(t, gap.kind, Apply_Kind.Gap)
-    _, _ = replica_apply_broadcast(&r, _committed_bc(9, _assistant_msg(9)))
 
-    // Resync reaches seq 7; replay applies 8 then 9 contiguously.
-    out, err := replica_install_snapshot(&r, _resync_msgs(7, []wire.Message{_assistant_msg(2)}, 2))
+    err := replica_install_snapshot(&r, _resync_msgs(7, []wire.Message{_assistant_msg(2)}, 2))
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
-    testing.expect_value(t, r.base_seq, wire.Seq(9))
-    _, has8 := replica_committed_by_id(&r, 8)
-    testing.expect(t, has8, "replayed 8 present")
-    _, has9 := replica_committed_by_id(&r, 9)
-    testing.expect(t, has9, "replayed 9 present")
-}
 
-@(test)
-test_buffered_events_superseded_are_skipped :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-    r.base_seq = 5
-
-    _, _ = replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
-    _, _ = replica_apply_broadcast(&r, _committed_bc(9, _assistant_msg(9)))
-
-    // Snapshot already covered seq 8/9; buffered copies must not re-apply.
-    out, err := replica_install_snapshot(&r, _resync_msgs(9, []wire.Message{_assistant_msg(8), _assistant_msg(9)}, 9))
-    testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
-    testing.expect_value(t, r.base_seq, wire.Seq(9))
-    testing.expect_value(t, len(r.messages), 2)
-}
-
-@(test)
-test_fresh_gap_during_replay_requests_another_resync :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-    r.base_seq = 5
-
-    _, _ = replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
-
-    // Resync only reaches seq 6, so buffered seq 8 is still a hole.
-    out, err := replica_install_snapshot(&r, _empty_resync(6))
-    testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Resync_Again)
-}
-
-@(test)
-test_resync_event_overflow_install_requests_resync_again :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    for i in 0 ..< u64(MAX_BUFFERED_EVENTS + 5) {
-        _, _ = replica_apply_broadcast(
-            &r,
-            _bc(.Input_Canceled, wire.Input_Canceled_Data{session_id = _sid(), input_id = wire.Input_Id(i)}),
-        )
-    }
-
-    out, err := replica_install_snapshot(&r, _empty_resync(0))
-    testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Resync_Again)
-}
-
-@(test)
-test_resync_byte_overflow_install_requests_resync_again :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-    _, _ = replica_apply_broadcast(&r, _bc(.Message_Started, _started(3)))
-
-    big := make([]u8, MAX_BUFFERED_BYTES + 1, context.allocator)
-    defer delete(big, context.allocator)
-    for &c in big {
-        c = 'x'
-    }
-    _, _ = replica_apply_broadcast(&r, _bc(.Message_Part_Delta, _delta(3, 0, 0, string(big))))
-
-    out, err := replica_install_snapshot(&r, _empty_resync(0))
-    testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Resync_Again)
-    _, has := replica_active_info(&r)
-    testing.expect(t, !has, "overflowed buffer materialized nothing")
+    post, perr := replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
+    testing.expect_value(t, perr, Replica_Error.None)
+    testing.expect_value(t, post.kind, Apply_Kind.Committed)
+    testing.expect_value(t, r.base_seq, wire.Seq(8))
 }
 
 @(test)
@@ -2326,9 +2180,8 @@ test_deinit_after_install_frees_all_regions :: proc(t: ^testing.T) {
     snap.item.activity = _running_activity()
     snap.item.activity.queued = 1
 
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
     testing.expect_value(t, len(r.messages), 1)
     testing.expect_value(t, len(r.queued), 1)
     _, has := replica_active_info(&r)
@@ -2469,9 +2322,8 @@ test_resync_seeds_running_tool_output_and_resumes :: proc(t: ^testing.T) {
     snap := _empty_resync(10)
     snap.active = _active_draft(5, content)
     snap.item.activity = _running_activity()
-    out, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
 
     // The seeded output length is the offset baseline: overlap ignored, append at 5.
     seeded, ok := replica_tool_output(&r, 0)
@@ -2488,53 +2340,20 @@ test_resync_seeds_running_tool_output_and_resumes :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_restart_resync_discards_prior_connection_events :: proc(t: ^testing.T) {
-    r: Session_Replica
-    replica_init(&r, context.allocator, _sid())
-    defer replica_destroy(&r)
-    r.base_seq = 5
-
-    testing.expect_value(t, replica_begin_resync(&r), Replica_Error.None)
-
-    // Buffer an event belonging to the old connection generation.
-    pre, _ := replica_apply_broadcast(&r, _committed_bc(8, _assistant_msg(8)))
-    testing.expect_value(t, pre.kind, Apply_Kind.Buffered)
-    testing.expect_value(t, len(r.resync.events), 1)
-
-    // A new connection generation restarts the buffer, dropping the prior event.
-    testing.expect_value(t, replica_restart_resync(&r), Replica_Error.None)
-    testing.expect_value(t, len(r.resync.events), 0)
-
-    // Buffer a post-restart event.
-    post, _ := replica_apply_broadcast(&r, _committed_bc(6, _assistant_msg(6)))
-    testing.expect_value(t, post.kind, Apply_Kind.Buffered)
-
-    // Install a snapshot reaching seq 5; replay applies only the post-restart event (6).
-    out, err := replica_install_snapshot(&r, _resync_msgs(5, []wire.Message{_assistant_msg(2)}, 2))
-    testing.expect_value(t, err, Replica_Error.None)
-    testing.expect_value(t, out, Install_Outcome.Live)
-    testing.expect_value(t, r.base_seq, wire.Seq(6))
-    _, has6 := replica_committed_by_id(&r, 6)
-    testing.expect(t, has6, "post-restart event replayed")
-    _, has8 := replica_committed_by_id(&r, 8)
-    testing.expect(t, !has8, "pre-restart event was discarded, not replayed")
-}
-
-@(test)
 test_resync_rejects_activity_queued_mismatch :: proc(t: ^testing.T) {
     r: Session_Replica
     replica_init(&r, context.allocator, _sid())
     defer replica_destroy(&r)
 
     // Establish prior state.
-    _, err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
+    err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
     testing.expect_value(t, err0, Replica_Error.None)
 
     // A snapshot whose activity.queued (1) disagrees with len(queued) (0) is malformed; the
     // wire validator catches the cross-field mismatch the replica used not to check.
     bad := _empty_resync(20)
     bad.item.activity.queued = 1
-    _, err := replica_install_snapshot(&r, bad)
+    err := replica_install_snapshot(&r, bad)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 
     // Prior state is intact.
@@ -2619,7 +2438,7 @@ test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
     defer replica_destroy(&r)
 
     // Establish prior state.
-    _, err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
+    err0 := replica_install_snapshot(&r, _resync_msgs(10, []wire.Message{_assistant_msg(2)}, 2))
     testing.expect_value(t, err0, Replica_Error.None)
 
     // An active draft (and its activity) referencing config_rev 99, absent from configs.
@@ -2631,7 +2450,7 @@ test_resync_rejects_draft_missing_config_rev :: proc(t: ^testing.T) {
         state = wire.Activity_State_Running{run_id = 7, started_at_ms = 1},
         config = wire.Run_Config{config_rev = 99, model = "model", reasoning = "high"},
     }
-    _, err := replica_install_snapshot(&r, bad)
+    err := replica_install_snapshot(&r, bad)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 
     // Prior state is intact.
@@ -2653,7 +2472,7 @@ test_committing_older_than_window_evicts_immediately :: proc(t: ^testing.T) {
         full[i] = _user_msg(wire.Message_Id(i + 1))
     }
 
-    _, err := replica_install_snapshot(&r, _resync_msgs(1, full, wire.Message_Id(len(full))))
+    err := replica_install_snapshot(&r, _resync_msgs(1, full, wire.Message_Id(len(full))))
     testing.expect_value(t, err, Replica_Error.None)
     testing.expect_value(t, len(r.messages), MAX_RETAINED_MESSAGES)
 
@@ -2707,7 +2526,7 @@ test_resync_rejects_multiple_waiting_tools :: proc(t: ^testing.T) {
         },
         config = _sample_configs[0],
     }
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 }
 
@@ -2733,8 +2552,8 @@ test_zero_length_delta_at_offset_is_changed :: proc(t: ^testing.T) {
 // every alloc/resize from the `fail_at`-th counted allocation onward and exempts arena-internal
 // allocations (which report `allocators.odin`) because `Dynamic_Arena` is not failure-safe. The
 // replica's OWN direct structural allocations — `new`, candidate spine `make`/`reserve`/`append`,
-// `text_buffer_build`, the resync-buffer struct — DO propagate `.Out_Of_Memory` and drive the
-// transactional rollback these tests prove.
+// and `text_buffer_build` — DO propagate `.Out_Of_Memory` and drive the transactional
+// rollback these tests prove.
 
 // Sweep `fail_at` across every allocation of `op`, asserting each run either fully succeeds
 // or cleanly returns `.Out_Of_Memory` (never another error or a corrupt state), with no
@@ -2769,8 +2588,7 @@ _op_install_snapshot :: proc(alloc: mem.Allocator) -> Replica_Error {
     defer replica_destroy(&r)
 
     msgs := []wire.Message{_assistant_msg(1), _assistant_msg(2), _assistant_msg(3)}
-    _, err := replica_install_snapshot(&r, _resync_msgs(10, msgs, 3))
-    return err
+    return replica_install_snapshot(&r, _resync_msgs(10, msgs, 3))
 }
 
 @(private = "file")
@@ -2830,24 +2648,6 @@ _op_queue_input :: proc(alloc: mem.Allocator) -> Replica_Error {
     return e
 }
 
-@(private = "file")
-_op_buffered_replay :: proc(alloc: mem.Allocator) -> Replica_Error {
-    r: Session_Replica
-    replica_init(&r, alloc, _sid())
-    defer replica_destroy(&r)
-
-    if e := replica_begin_resync(&r); e != .None {
-        return e
-    }
-
-    if _, e := replica_apply_broadcast(&r, _bc(.Message_Started, _started(3))); e != .None {
-        return e
-    }
-
-    _, e := replica_install_snapshot(&r, _resync_msgs(7, []wire.Message{_assistant_msg(2)}, 2))
-    return e
-}
-
 @(test)
 test_alloc_failure_snapshot_install_is_safe :: proc(t: ^testing.T) {
     _sweep_alloc_failures(t, _op_install_snapshot)
@@ -2868,16 +2668,11 @@ test_alloc_failure_queue_input_is_safe :: proc(t: ^testing.T) {
     _sweep_alloc_failures(t, _op_queue_input)
 }
 
-@(test)
-test_alloc_failure_buffered_replay_is_safe :: proc(t: ^testing.T) {
-    _sweep_alloc_failures(t, _op_buffered_replay)
-}
-
 // A tool in `waiting_permission` that already carries a resolved decision has no consistent
 // activity projection: the part-level cross-field check rejects a waiting part whose
 // permission state has a decision, and every other activity forbids a waiting tool. The
 // snapshot is therefore malformed and prior state is preserved — pending permission is only
-// derived (see `derive_pending_permission`) from a tool still awaiting a decision.
+// derived from a tool still awaiting a decision.
 @(test)
 test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
     r: Session_Replica
@@ -2909,7 +2704,7 @@ test_install_waiting_with_decision_is_malformed :: proc(t: ^testing.T) {
         },
         config = _sample_configs[0],
     }
-    _, err := replica_install_snapshot(&r, snap)
+    err := replica_install_snapshot(&r, snap)
     testing.expect_value(t, err, Replica_Error.Malformed_Snapshot)
 
     _, has := replica_active_info(&r)

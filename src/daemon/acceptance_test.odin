@@ -22,38 +22,35 @@ import wire "src:wire"
 // replica, and feeds every later broadcast through it.
 Acceptance_Obs :: struct {
     // Session resynced and subscribed to.
-    session:         wire.Session_Id,
+    session:     wire.Session_Id,
 
     // The `subscription.set` response was an error rather than a result.
-    sub_failed:      bool,
+    sub_failed:  bool,
 
     // The `session.resync` request was answered.
-    resync_done:     bool,
+    resync_done: bool,
 
     // The answer decoded as a snapshot and installed cleanly.
-    resync_ok:       bool,
+    resync_ok:   bool,
 
     // The replica the snapshot installed into and later broadcasts feed; initialized
     // and released by the test body, so a failing path still tears it down.
-    replica:         client.Session_Replica,
-
-    // Outcome of installing the snapshot.
-    install_outcome: client.Install_Outcome,
+    replica:     client.Session_Replica,
 
     // Error from installing the snapshot.
-    install_err:     client.Replica_Error,
+    install_err: client.Replica_Error,
 
     // Result of applying the post-restart broadcast.
-    post_result:     client.Apply_Result,
+    post_result: client.Apply_Result,
 
     // Error from applying the post-restart broadcast.
-    post_err:        client.Replica_Error,
+    post_err:    client.Replica_Error,
 
     // The post-restart broadcast was delivered and applied.
-    post_seen:       bool,
+    post_seen:   bool,
 
     // Terminal callback fired.
-    done:            bool,
+    done:        bool,
 }
 
 acceptance_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
@@ -66,8 +63,15 @@ acceptance_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     )
 }
 
-acceptance_on_sub :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+acceptance_on_sub :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Acceptance_Obs)(c.user_data)
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        o.sub_failed = true
+        return
+    }
+
+    resp := answered.response
 
     if _, ok := resp.(wire.Response_Ok); !ok {
         o.sub_failed = true
@@ -81,9 +85,15 @@ acceptance_on_sub :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     )
 }
 
-acceptance_on_resync :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+acceptance_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Acceptance_Obs)(c.user_data)
     o.resync_done = true
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        return
+    }
+
+    resp := answered.response
 
     ok, is_ok := resp.(wire.Response_Ok)
     if !is_ok {
@@ -95,7 +105,7 @@ acceptance_on_resync :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) 
         return
     }
 
-    o.install_outcome, o.install_err = client.replica_install_snapshot(&o.replica, cut)
+    o.install_err = client.replica_install_snapshot(&o.replica, cut)
     o.resync_ok = o.install_err == .None
 }
 
@@ -216,7 +226,6 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     // Resync cut: derived from the rows committed before the restart, one instant with
     // the recovered high water.
     testing.expect(t, obs.resync_ok, "the snapshot should decode and install into the replica")
-    testing.expect_value(t, obs.install_outcome, client.Install_Outcome.Live)
     testing.expect_value(t, obs.replica.base_seq, wire.Seq(2))
 
     if testing.expect_value(t, len(obs.replica.messages), 1) {

@@ -7,10 +7,6 @@ import wire "src:wire"
 // Largest committed window retained live; older messages fall off.
 MAX_RETAINED_MESSAGES :: wire.LIMITS.max_page_size
 
-// Resync-buffer caps; crossing either forces a fresh resync after install.
-MAX_BUFFERED_EVENTS :: 1024
-MAX_BUFFERED_BYTES :: 4 * 1024 * 1024
-
 // Failure modes surfaced by the fallible replica procedures. `None` is success.
 Replica_Error :: enum {
     None = 0,
@@ -34,11 +30,8 @@ Apply_Kind :: enum {
     // A message committed and sealed.
     Committed,
 
-    // A discontinuity started a resync.
+    // A discontinuity requires the owning controller to resync.
     Gap,
-
-    // Captured into the resync buffer for later replay.
-    Buffered,
 }
 
 // Result of applying one broadcast. `message_id` is meaningful only for `.Discarded`
@@ -46,15 +39,6 @@ Apply_Kind :: enum {
 Apply_Result :: struct {
     kind:       Apply_Kind,
     message_id: wire.Message_Id,
-}
-
-// Result of installing a resync snapshot.
-Install_Outcome :: enum {
-    // Caught up; live again.
-    Live,
-
-    // A replay gap or buffer overflow needs another resync.
-    Resync_Again,
 }
 
 // Kind of one active assistant part. Text and visible reasoning share the
@@ -136,28 +120,6 @@ Owned_Queued_Input :: struct {
     input: wire.Queued_Input,
 }
 
-// Broadcasts captured while a resync is in flight, replayed in arrival order.
-Resync_Buffer :: struct {
-    // Owns every cloned broadcast and the event list.
-    arena:    mem.Dynamic_Arena,
-
-    // Captured broadcasts, arrival order; backed by `arena`.
-    events:   [dynamic]wire.Notification,
-
-    // Running total of cloned broadcast bytes; the byte-cap backstop (no single "used"
-    // field on a Dynamic_Arena).
-    bytes:    int,
-
-    // The prior buffer was discarded after crossing a cap.
-    overflow: bool,
-}
-
-// The active-draft tool part awaiting permission; the view is materialized from it.
-Permission_Locator :: struct {
-    message_id: wire.Message_Id,
-    part_id:    wire.Part_Id,
-}
-
 // Replica-local pending-permission view. The resync snapshot carries no pending-permission
 // field, so this is derived from the active draft's tool state. All borrowed fields point
 // into the draft arena and die with the draft.
@@ -182,8 +144,8 @@ Active_Info :: struct {
 }
 
 // Owned state for one session. Ids are keys, never indices; `highest_finalized_id` is
-// the seal boundary. `active` and `resync` are pointers (nil = none) because both are
-// mutated in place; this diverges deliberately from the Zig inline optional/union.
+// the seal boundary. Synchronization belongs to the connection/session controller; the
+// replica only folds live broadcasts and atomically installs resync cuts.
 Session_Replica :: struct {
     // @private
     // Backing allocator; block allocator for every region arena.
@@ -226,12 +188,6 @@ Session_Replica :: struct {
 
     // Queued inputs, each independently reclaimable.
     queued:                  [dynamic]Owned_Queued_Input,
-
-    // Tool part awaiting permission; the view borrows from the draft.
-    pending_permission:      Maybe(Permission_Locator),
-
-    // Non-nil while buffering broadcasts during an in-flight resync; nil = live.
-    resync:                  ^Resync_Buffer,
 }
 
 // Initialize an empty replica for `session_id`. `allocator` backs every region arena and
@@ -247,8 +203,7 @@ replica_init :: proc(self: ^Session_Replica, allocator: mem.Allocator, session_i
 }
 
 // Free the swappable owned state: active draft, committed messages, configs, and queued
-// inputs, plus their spines. Does NOT touch `resync` — a buffered replay outlives the
-// install that calls this. Mirrors the teardown in the install commit step; keep the two
+// inputs, plus their spines. Mirrors the teardown in the install commit step; keep the two
 // sites freeing identical field sets.
 replica_free_owned :: proc(self: ^Session_Replica) {
     if self.active != nil {
@@ -270,14 +225,9 @@ replica_free_owned :: proc(self: ^Session_Replica) {
     delete(self.queued)
 }
 
-// Free all owned state, including any in-flight resync buffer, and zero the replica.
+// Free all owned state and zero the replica.
 replica_destroy :: proc(self: ^Session_Replica) {
     replica_free_owned(self)
-
-    if self.resync != nil {
-        resync_buffer_destroy(self.allocator, self.resync)
-        self.resync = nil
-    }
 
     self^ = {}
 }
@@ -320,12 +270,6 @@ owned_queued_input_clone :: proc(src: wire.Queued_Input, backing: mem.Allocator)
 // Free a queued input's arena.
 owned_queued_input_destroy :: proc(owned: ^Owned_Queued_Input) {
     mem.dynamic_arena_destroy(&owned.arena)
-}
-
-// Destroy a resync buffer: free its arena, then the heap-allocated struct.
-resync_buffer_destroy :: proc(allocator: mem.Allocator, buffer: ^Resync_Buffer) {
-    mem.dynamic_arena_destroy(&buffer.arena)
-    free(buffer, allocator)
 }
 
 // --- live folding ---
@@ -387,6 +331,14 @@ replica_on_part_added :: proc(
 
     if ordinal > count {
         return {kind = .Gap}, .None // missing part
+    }
+
+    if tool, is_tool := data.part.(wire.Tool_Part); is_tool {
+        if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); is_waiting {
+            if draft_has_waiting_permission(draft, nil) {
+                return {kind = .Gap}, .None
+            }
+        }
     }
 
     arena_alloc := mem.dynamic_arena_allocator(&draft.arena)
@@ -517,9 +469,7 @@ replica_on_tool_output_delta :: proc(
     return {kind = .Changed}, .None
 }
 
-// Replace the full live state of an existing tool part. This is the sole source of
-// `pending_permission`: it sets the locator when a tool part enters
-// `Tool_State_Waiting_Permission` and clears it when the tracked part leaves.
+// Replace the full live state of an existing tool part.
 replica_on_tool_state_changed :: proc(
     self: ^Session_Replica,
     data: wire.Tool_State_Changed_Data,
@@ -551,9 +501,6 @@ replica_on_tool_state_changed :: proc(
         return {kind = .Ignored}, .None
     }
 
-    // Validate the transition before mutating state.
-    now_waiting := false
-
     if _, is_waiting := data.state.(wire.Tool_State_Waiting_Permission); is_waiting {
         perm, has_perm := data.permission_state.?
 
@@ -562,13 +509,9 @@ replica_on_tool_state_changed :: proc(
             return {kind = .Gap}, .None
         }
 
-        if pending, has_pending := self.pending_permission.?; has_pending {
-            if pending.message_id != data.message_id || pending.part_id != data.part_id {
-                return {kind = .Gap}, .None
-            }
+        if draft_has_waiting_permission(draft, data.part_id) {
+            return {kind = .Gap}, .None
         }
-
-        now_waiting = true
     }
 
     // Previous tool state is owned by the draft arena; replaced in place. The superseded
@@ -579,21 +522,6 @@ replica_on_tool_state_changed :: proc(
 
     if p, has_permission := data.permission_state.?; has_permission {
         part.tool.tool.permission_state = wire.permission_state_clone(p, arena_alloc)
-    }
-
-    if now_waiting {
-        stored, has_stored := part.tool.tool.permission_state.?
-        assert(has_stored && permission_state_is_awaiting(stored), "cloned permission must survive as awaiting")
-
-        self.pending_permission = Permission_Locator {
-            message_id = data.message_id,
-            part_id    = data.part_id,
-        }
-    } else if pending, has_pending := self.pending_permission.?; has_pending {
-        // Leaving waiting on the tracked part clears it.
-        if pending.message_id == data.message_id && pending.part_id == data.part_id {
-            self.pending_permission = nil
-        }
     }
 
     return {kind = .Changed}, .None
@@ -608,7 +536,6 @@ replica_on_discarded :: proc(self: ^Session_Replica, data: wire.Message_Discarde
 
     if self.active != nil && self.active.message_id == data.message_id {
         advance_finalized(self, data.message_id)
-        clear_pending_permission_for_message(self, data.message_id)
         drop_active(self)
 
         return {kind = .Discarded, message_id = data.message_id}
@@ -723,6 +650,28 @@ open_draft :: proc(self: ^Session_Replica, message_id: wire.Message_Id) -> ^Draf
     return nil
 }
 
+// Whether another tool in `draft` is waiting for permission. `except` excludes the part
+// being transitioned in place.
+draft_has_waiting_permission :: proc(draft: ^Draft_Replica, except: Maybe(wire.Part_Id)) -> bool {
+    assert(draft != nil, "permission scan needs a draft")
+
+    for &part in draft.parts {
+        if part.kind != .Tool {
+            continue
+        }
+
+        if part_id, ok := except.?; ok && part.tool.tool.id == part_id {
+            continue
+        }
+
+        if _, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission); is_waiting {
+            return true
+        }
+    }
+
+    return false
+}
+
 // True if `message_id` is at or below the finalized high-water mark.
 is_finalized :: proc(self: ^Session_Replica, message_id: wire.Message_Id) -> bool {
     if highest, ok := self.highest_finalized_id.?; ok {
@@ -737,13 +686,6 @@ advance_finalized :: proc(self: ^Session_Replica, message_id: wire.Message_Id) {
     highest, ok := self.highest_finalized_id.?
     if !ok || message_id > highest {
         self.highest_finalized_id = message_id
-    }
-}
-
-// Clear a pending permission anchored in `message_id`.
-clear_pending_permission_for_message :: proc(self: ^Session_Replica, message_id: wire.Message_Id) {
-    if pending, ok := self.pending_permission.?; ok && pending.message_id == message_id {
-        self.pending_permission = nil
     }
 }
 
@@ -804,8 +746,7 @@ located_part :: proc(self: ^Session_Replica, message_id: wire.Message_Id, part_i
 // Only an identity conflict at a part the replica already holds proves divergence — a
 // missing draft or unfolded ordinal means the unsequenced streams are out of step.
 activity_locators_diverge :: proc(self: ^Session_Replica, state: wire.Activity_State) -> bool {
-    // A buffering replica's draft is not the live derivation; it must never be compared.
-    assert(self.resync == nil, "locators compared while resyncing")
+    assert(self != nil, "locator comparison needs a replica")
 
     #partial switch v in state {
     case wire.Activity_State_Reasoning:
@@ -928,39 +869,43 @@ replica_tool_output :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (s
 // Borrow the tool call awaiting permission, materialized from the active draft's tool
 // state. Invalidated by any later replica mutation, like `replica_tool_part`.
 replica_pending_permission :: proc(self: ^Session_Replica) -> (Pending_Permission_View, bool) {
-    pending, ok := self.pending_permission.?
-    if !ok {
+    if self.active == nil {
         return {}, false
     }
 
-    tool := replica_tool_part(self, pending.part_id)
-    if tool == nil {
-        return {}, false
+    for &part in self.active.parts {
+        if part.kind != .Tool {
+            continue
+        }
+
+        tool := &part.tool.tool
+
+        if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
+            continue
+        }
+
+        perm, has_perm := tool.permission_state.?
+        if !has_perm || !permission_state_is_awaiting(perm) {
+            continue
+        }
+
+        options, has_options := perm.options.?
+        if !has_options {
+            continue
+        }
+
+        return Pending_Permission_View {
+                message_id = self.active.message_id,
+                part_id = tool.id,
+                tool_name = tool.name,
+                arguments = tool.arguments,
+                options = options,
+                requested_at_ms = perm.requested_at_ms,
+            },
+            true
     }
 
-    if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
-        return {}, false
-    }
-
-    perm, has_perm := tool.permission_state.?
-    if !has_perm {
-        return {}, false
-    }
-
-    options, has_options := perm.options.?
-    if !has_options {
-        return {}, false
-    }
-
-    return Pending_Permission_View {
-            message_id = pending.message_id,
-            part_id = pending.part_id,
-            tool_name = tool.name,
-            arguments = tool.arguments,
-            options = options,
-            requested_at_ms = perm.requested_at_ms,
-        },
-        true
+    return {}, false
 }
 
 // Borrow a committed message by id; ok is false if absent. Slices borrow the message's
@@ -1059,8 +1004,6 @@ replica_on_committed :: proc(
             }
         }
     }
-
-    clear_pending_permission_for_message(self, mid)
 
     // Clear only the draft this commit finalizes.
     if self.active != nil && self.active.message_id == mid {
@@ -1200,8 +1143,8 @@ evict_oldest_if_full :: proc(self: ^Session_Replica) {
 // --- sequence gating and dispatch ---
 
 // Offer one session-scoped transcript/activity broadcast. Foreign-session and other-domain
-// broadcasts (e.g. `session.removed`, `session.summary_changed`) are ignored before any
-// gating or buffering, so they can neither advance the sequence nor enter the buffer.
+// broadcasts (e.g. `session.removed`, `session.summary_changed`) are ignored before
+// sequence gating. A gap leaves the replica unchanged and tells its controller to resync.
 replica_apply_broadcast :: proc(
     self: ^Session_Replica,
     bc: wire.Notification,
@@ -1214,11 +1157,6 @@ replica_apply_broadcast :: proc(
         return {kind = .Ignored}, .None
     }
 
-    // Buffer everything while a resync is in flight; replay happens after install.
-    if self.resync != nil {
-        return buffer_event(self, bc)
-    }
-
     // Durable events gate on the per-session sequence; live events fold directly.
     if seq, has_seq := wire.broadcast_data_seq(bc.params).?; has_seq {
         if seq <= self.base_seq {
@@ -1226,7 +1164,7 @@ replica_apply_broadcast :: proc(
         }
 
         if seq > self.base_seq + 1 {
-            return gap_resync(self, bc) // missed a durable event
+            return {kind = .Gap}, .None // missed a durable event
         }
 
         result := apply_durable(self, bc) or_return
@@ -1236,13 +1174,7 @@ replica_apply_broadcast :: proc(
         return result, .None
     }
 
-    result := apply_live(self, bc) or_return
-
-    if result.kind == .Gap {
-        return gap_resync(self, bc)
-    }
-
-    return result, .None
+    return apply_live(self, bc)
 }
 
 // Dispatch a contiguous durable broadcast to its state handler. Only the five durable-seq
@@ -1384,106 +1316,7 @@ replica_domain_session_id :: proc(data: wire.Broadcast_Data) -> (wire.Session_Id
     return {}, false
 }
 
-// --- resync buffering ---
-
-// Enter the resyncing state; a second call coalesces into the existing buffer. Diverges
-// from the Zig inline union: the buffer is heap-allocated and `self.resync` points at it
-// (nil = live), so mutable buffering has a stable pointer.
-replica_begin_resync :: proc(self: ^Session_Replica) -> Replica_Error {
-    if self.resync != nil {
-        return .None
-    }
-
-    buf, err := new(Resync_Buffer, self.allocator)
-    if err != nil {
-        return .Out_Of_Memory
-    }
-
-    mem.dynamic_arena_init(&buf.arena, self.allocator, self.allocator)
-    buf.events.allocator = mem.dynamic_arena_allocator(&buf.arena)
-    self.resync = buf
-
-    return .None
-}
-
-// Discard any buffered events and open a fresh resync buffer. A new connection generation
-// must not replay a dead connection's buffered events, so unlike `replica_begin_resync`
-// this never coalesces into an existing buffer.
-replica_restart_resync :: proc(self: ^Session_Replica) -> Replica_Error {
-    if self.resync != nil {
-        resync_buffer_destroy(self.allocator, self.resync)
-        self.resync = nil
-    }
-
-    return replica_begin_resync(self)
-}
-
-// Start a resync and capture the event that revealed the gap.
-gap_resync :: proc(self: ^Session_Replica, bc: wire.Notification) -> (res: Apply_Result, err: Replica_Error) {
-    replica_begin_resync(self) or_return
-    _ = buffer_event(self, bc) or_return
-
-    return {kind = .Gap}, .None
-}
-
-// Capture a broadcast into the resync buffer, honoring the event-count and byte caps.
-// Crossing either cap drops the whole prefix and keeps buffering into a fresh empty arena
-// with `overflow` set, so the eventual install forces another resync.
-buffer_event :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Result, Replica_Error) {
-    buf := self.resync
-
-    if buf.overflow {
-        return {kind = .Buffered}, .None
-    }
-
-    // Crossing either cap before adding this event discards the accumulated prefix.
-    if len(buf.events) >= MAX_BUFFERED_EVENTS || buf.bytes > MAX_BUFFERED_BYTES {
-        resync_buffer_reset_overflow(self, buf)
-
-        return {kind = .Buffered}, .None
-    }
-
-    arena_alloc := mem.dynamic_arena_allocator(&buf.arena)
-    cloned := wire.notification_clone(bc, arena_alloc)
-
-    if _, aerr := append(&buf.events, cloned); aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-
-    // `Dynamic_Arena` exposes no bytes-used field, so track the buffered payload size by
-    // its serialized length.
-    buf.bytes += broadcast_size_estimate(bc)
-
-    // A single oversized event trips the byte cap here rather than on the next call.
-    if buf.bytes > MAX_BUFFERED_BYTES {
-        resync_buffer_reset_overflow(self, buf)
-    }
-
-    return {kind = .Buffered}, .None
-}
-
-// Discard the buffer's arena and events, then keep it usable and flagged overflowed so
-// later events buffer cheaply into a fresh empty arena until install.
-resync_buffer_reset_overflow :: proc(self: ^Session_Replica, buf: ^Resync_Buffer) {
-    mem.dynamic_arena_destroy(&buf.arena)
-    mem.dynamic_arena_init(&buf.arena, self.allocator, self.allocator)
-    buf.events = {}
-    buf.events.allocator = mem.dynamic_arena_allocator(&buf.arena)
-    buf.bytes = 0
-    buf.overflow = true
-}
-
-// Serialized byte size of a broadcast, used as the resync byte-cap measure.
-broadcast_size_estimate :: proc(bc: wire.Notification) -> int {
-    e: wire.Emitter
-    wire.emitter_init(&e, context.allocator)
-    defer wire.emitter_destroy(&e)
-    wire.notification_emit(&e, bc)
-
-    return len(wire.to_string(&e))
-}
-
-// --- resync install and replay ---
+// --- resync install ---
 
 // Reconstruct a mid-flight draft from a resync snapshot so subsequent deltas resume at the
 // right offset. Metadata comes from the draft message itself (`Active_Draft` is just
@@ -1556,57 +1389,21 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
     return d, .None
 }
 
-// Recompute the pending-permission locator from a freshly installed draft. The resync
-// snapshot carries no pending-permission field, so it is derived from the draft's own tool
-// state: the first tool part in `Tool_State_Waiting_Permission` with options present.
-derive_pending_permission :: proc(active: ^Draft_Replica) -> Maybe(Permission_Locator) {
-    if active == nil {
-        return nil
-    }
-
-    for &part in active.parts {
-        if part.kind != .Tool {
-            continue
-        }
-
-        if _, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
-            continue
-        }
-
-        perm, has_perm := part.tool.tool.permission_state.?
-        if !has_perm || !permission_state_is_awaiting(perm) {
-            continue
-        }
-
-        return Permission_Locator{message_id = active.message_id, part_id = part.tool.tool.id}
-    }
-
-    return nil
-}
-
-// Install a resync snapshot transactionally, then replay any buffered broadcasts. Build
-// errors preserve prior state; a replay gap or overflow keeps the installed snapshot and
-// requests another resync. Odin has no `errdefer`, so a single `committed`-guarded `defer`
-// tears down every candidate on any early return before the commit.
-replica_install_snapshot :: proc(
-    self: ^Session_Replica,
-    r: wire.Session_Resync_Result,
-) -> (
-    outcome: Install_Outcome,
-    err: Replica_Error,
-) {
-    // The wire validator is stronger than the replica's inline checks (activity/queued and
-    // activity/waiting-tool cross-checks); its failure is a malformed snapshot.
+// Install a validated resync cut transactionally. The owning controller drops session
+// broadcasts while the request is in flight; the ordered response is the cut barrier, so
+// no replay is needed. Build errors preserve prior state. Odin has no `errdefer`, so a
+// single `committed`-guarded `defer` tears down every candidate before the commit.
+replica_install_snapshot :: proc(self: ^Session_Replica, r: wire.Session_Resync_Result) -> Replica_Error {
     if wire.session_resync_result_validate(r) != .None {
-        return .Live, .Malformed_Snapshot
+        return .Malformed_Snapshot
     }
 
     if self.session_id != r.item.session.id {
-        return .Live, .Session_Mismatch
+        return .Session_Mismatch
     }
 
     if len(r.messages) > MAX_RETAINED_MESSAGES {
-        return .Live, .Malformed_Snapshot
+        return .Malformed_Snapshot
     }
 
     // --- Build candidates. Nothing below touches `self` until the commit. ---
@@ -1640,78 +1437,33 @@ replica_install_snapshot :: proc(
     }
 
     if e_m != nil || e_q != nil || e_c != nil {
-        return .Live, .Out_Of_Memory
+        return .Out_Of_Memory
     }
 
-    // Messages: clone each, enforcing oldest-first, unique ids, all <= highest_finalized.
-    prev_id: Maybe(wire.Message_Id)
+    // The wire validator established ordering, uniqueness, boundaries, and references.
     for msg in r.messages {
-        mid := wire.message_id(msg)
-
-        if prev, ok := prev_id.?; ok && mid <= prev {
-            return .Live, .Malformed_Snapshot
-        }
-
-        if highest, ok := r.highest_finalized_message_id.?; !ok || mid > highest {
-            return .Live, .Malformed_Snapshot
-        }
-
-        prev_id = mid
-
         owned := owned_message_clone(msg, self.allocator)
         append(&cand_messages, owned) // capacity reserved by make
     }
 
-    // Configs: clone into the candidate arena, rejecting duplicate config_rev.
     cfg_alloc := mem.dynamic_arena_allocator(&cand_cfg_arena)
     for cfg in r.configs {
-        for existing in cand_configs {
-            if existing.config_rev == cfg.config_rev {
-                return .Live, .Malformed_Snapshot
-            }
-        }
-
         append(&cand_configs, wire.run_config_clone(cfg, cfg_alloc))
     }
 
-    // Referential integrity: every assistant message's config_rev exists.
-    for msg in r.messages {
-        if assistant, is_assistant := msg.(wire.Assistant_Message); is_assistant {
-            if !config_rev_present(cand_configs[:], assistant.config_rev) {
-                return .Live, .Malformed_Snapshot
-            }
-        }
-    }
-
-    // Active draft: id above highest_finalized, config_rev exists, then reconstruct it.
     if src, has_active := r.active.?; has_active {
-        if highest, ok := r.highest_finalized_message_id.?; ok && src.message.id <= highest {
-            return .Live, .Malformed_Snapshot
-        }
-
-        if !config_rev_present(cand_configs[:], src.message.config_rev) {
-            return .Live, .Malformed_Snapshot
-        }
-
         draft := draft_from_snapshot(self, src) or_return
 
         cand_active = draft
     }
 
-    // Queued inputs: clone each, rejecting duplicate input_id.
     for qi in r.queued {
-        for existing in cand_queued {
-            if existing.input.input_id == qi.input_id {
-                return .Live, .Malformed_Snapshot
-            }
-        }
-
         owned := owned_queued_input_clone(qi, self.allocator)
         append(&cand_queued, owned) // capacity reserved by make
     }
 
     // --- Commit: infallible from here. Free old owned state, move candidates in. ---
-    replica_free_owned(self) // teardown mirroring deinit MINUS self.resync (replay needs it)
+    replica_free_owned(self)
     self.messages = cand_messages
     self.queued = cand_queued
     self.configs = cand_configs
@@ -1722,67 +1474,7 @@ replica_install_snapshot :: proc(
     self.highest_finalized_id = r.highest_finalized_message_id
     self.pending_compaction = r.item.activity.pending_compaction
     self.last_cleared_compaction = nil
-    self.pending_permission = derive_pending_permission(cand_active)
     committed = true
 
-    return replica_replay_buffer(self)
-}
-
-// Detach and replay the resync buffer once, in arrival order. An overflowed buffer or a
-// fresh gap during replay yields `.Resync_Again` and leaves the replica resyncing again.
-replica_replay_buffer :: proc(self: ^Session_Replica) -> (Install_Outcome, Replica_Error) {
-    if self.resync == nil {
-        return .Live, .None
-    }
-
-    buf := self.resync
-    self.resync = nil // detach so replay does not re-buffer into itself
-
-    if buf.overflow {
-        resync_buffer_destroy(self.allocator, buf)
-
-        // Re-enter resyncing for the caller; an OOM here must surface rather than leave a
-        // silent live/resyncing inconsistency.
-        if err := replica_begin_resync(self); err != .None {
-            return .Resync_Again, err
-        }
-
-        return .Resync_Again, .None
-    }
-
-    outcome := Install_Outcome.Live
-    for ev in buf.events {
-        result, err := replica_apply_broadcast(self, ev)
-        if err != .None {
-            // Mirror the Zig errdefer: re-enter resyncing, then propagate the original
-            // failure (a begin_resync OOM is subsumed by the error we already return).
-            resync_buffer_destroy(self.allocator, buf)
-            _ = replica_begin_resync(self)
-
-            return .Resync_Again, err
-        }
-
-        // A fresh gap re-entered resyncing and captured `ev`; the next resync supersedes
-        // the rest of this buffer.
-        if result.kind == .Gap {
-            outcome = .Resync_Again
-
-            break
-        }
-    }
-
-    resync_buffer_destroy(self.allocator, buf)
-
-    return outcome, .None
-}
-
-// True if `config_rev` is present in the candidate config set.
-config_rev_present :: proc(configs: []wire.Run_Config, config_rev: wire.Config_Rev) -> bool {
-    for cfg in configs {
-        if cfg.config_rev == config_rev {
-            return true
-        }
-    }
-
-    return false
+    return .None
 }

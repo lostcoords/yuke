@@ -27,6 +27,9 @@ Transport :: struct {
     // Begin a graceful close with `code`.
     close:     proc(t: Transport, code: Close_Code) -> ws.Client_Error,
 
+    // Cancel a transport that has not opened yet.
+    cancel:    proc(t: Transport),
+
     // Fail without a close handshake. `err` is never `.None` or `.Not_Open`.
     abort:     proc(t: Transport, err: ws.Client_Error),
 
@@ -72,6 +75,7 @@ ws_create :: proc(
             open = ws_open,
             send_text = ws_send_text,
             close = ws_close,
+            cancel = ws_cancel,
             abort = ws_abort,
             destroy = ws_destroy,
         },
@@ -111,6 +115,14 @@ ws_close :: proc(t: Transport, code: Close_Code) -> ws.Client_Error {
     assert(backend != nil, "ws_close needs a backend")
 
     return ws.client_close(&backend.sock, ws.Close_Code(code))
+}
+
+@(private = "file")
+ws_cancel :: proc(t: Transport) {
+    backend := (^Ws_Backend)(t.self)
+    assert(backend != nil, "ws_cancel needs a backend")
+
+    ws.client_cancel(&backend.sock)
 }
 
 @(private = "file")

@@ -1,5 +1,6 @@
 package client
 
+import "core:log"
 import "core:mem"
 import "core:reflect"
 import "core:strings"
@@ -21,6 +22,8 @@ Sink :: struct {
     last_ok:          bool,
     last_result_type: typeid,
     last_error_code:  wire.Error_Code,
+    failures:         int,
+    last_failure:     Protocol_Error,
     broadcasts:       int,
     last_bc_name:     wire.Broadcast_Name,
     unknown:          int,
@@ -52,12 +55,30 @@ Completion :: struct {
     calls:       int,
     response_id: u64,
     result_type: typeid,
+    failure:     Protocol_Error,
 }
 
 // The recording completion registered per request. Updates the connection-wide `Sink`
 // and, when the request carried one, its own `Completion`.
-_rec_on_response :: proc(c: ^Client, resp: wire.Response, user_data: rawptr) {
+_rec_on_response :: proc(c: ^Client, outcome: Request_Outcome, user_data: rawptr) {
     s := (^Sink)(c.user_data)
+
+    if failed, is_failure := outcome.(Request_Failure); is_failure {
+        s.failures += 1
+        s.last_failure = failed.error
+
+        if user_data != nil {
+            own := (^Completion)(user_data)
+            own.calls += 1
+            own.failure = failed.error
+        }
+
+        return
+    }
+
+    answered, is_response := outcome.(Request_Response)
+    assert(is_response, "completion outcome is closed")
+    resp := answered.response
     s.responses += 1
 
     switch v in resp {
@@ -140,7 +161,7 @@ _init_client :: proc(c: ^Client, sink: ^Sink) {
 _expect_response :: proc(c: ^Client, id: u64, method: wire.Method_Name, own: ^Completion = nil) {
     c.pending[id] = {
         method      = method,
-        on_response = _rec_on_response,
+        on_complete = _rec_on_response,
         user_data   = own,
     }
 }
@@ -163,6 +184,7 @@ Fake_Transport :: struct {
     sent:       [dynamic]string,
     closes:     int,
     close_code: Close_Code,
+    cancels:    int,
     aborts:     int,
     last_abort: ws.Client_Error,
     destroys:   int,
@@ -176,6 +198,7 @@ _fake_transport_init :: proc(t: ^Fake_Transport) -> Transport {
         open = _fake_open,
         send_text = _fake_send_text,
         close = _fake_close,
+        cancel = _fake_cancel,
         abort = _fake_abort,
         destroy = _fake_destroy,
     }
@@ -201,6 +224,11 @@ _fake_close :: proc(tr: Transport, code: Close_Code) -> ws.Client_Error {
     t.close_code = code
 
     return .None
+}
+
+_fake_cancel :: proc(tr: Transport) {
+    t := (^Fake_Transport)(tr.self)
+    t.cancels += 1
 }
 
 _fake_abort :: proc(tr: Transport, err: ws.Client_Error) {
@@ -333,6 +361,132 @@ test_duplicate_response_does_not_refire_completion :: proc(t: ^testing.T) {
     testing.expect_value(t, own.calls, 1)
     testing.expect_value(t, sink.errors, 1)
     testing.expect_value(t, sink.last_error, Protocol_Error.Unknown_Response)
+}
+
+@(test)
+test_malformed_response_completes_request_with_decode_failure :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    defer _teardown(&c)
+
+    own: Completion
+    _expect_response(&c, 3, .Session_Send_Input, &own)
+
+    raw := `{"jsonrpc":"2.0","id":3,"result":{"type":"queued"}}`
+    testing.expect_value(t, client_handle_text(&c, transmute([]byte)raw), Protocol_Error.Decode_Failed)
+    testing.expect_value(t, own.calls, 1)
+    testing.expect_value(t, own.failure, Protocol_Error.Decode_Failed)
+    testing.expect_value(t, len(c.pending), 0)
+
+    testing.expect_value(t, client_handle_text(&c, transmute([]byte)raw), Protocol_Error.Unknown_Response)
+    testing.expect_value(t, own.calls, 1)
+}
+
+@(test)
+test_protocol_abort_completes_every_pending_request_once :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    defer _teardown(&c)
+
+    first: Completion
+    second: Completion
+    _expect_response(&c, 1, .Catalog_Refresh, &first)
+    _expect_response(&c, 2, .Session_List, &second)
+
+    client_abort(&c, .Bad_Frame)
+    testing.expect_value(t, c.state, Protocol_State.Closing)
+    testing.expect_value(t, len(c.pending), 0)
+    testing.expect_value(t, first.calls, 1)
+    testing.expect_value(t, first.failure, Protocol_Error.Bad_Frame)
+    testing.expect_value(t, second.calls, 1)
+    testing.expect_value(t, second.failure, Protocol_Error.Bad_Frame)
+    testing.expect_value(t, sink.errors, 1)
+
+    transport_on_close(&c, CLOSE_NORMAL)
+    testing.expect_value(t, first.calls, 1)
+    testing.expect_value(t, second.calls, 1)
+}
+
+@(test)
+test_terminal_close_completes_pending_before_close_callback :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    defer _teardown(&c)
+
+    own: Completion
+    _expect_response(&c, 1, .Catalog_Refresh, &own)
+
+    client_close(&c)
+    testing.expect_value(t, c.state, Protocol_State.Closing)
+    testing.expect_value(t, own.calls, 0)
+
+    transport_on_close(&c, CLOSE_NORMAL)
+    testing.expect_value(t, c.state, Protocol_State.Closed)
+    testing.expect_value(t, own.calls, 1)
+    testing.expect_value(t, own.failure, Protocol_Error.Connection_Closed)
+    testing.expect_value(t, sink.closes, 1)
+}
+
+@(test)
+test_transport_failure_completes_pending_before_error_callback :: proc(t: ^testing.T) {
+    saved_logger := context.logger
+    context.logger = log.nil_logger()
+    defer context.logger = saved_logger
+
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    defer _teardown(&c)
+
+    own: Completion
+    _expect_response(&c, 1, .Catalog_Refresh, &own)
+
+    transport_on_error(&c, .Recv_Failed)
+    testing.expect_value(t, c.state, Protocol_State.Closed)
+    testing.expect_value(t, own.calls, 1)
+    testing.expect_value(t, own.failure, Protocol_Error.Transport_Failed)
+    testing.expect_value(t, sink.errors, 1)
+    testing.expect_value(t, sink.last_error, Protocol_Error.Transport_Failed)
+}
+
+@(test)
+test_terminal_close_completes_initialize_while_closing :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    c.state = .Awaiting_Initialize
+    c.pending[INITIALIZE_REQUEST_ID] = {
+        method      = .Initialize,
+        on_complete = client_on_initialize_complete,
+    }
+    defer _teardown(&c)
+
+    transport_on_close(&c, CLOSE_NORMAL)
+    testing.expect_value(t, c.state, Protocol_State.Closed)
+    testing.expect_value(t, len(c.pending), 0)
+    testing.expect_value(t, sink.ready, 0)
+    testing.expect_value(t, sink.closes, 1)
+}
+
+@(test)
+test_close_while_connecting_cancels_transport :: proc(t: ^testing.T) {
+    sink: Sink
+    c: Client
+    _init_client(&c, &sink)
+    c.state = .Connecting
+    defer _teardown(&c)
+
+    client_close(&c)
+    testing.expect_value(t, c.state, Protocol_State.Closing)
+    testing.expect_value(t, sink.transport.cancels, 1)
+
+    transport_on_error(&c, .Canceled)
+    testing.expect_value(t, c.state, Protocol_State.Closed)
+    testing.expect_value(t, sink.closes, 1)
+    testing.expect_value(t, sink.errors, 0)
 }
 
 @(test)
@@ -548,7 +702,7 @@ test_handle_hello_valid_reaches_ready_and_retains :: proc(t: ^testing.T) {
 
     c.pending[INITIALIZE_REQUEST_ID] = {
         method      = .Initialize,
-        on_response = client_on_initialize_result,
+        on_complete = client_on_initialize_complete,
     }
 
     err := client_handle_text(&c, buf)
@@ -582,7 +736,7 @@ test_handle_hello_malformed_fails_decode :: proc(t: ^testing.T) {
 
     c.pending[INITIALIZE_REQUEST_ID] = {
         method      = .Initialize,
-        on_response = client_on_initialize_result,
+        on_complete = client_on_initialize_complete,
     }
 
     raw := `{"jsonrpc":"2.0","id":1,"result":{"protocol":1,"daemon":{"version":"x"`
@@ -604,7 +758,7 @@ test_handle_hello_error_response_is_bad_initialize :: proc(t: ^testing.T) {
 
     c.pending[INITIALIZE_REQUEST_ID] = {
         method      = .Initialize,
-        on_response = client_on_initialize_result,
+        on_complete = client_on_initialize_complete,
     }
 
     raw := `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"unsupported protocol version"}}`

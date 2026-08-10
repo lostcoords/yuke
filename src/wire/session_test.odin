@@ -41,6 +41,37 @@ _sample_session_list_item :: proc() -> Session_List_Item {
     }
 }
 
+@(private = "file")
+_snapshot_user_message :: proc(id: Message_Id) -> Message {
+    return User_Message{id = id, input_id = Input_Id(id), time = {created_at_ms = u64(id)}}
+}
+
+@(private = "file")
+_snapshot_assistant_message :: proc(id: Message_Id, config_rev: Config_Rev) -> Message {
+    return Assistant_Message {
+        id = id,
+        run_id = 1,
+        config_rev = config_rev,
+        agent = "main",
+        finish = Stop_Reason.Stop,
+        time = {created_at_ms = u64(id), completed_at_ms = u64(id)},
+    }
+}
+
+@(private = "file")
+_valid_resync_result :: proc(messages: []Message, configs: []Run_Config) -> Session_Resync_Result {
+    item := _sample_session_list_item()
+    item.session.message_count = 2
+
+    return Session_Resync_Result {
+        item = item,
+        base_seq = 4,
+        highest_finalized_message_id = 2,
+        messages = messages,
+        configs = configs,
+    }
+}
+
 @(test)
 test_session_scope_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
@@ -289,6 +320,89 @@ test_resync_params_limit_is_strict :: proc(t: ^testing.T) {
     testing.expect_value(t, request_params_validate(Request_Params(invalid)), Validation_Error.Out_Of_Range)
     invalid.limit = u64(LIMITS.max_page_size) + 1
     testing.expect_value(t, session_resync_params_validate(invalid), Validation_Error.Out_Of_Range)
+}
+
+@(test)
+test_session_resync_result_relational_validation :: proc(t: ^testing.T) {
+    messages := [2]Message{_snapshot_user_message(1), _snapshot_assistant_message(2, 1)}
+    configs := [1]Run_Config{{config_rev = 1, model = "openai/gpt", reasoning = "low"}}
+    valid := _valid_resync_result(messages[:], configs[:])
+    testing.expect_value(t, session_resync_result_validate(valid), Validation_Error.None)
+
+    under_count := valid
+    under_count.item.session.message_count = 1
+    testing.expect_value(t, session_resync_result_validate(under_count), Validation_Error.Mismatched_Payload)
+
+    missing_more := valid
+    missing_more.item.session.message_count = 3
+    testing.expect_value(t, session_resync_result_validate(missing_more), Validation_Error.Mismatched_Payload)
+
+    unexpected_more := valid
+    unexpected_more.has_more = true
+    testing.expect_value(t, session_resync_result_validate(unexpected_more), Validation_Error.Mismatched_Payload)
+
+    unordered := valid
+    unordered.messages = []Message{_snapshot_assistant_message(2, 1), _snapshot_user_message(1)}
+    testing.expect_value(t, session_resync_result_validate(unordered), Validation_Error.Mismatched_Payload)
+
+    unfinalized := valid
+    unfinalized.highest_finalized_message_id = Message_Id(1)
+    testing.expect_value(t, session_resync_result_validate(unfinalized), Validation_Error.Mismatched_Payload)
+
+    missing_boundary := valid
+    missing_boundary.highest_finalized_message_id = nil
+    testing.expect_value(t, session_resync_result_validate(missing_boundary), Validation_Error.Mismatched_Payload)
+
+    missing_config := valid
+    missing_config.configs = nil
+    testing.expect_value(t, session_resync_result_validate(missing_config), Validation_Error.Mismatched_Payload)
+
+    duplicate_config := valid
+    duplicate_config.configs = []Run_Config {
+        {config_rev = 1, model = "openai/gpt", reasoning = "low"},
+        {config_rev = 1, model = "other", reasoning = "high"},
+    }
+    testing.expect_value(t, session_resync_result_validate(duplicate_config), Validation_Error.Mismatched_Payload)
+
+    active_at_boundary := valid
+    active_at_boundary.active = Active_Draft {
+        message = Assistant_Message{id = 2, run_id = 3, config_rev = 1, agent = "main", time = {created_at_ms = 3}},
+    }
+    active_at_boundary.item.activity = Session_Activity {
+        state = Activity_State_Running{run_id = 3, started_at_ms = 3},
+        config = active_at_boundary.configs[0],
+    }
+    testing.expect_value(t, session_resync_result_validate(active_at_boundary), Validation_Error.Mismatched_Payload)
+
+    duplicate_input := valid
+    duplicate_input.queued = []Queued_Input{{input_id = 7, queued_at_ms = 1}, {input_id = 7, queued_at_ms = 2}}
+    duplicate_input.item.activity.queued = 2
+    testing.expect_value(t, session_resync_result_validate(duplicate_input), Validation_Error.Mismatched_Payload)
+}
+
+@(test)
+test_session_history_result_relational_validation :: proc(t: ^testing.T) {
+    valid := Session_History_Result {
+        session_id = Session_Id(_fixed16("0123456789abcdef")),
+        messages   = []Message{_snapshot_user_message(1), _snapshot_assistant_message(2, 1)},
+        configs    = []Run_Config{{config_rev = 1, model = "openai/gpt", reasoning = "low"}},
+    }
+    testing.expect_value(t, session_history_result_validate(valid), Validation_Error.None)
+
+    duplicate_message := valid
+    duplicate_message.messages = []Message{_snapshot_user_message(1), _snapshot_user_message(1)}
+    testing.expect_value(t, session_history_result_validate(duplicate_message), Validation_Error.Mismatched_Payload)
+
+    missing_config := valid
+    missing_config.configs = nil
+    testing.expect_value(t, session_history_result_validate(missing_config), Validation_Error.Mismatched_Payload)
+
+    duplicate_config := valid
+    duplicate_config.configs = []Run_Config {
+        {config_rev = 1, model = "openai/gpt", reasoning = "low"},
+        {config_rev = 1, model = "other", reasoning = "high"},
+    }
+    testing.expect_value(t, session_history_result_validate(duplicate_config), Validation_Error.Mismatched_Payload)
 }
 
 @(test)

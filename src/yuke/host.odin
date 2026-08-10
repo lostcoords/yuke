@@ -35,6 +35,8 @@ UI_JS :: #load("js/ui.js", string)
 
 DEFAULTS_JS :: #load("js/defaults.js", string)
 
+CLIENT_JS :: #load("js/client.js", string)
+
 // The user config entry, evaluated on top of the baked UI when present.
 USER_ENTRY :: "yuke.js"
 
@@ -85,6 +87,10 @@ Host :: struct {
     needs_tick:  bool,
     tick_period: time.Duration,
     tick_op:     ^nbio.Operation,
+
+    // One daemon connection shared by the client script tier. Its request completions own
+    // QuickJS promise functions, so it must be closed before `js` is released.
+    daemon:      Daemon_Connection,
 }
 
 host_init :: proc(
@@ -150,7 +156,7 @@ host_init :: proc(
     // test rather than depending on the directory existing yet.
     h.config_root = paths.config_dir(allocator)
 
-    modules := [2]js.Module{js.fs_module(), term_module()}
+    modules := [3]js.Module{js.fs_module(), term_module(), client_module()}
 
     // 16 MiB rather than the shared default: a TUI's scripts are widgets and keymaps, and
     // anything approaching this is a runaway. The deadline is deliberately the shared one —
@@ -198,6 +204,9 @@ host_destroy :: proc(h: ^Host) {
 
     host_cancel_tick(h)
     h.needs_tick = false
+    h.done = true
+
+    daemon_connection_destroy(h)
 
     // Before anything releases the context: draining runs every outstanding `yuke:fs`
     // completion on this loop, and each one settles a promise that lives in it. Freeing
@@ -284,6 +293,10 @@ host_dispatch :: proc(h: ^Host, obj: qjs.Value) {
 
 host_on_term_event :: proc(h: ^Host, ev: term.Event) {
     assert(h != nil && h.js.ctx != nil, "host_on_term_event needs a live host")
+
+    if h.done {
+        return
+    }
 
     if closed, is_closed := ev.(term.Input_Closed); is_closed {
         host_on_input_closed(h, closed.reason)

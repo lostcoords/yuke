@@ -107,8 +107,15 @@ cli_on_ready :: proc(c: ^client.Client, hello: wire.Initialize_Result) {
     }
 }
 
-cli_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+cli_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Cli_Obs)(c.user_data)
+    answered, ok := outcome.(client.Request_Response)
+    if !ok {
+        o.err = outcome.(client.Request_Failure).error
+        return
+    }
+
+    resp := answered.response
     o.got_response = true
 
     #partial switch v in resp {
@@ -275,8 +282,15 @@ handler_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     client.client_send_request(c, o.method, o.params, handler_on_response)
 }
 
-handler_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+handler_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Handler_Obs)(c.user_data)
+    answered, ok := outcome.(client.Request_Response)
+    if !ok {
+        o.err = outcome.(client.Request_Failure).error
+        return
+    }
+
+    resp := answered.response
     o.responded = true
 
     // `done` is latched by the terminal callback, not here: destroying a client with
@@ -1562,8 +1576,15 @@ concurrent_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     )
 }
 
-concurrent_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+concurrent_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Concurrent_Obs)(c.user_data)
+    answered, has_response := outcome.(client.Request_Response)
+    if !testing.expect(o.t, has_response, "browse request should receive a response") {
+        client.client_close(c)
+        return
+    }
+
+    resp := answered.response
     o.answered += 1
 
     ok, is_ok := resp.(wire.Response_Ok)
@@ -1715,7 +1736,7 @@ detach_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
 }
 
 // The connection is closed in the same turn the request was sent, so this may never run.
-detach_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+detach_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
 }
 
 detach_on_close :: proc(c: ^client.Client, code: client.Close_Code) {

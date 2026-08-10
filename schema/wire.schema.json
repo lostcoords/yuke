@@ -7176,7 +7176,7 @@
       "description": "session.history result.",
       "properties": {
         "configs": {
-          "description": "Configs referenced by `messages`.",
+          "description": "Unique configs resolving every assistant message in `messages`.",
           "items": {
             "$ref": "#/$defs/Run_Config"
           },
@@ -7188,7 +7188,7 @@
           "type": "boolean"
         },
         "messages": {
-          "description": "Page of transcript messages.",
+          "description": "Page of transcript messages, oldest first in strict message-id order.",
           "items": {
             "$ref": "#/$defs/Message"
           },
@@ -7658,7 +7658,7 @@
       "type": "object"
     },
     "Session_Resync_Result": {
-      "description": "Full session snapshot for reconnection. Non-owning.",
+      "description": "Full session snapshot for reconnection. Non-owning. On one ordered connection, the successful response is the snapshot cut barrier: session broadcasts queued before it are represented by this result, and broadcasts queued after it are newer than the cut.",
       "properties": {
         "active": {
           "$ref": "#/$defs/Active_Draft"
@@ -7667,7 +7667,7 @@
           "$ref": "#/$defs/Seq"
         },
         "configs": {
-          "description": "Configs referenced by `messages` and `active`.",
+          "description": "Unique configs resolving every assistant message in `messages` and `active`.",
           "items": {
             "$ref": "#/$defs/Run_Config"
           },
@@ -7675,7 +7675,7 @@
           "type": "array"
         },
         "has_more": {
-          "description": "Whether older messages exist beyond `messages`.",
+          "description": "True exactly when `item.session.message_count` exceeds the number of returned messages.",
           "type": "boolean"
         },
         "highest_finalized_message_id": {
@@ -7693,7 +7693,7 @@
           "$ref": "#/$defs/Session_List_Item"
         },
         "messages": {
-          "description": "Recent transcript messages.",
+          "description": "Recent transcript messages, oldest first in strict message-id order.",
           "items": {
             "$ref": "#/$defs/Message"
           },

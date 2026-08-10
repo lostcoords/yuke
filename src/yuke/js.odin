@@ -43,6 +43,9 @@ host_resolve :: proc(user: rawptr, name: string, allocator: mem.Allocator) -> (s
 
     case "yuke:defaults":
         return DEFAULTS_JS, false, true
+
+    case "yuke:client":
+        return CLIENT_JS, false, true
     }
 
     h := (^Host)(user)

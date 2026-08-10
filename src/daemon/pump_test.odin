@@ -97,8 +97,16 @@ pump_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     client.client_send_request(c, .Subscription_Set, wire.Subscription_Set_Params{sessions = o.sessions}, pump_on_sub)
 }
 
-pump_on_sub :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+pump_on_sub :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Pump_Obs)(c.user_data)
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        o.sub_failed = true
+        o.armed = true
+        return
+    }
+
+    resp := answered.response
 
     if _, ok := resp.(wire.Response_Ok); !ok {
         o.sub_failed = true

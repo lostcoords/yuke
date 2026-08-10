@@ -4316,7 +4316,7 @@
     },
     {
       "name": "Session_Resync_Result",
-      "doc": "Full session snapshot for reconnection. Non-owning.",
+      "doc": "Full session snapshot for reconnection. Non-owning. On one ordered connection, the successful response is the snapshot cut barrier: session broadcasts queued before it are represented by this result, and broadcasts queued after it are newer than the cut.",
       "fields": [
         {
           "name": "item",
@@ -4339,7 +4339,7 @@
         {
           "name": "messages",
           "type": "[]Message",
-          "doc": "Recent transcript messages.",
+          "doc": "Recent transcript messages, oldest first in strict message-id order.",
           "presence": "required",
           "bound": {
             "kind": "bounded",
@@ -4350,13 +4350,13 @@
         {
           "name": "has_more",
           "type": "bool",
-          "doc": "Whether older messages exist beyond `messages`.",
+          "doc": "True exactly when `item.session.message_count` exceeds the number of returned messages.",
           "presence": "required"
         },
         {
           "name": "configs",
           "type": "[]Run_Config",
-          "doc": "Configs referenced by `messages` and `active`.",
+          "doc": "Unique configs resolving every assistant message in `messages` and `active`.",
           "presence": "required",
           "bound": {
             "kind": "bounded",
@@ -4420,7 +4420,7 @@
         {
           "name": "messages",
           "type": "[]Message",
-          "doc": "Page of transcript messages.",
+          "doc": "Page of transcript messages, oldest first in strict message-id order.",
           "presence": "required",
           "bound": {
             "kind": "bounded",
@@ -4431,7 +4431,7 @@
         {
           "name": "configs",
           "type": "[]Run_Config",
-          "doc": "Configs referenced by `messages`.",
+          "doc": "Unique configs resolving every assistant message in `messages`.",
           "presence": "required",
           "bound": {
             "kind": "bounded",

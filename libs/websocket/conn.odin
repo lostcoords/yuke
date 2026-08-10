@@ -48,6 +48,7 @@ Conn_Error :: enum {
     Send_Queue_Full,
     Invalid_Close_Code,
     Not_Open,
+    Canceled,
     Too_Many_Connections,
 }
 
@@ -683,6 +684,7 @@ CONN_ERROR_OF_CLIENT := [Client_Error]Conn_Error {
     .Send_Queue_Full    = .Send_Queue_Full,
     .Invalid_Close_Code = .Invalid_Close_Code,
     .Not_Open           = .Not_Open,
+    .Canceled           = .Canceled,
 }
 
 // `Too_Many_Connections` is server-only; `client_error` asserts it never arrives, so
@@ -703,6 +705,7 @@ CLIENT_ERROR_OF_CONN := [Conn_Error]Client_Error {
     .Send_Queue_Full      = .Send_Queue_Full,
     .Invalid_Close_Code   = .Invalid_Close_Code,
     .Not_Open             = .Not_Open,
+    .Canceled             = .Canceled,
     .Too_Many_Connections = .None,
 }
 
@@ -739,6 +742,7 @@ SERVER_ERROR_OF_CONN := [Conn_Error]Server_Error {
     .Send_Queue_Full      = .Send_Queue_Full,
     .Invalid_Close_Code   = .Invalid_Close_Code,
     .Not_Open             = .Not_Open,
+    .Canceled             = .None,
     .Too_Many_Connections = .Too_Many_Connections,
 }
 
@@ -762,7 +766,11 @@ conn_error_from_server :: proc(err: Server_Error) -> Conn_Error {
 @(private)
 server_error :: proc(err: Conn_Error) -> Server_Error {
     assert(
-        err != .Resolve_Failed && err != .Dial_Failed && err != .Handshake_Failed && err != .Timed_Out,
+        err != .Resolve_Failed &&
+        err != .Dial_Failed &&
+        err != .Handshake_Failed &&
+        err != .Timed_Out &&
+        err != .Canceled,
         "client-only error surfaced on an adopted connection",
     )
 

@@ -606,6 +606,34 @@ test_client_dial_failure :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.state_at_term, Client_State.Closed)
 }
 
+@(test)
+test_client_cancel_during_dial :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    obs: Client_Obs
+    callbacks := Callbacks {
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
+        on_message = obs_on_message,
+        on_close = obs_on_close,
+        on_error = obs_on_error,
+    }
+
+    c: Client
+    cerr := client_connect(&c, loop, {host = "127.0.0.1", port = 1, path = "/ws"}, callbacks, &obs)
+    testing.expect_value(t, cerr, Client_Error.None)
+
+    client_cancel(&c)
+    testing.expect(t, obs.done, "canceling a dial should fire its terminal callback")
+    testing.expect(t, !obs.opened, "canceling a dial must not open")
+    testing.expect_value(t, obs.terminal_count, 1)
+    testing.expect_value(t, obs.err, Client_Error.Canceled)
+    testing.expect_value(t, obs.state_at_term, Client_State.Closed)
+
+    client_destroy(&c)
+}
+
 // --- 3. Handshake failure (non-101) ------------------------------------------
 
 // Server that reads the upgrade request then answers with a non-101 status.

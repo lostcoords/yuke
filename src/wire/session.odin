@@ -1399,7 +1399,9 @@ _activity_config_matches_draft :: proc(
     return false
 }
 
-// Full session snapshot for reconnection. Non-owning.
+// Full session snapshot for reconnection. Non-owning. On one ordered connection, the
+// successful response is the snapshot cut barrier: session broadcasts queued before it
+// are represented by this result, and broadcasts queued after it are newer than the cut.
 Session_Resync_Result :: struct {
     // Current compact session-index row at this snapshot cut.
     item:                         Session_List_Item,
@@ -1413,14 +1415,14 @@ Session_Resync_Result :: struct {
     highest_finalized_message_id: Maybe(Message_Id),
 
     // @bounded LIMITS.max_page_size
-    // Recent transcript messages.
+    // Recent transcript messages, oldest first in strict message-id order.
     messages:                     []Message,
 
-    // Whether older messages exist beyond `messages`.
+    // True exactly when `item.session.message_count` exceeds the number of returned messages.
     has_more:                     bool,
 
     // @bounded LIMITS.max_snapshot_configs
-    // Configs referenced by `messages` and `active`.
+    // Unique configs resolving every assistant message in `messages` and `active`.
     configs:                      []Run_Config,
 
     // In-flight draft, if any.
@@ -1473,7 +1475,60 @@ session_resync_result_emit :: proc(e: ^Emitter, self: Session_Resync_Result) {
     object_end(e)
 }
 
-// Verify annotated field bounds.
+// Whether `configs` contains `config_rev`.
+@(private)
+_snapshot_config_rev_present :: proc(configs: []Run_Config, config_rev: Config_Rev) -> bool {
+    for cfg in configs {
+        if cfg.config_rev == config_rev {
+            return true
+        }
+    }
+
+    return false
+}
+
+// Verify one unique config table.
+@(private)
+_snapshot_configs_validate :: proc(configs: []Run_Config) -> Validation_Error {
+    for cfg, index in configs {
+        run_config_validate(cfg) or_return
+
+        for prior in configs[:index] {
+            if prior.config_rev == cfg.config_rev {
+                return .Mismatched_Payload
+            }
+        }
+    }
+
+    return .None
+}
+
+// Verify a committed page is oldest-first, unique, and config-complete.
+@(private)
+_snapshot_messages_validate :: proc(messages: []Message, configs: []Run_Config) -> Validation_Error {
+    previous: Maybe(Message_Id)
+    for message in messages {
+        message_validate(message) or_return
+
+        id := message_id(message)
+
+        if prior, ok := previous.?; ok && id <= prior {
+            return .Mismatched_Payload
+        }
+
+        if assistant, ok := message.(Assistant_Message); ok {
+            if !_snapshot_config_rev_present(configs, assistant.config_rev) {
+                return .Mismatched_Payload
+            }
+        }
+
+        previous = id
+    }
+
+    return .None
+}
+
+// Verify annotated bounds and relational snapshot invariants.
 session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validation_Error {
     session_list_item_validate(self.item) or_return
 
@@ -1481,28 +1536,52 @@ session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validatio
         return .Overflow
     }
 
-    for message in self.messages {
-        message_validate(message) or_return
-    }
-
     if len(self.configs) > LIMITS.max_snapshot_configs {
         return .Overflow
     }
 
-    for cfg in self.configs {
-        run_config_validate(cfg) or_return
+    message_count := self.item.session.message_count
+    returned_count := u64(len(self.messages))
+
+    if message_count < returned_count || self.has_more != (message_count > returned_count) {
+        return .Mismatched_Payload
+    }
+
+    _snapshot_configs_validate(self.configs) or_return
+    _snapshot_messages_validate(self.messages, self.configs) or_return
+
+    if len(self.messages) != 0 {
+        highest, ok := self.highest_finalized_message_id.?
+
+        if !ok || message_id(self.messages[len(self.messages) - 1]) > highest {
+            return .Mismatched_Payload
+        }
     }
 
     if active, ok := self.active.?; ok {
         active_draft_validate(active) or_return
+
+        if highest, has_highest := self.highest_finalized_message_id.?; has_highest && active.message.id <= highest {
+            return .Mismatched_Payload
+        }
+
+        if !_snapshot_config_rev_present(self.configs, active.message.config_rev) {
+            return .Mismatched_Payload
+        }
     }
 
     if len(self.queued) > LIMITS.max_queued_inputs {
         return .Overflow
     }
 
-    for q in self.queued {
+    for q, index in self.queued {
         queued_input_validate(q) or_return
+
+        for prior in self.queued[:index] {
+            if prior.input_id == q.input_id {
+                return .Mismatched_Payload
+            }
+        }
     }
 
     if self.item.activity.queued != u64(len(self.queued)) {
@@ -1707,11 +1786,11 @@ Session_History_Result :: struct {
     session_id: Session_Id,
 
     // @bounded LIMITS.max_page_size
-    // Page of transcript messages.
+    // Page of transcript messages, oldest first in strict message-id order.
     messages:   []Message,
 
     // @bounded LIMITS.max_snapshot_configs
-    // Configs referenced by `messages`.
+    // Unique configs resolving every assistant message in `messages`.
     configs:    []Run_Config,
 
     // Whether older messages exist beyond this page.
@@ -1742,7 +1821,7 @@ session_history_result_emit :: proc(e: ^Emitter, self: Session_History_Result) {
     object_end(e)
 }
 
-// Verify annotated field bounds.
+// Verify annotated bounds and relational page invariants.
 session_history_result_validate :: proc(self: Session_History_Result) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
 
@@ -1750,17 +1829,12 @@ session_history_result_validate :: proc(self: Session_History_Result) -> Validat
         return .Overflow
     }
 
-    for message in self.messages {
-        message_validate(message) or_return
-    }
-
     if len(self.configs) > LIMITS.max_snapshot_configs {
         return .Overflow
     }
 
-    for cfg in self.configs {
-        run_config_validate(cfg) or_return
-    }
+    _snapshot_configs_validate(self.configs) or_return
+    _snapshot_messages_validate(self.messages, self.configs) or_return
 
     return .None
 }

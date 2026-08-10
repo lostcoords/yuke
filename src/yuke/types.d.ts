@@ -262,6 +262,204 @@ declare module "yuke:core" {
   export function quit(): void;
 }
 
+declare module "yuke:client" {
+  export type ConnectionState = "disconnected" | "connecting" | "ready" | "closing";
+
+  export interface ConnectOptions {
+    host?: string;
+    port: number;
+    secure?: boolean;
+    token?: string;
+  }
+
+  export type ClientErrorCode =
+    | "transport_failed"
+    | "bad_initialize"
+    | "unknown_response"
+    | "decode_failed"
+    | "bad_frame"
+    | "out_of_memory"
+    | "request_id_exhausted"
+    | "too_many_pending"
+    | "not_ready"
+    | "connection_closed";
+
+  export class ClientError extends Error {
+    code: ClientErrorCode;
+    constructor(code: ClientErrorCode);
+  }
+
+  export type RpcErrorCode =
+    | -32603
+    | -32602
+    | -32601
+    | -32600
+    | -31000
+    | -31001
+    | -31002
+    | -31003
+    | -31004
+    | -31005
+    | -31006
+    | -31007
+    | -31008
+    | -31009
+    | -31010
+    | -31011
+    | -31012
+    | -31013
+    | -31014
+    | -31015
+    | -31016
+    | -31017
+    | -31018
+    | -31019
+    | -31020
+    | -31021;
+
+  export class RpcError extends Error {
+    code: RpcErrorCode;
+    constructor(code: RpcErrorCode, message: string);
+  }
+
+  export type SessionScope =
+    | { type: "all" }
+    | { type: "workspace"; workspace_id: string };
+
+  export type SessionPopulation =
+    | { type: "top_level" }
+    | { type: "children"; parent_id: string }
+    | { type: "job_runs"; job_id: string }
+    | { type: "all" };
+
+  export type SessionView = "active" | "recent" | "active_recent";
+
+  export interface SessionListParams {
+    scope?: SessionScope;
+    population?: SessionPopulation;
+    view?: SessionView;
+    limit?: number;
+    cursor?: string;
+  }
+
+  export interface ClientIdentity {
+    name: string;
+    version: string;
+  }
+
+  export type SessionOrigin =
+    | { type: "root" }
+    | {
+        type: "child";
+        parent_id: string;
+        parent_message_id: number;
+        parent_part_id: number;
+      }
+    | { type: "fork"; source_id: string }
+    | { type: "cron"; job_id: string };
+
+  export interface Session {
+    id: string;
+    workspace_id: string;
+    profile: string;
+    model: string;
+    reasoning: string;
+    config_rev: number;
+    permission: "strict" | "normal" | "yolo";
+    max_rounds: number | null;
+    title: string;
+    message_count: number;
+    created_at_ms: number;
+    updated_at_ms: number;
+    created_by: ClientIdentity | null;
+    origin: SessionOrigin;
+    agent?: string;
+  }
+
+  export interface RunConfig {
+    config_rev: number;
+    model: string;
+    reasoning: string;
+  }
+
+  export type RunErrorCode =
+    | "provider"
+    | "protocol"
+    | "network"
+    | "timeout"
+    | "rate_limited"
+    | "quota_exhausted"
+    | "auth"
+    | "unknown_model"
+    | "unsupported_reasoning"
+    | "max_rounds"
+    | "context_overflow"
+    | "runtime"
+    | "internal";
+
+  export type ActivityState =
+    | { type: "idle" }
+    | { type: "building"; run_id: number; started_at_ms: number }
+    | { type: "running"; run_id: number; started_at_ms: number }
+    | { type: "reasoning"; run_id: number; message_id: number; part_id: number }
+    | {
+        type: "waiting_permission";
+        run_id: number;
+        message_id: number;
+        part_id: number;
+        tool_name: string;
+        requested_at_ms: number;
+      }
+    | {
+        type: "running_tool";
+        run_id: number;
+        message_id: number;
+        part_id: number;
+        tool_name: string;
+        started_at_ms: number;
+      }
+    | {
+        type: "retrying";
+        run_id: number;
+        attempt: number;
+        max_attempts: number;
+        next_at_ms: number;
+        code: RunErrorCode;
+        message: string;
+      }
+    | {
+        type: "compacting";
+        run_id: number;
+        reason: "auto" | "manual";
+        started_at_ms: number;
+      };
+
+  export interface SessionActivity {
+    state: ActivityState;
+    config?: RunConfig;
+    queued: number;
+    context_tokens: number;
+    pending_compaction: number | null;
+  }
+
+  export interface SessionListItem {
+    session: Session;
+    activity: SessionActivity;
+  }
+
+  export interface SessionListResult {
+    revision: number;
+    items: SessionListItem[];
+    next_cursor: string | null;
+    total: number;
+  }
+
+  export function connect(options: ConnectOptions): Promise<void>;
+  export function disconnect(): void;
+  export function connectionState(): ConnectionState;
+  export function sessionList(params?: SessionListParams): Promise<SessionListResult>;
+}
+
 declare module "yuke:ui" {
   import type { KeyEvent, MouseEvent } from "yuke:term";
   import type { CursorRequest, Layer, Rect, TickRequest } from "yuke:core";

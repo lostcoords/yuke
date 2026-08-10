@@ -63,27 +63,46 @@ Protocol_Error :: enum {
 
     // A send was attempted before the connection reached Ready.
     Not_Ready,
+
+    // The connection closed before an accepted request received a response.
+    Connection_Closed,
 }
 
-// Fired exactly once for one request's response. `resp` borrows frame memory valid only
-// for the call.
-Response_Proc :: proc(c: ^Client, resp: wire.Response, user_data: rawptr)
+// A validated response to one request. `response` borrows frame memory valid only for the
+// completion call.
+Request_Response :: struct {
+    response: wire.Response,
+}
+
+// A local terminal outcome for a request that cannot receive a response.
+Request_Failure :: struct {
+    error: Protocol_Error,
+}
+
+// Exactly one outcome for every accepted request.
+Request_Outcome :: union {
+    Request_Response,
+    Request_Failure,
+}
+
+// Fired exactly once for one accepted request.
+Completion_Proc :: proc(c: ^Client, outcome: Request_Outcome, user_data: rawptr)
 
 // One outstanding request. Holds no borrowed frame data.
 Pending_Request :: struct {
     // Method the request was sent with; types its success result on decode.
     method:      wire.Method_Name,
 
-    // Completion for this request's response. May be nil to discard it.
-    on_response: Response_Proc,
+    // Completion for this request's response or local failure. May be nil to discard it.
+    on_complete: Completion_Proc,
 
-    // Opaque pointer handed back to `on_response`.
+    // Opaque pointer handed back to `on_complete`.
     user_data:   rawptr,
 }
 
 // Event sink for connection-wide events. Any field may be nil. Callbacks borrow
 // frame memory valid only for the call. Responses are not routed here; they reach
-// their request's `Response_Proc`.
+// their request's `Completion_Proc`.
 Client_Callbacks :: struct {
     // Fired once when the `initialize` result is accepted and the driver reaches Ready.
     // `hello` is borrowed.
@@ -126,9 +145,7 @@ Client :: struct {
 
     // @private
     // Outstanding requests keyed by id: the method that types each response result,
-    // plus the completion that receives it. Entries still outstanding when the
-    // connection closes or errors are dropped, never completed — the terminal
-    // `on_close`/`on_error` is the one signal to reclaim their `user_data`.
+    // plus the completion that receives its validated response or local terminal failure.
     pending:          map[u64]Pending_Request,
 
     // @private
@@ -193,6 +210,7 @@ client_open :: proc(
         transport.open != nil &&
         transport.send_text != nil &&
         transport.close != nil &&
+        transport.cancel != nil &&
         transport.abort != nil &&
         transport.destroy != nil,
         "client_open needs a complete transport",
@@ -244,14 +262,14 @@ client_open :: proc(
     return .None
 }
 
-// Send a typed request and register the completion its response routes to. Requires
-// Ready. `on_response` fires exactly once, or may be nil to discard the response, which
-// is decoded and validated either way. A failed send leaves no half-built state.
+// Send a typed request and register its completion. Requires Ready. `on_complete` fires
+// exactly once with a validated response or a local terminal failure; it may be nil to
+// discard either outcome. A failed send leaves no half-built state and fires nothing.
 client_send_request :: proc(
     c: ^Client,
     method: wire.Method_Name,
     params: wire.Request_Params,
-    on_response: Response_Proc,
+    on_complete: Completion_Proc,
     user_data: rawptr = nil,
 ) -> (
     u64,
@@ -291,7 +309,7 @@ client_send_request :: proc(
     assert(id not_in c.pending, "request id reused while still outstanding")
     c.pending[id] = {
         method      = method,
-        on_response = on_response,
+        on_complete = on_complete,
         user_data   = user_data,
     }
     c.next_request_id += 1
@@ -338,33 +356,42 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             return .Unknown_Response
         }
 
-        // Consume the correlation before decoding: this response answers the request
-        // exactly once, whether or not the frame turns out to be well-formed.
-        if ok {
-            delete_key(&c.pending, id)
-        }
-
         // Fresh decoder over the whole frame: `response_from_reader` opens the object
         // itself. A success result is typed by the pending method, never the payload.
         d := wire.decoder_init(string(data), sa)
         resp, derr := wire.response_from_reader(req.method, &d)
         if derr != .None {
             log.warnf("client: response decode failed for %v: %v", req.method, derr)
+
+            if ok {
+                client_complete_failure(c, id, req, .Decode_Failed)
+            }
+
             return .Decode_Failed
         }
 
         if wire.dec_finish(&d) != .None {
             log.warnf("client: response for %v has trailing data", req.method)
+
+            if ok {
+                client_complete_failure(c, id, req, .Decode_Failed)
+            }
+
             return .Decode_Failed
         }
 
         if wire.response_validate(resp) != .None {
             log.warnf("client: response for %v failed validation", req.method)
+
+            if ok {
+                client_complete_failure(c, id, req, .Decode_Failed)
+            }
+
             return .Decode_Failed
         }
 
-        if req.on_response != nil {
-            req.on_response(c, resp, req.user_data)
+        if ok {
+            client_complete_response(c, id, req, resp)
         }
 
         if c.initialize_error != .None {
@@ -424,8 +451,19 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
 
 // Reach Ready from the `initialize` response. Registered as that request's
 // completion, so decode and validation already happened on the shared path.
-client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: rawptr) {
-    assert(c != nil && c.state == .Awaiting_Initialize, "initialize completed outside Awaiting_Initialize")
+client_on_initialize_complete :: proc(c: ^Client, outcome: Request_Outcome, user_data: rawptr) {
+    assert(c != nil, "initialize completion needs a client")
+    _ = user_data
+
+    response, has_response := outcome.(Request_Response)
+    if !has_response {
+        assert(c.state == .Awaiting_Initialize || c.state == .Closing, "initialize failed outside a pre-ready state")
+        return
+    }
+
+    assert(c.state == .Awaiting_Initialize, "initialize response completed outside Awaiting_Initialize")
+
+    resp := response.response
 
     ok, is_ok := resp.(wire.Response_Ok)
     if !is_ok {
@@ -464,8 +502,9 @@ client_on_initialize_result :: proc(c: ^Client, resp: wire.Response, user_data: 
     }
 }
 
-// Begin a graceful close with `code`. The terminal `on_close` fires once the close
-// completes. No-op if already closing or closed.
+// Close the connection. An opening transport is canceled; an open transport sends
+// a graceful close with `code`. The terminal `on_close` fires once teardown completes.
+// No-op if already closing or closed.
 client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
     assert(c != nil, "client_close needs a client")
 
@@ -473,16 +512,21 @@ client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
         return
     }
 
+    was_connecting := c.state == .Connecting
+    c.state = .Closing
     t := c.transport
-    close_err := t->close(code)
-    if close_err != .None {
-        assert(close_err != .Not_Open, "protocol and transport close states diverged")
-        c.state = .Closing
-        t->abort(close_err)
+
+    if was_connecting {
+        t->cancel()
         return
     }
 
-    c.state = .Closing
+    close_err := t->close(code)
+    if close_err != .None {
+        assert(close_err != .Not_Open, "protocol and transport close states diverged")
+        t->abort(close_err)
+        return
+    }
 }
 
 // Release all driver-owned state and the transport. Valid at `.Closed` (after the
@@ -490,6 +534,7 @@ client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
 // still has transport work outstanding. Leaves `transport_error` readable.
 client_destroy :: proc(c: ^Client) {
     assert(c.state == .Connecting || c.state == .Closed, "client_destroy with transport work still outstanding")
+    assert(len(c.pending) == 0, "client_destroy with uncompleted requests")
 
     delete(c.pending)
     mem.dynamic_arena_destroy(&c.scratch)
@@ -511,13 +556,20 @@ client_abort :: proc(c: ^Client, err: Protocol_Error) {
         return
     }
 
+    was_connecting := c.state == .Connecting
     c.state = .Closing
+    client_complete_all_failures(c, err)
 
     if c.cbs.on_error != nil {
         c.cbs.on_error(c, err)
     }
 
     t := c.transport
+    if was_connecting {
+        t->cancel()
+        return
+    }
+
     close_err := t->close(wire.CLOSE.protocol_error)
     if close_err != .None {
         assert(close_err != .Not_Open, "protocol and transport close states diverged")
@@ -548,7 +600,7 @@ transport_on_open :: proc(c: ^Client) {
     // handshake then routes through the one response path.
     c.pending[INITIALIZE_REQUEST_ID] = {
         method      = .Initialize,
-        on_response = client_on_initialize_result,
+        on_complete = client_on_initialize_complete,
     }
 }
 
@@ -588,6 +640,8 @@ transport_on_binary :: proc(c: ^Client) {
 // Closed by a graceful or peer close: fire the terminal `on_close`.
 transport_on_close :: proc(c: ^Client, code: Close_Code) {
     assert(c != nil, "transport close needs a client")
+    c.state = .Closing
+    client_complete_all_failures(c, .Connection_Closed)
     c.state = .Closed
 
     if c.cbs.on_close != nil {
@@ -600,12 +654,80 @@ transport_on_close :: proc(c: ^Client, code: Close_Code) {
 transport_on_error :: proc(c: ^Client, err: ws.Client_Error) {
     assert(c != nil, "transport error needs a client")
     assert(err != .None, "transport reported a failure with no reason")
-    c.state = .Closed
+
+    if err == .Canceled {
+        assert(c.state == .Closing, "transport canceled without a local close")
+        client_complete_all_failures(c, .Connection_Closed)
+        c.state = .Closed
+
+        if c.cbs.on_close != nil {
+            c.cbs.on_close(c, CLOSE_NORMAL)
+        }
+
+        return
+    }
+
     c.transport_error = err
+    c.state = .Closing
+    client_complete_all_failures(c, .Transport_Failed)
+    c.state = .Closed
 
     log.errorf("client: transport failed: %v", err)
 
     if c.cbs.on_error != nil {
         c.cbs.on_error(c, .Transport_Failed)
     }
+}
+
+// Consume one correlation and deliver its validated response.
+@(private)
+client_complete_response :: proc(c: ^Client, id: u64, req: Pending_Request, response: wire.Response) {
+    assert(c != nil, "request completion needs a client")
+    assert(id in c.pending, "response completed an unknown request")
+
+    delete_key(&c.pending, id)
+
+    if req.on_complete != nil {
+        req.on_complete(c, Request_Response{response = response}, req.user_data)
+    }
+}
+
+// Consume one correlation and deliver its local failure.
+@(private)
+client_complete_failure :: proc(c: ^Client, id: u64, req: Pending_Request, err: Protocol_Error) {
+    assert(c != nil, "request failure needs a client")
+    assert(id in c.pending, "failure completed an unknown request")
+    assert(err != .None, "request failed without a reason")
+
+    delete_key(&c.pending, id)
+
+    if req.on_complete != nil {
+        req.on_complete(c, Request_Failure{error = err}, req.user_data)
+    }
+}
+
+// Fail every remaining request exactly once. The state must already reject new sends so
+// completions cannot grow the map while it is draining.
+@(private)
+client_complete_all_failures :: proc(c: ^Client, err: Protocol_Error) {
+    assert(c != nil, "request drain needs a client")
+    assert(c.state != .Ready, "request drain while sends are accepted")
+    assert(err != .None, "request drain needs a failure")
+
+    for len(c.pending) != 0 {
+        id: u64
+        req: Pending_Request
+        found := false
+        for pending_id, pending in c.pending {
+            id = pending_id
+            req = pending
+            found = true
+            break
+        }
+
+        assert(found, "non-empty pending map had no entry")
+        client_complete_failure(c, id, req, err)
+    }
+
+    assert(len(c.pending) == 0, "request drain left pending work")
 }

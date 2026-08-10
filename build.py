@@ -81,7 +81,6 @@ PACKAGES = (
         "yuke",
         "src/yuke",
         "client binary: term drive + QuickJS + ui paint",
-        tests=False,
         in_aggregate=False,
         needs=BINDINGS,
     ),

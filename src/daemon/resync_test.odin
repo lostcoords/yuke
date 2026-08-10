@@ -811,9 +811,16 @@ resync_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
 
 // The driver reclaims its decode arena when this returns, so the snapshot is consumed
 // here, inside the callback that owns it.
-resync_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+resync_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Resync_Obs)(c.user_data)
     o.responded = true
+    answered, has_response := outcome.(client.Request_Response)
+    if !testing.expect(o.t, has_response, "session.resync should receive a response") {
+        client.client_close(c)
+        return
+    }
+
+    resp := answered.response
 
     ok, is_ok := resp.(wire.Response_Ok)
     if !testing.expect(o.t, is_ok, "session.resync should answer with a result") {
@@ -833,9 +840,8 @@ resync_on_response :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     client.replica_init(&r, context.allocator, o.session)
     defer client.replica_destroy(&r)
 
-    outcome, ierr := client.replica_install_snapshot(&r, cut)
+    ierr := client.replica_install_snapshot(&r, cut)
     testing.expect_value(o.t, ierr, client.Replica_Error.None)
-    testing.expect_value(o.t, outcome, client.Install_Outcome.Live)
     o.installed = ierr == .None
     o.messages = len(r.messages)
 
@@ -937,8 +943,14 @@ corrupt_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
     )
 }
 
-corrupt_on_resync :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+corrupt_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Corrupt_Obs)(c.user_data)
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        return
+    }
+
+    resp := answered.response
 
     if bad, is_error := resp.(wire.Response_Error); is_error {
         o.refused = true
@@ -950,8 +962,14 @@ corrupt_on_resync :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
     client.client_send_request(c, .Session_List, wire.Session_List_Params{}, corrupt_on_list)
 }
 
-corrupt_on_list :: proc(c: ^client.Client, resp: wire.Response, _: rawptr) {
+corrupt_on_list :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Corrupt_Obs)(c.user_data)
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        return
+    }
+
+    resp := answered.response
     _, ok := resp.(wire.Response_Ok)
     o.survived = ok
     client.client_close(c)
