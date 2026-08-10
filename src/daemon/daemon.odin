@@ -5,19 +5,17 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:os"
-import "core:strconv"
 import "core:strings"
 import "core:time"
 
 import "core:mem/virtual"
-import curl "libs:bindings/curl"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
-import provider_auth "src:auth"
 import store "src:daemon/store"
 import js "src:js"
 import "src:paths"
+import "src:secret"
 import wire "src:wire"
 
 // nbio offload workers, for blocking filesystem calls off the reactor.
@@ -109,127 +107,106 @@ Options :: struct {
 // `start`/`shutdown`/`destroy`.
 Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
-    front_door:          http_server.Server,
+    front_door:      http_server.Server,
 
     // HTTP routes and pre-match middleware for the front door. `user_data` is this
     // `^Daemon`, and every callback receives it typed as `Http_Context.user_data`.
-    router:              Http_Router,
+    router:          Http_Router,
 
     // WebSocket server fed by `http`, driven through `ws.server_*`. Its
     // per-connection callbacks recover this `^Daemon` via `wsc.server.user_data`.
-    ws_server:           ws.Server,
+    ws_server:       ws.Server,
 
     // @private
     // Borrowed event loop the transport submits ops to; never run here.
-    loop:                ^nbio.Event_Loop,
+    loop:            ^nbio.Event_Loop,
 
     // @private
     // Backs the owned config strings and every connection's `Conn`. Must outlive
     // the daemon.
-    allocator:           mem.Allocator,
+    allocator:       mem.Allocator,
 
     // @private
     // Owned daemon version string, reported in every `initialize` result.
-    daemon_version:      string,
+    daemon_version:  string,
 
     // @private
     // Owned blob directory; empty when `/blob` is disabled.
-    blob_dir:            string,
+    blob_dir:        string,
 
     // @private
     // See `WORKER_COUNT`.
-    workers:             offload.Pool,
+    workers:         offload.Pool,
+
+    // @private
+    // Live bounded filesystem jobs across all connections.
+    workspace_jobs:  int,
 
     // @private
     // Owned bearer token; empty when authorization is disabled.
-    auth_token:          string,
+    auth_token:      string,
 
     // @private
     // Owned browser-origin allowlist consulted by `middleware_admit`. Empty admits none.
-    allowed_origins:     []string,
+    allowed_origins: []string,
 
     // @private
     // Event log of record, open for the daemon's whole serving life. Nil when no
     // database is configured, which is what makes a durable broadcast impossible.
-    store:               ^store.Store,
+    store:           ^store.Store,
 
     // @private
-    // Owned credential-file path; empty when WebSocket OAuth is disabled.
-    auth_path:           string,
-
-    // @private
-    // Current private credential snapshot; nil exactly when `auth_path` is empty.
-    auth_store:          ^provider_auth.Store,
-
-    // @private
-    // Loopback-only OAuth callback listener and its route table. The single route
-    // is filled per browser login with that provider's registered callback path.
-    auth_callback:       http_server.Server,
-    auth_router:         Http_Router,
-    auth_callback_route: [1]Http_Route,
-
-    // @private
-    // Bounded OAuth control-plane HTTP transfers on the daemon loop.
-    auth_curl:           curl.Client,
-    auth_curl_ready:     bool,
-
-    // @private
-    // At most one login/refresh/credential-write is active across all providers.
-    // Refresh is daemon-owned and never appears on the wire.
-    auth_login:          ^Provider_Login,
-    auth_refresh:        ^Provider_Refresh,
-    auth_refresh_timer:  ^nbio.Operation,
-    auth_write_job:      ^Credential_Job,
-    auth_stopping:       bool,
+    // Provider credentials, OAuth transfers, callback listener, and active work.
+    provider_auth:   Provider_Auth,
 
     // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
-    seq_high:            map[wire.Session_Id]wire.Seq,
+    seq_high:        map[wire.Session_Id]wire.Seq,
 
     // @private
     // Scratch for one broadcast's encode; a single `Arena_Temp` spans the whole fan-out so
     // a shed marker minted mid-send shares it with the frame in flight.
-    pump_scratch:        virtual.Arena,
+    pump_scratch:    virtual.Arena,
 
     // @private
     // Shared scratch for one inbound frame; each `handle_text` wraps it in an `Arena_Temp`.
-    frame_scratch:       virtual.Arena,
+    frame_scratch:   virtual.Arena,
 
     // @private
     // Live connections keyed by the ticket that outlives them. Sized for the transport's
     // connection cap in `start`, so an admitted connection never allocates to register.
-    conns:               map[Conn_Ticket]^Conn,
+    conns:           map[Conn_Ticket]^Conn,
 
     // @private
     // Monotonic ticket source; incremented before use so zero is never issued.
-    next_ticket:         Conn_Ticket,
+    next_ticket:     Conn_Ticket,
 
     // @private
     // The outbound relay link, or nil when no relay is configured. Shares this daemon's
     // loop, store, and connection table; connected after `start` via `relay_connect`.
-    relay:               ^Relay,
+    relay:           ^Relay,
 
     // @private
     // Control-plane base URL the relay fetches link tickets from, resolved in `start` from the
     // manifest's `relayCloudUrl` or the hosted default. Owned; freed in the config cleanup.
-    relay_cloud_url:     string,
+    relay_cloud_url: string,
 
     // @private
     // Script tier: one QuickJS runtime for the whole daemon. Torn down after the worker
     // pool drains, since an in-flight host op owns a promise in its context.
-    js:                  js.Host,
+    js:              js.Host,
 
     // @private
     // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
     // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
     // before serving, leaving both zero.
-    config_json:         string,
-    config_seen:         bool,
+    config_json:     string,
+    config_seen:     bool,
 
     // Log level resolved from the manifest (`info` when unset or storeless). The caller owns
     // the logger, so it reads this after `start` and installs the matching one.
-    log_level:           log.Level,
+    log_level:       log.Level,
 }
 
 // Connection identity that outlives the `Conn`, so async work can resolve it later
@@ -262,6 +239,9 @@ Conn :: struct {
     // Allocator backing `scratch` and the retained client identity (the daemon's).
     allocator:          mem.Allocator,
     state:              Protocol_State,
+
+    // Workspace jobs still owned by this connection's ticket.
+    workspace_jobs:     int,
 
     // Retained client name from `initialize`; an owned `strings.clone` for
     // identity/logging, freed with the `Conn`. Never the borrowed frame slice.
@@ -312,7 +292,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     cloned_version, version_aerr := strings.clone(version, allocator)
     cloned_auth_path, auth_path_aerr := strings.clone(options.auth_path, allocator)
     d.daemon_version = cloned_version
-    d.auth_path = cloned_auth_path
+    d.provider_auth.path = cloned_auth_path
     if version_aerr != nil || auth_path_aerr != nil {
         return .Out_Of_Memory
     }
@@ -351,8 +331,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
             return .Invalid_Options
         }
 
-        delete(d.config_json, allocator)
-        d.config_json = ""
+        secret.string_destroy(&d.config_json, allocator)
 
         options.host = config.host
         // A zero from the manifest (omitted, or an explicit 0) does not clobber the port the
@@ -375,6 +354,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     if !auth_token_valid(options.auth_token) {
         return .Invalid_Options
     }
+    if !listen_auth_valid(options.host, options.auth_token) {
+        log.error("daemon: a non-loopback listener requires an authentication token")
+        return .Invalid_Options
+    }
 
     if options.db_path == "" {
         log.warn("daemon: no db_path configured; durable broadcasts and the session index are disabled")
@@ -384,16 +367,21 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         options.relay_cloud_url = RELAY_CLOUD_URL_DEFAULT
     }
 
+    normalized_cloud, cloud_err := relay_cloud_url_normalize(options.relay_cloud_url, allocator)
+    if cloud_err != .None {
+        log.error("daemon: relayCloudUrl must be HTTPS, or HTTP on a literal loopback address")
+        return cloud_err
+    }
+
     // Clone the owned config strings whose source may be the manifest, now that it has run.
     cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
     cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
-    cloned_cloud, cloud_aerr := strings.clone(options.relay_cloud_url, allocator)
     cloned_origins, origins_ok := clone_string_slice(options.allowed_origins, allocator)
     d.blob_dir = cloned_blob_dir
     d.auth_token = cloned_token
-    d.relay_cloud_url = cloned_cloud
+    d.relay_cloud_url = normalized_cloud
     d.allowed_origins = cloned_origins
-    if blob_aerr != nil || token_aerr != nil || cloud_aerr != nil || !origins_ok {
+    if blob_aerr != nil || token_aerr != nil || !origins_ok {
         return .Out_Of_Memory
     }
 
@@ -535,9 +523,10 @@ start_rollback :: proc(d: ^Daemon) {
     assert(d.front_door.state == .Idle, "failed front door retained active state")
 
     provider_auth_shutdown(d)
+    js.ops_close(&d.js)
 
-    if d.auth_callback.state != .Idle {
-        nbio.run_until(&d.auth_callback.shutdown_complete)
+    if d.provider_auth.callback.state != .Idle {
+        nbio.run_until(&d.provider_auth.callback.shutdown_complete)
     }
 
     // Drain first: a completion in flight settles a promise in the context js.destroy frees.
@@ -587,6 +576,7 @@ shutdown :: proc(d: ^Daemon) {
     log.info("daemon: shutdown started")
     http_server.shutdown(&d.front_door)
     provider_auth_shutdown(d)
+    js.ops_close(&d.js)
     ws.server_shutdown(&d.ws_server)
     relay_begin_close(d)
 }
@@ -596,9 +586,17 @@ shutdown :: proc(d: ^Daemon) {
 shutdown_complete :: proc(d: ^Daemon) -> bool {
     assert(d != nil, "a shutdown check needs daemon state")
 
-    callback_done := d.auth_callback.state == .Idle || d.auth_callback.shutdown_complete
+    callback_done := d.provider_auth.callback.state == .Idle || d.provider_auth.callback.shutdown_complete
+    workers_done := !offload.pool_is_running(&d.workers) || offload.pool_outstanding(&d.workers) == 0
 
-    return d.front_door.shutdown_complete && callback_done && d.ws_server.shutdown_complete && relay_closed(d)
+    return(
+        d.front_door.shutdown_complete &&
+        callback_done &&
+        d.ws_server.shutdown_complete &&
+        relay_closed(d) &&
+        workers_done &&
+        js.ops_idle(&d.js) \
+    )
 }
 
 // Release both connection sets and the owned clones. Call only once both halves
@@ -607,10 +605,16 @@ destroy :: proc(d: ^Daemon) {
     assert(d != nil, "destroy needs daemon state")
     assert(d.front_door.shutdown_complete, "destroy before HTTP shutdown completed")
     assert(
-        d.auth_callback.state == .Idle || d.auth_callback.shutdown_complete,
+        d.provider_auth.callback.state == .Idle || d.provider_auth.callback.shutdown_complete,
         "destroy before auth callback shutdown completed",
     )
     assert(d.ws_server.shutdown_complete, "destroy before WebSocket shutdown completed")
+    assert(
+        !offload.pool_is_running(&d.workers) || offload.pool_outstanding(&d.workers) == 0,
+        "destroy before workers drained",
+    )
+    assert(js.ops_idle(&d.js), "destroy before JavaScript host operations drained")
+    assert(d.workspace_jobs == 0, "destroy with workspace jobs in flight")
 
     // Order matters: draining runs every outstanding completion on this loop, and a
     // `yuke:fs` completion settles a promise in the context released just below.
@@ -682,9 +686,9 @@ free_config :: proc(d: ^Daemon) {
 
     delete(d.daemon_version, d.allocator)
     delete(d.blob_dir, d.allocator)
-    delete(d.auth_token, d.allocator)
-    delete(d.auth_path, d.allocator)
-    delete(d.config_json, d.allocator)
+    secret.string_destroy(&d.auth_token, d.allocator)
+    delete(d.provider_auth.path, d.allocator)
+    secret.string_destroy(&d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
     for o in d.allowed_origins {
         delete(o, d.allocator)
@@ -692,9 +696,7 @@ free_config :: proc(d: ^Daemon) {
     delete(d.allowed_origins, d.allocator)
     d.daemon_version = ""
     d.blob_dir = ""
-    d.auth_token = ""
-    d.auth_path = ""
-    d.config_json = ""
+    d.provider_auth.path = ""
     d.relay_cloud_url = ""
     d.allowed_origins = nil
 }
@@ -1003,16 +1005,11 @@ method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     assert(req.method == .Workspace_Describe, "workspace.describe received another method")
 
     params := req.params.(wire.Workspace_Describe_Params)
-    workspace_job_submit(conn, req.id, .Describe, params.path, 0, 0)
+    workspace_job_submit(conn, req.id, .Describe, params.path, "", 0)
 }
 
-// Longest browse cursor we could have minted. `strconv.parse_int` wraps silently
-// and still reports success, so a longer one is rejected before it is parsed.
-@(private)
-MAX_BROWSE_CURSOR_DIGITS :: 16
-
 // `workspace.browse`: immediate subdirectories only, sorted case-insensitively,
-// paginated by an opaque decimal-offset cursor. Missing path defaults to the daemon
+// paginated by an opaque last-name cursor. Missing path defaults to the daemon
 // user's home; cursor and page window are decided here, the listing itself is offloaded.
 method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "workspace.browse needs connection state")
@@ -1021,20 +1018,9 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
 
     params := req.params.(wire.Workspace_Browse_Params)
 
-    offset := 0
-    if cursor, ok := params.cursor.?; ok {
-        if len(cursor) > MAX_BROWSE_CURSOR_DIGITS {
-            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor", sa)
-            return
-        }
-
-        n, valid := strconv.parse_int(cursor, 10)
-        if !valid || n < 0 {
-            send_error(conn, req.id, .Bad_Request, "malformed workspace.browse cursor", sa)
-            return
-        }
-
-        offset = n
+    cursor := ""
+    if requested_cursor, ok := params.cursor.?; ok {
+        cursor = requested_cursor
     }
 
     // Page size is already validated to be within bounds; default when omitted.
@@ -1054,16 +1040,17 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         target = "/"
     }
 
-    workspace_job_submit(conn, req.id, .Browse, target, offset, page_size)
+    workspace_job_submit(conn, req.id, .Browse, target, cursor, page_size)
 }
 
 // Validate and emit a successful response. The result is built from already-trusted
 // daemon state, so an invalid outgoing frame is our bug, not the peer's — assert
 // rather than ship it.
-send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result, allocator: mem.Allocator) {
+send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "result send needs connection state")
     assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
-    send_response(conn, wire.response_ok_build(id, result), allocator)
+
+    return send_response(conn, wire.response_ok_build(id, result), allocator)
 }
 
 // Emit an error response naming `code`. `message` is diagnostic only; clients branch

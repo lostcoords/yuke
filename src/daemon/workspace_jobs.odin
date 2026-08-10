@@ -3,11 +3,13 @@ package daemon
 import "base:runtime"
 import "core:mem"
 import "core:os"
-import "core:strconv"
 import "core:strings"
 
 import "libs:offload"
 import wire "src:wire"
+
+WORKSPACE_JOBS_PER_CONN_MAX :: 4
+WORKSPACE_JOBS_GLOBAL_MAX :: 64
 
 // Which `workspace.*` method a job answers. Both begin with the same canonicalization,
 // then diverge into a describe or a listing.
@@ -55,7 +57,7 @@ Workspace_Job :: struct {
     path:        string,
 
     // Browse page window, decided from the params before submission.
-    offset:      int,
+    cursor:      string,
     page_size:   int,
 
     // What the pass decided. Nil until the worker finishes.
@@ -68,8 +70,9 @@ Workspace_Job :: struct {
     git:         Maybe(wire.Git_Info),
     modified_ms: u64,
 
-    // `workspace.browse` listing, whole and sorted; the loop pages it.
+    // `workspace.browse` page and whether another page follows.
     entries:     []wire.Dir_Entry,
+    has_more:    bool,
 
     // Backs every owned allocation above and the response the completion encodes. Blocks
     // come from the process heap, not the daemon's allocator, since the worker is its
@@ -86,16 +89,21 @@ workspace_job_submit :: proc(
     id: wire.Request_Id,
     kind: Workspace_Job_Kind,
     path: string,
-    offset: int,
+    cursor: string,
     page_size: int,
 ) {
     assert(conn != nil, "workspace job needs connection state")
     assert(conn.daemon != nil, "workspace job needs daemon state")
     assert(conn.state == .Ready, "workspace job submitted outside Ready")
     assert(conn.ticket != 0, "workspace job needs a resolvable connection")
-    assert(offset >= 0 && page_size >= 0, "workspace job needs a non-negative page window")
+    assert(page_size >= 0, "workspace job needs a non-negative page size")
 
     d := conn.daemon
+    assert(conn.workspace_jobs >= 0 && d.workspace_jobs >= 0, "workspace job counts stay non-negative")
+    if conn.workspace_jobs >= WORKSPACE_JOBS_PER_CONN_MAX || d.workspace_jobs >= WORKSPACE_JOBS_GLOBAL_MAX {
+        send_error(conn, id, .Overloaded, "too many workspace operations are in progress", conn.allocator)
+        return
+    }
 
     job, aerr := new(Workspace_Job, d.allocator)
     if aerr != nil {
@@ -107,14 +115,14 @@ workspace_job_submit :: proc(
     job.daemon = d
     job.ticket = conn.ticket
     job.kind = kind
-    job.offset = offset
     job.page_size = page_size
     mem.dynamic_arena_init(&job.arena, runtime.heap_allocator(), runtime.heap_allocator())
     job.allocator = mem.dynamic_arena_allocator(&job.arena)
 
     cloned_id, id_aerr := strings.clone(string(id), job.allocator)
     cloned_path, path_aerr := strings.clone(path, job.allocator)
-    if id_aerr != nil || path_aerr != nil {
+    cloned_cursor, cursor_aerr := strings.clone(cursor, job.allocator)
+    if id_aerr != nil || path_aerr != nil || cursor_aerr != nil {
         workspace_job_free(job)
         conn_abort(conn, .Out_Of_Memory)
         return
@@ -122,7 +130,10 @@ workspace_job_submit :: proc(
 
     job.id = wire.Request_Id(cloned_id)
     job.path = cloned_path
+    job.cursor = cloned_cursor
 
+    conn.workspace_jobs += 1
+    d.workspace_jobs += 1
     offload.submit(&d.workers, job, workspace_job_run, workspace_job_done)
 }
 
@@ -151,13 +162,14 @@ workspace_job_run :: proc(job: ^Workspace_Job) {
         job.modified_ms = path_mtime_ms(canonical, job.allocator)
 
     case .Browse:
-        entries, lerr := browse_entries(canonical, job.allocator)
+        entries, has_more, lerr := browse_entries_page(canonical, job.cursor, job.page_size, job.allocator)
         if lerr != nil {
             job.outcome = .Unreadable
             return
         }
 
         job.entries = entries
+        job.has_more = has_more
     }
 
     job.canonical = canonical
@@ -171,10 +183,16 @@ workspace_job_done :: proc(job: ^Workspace_Job) {
     assert(decided, "workspace pass completed without an outcome")
     defer workspace_job_free(job)
 
-    conn := conn_resolve(job.daemon, job.ticket)
+    d := job.daemon
+    assert(d.workspace_jobs > 0, "workspace completion needs a live global job")
+    d.workspace_jobs -= 1
+
+    conn := conn_resolve(d, job.ticket)
     if conn == nil {
         return
     }
+    assert(conn.workspace_jobs > 0, "workspace completion needs a live connection job")
+    conn.workspace_jobs -= 1
 
     switch outcome {
     case .Invalid_Path:
@@ -220,27 +238,21 @@ workspace_send_describe :: proc(conn: ^Conn, job: ^Workspace_Job) {
     send_result(conn, job.id, result, job.allocator)
 }
 
-// Emit one page of the `workspace.browse` listing. Paging is pure arithmetic over the
-// sorted listing, so it runs here, not on the worker; an offset past the end is an empty
-// final page, not an error.
+// Emit the bounded `workspace.browse` page prepared by the worker.
 workspace_send_browse :: proc(conn: ^Conn, job: ^Workspace_Job) {
     assert(job.kind == .Browse, "browse result built from another job")
     assert(len(job.canonical) > 0, "a completed browse has a canonical directory")
 
-    total := len(job.entries)
-    lo := min(job.offset, total)
-    hi := min(lo + job.page_size, total)
-
     next_cursor: Maybe(string)
-    cursor_buf: [24]u8
-    if hi < total {
-        next_cursor = strconv.write_int(cursor_buf[:], i64(hi), 10)
+    if job.has_more {
+        assert(len(job.entries) == job.page_size, "a continuing browse page is full")
+        next_cursor = job.entries[len(job.entries) - 1].name
     }
 
     result := wire.Workspace_Browse_Result {
         path        = job.canonical,
         parent      = parent_dir(job.canonical),
-        entries     = job.entries[lo:hi],
+        entries     = job.entries,
         next_cursor = next_cursor,
     }
 

@@ -10,6 +10,8 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
+import "src:secret"
+
 AUTH_FILE_VERSION :: 1
 AUTH_FILE_MAX_BYTES :: 1024 * 1024
 AUTH_FILE_PERMISSIONS :: os.Permissions{.Read_User, .Write_User}
@@ -65,7 +67,10 @@ Error :: enum {
     Malformed,
     Read_Failed,
     Write_Failed,
+    Durability_Uncertain,
 }
+
+Directory_Sync_Proc :: proc(parent: string) -> bool
 
 // A loaded credential snapshot. Mutations first durably replace `auth.json`,
 // then publish the matching in-memory map.
@@ -180,9 +185,20 @@ credentials_expiry :: proc(store: ^Store, provider_id: string) -> (expires_at_ms
 
 // Persist an OAuth entry before making it visible through this store.
 credentials_put :: proc(store: ^Store, provider_id: string, credentials: OAuth_Credentials) -> Error {
+    return credentials_put_with_sync(store, provider_id, credentials, file_sync_parent)
+}
+
+@(private)
+credentials_put_with_sync :: proc(
+    store: ^Store,
+    provider_id: string,
+    credentials: OAuth_Credentials,
+    directory_sync: Directory_Sync_Proc,
+) -> Error {
     assert(store != nil, "credentials_put needs an auth store")
     assert(provider_id_valid(provider_id), "credentials_put needs a valid provider id")
     assert(credentials_valid(credentials), "credentials_put needs complete credentials")
+    assert(directory_sync != nil, "credentials_put needs a directory sync implementation")
 
     next, cerr := file_clone(store.file, store.allocator)
     if cerr != .None {
@@ -211,23 +227,40 @@ credentials_put :: proc(store: ^Store, provider_id: string, credentials: OAuth_C
         return .Out_Of_Memory
     }
 
-    if werr := file_save(store.path, next, store.allocator); werr != .None {
+    published, werr := file_save(store.path, next, store.allocator, directory_sync)
+    if !published {
+        assert(werr != .None, "an unpublished auth save must report an error")
+
         return werr
     }
+    assert(werr == .None || werr == .Durability_Uncertain, "a published auth save has a final status")
 
     previous := store.file
     store.file = next
     next = {}
     file_destroy(&previous, store.allocator)
 
-    return .None
+    return werr
 }
 
 // Remove one provider credential. `removed` is false when the provider was not
 // present and no write was needed.
 provider_remove :: proc(store: ^Store, provider_id: string) -> (removed: bool, err: Error) {
+    return provider_remove_with_sync(store, provider_id, file_sync_parent)
+}
+
+@(private)
+provider_remove_with_sync :: proc(
+    store: ^Store,
+    provider_id: string,
+    directory_sync: Directory_Sync_Proc,
+) -> (
+    removed: bool,
+    err: Error,
+) {
     assert(store != nil, "provider_remove needs an auth store")
     assert(provider_id_valid(provider_id), "provider_remove needs a valid provider id")
+    assert(directory_sync != nil, "provider_remove needs a directory sync implementation")
 
     if _, found := store.file.providers[provider_id]; !found {
         return false, .None
@@ -241,16 +274,20 @@ provider_remove :: proc(store: ^Store, provider_id: string) -> (removed: bool, e
 
     file_entry_remove(&next, provider_id, store.allocator)
 
-    if werr := file_save(store.path, next, store.allocator); werr != .None {
+    published, werr := file_save(store.path, next, store.allocator, directory_sync)
+    if !published {
+        assert(werr != .None, "an unpublished auth removal must report an error")
+
         return false, werr
     }
+    assert(werr == .None || werr == .Durability_Uncertain, "a published auth removal has a final status")
 
     previous := store.file
     store.file = next
     next = {}
     file_destroy(&previous, store.allocator)
 
-    return true, .None
+    return true, werr
 }
 
 // Stable provider ids are short lowercase ASCII tokens, not display names.
@@ -281,9 +318,9 @@ credentials_valid :: proc(credentials: OAuth_Credentials) -> bool {
 
 credentials_destroy :: proc(credentials: ^OAuth_Credentials, allocator := context.allocator) {
     assert(credentials != nil, "credential cleanup needs a value")
-    secret_delete(&credentials.access_token, allocator)
-    secret_delete(&credentials.refresh_token, allocator)
-    secret_delete(&credentials.account_id, allocator)
+    secret.string_destroy(&credentials.access_token, allocator)
+    secret.string_destroy(&credentials.refresh_token, allocator)
+    secret.string_destroy(&credentials.account_id, allocator)
     credentials^ = {}
 }
 
@@ -485,7 +522,7 @@ file_destroy :: proc(file: ^File, allocator: mem.Allocator) {
             mutable := credentials
             credentials_destroy(&mutable, allocator)
             key := provider_id
-            secret_delete(&key, allocator)
+            secret.string_destroy(&key, allocator)
         }
 
         delete(file.providers)
@@ -504,7 +541,7 @@ file_wire_destroy :: proc(file: ^File_Wire, allocator: mem.Allocator) {
             mutable := entry
             entry_destroy(&mutable, allocator)
             key := provider_id
-            secret_delete(&key, allocator)
+            secret.string_destroy(&key, allocator)
         }
 
         delete(file.providers)
@@ -526,7 +563,7 @@ file_entry_remove :: proc(file: ^File, provider_id: string, allocator: mem.Alloc
         if key == provider_id {
             owned_key := key
             delete_key(&file.providers, provider_id)
-            secret_delete(&owned_key, allocator)
+            secret.string_destroy(&owned_key, allocator)
 
             return
         }
@@ -549,82 +586,79 @@ entry_credentials :: proc(entry: Entry) -> OAuth_Credentials {
 @(private)
 entry_destroy :: proc(entry: ^Entry, allocator: mem.Allocator) {
     assert(entry != nil, "auth entry cleanup needs a value")
-    secret_delete(&entry.kind, allocator)
-    secret_delete(&entry.access_token, allocator)
-    secret_delete(&entry.refresh_token, allocator)
-    secret_delete(&entry.account_id, allocator)
+    secret.string_destroy(&entry.kind, allocator)
+    secret.string_destroy(&entry.access_token, allocator)
+    secret.string_destroy(&entry.refresh_token, allocator)
+    secret.string_destroy(&entry.account_id, allocator)
     entry^ = {}
 }
 
-// Wipe and free a secret string, then null the field. Public so the daemon's
-// request buffers wipe through one authoritative implementation.
-secret_delete :: proc(value: ^string, allocator: mem.Allocator) {
-    assert(value != nil, "secret cleanup needs a string")
-
-    if len(value^) > 0 {
-        crypto.zero_explicit(raw_data(transmute([]byte)value^), len(value^))
-        delete(value^, allocator)
-        value^ = ""
-    }
-}
-
 @(private)
-file_save :: proc(path: string, file: File, allocator: mem.Allocator) -> Error {
+file_save :: proc(
+    path: string,
+    file: File,
+    allocator: mem.Allocator,
+    directory_sync: Directory_Sync_Proc,
+) -> (
+    published: bool,
+    err: Error,
+) {
     assert(path != "", "auth save needs a path")
     assert(file_valid(file), "auth save needs a valid snapshot")
+    assert(directory_sync != nil, "auth save needs a directory sync implementation")
 
     parent, _ := filepath.split(path)
     if parent == "" {
-        return .Invalid_Options
+        return false, .Invalid_Options
     }
 
     if mkerr := os.make_directory_all(parent, AUTH_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(parent) {
-        return .Write_Failed
+        return false, .Write_Failed
     }
 
     parent_info, parent_err := os.lstat(parent, allocator)
     if parent_err != nil {
-        return .Write_Failed
+        return false, .Write_Failed
     }
     defer os.file_info_delete(parent_info, allocator)
 
     if parent_info.type != .Directory {
-        return .Unsafe_Path
+        return false, .Unsafe_Path
     }
 
     when ODIN_OS != .Windows {
         if parent_info.mode & AUTH_DIR_FORBIDDEN_PERMISSIONS != {} {
-            return .Unsafe_Permissions
+            return false, .Unsafe_Permissions
         }
     }
 
     encoded, encode_err := file_encode(file, allocator)
     if encode_err != .None {
-        return encode_err
+        return false, encode_err
     }
-    defer secret_delete(&encoded, allocator)
+    defer secret.string_destroy(&encoded, allocator)
 
     if len(encoded) > AUTH_FILE_MAX_BYTES {
-        return .Too_Large
+        return false, .Too_Large
     }
 
     random: [16]byte
     crypto.rand_bytes(random[:])
     suffix, suffix_aerr := hex.encode(random[:], allocator)
     if suffix_aerr != nil {
-        return .Out_Of_Memory
+        return false, .Out_Of_Memory
     }
     defer delete(suffix, allocator)
 
     temp_path, path_aerr := strings.concatenate({path, ".tmp.", string(suffix)}, allocator)
     if path_aerr != nil {
-        return .Out_Of_Memory
+        return false, .Out_Of_Memory
     }
     defer delete(temp_path, allocator)
 
     handle, open_err := os.open(temp_path, {.Write, .Create, .Excl}, AUTH_FILE_PERMISSIONS)
     if open_err != nil {
-        return .Write_Failed
+        return false, .Write_Failed
     }
 
     renamed := false
@@ -650,28 +684,38 @@ file_save :: proc(path: string, file: File, allocator: mem.Allocator) -> Error {
     }
 
     if write_err != .None {
-        return write_err
+        return false, write_err
     }
 
     if os.rename(temp_path, path) != nil {
-        return .Write_Failed
+        return false, .Write_Failed
     }
     renamed = true
 
+    if !directory_sync(parent) {
+        return true, .Durability_Uncertain
+    }
+
+    return true, .None
+}
+
+@(private)
+file_sync_parent :: proc(parent: string) -> bool {
+    assert(parent != "", "auth directory sync needs a parent path")
+
     when ODIN_OS != .Windows {
-        directory, dir_err := os.open(parent, {.Read})
-        if dir_err != nil {
-            return .Write_Failed
+        directory, open_err := os.open(parent, {.Read})
+        if open_err != nil {
+            return false
         }
 
         sync_err := os.sync(directory)
         close_err := os.close(directory)
-        if sync_err != nil || close_err != nil {
-            return .Write_Failed
-        }
-    }
 
-    return .None
+        return sync_err == nil && close_err == nil
+    } else {
+        return true
+    }
 }
 
 // Encode the closed auth file shape without ambient allocation. Credential

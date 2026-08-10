@@ -227,6 +227,25 @@ test_daemon_upload_is_idempotent :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_daemon_upload_never_replaces_an_existing_address :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-blob-upload-no-replace")
+    defer os.remove_all(dir)
+
+    path, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
+    testing.expect_value(t, os.write_entire_file(path, transmute([]byte)string("existing")), nil)
+
+    put := run_http(t, blob_put_request(BLOB_HASH, UPLOAD_BODY), {blob_dir = dir})
+    testing.expect(t, strings.has_prefix(put, "HTTP/1.1 200 OK\r\n"), "an occupied address should be idempotent")
+
+    bytes, err := os.read_entire_file(path, context.temp_allocator)
+    testing.expect_value(t, err, nil)
+    testing.expect_value(t, string(bytes), "existing")
+    testing.expect(t, !blob_dir_has_temp(dir), "an occupied address leaves no temp")
+}
+
+@(test)
 test_daemon_rejects_upload_hash_mismatch :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
@@ -1490,4 +1509,15 @@ test_daemon_rejects_a_too_short_auth_token :: proc(t: ^testing.T) {
     err := start(&d, loop, {host = "127.0.0.1", port = 0, auth_token = "x"})
 
     testing.expect_value(t, err, Error.Invalid_Options)
+}
+
+@(test)
+test_daemon_requires_authentication_for_non_loopback_listeners :: proc(t: ^testing.T) {
+    token := strings.repeat("a", MIN_AUTH_TOKEN_BYTES, context.temp_allocator)
+
+    testing.expect(t, listen_auth_valid("127.0.0.1", ""), "loopback may explicitly disable authentication")
+    testing.expect(t, listen_auth_valid("127.8.9.10", ""), "the full IPv4 loopback block is local")
+    testing.expect(t, !listen_auth_valid("0.0.0.0", ""), "wildcard binding needs authentication")
+    testing.expect(t, !listen_auth_valid("192.0.2.1", ""), "remote binding needs authentication")
+    testing.expect(t, listen_auth_valid("0.0.0.0", token), "an authenticated wildcard binding is explicit")
 }

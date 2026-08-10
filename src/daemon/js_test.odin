@@ -340,6 +340,25 @@ test_js_root_without_an_entry_script_starts :: proc(t: ^testing.T) {
     testing.expect(t, d.js.ctx != nil, "a configured root brings up the runtime")
 }
 
+@(test)
+test_js_unreadable_entry_refuses_the_start :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+    context.logger = log.nil_logger()
+
+    root := test_make_dir("js-entry-unreadable")
+    defer os.remove_all(root)
+
+    entry, _ := os.join_path({root, JS_ENTRY_FILE}, context.temp_allocator)
+    testing.expect(t, os.make_directory(entry) == nil, "create an unreadable entry shape")
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.Script_Failed)
+}
+
 // Without a root there is nothing to contain paths against, so the module refuses to load
 // rather than reaching an unbounded filesystem. The runtime itself still comes up.
 @(test)

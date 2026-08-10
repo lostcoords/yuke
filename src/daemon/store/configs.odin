@@ -32,32 +32,66 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
     )
 }
 
-// Every announced config revision for the session, oldest first, as `wire.Run_Config`.
-// resync resolves a message's `config_rev` against this instead of folding the log. Row strings live in `allocator`.
-session_configs :: proc(
+// Resolve one announced revision without folding the event log.
+session_config :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+    revision: wire.Config_Rev,
+    allocator: mem.Allocator,
+) -> (
+    config: wire.Run_Config,
+    found: bool,
+    err: Error,
+) {
+    assert(s != nil, "session_config needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a config read needs an allocator")
+
+    row, sqlite_err := queries.session_config(&s.queries, {session_id = session, requested_rev = revision}, allocator)
+    return config_read_result(row, sqlite_err)
+}
+
+// The newest announced config, used by the session summary.
+session_config_current :: proc(
     s: ^Store,
     session: wire.Session_Id,
     allocator: mem.Allocator,
 ) -> (
-    configs: []wire.Run_Config,
+    config: wire.Run_Config,
+    found: bool,
     err: Error,
 ) {
-    assert(s != nil, "session_configs needs a store")
+    assert(s != nil, "session_config_current needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
-    assert(allocator.procedure != nil, "a config read needs an allocator")
+    assert(allocator.procedure != nil, "a current config read needs an allocator")
 
-    read, sqlite_err := queries.session_configs(&s.queries, {session_id = session}, allocator)
+    row, sqlite_err := queries.session_config_current(&s.queries, {session_id = session}, allocator)
+    return config_read_result(row, sqlite_err)
+}
+
+@(private)
+config_read_result :: proc(
+    row: queries.Session_Config_Row,
+    sqlite_err: sqlite.Error,
+) -> (
+    config: wire.Run_Config,
+    found: bool,
+    err: Error,
+) {
     if sqlite_err != nil {
-        return nil, read_err(sqlite_err)
+        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
+            return {}, false, nil
+        }
+
+        return {}, false, read_err(sqlite_err)
     }
 
-    // The generated row is `wire.Run_Config` field-for-field. So we can reuse the scanned array.
-    #assert(size_of(queries.Session_Configs_Row) == size_of(wire.Run_Config))
-    #assert(offset_of(queries.Session_Configs_Row, config_rev) == offset_of(wire.Run_Config, config_rev))
-    #assert(offset_of(queries.Session_Configs_Row, model) == offset_of(wire.Run_Config, model))
-    #assert(offset_of(queries.Session_Configs_Row, reasoning) == offset_of(wire.Run_Config, reasoning))
+    #assert(size_of(queries.Session_Config_Row) == size_of(wire.Run_Config))
+    #assert(offset_of(queries.Session_Config_Row, config_rev) == offset_of(wire.Run_Config, config_rev))
+    #assert(offset_of(queries.Session_Config_Row, model) == offset_of(wire.Run_Config, model))
+    #assert(offset_of(queries.Session_Config_Row, reasoning) == offset_of(wire.Run_Config, reasoning))
 
-    return transmute([]wire.Run_Config)read, nil
+    return wire.Run_Config(row), true, nil
 }
 
 // `Default` is resolved to its text before it reaches here; nil stores nothing

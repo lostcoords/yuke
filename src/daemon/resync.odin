@@ -90,13 +90,6 @@ resync_build :: proc(
         return {}, .Store_Failed
     }
 
-    // Every announced config revision, so a message's `config_rev` resolves without a fold.
-    known, cerr := store.session_configs(d.store, params.session_id, sa)
-    if cerr != nil {
-        log.errorf("daemon: resync config read failed: %v", cerr)
-        return {}, .Store_Failed
-    }
-
     page_size := wire.LIMITS.default_page_size
     if limit, ok := params.limit.?; ok {
         page_size = int(limit)
@@ -134,7 +127,7 @@ resync_build :: proc(
         case .Turn:
             // The turn's config is collected like every other, so an unannounced
             // revision is diagnosed in one place.
-            resync_config_add(&configs, known, open.config_rev) or_return
+            resync_config_add(&configs, d.store, params.session_id, open.config_rev, sa) or_return
             assert(len(configs) == 1, "the running config is the first one collected")
 
             activity.state = wire.Activity_State_Running {
@@ -163,12 +156,19 @@ resync_build :: proc(
             continue
         }
 
-        resync_config_add(&configs, known, assistant.config_rev) or_return
+        resync_config_add(&configs, d.store, params.session_id, assistant.config_rev, sa) or_return
     }
 
     // This summary is a placeholder until the session engine exists; it will be replaced
     // with the same derived row used by session.list and summary_changed.
-    current := resync_current_config(known)
+    current, current_found, current_err := store.session_config_current(d.store, params.session_id, sa)
+    if current_err != nil {
+        log.errorf("daemon: resync current config read failed: %v", current_err)
+        return {}, .Store_Failed
+    }
+    if !current_found {
+        current = {}
+    }
     item := wire.Session_List_Item {
         session = wire.Session {
             id = params.session_id,
@@ -217,16 +217,23 @@ resync_build :: proc(
 @(private)
 resync_config_add :: proc(
     out: ^[dynamic]wire.Run_Config,
-    known: []wire.Run_Config,
+    s: ^store.Store,
+    session: wire.Session_Id,
     rev: wire.Config_Rev,
+    allocator: mem.Allocator,
 ) -> Resync_Error {
     assert(out != nil, "collecting configs needs its accumulator")
+    assert(s != nil, "collecting configs needs a store")
 
     if _, collected := resync_config_find(out[:], rev); collected {
         return .None
     }
 
-    cfg, found := resync_config_find(known, rev)
+    cfg, found, read_err := store.session_config(s, session, rev, allocator)
+    if read_err != nil {
+        log.errorf("daemon: resync config read failed: %v", read_err)
+        return .Store_Failed
+    }
     if !found {
         log.errorf("daemon: resync found no config.changed for revision %v", rev)
         return .Corrupt_Log
@@ -236,27 +243,16 @@ resync_config_add :: proc(
     return .None
 }
 
-// The last announcement of `rev`; `ok` is false when the log never announced it.
+// Find a revision already collected for this cut.
 @(private)
-resync_config_find :: proc(known: []wire.Run_Config, rev: wire.Config_Rev) -> (cfg: wire.Run_Config, ok: bool) {
-    #reverse for candidate in known {
+resync_config_find :: proc(configs: []wire.Run_Config, rev: wire.Config_Rev) -> (cfg: wire.Run_Config, ok: bool) {
+    for candidate in configs {
         if candidate.config_rev == rev {
             return candidate, true
         }
     }
 
     return {}, false
-}
-
-// The session's live config: the newest `config.changed`, or nothing when the log has
-// none yet. `known` is ordered oldest first, so the last row is newest.
-@(private)
-resync_current_config :: proc(known: []wire.Run_Config) -> wire.Run_Config {
-    if len(known) == 0 {
-        return {}
-    }
-
-    return known[len(known) - 1]
 }
 
 // The temporary workspace id used until the session engine owns the summary.

@@ -91,7 +91,7 @@ Insert_Config_Params :: struct {
     reasoning:  string,
 }
 
-Session_Configs_Row :: struct {
+Session_Config_Row :: struct {
     config_rev: wire.Config_Rev,
     model:      string,
     reasoning:  string,
@@ -157,7 +157,12 @@ Set_Prompt_Params :: struct {
     prompt:     Maybe(string),
 }
 
-Session_Configs_Params :: struct {
+Session_Config_Params :: struct {
+    session_id:    wire.Session_Id,
+    requested_rev: wire.Config_Rev,
+}
+
+Session_Config_Current_Params :: struct {
     session_id: wire.Session_Id,
 }
 
@@ -249,7 +254,8 @@ Session_Activity_Params :: struct {
 Query_Id :: enum {
     Clear_Configs,
     Set_Prompt,
-    Session_Configs,
+    Session_Config,
+    Session_Config_Current,
     Append_Event,
     Advance_Seq,
     Bump_Ids,
@@ -268,60 +274,63 @@ Query_Id :: enum {
 
 @(private, rodata)
 QUERY_SQL := [Query_Id]string {
-    .Clear_Configs        = `DELETE FROM session_configs WHERE session_id = :session_id;`,
-    .Set_Prompt           = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
+    .Clear_Configs          = `DELETE FROM session_configs WHERE session_id = :session_id;`,
+    .Set_Prompt             = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
     SELECT :session_id, :prompt WHERE :prompt IS NOT NULL;`,
-    .Session_Configs      = `SELECT config_rev, model, reasoning FROM session_configs
+    .Session_Config         = `SELECT config_rev, model, reasoning FROM session_configs
+    WHERE session_id = :session_id AND config_rev = :requested_rev;`,
+    .Session_Config_Current = `SELECT config_rev, model, reasoning FROM session_configs
     WHERE session_id = :session_id
-    ORDER BY config_rev;`,
-    .Append_Event         = `INSERT INTO events(session_id, seq, name, payload)
+    ORDER BY config_rev DESC
+    LIMIT 1;`,
+    .Append_Event           = `INSERT INTO events(session_id, seq, name, payload)
     VALUES (:session_id, :seq, :name, :payload);`,
-    .Advance_Seq          = `UPDATE sessions SET seq_high = :seq
+    .Advance_Seq            = `UPDATE sessions SET seq_high = :seq
     WHERE id = :session_id AND seq_high = :seq - 1;`,
-    .Bump_Ids             = `UPDATE sessions SET
+    .Bump_Ids               = `UPDATE sessions SET
     message_id_high = MAX(message_id_high, :message_id_high),
     run_id_high     = MAX(run_id_high, :run_id_high),
     input_id_high   = MAX(input_id_high, :input_id_high),
     config_rev_high = MAX(config_rev_high, :config_rev_high)
     WHERE id = :session_id;`,
-    .Read_High            = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    .Read_High              = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
     FROM sessions WHERE id = :session_id;`,
-    .Truncate_Messages    = `DELETE FROM messages
+    .Truncate_Messages      = `DELETE FROM messages
     WHERE session_id = :session_id AND message_id >= :first_removed_id;`,
-    .Count_Messages       = `UPDATE sessions SET
+    .Count_Messages         = `UPDATE sessions SET
     message_count = message_count + :delta,
     updated_at_ms = MAX(updated_at_ms, COALESCE(:updated_at_ms, 0))
     WHERE id = :session_id;`,
-    .Session_History_Page = `SELECT m.message_id, m.seq, e.payload
+    .Session_History_Page   = `SELECT m.message_id, m.seq, e.payload
     FROM messages m
     JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
     WHERE m.session_id = :session_id
       AND (:cursor_message_id IS NULL OR m.message_id < :cursor_message_id)
     ORDER BY m.message_id DESC
     LIMIT :limit;`,
-    .Set_Open_Run         = `UPDATE sessions SET
+    .Set_Open_Run           = `UPDATE sessions SET
     open_run_id            = :open_run_id,
     open_run_kind          = :open_run_kind,
     open_run_reason        = :open_run_reason,
     open_run_config_rev    = :open_run_config_rev,
     open_run_started_at_ms = :open_run_started_at_ms
     WHERE id = :session_id;`,
-    .Clear_Open_Run       = `UPDATE sessions SET
+    .Clear_Open_Run         = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
     open_run_reason        = NULL,
     open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id AND open_run_id = :open_run_id;`,
-    .Reset_Open_Run       = `UPDATE sessions SET
+    .Reset_Open_Run         = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
     open_run_reason        = NULL,
     open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id;`,
-    .Session_Exists       = `SELECT 1 FROM sessions WHERE id = :session_id;`,
-    .Session_Page         = `SELECT
+    .Session_Exists         = `SELECT 1 FROM sessions WHERE id = :session_id;`,
+    .Session_Page           = `SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
@@ -337,34 +346,35 @@ WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
        OR (updated_at_ms = :cursor_updated_at_ms AND id < :cursor_id))
 ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;`,
-    .Session_Count        = `SELECT count(*) AS total FROM sessions
+    .Session_Count          = `SELECT count(*) AS total FROM sessions
 WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)
   AND (:job_id       IS NULL OR job_id       = :job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));`,
-    .Session_Activity     = `SELECT message_count,
+    .Session_Activity       = `SELECT message_count,
        open_run_id, open_run_kind, open_run_reason, open_run_config_rev, open_run_started_at_ms
     FROM sessions WHERE id = :session_id;`,
 }
 
 Queries :: struct {
-    clear_configs:        sqlite.Bind_Mapping(Clear_Configs_Params),
-    set_prompt:           sqlite.Bind_Mapping(Set_Prompt_Params),
-    session_configs:      sqlite.Reader(Session_Configs_Params, Session_Configs_Row),
-    append_event:         sqlite.Bind_Mapping(Append_Event_Params),
-    advance_seq:          sqlite.Bind_Mapping(Advance_Seq_Params),
-    bump_ids:             sqlite.Bind_Mapping(Bump_Ids_Params),
-    read_high:            sqlite.Reader(Read_High_Params, Read_High_Row),
-    truncate_messages:    sqlite.Bind_Mapping(Truncate_Messages_Params),
-    count_messages:       sqlite.Bind_Mapping(Count_Messages_Params),
-    session_history_page: sqlite.Reader(Session_History_Page_Params, Session_History_Page_Row),
-    set_open_run:         sqlite.Bind_Mapping(Set_Open_Run_Params),
-    clear_open_run:       sqlite.Bind_Mapping(Clear_Open_Run_Params),
-    reset_open_run:       sqlite.Bind_Mapping(Reset_Open_Run_Params),
-    session_exists:       sqlite.Bind_Mapping(Session_Exists_Params),
-    session_page:         sqlite.Reader(Session_Page_Params, Session_Page_Row),
-    session_count:        sqlite.Reader(Session_Count_Params, Session_Count_Row),
-    session_activity:     sqlite.Reader(Session_Activity_Params, Session_Activity_Row),
+    clear_configs:          sqlite.Bind_Mapping(Clear_Configs_Params),
+    set_prompt:             sqlite.Bind_Mapping(Set_Prompt_Params),
+    session_config:         sqlite.Reader(Session_Config_Params, Session_Config_Row),
+    session_config_current: sqlite.Reader(Session_Config_Current_Params, Session_Config_Row),
+    append_event:           sqlite.Bind_Mapping(Append_Event_Params),
+    advance_seq:            sqlite.Bind_Mapping(Advance_Seq_Params),
+    bump_ids:               sqlite.Bind_Mapping(Bump_Ids_Params),
+    read_high:              sqlite.Reader(Read_High_Params, Read_High_Row),
+    truncate_messages:      sqlite.Bind_Mapping(Truncate_Messages_Params),
+    count_messages:         sqlite.Bind_Mapping(Count_Messages_Params),
+    session_history_page:   sqlite.Reader(Session_History_Page_Params, Session_History_Page_Row),
+    set_open_run:           sqlite.Bind_Mapping(Set_Open_Run_Params),
+    clear_open_run:         sqlite.Bind_Mapping(Clear_Open_Run_Params),
+    reset_open_run:         sqlite.Bind_Mapping(Reset_Open_Run_Params),
+    session_exists:         sqlite.Bind_Mapping(Session_Exists_Params),
+    session_page:           sqlite.Reader(Session_Page_Params, Session_Page_Row),
+    session_count:          sqlite.Reader(Session_Count_Params, Session_Count_Row),
+    session_activity:       sqlite.Reader(Session_Activity_Params, Session_Activity_Row),
 }
 
 queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.allocator) -> sqlite.Error {
@@ -376,19 +386,32 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     set_prompt_bind, set_prompt_bind_err := sqlite.bind_prepare(set_prompt_stmt, Set_Prompt_Params)
     assert(set_prompt_bind_err == .None, "generated statement matches its generated struct")
     queries.set_prompt = set_prompt_bind
-    session_configs_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Configs]) or_return
-    session_configs_reader, session_configs_reader_err := sqlite.reader_prepare(
-        session_configs_stmt,
-        Session_Configs_Params,
-        Session_Configs_Row,
+    session_config_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Config]) or_return
+    session_config_reader, session_config_reader_err := sqlite.reader_prepare(
+        session_config_stmt,
+        Session_Config_Params,
+        Session_Config_Row,
         allocator,
     )
-    if session_configs_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_configs_stmt)
-        return session_configs_reader_err
+    if session_config_reader_err == .Out_Of_Memory {
+        sqlite.finalize(session_config_stmt)
+        return session_config_reader_err
     }
-    assert(session_configs_reader_err == .None, "generated statement matches its generated struct")
-    queries.session_configs = session_configs_reader
+    assert(session_config_reader_err == .None, "generated statement matches its generated struct")
+    queries.session_config = session_config_reader
+    session_config_current_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Config_Current]) or_return
+    session_config_current_reader, session_config_current_reader_err := sqlite.reader_prepare(
+        session_config_current_stmt,
+        Session_Config_Current_Params,
+        Session_Config_Row,
+        allocator,
+    )
+    if session_config_current_reader_err == .Out_Of_Memory {
+        sqlite.finalize(session_config_current_stmt)
+        return session_config_current_reader_err
+    }
+    assert(session_config_current_reader_err == .None, "generated statement matches its generated struct")
+    queries.session_config_current = session_config_current_reader
     append_event_stmt := sqlite.prepare(db, QUERY_SQL[.Append_Event]) or_return
     append_event_bind, append_event_bind_err := sqlite.bind_prepare(append_event_stmt, Append_Event_Params)
     assert(append_event_bind_err == .None, "generated statement matches its generated struct")
@@ -499,8 +522,10 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
 queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.clear_configs.statement)
     sqlite.finalize(queries.set_prompt.statement)
-    sqlite.finalize(queries.session_configs.statement)
-    sqlite.reader_destroy(&queries.session_configs, allocator)
+    sqlite.finalize(queries.session_config.statement)
+    sqlite.reader_destroy(&queries.session_config, allocator)
+    sqlite.finalize(queries.session_config_current.statement)
+    sqlite.reader_destroy(&queries.session_config_current, allocator)
     sqlite.finalize(queries.append_event.statement)
     sqlite.finalize(queries.advance_seq.statement)
     sqlite.finalize(queries.bump_ids.statement)
@@ -532,17 +557,28 @@ set_prompt :: proc(q: ^Queries, params_in: Set_Prompt_Params) -> sqlite.Result {
     return sqlite.execute(&q.set_prompt, &params)
 }
 
-session_configs :: proc(
+session_config :: proc(
     q: ^Queries,
-    params_in: Session_Configs_Params,
+    params_in: Session_Config_Params,
     allocator := context.allocator,
-    cap_hint := 0,
 ) -> (
-    []Session_Configs_Row,
+    Session_Config_Row,
     sqlite.Error,
 ) {
     params := params_in
-    return sqlite.read_all(&q.session_configs, &params, allocator, cap_hint)
+    return sqlite.read_one(&q.session_config, &params, allocator)
+}
+
+session_config_current :: proc(
+    q: ^Queries,
+    params_in: Session_Config_Current_Params,
+    allocator := context.allocator,
+) -> (
+    Session_Config_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_one(&q.session_config_current, &params, allocator)
 }
 
 append_event :: proc(q: ^Queries, params_in: Append_Event_Params) -> sqlite.Result {

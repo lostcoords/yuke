@@ -692,6 +692,8 @@ easy_configure :: proc(t: ^Transfer, req: Request) -> Code {
 
     e := t.easy
 
+    // Refuse every libcurl protocol handler except the two this client implements.
+    setopt_str(e, .Protocols_Str, "http,https") or_return
     setopt_str(e, .Url, req.url) or_return
     setopt_ptr(e, .Error_Buffer, &t.errbuf[0]) or_return
 

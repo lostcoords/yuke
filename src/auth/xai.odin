@@ -10,7 +10,7 @@ XAI_AUTHORIZE_URL :: "https://auth.x.ai/oauth2/authorize"
 XAI_TOKEN_URL :: "https://auth.x.ai/oauth2/token"
 XAI_DEVICE_URL :: "https://auth.x.ai/oauth2/device/code"
 XAI_SCOPE :: "openid profile email offline_access grok-cli:access api:access"
-XAI_CALLBACK_PORTS := [1]int{1456}
+XAI_CALLBACK_PORTS := [1]int{0}
 
 // xAI registers the redirect as 127.0.0.1 + `/callback` (any loopback port); both
 // must match the client registration or the redirect_uri is rejected.
@@ -21,9 +21,6 @@ XAI_CALLBACK_PATH :: "/callback"
 // response with no usable lifetime, which standard device/token responses never carry.
 XAI_REFRESH_LEAD_MS :: 5 * 60 * 1000
 XAI_REFRESH_FALLBACK_MS :: 6 * 60 * 60 * 1000
-
-// Device codes expire after ~15 minutes.
-XAI_DEVICE_TIMEOUT_MS :: 15 * 60 * 1000
 
 // Standard-OAuth terminal refresh error (top-level `error`).
 @(rodata)
@@ -46,15 +43,12 @@ xai_descriptor := Provider {
     device_token_url           = XAI_TOKEN_URL,
     device_redirect_uri        = "",
     device_verification_url    = "",
-    device_timeout_ms          = XAI_DEVICE_TIMEOUT_MS,
-    supports_browser           = true,
-    supports_device            = true,
     device_profile             = .Rfc8628,
-    refresh_uses_json          = false,
+    refresh_profile            = .Standard,
     refresh_lead_ms            = XAI_REFRESH_LEAD_MS,
     refresh_fallback_ms        = XAI_REFRESH_FALLBACK_MS,
     refresh_permanent_codes    = XAI_REFRESH_PERMANENT_CODES[:],
-    account_from_access_token  = true,
+    account_token              = .Access,
     account_id                 = xai_account_id,
 }
 

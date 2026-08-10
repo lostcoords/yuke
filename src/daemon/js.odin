@@ -81,13 +81,16 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, 
 
     defer delete(path, allocator)
 
-    // A root with no entry script is normal, so an unreadable path is not an error here.
     source, read_err := os.read_entire_file(path, allocator)
-    if read_err != nil {
-        return false, .None
-    }
-
     defer delete(source, allocator)
+    if read_err != nil {
+        if read_err == .Not_Exist {
+            return false, .None
+        }
+
+        log.errorf("daemon: cannot read script entry %s: %v", path, read_err)
+        return false, .Script_Failed
+    }
 
     if !js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator) {
         return false, .Script_Failed

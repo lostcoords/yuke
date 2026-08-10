@@ -3,6 +3,8 @@ package auth
 import "core:strings"
 import "core:testing"
 
+import "src:secret"
+
 // An unsigned JWT carrying `payload_json` as its claim set; the flow only
 // projects claims and never verifies the signature.
 xai_test_jwt :: proc(payload_json: string, allocator := context.allocator) -> string {
@@ -10,13 +12,13 @@ xai_test_jwt :: proc(payload_json: string, allocator := context.allocator) -> st
     if header_err != .None {
         return ""
     }
-    defer secret_delete(&header, allocator)
+    defer secret.string_destroy(&header, allocator)
 
     payload, payload_err := base64url_encode(transmute([]byte)payload_json, allocator)
     if payload_err != .None {
         return ""
     }
-    defer secret_delete(&payload, allocator)
+    defer secret.string_destroy(&payload, allocator)
 
     token, token_aerr := strings.concatenate({header, ".", payload, ".sig"}, allocator)
     if token_aerr != nil {
@@ -35,18 +37,18 @@ xai_test_id_token :: proc(allocator := context.allocator) -> string {
 test_xai_account_id_reads_oidc_sub :: proc(t: ^testing.T) {
     token := xai_test_id_token()
     testing.expect(t, token != "", "test JWT")
-    defer secret_delete(&token, context.allocator)
+    defer secret.string_destroy(&token, context.allocator)
 
     account, err := xai_account_id(token)
     testing.expect_value(t, err, OAuth_Error.None)
     testing.expect_value(t, account, "xai-user-123")
-    secret_delete(&account, context.allocator)
+    secret.string_destroy(&account, context.allocator)
 }
 
 @(test)
 test_xai_token_response_parse_uses_sub_and_expires_in :: proc(t: ^testing.T) {
     token := xai_test_id_token()
-    defer secret_delete(&token, context.allocator)
+    defer secret.string_destroy(&token, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {
@@ -58,7 +60,7 @@ test_xai_token_response_parse_uses_sub_and_expires_in :: proc(t: ^testing.T) {
         },
     )
     testing.expect(t, response_aerr == nil, "token response allocation")
-    defer secret_delete(&response, context.allocator)
+    defer secret.string_destroy(&response, context.allocator)
 
     credentials, parse_err := token_response_parse(xai_provider(), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
@@ -72,12 +74,12 @@ test_xai_token_response_parse_uses_sub_and_expires_in :: proc(t: ^testing.T) {
 @(test)
 test_xai_account_id_prefers_principal_id :: proc(t: ^testing.T) {
     token := xai_test_jwt(`{"principal_id":"acct-42","sub":"xai-user-123"}`)
-    defer secret_delete(&token, context.allocator)
+    defer secret.string_destroy(&token, context.allocator)
 
     account, err := xai_account_id(token)
     testing.expect_value(t, err, OAuth_Error.None)
     testing.expect_value(t, account, "acct-42")
-    secret_delete(&account, context.allocator)
+    secret.string_destroy(&account, context.allocator)
 }
 
 // The RFC 8628 device token response may omit `id_token`; xAI's identity lives in
@@ -85,13 +87,13 @@ test_xai_account_id_prefers_principal_id :: proc(t: ^testing.T) {
 @(test)
 test_xai_device_token_response_without_id_token_succeeds :: proc(t: ^testing.T) {
     access := xai_test_jwt(`{"principal_id":"acct-42"}`)
-    defer secret_delete(&access, context.allocator)
+    defer secret.string_destroy(&access, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {`{"access_token":"`, access, `","refresh_token":"r-new","expires_in":21600,"token_type":"Bearer"}`},
     )
     testing.expect(t, response_aerr == nil, "token response allocation")
-    defer secret_delete(&response, context.allocator)
+    defer secret.string_destroy(&response, context.allocator)
 
     credentials, parse_err := token_response_parse(xai_provider(), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
@@ -106,7 +108,7 @@ test_xai_device_token_response_without_id_token_succeeds :: proc(t: ^testing.T) 
 test_xai_refresh_body_is_form_encoded :: proc(t: ^testing.T) {
     body, err := refresh_request_body(xai_provider(), "r-token")
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret_delete(&body, context.allocator)
+    defer secret.string_destroy(&body, context.allocator)
 
     testing.expect_value(
         t,

@@ -1,7 +1,9 @@
 package daemon
 
+import "base:runtime"
 import "core:encoding/json"
 import "core:log"
+import "core:mem"
 
 // Well-known port a launcher binds when the operator configures none, so the web client can probe
 // for a local daemon. Applied by the launcher, not `start` (which keeps 0 meaning OS-assigned).
@@ -42,6 +44,28 @@ Script_Config :: struct {
 // Decode the JSON captured from `defineConfig`. A malformed value or an unknown member fails
 // the start rather than taking half of it — the same strictness the file loader enforced.
 config_decode :: proc(text: string, allocator := context.allocator) -> (config: Script_Config, ok: bool) {
+    parse_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&parse_arena, runtime.heap_allocator(), runtime.heap_allocator())
+    defer mem.dynamic_arena_destroy(&parse_arena)
+
+    value, parse_err := json.parse(text, .JSON, true, mem.dynamic_arena_allocator(&parse_arena))
+    if parse_err != nil {
+        return {}, false
+    }
+
+    object, is_object := value.(json.Object)
+    if !is_object {
+        return {}, false
+    }
+
+    for name in object {
+        switch name {
+        case "host", "port", "dbPath", "blobDir", "authToken", "logLevel", "relayCloudUrl", "allowedOrigins":
+        case:
+            return {}, false
+        }
+    }
+
     if json.unmarshal(transmute([]byte)text, &config, .JSON, allocator) != nil {
         return {}, false
     }

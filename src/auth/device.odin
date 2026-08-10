@@ -1,15 +1,20 @@
 package auth
 
 import "core:encoding/json"
+import "core:math"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
+
+import "src:secret"
 
 // Generic device-flow bounds and the RFC 8628 device grant type.
 DEVICE_HANDLE_MAX_BYTES :: 4096
 DEVICE_USER_CODE_MAX_BYTES :: 128
 DEVICE_VERIFICATION_URL_MAX_BYTES :: 2048
+DEVICE_POLL_INTERVAL_MIN_S :: 1
 DEVICE_POLL_INTERVAL_MAX_S :: 60
+DEVICE_CODE_LIFETIME_MAX_S :: 24 * 60 * 60
 
 // RFC 8628 §3.5 poll interval when a standard device response omits `interval`.
 DEVICE_DEFAULT_POLL_INTERVAL_S :: 5
@@ -39,6 +44,7 @@ Device_Session :: struct {
     user_code:        string,
     verification_uri: string,
     interval_s:       u64,
+    expires_in_s:     u64,
 }
 
 // The authorization grant a Codex device poll returns, exchanged for tokens in a
@@ -75,17 +81,17 @@ Device_Poll_Result :: union {
 
 device_session_destroy :: proc(value: ^Device_Session, allocator := context.allocator) {
     assert(value != nil, "device session cleanup needs a value")
-    secret_delete(&value.handle, allocator)
-    secret_delete(&value.user_code, allocator)
-    secret_delete(&value.verification_uri, allocator)
+    secret.string_destroy(&value.handle, allocator)
+    secret.string_destroy(&value.user_code, allocator)
+    secret.string_destroy(&value.verification_uri, allocator)
     value^ = {}
 }
 
 device_grant_destroy :: proc(value: ^Device_Grant, allocator := context.allocator) {
     assert(value != nil, "device grant cleanup needs a value")
-    secret_delete(&value.authorization_code, allocator)
-    secret_delete(&value.code_challenge, allocator)
-    secret_delete(&value.code_verifier, allocator)
+    secret.string_destroy(&value.authorization_code, allocator)
+    secret.string_destroy(&value.code_challenge, allocator)
+    secret.string_destroy(&value.code_verifier, allocator)
     value^ = {}
 }
 
@@ -100,7 +106,7 @@ device_auth_body :: proc(
     content_type: string,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.supports_device, "device request needs a device-capable provider")
+    assert(provider != nil, "device request needs a provider")
 
     switch provider.device_profile {
     case .Codex:
@@ -120,9 +126,9 @@ device_auth_body :: proc(
         client_id, client_err := url_encode(provider.client_id, allocator)
         scope, scope_err := url_encode(provider.scope, allocator)
         referrer, referrer_err := url_encode(originator, allocator)
-        defer secret_delete(&client_id, allocator)
-        defer secret_delete(&scope, allocator)
-        defer secret_delete(&referrer, allocator)
+        defer secret.string_destroy(&client_id, allocator)
+        defer secret.string_destroy(&scope, allocator)
+        defer secret.string_destroy(&referrer, allocator)
         if client_err != .None || scope_err != .None || referrer_err != .None {
             return "", "", .Out_Of_Memory
         }
@@ -151,7 +157,7 @@ device_poll_body :: proc(
     content_type: string,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.supports_device, "device poll needs a device-capable provider")
+    assert(provider != nil, "device poll needs a provider")
 
     if !device_session_valid(session) {
         return "", "", .Invalid_Input
@@ -177,9 +183,9 @@ device_poll_body :: proc(
         grant_type, grant_err := url_encode(DEVICE_CODE_GRANT_TYPE, allocator)
         client_id, client_err := url_encode(provider.client_id, allocator)
         device_code, device_err := url_encode(session.handle, allocator)
-        defer secret_delete(&grant_type, allocator)
-        defer secret_delete(&client_id, allocator)
-        defer secret_delete(&device_code, allocator)
+        defer secret.string_destroy(&grant_type, allocator)
+        defer secret.string_destroy(&client_id, allocator)
+        defer secret.string_destroy(&device_code, allocator)
         if grant_err != .None || client_err != .None || device_err != .None {
             return "", "", .Out_Of_Memory
         }
@@ -208,7 +214,7 @@ device_auth_parse :: proc(
     out: Device_Session,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.supports_device, "device parse needs a device-capable provider")
+    assert(provider != nil, "device parse needs a provider")
 
     defer if err != .None {
         device_session_destroy(&out, allocator)
@@ -233,6 +239,15 @@ device_auth_parse :: proc(
     interval, interval_err := device_interval_member(object, provider.device_profile)
     if interval_err != .None {
         return {}, interval_err
+    }
+
+    expires_in_s := u64(CODEX_DEVICE_TIMEOUT_MS / 1000)
+    if provider.device_profile == .Rfc8628 {
+        expires, expires_present, expires_valid := json_optional_positive_u64_member(object, "expires_in")
+        if !expires_present || !expires_valid || expires > DEVICE_CODE_LIFETIME_MAX_S {
+            return {}, .Invalid_Response
+        }
+        expires_in_s = expires
     }
 
     verification := provider.device_verification_url
@@ -265,6 +280,7 @@ device_auth_parse :: proc(
     }
     out.verification_uri = cloned_uri
     out.interval_s = interval
+    out.expires_in_s = expires_in_s
 
     if !device_session_valid(out) || out.verification_uri == "" {
         return {}, .Invalid_Response
@@ -283,7 +299,7 @@ device_poll_classify :: proc(
     result: Device_Poll_Result,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.supports_device, "device classify needs a device-capable provider")
+    assert(provider != nil, "device classify needs a provider")
 
     switch provider.device_profile {
     case .Codex:
@@ -414,14 +430,17 @@ rfc8628_error_result :: proc(data: string, allocator: mem.Allocator) -> Device_P
     return Device_Failed{message = "device approval failed"}
 }
 
-// The poll interval. Codex carries it as a string and rejects other shapes; RFC
-// 8628 carries it as a JSON number. An absent interval defaults to zero.
+// The positive integral poll interval. RFC 8628 defaults an absent value to five seconds;
+// Codex's proprietary response is required to carry its string interval.
 @(private)
 device_interval_member :: proc(object: json.Object, profile: Device_Profile) -> (interval: u64, err: OAuth_Error) {
     interval_value, found := object["interval"]
     if !found {
-        // RFC 8628 defaults to 5s when omitted; Codex always sends an interval.
-        return profile == .Rfc8628 ? DEVICE_DEFAULT_POLL_INTERVAL_S : 0, .None
+        if profile == .Rfc8628 {
+            return DEVICE_DEFAULT_POLL_INTERVAL_S, .None
+        }
+
+        return 0, .Invalid_Response
     }
 
     // Parser has `parse_integers` off, so RFC 8628's numeric interval arrives as a
@@ -435,7 +454,10 @@ device_interval_member :: proc(object: json.Object, profile: Device_Profile) -> 
         }
 
     case json.Float:
-        if profile == .Codex || shape < 0 || shape > f64(DEVICE_POLL_INTERVAL_MAX_S) {
+        if profile == .Codex ||
+           shape < DEVICE_POLL_INTERVAL_MIN_S ||
+           shape > f64(DEVICE_POLL_INTERVAL_MAX_S) ||
+           math.floor(shape) != shape {
             return 0, .Invalid_Response
         }
         interval = u64(shape)
@@ -444,7 +466,7 @@ device_interval_member :: proc(object: json.Object, profile: Device_Profile) -> 
         return 0, .Invalid_Response
     }
 
-    if interval > DEVICE_POLL_INTERVAL_MAX_S {
+    if interval < DEVICE_POLL_INTERVAL_MIN_S || interval > DEVICE_POLL_INTERVAL_MAX_S {
         return 0, .Invalid_Response
     }
 
@@ -459,6 +481,9 @@ device_session_valid :: proc(value: Device_Session) -> bool {
         value.user_code != "" &&
         len(value.user_code) <= DEVICE_USER_CODE_MAX_BYTES &&
         len(value.verification_uri) <= DEVICE_VERIFICATION_URL_MAX_BYTES &&
-        value.interval_s <= DEVICE_POLL_INTERVAL_MAX_S \
+        value.interval_s >= DEVICE_POLL_INTERVAL_MIN_S &&
+        value.interval_s <= DEVICE_POLL_INTERVAL_MAX_S &&
+        value.expires_in_s > 0 &&
+        value.expires_in_s <= DEVICE_CODE_LIFETIME_MAX_S \
     )
 }

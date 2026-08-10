@@ -2,6 +2,18 @@ package auth
 
 import "core:mem"
 
+// Provider-specific refresh response and request behavior.
+Refresh_Profile :: enum {
+    Codex,
+    Standard,
+}
+
+// Token from which a provider projects its durable account identity.
+Account_Token :: enum {
+    Id,
+    Access,
+}
+
 // One provider's OAuth adapter: endpoints, public client identity, and the few
 // behaviors that differ. Immutable package value with a stable address; hold the pointer.
 Provider :: struct {
@@ -42,20 +54,11 @@ Provider :: struct {
     device_redirect_uri:        string,
     device_verification_url:    string,
 
-    // How long a device login may run before it is abandoned, in milliseconds.
-    device_timeout_ms:          u64,
-
-    // Login mechanisms this provider supports.
-    supports_browser:           bool,
-    supports_device:            bool,
-
-    // Which device-code protocol this provider speaks (only read when
-    // `supports_device`).
+    // Which device-code protocol this provider speaks.
     device_profile:             Device_Profile,
 
-    // Refresh grant transport: a JSON body (Codex) when true, form-encoded
-    // (standard OAuth) when false.
-    refresh_uses_json:          bool,
+    // Refresh request and response behavior.
+    refresh_profile:            Refresh_Profile,
 
     // Proactive-refresh lead and the expiry fallback used when a response carries
     // no usable lifetime, both in milliseconds.
@@ -66,11 +69,9 @@ Provider :: struct {
     // Matched against a top-level `error` string or a nested `error.code`.
     refresh_permanent_codes:    []string,
 
-    // Which token carries the account identity: Codex's custom `id_token` claim
-    // (mandatory) vs xAI's access-token `principal_id` (id_token then optional).
-    account_from_access_token:  bool,
+    // Which token carries the account identity.
+    account_token:              Account_Token,
 
-    // Project the account id out of the token `account_from_access_token` names.
-    // Required: credentials are invalid without one.
+    // Project the account id out of `account_token`.
     account_id:                 proc(token: string, allocator: mem.Allocator) -> (string, OAuth_Error),
 }

@@ -198,6 +198,23 @@ test_define_config_rejects_a_mistyped_value :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Error.Invalid_Options)
 }
 
+@(test)
+test_define_config_rejects_an_unknown_member :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    err := entry_start(
+        t,
+        "cfg-unknown",
+        `
+            import { defineConfig } from "yuke:daemon"
+
+            export default defineConfig({ prot: 9853 })
+        `,
+    )
+
+    testing.expect_value(t, err, Error.Invalid_Options)
+}
+
 // `allowedOrigins` decodes into the owned string slice, surviving the decode arena as clones.
 @(test)
 test_define_config_reads_allowed_origins :: proc(t: ^testing.T) {

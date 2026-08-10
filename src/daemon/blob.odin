@@ -75,7 +75,7 @@ Blob_Upload :: struct {
     // Owned final content-addressed path `<blob_dir>/<hash>`.
     final_path:  string,
 
-    // Owned temp path streamed to, then atomically renamed to `final_path`.
+    // Owned temp path streamed to, then atomically linked to `final_path`.
     temp_path:   string,
 
     // The claimed 64-hex digest from the URL, copied inline for logging.
@@ -109,7 +109,7 @@ blob_upload_chunk :: proc(c: ^http_server.Conn, user_data: rawptr, chunk: []byte
     return true
 }
 
-// Hands the finished (or abandoned) upload to a worker: `fsync`/`rename`/`unlink` have no
+// Hands the finished (or abandoned) upload to a worker: `fsync`/`link`/`unlink` have no
 // nbio operation, so finalizing on the reactor would stall every other connection.
 blob_upload_end :: proc(c: ^http_server.Conn, user_data: rawptr, ok: bool) {
     up := (^Blob_Upload)(user_data)
@@ -140,17 +140,15 @@ blob_publish :: proc(up: ^Blob_Upload) {
     up.outcome = outcome
     assert(up.file == nil, "finalize left the temp file open")
 
-    // The temp survives only when the rename turned it into the blob; every other outcome
-    // leaves nothing behind for the boot sweep to find.
-    if outcome != .Stored {
-        os.remove(up.temp_path)
-    }
+    // A successful publish leaves the final hard link intact; every outcome can drop
+    // the temporary name. A failed unlink is harmless crash residue for the boot sweep.
+    os.remove(up.temp_path)
 }
 
 // Close the temp file and decide the upload's fate, without touching the temp path: the
 // single caller removes it for every outcome but `.Stored`. Sets `err` on a failure.
 blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
-    // Flush before rename publishes the content-addressed name. Narrows the power-loss
+    // Flush before a hard link publishes the content-addressed name. Narrows the power-loss
     // window rather than closing it; darwin needs `F_FULLFSYNC` for a media barrier.
     if up.publish {
         up.err = os.sync(up.file)
@@ -174,20 +172,12 @@ blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
         return .Mismatch
     }
 
-    // Content-addressed and idempotent: an already-present store makes the upload a
-    // no-op, so drop the temp and report success without replacing the file.
-    if os.exists(up.final_path) {
+    // A hard link is an atomic no-replace publish: exactly one concurrent upload can
+    // create the content address, and no existing file can be overwritten.
+    if lerr := os.link(up.temp_path, up.final_path); lerr == .Exist {
         return .Already_Present
-    }
-
-    if rerr := os.rename(up.temp_path, up.final_path); rerr != nil {
-        // A concurrent upload of the same content may have published it between the
-        // existence check and the rename; a now-present target is still success.
-        if os.exists(up.final_path) {
-            return .Already_Present
-        }
-
-        up.err = rerr
+    } else if lerr != nil {
+        up.err = lerr
         return .Failed
     }
 

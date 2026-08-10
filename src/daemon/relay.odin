@@ -16,12 +16,16 @@ import "core:log"
 import "core:mem"
 import "core:mem/virtual"
 import "core:nbio"
+import "core:net"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 
 import "src:paths"
+import "src:secret"
 
 import curl "libs:bindings/curl"
+import http "libs:http"
 import ws "libs:websocket"
 import relay "src:relay"
 
@@ -36,6 +40,118 @@ RELAY_TICKET_TOTAL_TIMEOUT :: 30 * time.Second
 
 // The control-plane path a daemon POSTs its device credential to for a link ticket.
 RELAY_LINK_TICKETS_PATH :: "/api/v1/link_tickets"
+
+// Validate and remove trailing slashes from a control-plane base URL. Remote
+// endpoints require HTTPS; plaintext HTTP is limited to literal IPv4 loopback.
+relay_cloud_url_normalize :: proc(source: string, allocator := context.allocator) -> (normalized: string, err: Error) {
+    if source == "" {
+        return "", .Invalid_Options
+    }
+
+    for c in transmute([]u8)source {
+        if c <= ' ' || c >= 0x7f {
+            return "", .Invalid_Options
+        }
+    }
+    if strings.contains_any(source, "@?#") {
+        return "", .Invalid_Options
+    }
+
+    prefix := "https://"
+    secure := true
+    if strings.has_prefix(source, "http://") {
+        prefix = "http://"
+        secure = false
+    } else if !strings.has_prefix(source, prefix) {
+        return "", .Invalid_Options
+    }
+
+    rest := source[len(prefix):]
+    slash := strings.index_byte(rest, '/')
+    authority := rest
+    if slash >= 0 {
+        authority = rest[:slash]
+    }
+    if authority == "" || authority[len(authority) - 1] == ':' {
+        return "", .Invalid_Options
+    }
+
+    for c in transmute([]u8)authority {
+        if !(c >= 'a' && c <= 'z' ||
+               c >= 'A' && c <= 'Z' ||
+               c >= '0' && c <= '9' ||
+               c == '.' ||
+               c == '-' ||
+               c == ':' ||
+               c == '[' ||
+               c == ']') {
+            return "", .Invalid_Options
+        }
+    }
+
+    host, bracketed, host_ok := http.split_host(authority)
+    if !host_ok || host == "" {
+        return "", .Invalid_Options
+    }
+
+    port_suffix := authority[len(host):]
+    if bracketed {
+        port_suffix = authority[len(host) + 2:]
+    }
+    if port_suffix != "" {
+        if len(port_suffix) < 2 || len(port_suffix) > 6 {
+            return "", .Invalid_Options
+        }
+
+        port, port_ok := strconv.parse_int(port_suffix[1:], 10)
+        if !port_ok || port < 1 || port > 65535 {
+            return "", .Invalid_Options
+        }
+    }
+
+    if !secure {
+        address, address_ok := net.parse_ip4_address(host)
+        if !address_ok || bracketed || address[0] != 127 {
+            return "", .Invalid_Options
+        }
+    }
+
+    end := len(source)
+    for end > len(prefix) + len(authority) && source[end - 1] == '/' {
+        end -= 1
+    }
+
+    path := source[len(prefix) + len(authority):end]
+    if path != "" {
+        if strings.contains(path, "//") ||
+           path == "/." ||
+           path == "/.." ||
+           strings.contains(path, "/./") ||
+           strings.contains(path, "/../") {
+            return "", .Invalid_Options
+        }
+
+        for c in transmute([]u8)path {
+            if !(c >= 'a' && c <= 'z' ||
+                   c >= 'A' && c <= 'Z' ||
+                   c >= '0' && c <= '9' ||
+                   c == '/' ||
+                   c == '-' ||
+                   c == '.' ||
+                   c == '_' ||
+                   c == '~') {
+                return "", .Invalid_Options
+            }
+        }
+    }
+
+    cloned, clone_err := strings.clone(source[:end], allocator)
+    if clone_err != nil {
+        return "", .Out_Of_Memory
+    }
+
+    return cloned, .None
+}
 
 // The relay link's lifecycle. Exactly one state at a time; `shutdown_complete` waits for
 // `.Closed`.
@@ -79,7 +195,7 @@ Relay :: struct {
     curl_client:     curl.Client,
     curl_ready:      bool,
     ticket_xfer:     curl.Transfer,
-    ticket_resp:     Auth_Response,
+    ticket_resp:     Bounded_Response,
 
     // The relay endpoint and ticket the last fetch produced, owned and refreshed per fetch.
     relay_url:       string,
@@ -161,11 +277,16 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
 
     r.curl_ready = true
 
-    clone_err: mem.Allocator_Error
-    r.cloud_url, clone_err = strings.clone(cloud_url, d.allocator)
-    if clone_err == nil {
-        r.credential, clone_err = strings.clone(credential, d.allocator)
+    normalized_cloud, url_err := relay_cloud_url_normalize(cloud_url, d.allocator)
+    if url_err != .None {
+        relay_free_partial(r)
+
+        return url_err
     }
+    r.cloud_url = normalized_cloud
+
+    cloned_credential, clone_err := strings.clone(credential, d.allocator)
+    r.credential = cloned_credential
     if clone_err != nil {
         relay_free_partial(r)
 
@@ -293,12 +414,13 @@ relay_destroy :: proc(d: ^Daemon) {
     }
 
     ecdh.private_key_clear(&r.static_key)
+    bounded_response_reset(&r.ticket_resp)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
     delete(r.cloud_url, d.allocator)
-    delete(r.credential, d.allocator)
+    secret.string_destroy(&r.credential, d.allocator)
     delete(r.relay_url, d.allocator)
-    delete(r.ticket, d.allocator)
+    secret.string_destroy(&r.ticket, d.allocator)
     free(r, d.allocator)
     d.relay = nil
 }
@@ -379,7 +501,7 @@ relay_free_partial :: proc(r: ^Relay) {
     }
 
     delete(r.cloud_url, r.daemon.allocator)
-    delete(r.credential, r.daemon.allocator)
+    secret.string_destroy(&r.credential, r.daemon.allocator)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
     relay.reassembler_destroy(&r.recv_reasm)
@@ -395,10 +517,11 @@ relay_fetch_ticket :: proc(r: ^Relay) {
     assert(r.curl_ready, "relay ticket fetch needs a curl client")
 
     r.state = .Fetching
-    r.ticket_resp = {}
+    bounded_response_reset(&r.ticket_resp)
 
     url := strings.concatenate({r.cloud_url, RELAY_LINK_TICKETS_PATH}, context.temp_allocator)
     bearer := strings.concatenate({"Bearer ", r.credential}, context.temp_allocator)
+    defer secret.string_destroy(&bearer, context.temp_allocator)
 
     headers := [?]curl.Header{{name = "authorization", value = bearer}, {name = "accept", value = "application/json"}}
     request := curl.Request {
@@ -423,7 +546,7 @@ relay_fetch_ticket :: proc(r: ^Relay) {
 relay_ticket_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     r := (^Relay)(user)
 
-    return auth_response_accumulate(&r.ticket_resp, chunk)
+    return bounded_response_accumulate(&r.ticket_resp, chunk)
 }
 
 // The ticket fetch finished. On a 2xx with a well-formed body, adopt the ticket and dial; any
@@ -432,6 +555,7 @@ relay_ticket_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
 relay_ticket_on_done :: proc(user: rawptr, result: curl.Result) {
     r := (^Relay)(user)
     assert(r.ticket_xfer.state == .Done, "relay ticket completion needs a terminal transfer")
+    defer bounded_response_reset(&r.ticket_resp)
 
     if r.state == .Stopping {
         r.state = .Closed
@@ -446,7 +570,7 @@ relay_ticket_on_done :: proc(user: rawptr, result: curl.Result) {
         return
     }
 
-    if !relay_ticket_store(r, auth_response_body(&r.ticket_resp)) {
+    if !relay_ticket_store(r, bounded_response_body(&r.ticket_resp)) {
         log.error("daemon: relay ticket response was malformed")
         relay_schedule_reconnect(r)
 
@@ -465,6 +589,7 @@ relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
     if cerr != .None {
         return false
     }
+    defer secret.string_destroy(&parsed.ticket, context.temp_allocator)
 
     if _, ok := relay.endpoint_parse(parsed.relay_url); !ok {
         return false
@@ -477,12 +602,12 @@ relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
 
     url, u_aerr := strings.clone(parsed.relay_url, r.daemon.allocator)
     if u_aerr != nil {
-        delete(ticket, r.daemon.allocator)
+        secret.string_destroy(&ticket, r.daemon.allocator)
 
         return false
     }
 
-    delete(r.ticket, r.daemon.allocator)
+    secret.string_destroy(&r.ticket, r.daemon.allocator)
     delete(r.relay_url, r.daemon.allocator)
     r.ticket = ticket
     r.relay_url = url

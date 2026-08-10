@@ -16,6 +16,10 @@ test_credentials :: proc(access := "access-one") -> OAuth_Credentials {
     }
 }
 
+test_directory_sync_fail :: proc(_: string) -> bool {
+    return false
+}
+
 test_dir :: proc(tag: string, allocator := context.allocator) -> string {
     random: [8]byte
     crypto.rand_bytes(random[:])
@@ -121,6 +125,44 @@ test_store_update_preserves_other_provider_and_logout_removes_one :: proc(t: ^te
     testing.expect(t, second_found, "unrelated provider preserved")
     testing.expect_value(t, second.access_token, "second")
     credentials_destroy(&second)
+}
+
+@(test)
+test_store_adopts_published_snapshot_when_directory_sync_fails :: proc(t: ^testing.T) {
+    dir := test_dir("sync-failure")
+    defer {
+        _ = os.remove_all(dir)
+        delete(dir)
+    }
+    path, path_err := filepath.join({dir, "auth.json"})
+    if path_err != nil {
+        testing.expect(t, false, "join auth path")
+        return
+    }
+    defer delete(path)
+
+    store, open_err := open(path)
+    testing.expect_value(t, open_err, Error.None)
+    defer close(store)
+
+    put_err := credentials_put_with_sync(store, "openai-codex", test_credentials(), test_directory_sync_fail)
+    testing.expect_value(t, put_err, Error.Durability_Uncertain)
+    testing.expect(t, credentials_present(store, "openai-codex"), "published credential is visible in memory")
+
+    reopened, reopen_err := open(path)
+    testing.expect_value(t, reopen_err, Error.None)
+    testing.expect(t, credentials_present(reopened, "openai-codex"), "renamed credential is visible on disk")
+    close(reopened)
+
+    removed, remove_err := provider_remove_with_sync(store, "openai-codex", test_directory_sync_fail)
+    testing.expect(t, removed, "published removal is reported")
+    testing.expect_value(t, remove_err, Error.Durability_Uncertain)
+    testing.expect(t, !credentials_present(store, "openai-codex"), "published removal is visible in memory")
+
+    reopened_after_remove, reopen_remove_err := open(path)
+    testing.expect_value(t, reopen_remove_err, Error.None)
+    testing.expect(t, !credentials_present(reopened_after_remove, "openai-codex"), "removal is visible on disk")
+    close(reopened_after_remove)
 }
 
 @(test)

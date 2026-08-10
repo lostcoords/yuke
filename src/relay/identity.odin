@@ -11,6 +11,7 @@ import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "src:secret"
 
 // The credential file inside the config directory: the device's control-plane identity.
 CREDENTIALS_FILE :: "credentials.json"
@@ -91,6 +92,7 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
     if cred_err != nil {
         return {}, .Unreadable
     }
+    defer secret.bytes_destroy(&cred_bytes, context.temp_allocator)
 
     cf: Credentials_File
     if json.unmarshal(cred_bytes, &cf, .JSON, context.temp_allocator) != nil {
@@ -105,6 +107,7 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
     if key_err != nil {
         return {}, .Unreadable
     }
+    defer secret.bytes_destroy(&key_bytes, context.temp_allocator)
 
     if len(key_bytes) != NOISE_STATIC_KEY_SIZE {
         return {}, .Key_Invalid
@@ -149,7 +152,7 @@ identity_save :: proc(dir: string, id: ^Identity, allocator := context.allocator
         return .Out_Of_Memory
     }
 
-    defer delete(encoded, allocator)
+    defer secret.bytes_destroy(&encoded, allocator)
 
     key_bytes: [NOISE_STATIC_KEY_SIZE]u8
     ecdh.private_key_bytes(&id.static_key, key_bytes[:])
@@ -170,7 +173,7 @@ identity_destroy :: proc(id: ^Identity) {
 
     if id.allocator.procedure != nil {
         delete(id.device_id, id.allocator)
-        delete(id.credential, id.allocator)
+        secret.string_destroy(&id.credential, id.allocator)
         delete(id.relay_url, id.allocator)
     }
 

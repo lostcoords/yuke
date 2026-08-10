@@ -1,6 +1,7 @@
 package daemon
 
 import "core:crypto"
+import "core:net"
 import "core:strings"
 import http "libs:http"
 
@@ -170,6 +171,25 @@ auth_token_valid :: proc(token: string) -> bool {
     }
 
     return true
+}
+
+// An unauthenticated front door may only bind a literal IPv4 loopback address.
+listen_auth_valid :: proc(host, token: string) -> bool {
+    if !auth_token_valid(token) {
+        return false
+    }
+
+    resolved_host := host if host != "" else "127.0.0.1"
+    address, parsed := net.parse_ip4_address(resolved_host)
+    if !parsed {
+        return false
+    }
+
+    if token != "" {
+        return true
+    }
+
+    return address[0] == 127
 }
 
 // Constant-time token comparison; only the length is allowed to leak.

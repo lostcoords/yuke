@@ -20,7 +20,11 @@ CODEX_REFRESH_LEAD_MS :: 5 * 60 * 1000
 
 // Refresh `error.code` values that mean the rotating token is gone for good.
 @(rodata)
-CODEX_REFRESH_PERMANENT_CODES := [?]string{"refresh_token_expired", "refresh_token_reused"}
+CODEX_REFRESH_PERMANENT_CODES := [?]string {
+    "refresh_token_expired",
+    "refresh_token_reused",
+    "refresh_token_invalidated",
+}
 
 // The Codex/OpenAI provider descriptor. Immutable, stable address.
 codex_descriptor := Provider {
@@ -38,15 +42,12 @@ codex_descriptor := Provider {
     device_token_url           = CODEX_DEVICE_TOKEN_URL,
     device_redirect_uri        = CODEX_DEVICE_REDIRECT_URI,
     device_verification_url    = CODEX_DEVICE_VERIFICATION_URL,
-    device_timeout_ms          = CODEX_DEVICE_TIMEOUT_MS,
-    supports_browser           = true,
-    supports_device            = true,
     device_profile             = .Codex,
-    refresh_uses_json          = true,
+    refresh_profile            = .Codex,
     refresh_lead_ms            = CODEX_REFRESH_LEAD_MS,
     refresh_fallback_ms        = CODEX_REFRESH_FALLBACK_MS,
     refresh_permanent_codes    = CODEX_REFRESH_PERMANENT_CODES[:],
-    account_from_access_token  = false,
+    account_token              = .Id,
     account_id                 = codex_account_id,
 }
 

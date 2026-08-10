@@ -10,6 +10,8 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 
+import "src:secret"
+
 // Provider-generic OAuth 2.0 machinery: PKCE browser flow, token/refresh grant
 // building and parsing, refresh timing, and the encoding/JSON helpers. Every proc
 // is driven by a `^Provider` descriptor or is a pure helper; per-provider files
@@ -37,10 +39,10 @@ Authorization_Flow :: struct {
 
 authorization_flow_destroy :: proc(flow: ^Authorization_Flow, allocator := context.allocator) {
     assert(flow != nil, "authorization flow cleanup needs a value")
-    secret_delete(&flow.verifier, allocator)
-    secret_delete(&flow.state, allocator)
-    secret_delete(&flow.redirect_uri, allocator)
-    secret_delete(&flow.auth_url, allocator)
+    secret.string_destroy(&flow.verifier, allocator)
+    secret.string_destroy(&flow.state, allocator)
+    secret.string_destroy(&flow.redirect_uri, allocator)
+    secret.string_destroy(&flow.auth_url, allocator)
     flow^ = {}
 }
 
@@ -54,7 +56,7 @@ authorization_flow_create :: proc(
     flow: Authorization_Flow,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.supports_browser, "browser flow needs a browser-capable provider")
+    assert(provider != nil, "browser flow needs a provider")
     assert(provider.authorize_originator_param != "", "browser flow needs an originator parameter name")
     assert(
         provider.callback_host != "" && provider.callback_path != "" && provider.callback_path[0] == '/',
@@ -100,7 +102,7 @@ authorization_flow_create :: proc(
     if challenge_err != .None {
         return {}, challenge_err
     }
-    defer secret_delete(&challenge, allocator)
+    defer secret.string_destroy(&challenge, allocator)
 
     client_id, client_err := url_encode(provider.client_id, allocator)
     redirect_uri, redirect_err := url_encode(flow.redirect_uri, allocator)
@@ -108,12 +110,12 @@ authorization_flow_create :: proc(
     encoded_challenge, challenge_encode_err := url_encode(challenge, allocator)
     state_param, state_err := url_encode(flow.state, allocator)
     originator_param, originator_err := url_encode(originator, allocator)
-    defer secret_delete(&client_id, allocator)
-    defer secret_delete(&redirect_uri, allocator)
-    defer secret_delete(&scope, allocator)
-    defer secret_delete(&encoded_challenge, allocator)
-    defer secret_delete(&state_param, allocator)
-    defer secret_delete(&originator_param, allocator)
+    defer secret.string_destroy(&client_id, allocator)
+    defer secret.string_destroy(&redirect_uri, allocator)
+    defer secret.string_destroy(&scope, allocator)
+    defer secret.string_destroy(&encoded_challenge, allocator)
+    defer secret.string_destroy(&state_param, allocator)
+    defer secret.string_destroy(&originator_param, allocator)
 
     if client_err != .None ||
        redirect_err != .None ||
@@ -172,9 +174,9 @@ authorization_code_body :: proc(
     encoded_code, code_err := url_encode(code, allocator)
     encoded_redirect, redirect_err := url_encode(flow.redirect_uri, allocator)
     encoded_verifier, verifier_err := url_encode(flow.verifier, allocator)
-    defer secret_delete(&encoded_code, allocator)
-    defer secret_delete(&encoded_redirect, allocator)
-    defer secret_delete(&encoded_verifier, allocator)
+    defer secret.string_destroy(&encoded_code, allocator)
+    defer secret.string_destroy(&encoded_redirect, allocator)
+    defer secret.string_destroy(&encoded_verifier, allocator)
     if code_err != .None || redirect_err != .None || verifier_err != .None {
         return "", .Out_Of_Memory
     }
@@ -304,9 +306,9 @@ token_response_parse :: proc(
     id_token, id_token_ok := json_string_member(object, "id_token")
     access, access_ok := json_string_member(object, "access_token")
     refresh, refresh_ok := json_string_member(object, "refresh_token")
-    expires_in, expires_ok := json_positive_u64_member(object, "expires_in")
+    expires_in, expires_present, expires_valid := json_optional_positive_u64_member(object, "expires_in")
 
-    if !access_ok || access == "" || !refresh_ok || refresh == "" {
+    if !access_ok || access == "" || !refresh_ok || refresh == "" || !expires_valid {
         err = .Invalid_Response
 
         return
@@ -314,8 +316,8 @@ token_response_parse :: proc(
 
     // Codex's identity is in the (mandatory) id_token; xAI's is in the access token
     // and its id_token may be absent. Pick the token the account is projected from.
-    account_token := access if provider.account_from_access_token else id_token
-    if !provider.account_from_access_token && (!id_token_ok || id_token == "") {
+    account_token := access if provider.account_token == .Access else id_token
+    if provider.account_token == .Id && (!id_token_ok || id_token == "") {
         err = .Invalid_Response
 
         return
@@ -331,7 +333,7 @@ token_response_parse :: proc(
 
     if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
         credentials.expires_at_ms = jwt_expires_at
-    } else if expires_ok {
+    } else if expires_present {
         if expires_in > (max(u64) - now_ms) / 1000 {
             err = .Invalid_Response
 
@@ -362,8 +364,7 @@ token_response_parse :: proc(
     return credentials, .None
 }
 
-// Build a provider's refresh grant. `refresh_uses_json` picks the transport:
-// Codex sends JSON, standard OAuth providers form-encode. Owned and secret.
+// Build a provider's refresh grant. Codex sends JSON; standard OAuth uses form encoding.
 refresh_request_body :: proc(
     provider: ^Provider,
     refresh_token: string,
@@ -378,7 +379,7 @@ refresh_request_body :: proc(
         return "", .Invalid_Input
     }
 
-    if provider.refresh_uses_json {
+    if provider.refresh_profile == .Codex {
         Payload :: struct {
             client_id:     string `json:"client_id"`,
             grant_type:    string `json:"grant_type"`,
@@ -396,7 +397,7 @@ refresh_request_body :: proc(
     }
 
     encoded_token, token_err := url_encode(refresh_token, allocator)
-    defer secret_delete(&encoded_token, allocator)
+    defer secret.string_destroy(&encoded_token, allocator)
     if token_err != .None {
         return "", .Out_Of_Memory
     }
@@ -412,8 +413,8 @@ refresh_request_body :: proc(
     return value, .None
 }
 
-// Merge a successful refresh response into an existing credential set. Every
-// returned token is optional; an omitted or null member retains its old value.
+// Merge a successful refresh response into an existing credential set. Codex may
+// omit rotated fields; a standard response must carry a fresh access token.
 refresh_response_parse :: proc(
     provider: ^Provider,
     data: string,
@@ -450,7 +451,14 @@ refresh_response_parse :: proc(
     id_token, id_present, id_valid := json_optional_string_member(object, "id_token")
     access, access_present, access_valid := json_optional_string_member(object, "access_token")
     refresh, refresh_present, refresh_valid := json_optional_string_member(object, "refresh_token")
-    if !id_valid || !access_valid || !refresh_valid {
+    expires_in, expires_present, expires_valid := json_optional_positive_u64_member(object, "expires_in")
+    if !id_valid || !access_valid || !refresh_valid || !expires_valid {
+        err = .Invalid_Response
+
+        return
+    }
+
+    if provider.refresh_profile == .Standard && !access_present {
         err = .Invalid_Response
 
         return
@@ -459,7 +467,7 @@ refresh_response_parse :: proc(
     // Re-project the account id when the token carrying it was rotated: Codex's
     // account lives in the id_token, xAI's in the access token.
     account_token, account_present := id_token, id_present
-    if provider.account_from_access_token {
+    if provider.account_token == .Access {
         account_token, account_present = access, access_present
     }
 
@@ -471,8 +479,19 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret_delete(&credentials.account_id, allocator)
+        secret.string_destroy(&credentials.account_id, allocator)
         credentials.account_id = account_id
+    }
+
+    expires_at_ms := now_ms + min(max(u64) - now_ms, provider.refresh_fallback_ms)
+    if expires_present {
+        if expires_in > (max(u64) - now_ms) / 1000 {
+            err = .Invalid_Response
+
+            return
+        }
+
+        expires_at_ms = now_ms + expires_in * 1000
     }
 
     if access_present {
@@ -483,15 +502,16 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret_delete(&credentials.access_token, allocator)
+        secret.string_destroy(&credentials.access_token, allocator)
         credentials.access_token = access_clone
 
-        if expires_at, expires_ok := jwt_expiration_ms(access, allocator); expires_ok {
-            credentials.expires_at_ms = expires_at
-        } else {
-            credentials.expires_at_ms = now_ms + min(max(u64) - now_ms, provider.refresh_fallback_ms)
+        if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
+            expires_at_ms = jwt_expires_at
         }
+    } else {
+        assert(provider.refresh_profile == .Codex, "only Codex may omit a refreshed access token")
     }
+    credentials.expires_at_ms = expires_at_ms
 
     if refresh_present {
         refresh_clone, refresh_aerr := strings.clone(refresh, allocator)
@@ -501,7 +521,7 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret_delete(&credentials.refresh_token, allocator)
+        secret.string_destroy(&credentials.refresh_token, allocator)
         credentials.refresh_token = refresh_clone
     }
 
@@ -608,8 +628,8 @@ jwt_expiration_ms :: proc(token: string, allocator: mem.Allocator) -> (u64, bool
     }
     defer secret_json_destroy(value, allocator)
 
-    seconds, seconds_ok := json_positive_u64_member(object, "exp")
-    if !seconds_ok || seconds > max(u64) / 1000 {
+    seconds, seconds_present, seconds_valid := json_optional_positive_u64_member(object, "exp")
+    if !seconds_present || !seconds_valid || seconds > max(u64) / 1000 {
         return 0, false
     }
 
@@ -637,7 +657,7 @@ base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> (string, OAu
     if aerr != nil {
         return "", .Out_Of_Memory
     }
-    defer secret_delete(&padded, allocator)
+    defer secret.string_destroy(&padded, allocator)
 
     end := len(padded)
     for end > 0 && padded[end - 1] == '=' {
@@ -782,25 +802,33 @@ json_optional_string_member :: proc(object: json.Object, name: string) -> (value
 }
 
 @(private)
-json_positive_u64_member :: proc(object: json.Object, name: string) -> (u64, bool) {
+json_optional_positive_u64_member :: proc(
+    object: json.Object,
+    name: string,
+) -> (
+    number: u64,
+    present: bool,
+    valid: bool,
+) {
     value, found := object[name]
     if !found {
-        return 0, false
+        return 0, false, true
     }
+    present = true
 
-    #partial switch number in value {
+    #partial switch candidate in value {
     case json.Integer:
-        if number > 0 {
-            return u64(number), true
+        if candidate > 0 {
+            return u64(candidate), true, true
         }
 
     case json.Float:
-        if number > 0 && number <= f64(max(u64)) && math.floor(number) == number {
-            return u64(number), true
+        if candidate > 0 && candidate < f64(max(u64)) && math.floor(candidate) == candidate {
+            return u64(candidate), true, true
         }
     }
 
-    return 0, false
+    return 0, true, false
 }
 
 @(private)

@@ -186,6 +186,20 @@ destroy :: proc(h: ^Host) {
     h.user = nil
 }
 
+// Permanently refuse new host operations while allowing submitted ones to finish.
+ops_close :: proc(h: ^Host) {
+    assert(h != nil, "closing host operations needs a host")
+
+    h.ops_open = false
+}
+
+ops_idle :: proc(h: ^Host) -> bool {
+    assert(h != nil, "host operation status needs a host")
+    assert(h.pending >= 0, "host operation count stays non-negative")
+
+    return h.pending == 0
+}
+
 user_of :: proc(ctx: ^qjs.Context) -> rawptr {
     h := host_of(ctx)
 

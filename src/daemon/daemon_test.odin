@@ -14,6 +14,7 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 import "core:unicode/utf8"
+import curl "libs:bindings/curl"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
@@ -39,10 +40,8 @@ import wire "src:wire"
 // Bring a daemon all the way down and reclaim it.
 test_teardown :: proc(d: ^Daemon) {
     shutdown(d)
-    nbio.run_until(&d.ws_server.shutdown_complete)
-    nbio.run_until(&d.front_door.shutdown_complete)
-    if d.auth_callback.state == .Closing {
-        nbio.run_until(&d.auth_callback.shutdown_complete)
+    for !shutdown_complete(d) {
+        _ = nbio.tick(time.Millisecond)
     }
     destroy(d)
 }
@@ -616,14 +615,120 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
 
     d: Daemon
     testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
-    testing.expect(t, d.auth_refresh_timer != nil, "future credentials arm proactive refresh")
-    testing.expect(t, d.auth_refresh == nil, "future credentials do not refresh early")
+    testing.expect(t, d.provider_auth.refresh_timer != nil, "future credentials arm proactive refresh")
+    testing.expect(t, d.provider_auth.refresh == nil, "future credentials do not refresh early")
 
     shutdown(&d)
-    testing.expect(t, d.auth_refresh_timer == nil, "shutdown cancels proactive refresh")
-    nbio.run_until(&d.ws_server.shutdown_complete)
-    nbio.run_until(&d.front_door.shutdown_complete)
+    testing.expect(t, d.provider_auth.refresh_timer == nil, "shutdown cancels proactive refresh")
+    for !shutdown_complete(&d) {
+        _ = nbio.tick(time.Millisecond)
+    }
     destroy(&d)
+}
+
+@(test)
+test_daemon_login_deadline_releases_the_attempt :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-login-deadline")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    defer test_teardown(&d)
+
+    login, aerr := new(Provider_Login, d.allocator)
+    testing.expect(t, aerr == nil, "allocate login attempt")
+    login^ = {
+        kind           = .Xai,
+        id             = login_id_create(),
+        requested_flow = .Device_Code,
+        phase          = .Device_Waiting_Poll,
+    }
+    d.provider_auth.login = login
+    provider_login_deadline_arm(&d, time.Millisecond)
+
+    for d.provider_auth.login != nil {
+        _ = nbio.tick(time.Millisecond)
+    }
+
+    testing.expect(t, d.provider_auth.login == nil, "deadline owns terminal attempt cleanup")
+}
+
+@(test)
+test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-refresh-invalidate")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    initial, open_err := provider_auth.open(path)
+    testing.expect_value(t, open_err, provider_auth.Error.None)
+    credentials := provider_auth.OAuth_Credentials {
+        access_token  = "access",
+        refresh_token = "refresh",
+        expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
+        account_id    = "account",
+    }
+    testing.expect_value(
+        t,
+        provider_auth.credentials_put(initial, provider_auth.XAI_PROVIDER_ID, credentials),
+        provider_auth.Error.None,
+    )
+    provider_auth.close(initial)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    defer test_teardown(&d)
+    provider_refresh_timer_cancel(&d)
+
+    existing, found, read_err := provider_auth.credentials_get(
+        d.provider_auth.store,
+        provider_auth.XAI_PROVIDER_ID,
+        d.allocator,
+    )
+    testing.expect_value(t, read_err, provider_auth.Error.None)
+    testing.expect(t, found, "refresh fixture is signed in")
+
+    refresh, aerr := new(Provider_Refresh, d.allocator)
+    testing.expect(t, aerr == nil, "allocate refresh attempt")
+    refresh^ = {
+        kind = .Xai,
+        transfer = {state = .Done},
+        existing = existing,
+    }
+    testing.expect(
+        t,
+        bounded_response_accumulate(&refresh.response, transmute([]byte)string(`{"error":"invalid_grant"}`)),
+        "terminal response fits",
+    )
+    d.provider_auth.refresh = refresh
+
+    provider_refresh_on_done(&d, curl.Result{code = .Ok, status = 400})
+    testing.expect(t, d.provider_auth.refresh == nil, "terminal response releases the refresh")
+    testing.expect(t, d.provider_auth.write_job != nil, "terminal response queues durable invalidation")
+
+    for d.provider_auth.write_job != nil {
+        _ = nbio.tick(time.Millisecond)
+    }
+
+    testing.expect(
+        t,
+        !provider_auth.credentials_present(d.provider_auth.store, provider_auth.XAI_PROVIDER_ID),
+        "terminal refresh removes the unusable credential",
+    )
 }
 
 check_auth_logout :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -1038,6 +1143,7 @@ check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handl
         if !testing.expect(t, has, "a 3-entry dir paged by 2 has a next_cursor") {
             return true
         }
+        testing.expect_value(t, cursor, "beta")
 
         // The cursor is borrowed for this callback only; `client_send_request` copies
         // it into the outbound frame synchronously, so it is safe to forward here.
@@ -1099,67 +1205,38 @@ test_daemon_workspace_browse_missing_path :: proc(t: ^testing.T) {
     run_handler(t, &obs)
 }
 
-check_browse_bad_cursor :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+check_browse_name_cursor :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
-    e, is_err := resp.(wire.Response_Error)
-    if !testing.expect(t, is_err, "a malformed cursor is an error response") {
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "an opaque name cursor is accepted") {
         return true
     }
 
-    testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
+    result, is_browse := ok.result.(wire.Workspace_Browse_Result)
+    if !testing.expect(t, is_browse, "result is a browse result") {
+        return true
+    }
+
+    if testing.expect_value(t, len(result.entries), 1) {
+        testing.expect_value(t, result.entries[0].name, "repo")
+    }
+    _, has_cursor := result.next_cursor.?
+    testing.expect(t, !has_cursor, "the name boundary reaches the final page")
 
     return true
 }
 
-// The cursor grammar rejects, before ever parsing, a string longer than
-// `MAX_BROWSE_CURSOR_DIGITS`; the connection stays open and answers an error frame.
 @(test)
-test_daemon_workspace_browse_overlong_cursor_is_bad_request :: proc(t: ^testing.T) {
+test_daemon_workspace_browse_uses_name_cursor :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := test_make_browse_dir("yuke-odin-browse-cursor-overlong")
+    dir := test_make_browse_dir("yuke-odin-browse-name-cursor")
     defer os.remove_all(dir)
 
     obs := Handler_Obs {
         method = .Workspace_Browse,
-        params = wire.Workspace_Browse_Params{path = dir, cursor = "10000000000000000"},
-        check = check_browse_bad_cursor,
-        dir = dir,
-    }
-    run_handler(t, &obs)
-}
-
-// A cursor within the digit bound that is not a decimal integer fails
-// `strconv.parse_int` and is a `Bad_Request`, not a crash.
-@(test)
-test_daemon_workspace_browse_unparseable_cursor_is_bad_request :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    dir := test_make_browse_dir("yuke-odin-browse-cursor-unparseable")
-    defer os.remove_all(dir)
-
-    obs := Handler_Obs {
-        method = .Workspace_Browse,
-        params = wire.Workspace_Browse_Params{path = dir, cursor = "not-a-number"},
-        check = check_browse_bad_cursor,
-        dir = dir,
-    }
-    run_handler(t, &obs)
-}
-
-// A negative cursor parses but fails the `n < 0` guard, so it is also `Bad_Request`
-// rather than an accepted (and meaningless) offset.
-@(test)
-test_daemon_workspace_browse_negative_cursor_is_bad_request :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    dir := test_make_browse_dir("yuke-odin-browse-cursor-negative")
-    defer os.remove_all(dir)
-
-    obs := Handler_Obs {
-        method = .Workspace_Browse,
-        params = wire.Workspace_Browse_Params{path = dir, cursor = "-1"},
-        check = check_browse_bad_cursor,
+        params = wire.Workspace_Browse_Params{path = dir, cursor = "beta"},
+        check = check_browse_name_cursor,
         dir = dir,
     }
     run_handler(t, &obs)

@@ -20,6 +20,7 @@ import ts "libs:testsupport"
 @(test)
 test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Url), 10002)
+    testing.expect_value(t, int(Option.Protocols_Str), 10318)
     testing.expect_value(t, int(Option.Write_Data), 10001)
     testing.expect_value(t, int(Option.Error_Buffer), 10010)
     testing.expect_value(t, int(Option.Http_Header), 10023)
