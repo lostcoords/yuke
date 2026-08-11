@@ -128,6 +128,39 @@ session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(st
     return nil
 }
 
+// Read the public summary and open-run projection from one session row. Every
+// string clones into `allocator`; `found` is false only for an unknown id.
+session_snapshot :: proc(
+    s: ^Store,
+    id: wire.Session_Id,
+    allocator: mem.Allocator,
+) -> (
+    snapshot: Session_Snapshot,
+    found: bool,
+    err: Error,
+) {
+    assert(s != nil, "session_snapshot needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a session read needs an allocator")
+
+    row, sqlite_err := queries.session_snapshot(&s.queries, {session_id = id}, allocator)
+    if sqlite_err != nil {
+        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
+            return {}, false, nil
+        }
+
+        return {}, false, read_err(sqlite_err)
+    }
+
+    session, session_valid := session_row_to_wire(row)
+    open_run, run_valid := open_run_from_row(row)
+    if !session_valid || !run_valid {
+        return {}, false, Store_Error.Invalid_Row
+    }
+
+    return Session_Snapshot{session = session, open_run = open_run}, true, nil
+}
+
 // Read one page of the session index, newest first, resuming after `cursor`. Every string
 // clones into `allocator` and nothing is freed — built for an arena the owner reclaims in bulk.
 session_page :: proc(
@@ -214,7 +247,7 @@ session_count :: proc(s: ^Store, filter: Session_Filter) -> (total: u64, err: Er
 // Rebuild the wire session a row was flattened from. `ok` is false for a row the protocol
 // refuses: CHECK constraints are weaker than `session_validate`, so a foreign writer can leave one.
 @(private)
-session_row_to_wire :: proc(row: queries.Session_Page_Row) -> (session: wire.Session, ok: bool) {
+session_row_to_wire :: proc(row: $Row) -> (session: wire.Session, ok: bool) {
     origin := session_origin_from_row(row) or_return
     permission := wire.permission_mode_from_wire(row.permission) or_return
 
@@ -261,7 +294,7 @@ session_row_to_wire :: proc(row: queries.Session_Page_Row) -> (session: wire.Ses
 // Rebuild the origin union from the discriminator and the arm's own ids. Every arm but
 // root carries ids that are non-null exactly for it.
 @(private)
-session_origin_from_row :: proc(row: queries.Session_Page_Row) -> (origin: wire.Session_Origin, ok: bool) {
+session_origin_from_row :: proc(row: $Row) -> (origin: wire.Session_Origin, ok: bool) {
     arm := wire.session_origin_type_from_wire(row.origin) or_return
 
     switch _ in arm {

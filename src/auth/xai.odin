@@ -26,9 +26,9 @@ XAI_REFRESH_FALLBACK_MS :: 6 * 60 * 60 * 1000
 @(rodata)
 XAI_REFRESH_PERMANENT_CODES := [?]string{"invalid_grant"}
 
-// The xAI provider descriptor. Immutable, stable address. Device support arrives
-// with the RFC 8628 flow profile; browser + refresh work today.
+// The xAI provider descriptor. Immutable, stable address.
 xai_descriptor := Provider {
+    kind                       = .Xai,
     id                         = XAI_PROVIDER_ID,
     client_id                  = XAI_CLIENT_ID,
     scope                      = XAI_SCOPE,
@@ -43,18 +43,9 @@ xai_descriptor := Provider {
     device_token_url           = XAI_TOKEN_URL,
     device_redirect_uri        = "",
     device_verification_url    = "",
-    device_profile             = .Rfc8628,
-    refresh_profile            = .Standard,
     refresh_lead_ms            = XAI_REFRESH_LEAD_MS,
     refresh_fallback_ms        = XAI_REFRESH_FALLBACK_MS,
     refresh_permanent_codes    = XAI_REFRESH_PERMANENT_CODES[:],
-    account_token              = .Access,
-    account_id                 = xai_account_id,
-}
-
-// The xAI provider descriptor; the returned pointer is stable for the program.
-xai_provider :: proc() -> ^Provider {
-    return &xai_descriptor
 }
 
 // Project the xAI account id from the access token: `principal_id` (fallback

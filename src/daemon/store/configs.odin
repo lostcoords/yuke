@@ -21,7 +21,7 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
         return nil
     }
 
-    return sqlite.execute(
+    sqlite.execute(
         &s.inserts.insert_config,
         &queries.Insert_Config_Params {
             session_id = session,
@@ -29,7 +29,20 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
             model = changed.config.model,
             reasoning = changed.config.reasoning,
         },
-    )
+    ) or_return
+
+    queries.set_session_config(
+        &s.queries,
+        {
+            session_id = session,
+            config_rev = changed.config.config_rev,
+            model = changed.config.model,
+            reasoning = changed.config.reasoning,
+        },
+    ) or_return
+    assert(sqlite.changes(s.writer) == 1, "a config announcement updates its session summary")
+
+    return nil
 }
 
 // Resolve one announced revision without folding the event log.
@@ -48,24 +61,6 @@ session_config :: proc(
     assert(allocator.procedure != nil, "a config read needs an allocator")
 
     row, sqlite_err := queries.session_config(&s.queries, {session_id = session, requested_rev = revision}, allocator)
-    return config_read_result(row, sqlite_err)
-}
-
-// The newest announced config, used by the session summary.
-session_config_current :: proc(
-    s: ^Store,
-    session: wire.Session_Id,
-    allocator: mem.Allocator,
-) -> (
-    config: wire.Run_Config,
-    found: bool,
-    err: Error,
-) {
-    assert(s != nil, "session_config_current needs a store")
-    assert(s.writer != nil, "an open store always holds its writer")
-    assert(allocator.procedure != nil, "a current config read needs an allocator")
-
-    row, sqlite_err := queries.session_config_current(&s.queries, {session_id = session}, allocator)
     return config_read_result(row, sqlite_err)
 }
 

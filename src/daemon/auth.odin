@@ -14,14 +14,8 @@ MIN_AUTH_TOKEN_BYTES :: 32
 
 // Authentication result for one syntactically valid request.
 Auth_Result :: enum {
-    // No token is configured; every request is admitted.
-    Disabled,
-
-    // A matching token arrived in `Authorization: Bearer`.
-    Header,
-
-    // A matching token arrived in the `token` query parameter.
-    Query,
+    // Authentication is disabled, or the one presented credential matched.
+    Allowed,
 
     // A token is required and the request presented no credential.
     Missing,
@@ -44,7 +38,7 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
     assert(d != nil, "authentication needs a daemon")
 
     if d.auth_token == "" {
-        return .Disabled
+        return .Allowed
     }
 
     assert(auth_token_valid(d.auth_token), "daemon retained an invalid auth token")
@@ -73,12 +67,12 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
             }
         }
 
-        return .Header
+        return .Allowed
 
     case .Missing:
 
     case .Duplicate:
-        return .Ambiguous
+        assert(false, "duplicate authorization was rejected before dispatch")
     }
 
     switch query_lookup {
@@ -87,13 +81,13 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
             return .Invalid
         }
 
-        return .Query
+        return .Allowed
 
     case .Missing:
         return .Missing
 
     case .Duplicate:
-        return .Ambiguous
+        assert(false, "duplicate query token was rejected before dispatch")
     }
 
     return .Missing
@@ -214,7 +208,7 @@ auth_challenge :: proc(result: Auth_Result) -> string {
     case .Ambiguous:
         return BEARER + ", error=\"invalid_request\""
 
-    case .Disabled, .Header, .Query:
+    case .Allowed:
         assert(false, "auth challenge built for a result that is not a refusal")
     }
 

@@ -289,7 +289,7 @@ token_response_parse :: proc(
     credentials: OAuth_Credentials,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.account_id != nil, "token parse needs a provider with account extraction")
+    assert(provider != nil, "token parse needs a provider")
 
     defer if err != .None {
         credentials_destroy(&credentials, allocator)
@@ -316,14 +316,24 @@ token_response_parse :: proc(
 
     // Codex's identity is in the (mandatory) id_token; xAI's is in the access token
     // and its id_token may be absent. Pick the token the account is projected from.
-    account_token := access if provider.account_token == .Access else id_token
-    if provider.account_token == .Id && (!id_token_ok || id_token == "") {
+    account_token := access
+    if provider.kind == .Codex {
+        if !id_token_ok || id_token == "" {
+            err = .Invalid_Response
+
+            return
+        }
+
+        account_token = id_token
+    }
+
+    if account_token == "" {
         err = .Invalid_Response
 
         return
     }
 
-    account_id, account_err := provider.account_id(account_token, allocator)
+    account_id, account_err := account_id_from_token(provider.kind, account_token, allocator)
     if account_err != .None {
         err = account_err
 
@@ -370,16 +380,17 @@ refresh_request_body :: proc(
     refresh_token: string,
     allocator := context.allocator,
 ) -> (
-    string,
-    OAuth_Error,
+    body: string,
+    content_type: string,
+    err: OAuth_Error,
 ) {
     assert(provider != nil, "refresh body needs a provider")
 
     if refresh_token == "" {
-        return "", .Invalid_Input
+        return "", "", .Invalid_Input
     }
 
-    if provider.refresh_profile == .Codex {
+    if provider.kind == .Codex {
         Payload :: struct {
             client_id:     string `json:"client_id"`,
             grant_type:    string `json:"grant_type"`,
@@ -390,16 +401,16 @@ refresh_request_body :: proc(
             allocator = allocator,
         )
         if marshal_err != nil {
-            return "", .Out_Of_Memory
+            return "", "", .Out_Of_Memory
         }
 
-        return transmute(string)bytes, .None
+        return transmute(string)bytes, "application/json", .None
     }
 
     encoded_token, token_err := url_encode(refresh_token, allocator)
     defer secret.string_destroy(&encoded_token, allocator)
     if token_err != .None {
-        return "", .Out_Of_Memory
+        return "", "", .Out_Of_Memory
     }
 
     value, aerr := strings.concatenate(
@@ -407,10 +418,10 @@ refresh_request_body :: proc(
         allocator,
     )
     if aerr != nil {
-        return "", .Out_Of_Memory
+        return "", "", .Out_Of_Memory
     }
 
-    return value, .None
+    return value, "application/x-www-form-urlencoded", .None
 }
 
 // Merge a successful refresh response into an existing credential set. Codex may
@@ -425,7 +436,7 @@ refresh_response_parse :: proc(
     credentials: OAuth_Credentials,
     err: OAuth_Error,
 ) {
-    assert(provider != nil && provider.account_id != nil, "refresh parse needs a provider with account extraction")
+    assert(provider != nil, "refresh parse needs a provider")
 
     if !credentials_valid(existing) {
         return {}, .Invalid_Input
@@ -458,7 +469,7 @@ refresh_response_parse :: proc(
         return
     }
 
-    if provider.refresh_profile == .Standard && !access_present {
+    if provider.kind == .Xai && !access_present {
         err = .Invalid_Response
 
         return
@@ -466,13 +477,13 @@ refresh_response_parse :: proc(
 
     // Re-project the account id when the token carrying it was rotated: Codex's
     // account lives in the id_token, xAI's in the access token.
-    account_token, account_present := id_token, id_present
-    if provider.account_token == .Access {
-        account_token, account_present = access, access_present
+    account_token, account_present := access, access_present
+    if provider.kind == .Codex {
+        account_token, account_present = id_token, id_present
     }
 
     if account_present {
-        account_id, account_err := provider.account_id(account_token, allocator)
+        account_id, account_err := account_id_from_token(provider.kind, account_token, allocator)
         if account_err != .None {
             err = account_err
 
@@ -509,7 +520,7 @@ refresh_response_parse :: proc(
             expires_at_ms = jwt_expires_at
         }
     } else {
-        assert(provider.refresh_profile == .Codex, "only Codex may omit a refreshed access token")
+        assert(provider.kind == .Codex, "only Codex may omit a refreshed access token")
     }
     credentials.expires_at_ms = expires_at_ms
 
@@ -573,15 +584,10 @@ refresh_failure_permanent :: proc(provider: ^Provider, data: string, allocator :
 
 // Proactive refresh window (`refresh_lead_ms` before expiry), saturating at the epoch.
 oauth_needs_refresh :: proc(provider: ^Provider, expires_at_ms, now_ms: u64) -> bool {
-    return oauth_refresh_after_ms(provider, expires_at_ms, now_ms) == 0
-}
-
-// Milliseconds until the proactive refresh boundary, saturating at zero.
-oauth_refresh_after_ms :: proc(provider: ^Provider, expires_at_ms, now_ms: u64) -> u64 {
     assert(provider != nil, "refresh window needs a provider")
     threshold := expires_at_ms - min(expires_at_ms, provider.refresh_lead_ms)
 
-    return threshold - min(threshold, now_ms)
+    return now_ms >= threshold
 }
 
 // Decode a JWT payload segment to its JSON object; signature is not verified.

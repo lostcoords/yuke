@@ -6,8 +6,7 @@ import "libs:testsupport"
 import "src:client"
 import wire "src:wire"
 
-// `run_handler` on a daemon holding a seeded registry, so what comes back is what SQLite
-// holds rather than the empty page a storeless daemon can only ever answer.
+// `run_handler` on a daemon holding a seeded file registry.
 @(private = "file")
 run_session_list :: proc(t: ^testing.T, name: string, obs: ^Handler_Obs, sessions: ..wire.Session) {
     path := testsupport.sqlite_db_path(t, name)

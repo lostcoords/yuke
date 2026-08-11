@@ -12,10 +12,6 @@ import wire "src:wire"
 Pump_Error :: enum {
     None,
 
-    // A durable broadcast was emitted with no database configured; it has nowhere to
-    // be sequenced.
-    No_Store,
-
     // The store refused the append or the high-water read; nothing was written.
     Store_Failed,
 
@@ -61,10 +57,7 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
     case .Durable_Gated:
         sid, named := session.?
         assert(named, "a durable broadcast names its session")
-
-        if d.store == nil {
-            return .No_Store
-        }
+        assert(d.store != nil, "a serving daemon always owns an event store")
 
         seq := pump_next_seq(d, sid) or_return
         stamped := pump_stamp_seq(data, seq)

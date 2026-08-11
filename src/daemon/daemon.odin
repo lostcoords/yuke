@@ -83,8 +83,8 @@ Options :: struct {
     // the RFC 3986 unreserved alphabet so the same token is safe in a query.
     auth_token:      string,
 
-    // SQLite database holding the event log, created if absent. Empty disables the
-    // store, and with it every durable broadcast.
+    // SQLite database holding the event log, created if absent. Empty uses a
+    // process-lifetime in-memory database.
     db_path:         string,
 
     // Private provider credential file. Empty disables WebSocket OAuth methods.
@@ -151,8 +151,8 @@ Daemon :: struct {
     allowed_origins: []string,
 
     // @private
-    // Event log of record, open for the daemon's whole serving life. Nil when no
-    // database is configured, which is what makes a durable broadcast impossible.
+    // Event log of record, open for the daemon's whole serving life. File-backed
+    // when configured and process-lifetime in-memory otherwise.
     store:           ^store.Store,
 
     // @private
@@ -204,7 +204,7 @@ Daemon :: struct {
     config_json:     string,
     config_seen:     bool,
 
-    // Log level resolved from the manifest (`info` when unset or storeless). The caller owns
+    // Log level resolved from the manifest (`info` when unset). The caller owns
     // the logger, so it reads this after `start` and installs the matching one.
     log_level:       log.Level,
 }
@@ -360,7 +360,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     }
 
     if options.db_path == "" {
-        log.warn("daemon: no db_path configured; durable broadcasts and the session index are disabled")
+        log.info("daemon: no db_path configured; using an in-memory event store")
     }
 
     if options.relay_cloud_url == "" {
@@ -401,22 +401,26 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     // The log of record has to be usable before anything is adopted: a damaged or
     // future-versioned database is a start failure, never a per-request one.
-    if options.db_path != "" {
-        opened, serr := store.open(options.db_path, allocator)
-        if serr != nil {
-            log.errorf("daemon: event store unavailable at %s: %v", options.db_path, serr)
-            return .Store_Failed
-        }
-
-        marks, merr := make(map[wire.Session_Id]wire.Seq, 16, allocator)
-        if merr != nil {
-            store.close(opened)
-            return .Out_Of_Memory
-        }
-
-        d.store = opened
-        d.seq_high = marks
+    opened: ^store.Store
+    serr: store.Error
+    if options.db_path == "" {
+        opened, serr = store.open_memory(allocator)
+    } else {
+        opened, serr = store.open(options.db_path, allocator)
     }
+    if serr != nil {
+        log.errorf("daemon: event store unavailable at %s: %v", options.db_path, serr)
+        return .Store_Failed
+    }
+
+    marks, merr := make(map[wire.Session_Id]wire.Seq, 16, allocator)
+    if merr != nil {
+        store.close(opened)
+        return .Out_Of_Memory
+    }
+
+    d.store = opened
+    d.seq_high = marks
 
     callbacks := ws.Server_Callbacks {
         on_open    = ws_on_open,
@@ -494,7 +498,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     assert(d.ws_server.user_data == d, "websocket server has the wrong owner")
     assert(d.front_door.state == .Serving, "front door did not reach Serving")
     assert(d.ws_server.state == .Serving, "websocket server did not reach Serving")
-    assert((d.store != nil) == (options.db_path != ""), "the store is open exactly when a database is configured")
+    assert(d.store != nil, "a serving daemon always owns an event store")
 
     if d.blob_dir != "" {
         removed := blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
@@ -504,13 +508,12 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     }
 
     log.infof(
-        "daemon: listening on %s:%d version=%s auth=%v blob=%v store=%v",
+        "daemon: listening on %s:%d version=%s auth=%v blob=%v",
         net.to_string(net.Address(d.front_door.bind_address), context.temp_allocator),
         http_server.bound_port(&d.front_door),
         d.daemon_version,
         d.auth_token != "",
         d.blob_dir != "",
-        d.store != nil,
     )
 
     return .None

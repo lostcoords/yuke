@@ -2,6 +2,16 @@
 -- session_id: wire.Session_Id!
 DELETE FROM session_configs WHERE session_id = :session_id;
 
+-- name: Set_Session_Config :exec
+-- A config announcement also becomes the session's future-run default.
+-- session_id: wire.Session_Id!
+-- config_rev: wire.Config_Rev!
+-- model: string!
+-- reasoning: string!
+UPDATE sessions
+    SET config_rev = :config_rev, model = :model, reasoning = :reasoning
+    WHERE id = :session_id;
+
 -- name: Set_Prompt :exec
 -- A null writes no row, which reads back as `system_prompt: null`.
 -- session_id: wire.Session_Id!
@@ -17,13 +27,3 @@ INSERT OR REPLACE INTO session_prompts(session_id, prompt)
 -- reasoning: string!
 SELECT config_rev, model, reasoning FROM session_configs
     WHERE session_id = :session_id AND config_rev = :requested_rev;
-
--- name: Session_Config_Current :one
--- session_id: wire.Session_Id!
--- config_rev: wire.Config_Rev!
--- model: string!
--- reasoning: string!
-SELECT config_rev, model, reasoning FROM session_configs
-    WHERE session_id = :session_id
-    ORDER BY config_rev DESC
-    LIMIT 1;

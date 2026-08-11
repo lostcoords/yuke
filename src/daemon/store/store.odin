@@ -159,7 +159,7 @@ Store :: struct {
 
 // Open the store at `path`, creating it if absent, and migrate it to the latest
 // embedded schema. On error nothing is left open.
-open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: Error) {
+open :: proc(path: string, allocator := context.allocator) -> (^Store, Error) {
     assert(len(path) > 0, "open needs a path")
 
     cpath, clone_err := strings.clone_to_cstring(path, allocator)
@@ -168,7 +168,31 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
     }
     defer delete(cpath, allocator)
 
-    db := sqlite.open(cpath, {.Readwrite, .Create, .Nomutex}) or_return
+    db, rc := sqlite.open(cpath, {.Readwrite, .Create, .Nomutex})
+    if rc != .Ok {
+        return nil, rc
+    }
+
+    return open_conn(db, true, allocator)
+}
+
+// Open a process-lifetime store with the same schema and constraints as a file
+// store. Its contents disappear when the store closes.
+open_memory :: proc(allocator := context.allocator) -> (^Store, Error) {
+    db, rc := sqlite.open_memory({.Readwrite, .Create, .Nomutex})
+    if rc != .Ok {
+        return nil, rc
+    }
+
+    return open_conn(db, false, allocator)
+}
+
+// Adopt a fresh writer connection and build the store around it. The caller
+// transfers ownership even when initialization fails.
+@(private)
+open_conn :: proc(db: ^sqlite.Conn, durable: bool, allocator: mem.Allocator) -> (s: ^Store, err: Error) {
+    assert(db != nil, "open_conn needs a connection")
+
     defer if err != nil {
         close_rc := sqlite.close(db)
         assert(close_rc == .Ok, "failed open leaves no SQLite child alive")
@@ -182,7 +206,7 @@ open :: proc(path: string, allocator := context.allocator) -> (s: ^Store, err: E
 
     check_integrity(db) or_return
     version := check_identity(db) or_return
-    configure(db) or_return
+    configure(db, durable) or_return
     migrations_apply(db, MIGRATIONS[:], APPLICATION_ID, version) or_return
 
     q: queries.Queries
@@ -232,16 +256,21 @@ close :: proc(s: ^Store) {
     free(s, s.allocator)
 }
 
-// WAL plus `synchronous=NORMAL`: commits survive a crash, power loss only the newest.
-// Foreign keys default off, are per-connection, and are a no-op mid-transaction —
-// forgetting one silently disables every ON DELETE CASCADE, so all three are read back.
+// File stores require WAL plus `synchronous=NORMAL`. Memory stores retain their
+// only supported rollback journal. Foreign keys are per-connection, so every
+// requested setting is read back before the connection is admitted.
 @(private)
-configure :: proc(db: ^sqlite.Conn) -> Error {
+configure :: proc(db: ^sqlite.Conn, durable: bool) -> Error {
     assert(db != nil, "configure needs a connection")
 
-    // WAL is refused on some filesystems, and the pragma reports the mode it
-    // settled on rather than failing.
-    journaled := sqlite.journal_mode_set(db, .Wal) or_return
+    mode := sqlite.Journal_Mode.Memory
+    if durable {
+        mode = .Wal
+    }
+
+    // WAL is refused on some filesystems, while an in-memory database cannot
+    // leave MEMORY mode. The pragma reports refusal instead of failing.
+    journaled := sqlite.journal_mode_set(db, mode) or_return
 
     if !journaled {
         return .Durability_Unavailable

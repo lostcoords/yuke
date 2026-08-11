@@ -20,8 +20,7 @@ Script_Config :: struct {
     // TCP port for `/ws` and `/blob`. Zero binds an OS-assigned port.
     port:            int `json:"port"`,
 
-    // SQLite database holding the event log. Empty disables the store, and with it every
-    // durable broadcast.
+    // SQLite database holding the event log. Empty uses a process-lifetime memory store.
     db_path:         string `json:"dbPath"`,
 
     // Directory holding content-addressed blobs.

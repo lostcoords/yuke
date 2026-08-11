@@ -242,6 +242,12 @@ test_daemon_resync_cut_derives_from_the_log :: proc(t: ^testing.T) {
             testing.expect(t, !cut.has_more, "the whole transcript fits the default page")
             testing.expect_value(t, cut.item.session.id, session)
             testing.expect_value(t, cut.item.session.message_count, u64(2))
+            testing.expect_value(t, cut.item.session.workspace_id, wire.Workspace_Id(pump_test_session('f')))
+            testing.expect_value(t, cut.item.session.profile, "default")
+            testing.expect_value(t, cut.item.session.model, "m1")
+            testing.expect_value(t, cut.item.session.reasoning, "low")
+            testing.expect_value(t, cut.item.session.permission, wire.Permission_Mode.Normal)
+            testing.expect_value(t, cut.item.session.title, "test")
 
             // Only the revision the page references is carried.
             if testing.expect_value(t, len(cut.configs), 1) {
@@ -276,7 +282,7 @@ test_daemon_resync_of_an_unknown_session_is_refused :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_resync_without_a_store_is_unknown :: proc(t: ^testing.T) {
+test_daemon_resync_in_empty_memory_store_is_unknown :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -285,7 +291,7 @@ test_daemon_resync_without_a_store_is_unknown :: proc(t: ^testing.T) {
 
     d: Daemon
     testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0}), Error.None)
-    testing.expect(t, d.store == nil, "no database configured means no store")
+    testing.expect(t, d.store != nil, "no database path selects the in-memory store")
 
     _, err := resync_build(&d, {session_id = pump_test_session('d')}, context.temp_allocator)
     testing.expect_value(t, err, Resync_Error.Unknown_Session)

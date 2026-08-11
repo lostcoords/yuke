@@ -66,10 +66,7 @@ resync_build :: proc(
     assert(d != nil, "a resync cut needs daemon state")
     assert(wire.session_resync_params_validate(params) == .None, "a resync cut needs validated params")
 
-    // Nothing durable exists without a store, so no session does either.
-    if d.store == nil {
-        return {}, .Unknown_Session
-    }
+    assert(d.store != nil, "a serving daemon always owns an event store")
 
     hw, herr := store.high_water(d.store, params.session_id)
     if herr != nil {
@@ -83,11 +80,14 @@ resync_build :: proc(
         return {}, .Unknown_Session
     }
 
-    // Message count and open-run activity, from the session row the projections maintain.
-    activity_row, aerr := store.session_activity(d.store, params.session_id, sa)
-    if aerr != nil {
-        log.errorf("daemon: resync activity read failed: %v", aerr)
+    snapshot, found, serr := store.session_snapshot(d.store, params.session_id, sa)
+    if serr != nil {
+        log.errorf("daemon: resync session read failed: %v", serr)
         return {}, .Store_Failed
+    }
+    if !found {
+        log.error("daemon: resync high-water names no session row")
+        return {}, .Corrupt_Log
     }
 
     page_size := wire.LIMITS.default_page_size
@@ -105,8 +105,6 @@ resync_build :: proc(
         return {}, .Store_Failed
     }
 
-    total := int(activity_row.message_count)
-
     // The boundary is the store's minted mark, not the page's own maximum: truncated ids
     // and compaction dividers are finalized too, even once no message carries them.
     boundary: Maybe(wire.Message_Id)
@@ -122,7 +120,7 @@ resync_build :: proc(
 
     // Until the session engine supplies its live state, the open run is the only activity
     // the log reconstructs. Drafts and queued inputs are not rebuilt here.
-    if open, running := activity_row.open_run.?; running {
+    if open, running := snapshot.open_run.?; running {
         switch open.kind {
         case .Turn:
             // The turn's config is collected like every other, so an unannounced
@@ -159,28 +157,8 @@ resync_build :: proc(
         resync_config_add(&configs, d.store, params.session_id, assistant.config_rev, sa) or_return
     }
 
-    // This summary is a placeholder until the session engine exists; it will be replaced
-    // with the same derived row used by session.list and summary_changed.
-    current, current_found, current_err := store.session_config_current(d.store, params.session_id, sa)
-    if current_err != nil {
-        log.errorf("daemon: resync current config read failed: %v", current_err)
-        return {}, .Store_Failed
-    }
-    if !current_found {
-        current = {}
-    }
     item := wire.Session_List_Item {
-        session = wire.Session {
-            id = params.session_id,
-            workspace_id = wire.Workspace_Id(resync_unset_id()),
-            model = current.model,
-            reasoning = current.reasoning,
-            config_rev = current.config_rev,
-            permission = .Strict,
-            message_count = u64(total),
-            created_by = wire.Client{},
-            origin = wire.Session_Origin_Root{},
-        },
+        session  = snapshot.session,
         activity = activity,
     }
 
@@ -189,7 +167,7 @@ resync_build :: proc(
         base_seq                     = hw.seq,
         highest_finalized_message_id = boundary,
         messages                     = messages,
-        has_more                     = total > len(messages),
+        has_more                     = snapshot.session.message_count > u64(len(messages)),
         configs                      = configs[:],
     }
 
@@ -253,15 +231,4 @@ resync_config_find :: proc(configs: []wire.Run_Config, rev: wire.Config_Rev) -> 
     }
 
     return {}, false
-}
-
-// The temporary workspace id used until the session engine owns the summary.
-@(private)
-resync_unset_id :: proc() -> [16]u8 {
-    out: [16]u8
-    for i in 0 ..< 16 {
-        out[i] = '0'
-    }
-
-    return out
 }

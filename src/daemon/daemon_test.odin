@@ -327,7 +327,7 @@ handler_callbacks :: proc() -> client.Client_Callbacks {
 }
 
 // Bring up a daemon, drive `obs`'s single request through the client driver, and run its
-// check(s). `db_path`/`sessions` seed a store; both default to the storeless daemon most methods need.
+// check(s). `db_path` selects a file store; an empty path uses the in-memory store.
 run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", auth_path := "", sessions: ..wire.Session) {
     obs.t = t
 
@@ -616,7 +616,7 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
     d: Daemon
     testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
     testing.expect(t, d.provider_auth.refresh_timer != nil, "future credentials arm proactive refresh")
-    testing.expect(t, d.provider_auth.refresh == nil, "future credentials do not refresh early")
+    testing.expect(t, provider_refresh(&d) == nil, "future credentials do not refresh early")
 
     shutdown(&d)
     testing.expect(t, d.provider_auth.refresh_timer == nil, "shutdown cancels proactive refresh")
@@ -651,14 +651,51 @@ test_daemon_login_deadline_releases_the_attempt :: proc(t: ^testing.T) {
         requested_flow = .Device_Code,
         phase          = .Device_Waiting_Poll,
     }
-    d.provider_auth.login = login
+    d.provider_auth.operation = login
     provider_login_deadline_arm(&d, time.Millisecond)
 
-    for d.provider_auth.login != nil {
+    for provider_login(&d) != nil {
         _ = nbio.tick(time.Millisecond)
     }
 
-    testing.expect(t, d.provider_auth.login == nil, "deadline owns terminal attempt cleanup")
+    testing.expect(t, provider_login(&d) == nil, "deadline owns terminal attempt cleanup")
+}
+
+@(test)
+test_daemon_login_summary_survives_credential_persistence :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-login-persistence")
+    defer os.remove_all(dir)
+    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
+    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    defer test_teardown(&d)
+
+    login_id := login_id_create()
+    job := Credential_Job {
+        daemon      = &d,
+        kind        = .Login,
+        provider_id = provider_auth.XAI_PROVIDER_ID,
+        login_id    = login_id,
+        login_flow  = .Device_Code,
+    }
+    d.provider_auth.operation = &job
+
+    state := provider_state(&d, .Xai)
+    summary, pending := state.pending_login.?
+    if testing.expect(t, pending, "credential persistence retains the public login summary") {
+        testing.expect_value(t, summary.login_id, login_id)
+        testing.expect_value(t, summary.flow, wire.Auth_Flow.Device_Code)
+    }
+
+    d.provider_auth.operation = nil
 }
 
 @(test)
@@ -714,13 +751,13 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
         bounded_response_accumulate(&refresh.response, transmute([]byte)string(`{"error":"invalid_grant"}`)),
         "terminal response fits",
     )
-    d.provider_auth.refresh = refresh
+    d.provider_auth.operation = refresh
 
     provider_refresh_on_done(&d, curl.Result{code = .Ok, status = 400})
-    testing.expect(t, d.provider_auth.refresh == nil, "terminal response releases the refresh")
-    testing.expect(t, d.provider_auth.write_job != nil, "terminal response queues durable invalidation")
+    testing.expect(t, provider_refresh(&d) == nil, "terminal response releases the refresh")
+    testing.expect(t, credential_job(&d) != nil, "terminal response queues durable invalidation")
 
-    for d.provider_auth.write_job != nil {
+    for credential_job(&d) != nil {
         _ = nbio.tick(time.Millisecond)
     }
 
@@ -851,6 +888,23 @@ test_daemon_browser_login_starts_and_cancels_over_websocket :: proc(t: ^testing.
         check = check_auth_browser_start_cancel,
     }
     run_handler(t, &obs, auth_path = path)
+}
+
+@(test)
+test_browser_login_is_local_only :: proc(t: ^testing.T) {
+    local_tx: ws.Server_Conn
+    local := Conn {
+        tx = &local_tx,
+    }
+    testing.expect(t, provider_login_flow_allowed(&local, .Browser), "local browser login is admitted")
+    testing.expect(t, provider_login_flow_allowed(&local, .Device_Code), "local device login is admitted")
+
+    relay_tx: Relay
+    remote := Conn {
+        tx = &relay_tx,
+    }
+    testing.expect(t, !provider_login_flow_allowed(&remote, .Browser), "relay browser login is refused")
+    testing.expect(t, provider_login_flow_allowed(&remote, .Device_Code), "relay device login is admitted")
 }
 
 check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {

@@ -481,7 +481,7 @@ test_daemon_live_gated_broadcast_is_not_persisted :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) {
+test_daemon_without_db_path_uses_memory_store :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -491,7 +491,7 @@ test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) 
     d: Daemon
     derr := start(&d, loop, {host = "127.0.0.1", port = 0})
     testing.expect_value(t, derr, Error.None)
-    testing.expect(t, d.store == nil, "no database configured means no store")
+    testing.expect(t, d.store != nil, "no database path selects the in-memory store")
 
     session := pump_test_session('1')
     daemon_test_session_create(t, &d, session)
@@ -501,10 +501,11 @@ test_daemon_durable_broadcast_without_a_store_is_refused :: proc(t: ^testing.T) 
     c: client.Client
     pump_client_arm(t, &c, loop, bound_port(&d), &obs)
 
-    // Nothing can be sequenced, so nothing is delivered either.
-    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.No_Store)
+    testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
     pump_settle()
-    testing.expect_value(t, len(obs.names), 0)
+    testing.expect_value(t, len(obs.names), 1)
+    testing.expect_value(t, obs.names[0], wire.Broadcast_Name.Run_Started)
+    testing.expect_value(t, obs.seqs[0], wire.Seq(1))
 
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
@@ -1133,9 +1134,7 @@ daemon_test_session :: proc(id: wire.Session_Id) -> wire.Session {
 // registry row before the pump can log anything for it. The daemon has no session
 // engine yet, so tests stand in for what `session.create` will do.
 daemon_test_session_create :: proc(t: ^testing.T, d: ^Daemon, ids: ..wire.Session_Id) {
-    if d.store == nil {
-        return
-    }
+    assert(d.store != nil, "a serving daemon always owns an event store")
 
     for id in ids {
         testing.expect_value(t, store.session_create(d.store, daemon_test_session(id), nil), nil)

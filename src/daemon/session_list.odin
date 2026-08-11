@@ -44,11 +44,7 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         population = params.population,
     }
 
-    // Nothing is durable without a store, so no session exists to list.
-    if d.store == nil {
-        send_result(conn, req.id, wire.Session_List_Result{}, sa)
-        return
-    }
+    assert(d.store != nil, "a serving daemon always owns an event store")
 
     // `active` selects sessions with a live run; without an engine there are none, so an
     // empty page is correct — `recent` and `active_recent` coincide for the same reason.

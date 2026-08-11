@@ -5,12 +5,12 @@ import "core:testing"
 
 import "src:secret"
 
-// --- Codex device profile (non-standard: 403/404 pending, two-step exchange) ---
+// --- Codex device flow (non-standard: 403/404 pending, two-step exchange) ---
 
 @(test)
 test_codex_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
     session, err := device_auth_parse(
-        codex_provider(),
+        provider(.Codex),
         `{"device_auth_id":"machine-secret","user_code":"CODE-12345","interval":"5"}`,
     )
     testing.expect_value(t, err, OAuth_Error.None)
@@ -22,7 +22,7 @@ test_codex_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
     testing.expect_value(t, session.expires_in_s, u64(15 * 60))
     testing.expect_value(t, session.verification_uri, CODEX_DEVICE_VERIFICATION_URL)
 
-    body, content_type, body_err := device_poll_body(codex_provider(), session)
+    body, content_type, body_err := device_poll_body(provider(.Codex), session)
     testing.expect_value(t, body_err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
     testing.expect_value(t, content_type, "application/json")
@@ -32,25 +32,25 @@ test_codex_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
 @(test)
 test_codex_device_auth_parse_alias_and_interval_rules :: proc(t: ^testing.T) {
     _, zero_err := device_auth_parse(
-        codex_provider(),
+        provider(.Codex),
         `{"device_auth_id":"machine-secret","usercode":"CODE-12345","interval":"0"}`,
     )
     testing.expect_value(t, zero_err, OAuth_Error.Invalid_Response)
 
     _, missing_err := device_auth_parse(
-        codex_provider(),
+        provider(.Codex),
         `{"device_auth_id":"machine-secret","user_code":"CODE-12345"}`,
     )
     testing.expect_value(t, missing_err, OAuth_Error.Invalid_Response)
 
     _, number_err := device_auth_parse(
-        codex_provider(),
+        provider(.Codex),
         `{"device_auth_id":"machine-secret","user_code":"CODE-12345","interval":5}`,
     )
     testing.expect_value(t, number_err, OAuth_Error.Invalid_Response)
 
     _, large_err := device_auth_parse(
-        codex_provider(),
+        provider(.Codex),
         `{"device_auth_id":"machine-secret","user_code":"CODE-12345","interval":"61"}`,
     )
     testing.expect_value(t, large_err, OAuth_Error.Invalid_Response)
@@ -58,15 +58,15 @@ test_codex_device_auth_parse_alias_and_interval_rules :: proc(t: ^testing.T) {
 
 @(test)
 test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
-    pending_403, _ := device_poll_classify(codex_provider(), 403, "", context.allocator)
+    pending_403, _ := device_poll_classify(provider(.Codex), 403, "", context.allocator)
     _, is_pending_403 := pending_403.(Device_Pending)
     testing.expect(t, is_pending_403, "codex 403 keeps polling")
 
-    pending_404, _ := device_poll_classify(codex_provider(), 404, "", context.allocator)
+    pending_404, _ := device_poll_classify(provider(.Codex), 404, "", context.allocator)
     _, is_pending_404 := pending_404.(Device_Pending)
     testing.expect(t, is_pending_404, "codex 404 keeps polling")
 
-    rejected, _ := device_poll_classify(codex_provider(), 400, "", context.allocator)
+    rejected, _ := device_poll_classify(provider(.Codex), 400, "", context.allocator)
     _, is_failed := rejected.(Device_Failed)
     testing.expect(t, is_failed, "codex non-2xx (not 403/404) is terminal")
 
@@ -77,7 +77,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
     testing.expect(t, approved_aerr == nil, "grant fixture allocation")
     defer secret.string_destroy(&approved, context.allocator)
 
-    outcome, outcome_err := device_poll_classify(codex_provider(), 200, approved, context.allocator)
+    outcome, outcome_err := device_poll_classify(provider(.Codex), 200, approved, context.allocator)
     testing.expect_value(t, outcome_err, OAuth_Error.None)
     exchange, is_exchange := outcome.(Device_Exchange)
     if !testing.expect(t, is_exchange, "codex 2xx yields a grant to exchange") {
@@ -87,7 +87,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
     defer device_grant_destroy(&grant)
     testing.expect_value(t, grant.authorization_code, "poll-code")
 
-    body, body_err := device_grant_body(codex_provider(), grant)
+    body, body_err := device_grant_body(provider(.Codex), grant)
     testing.expect_value(t, body_err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
     testing.expect(t, strings.contains(body, "code=poll-code"), "authorization code is exchanged")
@@ -98,11 +98,11 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
     )
 }
 
-// --- RFC 8628 device profile (standard: error-body pending, direct tokens) ---
+// --- RFC 8628 device flow (standard: error-body pending, direct tokens) ---
 
 @(test)
 test_rfc8628_device_auth_body_is_form_with_referrer :: proc(t: ^testing.T) {
-    body, content_type, err := device_auth_body(xai_provider(), "yuke-odin")
+    body, content_type, err := device_auth_body(provider(.Xai), "yuke-odin")
     testing.expect_value(t, err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
 
@@ -115,7 +115,7 @@ test_rfc8628_device_auth_body_is_form_with_referrer :: proc(t: ^testing.T) {
 @(test)
 test_rfc8628_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
     session, err := device_auth_parse(
-        xai_provider(),
+        provider(.Xai),
         `{"device_code":"dev-code","user_code":"WXYZ-7788","verification_uri":"https://x.ai/device","verification_uri_complete":"https://x.ai/device?code=WXYZ-7788","expires_in":900,"interval":5}`,
     )
     testing.expect_value(t, err, OAuth_Error.None)
@@ -127,7 +127,7 @@ test_rfc8628_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
     testing.expect_value(t, session.expires_in_s, u64(900))
     testing.expect_value(t, session.verification_uri, "https://x.ai/device?code=WXYZ-7788")
 
-    body, content_type, body_err := device_poll_body(xai_provider(), session)
+    body, content_type, body_err := device_poll_body(provider(.Xai), session)
     testing.expect_value(t, body_err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
     testing.expect_value(t, content_type, "application/x-www-form-urlencoded")
@@ -143,22 +143,22 @@ test_rfc8628_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
 test_rfc8628_device_auth_parse_rejects_invalid_timing :: proc(t: ^testing.T) {
     base :: `{"device_code":"dev-code","user_code":"WXYZ-7788","verification_uri":"https://x.ai/device"`
 
-    _, missing_expiry := device_auth_parse(xai_provider(), base + `,"interval":5}`)
+    _, missing_expiry := device_auth_parse(provider(.Xai), base + `,"interval":5}`)
     testing.expect_value(t, missing_expiry, OAuth_Error.Invalid_Response)
 
-    _, zero_expiry := device_auth_parse(xai_provider(), base + `,"expires_in":0,"interval":5}`)
+    _, zero_expiry := device_auth_parse(provider(.Xai), base + `,"expires_in":0,"interval":5}`)
     testing.expect_value(t, zero_expiry, OAuth_Error.Invalid_Response)
 
-    _, fractional_expiry := device_auth_parse(xai_provider(), base + `,"expires_in":900.5,"interval":5}`)
+    _, fractional_expiry := device_auth_parse(provider(.Xai), base + `,"expires_in":900.5,"interval":5}`)
     testing.expect_value(t, fractional_expiry, OAuth_Error.Invalid_Response)
 
-    _, zero_interval := device_auth_parse(xai_provider(), base + `,"expires_in":900,"interval":0}`)
+    _, zero_interval := device_auth_parse(provider(.Xai), base + `,"expires_in":900,"interval":0}`)
     testing.expect_value(t, zero_interval, OAuth_Error.Invalid_Response)
 
-    _, fractional_interval := device_auth_parse(xai_provider(), base + `,"expires_in":900,"interval":5.5}`)
+    _, fractional_interval := device_auth_parse(provider(.Xai), base + `,"expires_in":900,"interval":5.5}`)
     testing.expect_value(t, fractional_interval, OAuth_Error.Invalid_Response)
 
-    defaulted, defaulted_err := device_auth_parse(xai_provider(), base + `,"expires_in":900}`)
+    defaulted, defaulted_err := device_auth_parse(provider(.Xai), base + `,"expires_in":900}`)
     testing.expect_value(t, defaulted_err, OAuth_Error.None)
     defer device_session_destroy(&defaulted)
     testing.expect_value(t, defaulted.interval_s, u64(DEVICE_DEFAULT_POLL_INTERVAL_S))
@@ -166,31 +166,31 @@ test_rfc8628_device_auth_parse_rejects_invalid_timing :: proc(t: ^testing.T) {
 
 @(test)
 test_rfc8628_device_classify_states :: proc(t: ^testing.T) {
-    tokens, _ := device_poll_classify(xai_provider(), 200, `{"access_token":"a"}`, context.allocator)
+    tokens, _ := device_poll_classify(provider(.Xai), 200, `{"access_token":"a"}`, context.allocator)
     _, is_tokens := tokens.(Device_Tokens)
     testing.expect(t, is_tokens, "200 means tokens are ready")
 
-    pending, _ := device_poll_classify(xai_provider(), 400, `{"error":"authorization_pending"}`, context.allocator)
+    pending, _ := device_poll_classify(provider(.Xai), 400, `{"error":"authorization_pending"}`, context.allocator)
     _, is_pending := pending.(Device_Pending)
     testing.expect(t, is_pending, "authorization_pending keeps polling")
 
-    slow, _ := device_poll_classify(xai_provider(), 400, `{"error":"slow_down"}`, context.allocator)
+    slow, _ := device_poll_classify(provider(.Xai), 400, `{"error":"slow_down"}`, context.allocator)
     _, is_slow := slow.(Device_Slow_Down)
     testing.expect(t, is_slow, "slow_down widens the interval")
 
-    transient, _ := device_poll_classify(xai_provider(), 429, `{}`, context.allocator)
+    transient, _ := device_poll_classify(provider(.Xai), 429, `{}`, context.allocator)
     _, is_transient := transient.(Device_Pending)
     testing.expect(t, is_transient, "429 is a transient retry")
 
-    denied, _ := device_poll_classify(xai_provider(), 400, `{"error":"access_denied"}`, context.allocator)
+    denied, _ := device_poll_classify(provider(.Xai), 400, `{"error":"access_denied"}`, context.allocator)
     _, denied_failed := denied.(Device_Failed)
     testing.expect(t, denied_failed, "access_denied is terminal")
 
-    expired, _ := device_poll_classify(xai_provider(), 400, `{"error":"expired_token"}`, context.allocator)
+    expired, _ := device_poll_classify(provider(.Xai), 400, `{"error":"expired_token"}`, context.allocator)
     _, expired_failed := expired.(Device_Failed)
     testing.expect(t, expired_failed, "expired_token is terminal")
 
-    unknown, _ := device_poll_classify(xai_provider(), 400, `{"error":"teapot"}`, context.allocator)
+    unknown, _ := device_poll_classify(provider(.Xai), 400, `{"error":"teapot"}`, context.allocator)
     _, unknown_failed := unknown.(Device_Failed)
     testing.expect(t, unknown_failed, "unknown errors are terminal, not an infinite poll")
 }

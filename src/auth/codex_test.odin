@@ -27,7 +27,7 @@ test_url_encode_uses_rfc_3986_unreserved_set :: proc(t: ^testing.T) {
 
 @(test)
 test_authorization_flow_contains_dynamic_callback_and_no_padding :: proc(t: ^testing.T) {
-    flow, err := authorization_flow_create(codex_provider(), 1457, "yuke-daemon/1", context.allocator)
+    flow, err := authorization_flow_create(provider(.Codex), 1457, "yuke-daemon/1", context.allocator)
     testing.expect_value(t, err, OAuth_Error.None)
     defer authorization_flow_destroy(&flow, context.allocator)
 
@@ -58,7 +58,7 @@ test_authorization_code_body_uses_dynamic_callback_and_pkce :: proc(t: ^testing.
         verifier     = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
         redirect_uri = "http://localhost:1457/auth/callback",
     }
-    body, err := authorization_code_body(codex_provider(), flow, "code +/%")
+    body, err := authorization_code_body(provider(.Codex), flow, "code +/%")
     testing.expect_value(t, err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
 
@@ -149,7 +149,7 @@ test_account_id_and_token_response_parse :: proc(t: ^testing.T) {
     testing.expect(t, response_aerr == nil, "token response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    credentials, parse_err := token_response_parse(codex_provider(), response, 1_700_000_000_000)
+    credentials, parse_err := token_response_parse(provider(.Codex), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -170,7 +170,7 @@ test_login_token_response_requires_a_refresh_token :: proc(t: ^testing.T) {
     testing.expect(t, response_aerr == nil, "token response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    _, missing_err := token_response_parse(codex_provider(), response, 10_000)
+    _, missing_err := token_response_parse(provider(.Codex), response, 10_000)
     testing.expect_value(t, missing_err, OAuth_Error.Invalid_Response)
 }
 
@@ -191,15 +191,16 @@ test_login_token_response_overflow_releases_the_derived_account :: proc(t: ^test
     testing.expect(t, response_aerr == nil, "token response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    _, parse_err := token_response_parse(codex_provider(), response, max(u64))
+    _, parse_err := token_response_parse(provider(.Codex), response, max(u64))
     testing.expect_value(t, parse_err, OAuth_Error.Invalid_Response)
 }
 
 @(test)
 test_refresh_request_is_json_and_escapes_the_rotating_token :: proc(t: ^testing.T) {
-    body, err := refresh_request_body(codex_provider(), `refresh-"\\token`)
+    body, content_type, err := refresh_request_body(provider(.Codex), `refresh-"\\token`)
     testing.expect_value(t, err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
+    testing.expect_value(t, content_type, "application/json")
 
     testing.expect_value(
         t,
@@ -226,7 +227,7 @@ test_refresh_response_merges_optional_tokens_and_retains_account :: proc(t: ^tes
     testing.expect(t, response_aerr == nil, "refresh response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    credentials, parse_err := refresh_response_parse(codex_provider(), response, existing, 1_700_000_000_000)
+    credentials, parse_err := refresh_response_parse(provider(.Codex), response, existing, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -251,7 +252,7 @@ test_refresh_response_updates_account_only_from_returned_id_token :: proc(t: ^te
     testing.expect(t, response_aerr == nil, "refresh response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    credentials, parse_err := refresh_response_parse(codex_provider(), response, existing, 1_700_000_000_000)
+    credentials, parse_err := refresh_response_parse(provider(.Codex), response, existing, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -270,7 +271,7 @@ test_refresh_response_may_omit_every_token_field :: proc(t: ^testing.T) {
         account_id    = "acct-old",
     }
 
-    credentials, parse_err := refresh_response_parse(codex_provider(), `{}`, existing, 1_800_000_000_000)
+    credentials, parse_err := refresh_response_parse(provider(.Codex), `{}`, existing, 1_800_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -289,11 +290,11 @@ test_refresh_response_rejects_present_empty_or_wrong_type_tokens :: proc(t: ^tes
         account_id    = "acct-old",
     }
 
-    _, empty_err := refresh_response_parse(codex_provider(), `{"access_token":""}`, existing, 0)
+    _, empty_err := refresh_response_parse(provider(.Codex), `{"access_token":""}`, existing, 0)
     testing.expect_value(t, empty_err, OAuth_Error.Invalid_Response)
-    _, type_err := refresh_response_parse(codex_provider(), `{"refresh_token":7}`, existing, 0)
+    _, type_err := refresh_response_parse(provider(.Codex), `{"refresh_token":7}`, existing, 0)
     testing.expect_value(t, type_err, OAuth_Error.Invalid_Response)
-    _, malformed_err := refresh_response_parse(codex_provider(), `not json`, existing, 0)
+    _, malformed_err := refresh_response_parse(provider(.Codex), `not json`, existing, 0)
     testing.expect_value(t, malformed_err, OAuth_Error.Invalid_Response)
 }
 
@@ -301,32 +302,30 @@ test_refresh_response_rejects_present_empty_or_wrong_type_tokens :: proc(t: ^tes
 test_refresh_failure_classifies_only_terminal_rotating_token_errors :: proc(t: ^testing.T) {
     testing.expect(
         t,
-        refresh_failure_permanent(codex_provider(), `{"error":{"code":"refresh_token_expired"}}`),
+        refresh_failure_permanent(provider(.Codex), `{"error":{"code":"refresh_token_expired"}}`),
         "expired",
     )
     testing.expect(
         t,
-        refresh_failure_permanent(codex_provider(), `{"error":{"code":"refresh_token_reused"}}`),
+        refresh_failure_permanent(provider(.Codex), `{"error":{"code":"refresh_token_reused"}}`),
         "reused",
     )
     testing.expect(
         t,
-        refresh_failure_permanent(codex_provider(), `{"error":{"code":"refresh_token_invalidated"}}`),
+        refresh_failure_permanent(provider(.Codex), `{"error":{"code":"refresh_token_invalidated"}}`),
         "invalidated",
     )
     testing.expect(
         t,
-        !refresh_failure_permanent(codex_provider(), `{"error":{"code":"temporarily_unavailable"}}`),
+        !refresh_failure_permanent(provider(.Codex), `{"error":{"code":"temporarily_unavailable"}}`),
         "transient",
     )
-    testing.expect(t, !refresh_failure_permanent(codex_provider(), `not json`), "malformed")
+    testing.expect(t, !refresh_failure_permanent(provider(.Codex), `not json`), "malformed")
 }
 
 @(test)
 test_oauth_refresh_window_saturates :: proc(t: ^testing.T) {
-    testing.expect(t, oauth_needs_refresh(codex_provider(), 60_000, 0), "short-lived token refreshes immediately")
-    testing.expect(t, oauth_needs_refresh(codex_provider(), 1_000_000, 900_000), "inside lead window")
-    testing.expect(t, !oauth_needs_refresh(codex_provider(), 1_000_000, 100_000), "outside lead window")
-    testing.expect_value(t, oauth_refresh_after_ms(codex_provider(), 60_000, 0), u64(0))
-    testing.expect_value(t, oauth_refresh_after_ms(codex_provider(), 1_000_000, 100_000), u64(600_000))
+    testing.expect(t, oauth_needs_refresh(provider(.Codex), 60_000, 0), "short-lived token refreshes immediately")
+    testing.expect(t, oauth_needs_refresh(provider(.Codex), 1_000_000, 900_000), "inside lead window")
+    testing.expect(t, !oauth_needs_refresh(provider(.Codex), 1_000_000, 100_000), "outside lead window")
 }

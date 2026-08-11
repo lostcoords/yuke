@@ -28,6 +28,7 @@ CODEX_REFRESH_PERMANENT_CODES := [?]string {
 
 // The Codex/OpenAI provider descriptor. Immutable, stable address.
 codex_descriptor := Provider {
+    kind                       = .Codex,
     id                         = CODEX_PROVIDER_ID,
     client_id                  = CODEX_CLIENT_ID,
     scope                      = CODEX_SCOPE,
@@ -42,18 +43,9 @@ codex_descriptor := Provider {
     device_token_url           = CODEX_DEVICE_TOKEN_URL,
     device_redirect_uri        = CODEX_DEVICE_REDIRECT_URI,
     device_verification_url    = CODEX_DEVICE_VERIFICATION_URL,
-    device_profile             = .Codex,
-    refresh_profile            = .Codex,
     refresh_lead_ms            = CODEX_REFRESH_LEAD_MS,
     refresh_fallback_ms        = CODEX_REFRESH_FALLBACK_MS,
     refresh_permanent_codes    = CODEX_REFRESH_PERMANENT_CODES[:],
-    account_token              = .Id,
-    account_id                 = codex_account_id,
-}
-
-// The Codex provider descriptor; the returned pointer is stable for the program.
-codex_provider :: proc() -> ^Provider {
-    return &codex_descriptor
 }
 
 // Extract the Codex `chatgpt-account-id` from the id_token JWT. Reads an

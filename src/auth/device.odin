@@ -20,22 +20,11 @@ DEVICE_CODE_LIFETIME_MAX_S :: 24 * 60 * 60
 DEVICE_DEFAULT_POLL_INTERVAL_S :: 5
 DEVICE_CODE_GRANT_TYPE :: "urn:ietf:params:oauth:grant-type:device_code"
 
-// Codex device endpoints (its device auth is non-standard; see Device_Profile).
+// Codex device endpoints; its device auth is a non-standard two-step flow.
 CODEX_DEVICE_USER_CODE_URL :: "https://auth.openai.com/api/accounts/deviceauth/usercode"
 CODEX_DEVICE_TOKEN_URL :: "https://auth.openai.com/api/accounts/deviceauth/token"
 CODEX_DEVICE_REDIRECT_URI :: "https://auth.openai.com/deviceauth/callback"
 CODEX_DEVICE_TIMEOUT_MS :: 15 * 60 * 1000
-
-// The device-code protocol a provider speaks.
-Device_Profile :: enum {
-    // Non-standard: pending is HTTP 403/404, and the poll returns an
-    // authorization code that is exchanged for tokens in a second request.
-    Codex,
-
-    // RFC 8628: pending/backoff are error-body codes, and the poll returns the
-    // token set directly on approval.
-    Rfc8628,
-}
 
 // Daemon-private device session: how to poll, and what to show the user. `handle`
 // is Codex's `device_auth_id` or the RFC 8628 `device_code`. Owned.
@@ -108,7 +97,7 @@ device_auth_body :: proc(
 ) {
     assert(provider != nil, "device request needs a provider")
 
-    switch provider.device_profile {
+    switch provider.kind {
     case .Codex:
         value, aerr := strings.concatenate({`{"client_id":"`, provider.client_id, `"}`}, allocator)
         if aerr != nil {
@@ -117,7 +106,7 @@ device_auth_body :: proc(
 
         return value, "application/json", .None
 
-    case .Rfc8628:
+    case .Xai:
         assert(provider.authorize_originator_param != "", "RFC 8628 device request needs a client-identity param")
         if originator == "" || len(originator) > 64 {
             return "", "", .Invalid_Input
@@ -163,7 +152,7 @@ device_poll_body :: proc(
         return "", "", .Invalid_Input
     }
 
-    switch provider.device_profile {
+    switch provider.kind {
     case .Codex:
         Payload :: struct {
             device_auth_id: string `json:"device_auth_id"`,
@@ -179,7 +168,7 @@ device_poll_body :: proc(
 
         return transmute(string)bytes, "application/json", .None
 
-    case .Rfc8628:
+    case .Xai:
         grant_type, grant_err := url_encode(DEVICE_CODE_GRANT_TYPE, allocator)
         client_id, client_err := url_encode(provider.client_id, allocator)
         device_code, device_err := url_encode(session.handle, allocator)
@@ -226,7 +215,7 @@ device_auth_parse :: proc(
     }
     defer secret_json_destroy(value, allocator)
 
-    handle_key := provider.device_profile == .Codex ? "device_auth_id" : "device_code"
+    handle_key := provider.kind == .Codex ? "device_auth_id" : "device_code"
     handle, handle_ok := json_string_member(object, handle_key)
     user_code, code_ok := json_string_member(object, "user_code")
     if !code_ok {
@@ -236,13 +225,13 @@ device_auth_parse :: proc(
         return {}, .Invalid_Response
     }
 
-    interval, interval_err := device_interval_member(object, provider.device_profile)
+    interval, interval_err := device_interval_member(object, provider.kind)
     if interval_err != .None {
         return {}, interval_err
     }
 
     expires_in_s := u64(CODEX_DEVICE_TIMEOUT_MS / 1000)
-    if provider.device_profile == .Rfc8628 {
+    if provider.kind == .Xai {
         expires, expires_present, expires_valid := json_optional_positive_u64_member(object, "expires_in")
         if !expires_present || !expires_valid || expires > DEVICE_CODE_LIFETIME_MAX_S {
             return {}, .Invalid_Response
@@ -251,7 +240,7 @@ device_auth_parse :: proc(
     }
 
     verification := provider.device_verification_url
-    if provider.device_profile == .Rfc8628 {
+    if provider.kind == .Xai {
         uri, uri_ok := json_string_member(object, "verification_uri_complete")
         if !uri_ok {
             uri, uri_ok = json_string_member(object, "verification_uri")
@@ -301,7 +290,7 @@ device_poll_classify :: proc(
 ) {
     assert(provider != nil, "device classify needs a provider")
 
-    switch provider.device_profile {
+    switch provider.kind {
     case .Codex:
         if status == 403 || status == 404 {
             return Device_Pending{}, .None
@@ -317,7 +306,7 @@ device_poll_classify :: proc(
 
         return Device_Exchange{grant = grant}, .None
 
-    case .Rfc8628:
+    case .Xai:
         if status >= 200 && status < 300 {
             return Device_Tokens{}, .None
         }
@@ -340,7 +329,7 @@ device_grant_body :: proc(
     string,
     OAuth_Error,
 ) {
-    assert(provider != nil && provider.device_profile == .Codex, "device grant exchange is Codex-only")
+    assert(provider != nil && provider.kind == .Codex, "device grant exchange is Codex-only")
 
     flow := Authorization_Flow {
         verifier     = grant.code_verifier,
@@ -433,10 +422,10 @@ rfc8628_error_result :: proc(data: string, allocator: mem.Allocator) -> Device_P
 // The positive integral poll interval. RFC 8628 defaults an absent value to five seconds;
 // Codex's proprietary response is required to carry its string interval.
 @(private)
-device_interval_member :: proc(object: json.Object, profile: Device_Profile) -> (interval: u64, err: OAuth_Error) {
+device_interval_member :: proc(object: json.Object, kind: Kind) -> (interval: u64, err: OAuth_Error) {
     interval_value, found := object["interval"]
     if !found {
-        if profile == .Rfc8628 {
+        if kind == .Xai {
             return DEVICE_DEFAULT_POLL_INTERVAL_S, .None
         }
 
@@ -454,7 +443,7 @@ device_interval_member :: proc(object: json.Object, profile: Device_Profile) -> 
         }
 
     case json.Float:
-        if profile == .Codex ||
+        if kind == .Codex ||
            shape < DEVICE_POLL_INTERVAL_MIN_S ||
            shape > f64(DEVICE_POLL_INTERVAL_MAX_S) ||
            math.floor(shape) != shape {

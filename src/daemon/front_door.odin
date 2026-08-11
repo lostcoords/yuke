@@ -105,6 +105,8 @@ OFFICIAL_ORIGIN :: "https://client.yuke.sh"
 
 // Whether `origin` is the official client or an operator-configured allowlist entry.
 origin_allowed :: proc(allowed: []string, origin: string) -> bool {
+    // @Todo(xyaman): Require pairing before an allowed browser origin can control
+    // an otherwise unauthenticated loopback daemon.
     if origin == OFFICIAL_ORIGIN {
         return true
     }
@@ -127,31 +129,26 @@ middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     d := ctx.user_data
 
     auth := authenticate(d, ctx.request.head, ctx.request.query)
-    switch auth {
-    case .Missing, .Invalid, .Unsupported_Scheme:
-        log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
-        if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", auth_challenge(auth)) {
-            return .Stop
-        }
-
-        http_server.respond_text(ctx.conn, .Unauthorized, "unauthorized")
-
-        return .Stop
-
-    case .Ambiguous:
-        log.warnf("daemon: ambiguous credentials %s %s", ctx.request.head.method, ctx.request.path)
-        if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", auth_challenge(auth)) {
-            return .Stop
-        }
-
-        http_server.respond_text(ctx.conn, .Bad_Request, "ambiguous credentials")
-
-        return .Stop
-
-    case .Disabled, .Header, .Query:
+    if auth == .Allowed {
+        return .Continue
     }
 
-    return .Continue
+    status := http.Status.Unauthorized
+    message := "unauthorized"
+    if auth == .Ambiguous {
+        status = .Bad_Request
+        message = "ambiguous credentials"
+        log.warnf("daemon: ambiguous credentials %s %s", ctx.request.head.method, ctx.request.path)
+    } else {
+        log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
+    }
+
+    if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", auth_challenge(auth)) {
+        return .Stop
+    }
+
+    http_server.respond_text(ctx.conn, status, message)
+    return .Stop
 }
 
 // Unmatched path after auth.

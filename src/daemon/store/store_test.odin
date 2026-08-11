@@ -52,6 +52,27 @@ test_open_creates_schema_at_latest_version :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_open_memory_creates_constrained_ephemeral_store :: proc(t: ^testing.T) {
+    s, err := open_memory()
+    testing.expect_value(t, err, nil)
+    testing.expect(t, s != nil, "a successful memory open returns a store")
+    defer close(s)
+
+    version, verr := sqlite.query_one_i64(s.writer, "PRAGMA user_version")
+    testing.expect_value(t, verr, sqlite.Result.Ok)
+    testing.expect_value(t, version, i64(len(MIGRATIONS)))
+
+    mode, merr := sqlite.query_one_text(s.writer, "PRAGMA journal_mode")
+    defer delete(mode)
+    testing.expect_value(t, merr, sqlite.Result.Ok)
+    testing.expect_value(t, mode, "memory")
+
+    keys, keys_err := sqlite.query_one_i64(s.writer, "PRAGMA foreign_keys")
+    testing.expect_value(t, keys_err, sqlite.Result.Ok)
+    testing.expect_value(t, keys, i64(1))
+}
+
+@(test)
 test_reopen_applies_nothing :: proc(t: ^testing.T) {
     path := testsupport.sqlite_db_path(t, "reopen")
     defer testsupport.sqlite_db_remove(path)

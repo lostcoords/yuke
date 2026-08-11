@@ -2,21 +2,19 @@ package auth
 
 import "core:mem"
 
-// Provider-specific refresh response and request behavior.
-Refresh_Profile :: enum {
+// Authentication-capable providers. This one discriminator selects the
+// descriptor and every provider-specific OAuth behavior.
+Kind :: enum {
     Codex,
-    Standard,
-}
-
-// Token from which a provider projects its durable account identity.
-Account_Token :: enum {
-    Id,
-    Access,
+    Xai,
 }
 
 // One provider's OAuth adapter: endpoints, public client identity, and the few
 // behaviors that differ. Immutable package value with a stable address; hold the pointer.
 Provider :: struct {
+    // Closed provider identity; selects protocol behavior without parallel profiles.
+    kind:                       Kind,
+
     // Stable id; the key under `providers` in auth.json and on the wire.
     id:                         string,
 
@@ -54,12 +52,6 @@ Provider :: struct {
     device_redirect_uri:        string,
     device_verification_url:    string,
 
-    // Which device-code protocol this provider speaks.
-    device_profile:             Device_Profile,
-
-    // Refresh request and response behavior.
-    refresh_profile:            Refresh_Profile,
-
     // Proactive-refresh lead and the expiry fallback used when a response carries
     // no usable lifetime, both in milliseconds.
     refresh_lead_ms:            u64,
@@ -68,10 +60,42 @@ Provider :: struct {
     // Failed-refresh identifiers that mean the rotating token is gone for good.
     // Matched against a top-level `error` string or a nested `error.code`.
     refresh_permanent_codes:    []string,
+}
 
-    // Which token carries the account identity.
-    account_token:              Account_Token,
+// Resolve the closed provider identity to its immutable descriptor.
+provider :: proc(kind: Kind) -> ^Provider {
+    switch kind {
+    case .Codex:
+        return &codex_descriptor
 
-    // Project the account id out of `account_token`.
-    account_id:                 proc(token: string, allocator: mem.Allocator) -> (string, OAuth_Error),
+    case .Xai:
+        return &xai_descriptor
+    }
+
+    unreachable()
+}
+
+// Resolve a durable/wire provider id to the closed provider identity.
+kind_from_id :: proc(id: string) -> (Kind, bool) {
+    for kind in Kind {
+        if provider(kind).id == id {
+            return kind, true
+        }
+    }
+
+    return {}, false
+}
+
+// Project the durable account id from the token selected by `kind`.
+@(private)
+account_id_from_token :: proc(kind: Kind, token: string, allocator: mem.Allocator) -> (string, OAuth_Error) {
+    switch kind {
+    case .Codex:
+        return codex_account_id(token, allocator)
+
+    case .Xai:
+        return xai_account_id(token, allocator)
+    }
+
+    unreachable()
 }

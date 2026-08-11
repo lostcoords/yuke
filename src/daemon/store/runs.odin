@@ -1,7 +1,5 @@
 package store
 
-import "core:mem"
-
 import "src:daemon/store/queries"
 import "src:wire"
 
@@ -17,11 +15,10 @@ Open_Run :: struct {
     started_at_ms: u64,
 }
 
-// A session's `message_count` and open-run state, read together from its row. resync
-// reads this after `high_water` has confirmed the session exists.
-Session_Activity :: struct {
-    message_count: u64,
-    open_run:      Maybe(Open_Run),
+// The two projections resync needs from one sessions-row read.
+Session_Snapshot :: struct {
+    session:  wire.Session,
+    open_run: Maybe(Open_Run),
 }
 
 // Fold a run lifecycle event into the open-run projection, inside the append transaction.
@@ -62,51 +59,42 @@ runs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_Dat
     return nil
 }
 
-// A session's message count and open-run state. Called after `high_water` has confirmed the
-// session exists, so the row is always present. A stored value the codec rejects is `Invalid_Row`.
-session_activity :: proc(
-    s: ^Store,
-    session: wire.Session_Id,
-    allocator: mem.Allocator,
-) -> (
-    activity: Session_Activity,
-    err: Error,
-) {
-    assert(s != nil, "session_activity needs a store")
-    assert(s.writer != nil, "an open store always holds its writer")
-
-    row, sqlite_err := queries.session_activity(&s.queries, {session_id = session}, allocator)
-    if sqlite_err != nil {
-        return {}, read_err(sqlite_err)
-    }
-
-    activity.message_count = row.message_count
-
+// Decode the nullable open-run columns embedded in a session snapshot.
+@(private)
+open_run_from_row :: proc(row: $Row) -> (Maybe(Open_Run), bool) {
     run_id, running := row.open_run_id.?
+    kind_wire, has_kind := row.open_run_kind.?
+    reason_wire, has_reason := row.open_run_reason.?
+    config_rev, has_config := row.open_run_config_rev.?
+    started_at_ms, has_started := row.open_run_started_at_ms.?
     if !running {
-        return activity, nil
+        return nil, !has_kind && !has_reason && !has_config && !has_started
     }
 
-    kind_wire, _ := row.open_run_kind.?
+    if !has_kind || !has_config || !has_started {
+        return nil, false
+    }
+
     kind, kind_ok := wire.run_kind_from_wire(kind_wire)
     if !kind_ok {
-        return {}, Store_Error.Invalid_Row
+        return nil, false
+    }
+
+    if has_reason != (kind == .Compaction) {
+        return nil, false
     }
 
     reason: Maybe(wire.Compaction_Reason)
-    if reason_wire, has_reason := row.open_run_reason.?; has_reason {
+    if has_reason {
         parsed, reason_ok := wire.compaction_reason_from_wire(reason_wire)
         if !reason_ok {
-            return {}, Store_Error.Invalid_Row
+            return nil, false
         }
 
         reason = parsed
     }
 
-    config_rev, _ := row.open_run_config_rev.?
-    started_at_ms, _ := row.open_run_started_at_ms.?
-
-    activity.open_run = Open_Run {
+    open := Open_Run {
         run_id        = run_id,
         kind          = kind,
         reason        = reason,
@@ -114,5 +102,5 @@ session_activity :: proc(
         started_at_ms = started_at_ms,
     }
 
-    return activity, nil
+    return open, true
 }

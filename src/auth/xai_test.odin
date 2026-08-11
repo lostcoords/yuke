@@ -62,7 +62,7 @@ test_xai_token_response_parse_uses_sub_and_expires_in :: proc(t: ^testing.T) {
     testing.expect(t, response_aerr == nil, "token response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    credentials, parse_err := token_response_parse(xai_provider(), response, 1_700_000_000_000)
+    credentials, parse_err := token_response_parse(provider(.Xai), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -95,7 +95,7 @@ test_xai_device_token_response_without_id_token_succeeds :: proc(t: ^testing.T) 
     testing.expect(t, response_aerr == nil, "token response allocation")
     defer secret.string_destroy(&response, context.allocator)
 
-    credentials, parse_err := token_response_parse(xai_provider(), response, 1_700_000_000_000)
+    credentials, parse_err := token_response_parse(provider(.Xai), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
     defer credentials_destroy(&credentials)
 
@@ -106,9 +106,10 @@ test_xai_device_token_response_without_id_token_succeeds :: proc(t: ^testing.T) 
 
 @(test)
 test_xai_refresh_body_is_form_encoded :: proc(t: ^testing.T) {
-    body, err := refresh_request_body(xai_provider(), "r-token")
+    body, content_type, err := refresh_request_body(provider(.Xai), "r-token")
     testing.expect_value(t, err, OAuth_Error.None)
     defer secret.string_destroy(&body, context.allocator)
+    testing.expect_value(t, content_type, "application/x-www-form-urlencoded")
 
     testing.expect_value(
         t,
@@ -121,16 +122,16 @@ test_xai_refresh_body_is_form_encoded :: proc(t: ^testing.T) {
 test_xai_refresh_failure_classifies_top_level_invalid_grant :: proc(t: ^testing.T) {
     testing.expect(
         t,
-        refresh_failure_permanent(xai_provider(), `{"error":"invalid_grant"}`),
+        refresh_failure_permanent(provider(.Xai), `{"error":"invalid_grant"}`),
         "invalid_grant is terminal",
     )
-    testing.expect(t, !refresh_failure_permanent(xai_provider(), `{"error":"slow_down"}`), "transient stays retryable")
-    testing.expect(t, !refresh_failure_permanent(xai_provider(), `not json`), "malformed stays retryable")
+    testing.expect(t, !refresh_failure_permanent(provider(.Xai), `{"error":"slow_down"}`), "transient stays retryable")
+    testing.expect(t, !refresh_failure_permanent(provider(.Xai), `not json`), "malformed stays retryable")
 }
 
 @(test)
 test_xai_authorize_url_uses_referrer_and_pkce :: proc(t: ^testing.T) {
-    flow, err := authorization_flow_create(xai_provider(), 1456, "yuke-odin", context.allocator)
+    flow, err := authorization_flow_create(provider(.Xai), 1456, "yuke-odin", context.allocator)
     testing.expect_value(t, err, OAuth_Error.None)
     defer authorization_flow_destroy(&flow, context.allocator)
 
