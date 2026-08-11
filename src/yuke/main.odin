@@ -1,17 +1,17 @@
 /*
-yuke: one binary, three subcommands over a single `~/.config/yuke` identity.
+yuke: one binary, a handful of subcommands over a single `~/.config/yuke` identity.
 
   yuke            the interactive TUI client (default, no subcommand)
   yuke daemon     the session daemon (front door, store, script tier)
+  yuke service    install/manage the daemon as a background OS service
   yuke login      device-code enrollment against the control plane
 
 Role is per-invocation, not a persisted identity: the same device credential backs the client,
 the daemon, and login. This file only routes; each subcommand's body lives in its own
-`cmd_*.odin`.
+`cmd_*.odin`, and `commands.odin` holds the help table the routing is documented from.
 */
 package main
 
-import "core:fmt"
 import "core:os"
 
 import tui "src:tui"
@@ -23,27 +23,20 @@ main :: proc() {
     case "daemon":
         daemon_run()
 
+    case "service":
+        service_run()
+
     case "login":
         login_run()
 
     case "help", "--help", "-h":
-        usage()
+        if len(os.args) > 2 {
+            help_command(os.args[2])
+        } else {
+            usage()
+        }
 
     case:
         tui.run()
     }
-}
-
-// Print the subcommand summary to stdout.
-@(private = "file")
-usage :: proc() {
-    fmt.println(
-        `yuke — session client, daemon, and device login
-
-usage:
-  yuke            run the interactive TUI client (default)
-  yuke daemon     run the session daemon
-  yuke login      enroll this device with the control plane
-  yuke help       show this message`,
-    )
 }
