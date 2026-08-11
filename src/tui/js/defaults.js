@@ -4,6 +4,7 @@
 import { term } from "yuke:term";
 import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit } from "yuke:core";
 import { ui, List, Transcript } from "yuke:ui";
+import { connect, connectionState } from "yuke:client";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
 Object.assign(style.groups, {
@@ -356,7 +357,7 @@ class HomeView extends View {
 
     let y = padTop + brandH;
     if (headerH > y) {
-      const status = here.length + " here · " + others.length + " elsewhere · dummy";
+      const status = here.length + " here · " + others.length + " elsewhere · " + connectionLabel();
       paintCentered(y, status, w, "YukeStatus");
       y++;
     }
@@ -803,8 +804,82 @@ keymap.add({
   },
 });
 
+// --- daemon connection --------------------------------------------------------------------
+// Owns the local daemon lifecycle: connect on start, retry every RETRY_MS while down. The host
+// has no setTimeout and does not push post-ready close into JS, so this service always ticks:
+// while ready it is a slow liveness poll (drop → schedule retry); while down it advances the
+// header countdown and reconnects. Views read connectionState()/connectionLabel(). Target is
+// fixed until applyConfig lands.
+const DAEMON = { host: "127.0.0.1", port: 9853 };
+const RETRY_MS = 5000;
+const READY_POLL_MS = 1000; // drop detection; host has no connection-change callback yet
+const RETRY_POLL_MS = 500; // countdown label + reconnect deadline
+
+const connection = {
+  nextRetryAt: 0,
+
+  onStart() {
+    this.attempt();
+  },
+
+  attempt() {
+    if (connectionState() !== "disconnected") return;
+
+    this.nextRetryAt = 0;
+    try {
+      connect(DAEMON).then(
+        () => {
+          root.invalidate();
+        },
+        () => {
+          this.nextRetryAt = Date.now() + RETRY_MS;
+          root.invalidate();
+        },
+      );
+    } catch (_e) {
+      this.nextRetryAt = Date.now() + RETRY_MS;
+    }
+
+    root.invalidate();
+  },
+
+  // Always arm ticks: ready needs a heartbeat (no host drop event); offline needs the countdown.
+  needsTick() {
+    const ms = connectionState() === "ready" ? READY_POLL_MS : RETRY_POLL_MS;
+    return { periodMs: ms };
+  },
+
+  // Disconnected: arm a retry if none is pending (failed attempt or live drop), else dial when due.
+  // Connecting/ready/closing: no-op; the next disconnected tick will schedule.
+  tick() {
+    if (connectionState() !== "disconnected") return;
+
+    if (this.nextRetryAt === 0) {
+      this.nextRetryAt = Date.now() + RETRY_MS;
+    } else if (Date.now() >= this.nextRetryAt) {
+      this.attempt();
+    }
+  },
+};
+
+// Header status: connected / connecting / offline with a retry countdown.
+function connectionLabel() {
+  const st = connectionState();
+  if (st === "ready") return "connected";
+  if (st === "connecting") return "connecting…";
+  if (st === "closing") return "disconnecting…";
+
+  if (connection.nextRetryAt > 0) {
+    const secs = Math.max(0, Math.ceil((connection.nextRetryAt - Date.now()) / 1000));
+    return "daemon off · retry " + secs + "s";
+  }
+
+  return "daemon off";
+}
+
 seedDummy();
 root.setActive(home);
+root.addService(connection);
 
 // Exported so a user's yuke.js can reference the stock views (swap, subclass, or patch).
 export { home, shell, HomeView, ShellView };

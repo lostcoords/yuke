@@ -243,11 +243,19 @@ declare module "yuke:core" {
     cursor(): CursorRequest | null;
   }
 
+  export interface Service {
+    onStart?(): void;
+    needsTick?(): TickRequest | null;
+    tick?(): void;
+  }
+
   export class RootView {
     active: View | null;
     overlays: Layer[];
+    services: Service[];
     constructor();
     setActive(view: View | null): void;
+    addService(svc: Service): Service;
     get focused(): Layer | null;
     pushOverlay(layer: Layer): Layer;
     popOverlay(layer?: Layer): void;

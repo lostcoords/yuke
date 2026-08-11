@@ -361,16 +361,29 @@ export class View {
 // RootView owns the frame, the base view, and a z-ordered overlay stack. Layers paint
 // back-to-front (base first, overlays on top); input dispatches front-to-back (top overlay
 // first). The top overlay is the focused layer; a modal one (the default) stops input from
-// reaching the base. Ticks follow paint visibility (any layer that needsTick), so a base
-// spinner keeps advancing under a floating window. Cursor stays focused-only.
+// reaching the base. Ticks walk base, overlays, and background services (any needsTick), so a
+// base spinner keeps advancing under a floating window and services stay alive with no paint.
+// Cursor stays focused-only.
 export class RootView {
   constructor() {
     this.active = null; // base view
     this.overlays = []; // z-order; last === top === focused
+    this.services = []; // background concerns (e.g. the daemon connection): tick + start, no paint
+    this._started = false; // the start event has fired
   }
 
   setActive(view) {
     this.active = view;
+  }
+
+  // Register a background service: an object with optional onStart()/needsTick()/tick(). It never
+  // paints; it rides the tick loop so a concern like the daemon connection runs under any view.
+  // Added after start, it starts at once.
+  addService(svc) {
+    this.services.push(svc);
+    if (this._started && svc.onStart) svc.onStart();
+    this.syncTick();
+    return svc;
   }
 
   // The layer that owns keyboard input and the cursor this frame.
@@ -402,10 +415,12 @@ export class RootView {
     this.draw();
   }
 
-  // Walk base + overlays (paint order). Used for tick arming and advance.
-  _forEachLayer(fn) {
+  // Walk everything that can tick: base view, overlays, and background services. Paint has its
+  // own explicit walk in draw(); this one is for tick arming and advance only.
+  _forEachTickable(fn) {
     if (this.active) fn(this.active);
     for (const layer of this.overlays) fn(layer);
+    for (const svc of this.services) fn(svc);
   }
 
   draw() {
@@ -442,7 +457,7 @@ export class RootView {
   // a 100ms spinner under a slower overlay still advances on time.
   syncTick() {
     let period = null;
-    this._forEachLayer((layer) => {
+    this._forEachTickable((layer) => {
       if (!layer.needsTick) return;
       const t = layer.needsTick();
       if (!t) return;
@@ -455,7 +470,7 @@ export class RootView {
 
   // Advance animation state on every layer that currently wants ticks.
   tickLayers() {
-    this._forEachLayer((layer) => {
+    this._forEachTickable((layer) => {
       if (!layer.needsTick || !layer.tick) return;
       if (layer.needsTick()) layer.tick();
     });
@@ -469,6 +484,11 @@ export class RootView {
     }
 
     if (ev.type === "start" || ev.type === "resize") {
+      if (ev.type === "start" && !this._started) {
+        this._started = true;
+        for (const svc of this.services) if (svc.onStart) svc.onStart();
+      }
+
       this.draw();
       return;
     }
