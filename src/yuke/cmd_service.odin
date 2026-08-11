@@ -140,11 +140,10 @@ service_log_path :: proc(allocator := context.allocator) -> string {
     return path if err == nil else ""
 }
 
-// Ensure the parent directory of `path` exists, exiting on failure. Shared by the text unit
-// writer below and the Windows UTF-16 writer, which differ only in how they encode the body.
+// Ensure the parent directory of `path` exists, exiting on failure.
 service_make_parent_dirs :: proc(path: string) {
+    // filepath.dir slices `path`; it is not an allocation and must not be freed.
     dir := filepath.dir(path)
-    defer delete(dir, context.allocator)
 
     if err := os.make_directory_all(dir); err != nil && !os.is_dir(dir) {
         fmt.eprintfln("yuke service: could not create %s: %v", dir, err)
@@ -184,15 +183,24 @@ service_require_installed :: proc(path: string) {
 // Filesystem paths rarely contain these, but a home directory or script root that does must not
 // produce a malformed unit. Caller owns the result.
 service_xml_escape :: proc(s: string, allocator := context.allocator) -> string {
-    amp, _ := strings.replace_all(s, "&", "&amp;", allocator)
+    // replace_all aliases its input when the pattern is absent; free only real allocations and
+    // clone the result so it is always owned.
+    amp, amp_alloc := strings.replace_all(s, "&", "&amp;", allocator)
+    defer if amp_alloc {
+        delete(amp, allocator)
+    }
 
-    lt, _ := strings.replace_all(amp, "<", "&lt;", allocator)
-    delete(amp, allocator)
+    lt, lt_alloc := strings.replace_all(amp, "<", "&lt;", allocator)
+    defer if lt_alloc {
+        delete(lt, allocator)
+    }
 
-    gt, _ := strings.replace_all(lt, ">", "&gt;", allocator)
-    delete(lt, allocator)
+    gt, gt_alloc := strings.replace_all(lt, ">", "&gt;", allocator)
+    defer if gt_alloc {
+        delete(gt, allocator)
+    }
 
-    return gt
+    return strings.clone(gt, allocator)
 }
 
 // Report a supervisor step that failed and exit non-zero. Shared exit path so every platform
