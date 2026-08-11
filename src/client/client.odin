@@ -296,8 +296,11 @@ client_send_request :: proc(
         return 0, .Bad_Frame
     }
 
-    e, _ := wire.request_encode(req, c.allocator)
+    e, encoded := wire.request_encode(req, c.allocator)
     defer wire.emitter_destroy(&e)
+    if !encoded {
+        return 0, .Out_Of_Memory
+    }
 
     serr := c.transport->send_text(transmute([]byte)wire.to_string(&e))
     if serr != .None {

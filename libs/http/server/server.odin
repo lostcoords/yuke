@@ -1,6 +1,7 @@
 package http_server
 
 import "base:runtime"
+import "core:crypto"
 import "core:log"
 import "core:mem"
 import "core:nbio"
@@ -1045,7 +1046,9 @@ conn_on_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
         return
     }
 
-    if _, aerr := append(&c.head_buf, ..c.recv_buf[:op.recv.received]); aerr != nil {
+    _, aerr := append(&c.head_buf, ..c.recv_buf[:op.recv.received])
+    crypto.zero_explicit(raw_data(c.recv_buf), op.recv.received)
+    if aerr != nil {
         conn_finalize(c)
         return
     }
@@ -1454,7 +1457,13 @@ conn_release :: proc(c: ^Conn) {
     assert(s.conns[c.ticket] == c, "releasing a connection the server does not own")
     assert(c.close_pending == 0, "connection released with closes outstanding")
 
+    if cap(c.head_buf) > 0 {
+        crypto.zero_explicit(raw_data(c.head_buf), cap(c.head_buf))
+    }
     delete(c.head_buf)
+    if len(c.recv_buf) > 0 {
+        crypto.zero_explicit(raw_data(c.recv_buf), len(c.recv_buf))
+    }
     delete(c.recv_buf, c.allocator)
     delete(c.resp_head, c.allocator)
     delete(c.resp_body, c.allocator)

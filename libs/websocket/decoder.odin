@@ -1,8 +1,66 @@
 package websocket
 
 import "base:runtime"
+import "core:crypto"
+import "core:mem"
 import "core:slice"
 import "core:unicode/utf8"
+
+bytes_zero :: proc(data: []byte) {
+    if len(data) > 0 {
+        crypto.zero_explicit(raw_data(data), len(data))
+    }
+}
+
+owned_bytes_destroy :: proc(data: []byte, allocator: mem.Allocator) {
+    bytes_zero(data)
+    delete(data, allocator)
+}
+
+dynamic_bytes_destroy :: proc(data: ^[dynamic]byte) {
+    assert(data != nil, "dynamic byte cleanup needs storage")
+    if cap(data^) > 0 {
+        crypto.zero_explicit(raw_data(data^), cap(data^))
+    }
+    delete(data^)
+    data^ = nil
+}
+
+dynamic_bytes_clear :: proc(data: ^[dynamic]byte) {
+    assert(data != nil, "dynamic byte reset needs storage")
+    bytes_zero(data^[:])
+    clear(data)
+}
+
+dynamic_bytes_append :: proc(data: ^[dynamic]byte, added: []byte) -> runtime.Allocator_Error {
+    assert(data != nil, "dynamic byte append needs storage")
+    if len(added) == 0 {
+        return nil
+    }
+    if len(added) > max(int) - len(data^) {
+        return runtime.Allocator_Error.Out_Of_Memory
+    }
+
+    old_len := len(data^)
+    needed := old_len + len(added)
+    if needed > cap(data^) {
+        allocator := data^.allocator
+        new_capacity := max(needed, max(64, min(cap(data^), max(int) / 2) * 2))
+        replacement, aerr := make([dynamic]byte, old_len, new_capacity, allocator)
+        if aerr != nil {
+            return aerr
+        }
+        copy(replacement[:], data^[:])
+        dynamic_bytes_destroy(data)
+        data^ = replacement
+    }
+
+    resize(data, needed)
+    copied := copy(data^[old_len:], added)
+    assert(copied == len(added), "dynamic byte append was short")
+
+    return nil
+}
 
 // The kind of a decoded message. Ping/Pong/Close are control frames the driver
 // acts on; Text/Binary are application payloads.
@@ -87,7 +145,7 @@ decoder_init :: proc(
     message: [dynamic]byte
     message, aerr = make([dynamic]byte, allocator)
     if aerr != nil {
-        delete(scratch)
+        dynamic_bytes_destroy(&scratch)
         return aerr
     }
 
@@ -108,8 +166,8 @@ decoder_destroy :: proc(d: ^Decoder) {
     assert(d != nil, "decoder_destroy needs a decoder")
     assert(d.head >= 0 && d.head <= len(d.scratch), "decoder head outside scratch")
 
-    delete(d.scratch)
-    delete(d.message)
+    dynamic_bytes_destroy(&d.scratch)
+    dynamic_bytes_destroy(&d.message)
     d^ = {}
 }
 
@@ -125,13 +183,12 @@ decoder_feed :: proc(d: ^Decoder, data: []byte) -> runtime.Allocator_Error {
             copy(d.scratch[:remaining], d.scratch[d.head:])
         }
 
+        bytes_zero(d.scratch[remaining:])
         resize(&d.scratch, remaining)
         d.head = 0
     }
 
-    _, aerr := append(&d.scratch, ..data)
-
-    return aerr
+    return dynamic_bytes_append(&d.scratch, data)
 }
 
 // Decode the next complete message from buffered bytes. `has_msg` is true when a
@@ -187,6 +244,7 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
                 return {}, false, .Out_Of_Memory
             }
 
+            bytes_zero(payload)
             d.head += frame_length
 
             return {kind = kind, data = out_data}, true, .None
@@ -226,9 +284,10 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
             message_opcode = header.opcode
         }
 
-        if _, aerr := append(&d.message, ..payload); aerr != nil {
+        if aerr := dynamic_bytes_append(&d.message, payload); aerr != nil {
             return {}, false, .Out_Of_Memory
         }
+        bytes_zero(payload)
 
         d.head += frame_length
 
@@ -239,7 +298,7 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         // Text must be valid UTF-8 (RFC 6455 §5.6). Validate before cloning so the
         // failure path allocates nothing.
         if message_opcode == .Text && !utf8.valid_string(string(d.message[:])) {
-            clear(&d.message)
+            dynamic_bytes_clear(&d.message)
             return {}, false, .Invalid_Utf8
         }
 
@@ -247,7 +306,7 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         if aerr != nil {
             return {}, false, .Out_Of_Memory
         }
-        clear(&d.message)
+        dynamic_bytes_clear(&d.message)
 
         kind: Message_Kind = message_opcode == .Text ? .Text : .Binary
 

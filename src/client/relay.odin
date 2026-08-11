@@ -20,6 +20,7 @@ import "core:strings"
 
 import ws "libs:websocket"
 import relay "src:relay"
+import "src:secret"
 
 // Relay backend behind a `Transport`: one `/connect` link, the initiator Noise session, and
 // the reassembler for inbound fragments. Heap-owned by `relay_create` so its address is
@@ -189,7 +190,7 @@ relay_send_text :: proc(t: Transport, data: []byte) -> ws.Client_Error {
     assert(len(data) > 0, "relay send needs a non-empty frame")
 
     temp := virtual.arena_temp_begin(&backend.send_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&backend.send_scratch)
 
     count := relay.transport_chunk_count(len(data))
@@ -285,7 +286,7 @@ relay_on_parked :: proc(l: ^relay.Link) {
     backend := relay_of(l)
 
     temp := virtual.arena_temp_begin(&backend.send_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&backend.send_scratch)
 
     msg1, err := relay.session_initiate(&backend.session, scratch)
@@ -311,7 +312,7 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     backend := relay_of(l)
 
     temp := virtual.arena_temp_begin(&backend.recv_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&backend.recv_scratch)
 
     if !backend.established {

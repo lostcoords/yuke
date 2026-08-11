@@ -31,29 +31,21 @@ auth_flow_from_wire :: proc(value: string) -> (Auth_Flow, bool) {
     return enum_from_wire(auth_flow_wire, value)
 }
 
-// Coarse persisted authentication state for a provider.
-Auth_State :: enum {
-    // No durable credentials are available.
-    Signed_Out,
-
-    // Durable credentials are available.
-    Signed_In,
+// Kind of durable provider credential. Values reveal no credential material.
+Auth_Credential_Kind :: enum {
+    Api_Key,
+    OAuth,
 }
 
 @(rodata)
-auth_state_wire := [Auth_State]string {
-    .Signed_Out = "signed_out",
-    .Signed_In  = "signed_in",
+auth_credential_kind_wire := [Auth_Credential_Kind]string {
+    .Api_Key = "api_key",
+    .OAuth   = "oauth",
 }
 
-// Wire string for an auth state.
-auth_state_to_wire :: proc(state: Auth_State) -> string {
-    return auth_state_wire[state]
-}
-
-// Auth state for a wire string; ok is false for an unknown state.
-auth_state_from_wire :: proc(value: string) -> (Auth_State, bool) {
-    return enum_from_wire(auth_state_wire, value)
+// Wire string for a credential kind.
+auth_credential_kind_to_wire :: proc(kind: Auth_Credential_Kind) -> string {
+    return auth_credential_kind_wire[kind]
 }
 
 // Public locator for one daemon-owned login attempt. It contains no OAuth secret.
@@ -68,18 +60,22 @@ Auth_Login_Summary :: struct {
 // Public authentication state and capabilities for one provider.
 Auth_Provider :: struct {
     // Stable configuration identifier.
-    provider_id:   Provider_Id,
+    provider_id:      Provider_Id,
 
-    // Whether durable credentials are available.
-    state:         Auth_State,
+    // @required-nullable
+    // Durable credential kind, or null when none is saved.
+    credential_kind:  Maybe(Auth_Credential_Kind),
+
+    // Whether API-key storage changed after this daemon started.
+    restart_required: bool,
 
     // @bounded LIMITS.max_auth_flows
     // Login mechanisms currently supported by this provider.
-    login_flows:   []Auth_Flow,
+    login_flows:      []Auth_Flow,
 
     // @required-nullable
     // Current daemon-owned attempt, if one is running.
-    pending_login: Maybe(Auth_Login_Summary),
+    pending_login:    Maybe(Auth_Login_Summary),
 }
 
 // Params for `auth.login`.
@@ -131,6 +127,22 @@ Auth_Cancel_Login_Params :: struct {
 Auth_Logout_Params :: struct {
     // Provider whose durable credentials are removed.
     provider_id: Provider_Id,
+}
+
+// Write-only params for `auth.set_api_key`. The key is never returned or retained by wire state.
+Auth_Set_Api_Key_Params :: struct {
+    // Provider whose durable API key is replaced.
+    provider_id: Provider_Id,
+
+    // @bounded LIMITS.max_api_key_bytes
+    // Secret key accepted only in this request.
+    api_key:     string,
+}
+
+// Result of staging an API-key replacement.
+Auth_Set_Api_Key_Result :: struct {
+    // Always true: a running daemon does not change its active credential snapshot.
+    restart_required: bool,
 }
 
 // Result of `auth.list`.
@@ -195,7 +207,15 @@ auth_login_summary_validate :: proc(self: Auth_Login_Summary) -> Validation_Erro
 auth_provider_emit :: proc(e: ^Emitter, self: Auth_Provider) {
     object_begin(e)
     field_string(e, "provider_id", self.provider_id)
-    field_string(e, "state", auth_state_to_wire(self.state))
+    key(e, "credential_kind")
+
+    if kind, ok := self.credential_kind.?; ok {
+        val_string(e, auth_credential_kind_to_wire(kind))
+    } else {
+        val_null(e)
+    }
+
+    field_bool(e, "restart_required", self.restart_required)
     key(e, "login_flows")
     array_begin(e)
     for flow in self.login_flows {
@@ -219,7 +239,7 @@ auth_provider_emit :: proc(e: ^Emitter, self: Auth_Provider) {
 auth_provider_validate :: proc(self: Auth_Provider) -> Validation_Error {
     provider_id_validate(self.provider_id) or_return
 
-    if len(self.login_flows) == 0 || len(self.login_flows) > LIMITS.max_auth_flows {
+    if len(self.login_flows) > LIMITS.max_auth_flows {
         return .Overflow
     }
 
@@ -249,7 +269,8 @@ auth_provider_clone :: proc(self: Auth_Provider, allocator := context.allocator)
 
     return Auth_Provider {
         provider_id = strings.clone(self.provider_id, allocator),
-        state = self.state,
+        credential_kind = self.credential_kind,
+        restart_required = self.restart_required,
         login_flows = flows,
         pending_login = self.pending_login,
     }
@@ -337,6 +358,43 @@ auth_logout_params_emit :: proc(e: ^Emitter, self: Auth_Logout_Params) {
 // Verify auth.logout params.
 auth_logout_params_validate :: proc(self: Auth_Logout_Params) -> Validation_Error {
     return provider_id_validate(self.provider_id)
+}
+
+// Write auth.set_api_key params. This is the only request emitter that accepts a provider secret.
+auth_set_api_key_params_emit :: proc(e: ^Emitter, self: Auth_Set_Api_Key_Params) {
+    assert(e.secret, "auth.set_api_key needs a secret emitter")
+
+    object_begin(e)
+    field_string(e, "provider_id", self.provider_id)
+    field_string(e, "api_key", self.api_key)
+    object_end(e)
+}
+
+// Verify auth.set_api_key params before any durable mutation.
+auth_set_api_key_params_validate :: proc(self: Auth_Set_Api_Key_Params) -> Validation_Error {
+    provider_id_validate(self.provider_id) or_return
+
+    if self.api_key == "" {
+        return .Invalid_Length
+    }
+
+    return enforce_bounded(LIMITS.max_api_key_bytes, self.api_key)
+}
+
+// Write the secret-free auth.set_api_key result.
+auth_set_api_key_result_emit :: proc(e: ^Emitter, self: Auth_Set_Api_Key_Result) {
+    object_begin(e)
+    field_bool(e, "restart_required", self.restart_required)
+    object_end(e)
+}
+
+// A running daemon always requires restart after accepting a key.
+auth_set_api_key_result_validate :: proc(self: Auth_Set_Api_Key_Result) -> Validation_Error {
+    if !self.restart_required {
+        return .Mismatched_Payload
+    }
+
+    return .None
 }
 
 // Write auth.list result.
@@ -499,7 +557,8 @@ auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err:
 
     Field :: enum {
         Provider,
-        State,
+        Credential,
+        Restart,
         Flows,
         Pending,
     }
@@ -514,9 +573,16 @@ auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err:
             provider.provider_id = dec_string(d) or_return
             seen += {.Provider}
 
-        case "state":
-            provider.state = dec_enum(d, auth_state_wire) or_return
-            seen += {.State}
+        case "credential_kind":
+            seen += {.Credential}
+
+            if !dec_is_null(d) {
+                provider.credential_kind = dec_enum(d, auth_credential_kind_wire) or_return
+            }
+
+        case "restart_required":
+            provider.restart_required = dec_bool(d) or_return
+            seen += {.Restart}
 
         case "login_flows":
             provider.login_flows = dec_array(d, auth_flow_from_reader) or_return
@@ -534,7 +600,7 @@ auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err:
         }
     }
 
-    if seen != {.Provider, .State, .Flows, .Pending} {
+    if seen != {.Provider, .Credential, .Restart, .Flows, .Pending} {
         return {}, .Mismatched_Payload
     }
 
@@ -716,6 +782,66 @@ auth_logout_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Logout_Para
     }
 
     return params, .None
+}
+
+// Decode write-only auth.set_api_key params.
+auth_set_api_key_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Set_Api_Key_Params, err: Validation_Error) {
+    dec_object_begin(d) or_return
+
+    Field :: enum {
+        Provider,
+        Key,
+    }
+
+    seen: bit_set[Field]
+    for {
+        field, done := dec_key(d) or_return
+        if done do break
+
+        switch field {
+        case "provider_id":
+            params.provider_id = dec_string(d) or_return
+            seen += {.Provider}
+
+        case "api_key":
+            params.api_key = dec_string(d) or_return
+            seen += {.Key}
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if seen != {.Provider, .Key} {
+        return {}, .Mismatched_Payload
+    }
+
+    return params, .None
+}
+
+// Decode the secret-free auth.set_api_key result.
+auth_set_api_key_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Set_Api_Key_Result, err: Validation_Error) {
+    dec_object_begin(d) or_return
+    have := false
+    for {
+        field, done := dec_key(d) or_return
+        if done do break
+
+        switch field {
+        case "restart_required":
+            result.restart_required = dec_bool(d) or_return
+            have = true
+
+        case:
+            dec_skip(d) or_return
+        }
+    }
+
+    if !have {
+        return {}, .Mismatched_Payload
+    }
+
+    return result, .None
 }
 
 // Decode auth.list result.

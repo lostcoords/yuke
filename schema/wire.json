@@ -8,6 +8,7 @@
     "default_workspace_browse_page_size": 100,
     "max_activity_retry_message_bytes": 1024,
     "max_agents": 256,
+    "max_api_key_bytes": 65536,
     "max_auth_flows": 8,
     "max_auth_providers": 64,
     "max_auth_url_bytes": 4096,
@@ -238,6 +239,15 @@
       "params": "Empty",
       "result": "Auth_List_Result",
       "paramsOptional": true
+    },
+    {
+      "name": "auth.set_api_key",
+      "odinName": "Auth_Set_Api_Key",
+      "direction": "clientToServer",
+      "doc": "Durably replace one provider API key without activating it or returning it.",
+      "params": "Auth_Set_Api_Key_Params",
+      "result": "Auth_Set_Api_Key_Result",
+      "paramsOptional": false
     },
     {
       "name": "auth.login",
@@ -794,9 +804,15 @@
           "presence": "required"
         },
         {
-          "name": "state",
-          "type": "Auth_State",
-          "doc": "Whether durable credentials are available.",
+          "name": "credential_kind",
+          "type": "Maybe(Auth_Credential_Kind)",
+          "doc": "Durable credential kind, or null when none is saved.",
+          "presence": "requiredNullable"
+        },
+        {
+          "name": "restart_required",
+          "type": "bool",
+          "doc": "Whether API-key storage changed after this daemon started.",
           "presence": "required"
         },
         {
@@ -913,6 +929,41 @@
           "name": "provider_id",
           "type": "Provider_Id",
           "doc": "Provider whose durable credentials are removed.",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "Auth_Set_Api_Key_Params",
+      "doc": "Write-only params for `auth.set_api_key`. The key is never returned or retained by wire state.",
+      "fields": [
+        {
+          "name": "provider_id",
+          "type": "Provider_Id",
+          "doc": "Provider whose durable API key is replaced.",
+          "presence": "required"
+        },
+        {
+          "name": "api_key",
+          "type": "string",
+          "doc": "Secret key accepted only in this request.",
+          "presence": "required",
+          "bound": {
+            "kind": "bounded",
+            "expr": "LIMITS.max_api_key_bytes",
+            "value": 65536
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth_Set_Api_Key_Result",
+      "doc": "Result of staging an API-key replacement.",
+      "fields": [
+        {
+          "name": "restart_required",
+          "type": "bool",
+          "doc": "Always true: a running daemon does not change its active credential snapshot.",
           "presence": "required"
         }
       ]
@@ -5888,6 +5939,9 @@
           "type": "Empty"
         },
         {
+          "type": "Auth_Set_Api_Key_Params"
+        },
+        {
           "type": "Auth_Login_Params"
         },
         {
@@ -5968,6 +6022,9 @@
         },
         {
           "type": "Auth_List_Result"
+        },
+        {
+          "type": "Auth_Set_Api_Key_Result"
         },
         {
           "type": "Auth_Login_Result"
@@ -6304,19 +6361,19 @@
       ]
     },
     {
-      "name": "Auth_State",
-      "doc": "Coarse persisted authentication state for a provider.",
+      "name": "Auth_Credential_Kind",
+      "doc": "Kind of durable provider credential. Values reveal no credential material.",
       "numeric": false,
       "values": [
         {
-          "name": "Signed_Out",
-          "wire": "signed_out",
-          "doc": "No durable credentials are available."
+          "name": "Api_Key",
+          "wire": "api_key",
+          "doc": ""
         },
         {
-          "name": "Signed_In",
-          "wire": "signed_in",
-          "doc": "Durable credentials are available."
+          "name": "OAuth",
+          "wire": "oauth",
+          "doc": ""
         }
       ]
     },
@@ -6865,6 +6922,11 @@
           "name": "Auth_List",
           "wire": "auth.list",
           "doc": "Read public authentication state and supported login mechanisms."
+        },
+        {
+          "name": "Auth_Set_Api_Key",
+          "wire": "auth.set_api_key",
+          "doc": "Durably replace one provider API key without activating it or returning it."
         },
         {
           "name": "Auth_Login",

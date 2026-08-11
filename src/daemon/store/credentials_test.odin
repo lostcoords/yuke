@@ -60,6 +60,31 @@ test_credentials_round_trip_both_arms :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_credential_statuses_contain_no_secret_values :: proc(t: ^testing.T) {
+    s, err := open_memory()
+    testing.expect_value(t, err, nil)
+    defer close(s)
+
+    testing.expect_value(t, credential_api_key_upsert(s, "anthropic", "api-secret"), nil)
+    testing.expect_value(
+        t,
+        credential_oauth_upsert(
+            s,
+            "openai-codex",
+            {access_token = "access-secret", refresh_token = "refresh-secret", expires_at_ms = 100},
+        ),
+        nil,
+    )
+
+    statuses, load_err := credential_statuses_load(s)
+    testing.expect_value(t, load_err, nil)
+    defer credential_statuses_destroy(statuses)
+    testing.expect_value(t, len(statuses), 2)
+    testing.expect_value(t, statuses[0], Credential_Status{provider_id = "anthropic", kind = .Api_Key})
+    testing.expect_value(t, statuses[1], Credential_Status{provider_id = "openai-codex", kind = .OAuth})
+}
+
+@(test)
 test_credential_upsert_replaces_the_closed_arm_and_remove_is_idempotent :: proc(t: ^testing.T) {
     s, err := open_memory()
     testing.expect_value(t, err, nil)

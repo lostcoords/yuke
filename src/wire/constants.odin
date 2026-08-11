@@ -138,6 +138,9 @@ Limits :: struct {
     // Max human-readable request error bytes.
     max_error_message_bytes:             int,
 
+    // Max bytes in one write-only provider API key request.
+    max_api_key_bytes:                   int,
+
     // Daemon WebSocket ping interval.
     ping_interval_ms:                    u64,
 
@@ -189,6 +192,7 @@ LIMITS :: Limits {
     max_snapshot_configs                = 501,
     max_message_string_bytes            = 1024 * 1024,
     max_error_message_bytes             = 4096,
+    max_api_key_bytes                   = 64 * 1024,
     ping_interval_ms                    = 30_000,
     dead_connection_ms                  = 90_000,
 }

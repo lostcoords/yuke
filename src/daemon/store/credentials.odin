@@ -18,9 +18,19 @@ CREDENTIALS_LOAD_SQL :: `SELECT provider_id, kind, api_key, access_token,
     refresh_token, expires_at_ms, account_id
 FROM provider_credentials ORDER BY provider_id`
 
+@(private)
+CREDENTIAL_STATUSES_LOAD_SQL :: `SELECT provider_id, kind
+FROM provider_credentials ORDER BY provider_id`
+
 Credential_Kind :: enum {
     Api_Key,
     OAuth,
+}
+
+// Owned secret-free projection used by auth.list.
+Credential_Status :: struct {
+    provider_id: string,
+    kind:        Credential_Kind,
 }
 
 OAuth_Credential :: struct {
@@ -50,6 +60,73 @@ Credential_Row :: struct {
     refresh_token: Maybe(string) `sql:",borrowed"`,
     expires_at_ms: Maybe(u64),
     account_id:    Maybe(string) `sql:",borrowed"`,
+}
+
+@(private)
+Credential_Status_Row :: struct {
+    provider_id: string `sql:",borrowed"`,
+    kind:        string `sql:",borrowed"`,
+}
+
+credential_statuses_load :: proc(
+    s: ^Store,
+    allocator := context.allocator,
+) -> (
+    statuses: [dynamic]Credential_Status,
+    err: Error,
+) {
+    assert(s != nil, "credential_statuses_load needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a credential status read needs an allocator")
+
+    st := sqlite.prepare(s.writer, CREDENTIAL_STATUSES_LOAD_SQL) or_return
+    defer sqlite.finalize(st)
+
+    list: [dynamic]Credential_Status
+    list.allocator = allocator
+    defer if err != nil {
+        credential_statuses_destroy(list)
+    }
+
+    for {
+        rc := sqlite.step(st)
+
+        if rc != .Row {
+            if sqlite.is_error(rc) {
+                return nil, rc
+            }
+
+            assert(rc == .Done, "a credential status read either yields a row or completes")
+            break
+        }
+
+        row: Credential_Status_Row
+        sqlite.scan_row(st, &row, allocator) or_return
+        kind, valid := credential_kind_parse(row.kind)
+        if !valid || !credential_provider_id_valid(row.provider_id) {
+            return nil, .Invalid_Row
+        }
+
+        provider_id := credential_clone(row.provider_id, allocator) or_return
+        if _, append_err := append(&list, Credential_Status{provider_id = provider_id, kind = kind});
+           append_err != nil {
+            delete(provider_id, allocator)
+            return nil, .Alloc_Failed
+        }
+    }
+
+    return list, nil
+}
+
+credential_statuses_destroy :: proc(statuses: [dynamic]Credential_Status) {
+    allocator := statuses.allocator
+    assert(allocator.procedure != nil, "owned credential statuses carry their allocator")
+
+    for status in statuses {
+        delete(status.provider_id, allocator)
+    }
+
+    delete(statuses)
 }
 
 credentials_load :: proc(s: ^Store, allocator := context.allocator) -> (credentials: [dynamic]Credential, err: Error) {

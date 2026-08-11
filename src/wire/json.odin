@@ -1,6 +1,7 @@
 package wire
 
 import "base:intrinsics"
+import "core:crypto"
 import "core:strconv"
 import "core:strings"
 
@@ -37,6 +38,7 @@ Emitter :: struct {
     depth:  int,
     first:  [32]bool,
     failed: bool,
+    secret: bool,
 }
 
 // Initialize an emitter over a fresh buffer.
@@ -44,6 +46,23 @@ emitter_init :: proc(e: ^Emitter, allocator := context.allocator) {
     e.sb = strings.builder_make(allocator)
     e.depth = 0
     e.failed = false
+}
+
+// Preallocate a secret-bearing emitter so growth never releases an old plaintext copy.
+emitter_secret_init :: proc(e: ^Emitter, capacity: int, allocator := context.allocator) {
+    assert(e != nil, "secret emitter init needs storage")
+    assert(capacity > 0, "secret emitter capacity must be positive")
+
+    e^ = {
+        secret = true,
+    }
+    sb, aerr := strings.builder_make_len_cap(0, capacity, allocator)
+    if aerr != nil {
+        e.failed = true
+        return
+    }
+
+    e.sb = sb
 }
 
 // Whether any write was truncated by a failed buffer growth. The accumulated text is
@@ -74,9 +93,15 @@ _put_byte :: proc(e: ^Emitter, c: byte) {
     }
 }
 
-// Release the emitter's buffer.
+// Release the emitter's buffer, explicitly wiping it when it carried a secret.
 emitter_destroy :: proc(e: ^Emitter) {
+    assert(e != nil, "emitter cleanup needs storage")
+
+    if e.secret && cap(e.sb.buf) > 0 {
+        crypto.zero_explicit(raw_data(e.sb.buf), cap(e.sb.buf))
+    }
     strings.builder_destroy(&e.sb)
+    e^ = {}
 }
 
 // The accumulated JSON text (valid until the emitter is destroyed).

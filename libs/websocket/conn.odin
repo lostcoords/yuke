@@ -208,7 +208,9 @@ conn_recv_completed :: proc(core: ^Conn_Core, received: int, failed: bool) {
         return
     }
 
-    if decoder_feed(&core.decoder, core.recv_buf[:received]) != nil {
+    feed_err := decoder_feed(&core.decoder, core.recv_buf[:received])
+    bytes_zero(core.recv_buf[:received])
+    if feed_err != nil {
         conn_fail(core, .Out_Of_Memory)
         return
     }
@@ -254,26 +256,26 @@ conn_drain_decoder :: proc(core: ^Conn_Core) -> bool {
                 core.message(core, msg.kind, msg.data)
             }
 
-            delete(msg.data, core.allocator)
+            owned_bytes_destroy(msg.data, core.allocator)
 
         case .Ping:
             if core.state == .Open {
                 control_err := conn_enqueue_control(core, .Pong, msg.data)
                 if control_err != .None {
-                    delete(msg.data, core.allocator)
+                    owned_bytes_destroy(msg.data, core.allocator)
                     conn_fail(core, control_err)
                     return false
                 }
             }
-            delete(msg.data, core.allocator)
+            owned_bytes_destroy(msg.data, core.allocator)
 
         case .Pong:
-            delete(msg.data, core.allocator)
+            owned_bytes_destroy(msg.data, core.allocator)
 
         case .Close:
             parsed, perr := parse_close(msg.data)
             had_body := len(msg.data) != 0
-            delete(msg.data, core.allocator)
+            owned_bytes_destroy(msg.data, core.allocator)
             if perr != .None {
                 conn_fail(core, .Protocol_Violation)
                 return false
@@ -369,12 +371,12 @@ conn_enqueue :: proc(core: ^Conn_Core, frame: []byte, control: bool) -> Conn_Err
     }
 
     if core.pending_send_bytes > limit - len(frame) {
-        delete(frame, core.allocator)
+        owned_bytes_destroy(frame, core.allocator)
         return .Send_Queue_Full
     }
 
     if _, aerr := append(&core.send_queue, frame); aerr != nil {
-        delete(frame, core.allocator)
+        owned_bytes_destroy(frame, core.allocator)
         return .Out_Of_Memory
     }
 
@@ -460,7 +462,7 @@ conn_send_completed :: proc(core: ^Conn_Core, failed: bool) {
     for frame in core.send_batch {
         assert(len(frame) <= core.pending_send_bytes, "send byte accounting underflow")
         core.pending_send_bytes -= len(frame)
-        delete(frame, core.allocator)
+        owned_bytes_destroy(frame, core.allocator)
     }
     clear(&core.send_batch)
     core.sending = false

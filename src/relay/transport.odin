@@ -10,6 +10,8 @@
 // a malformed one degrades to a `Transport_Error` the caller closes the link on, never a crash.
 package relay
 
+import "base:runtime"
+import "core:crypto"
 import "core:crypto/noise"
 
 // The 1-byte chunk header, prepended to each chunk's plaintext before sealing. A sole chunk
@@ -154,6 +156,9 @@ reassembler_init :: proc(r: ^Reassembler, allocator := context.allocator) {
 reassembler_reset :: proc(r: ^Reassembler) {
     assert(r != nil, "reassembler_reset needs a reassembler")
 
+    if len(r.buf) > 0 {
+        crypto.zero_explicit(raw_data(r.buf[:]), len(r.buf))
+    }
     clear(&r.buf)
 }
 
@@ -161,8 +166,39 @@ reassembler_reset :: proc(r: ^Reassembler) {
 reassembler_destroy :: proc(r: ^Reassembler) {
     assert(r != nil, "reassembler_destroy needs a reassembler")
 
+    if cap(r.buf) > 0 {
+        crypto.zero_explicit(raw_data(r.buf), cap(r.buf))
+    }
     delete(r.buf)
     r^ = {}
+}
+
+reassembler_append :: proc(r: ^Reassembler, body: []u8) -> runtime.Allocator_Error {
+    assert(r != nil, "reassembler append needs a reassembler")
+    assert(len(r.buf) + len(body) <= TRANSPORT_FRAME_MAX, "reassembler append exceeds its bound")
+    if len(body) == 0 {
+        return nil
+    }
+
+    old_len := len(r.buf)
+    needed := old_len + len(body)
+    if needed > cap(r.buf) {
+        allocator := r.buf.allocator
+        new_capacity := min(TRANSPORT_FRAME_MAX, max(needed, max(64, cap(r.buf) * 2)))
+        replacement, aerr := make([dynamic]u8, old_len, new_capacity, allocator)
+        if aerr != nil {
+            return aerr
+        }
+        copy(replacement[:], r.buf[:])
+        reassembler_destroy(r)
+        r.buf = replacement
+    }
+
+    resize(&r.buf, needed)
+    copied := copy(r.buf[old_len:], body)
+    assert(copied == len(body), "reassembler append was short")
+
+    return nil
 }
 
 // Feed one opened chunk (a header byte then its body) into the reassembler. When the chunk was
@@ -193,7 +229,7 @@ reassembler_push :: proc(r: ^Reassembler, chunk: []u8) -> (frame: []u8, done: bo
     }
 
     if is_first {
-        clear(&r.buf)
+        reassembler_reset(r)
     } else if len(r.buf) == 0 {
         // A continuation with no started frame: the peer skipped a FIRST. Only a sender bug or a
         // forged/reordered stream reaches here — Noise counters already reject reordering.
@@ -204,7 +240,7 @@ reassembler_push :: proc(r: ^Reassembler, chunk: []u8) -> (frame: []u8, done: bo
         return nil, false, .Frame_Too_Large
     }
 
-    if _, aerr := append(&r.buf, ..body); aerr != nil {
+    if aerr := reassembler_append(r, body); aerr != nil {
         return nil, false, .Out_Of_Memory
     }
 

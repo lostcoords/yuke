@@ -468,18 +468,18 @@ client_destroy :: proc(c: ^Client) {
     assert(c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]), "pending send byte mismatch")
 
     decoder_destroy(&c.decoder)
-    delete(c.recv_buf, c.allocator)
+    owned_bytes_destroy(c.recv_buf, c.allocator)
     delete(c.handshake_buf)
 
     delete(c.request_buf, c.allocator)
 
     for frame in c.send_queue {
-        delete(frame, c.allocator)
+        owned_bytes_destroy(frame, c.allocator)
     }
     delete(c.send_queue)
 
     for frame in c.send_batch {
-        delete(frame, c.allocator)
+        owned_bytes_destroy(frame, c.allocator)
     }
     delete(c.send_batch)
 

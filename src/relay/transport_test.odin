@@ -1,6 +1,7 @@
 package relay
 
 import "core:crypto/ecdh"
+import "core:mem"
 import "core:slice"
 import "core:testing"
 
@@ -111,6 +112,23 @@ test_reassembler_self_correct :: proc(t: ^testing.T) {
     testing.expect_value(t, err1, Transport_Error.None)
     testing.expect(t, done1, "the fresh frame completes")
     testing.expect(t, slice.equal(frame, []u8{'o', 'k'}), "only the fresh frame's bytes remain")
+}
+
+@(test)
+test_reassembler_reset_wipes_plaintext :: proc(t: ^testing.T) {
+    ra: Reassembler
+    reassembler_init(&ra, context.allocator)
+    defer reassembler_destroy(&ra)
+
+    _, done, err := reassembler_push(&ra, []u8{TRANSPORT_CHUNK_FIRST, 's', 'e', 'c', 'r', 'e', 't'})
+    testing.expect_value(t, err, Transport_Error.None)
+    testing.expect(t, !done, "partial secret frame remains buffered")
+    backing := mem.slice_ptr(raw_data(ra.buf), cap(ra.buf))
+
+    reassembler_reset(&ra)
+    for byte in backing {
+        testing.expect_value(t, byte, u8(0))
+    }
 }
 
 // A full session round-trip for a frame several packets long: seal each chunk through the Noise

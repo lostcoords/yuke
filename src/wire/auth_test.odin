@@ -8,12 +8,13 @@ test_auth_provider_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"provider_id":"openai-codex","state":"signed_out","login_flows":["browser","device_code"],"pending_login":{"login_id":"0123456789abcdef0123456789abcdef","flow":"browser"}}`
+    input := `{"provider_id":"openai-codex","credential_kind":null,"restart_required":false,"login_flows":["browser","device_code"],"pending_login":{"login_id":"0123456789abcdef0123456789abcdef","flow":"browser"}}`
     decoder := decoder_init(input, context.temp_allocator)
     provider, err := auth_provider_from_reader(&decoder)
     testing.expect_value(t, err, Validation_Error.None)
     testing.expect_value(t, provider.provider_id, Provider_Id("openai-codex"))
-    testing.expect_value(t, provider.state, Auth_State.Signed_Out)
+    testing.expect(t, provider.credential_kind == nil, "provider has no saved credential")
+    testing.expect(t, !provider.restart_required, "OAuth state is live")
     testing.expect_value(t, len(provider.login_flows), 2)
     login, pending := provider.pending_login.?
     testing.expect(t, pending, "pending login is present")
@@ -68,13 +69,13 @@ test_auth_provider_rejects_duplicate_or_unadvertised_flow :: proc(t: ^testing.T)
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    duplicate_input := `{"provider_id":"openai-codex","state":"signed_out","login_flows":["browser","browser"],"pending_login":null}`
+    duplicate_input := `{"provider_id":"openai-codex","credential_kind":null,"restart_required":false,"login_flows":["browser","browser"],"pending_login":null}`
     duplicate_decoder := decoder_init(duplicate_input, context.temp_allocator)
     duplicate, duplicate_err := auth_provider_from_reader(&duplicate_decoder)
     testing.expect_value(t, duplicate_err, Validation_Error.None)
     testing.expect_value(t, auth_provider_validate(duplicate), Validation_Error.Mismatched_Payload)
 
-    unadvertised_input := `{"provider_id":"openai-codex","state":"signed_out","login_flows":["browser"],"pending_login":{"login_id":"0123456789abcdef0123456789abcdef","flow":"device_code"}}`
+    unadvertised_input := `{"provider_id":"openai-codex","credential_kind":null,"restart_required":false,"login_flows":["browser"],"pending_login":{"login_id":"0123456789abcdef0123456789abcdef","flow":"device_code"}}`
     unadvertised_decoder := decoder_init(unadvertised_input, context.temp_allocator)
     unadvertised, unadvertised_err := auth_provider_from_reader(&unadvertised_decoder)
     testing.expect_value(t, unadvertised_err, Validation_Error.None)
@@ -110,6 +111,51 @@ test_auth_methods_roundtrip_without_credentials :: proc(t: ^testing.T) {
     defer emitter_destroy(&result_emitter)
     response_result_emit(&result_emitter, result)
     testing.expect_value(t, to_string(&result_emitter), list_input)
+}
+
+@(test)
+test_auth_set_api_key_is_write_only_and_bounded :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"provider_id":"openai","api_key":"secret-value"}`
+    decoder := decoder_init(input, context.temp_allocator)
+    params, params_err := request_params_from_reader(.Auth_Set_Api_Key, &decoder)
+    testing.expect_value(t, params_err, Validation_Error.None)
+    testing.expect_value(t, request_params_validate(params), Validation_Error.None)
+
+    emitter: Emitter
+    emitter_secret_init(&emitter, 1024)
+    defer emitter_destroy(&emitter)
+    request_params_emit(&emitter, params)
+    testing.expect_value(t, to_string(&emitter), input)
+
+    result := Auth_Set_Api_Key_Result {
+        restart_required = true,
+    }
+    result_emitter: Emitter
+    emitter_init(&result_emitter)
+    defer emitter_destroy(&result_emitter)
+    response_result_emit(&result_emitter, result)
+    testing.expect_value(t, to_string(&result_emitter), `{"restart_required":true}`)
+    testing.expect(t, !strings.contains(to_string(&result_emitter), "secret-value"), "result contains no key material")
+
+    testing.expect_value(
+        t,
+        auth_set_api_key_params_validate({provider_id = "openai", api_key = ""}),
+        Validation_Error.Invalid_Length,
+    )
+    too_long := strings.repeat("x", LIMITS.max_api_key_bytes + 1, context.temp_allocator)
+    testing.expect_value(
+        t,
+        auth_set_api_key_params_validate({provider_id = "openai", api_key = too_long}),
+        Validation_Error.Overflow,
+    )
+    testing.expect_value(
+        t,
+        auth_set_api_key_result_validate({restart_required = false}),
+        Validation_Error.Mismatched_Payload,
+    )
 }
 
 @(test)

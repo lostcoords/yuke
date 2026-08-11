@@ -18,6 +18,13 @@ test_http_admits_its_own_bind_address :: proc(t: ^testing.T) {
     testing.expect(t, address_is_local(net.IP4_Any, net.IP4_Loopback), "a wildcard bind still admits loopback")
 }
 
+@(test)
+test_loopback_address_admission :: proc(t: ^testing.T) {
+    testing.expect(t, address_is_loopback(net.IP4_Address{127, 4, 3, 2}), "all IPv4 loopback is local")
+    testing.expect(t, address_is_loopback(net.IP6_Loopback), "IPv6 loopback is local")
+    testing.expect(t, !address_is_loopback(net.IP4_Address{192, 168, 1, 1}), "LAN peers are not loopback")
+}
+
 // `localhost` is exempt as a bare name only, and a `:port` never reaches the literal.
 @(test)
 test_http_host_literal_admission :: proc(t: ^testing.T) {

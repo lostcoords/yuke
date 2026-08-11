@@ -60,6 +60,9 @@ Method_Name :: enum {
     // Read public authentication state and supported login mechanisms.
     Auth_List,
 
+    // Durably replace one provider API key without activating it or returning it.
+    Auth_Set_Api_Key,
+
     // Start a daemon-owned provider login attempt.
     Auth_Login,
 
@@ -126,6 +129,7 @@ method_name_wire := [Method_Name]string {
     .Catalog_List         = "catalog.list",
     .Catalog_Refresh      = "catalog.refresh",
     .Auth_List            = "auth.list",
+    .Auth_Set_Api_Key     = "auth.set_api_key",
     .Auth_Login           = "auth.login",
     .Auth_Cancel_Login    = "auth.cancel_login",
     .Auth_Logout          = "auth.logout",
@@ -269,6 +273,7 @@ Request_Params :: union {
     Subscription_Set_Params,
     Catalog_List_Params,
     Empty,
+    Auth_Set_Api_Key_Params,
     Auth_Login_Params,
     Auth_Cancel_Login_Params,
     Auth_Logout_Params,
@@ -298,6 +303,7 @@ Response_Result :: union {
     Catalog_List_Result,
     Catalog_Refresh_Result,
     Auth_List_Result,
+    Auth_Set_Api_Key_Result,
     Auth_Login_Result,
     Workspace_Describe_Result,
     Workspace_Browse_Result,
@@ -365,6 +371,9 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
 
     case Empty:
         empty_emit(e)
+
+    case Auth_Set_Api_Key_Params:
+        auth_set_api_key_params_emit(e, p)
 
     case Auth_Login_Params:
         auth_login_params_emit(e, p)
@@ -446,6 +455,9 @@ response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
     case Auth_List_Result:
         auth_list_result_emit(e, r)
 
+    case Auth_Set_Api_Key_Result:
+        auth_set_api_key_result_emit(e, r)
+
     case Auth_Login_Result:
         auth_login_result_emit(e, r)
 
@@ -511,6 +523,9 @@ request_params_validate :: proc(params: Request_Params) -> Validation_Error {
     case Subscription_Set_Params:
         return subscription_set_params_validate(p)
 
+    case Auth_Set_Api_Key_Params:
+        return auth_set_api_key_params_validate(p)
+
     case Auth_Login_Params:
         return auth_login_params_validate(p)
 
@@ -574,6 +589,9 @@ response_result_validate :: proc(result: Response_Result) -> Validation_Error {
 
     case Auth_List_Result:
         return auth_list_result_validate(r)
+
+    case Auth_Set_Api_Key_Result:
+        return auth_set_api_key_result_validate(r)
 
     case Auth_Login_Result:
         return auth_login_result_validate(r)
@@ -858,6 +876,9 @@ request_params_from_reader :: proc(
     case .Auth_List:
         params = empty_from_reader(d) or_return
 
+    case .Auth_Set_Api_Key:
+        params = auth_set_api_key_params_from_reader(d) or_return
+
     case .Auth_Login:
         params = auth_login_params_from_reader(d) or_return
 
@@ -969,6 +990,9 @@ response_result_from_reader :: proc(
 
     case .Auth_List:
         result = auth_list_result_from_reader(d) or_return
+
+    case .Auth_Set_Api_Key:
+        result = auth_set_api_key_result_from_reader(d) or_return
 
     case .Auth_Login:
         result = auth_login_result_from_reader(d) or_return

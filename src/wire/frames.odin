@@ -35,7 +35,12 @@ request_emit :: proc(e: ^Emitter, self: Request) {
 // Encode a request; the caller owns the returned emitter (`to_string` then destroy).
 // `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
 request_encode :: proc(self: Request, allocator := context.allocator) -> (e: Emitter, ok: bool) {
-    emitter_init(&e, allocator)
+    if self.method == .Auth_Set_Api_Key {
+        // JSON control-byte escaping can expand each secret byte to six bytes.
+        emitter_secret_init(&e, 6 * LIMITS.max_api_key_bytes + 1024, allocator)
+    } else {
+        emitter_init(&e, allocator)
+    }
     request_emit(&e, self)
 
     return e, !emitter_failed(&e)
@@ -44,6 +49,12 @@ request_encode :: proc(self: Request, allocator := context.allocator) -> (e: Emi
 // Verify the id shape and params bounds.
 request_validate :: proc(self: Request) -> Validation_Error {
     req_id_validate(self.id) or_return
+
+    _, has_api_key := self.params.(Auth_Set_Api_Key_Params)
+    if (self.method == .Auth_Set_Api_Key) != has_api_key {
+        return .Mismatched_Payload
+    }
+
     return request_params_validate(self.params)
 }
 

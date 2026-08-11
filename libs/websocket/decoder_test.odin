@@ -189,6 +189,58 @@ test_decode_server_ownership_no_leaks_with_partial_message_pending :: proc(t: ^t
     testing.expect_value(t, len(track.allocation_map), 0)
 }
 
+@(test)
+test_decode_server_wipes_internal_plaintext_after_message :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    d: Decoder
+    decoder_init(&d, 1 << 20, 1 << 20, .Server, context.temp_allocator)
+    defer decoder_destroy(&d)
+
+    decoder_feed(&d, cli_frame(0x81, transmute([]byte)string("provider-secret")))
+    msg, has, err := decoder_next(&d, context.temp_allocator)
+    testing.expect_value(t, err, Protocol_Error.None)
+    testing.expect(t, has, "secret-bearing message should decode")
+    testing.expect_value(t, string(msg.data), "provider-secret")
+
+    payload_start := len(d.scratch) - len("provider-secret")
+    for byte in d.scratch[payload_start:] {
+        testing.expect_value(t, byte, u8(0))
+    }
+    if cap(d.message) > 0 {
+        backing := mem.slice_ptr(raw_data(d.message), cap(d.message))
+        for byte in backing {
+            testing.expect_value(t, byte, u8(0))
+        }
+    }
+}
+
+@(test)
+test_conn_wipes_receive_buffer_after_feeding_decoder :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    frame := srv_frame(0x81, transmute([]byte)string("provider-secret"))
+    recv := make([]byte, len(frame), context.temp_allocator)
+    copy(recv, frame)
+
+    core := Conn_Core {
+        allocator = context.temp_allocator,
+        state = .Open,
+        recv_buf = recv,
+        message = proc(core: ^Conn_Core, _: Message_Kind, _: []byte) {
+            core.state = .Closed
+        },
+    }
+    decoder_init(&core.decoder, 1 << 20, 1 << 20, .Client, context.temp_allocator)
+    defer decoder_destroy(&core.decoder)
+
+    conn_recv_completed(&core, len(frame), false)
+
+    for byte in recv {
+        testing.expect_value(t, byte, u8(0))
+    }
+}
+
 // A single final text frame decodes to one UTF-8 Text message.
 @(test)
 test_decode_single_text :: proc(t: ^testing.T) {

@@ -873,7 +873,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 
     d := conn.daemon
     temp := virtual.arena_temp_begin(&d.frame_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     sa := virtual.arena_allocator(&d.frame_scratch)
 
     decoder := wire.decoder_init(string(data), sa)
@@ -921,6 +921,9 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 
     case .Auth_List:
         method_auth_list(conn, req, sa)
+
+    case .Auth_Set_Api_Key:
+        method_auth_set_api_key(conn, req, sa)
 
     case .Auth_Login:
         method_auth_login(conn, req, sa)

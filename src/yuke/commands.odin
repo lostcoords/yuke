@@ -65,6 +65,19 @@ COMMANDS := []Command {
             "  --cloud <url>    control-plane base URL (default $YUKE_CLOUD_URL)",
         },
     },
+    {
+        name = "provider",
+        args = "<verb>",
+        summary = "manage provider credentials on the local daemon",
+        detail = {
+            "  yuke provider list              show saved credential kinds and restart state",
+            "  yuke provider set-key <id>      securely prompt for and save an API key",
+            "  yuke provider remove-key <id>   remove a saved API key",
+            "",
+            "API-key changes take effect after the daemon restarts. Keys are never accepted",
+            "on the command line or returned by the daemon.",
+        },
+    },
     {name = "help", args = "[command]", summary = "show this message, or the detail for one command", detail = {}},
 }
 

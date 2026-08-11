@@ -665,6 +665,14 @@
       ],
       "type": "object"
     },
+    "Auth_Credential_Kind": {
+      "description": "Kind of durable provider credential. Values reveal no credential material.",
+      "enum": [
+        "api_key",
+        "oauth"
+      ],
+      "type": "string"
+    },
     "Auth_Flow": {
       "description": "OAuth login mechanisms a provider exposes.",
       "enum": [
@@ -948,6 +956,17 @@
     "Auth_Provider": {
       "description": "Public authentication state and capabilities for one provider.",
       "properties": {
+        "credential_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Auth_Credential_Kind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Durable credential kind, or null when none is saved."
+        },
         "login_flows": {
           "description": "Login mechanisms currently supported by this provider.",
           "items": {
@@ -970,25 +989,51 @@
         "provider_id": {
           "$ref": "#/$defs/Provider_Id"
         },
-        "state": {
-          "$ref": "#/$defs/Auth_State"
+        "restart_required": {
+          "description": "Whether API-key storage changed after this daemon started.",
+          "type": "boolean"
         }
       },
       "required": [
         "provider_id",
-        "state",
+        "credential_kind",
+        "restart_required",
         "login_flows",
         "pending_login"
       ],
       "type": "object"
     },
-    "Auth_State": {
-      "description": "Coarse persisted authentication state for a provider.",
-      "enum": [
-        "signed_out",
-        "signed_in"
+    "Auth_Set_Api_Key_Params": {
+      "description": "Write-only params for `auth.set_api_key`. The key is never returned or retained by wire state.",
+      "properties": {
+        "api_key": {
+          "description": "Secret key accepted only in this request.",
+          "maxLength": 65536,
+          "type": "string",
+          "x-maxUtf8Bytes": 65536
+        },
+        "provider_id": {
+          "$ref": "#/$defs/Provider_Id"
+        }
+      },
+      "required": [
+        "provider_id",
+        "api_key"
       ],
-      "type": "string"
+      "type": "object"
+    },
+    "Auth_Set_Api_Key_Result": {
+      "description": "Result of staging an API-key replacement.",
+      "properties": {
+        "restart_required": {
+          "description": "Always true: a running daemon does not change its active credential snapshot.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "restart_required"
+      ],
+      "type": "object"
     },
     "Broadcast_Data": {
       "anyOf": [
@@ -3139,6 +3184,7 @@
         "catalog.list",
         "catalog.refresh",
         "auth.list",
+        "auth.set_api_key",
         "auth.login",
         "auth.cancel_login",
         "auth.logout",
@@ -4991,6 +5037,32 @@
           "type": "object"
         },
         {
+          "description": "Durably replace one provider API key without activating it or returning it.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Request_Id"
+            },
+            "jsonrpc": {
+              "const": "2.0",
+              "type": "string"
+            },
+            "method": {
+              "const": "auth.set_api_key",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/Auth_Set_Api_Key_Params"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Start a daemon-owned provider login attempt.",
           "properties": {
             "id": {
@@ -5425,6 +5497,9 @@
           "$ref": "#/$defs/Empty"
         },
         {
+          "$ref": "#/$defs/Auth_Set_Api_Key_Params"
+        },
+        {
           "$ref": "#/$defs/Auth_Login_Params"
         },
         {
@@ -5566,6 +5641,32 @@
         },
         "result": {
           "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Response_Auth_Set_Api_Key": {
+      "description": "Success response to `auth.set_api_key`.",
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Request_Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Auth_Set_Api_Key_Result"
         }
       },
       "required": [
@@ -5946,6 +6047,9 @@
         },
         {
           "$ref": "#/$defs/Auth_List_Result"
+        },
+        {
+          "$ref": "#/$defs/Auth_Set_Api_Key_Result"
         },
         {
           "$ref": "#/$defs/Auth_Login_Result"

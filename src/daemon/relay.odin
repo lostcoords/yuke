@@ -435,7 +435,7 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
     assert(len(plaintext) > 0, "relay send needs a non-empty frame")
 
     temp := virtual.arena_temp_begin(&r.send_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&r.send_scratch)
 
     // A frame larger than one Noise packet rides several SEALED frames, each a header byte then a
@@ -770,7 +770,7 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     r := relay_of(l)
 
     temp := virtual.arena_temp_begin(&r.recv_scratch)
-    defer virtual.arena_temp_end(temp)
+    defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&r.recv_scratch)
 
     if !r.established {

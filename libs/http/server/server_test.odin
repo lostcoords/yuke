@@ -1,6 +1,8 @@
 package http_server
 
 import "core:log"
+import "core:mem"
+import "core:mem/virtual"
 import "core:nbio"
 import "core:net"
 import "core:os"
@@ -757,6 +759,47 @@ test_http_hijack_hands_over_the_socket :: proc(t: ^testing.T) {
     testing.expect_value(t, obs.request_count, 1)
     testing.expect_value(t, obs.body_len, 1)
     testing.expect_value(t, got, HIJACKED)
+}
+
+@(test)
+test_http_release_wipes_request_buffers :: proc(t: ^testing.T) {
+    arena: virtual.Arena
+    testing.expect_value(t, virtual.arena_init_growing(&arena), nil)
+    defer virtual.arena_destroy(&arena)
+    allocator := virtual.arena_allocator(&arena)
+
+    conns := make(map[Ticket]^Conn, 1, allocator)
+    server := Server {
+        allocator       = allocator,
+        state           = .Serving,
+        max_connections = 1,
+        conns           = conns,
+    }
+
+    conn := new(Conn, allocator)
+    head := make([dynamic]byte, len("provider-secret"), len("provider-secret"), allocator)
+    copy(head[:], transmute([]byte)string("provider-secret"))
+    recv := make([]byte, len("masked-secret-frame"), allocator)
+    copy(recv, transmute([]byte)string("masked-secret-frame"))
+    conn^ = {
+        server    = &server,
+        allocator = allocator,
+        ticket    = 1,
+        state     = .Hijacked,
+        head_buf  = head,
+        recv_buf  = recv,
+    }
+    map_insert(&server.conns, conn.ticket, conn)
+
+    head_backing := mem.slice_ptr(raw_data(head), cap(head))
+    conn_release(conn)
+
+    for byte in head_backing {
+        testing.expect_value(t, byte, u8(0))
+    }
+    for byte in recv {
+        testing.expect_value(t, byte, u8(0))
+    }
 }
 
 // --- Pending response headers -------------------------------------------------

@@ -391,7 +391,7 @@ server_adopt_rollback :: proc(conn: ^Server_Conn) {
     assert(conn.send_op == nil && conn.recv_op == nil, "adopt rollback after I/O began")
 
     decoder_destroy(&conn.decoder)
-    delete(conn.recv_buf, conn.allocator)
+    owned_bytes_destroy(conn.recv_buf, conn.allocator)
     delete(conn.response_buf, conn.allocator)
     delete(conn.send_queue)
     delete(conn.send_batch)
@@ -605,17 +605,17 @@ conn_release :: proc(conn: ^Server_Conn) {
     )
 
     decoder_destroy(&conn.decoder)
-    delete(conn.recv_buf, conn.allocator)
+    owned_bytes_destroy(conn.recv_buf, conn.allocator)
 
     delete(conn.response_buf, conn.allocator)
 
     for frame in conn.send_queue {
-        delete(frame, conn.allocator)
+        owned_bytes_destroy(frame, conn.allocator)
     }
     delete(conn.send_queue)
 
     for frame in conn.send_batch {
-        delete(frame, conn.allocator)
+        owned_bytes_destroy(frame, conn.allocator)
     }
     delete(conn.send_batch)
 

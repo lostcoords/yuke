@@ -274,6 +274,9 @@ Handler_Obs :: struct {
 
     // Multi-request auth test state.
     auth_stage: int,
+
+    // Running daemon, exposed only while `run_handler` owns it.
+    daemon:     ^Daemon,
 }
 
 handler_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
@@ -338,6 +341,7 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: .
     d: Daemon
     derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path})
     testing.expect_value(t, derr, Error.None)
+    obs.daemon = &d
 
     for session in sessions {
         testing.expect_value(t, store.session_create(d.store, session, nil), nil)
@@ -434,6 +438,16 @@ test_store_credential_present :: proc(t: ^testing.T, s: ^store.Store, provider_i
     }
 
     return false
+}
+
+test_api_key_store_write :: proc(t: ^testing.T, path, provider_id, api_key: string) -> bool {
+    opened, open_err := store.open(path)
+    if !testing.expect_value(t, open_err, nil) {
+        return false
+    }
+    defer store.close(opened)
+
+    return testing.expect_value(t, store.credential_api_key_upsert(opened, provider_id, api_key), nil)
 }
 
 // A name 270 UTF-8 bytes long (90 repeated 3-byte "あ" runes) but only 90 characters:
@@ -582,7 +596,8 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
     if !testing.expect(t, codex_ok, "codex provider is listed") {
         return true
     }
-    testing.expect_value(t, codex.state, wire.Auth_State.Signed_Out)
+    testing.expect(t, codex.credential_kind == nil, "fresh Codex auth has no credential")
+    testing.expect(t, !codex.restart_required, "OAuth state applies immediately")
     _, codex_pending := codex.pending_login.?
     testing.expect(t, !codex_pending, "fresh auth has no pending login")
 
@@ -596,7 +611,7 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
     if !testing.expect(t, xai_ok, "xai provider is listed") {
         return true
     }
-    testing.expect_value(t, xai.state, wire.Auth_State.Signed_Out)
+    testing.expect(t, xai.credential_kind == nil, "fresh xAI auth has no credential")
 
     // xAI offers both browser (PKCE) and device (RFC 8628) login.
     xai_browser := false
@@ -619,6 +634,200 @@ test_daemon_auth_list_uses_the_daemon_store :: proc(t: ^testing.T) {
         method = .Auth_List,
         params = wire.Empty{},
         check  = check_auth_list,
+    }
+    run_handler(t, &obs)
+}
+
+test_auth_provider_find :: proc(providers: []wire.Auth_Provider, provider_id: string) -> (wire.Auth_Provider, bool) {
+    for provider in providers {
+        if provider.provider_id == wire.Provider_Id(provider_id) {
+            return provider, true
+        }
+    }
+
+    return {}, false
+}
+
+check_auth_set_api_key_stages_until_restart :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+
+    if o.auth_stage == 0 {
+        ok, is_ok := resp.(wire.Response_Ok)
+        if !testing.expect(t, is_ok, "auth.set_api_key should succeed over loopback") {
+            return true
+        }
+
+        result, is_result := ok.result.(wire.Auth_Set_Api_Key_Result)
+        if testing.expect(t, is_result, "auth.set_api_key returns its write-only result") {
+            testing.expect(t, result.restart_required, "API-key writes require restart")
+        }
+        testing.expect(t, "openai" not_in o.daemon.provider_auth.api_keys, "write does not change active keys")
+        testing.expect(t, test_store_credential_present(t, o.daemon.store, "openai"), "write is durable")
+
+        o.auth_stage = 1
+        client.client_send_request(c, .Auth_List, wire.Empty{}, handler_on_response)
+        return false
+    }
+
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.list should succeed after an API-key write") {
+        return true
+    }
+
+    result, is_list := ok.result.(wire.Auth_List_Result)
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
+        return true
+    }
+
+    provider, found := test_auth_provider_find(result.providers, "openai")
+    if testing.expect(t, found, "saved API-key provider is listed") {
+        kind, has_kind := provider.credential_kind.?
+        testing.expect(t, has_kind && kind == .Api_Key, "list reveals only the credential kind")
+        testing.expect(t, provider.restart_required, "list reports the staged restart")
+        testing.expect_value(t, len(provider.login_flows), 0)
+    }
+
+    return true
+}
+
+check_auth_api_key_active_after_restart :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+    t := o.t
+    active, found_active := o.daemon.provider_auth.api_keys["openai"]
+    testing.expect(t, found_active && active == "test-api-key", "restart activates the saved API key")
+
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.list should succeed after restart") {
+        return true
+    }
+
+    result, is_list := ok.result.(wire.Auth_List_Result)
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
+        return true
+    }
+
+    provider, found := test_auth_provider_find(result.providers, "openai")
+    if testing.expect(t, found, "active API-key provider is listed") {
+        kind, has_kind := provider.credential_kind.?
+        testing.expect(t, has_kind && kind == .Api_Key, "active provider retains its credential kind")
+        testing.expect(t, !provider.restart_required, "restart clears the staged status")
+    }
+
+    return true
+}
+
+@(test)
+test_daemon_auth_set_api_key_applies_only_after_restart :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-set-api-key")
+    defer os.remove_all(dir)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
+
+    write_obs := Handler_Obs {
+        method = .Auth_Set_Api_Key,
+        params = wire.Auth_Set_Api_Key_Params{provider_id = "openai", api_key = "test-api-key"},
+        check = check_auth_set_api_key_stages_until_restart,
+    }
+    run_handler(t, &write_obs, db_path = path)
+
+    restart_obs := Handler_Obs {
+        method = .Auth_List,
+        params = wire.Empty{},
+        check  = check_auth_api_key_active_after_restart,
+    }
+    run_handler(t, &restart_obs, db_path = path)
+}
+
+check_auth_api_key_remove_stages_until_restart :: proc(
+    c: ^client.Client,
+    resp: wire.Response,
+    o: ^Handler_Obs,
+) -> bool {
+    t := o.t
+
+    if o.auth_stage == 0 {
+        ok, is_ok := resp.(wire.Response_Ok)
+        if !testing.expect(t, is_ok, "auth.logout should remove an API key") {
+            return true
+        }
+        _, is_empty := ok.result.(wire.Empty)
+        testing.expect(t, is_empty, "auth.logout returns an empty result")
+
+        active, found_active := o.daemon.provider_auth.api_keys["openai"]
+        testing.expect(t, found_active && active == "test-api-key", "removal keeps the active startup key")
+        testing.expect(t, !test_store_credential_present(t, o.daemon.store, "openai"), "removal is durable")
+
+        o.auth_stage = 1
+        client.client_send_request(c, .Auth_List, wire.Empty{}, handler_on_response)
+        return false
+    }
+
+    ok, is_ok := resp.(wire.Response_Ok)
+    if !testing.expect(t, is_ok, "auth.list should succeed after API-key removal") {
+        return true
+    }
+
+    result, is_list := ok.result.(wire.Auth_List_Result)
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
+        return true
+    }
+
+    provider, found := test_auth_provider_find(result.providers, "openai")
+    if testing.expect(t, found, "active removed provider remains listed until restart") {
+        testing.expect(t, provider.credential_kind == nil, "removed provider has no saved credential")
+        testing.expect(t, provider.restart_required, "removal requires restart")
+    }
+
+    return true
+}
+
+@(test)
+test_daemon_auth_remove_api_key_applies_only_after_restart :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_dir("yuke-daemon-auth-remove-api-key")
+    defer os.remove_all(dir)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
+    if !test_api_key_store_write(t, path, "openai", "test-api-key") {
+        return
+    }
+
+    obs := Handler_Obs {
+        method = .Auth_Logout,
+        params = wire.Auth_Logout_Params{provider_id = "openai"},
+        check = check_auth_api_key_remove_stages_until_restart,
+    }
+    run_handler(t, &obs, db_path = path)
+}
+
+check_auth_set_api_key_rejects_oauth_provider :: proc(
+    c: ^client.Client,
+    resp: wire.Response,
+    o: ^Handler_Obs,
+) -> bool {
+    t := o.t
+    rejected, is_error := resp.(wire.Response_Error)
+    if testing.expect(t, is_error, "OAuth-only provider rejects an API key") {
+        testing.expect_value(t, rejected.error.code, wire.Error_Code.Bad_Request)
+    }
+    testing.expect(
+        t,
+        !test_store_credential_present(t, o.daemon.store, oauth.CODEX_PROVIDER_ID),
+        "rejection is durable",
+    )
+    testing.expect(t, oauth.CODEX_PROVIDER_ID not_in o.daemon.provider_auth.staged_api_keys, "rejection is not staged")
+
+    return true
+}
+
+@(test)
+test_daemon_auth_set_api_key_rejects_oauth_only_provider :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    obs := Handler_Obs {
+        method = .Auth_Set_Api_Key,
+        params = wire.Auth_Set_Api_Key_Params{provider_id = oauth.CODEX_PROVIDER_ID, api_key = "test-api-key"},
+        check = check_auth_set_api_key_rejects_oauth_provider,
     }
     run_handler(t, &obs)
 }
@@ -962,6 +1171,19 @@ test_browser_login_is_local_only :: proc(t: ^testing.T) {
     }
     testing.expect(t, !provider_login_flow_allowed(&remote, .Browser), "relay browser login is refused")
     testing.expect(t, provider_login_flow_allowed(&remote, .Device_Code), "relay device login is admitted")
+}
+
+@(test)
+test_api_key_write_is_admitted_over_established_relay :: proc(t: ^testing.T) {
+    relay_tx := Relay {
+        established = true,
+    }
+    conn := Conn {
+        tx = &relay_tx,
+    }
+    relay_tx.conn = &conn
+
+    testing.expect(t, provider_api_key_transport_allowed(&conn), "encrypted relay admits API keys")
 }
 
 check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {

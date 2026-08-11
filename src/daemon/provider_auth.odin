@@ -4,6 +4,7 @@ import "core:crypto"
 import "core:log"
 import "core:mem"
 import "core:nbio"
+import "core:net"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -11,10 +12,13 @@ import "core:time"
 import curl "libs:bindings/curl"
 import http "libs:http"
 import http_server "libs:http/server"
+import ws "libs:websocket"
 import "src:daemon/oauth"
 import "src:daemon/store"
 import "src:secret"
 import wire "src:wire"
+
+#assert(store.CREDENTIAL_SECRET_MAX_BYTES == wire.LIMITS.max_api_key_bytes)
 
 CONTROL_RESPONSE_MAX_BYTES :: 64 * 1024
 AUTH_TOKEN_CONNECT_TIMEOUT :: 15 * time.Second
@@ -95,17 +99,19 @@ OAuth_Operation :: union {
     ^Provider_Refresh,
 }
 
-// Live OAuth credentials, login/refresh state, callback listener, and HTTP client.
+// Active startup credentials, staged API-key changes, OAuth work, and HTTP client.
 Provider_Auth :: struct {
-    credentials:    [oauth.Kind]oauth.OAuth_Credentials,
-    callback:       http_server.Server,
-    router:         Http_Router,
-    callback_route: [1]Http_Route,
-    curl:           curl.Client,
-    curl_ready:     bool,
-    operation:      OAuth_Operation,
-    refresh_timer:  ^nbio.Operation,
-    stopping:       bool,
+    credentials:     [oauth.Kind]oauth.OAuth_Credentials,
+    api_keys:        map[string]string,
+    staged_api_keys: map[string]bool,
+    callback:        http_server.Server,
+    router:          Http_Router,
+    callback_route:  [1]Http_Route,
+    curl:            curl.Client,
+    curl_ready:      bool,
+    operation:       OAuth_Operation,
+    refresh_timer:   ^nbio.Operation,
+    stopping:        bool,
 }
 
 provider_login :: proc(d: ^Daemon) -> ^Provider_Login {
@@ -200,7 +206,17 @@ provider_credentials_load :: proc(d: ^Daemon) -> store.Error {
     defer store.credentials_destroy(loaded)
 
     for &row in loaded {
-        if row.kind != .OAuth {
+        if row.kind == .Api_Key {
+            if _, oauth_only := oauth.kind_from_id(row.provider_id); oauth_only {
+                log.errorf("daemon: OAuth-only provider %s has an API-key credential", row.provider_id)
+                return .Invalid_Row
+            }
+
+            if map_insert(&d.provider_auth.api_keys, row.provider_id, row.api_key) == nil {
+                return .Alloc_Failed
+            }
+            row.provider_id = ""
+            row.api_key = ""
             continue
         }
 
@@ -235,6 +251,20 @@ provider_credentials_destroy :: proc(d: ^Daemon) {
     for kind in oauth.Kind {
         _ = provider_credentials_remove(d, kind)
     }
+
+    for provider_id, api_key in d.provider_auth.api_keys {
+        key := api_key
+        secret.string_destroy(&key, d.allocator)
+        delete(provider_id, d.allocator)
+    }
+    delete(d.provider_auth.api_keys)
+    d.provider_auth.api_keys = nil
+
+    for provider_id in d.provider_auth.staged_api_keys {
+        delete(provider_id, d.allocator)
+    }
+    delete(d.provider_auth.staged_api_keys)
+    d.provider_auth.staged_api_keys = nil
 }
 
 // Load durable OAuth credentials and initialize the bounded HTTP client. A browser
@@ -247,6 +277,16 @@ provider_auth_init :: proc(d: ^Daemon) -> Error {
         d.provider_auth.operation == nil && d.provider_auth.refresh_timer == nil && !d.provider_auth.stopping,
         "fresh provider auth has no work",
     )
+
+    api_keys, api_keys_err := make(map[string]string, 8, d.allocator)
+    staged, staged_err := make(map[string]bool, 8, d.allocator)
+    if api_keys_err != nil || staged_err != nil {
+        delete(api_keys)
+        delete(staged)
+        return .Out_Of_Memory
+    }
+    d.provider_auth.api_keys = api_keys
+    d.provider_auth.staged_api_keys = staged
 
     if load_err := provider_credentials_load(d); load_err != nil {
         log.errorf("daemon: OAuth credentials could not be loaded: %v", load_err)
@@ -368,6 +408,39 @@ provider_auth_destroy :: proc(d: ^Daemon) {
 
     provider_credentials_destroy(d)
     d.provider_auth.router = {}
+}
+
+// Remember that API-key storage changed after this process started.
+// The owned map key survives the request arena. `added` lets a failed store write roll it back.
+provider_api_key_stage :: proc(d: ^Daemon, provider_id: string) -> (added, ok: bool) {
+    assert(d != nil, "API-key staging needs daemon state")
+    assert(d.provider_auth.staged_api_keys != nil, "API-key staging needs initialized auth")
+
+    if provider_id in d.provider_auth.staged_api_keys {
+        return false, true
+    }
+
+    owned, clone_err := strings.clone(provider_id, d.allocator)
+    if clone_err != nil {
+        return false, false
+    }
+    if map_insert(&d.provider_auth.staged_api_keys, owned, true) == nil {
+        delete(owned, d.allocator)
+        return false, false
+    }
+
+    return true, true
+}
+
+// Roll back a marker this request added before a failed store mutation.
+provider_api_key_unstage :: proc(d: ^Daemon, provider_id: string) {
+    assert(d != nil, "API-key unstaging needs daemon state")
+    assert(provider_id in d.provider_auth.staged_api_keys, "API-key unstaging needs a marker")
+
+    owned, _ := delete_key(&d.provider_auth.staged_api_keys, provider_id)
+    assert(owned != "", "staged API-key map lost its owned key")
+
+    delete(owned, d.allocator)
 }
 
 // The first signed-in provider already inside its proactive refresh window.
@@ -1104,28 +1177,224 @@ provider_state :: proc(d: ^Daemon, kind: oauth.Kind) -> wire.Auth_Provider {
         }
     }
 
-    state := wire.Auth_State.Signed_Out
+    credential_kind: Maybe(wire.Auth_Credential_Kind)
     if _, present := provider_credentials_get(d, kind); present {
-        state = .Signed_In
+        credential_kind = wire.Auth_Credential_Kind.OAuth
     }
 
     return {
         provider_id = wire.Provider_Id(provider.id),
-        state = state,
+        credential_kind = credential_kind,
+        restart_required = false,
         login_flows = LOGIN_FLOWS[:],
         pending_login = pending,
     }
+}
+
+provider_credential_kind :: proc(kind: store.Credential_Kind) -> wire.Auth_Credential_Kind {
+    switch kind {
+    case .Api_Key:
+        return .Api_Key
+
+    case .OAuth:
+        return .OAuth
+    }
+
+    unreachable()
+}
+
+provider_credential_status :: proc(
+    statuses: []store.Credential_Status,
+    provider_id: string,
+) -> (
+    kind: store.Credential_Kind,
+    found: bool,
+) {
+    for status in statuses {
+        if status.provider_id == provider_id {
+            return status.kind, true
+        }
+    }
+
+    return {}, false
+}
+
+provider_public_count :: proc(d: ^Daemon, statuses: []store.Credential_Status) -> int {
+    assert(d != nil, "provider count needs daemon state")
+
+    count := len(statuses)
+    for kind in oauth.Kind {
+        if _, found := provider_credential_status(statuses, oauth.provider(kind).id); !found {
+            count += 1
+        }
+    }
+    for provider_id in d.provider_auth.api_keys {
+        if _, found := provider_credential_status(statuses, provider_id); !found {
+            count += 1
+        }
+    }
+
+    return count
+}
+
+provider_stored_state :: proc(
+    d: ^Daemon,
+    provider_id: string,
+    credential_kind: Maybe(wire.Auth_Credential_Kind),
+) -> wire.Auth_Provider {
+    assert(d != nil, "stored credential state needs daemon state")
+
+    return {
+        provider_id = wire.Provider_Id(provider_id),
+        credential_kind = credential_kind,
+        restart_required = provider_id in d.provider_auth.staged_api_keys,
+    }
+}
+
+provider_state_less :: proc(a, b: wire.Auth_Provider) -> bool {
+    return a.provider_id < b.provider_id
 }
 
 method_auth_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil && conn.state == .Ready, "auth.list needs a Ready connection")
     assert(req.method == .Auth_List, "auth.list received another method")
 
-    providers: [oauth.Kind]wire.Auth_Provider
-    for kind in oauth.Kind {
-        providers[kind] = provider_state(conn.daemon, kind)
+    d := conn.daemon
+    statuses, load_err := store.credential_statuses_load(d.store, sa)
+    if load_err != nil {
+        log.errorf("daemon: credential status could not be read: %v", load_err)
+        send_error(conn, req.id, .Internal, "credential status could not be read", sa)
+        return
     }
-    send_result(conn, req.id, wire.Auth_List_Result{providers = slice.enumerated_array(&providers)}, sa)
+    defer store.credential_statuses_destroy(statuses)
+
+    count := provider_public_count(d, statuses[:])
+    if count > wire.LIMITS.max_auth_providers {
+        log.errorf("daemon: %d credential providers exceed the wire limit", count)
+        send_error(conn, req.id, .Internal, "too many credential providers", sa)
+        return
+    }
+
+    providers, make_err := make([dynamic]wire.Auth_Provider, 0, count, sa)
+    if make_err != nil {
+        conn_abort(conn, .Out_Of_Memory)
+        return
+    }
+
+    for status in statuses {
+        if kind, known := oauth.kind_from_id(status.provider_id); known {
+            assert(status.kind == .OAuth, "OAuth-only provider retained an API-key row")
+            append(&providers, provider_state(d, kind))
+            continue
+        }
+
+        append(&providers, provider_stored_state(d, status.provider_id, provider_credential_kind(status.kind)))
+    }
+    for kind in oauth.Kind {
+        provider := oauth.provider(kind)
+        if _, found := provider_credential_status(statuses[:], provider.id); !found {
+            append(&providers, provider_state(d, kind))
+        }
+    }
+    for provider_id in d.provider_auth.api_keys {
+        if _, found := provider_credential_status(statuses[:], provider_id); found {
+            continue
+        }
+
+        assert(provider_id in d.provider_auth.staged_api_keys, "an active removed API key needs restart")
+        append(&providers, provider_stored_state(d, provider_id, nil))
+    }
+
+    assert(len(providers) == count, "provider status count diverged from its projection")
+    slice.sort_by(providers[:], provider_state_less)
+    send_result(conn, req.id, wire.Auth_List_Result{providers = providers[:]}, sa)
+}
+
+// API keys may cross only a loopback socket or the end-to-end encrypted relay.
+provider_api_key_transport_allowed :: proc(conn: ^Conn) -> bool {
+    assert(conn != nil && conn.tx != nil, "API-key admission needs a transport")
+
+    switch t in conn.tx {
+    case ^Relay:
+        assert(t.conn == conn && t.established, "API-key relay admission needs an established peer")
+        return true
+
+    case ^ws.Server_Conn:
+        endpoint, endpoint_err := net.peer_endpoint(t.socket)
+        if endpoint_err != .None {
+            return false
+        }
+
+        return http_server.address_is_loopback(endpoint.address)
+    }
+
+    unreachable()
+}
+
+method_auth_set_api_key :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+    assert(conn != nil && conn.state == .Ready, "auth.set_api_key needs a Ready connection")
+    assert(req.method == .Auth_Set_Api_Key, "auth.set_api_key received another method")
+
+    if !provider_api_key_transport_allowed(conn) {
+        send_error(conn, req.id, .Bad_Request, "API keys may be changed only over loopback or relay", sa)
+        return
+    }
+
+    d := conn.daemon
+    params := req.params.(wire.Auth_Set_Api_Key_Params)
+    provider_id := string(params.provider_id)
+    if _, oauth_only := oauth.kind_from_id(provider_id); oauth_only {
+        send_error(conn, req.id, .Bad_Request, "provider accepts OAuth credentials only", sa)
+        return
+    }
+
+    statuses, load_err := store.credential_statuses_load(d.store, sa)
+    if load_err != nil {
+        log.errorf("daemon: credential status could not be read: %v", load_err)
+        send_error(conn, req.id, .Internal, "credential status could not be read", sa)
+        return
+    }
+    defer store.credential_statuses_destroy(statuses)
+
+    existing_kind, exists := provider_credential_status(statuses[:], provider_id)
+    if exists && existing_kind == .OAuth {
+        send_error(conn, req.id, .Bad_Request, "provider accepts OAuth credentials only", sa)
+        return
+    }
+    if !exists &&
+       provider_id not_in d.provider_auth.api_keys &&
+       provider_public_count(d, statuses[:]) >= wire.LIMITS.max_auth_providers {
+        send_error(conn, req.id, .Overloaded, "too many credential providers", sa)
+        return
+    }
+
+    api_key, clone_err := strings.clone(params.api_key, d.allocator)
+    if clone_err != nil {
+        conn_abort(conn, .Out_Of_Memory)
+        return
+    }
+    defer secret.string_destroy(&api_key, d.allocator)
+
+    staged, stage_ok := provider_api_key_stage(d, provider_id)
+    if !stage_ok {
+        conn_abort(conn, .Out_Of_Memory)
+        return
+    }
+
+    if write_err := store.credential_api_key_upsert(d.store, provider_id, api_key); write_err != nil {
+        if staged {
+            provider_api_key_unstage(d, provider_id)
+        }
+        log.errorf("daemon: %s API key could not be stored: %v", provider_id, write_err)
+        send_error(conn, req.id, .Internal, "API key could not be stored", sa)
+        return
+    }
+
+    send_result(conn, req.id, wire.Auth_Set_Api_Key_Result{restart_required = true}, sa)
+    _ = broadcast(
+        d,
+        wire.Auth_Changed_Data{provider = provider_stored_state(d, provider_id, wire.Auth_Credential_Kind.Api_Key)},
+    )
 }
 
 method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
@@ -1252,10 +1521,51 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(req.method == .Auth_Logout, "auth.logout received another method")
     d := conn.daemon
     params := req.params.(wire.Auth_Logout_Params)
+    provider_id := string(params.provider_id)
 
-    kind, kind_ok := oauth.kind_from_id(string(params.provider_id))
+    kind, kind_ok := oauth.kind_from_id(provider_id)
     if !kind_ok {
-        send_error(conn, req.id, .Bad_Request, "unknown authentication provider", sa)
+        statuses, load_err := store.credential_statuses_load(d.store, sa)
+        if load_err != nil {
+            log.errorf("daemon: credential status could not be read: %v", load_err)
+            send_error(conn, req.id, .Internal, "credential status could not be read", sa)
+            return
+        }
+        defer store.credential_statuses_destroy(statuses)
+
+        credential_kind, found := provider_credential_status(statuses[:], provider_id)
+        if !found {
+            send_result(conn, req.id, wire.Empty{}, sa)
+            return
+        }
+        if credential_kind != .Api_Key {
+            send_error(conn, req.id, .Bad_Request, "unknown authentication provider", sa)
+            return
+        }
+
+        staged, stage_ok := provider_api_key_stage(d, provider_id)
+        if !stage_ok {
+            conn_abort(conn, .Out_Of_Memory)
+            return
+        }
+
+        removed, remove_err := store.credential_remove(d.store, provider_id)
+        if remove_err != nil {
+            if staged {
+                provider_api_key_unstage(d, provider_id)
+            }
+            log.errorf("daemon: %s API key could not be removed: %v", provider_id, remove_err)
+            send_error(conn, req.id, .Internal, "API key could not be removed", sa)
+            return
+        }
+        assert(removed, "saved API-key status must remove one row")
+
+        if provider_id not_in d.provider_auth.api_keys {
+            provider_api_key_unstage(d, provider_id)
+        }
+
+        send_result(conn, req.id, wire.Empty{}, sa)
+        _ = broadcast(d, wire.Auth_Changed_Data{provider = provider_stored_state(d, provider_id, nil)})
         return
     }
     provider := oauth.provider(kind)

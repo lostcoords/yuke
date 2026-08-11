@@ -23,6 +23,24 @@ test_request_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_api_key_params_match_only_the_api_key_method :: proc(t: ^testing.T) {
+    secret := Auth_Set_Api_Key_Params {
+        provider_id = "openai",
+        api_key     = "secret",
+    }
+    testing.expect_value(
+        t,
+        request_validate({id = "1", method = .Auth_List, params = secret}),
+        Validation_Error.Mismatched_Payload,
+    )
+    testing.expect_value(
+        t,
+        request_validate({id = "1", method = .Auth_Set_Api_Key, params = Empty{}}),
+        Validation_Error.Mismatched_Payload,
+    )
+}
+
+@(test)
 test_response_ok_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","id":3,"result":{"type":"queued","input_id":8}}`
     v := decoder_init(input, context.temp_allocator)

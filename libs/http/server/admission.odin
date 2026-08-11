@@ -64,6 +64,11 @@ address_is_local :: proc(bind_address: net.IP4_Address, addr: net.Address) -> bo
     return false
 }
 
+// Whether an accepted peer address is loopback, including IPv4-mapped IPv6 loopback.
+address_is_loopback :: proc(addr: net.Address) -> bool {
+    return address_is_local(net.IP4_Loopback, addr)
+}
+
 // Whether `a` is an IPv4-mapped loopback literal (`::ffff:127.0.0.1`), which addresses
 // loopback by another spelling.
 @(private)

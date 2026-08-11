@@ -219,7 +219,7 @@ client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     defer qjs.free_string(ctx, method_text)
 
     method, known := wire.method_name_from_wire(method_text)
-    if !known || method == .Initialize {
+    if !known || method == .Initialize || method == .Auth_Set_Api_Key {
         return qjs.throw_type_error(ctx, "request method is not available")
     }
 
