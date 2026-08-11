@@ -1083,7 +1083,7 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
     target: string
     if p, ok := params.path.?; ok {
         target = p
-    } else if home, found := os.lookup_env("HOME", sa); found {
+    } else if home := paths.home_dir(sa); home != "" {
         target = home
     } else {
         target = "/"
