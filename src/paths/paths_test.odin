@@ -82,6 +82,57 @@ test_config_dir_names_the_app_directory :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_data_dir_honors_xdg_on_unix :: proc(t: ^testing.T) {
+    sync.mutex_lock(&env_lock)
+    defer sync.mutex_unlock(&env_lock)
+
+    when ODIN_OS != .Windows {
+        prior, had := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
+        defer env_restore("XDG_DATA_HOME", prior, had)
+
+        testing.expect(t, os.set_env("XDG_DATA_HOME", "/tmp/xdgdata") == nil, "set xdg data")
+
+        dir := data_dir(context.temp_allocator)
+        want, _ := filepath.join({"/tmp/xdgdata", APP_DIR}, context.temp_allocator)
+
+        testing.expect_value(t, dir, want)
+    }
+}
+
+@(test)
+test_data_dir_falls_back_to_home_local_share :: proc(t: ^testing.T) {
+    sync.mutex_lock(&env_lock)
+    defer sync.mutex_unlock(&env_lock)
+
+    when ODIN_OS != .Windows {
+        xdg_prior, xdg_had := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
+        home_prior, home_had := os.lookup_env(HOME_ENV, context.temp_allocator)
+        defer env_restore("XDG_DATA_HOME", xdg_prior, xdg_had)
+        defer env_restore(HOME_ENV, home_prior, home_had)
+
+        os.unset_env("XDG_DATA_HOME")
+        testing.expect(t, os.set_env(HOME_ENV, "/tmp/home") == nil, "set home")
+
+        dir := data_dir(context.temp_allocator)
+        want, _ := filepath.join({"/tmp/home", ".local", "share", APP_DIR}, context.temp_allocator)
+
+        testing.expect_value(t, dir, want)
+    }
+}
+
+@(test)
+test_db_and_blob_paths_derive_from_the_data_directory :: proc(t: ^testing.T) {
+    testing.expect_value(t, DB_FILE, "yuked.db")
+    testing.expect_value(t, BLOB_SUBDIR, "blobs")
+
+    want_db, _ := filepath.join({"/data/yuke", DB_FILE}, context.temp_allocator)
+    want_blobs, _ := filepath.join({"/data/yuke", BLOB_SUBDIR}, context.temp_allocator)
+
+    testing.expect_value(t, db_path_in("/data/yuke", context.temp_allocator), want_db)
+    testing.expect_value(t, blob_dir_in("/data/yuke", context.temp_allocator), want_blobs)
+}
+
+@(test)
 test_auth_path_honors_xdg_on_unix :: proc(t: ^testing.T) {
     sync.mutex_lock(&env_lock)
     defer sync.mutex_unlock(&env_lock)

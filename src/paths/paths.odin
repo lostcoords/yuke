@@ -11,6 +11,12 @@ APP_DIR :: "yuke"
 // The daemon's private credential file, `auth.json` in the shared application directory.
 AUTH_FILE :: "auth.json"
 
+// The daemon's SQLite event log, `yuked.db` in the data directory.
+DB_FILE :: "yuked.db"
+
+// The content-addressed blob store, the `blobs` subdirectory of the data directory.
+BLOB_SUBDIR :: "blobs"
+
 // Home-directory environment variable: `USERPROFILE` on Windows, `HOME` elsewhere. Windows
 // has no `HOME`, so resolving against it would leave a binary unable to find its own config.
 HOME_ENV :: "USERPROFILE" when ODIN_OS == .Windows else "HOME"
@@ -59,6 +65,57 @@ config_dir :: proc(allocator := context.allocator) -> string {
 
         return joined if err == nil else ""
     }
+}
+
+// The platform data directory, holding the event-log database and blob store: `%LOCALAPPDATA%\yuke`
+// on Windows (machine-local, not the roaming profile a live database must not sync into),
+// `$XDG_DATA_HOME/yuke` when set, else `~/.local/share/yuke`. Empty when no base can be resolved.
+data_dir :: proc(allocator := context.allocator) -> string {
+    when ODIN_OS == .Windows {
+        base, found := os.lookup_env("LOCALAPPDATA", allocator)
+        if !found || base == "" {
+            return ""
+        }
+
+        defer delete(base, allocator)
+
+        return join_or_empty(base, allocator)
+    } else {
+        if xdg, set := os.lookup_env("XDG_DATA_HOME", allocator); set {
+            defer delete(xdg, allocator)
+
+            if xdg != "" {
+                return join_or_empty(xdg, allocator)
+            }
+        }
+
+        home := home_dir(allocator)
+        if home == "" {
+            return ""
+        }
+
+        defer delete(home, allocator)
+
+        joined, err := filepath.join({home, ".local", "share", APP_DIR}, allocator)
+
+        return joined if err == nil else ""
+    }
+}
+
+// The event-log database path inside `base`, the data directory. Empty only on a join failure.
+db_path_in :: proc(base: string, allocator := context.allocator) -> string {
+    assert(base != "", "a database path needs a data directory")
+    path, err := filepath.join({base, DB_FILE}, allocator)
+
+    return path if err == nil else ""
+}
+
+// The blob store directory inside `base`, the data directory. Empty only on a join failure.
+blob_dir_in :: proc(base: string, allocator := context.allocator) -> string {
+    assert(base != "", "a blob directory needs a data directory")
+    path, err := filepath.join({base, BLOB_SUBDIR}, allocator)
+
+    return path if err == nil else ""
 }
 
 // The private credential file in the shared application directory. Empty means the platform

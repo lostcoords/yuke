@@ -57,8 +57,8 @@ daemon_run :: proc() {
     defer log.destroy_console_logger(logger)
     context.logger = logger
 
-    // Bootstrap only: `yuked.js` supplies host, port, db_path, blob_dir, auth_token, and the
-    // log level. `start` reads the manifest and fills them in before it binds anything.
+    // Bootstrap only: `yuked.js` supplies host, port, dataDir, auth_token, and the log level.
+    // `start` reads the manifest and fills them in before it binds anything.
     options := boot_options(DAEMON_VERSION)
 
     if options.auth_path == "" {

@@ -20,11 +20,9 @@ Script_Config :: struct {
     // TCP port for `/ws` and `/blob`. Zero binds an OS-assigned port.
     port:            int `json:"port"`,
 
-    // SQLite database holding the event log. Empty uses a process-lifetime memory store.
-    db_path:         string `json:"dbPath"`,
-
-    // Directory holding content-addressed blobs.
-    blob_dir:        string `json:"blobDir"`,
+    // Base directory for the event-log database (`yuked.db`) and blob store (`blobs/`). Empty
+    // uses the platform data directory.
+    data_dir:        string `json:"dataDir"`,
 
     // Bearer token; at least 32 bytes when set. Empty disables authorization.
     auth_token:      string `json:"authToken"`,
@@ -59,7 +57,7 @@ config_decode :: proc(text: string, allocator := context.allocator) -> (config: 
 
     for name in object {
         switch name {
-        case "host", "port", "dbPath", "blobDir", "authToken", "logLevel", "relayCloudUrl", "allowedOrigins":
+        case "host", "port", "dataDir", "authToken", "logLevel", "relayCloudUrl", "allowedOrigins":
         case:
             return {}, false
         }

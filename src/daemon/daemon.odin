@@ -5,6 +5,7 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:time"
 
@@ -61,10 +62,13 @@ Error :: enum {
 // Hosted control plane the relay fetches link tickets from when `yuked.js` sets no `relayCloudUrl`.
 RELAY_CLOUD_URL_DEFAULT :: "https://platform.yuke.sh"
 
+// Owner-only mode for the data directory the store and blobs live under, matching the blobs.
+DATA_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
+
 // Listen and identity options. Zero-valued fields default in `start`. When `yuked.js` in the
-// script root calls `defineConfig`, its values supersede `host`, `port`, `db_path`, `blob_dir`,
-// `auth_token`, and `relay_cloud_url` here; `daemon_version`, `js_root`, and `auth_path` are
-// always the caller's.
+// script root calls `defineConfig`, its values supersede `host`, `port`, the data directory
+// (`db_path`/`blob_dir`), `auth_token`, and `relay_cloud_url` here; `daemon_version`, `js_root`,
+// and `auth_path` are always the caller's.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:            string,
@@ -75,16 +79,16 @@ Options :: struct {
     // Daemon build/version string reported in `initialize`. Defaults to `"0.0.0"`.
     daemon_version:  string,
 
-    // Directory holding content-addressed blobs, created if absent. Empty disables
-    // `/blob`.
+    // Blob store directory, created if absent. Empty disables `/blob`. The launcher derives
+    // it as `<data-dir>/blobs`.
     blob_dir:        string,
 
     // Required bearer token. Empty disables authorization; non-empty values use
     // the RFC 3986 unreserved alphabet so the same token is safe in a query.
     auth_token:      string,
 
-    // SQLite database holding the event log, created if absent. Empty uses a
-    // process-lifetime in-memory database.
+    // SQLite event log, created if absent. Empty uses a process-lifetime in-memory database.
+    // The launcher derives it as `<data-dir>/yuked.db`.
     db_path:         string,
 
     // Private provider credential file. Empty disables WebSocket OAuth methods.
@@ -339,8 +343,13 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         if config.port != 0 {
             options.port = config.port
         }
-        options.db_path = paths.expand_home(config.db_path, sa)
-        options.blob_dir = paths.expand_home(config.blob_dir, sa)
+        // A relocated base re-derives both paths; an omitted `dataDir` keeps the launcher's.
+        if config.data_dir != "" {
+            base := paths.expand_home(config.data_dir, sa)
+            options.db_path = paths.db_path_in(base, sa)
+            options.blob_dir = paths.blob_dir_in(base, sa)
+        }
+
         options.auth_token = config.auth_token
         options.relay_cloud_url = config.relay_cloud_url
         options.allowed_origins = config.allowed_origins
@@ -360,7 +369,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     }
 
     if options.db_path == "" {
-        log.info("daemon: no db_path configured; using an in-memory event store")
+        log.info("daemon: no data directory resolved; using an in-memory event store")
     }
 
     if options.relay_cloud_url == "" {
@@ -406,6 +415,14 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     if options.db_path == "" {
         opened, serr = store.open_memory(allocator)
     } else {
+        // Create the data directory on demand; blobs make their own subdirectory above.
+        db_dir := filepath.dir(options.db_path)
+
+        if mkerr := os.make_directory_all(db_dir, DATA_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(db_dir) {
+            log.errorf("daemon: cannot create data directory %s: %v", db_dir, mkerr)
+            return .Store_Failed
+        }
+
         opened, serr = store.open(options.db_path, allocator)
     }
     if serr != nil {

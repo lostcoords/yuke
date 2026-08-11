@@ -6,9 +6,8 @@ declare module "yuke:daemon" {
   export interface DaemonConfig {
     host?: string;
     port?: number;
-    /** SQLite event-store path. Omit for a process-lifetime in-memory store. */
-    dbPath?: string;
-    blobDir?: string;
+    /** Base directory for the event-log database and blob store. Omit for the platform data directory. */
+    dataDir?: string;
     authToken?: string;
     logLevel?: "debug" | "info" | "warn" | "error";
     relayCloudUrl?: string;

@@ -41,15 +41,26 @@ script_root :: proc(allocator := context.allocator) -> string {
 }
 
 // The bootstrap options `start` needs before the manifest runs: the build version, the script
-// root, the private credential path, and the default port. Every other operator-facing value
-// (host, db_path, blob_dir, auth_token, log_level) comes from `yuked.js`'s `defineConfig`; the
-// port defaults here and the manifest supersedes it only with a non-zero value.
+// root, the private credential path, the default port, and the platform data-directory paths.
+// Every other operator-facing value (host, dataDir, auth_token, log_level) comes from `yuked.js`'s
+// `defineConfig`; the port defaults here and the manifest supersedes it only with a non-zero value.
 boot_options :: proc(version: string, allocator := context.allocator) -> daemon.Options {
-    return daemon.Options {
+    options := daemon.Options {
         daemon_version = version,
         js_root        = script_root(allocator),
         auth_path      = paths.auth_path(allocator),
         // The manifest supersedes this only when it sets a non-zero port.
         port           = daemon.DEFAULT_PORT,
     }
+
+    // Store and blobs default under the platform data directory; `dataDir` relocates the base.
+    // An unresolved base leaves both empty: memory store, `/blob` disabled.
+    if base := paths.data_dir(allocator); base != "" {
+        defer delete(base, allocator)
+
+        options.db_path = paths.db_path_in(base, allocator)
+        options.blob_dir = paths.blob_dir_in(base, allocator)
+    }
+
+    return options
 }
