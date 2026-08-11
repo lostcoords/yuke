@@ -53,13 +53,12 @@ boot_options :: proc(version: string, allocator := context.allocator) -> daemon.
         port           = daemon.DEFAULT_PORT,
     }
 
-    // Store and blobs default under the platform data directory; `dataDir` relocates the base.
-    // An unresolved base leaves both empty: memory store, `/blob` disabled.
+    // Store and blobs default under the platform data directory; `data_dir` keeps the base itself
+    // for the device-identity read. An unresolved base leaves all three empty.
     if base := paths.data_dir(allocator); base != "" {
-        defer delete(base, allocator)
-
         options.db_path = paths.db_path_in(base, allocator)
         options.blob_dir = paths.blob_dir_in(base, allocator)
+        options.data_dir = base
     }
 
     return options

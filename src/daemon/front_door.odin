@@ -191,10 +191,12 @@ route_ws :: proc(ctx: ^Http_Context) {
     ws.accept_upgrade(&d.ws_server, ctx.conn, ctx.request.head, ctx.request.trailing)
 }
 
-// The /identity response: service name and build version, no secret.
+// The /identity response: service name, build version, and the enrolled device id when present.
+// No secret; `device_id` is already visible to a signed-in browser via /browser/devices.
 Identity_Info :: struct {
-    service: string `json:"service"`,
-    version: string `json:"version"`,
+    service:   string `json:"service"`,
+    version:   string `json:"version"`,
+    device_id: string `json:"device_id,omitempty"`,
 }
 
 // Public discovery endpoint a browser probes to detect a local daemon before any WebSocket upgrade.
@@ -203,7 +205,13 @@ route_identity :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     identity_cors(ctx)
 
-    body, merr := json.marshal(Identity_Info{service = "yuke", version = d.daemon_version}, {}, context.temp_allocator)
+    info := Identity_Info {
+        service   = "yuke",
+        version   = d.daemon_version,
+        device_id = d.device_id,
+    }
+
+    body, merr := json.marshal(info, {}, context.temp_allocator)
     if merr != nil {
         http_server.respond_text(ctx.conn, .Internal_Server_Error, "identity encode failed")
         return

@@ -14,6 +14,7 @@ import "core:time"
 import "libs:offload"
 import ws "libs:websocket"
 import client "src:client"
+import relay "src:relay"
 import wire "src:wire"
 
 // --- Front-door route tests ---------------------------------------------------
@@ -131,6 +132,25 @@ test_make_blob_dir :: proc(name: string) -> string {
     path, _ := os.join_path({dir, BLOB_HASH}, context.temp_allocator)
     werr := os.write_entire_file(path, transmute([]byte)string(BLOB_BODY))
     assert(werr == nil, "test blob should be writable")
+
+    return dir
+}
+
+// A device-identity directory (`credentials.json` + `identity.key`) enrolling `device_id`, so a
+// daemon started with it as `data_dir` advertises that id on /identity.
+test_make_identity_dir :: proc(name: string, device_id: string) -> string {
+    dir := test_make_dir(name)
+
+    cred := strings.concatenate(
+        {`{"device_id":"`, device_id, `","credential":"c","relay_url":"wss://relay.example"}`},
+        context.temp_allocator,
+    )
+    cred_path, _ := os.join_path({dir, relay.CREDENTIALS_FILE}, context.temp_allocator)
+    assert(os.write_entire_file(cred_path, transmute([]byte)cred) == nil, "test credentials should be writable")
+
+    key: [relay.NOISE_STATIC_KEY_SIZE]byte = 0x42
+    key_path, _ := os.join_path({dir, relay.IDENTITY_KEY_FILE}, context.temp_allocator)
+    assert(os.write_entire_file(key_path, key[:]) == nil, "test identity key should be writable")
 
     return dir
 }
@@ -1079,6 +1099,31 @@ test_daemon_identity_is_public :: proc(t: ^testing.T) {
         t,
         strings.contains(got, "Access-Control-Allow-Origin: https://client.yuke.sh"),
         "identity echoes the origin for CORS",
+    )
+    testing.expect(t, !strings.contains(got, "device_id"), "an unenrolled daemon omits device_id")
+}
+
+// An enrolled daemon advertises its device id on /identity so a browser can match this machine to a
+// roster entry. The id is not a secret: a signed-in browser already reads it via /browser/devices.
+@(test)
+test_daemon_identity_reports_the_enrolled_device_id :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    dir := test_make_identity_dir("yuke-identity", "dev_0123456789abcdef")
+    defer os.remove_all(dir)
+
+    got := run_http(
+        t,
+        "GET /identity HTTP/1.1\r\nhost: 127.0.0.1\r\norigin: https://client.yuke.sh\r\n\r\n",
+        {data_dir = dir},
+    )
+
+    testing.expectf(t, strings.has_prefix(got, "HTTP/1.1 200 OK\r\n"), "identity answers 200, got %q", got)
+    testing.expectf(
+        t,
+        strings.contains(got, `"device_id":"dev_0123456789abcdef"`),
+        "identity carries the id, got %q",
+        got,
     )
 }
 

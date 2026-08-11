@@ -16,6 +16,7 @@ import ws "libs:websocket"
 import store "src:daemon/store"
 import js "src:js"
 import "src:paths"
+import relay "src:relay"
 import "src:secret"
 import wire "src:wire"
 
@@ -91,6 +92,10 @@ Options :: struct {
     // The launcher derives it as `<data-dir>/yuked.db`.
     db_path:         string,
 
+    // Platform data directory holding the device identity, read at start for the /identity device
+    // id. Empty omits it. Same source the relay reads; the manifest never relocates it.
+    data_dir:        string,
+
     // Private provider credential file. Empty disables WebSocket OAuth methods.
     auth_path:       string,
 
@@ -133,6 +138,11 @@ Daemon :: struct {
     // @private
     // Owned daemon version string, reported in every `initialize` result.
     daemon_version:  string,
+
+    // @private
+    // Enrolled device id advertised on /identity for local discovery, loaded at start from the
+    // same device identity the relay uses. Empty when this machine is not enrolled. Owned.
+    device_id:       string,
 
     // @private
     // Owned blob directory; empty when `/blob` is disabled.
@@ -392,6 +402,23 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     d.allowed_origins = cloned_origins
     if blob_aerr != nil || token_aerr != nil || !origins_ok {
         return .Out_Of_Memory
+    }
+
+    // The enrolled device id for /identity, from the same device identity the relay reads. Only the
+    // id is kept: it is moved out, then `identity_destroy` frees and wipes the credential and key.
+    if options.data_dir != "" {
+        id, ierr := relay.identity_load(options.data_dir, allocator)
+        switch ierr {
+        case .None:
+            d.device_id = id.device_id
+            id.device_id = ""
+            relay.identity_destroy(&id)
+
+        case .Absent:
+
+        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+            log.warnf("daemon: device identity unusable (%v); /identity omits device_id", ierr)
+        }
     }
 
     if auth_err := provider_auth_init(d); auth_err != .None {
@@ -705,6 +732,7 @@ free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
     delete(d.daemon_version, d.allocator)
+    delete(d.device_id, d.allocator)
     delete(d.blob_dir, d.allocator)
     secret.string_destroy(&d.auth_token, d.allocator)
     delete(d.provider_auth.path, d.allocator)
@@ -715,6 +743,7 @@ free_config :: proc(d: ^Daemon) {
     }
     delete(d.allowed_origins, d.allocator)
     d.daemon_version = ""
+    d.device_id = ""
     d.blob_dir = ""
     d.provider_auth.path = ""
     d.relay_cloud_url = ""
