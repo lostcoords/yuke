@@ -6,11 +6,102 @@
 import { term } from "yuke:term";
 
 // --- config -------------------------------------------------------------------------------
-// Plain mutable tunables. Plugins namespace their own settings under config.plugins.<name>;
-// config.plugins.<name> === false is the convention for "disabled".
+// Plain mutable tunables. Plugins namespace under config.plugins.<name>; false means disabled.
+// Product settings (daemon target, …) go through defineConfig for parity with yuked.js, or by
+// mutating config.daemon before the start event — connection reads them at dial time.
 export const config = {
   plugins: Object.create(null),
+  daemon: {
+    host: "127.0.0.1",
+    port: 9853,
+    autoConnect: true,
+    retryMs: 5000,
+    // token: omit on loopback; set when the front door requires a bearer
+  },
 };
+
+// Declarative entry for ~/.config/yuke/yuke.js — same name as yuked.js, client schema (nested
+// under daemon). Merges into config and returns the input so `export default defineConfig({…})`
+// works. Unknown keys throw; a broken user file is non-fatal at the host.
+export function defineConfig(partial) {
+  if (partial == null || typeof partial !== "object" || Array.isArray(partial)) {
+    throw new TypeError("defineConfig expects a config object");
+  }
+
+  for (const key of Object.keys(partial)) {
+    if (key !== "daemon") {
+      throw new TypeError("defineConfig: unknown key " + key);
+    }
+  }
+
+  if (partial.daemon !== undefined) {
+    applyDaemonConfig(partial.daemon);
+  }
+
+  return partial;
+}
+
+// Validate the whole partial first, then assign once — a throw must not leave config half-applied
+// (yuke.js failures are non-fatal, so a partial dial target would silently stick).
+function applyDaemonConfig(d) {
+  if (d == null || typeof d !== "object" || Array.isArray(d)) {
+    throw new TypeError("defineConfig.daemon expects an object");
+  }
+
+  for (const key of Object.keys(d)) {
+    switch (key) {
+      case "host":
+      case "port":
+      case "autoConnect":
+      case "retryMs":
+      case "token":
+        break;
+      default:
+        throw new TypeError("defineConfig.daemon: unknown key " + key);
+    }
+  }
+
+  const patch = {};
+
+  if (d.host !== undefined) {
+    if (typeof d.host !== "string" || d.host === "") {
+      throw new TypeError("daemon.host must be a non-empty string");
+    }
+    patch.host = d.host;
+  }
+
+  if (d.port !== undefined) {
+    const p = d.port;
+    if (typeof p !== "number" || !Number.isFinite(p) || p !== (p | 0) || p < 1 || p > 65535) {
+      throw new TypeError("daemon.port must be an integer 1..65535");
+    }
+    patch.port = p;
+  }
+
+  if (d.autoConnect !== undefined) {
+    if (typeof d.autoConnect !== "boolean") {
+      throw new TypeError("daemon.autoConnect must be a boolean");
+    }
+    patch.autoConnect = d.autoConnect;
+  }
+
+  if (d.retryMs !== undefined) {
+    const ms = d.retryMs;
+    if (typeof ms !== "number" || !Number.isFinite(ms) || ms !== (ms | 0) || ms < 1) {
+      throw new TypeError("daemon.retryMs must be a positive integer");
+    }
+    patch.retryMs = ms;
+  }
+
+  if (d.token !== undefined) {
+    if (typeof d.token !== "string") {
+      throw new TypeError("daemon.token must be a string");
+    }
+    patch.token = d.token;
+  }
+
+  Object.assign(config.daemon, patch);
+}
 
 // --- style: Neovim-like highlight groups over a palette -----------------------------------
 // A group is a style ({ fg?, bg?, bold?, … } over palette names) or a { link } to another

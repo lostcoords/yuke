@@ -2,7 +2,7 @@
 // built on yuke:core as View subclasses with commands and keymaps. A user's yuke.js layers on
 // top of this (adds keymaps, patches these prototypes, swaps the active view).
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit } from "yuke:core";
+import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit, config } from "yuke:core";
 import { ui, List, Transcript } from "yuke:ui";
 import { connect, connectionState } from "yuke:client";
 
@@ -772,10 +772,97 @@ function openCommandLine() {
   return root.pushOverlay(new CommandLine());
 }
 
+// --- daemon connection --------------------------------------------------------------------
+// Owns the local daemon lifecycle. Target and retry policy come from config.daemon (set by
+// defaults or defineConfig in yuke.js before start). The host has no setTimeout and does not
+// push post-ready close into JS, so while auto-connect is on (or a session is live) this service
+// ticks: ready → slow drop poll; offline → countdown + reconnect. autoConnect: false skips
+// initial dial and auto-retry; :connect (app:connect) dials once manually.
+const READY_POLL_MS = 1000;
+const RETRY_POLL_MS = 500;
+
+const connection = {
+  nextRetryAt: 0,
+
+  onStart() {
+    if (config.daemon.autoConnect === false) return;
+    this.attempt();
+  },
+
+  attempt() {
+    if (connectionState() !== "disconnected") return;
+
+    this.nextRetryAt = 0;
+    const d = config.daemon;
+    const opts = { host: d.host, port: d.port };
+    if (d.token) opts.token = d.token;
+
+    try {
+      connect(opts).then(
+        () => {
+          root.invalidate();
+        },
+        () => {
+          this.scheduleRetry();
+          root.invalidate();
+        },
+      );
+    } catch (_e) {
+      this.scheduleRetry();
+    }
+
+    root.invalidate();
+  },
+
+  scheduleRetry() {
+    if (config.daemon.autoConnect === false) return;
+    this.nextRetryAt = Date.now() + config.daemon.retryMs;
+  },
+
+  // Ready always polls (drop → UI). Offline polls when auto-reconnect is on or a countdown is live.
+  needsTick() {
+    const st = connectionState();
+    if (st === "ready") return { periodMs: READY_POLL_MS };
+    if (st === "connecting" || st === "closing") return { periodMs: RETRY_POLL_MS };
+    if (config.daemon.autoConnect !== false || this.nextRetryAt > 0) {
+      return { periodMs: RETRY_POLL_MS };
+    }
+    return null;
+  },
+
+  // Auto path only: arm a retry if none is pending, else dial when due. Manual mode never retries.
+  tick() {
+    if (connectionState() !== "disconnected") return;
+    if (config.daemon.autoConnect === false) return;
+
+    if (this.nextRetryAt === 0) {
+      this.nextRetryAt = Date.now() + config.daemon.retryMs;
+    } else if (Date.now() >= this.nextRetryAt) {
+      this.attempt();
+    }
+  },
+};
+
+// Header status: connected / connecting / offline with a retry countdown.
+function connectionLabel() {
+  const st = connectionState();
+  if (st === "ready") return "connected";
+  if (st === "connecting") return "connecting…";
+  if (st === "closing") return "disconnecting…";
+
+  if (connection.nextRetryAt > 0) {
+    const secs = Math.max(0, Math.ceil((connection.nextRetryAt - Date.now()) / 1000));
+    return "daemon off · retry " + secs + "s";
+  }
+
+  return "daemon off";
+}
+
 // --- commands + keymaps -------------------------------------------------------------------
 command.add(null, {
   "app:quit": () => quit(),
   "ui:palette": () => openPalette(),
+  "app:connect": () => connection.attempt(),
 });
 
 command.add("home", {
@@ -803,79 +890,6 @@ keymap.add({
     return true;
   },
 });
-
-// --- daemon connection --------------------------------------------------------------------
-// Owns the local daemon lifecycle: connect on start, retry every RETRY_MS while down. The host
-// has no setTimeout and does not push post-ready close into JS, so this service always ticks:
-// while ready it is a slow liveness poll (drop → schedule retry); while down it advances the
-// header countdown and reconnects. Views read connectionState()/connectionLabel(). Target is
-// fixed until applyConfig lands.
-const DAEMON = { host: "127.0.0.1", port: 9853 };
-const RETRY_MS = 5000;
-const READY_POLL_MS = 1000; // drop detection; host has no connection-change callback yet
-const RETRY_POLL_MS = 500; // countdown label + reconnect deadline
-
-const connection = {
-  nextRetryAt: 0,
-
-  onStart() {
-    this.attempt();
-  },
-
-  attempt() {
-    if (connectionState() !== "disconnected") return;
-
-    this.nextRetryAt = 0;
-    try {
-      connect(DAEMON).then(
-        () => {
-          root.invalidate();
-        },
-        () => {
-          this.nextRetryAt = Date.now() + RETRY_MS;
-          root.invalidate();
-        },
-      );
-    } catch (_e) {
-      this.nextRetryAt = Date.now() + RETRY_MS;
-    }
-
-    root.invalidate();
-  },
-
-  // Always arm ticks: ready needs a heartbeat (no host drop event); offline needs the countdown.
-  needsTick() {
-    const ms = connectionState() === "ready" ? READY_POLL_MS : RETRY_POLL_MS;
-    return { periodMs: ms };
-  },
-
-  // Disconnected: arm a retry if none is pending (failed attempt or live drop), else dial when due.
-  // Connecting/ready/closing: no-op; the next disconnected tick will schedule.
-  tick() {
-    if (connectionState() !== "disconnected") return;
-
-    if (this.nextRetryAt === 0) {
-      this.nextRetryAt = Date.now() + RETRY_MS;
-    } else if (Date.now() >= this.nextRetryAt) {
-      this.attempt();
-    }
-  },
-};
-
-// Header status: connected / connecting / offline with a retry countdown.
-function connectionLabel() {
-  const st = connectionState();
-  if (st === "ready") return "connected";
-  if (st === "connecting") return "connecting…";
-  if (st === "closing") return "disconnecting…";
-
-  if (connection.nextRetryAt > 0) {
-    const secs = Math.max(0, Math.ceil((connection.nextRetryAt - Date.now()) / 1000));
-    return "daemon off · retry " + secs + "s";
-  }
-
-  return "daemon off";
-}
 
 seedDummy();
 root.setActive(home);

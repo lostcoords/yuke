@@ -141,11 +141,26 @@ declare module "yuke:term" {
 declare module "yuke:core" {
   import type { KeyEvent, MouseEvent, Style, TermEvent } from "yuke:term";
 
+  export interface DaemonConfig {
+    host: string;
+    port: number;
+    autoConnect: boolean;
+    retryMs: number;
+    token?: string;
+  }
+
   export interface Config {
     plugins: Record<string, unknown>;
+    daemon: DaemonConfig;
     [key: string]: unknown;
   }
   export const config: Config;
+
+  export interface DefineConfigInput {
+    daemon?: Partial<DaemonConfig>;
+  }
+
+  export function defineConfig(partial: DefineConfigInput): DefineConfigInput;
 
   export interface StyleGroupDef {
     fg?: string | number;
