@@ -204,9 +204,13 @@ def install(args):
 
     dest_dir = install_dir(args)
     dest_dir.mkdir(parents=True, exist_ok=True)
+    # Atomic rename, not in-place copy: overwriting a running daemon's mapped binary makes
+    # macOS SIGKILL the next exec. os.replace gives dest a fresh inode.
     dest = dest_dir / "yuke"
-    shutil.copy2(BUILD / "yuke", dest)
-    dest.chmod(0o755)
+    staged = dest_dir / ".yuke.new"
+    shutil.copy2(BUILD / "yuke", staged)
+    staged.chmod(0o755)
+    os.replace(staged, dest)
     print(f"installed yuke -> {dest}")
 
     if str(dest_dir) not in os.environ.get("PATH", "").split(os.pathsep):
