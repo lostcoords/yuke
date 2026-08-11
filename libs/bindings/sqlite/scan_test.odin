@@ -477,6 +477,30 @@ test_scan_mapping_scans_maybe_columns :: proc(t: ^testing.T) {
     testing.expect_value(t, step(st), Result.Done)
 }
 
+@(test)
+test_scan_borrows_text_inside_maybe :: proc(t: ^testing.T) {
+    db, rc := open_memory()
+    testing.expect_value(t, rc, Result.Ok)
+    defer testing.expect_value(t, close(db), Result.Ok)
+
+    st, prep := prepare(db, "SELECT 'set' AS value")
+    testing.expect_value(t, prep, Result.Ok)
+    defer testing.expect_value(t, finalize(st), Result.Ok)
+    testing.expect_value(t, step(st), Result.Row)
+
+    Row :: struct {
+        value: Maybe(string) `sql:",borrowed"`,
+    }
+    row: Row
+    testing.expect_value(t, scan_row(st, &row), Scan_Error.None)
+    value, set := row.value.?
+    testing.expect(t, set, "the non-null column sets the Maybe arm")
+    testing.expect_value(t, value, "set")
+
+    scan_destroy(&row)
+    testing.expect_value(t, row, Row{})
+}
+
 // A `Maybe` payload that landed before a later column failed is still owned, so the
 // release walk has to see through the tag to give it back.
 @(test)

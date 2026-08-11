@@ -40,6 +40,10 @@ Store_Error :: enum {
     // an unknown or live-only broadcast name, an out-of-order seq, an empty payload.
     Invalid_Row,
 
+    // A provider id or credential value is empty, malformed, or larger than the
+    // bounded store representation. Rejected before any value is bound to SQLite.
+    Invalid_Credential,
+
     // `quick_check` reported damage. A file SQLite refuses outright arrives as its
     // own `.Corrupt` / `.Not_A_Db` instead.
     Integrity_Failed,

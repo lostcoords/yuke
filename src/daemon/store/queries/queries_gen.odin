@@ -160,6 +160,23 @@ Session_Config_Params :: struct {
     requested_rev: wire.Config_Rev,
 }
 
+Upsert_Api_Key_Params :: struct {
+    provider_id: string,
+    api_key:     string,
+}
+
+Upsert_OAuth_Params :: struct {
+    provider_id:   string,
+    access_token:  string,
+    refresh_token: string,
+    expires_at_ms: u64,
+    account_id:    Maybe(string),
+}
+
+Remove_Credential_Params :: struct {
+    provider_id: string,
+}
+
 Append_Event_Params :: struct {
     session_id: wire.Session_Id,
     seq:        wire.Seq,
@@ -250,6 +267,9 @@ Query_Id :: enum {
     Set_Session_Config,
     Set_Prompt,
     Session_Config,
+    Upsert_Api_Key,
+    Upsert_OAuth,
+    Remove_Credential,
     Append_Event,
     Advance_Seq,
     Bump_Ids,
@@ -276,6 +296,15 @@ QUERY_SQL := [Query_Id]string {
     SELECT :session_id, :prompt WHERE :prompt IS NOT NULL;`,
     .Session_Config       = `SELECT config_rev, model, reasoning FROM session_configs
     WHERE session_id = :session_id AND config_rev = :requested_rev;`,
+    .Upsert_Api_Key       = `INSERT OR REPLACE INTO provider_credentials(provider_id, kind, api_key)
+VALUES (:provider_id, 'api_key', :api_key);`,
+    .Upsert_OAuth         = `INSERT OR REPLACE INTO provider_credentials(
+    provider_id, kind, access_token, refresh_token, expires_at_ms, account_id
+)
+VALUES (
+    :provider_id, 'oauth', :access_token, :refresh_token, :expires_at_ms, :account_id
+);`,
+    .Remove_Credential    = `DELETE FROM provider_credentials WHERE provider_id = :provider_id;`,
     .Append_Event         = `INSERT INTO events(session_id, seq, name, payload)
     VALUES (:session_id, :seq, :name, :payload);`,
     .Advance_Seq          = `UPDATE sessions SET seq_high = :seq
@@ -360,6 +389,9 @@ Queries :: struct {
     set_session_config:   sqlite.Bind_Mapping(Set_Session_Config_Params),
     set_prompt:           sqlite.Bind_Mapping(Set_Prompt_Params),
     session_config:       sqlite.Reader(Session_Config_Params, Session_Config_Row),
+    upsert_api_key:       sqlite.Bind_Mapping(Upsert_Api_Key_Params),
+    upsert_oauth:         sqlite.Bind_Mapping(Upsert_OAuth_Params),
+    remove_credential:    sqlite.Bind_Mapping(Remove_Credential_Params),
     append_event:         sqlite.Bind_Mapping(Append_Event_Params),
     advance_seq:          sqlite.Bind_Mapping(Advance_Seq_Params),
     bump_ids:             sqlite.Bind_Mapping(Bump_Ids_Params),
@@ -405,6 +437,21 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     }
     assert(session_config_reader_err == .None, "generated statement matches its generated struct")
     queries.session_config = session_config_reader
+    upsert_api_key_stmt := sqlite.prepare(db, QUERY_SQL[.Upsert_Api_Key]) or_return
+    upsert_api_key_bind, upsert_api_key_bind_err := sqlite.bind_prepare(upsert_api_key_stmt, Upsert_Api_Key_Params)
+    assert(upsert_api_key_bind_err == .None, "generated statement matches its generated struct")
+    queries.upsert_api_key = upsert_api_key_bind
+    upsert_oauth_stmt := sqlite.prepare(db, QUERY_SQL[.Upsert_OAuth]) or_return
+    upsert_oauth_bind, upsert_oauth_bind_err := sqlite.bind_prepare(upsert_oauth_stmt, Upsert_OAuth_Params)
+    assert(upsert_oauth_bind_err == .None, "generated statement matches its generated struct")
+    queries.upsert_oauth = upsert_oauth_bind
+    remove_credential_stmt := sqlite.prepare(db, QUERY_SQL[.Remove_Credential]) or_return
+    remove_credential_bind, remove_credential_bind_err := sqlite.bind_prepare(
+        remove_credential_stmt,
+        Remove_Credential_Params,
+    )
+    assert(remove_credential_bind_err == .None, "generated statement matches its generated struct")
+    queries.remove_credential = remove_credential_bind
     append_event_stmt := sqlite.prepare(db, QUERY_SQL[.Append_Event]) or_return
     append_event_bind, append_event_bind_err := sqlite.bind_prepare(append_event_stmt, Append_Event_Params)
     assert(append_event_bind_err == .None, "generated statement matches its generated struct")
@@ -518,6 +565,9 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.set_prompt.statement)
     sqlite.finalize(queries.session_config.statement)
     sqlite.reader_destroy(&queries.session_config, allocator)
+    sqlite.finalize(queries.upsert_api_key.statement)
+    sqlite.finalize(queries.upsert_oauth.statement)
+    sqlite.finalize(queries.remove_credential.statement)
     sqlite.finalize(queries.append_event.statement)
     sqlite.finalize(queries.advance_seq.statement)
     sqlite.finalize(queries.bump_ids.statement)
@@ -564,6 +614,21 @@ session_config :: proc(
 ) {
     params := params_in
     return sqlite.read_one(&q.session_config, &params, allocator)
+}
+
+upsert_api_key :: proc(q: ^Queries, params_in: Upsert_Api_Key_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.upsert_api_key, &params)
+}
+
+upsert_oauth :: proc(q: ^Queries, params_in: Upsert_OAuth_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.upsert_oauth, &params)
+}
+
+remove_credential :: proc(q: ^Queries, params_in: Remove_Credential_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.remove_credential, &params)
 }
 
 append_event :: proc(q: ^Queries, params_in: Append_Event_Params) -> sqlite.Result {

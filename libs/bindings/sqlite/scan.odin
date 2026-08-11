@@ -453,6 +453,10 @@ scan_type_owns :: proc(info: ^reflect.Type_Info) -> bool {
 
     case reflect.Type_Info_Slice:
         return true
+
+    case reflect.Type_Info_Union:
+        assert(len(kind.variants) == 1 && !kind.no_nil, "the walk admits only Maybe leaves")
+        return scan_type_owns(kind.variants[0])
     }
 
     return false

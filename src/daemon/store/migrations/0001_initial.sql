@@ -1,6 +1,37 @@
--- The session registry, the event log of record, and the transcript projection.
+-- Provider credentials, the session registry, the event log of record, and the
+-- transcript projection.
 -- Shipped migration text is immutable: add a step, never edit one. Numeric upper
 -- bounds are 2^53-1, the largest integer the wire's JSON round-trips exactly.
+
+-- The discriminator and nullability checks keep the two credential arms closed:
+-- a row is exactly one API key or one OAuth grant.
+CREATE TABLE provider_credentials (
+    provider_id TEXT PRIMARY KEY
+        CHECK (
+            typeof(provider_id) = 'text' AND
+            length(provider_id) BETWEEN 1 AND 64 AND
+            length(CAST(provider_id AS BLOB)) = length(provider_id) AND
+            provider_id NOT GLOB '*[^a-z0-9._-]*'
+        ),
+    kind TEXT NOT NULL CHECK (typeof(kind) = 'text' AND kind IN ('api_key', 'oauth')),
+
+    api_key       TEXT CHECK (api_key       IS NULL OR (typeof(api_key)       = 'text' AND length(CAST(api_key       AS BLOB)) BETWEEN 1 AND 65536)),
+    access_token  TEXT CHECK (access_token  IS NULL OR (typeof(access_token)  = 'text' AND length(CAST(access_token  AS BLOB)) BETWEEN 1 AND 65536)),
+    refresh_token TEXT CHECK (refresh_token IS NULL OR (typeof(refresh_token) = 'text' AND length(CAST(refresh_token AS BLOB)) BETWEEN 1 AND 65536)),
+    expires_at_ms INTEGER CHECK (expires_at_ms IS NULL OR (typeof(expires_at_ms) = 'integer' AND expires_at_ms BETWEEN 1 AND 9007199254740991)),
+    account_id    TEXT CHECK (account_id IS NULL OR (typeof(account_id) = 'text' AND length(CAST(account_id AS BLOB)) BETWEEN 1 AND 4096)),
+
+    CHECK (
+        (kind = 'api_key' AND
+            api_key IS NOT NULL AND
+            access_token IS NULL AND refresh_token IS NULL AND
+            expires_at_ms IS NULL AND account_id IS NULL) OR
+        (kind = 'oauth' AND
+            api_key IS NULL AND
+            access_token IS NOT NULL AND refresh_token IS NOT NULL AND
+            expires_at_ms IS NOT NULL)
+    )
+) WITHOUT ROWID;
 
 -- Primary state, not derived: session.summary_changed is Ungated and never reaches the
 -- log, so nothing here rebuilds by replay. Carries the id-minting marks too, one row per

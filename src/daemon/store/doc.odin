@@ -1,6 +1,6 @@
 /*
-The store package owns the daemon's SQLite database: the `events` log of record
-and the derived per-session state written in the same transaction.
+The store package owns the daemon's SQLite database: provider credentials, the
+`events` log of record, and derived per-session state.
 
 `open` opens the single writer (`Readwrite|Create|Nomutex`), sets
 `busy_timeout`, runs a `quick_check`, and validates `application_id` and
@@ -60,7 +60,8 @@ the log: each row's payload is cloned into the allocator the caller supplies, an
 that clone is handed to the visitor outright — the visitor frees nothing, and the
 caller reclaims every row wholesale (typically by resetting the arena backing that
 allocator) once the visit ends. Persisted storage classes are validated on read as
-well as constrained by the schema.
+well as constrained by the schema. Credential reads borrow the SQLite row, clone
+only the selected arm, and explicitly wipe every owned secret during cleanup.
 */
 
 package store
