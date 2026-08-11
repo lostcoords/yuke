@@ -168,10 +168,10 @@ service_start :: proc() {
 
     run_tool({"launchctl", "enable", target})
 
-    // Bootstrap first so a stopped (booted-out) service is loaded again; ignore "already loaded",
-    // then kickstart to (re)start it.
+    // Bootstrap reloads a booted-out service; ignore "already loaded". kickstart without -k just
+    // ensures it runs: -k would bounce a healthy daemon and stall on launchd's relaunch throttle.
     run_tool({"launchctl", "bootstrap", domain, path})
-    run_tool_checked({"launchctl", "kickstart", "-k", target}, "launchctl kickstart")
+    run_tool_checked({"launchctl", "kickstart", target}, "launchctl kickstart")
 
     fmt.printfln("Started %s.", SERVICE_LABEL)
 }
