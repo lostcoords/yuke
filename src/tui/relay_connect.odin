@@ -79,13 +79,13 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
     assert(device != "", "remote connect needs a device name")
     assert(h.remote == nil, "remote connect started while one was in flight")
 
-    if h.config_root == "" {
+    if h.data_root == "" {
         client_promise_reject(job, "not_enrolled", true)
 
         return
     }
 
-    id, ierr := relay.identity_load(h.config_root, h.allocator)
+    id, ierr := relay.identity_load(h.data_root, h.allocator)
     switch ierr {
     case .None:
 

@@ -306,9 +306,9 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
 relay_autostart :: proc(d: ^Daemon) {
     assert(d != nil, "relay autostart needs daemon state")
 
-    dir := paths.config_dir(d.allocator)
+    dir := paths.data_dir(d.allocator)
     if dir == "" {
-        log.warn("daemon: no config directory; relay disabled")
+        log.warn("daemon: no data directory; relay disabled")
 
         return
     }

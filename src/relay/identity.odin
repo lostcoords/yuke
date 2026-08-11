@@ -79,7 +79,7 @@ Credentials_File :: struct {
 // Load the device identity from `dir`. `.Absent` when either file is missing (not enrolled);
 // the credential fields must all be present and the key must be a valid X25519 private key.
 identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Identity, err: Identity_Error) {
-    assert(dir != "", "identity_load needs a config directory")
+    assert(dir != "", "identity_load needs a directory")
 
     cred_path, _ := filepath.join({dir, CREDENTIALS_FILE}, context.temp_allocator)
     key_path, _ := filepath.join({dir, IDENTITY_KEY_FILE}, context.temp_allocator)
@@ -138,7 +138,7 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
 // Write `id` to `dir` as `credentials.json` + `identity.key`, each mode 0600 and replaced
 // atomically. The directory must already exist.
 identity_save :: proc(dir: string, id: ^Identity, allocator := context.allocator) -> Identity_Error {
-    assert(dir != "", "identity_save needs a config directory")
+    assert(dir != "", "identity_save needs a directory")
     assert(id != nil, "identity_save needs an identity")
     assert(id.device_id != "" && id.credential != "" && id.relay_url != "", "identity_save needs complete credentials")
 

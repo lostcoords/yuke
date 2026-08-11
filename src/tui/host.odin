@@ -79,6 +79,9 @@ Host :: struct {
     // Owned canonical config directory (`~/.config/yuke`); the containment root for user module
     // files. Empty when no config dir resolves — then only the baked modules load.
     config_root:      string,
+    // Owned data directory (`~/.local/share/yuke`); where `yuke login` writes the device identity.
+    // Empty when none resolves, which reads as not-enrolled.
+    data_root:        string,
     allocator:        mem.Allocator,
     // Cached dimensions for term.width / term.height.
     width:            u16,
@@ -167,6 +170,7 @@ host_init :: proc(
     // the exact string the user-module names are built from, so containment stays a byte-prefix
     // test rather than depending on the directory existing yet.
     h.config_root = paths.config_dir(allocator)
+    h.data_root = paths.data_dir(allocator)
 
     modules := [3]js.Module{js.fs_module(), term_module(), client_module()}
 
@@ -274,6 +278,11 @@ host_destroy :: proc(h: ^Host) {
     if h.config_root != "" {
         delete(h.config_root, h.allocator)
         h.config_root = ""
+    }
+
+    if h.data_root != "" {
+        delete(h.data_root, h.allocator)
+        h.data_root = ""
     }
 }
 

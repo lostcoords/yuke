@@ -1,7 +1,7 @@
 /*
 yuke login (`yuke login`): device-code enrollment. Generates the device's X25519 static key,
 walks the control plane's device-code flow, and writes the credential and key into
-`~/.config/yuke` for the client and daemon to share.
+`~/.local/share/yuke` for the client and daemon to share.
 
 The control-plane client (`src/relay`) is async on an nbio loop; login is a one-shot CLI, so
 `cloud_post` drives that loop synchronously — start one transfer, tick until it settles.
@@ -52,9 +52,9 @@ login_run :: proc() {
         os.exit(2)
     }
 
-    dir := paths.config_dir()
+    dir := paths.data_dir()
     if dir == "" {
-        fmt.eprintln("yuke login: no config directory could be resolved")
+        fmt.eprintln("yuke login: no data directory could be resolved")
         os.exit(1)
     }
 
