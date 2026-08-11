@@ -41,14 +41,13 @@ script_root :: proc(allocator := context.allocator) -> string {
 }
 
 // The bootstrap options `start` needs before the manifest runs: the build version, the script
-// root, the private credential path, the default port, and the platform data-directory paths.
+// root, the default port, and the platform data-directory paths.
 // Every other operator-facing value (host, dataDir, auth_token, log_level) comes from `yuked.js`'s
 // `defineConfig`; the port defaults here and the manifest supersedes it only with a non-zero value.
 boot_options :: proc(version: string, allocator := context.allocator) -> daemon.Options {
     options := daemon.Options {
         daemon_version = version,
         js_root        = script_root(allocator),
-        auth_path      = paths.auth_path(allocator),
         // The manifest supersedes this only when it sets a non-zero port.
         port           = daemon.DEFAULT_PORT,
     }

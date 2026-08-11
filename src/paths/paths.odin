@@ -4,12 +4,9 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-// Shared application directory for the TUI, daemon, plugins, and credentials. Both binaries
+// Shared application directory for the TUI, daemon, and plugins. Both binaries
 // resolve the same leaf so the client writes `yuke.js` where the daemon looks for it.
 APP_DIR :: "yuke"
-
-// The daemon's private credential file, `auth.json` in the shared application directory.
-AUTH_FILE :: "auth.json"
 
 // The daemon's SQLite event log, `yuked.db` in the data directory.
 DB_FILE :: "yuked.db"
@@ -34,7 +31,7 @@ home_dir :: proc(allocator := context.allocator) -> string {
 
 // The shared configuration directory, following each platform's convention: `%APPDATA%\yuke`
 // on Windows, `$XDG_CONFIG_HOME/yuke` when set, else `~/.config/yuke`. Empty when no base can
-// be resolved. This holds `yuke.js`, `yuked.js`, `auth.json`, and `plugins/`.
+// be resolved. This holds `yuke.js`, `yuked.js`, and `plugins/`.
 config_dir :: proc(allocator := context.allocator) -> string {
     when ODIN_OS == .Windows {
         base, found := os.lookup_env("APPDATA", allocator)
@@ -114,21 +111,6 @@ db_path_in :: proc(base: string, allocator := context.allocator) -> string {
 blob_dir_in :: proc(base: string, allocator := context.allocator) -> string {
     assert(base != "", "a blob directory needs a data directory")
     path, err := filepath.join({base, BLOB_SUBDIR}, allocator)
-
-    return path if err == nil else ""
-}
-
-// The private credential file in the shared application directory. Empty means the platform
-// config directory could not be resolved.
-auth_path :: proc(allocator := context.allocator) -> string {
-    dir := config_dir(allocator)
-    if dir == "" {
-        return ""
-    }
-
-    defer delete(dir, allocator)
-
-    path, err := filepath.join({dir, AUTH_FILE}, allocator)
 
     return path if err == nil else ""
 }

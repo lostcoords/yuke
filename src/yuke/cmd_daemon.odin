@@ -61,10 +61,6 @@ daemon_run :: proc() {
     // `start` reads the manifest and fills them in before it binds anything.
     options := boot_options(DAEMON_VERSION)
 
-    if options.auth_path == "" {
-        log.warn("yuke: no config directory could be resolved; provider OAuth is disabled")
-    }
-
     if err := nbio.acquire_thread_event_loop(); err != nil {
         log.errorf("yuke: event loop unavailable: %v", err)
         os.exit(1)

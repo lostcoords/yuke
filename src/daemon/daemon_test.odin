@@ -328,7 +328,7 @@ handler_callbacks :: proc() -> client.Client_Callbacks {
 
 // Bring up a daemon, drive `obs`'s single request through the client driver, and run its
 // check(s). `db_path` selects a file store; an empty path uses the in-memory store.
-run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", auth_path := "", sessions: ..wire.Session) {
+run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: ..wire.Session) {
     obs.t = t
 
     nbio.acquire_thread_event_loop()
@@ -336,7 +336,7 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", auth_path :
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path, auth_path = auth_path})
+    derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = db_path})
     testing.expect_value(t, derr, Error.None)
 
     for session in sessions {
@@ -391,6 +391,49 @@ test_make_dir :: proc(name: string) -> string {
     os.make_directory_all(dir)
 
     return dir
+}
+
+test_oauth_store_write :: proc(
+    t: ^testing.T,
+    path: string,
+    kind: provider_auth.Kind,
+    credentials: provider_auth.OAuth_Credentials,
+) -> bool {
+    opened, open_err := store.open(path)
+    if !testing.expect_value(t, open_err, nil) {
+        return false
+    }
+    defer store.close(opened)
+
+    provider := provider_auth.provider(kind)
+    write_err := store.credential_oauth_upsert(
+        opened,
+        provider.id,
+        {
+            access_token = credentials.access_token,
+            refresh_token = credentials.refresh_token,
+            expires_at_ms = credentials.expires_at_ms,
+            account_id = credentials.account_id,
+        },
+    )
+
+    return testing.expect_value(t, write_err, nil)
+}
+
+test_store_credential_present :: proc(t: ^testing.T, s: ^store.Store, provider_id: string) -> bool {
+    credentials, load_err := store.credentials_load(s)
+    if !testing.expect_value(t, load_err, nil) {
+        return false
+    }
+    defer store.credentials_destroy(credentials)
+
+    for credential in credentials {
+        if credential.provider_id == provider_id {
+            return true
+        }
+    }
+
+    return false
 }
 
 // A name 270 UTF-8 bytes long (90 repeated 3-byte "あ" runes) but only 90 characters:
@@ -569,20 +612,15 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
 }
 
 @(test)
-test_daemon_auth_list_uses_configured_auth_json :: proc(t: ^testing.T) {
+test_daemon_auth_list_uses_the_daemon_store :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    dir := test_make_dir("yuke-daemon-auth-list")
-    defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
 
     obs := Handler_Obs {
         method = .Auth_List,
         params = wire.Empty{},
         check  = check_auth_list,
     }
-    run_handler(t, &obs, auth_path = path)
+    run_handler(t, &obs)
 }
 
 @(test)
@@ -591,30 +629,26 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
 
     dir := test_make_dir("yuke-daemon-auth-refresh-timer")
     defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    auth_store, open_err := provider_auth.open(path)
-    testing.expect_value(t, open_err, provider_auth.Error.None)
     credentials := provider_auth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
         account_id    = "account",
     }
-    testing.expect_value(
-        t,
-        provider_auth.credentials_put(auth_store, provider_auth.CODEX_PROVIDER_ID, credentials),
-        provider_auth.Error.None,
-    )
-    provider_auth.close(auth_store)
+    if !test_oauth_store_write(t, path, .Codex, credentials) {
+        return
+    }
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    _, signed_in := provider_credentials_get(&d, .Codex)
+    testing.expect(t, signed_in, "startup loads OAuth credentials from the daemon store")
     testing.expect(t, d.provider_auth.refresh_timer != nil, "future credentials arm proactive refresh")
     testing.expect(t, provider_refresh(&d) == nil, "future credentials do not refresh early")
 
@@ -627,20 +661,81 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_login_deadline_releases_the_attempt :: proc(t: ^testing.T) {
+test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := test_make_dir("yuke-daemon-auth-login-deadline")
+    dir := test_make_dir("yuke-daemon-auth-refresh-success")
     defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
+
+    credentials := provider_auth.OAuth_Credentials {
+        access_token  = "access",
+        refresh_token = "refresh",
+        expires_at_ms = 1,
+        account_id    = "account",
+    }
+    if !test_oauth_store_write(t, path, .Codex, credentials) {
+        return
+    }
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    defer test_teardown(&d)
+    provider_refresh_timer_cancel(&d)
+
+    refresh, aerr := new(Provider_Refresh, d.allocator)
+    if !testing.expect(t, aerr == nil, "allocate refresh attempt") {
+        return
+    }
+    refresh^ = {
+        kind = .Codex,
+        transfer = {state = .Done},
+    }
+    testing.expect(
+        t,
+        bounded_response_accumulate(&refresh.response, transmute([]byte)string(`{}`)),
+        "refresh response fits",
+    )
+    d.provider_auth.operation = refresh
+
+    provider_refresh_on_done(&d, curl.Result{code = .Ok, status = 200})
+    testing.expect(t, provider_refresh(&d) == nil, "successful refresh releases the operation")
+
+    live, signed_in := provider_credentials_get(&d, .Codex)
+    if testing.expect(t, signed_in, "successful refresh keeps the provider signed in") {
+        testing.expect(t, live.expires_at_ms > credentials.expires_at_ms, "live expiry was refreshed")
+    }
+
+    rows, load_err := store.credentials_load(d.store)
+    if !testing.expect_value(t, load_err, nil) {
+        return
+    }
+    defer store.credentials_destroy(rows)
+
+    stored := false
+    for row in rows {
+        if row.provider_id == provider_auth.CODEX_PROVIDER_ID {
+            stored = true
+            testing.expect(t, row.expires_at_ms > credentials.expires_at_ms, "stored expiry was refreshed")
+        }
+    }
+    testing.expect(t, stored, "refreshed credentials remain durable")
+}
+
+@(test)
+test_daemon_login_deadline_releases_the_attempt :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    d: Daemon
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0}), Error.None)
     defer test_teardown(&d)
 
     login, aerr := new(Provider_Login, d.allocator)
@@ -662,35 +757,28 @@ test_daemon_login_deadline_releases_the_attempt :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_login_summary_survives_credential_persistence :: proc(t: ^testing.T) {
+test_daemon_login_summary_tracks_the_live_attempt :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-
-    dir := test_make_dir("yuke-daemon-auth-login-persistence")
-    defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0}), Error.None)
     defer test_teardown(&d)
 
     login_id := login_id_create()
-    job := Credential_Job {
-        daemon      = &d,
-        kind        = .Login,
-        provider_id = provider_auth.XAI_PROVIDER_ID,
-        login_id    = login_id,
-        login_flow  = .Device_Code,
+    login := Provider_Login {
+        kind           = .Xai,
+        id             = login_id,
+        requested_flow = .Device_Code,
     }
-    d.provider_auth.operation = &job
+    d.provider_auth.operation = &login
 
     state := provider_state(&d, .Xai)
     summary, pending := state.pending_login.?
-    if testing.expect(t, pending, "credential persistence retains the public login summary") {
+    if testing.expect(t, pending, "live login exposes its public summary") {
         testing.expect_value(t, summary.login_id, login_id)
         testing.expect_value(t, summary.flow, wire.Auth_Flow.Device_Code)
     }
@@ -704,47 +792,37 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
 
     dir := test_make_dir("yuke-daemon-auth-refresh-invalidate")
     defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    initial, open_err := provider_auth.open(path)
-    testing.expect_value(t, open_err, provider_auth.Error.None)
     credentials := provider_auth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
-        account_id    = "account",
+        account_id    = "",
     }
-    testing.expect_value(
-        t,
-        provider_auth.credentials_put(initial, provider_auth.XAI_PROVIDER_ID, credentials),
-        provider_auth.Error.None,
-    )
-    provider_auth.close(initial)
+    if !test_oauth_store_write(t, path, .Xai, credentials) {
+        return
+    }
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, auth_path = path}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
     defer test_teardown(&d)
     provider_refresh_timer_cancel(&d)
 
-    existing, found, read_err := provider_auth.credentials_get(
-        d.provider_auth.store,
-        provider_auth.XAI_PROVIDER_ID,
-        d.allocator,
-    )
-    testing.expect_value(t, read_err, provider_auth.Error.None)
+    _, found := provider_credentials_get(&d, .Xai)
     testing.expect(t, found, "refresh fixture is signed in")
 
     refresh, aerr := new(Provider_Refresh, d.allocator)
-    testing.expect(t, aerr == nil, "allocate refresh attempt")
+    if !testing.expect(t, aerr == nil, "allocate refresh attempt") {
+        return
+    }
     refresh^ = {
         kind = .Xai,
         transfer = {state = .Done},
-        existing = existing,
     }
     testing.expect(
         t,
@@ -755,17 +833,9 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
 
     provider_refresh_on_done(&d, curl.Result{code = .Ok, status = 400})
     testing.expect(t, provider_refresh(&d) == nil, "terminal response releases the refresh")
-    testing.expect(t, credential_job(&d) != nil, "terminal response queues durable invalidation")
-
-    for credential_job(&d) != nil {
-        _ = nbio.tick(time.Millisecond)
-    }
-
-    testing.expect(
-        t,
-        !provider_auth.credentials_present(d.provider_auth.store, provider_auth.XAI_PROVIDER_ID),
-        "terminal refresh removes the unusable credential",
-    )
+    _, signed_in := provider_credentials_get(&d, .Xai)
+    testing.expect(t, !signed_in, "terminal refresh signs the provider out")
+    testing.expect(t, !test_store_credential_present(t, d.store, provider_auth.XAI_PROVIDER_ID), "removal is durable")
 }
 
 check_auth_logout :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -787,37 +857,33 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
 
     dir := test_make_dir("yuke-daemon-auth-logout")
     defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
+    path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    auth_store, open_err := provider_auth.open(path)
-    testing.expect_value(t, open_err, provider_auth.Error.None)
     credentials := provider_auth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = 1_900_000_000_000,
         account_id    = "account",
     }
-    testing.expect_value(
-        t,
-        provider_auth.credentials_put(auth_store, provider_auth.CODEX_PROVIDER_ID, credentials),
-        provider_auth.Error.None,
-    )
-    provider_auth.close(auth_store)
+    if !test_oauth_store_write(t, path, .Codex, credentials) {
+        return
+    }
 
     obs := Handler_Obs {
         method = .Auth_Logout,
         params = wire.Auth_Logout_Params{provider_id = provider_auth.CODEX_PROVIDER_ID},
         check = check_auth_logout,
     }
-    run_handler(t, &obs, auth_path = path)
+    run_handler(t, &obs, db_path = path)
 
-    reopened, reopen_err := provider_auth.open(path)
-    testing.expect_value(t, reopen_err, provider_auth.Error.None)
-    defer provider_auth.close(reopened)
+    reopened, reopen_err := store.open(path)
+    if !testing.expect_value(t, reopen_err, nil) {
+        return
+    }
+    defer store.close(reopened)
     testing.expect(
         t,
-        !provider_auth.credentials_present(reopened, provider_auth.CODEX_PROVIDER_ID),
+        !test_store_credential_present(t, reopened, provider_auth.CODEX_PROVIDER_ID),
         "logout is durable before its response",
     )
 }
@@ -877,17 +943,12 @@ check_auth_browser_start_cancel :: proc(c: ^client.Client, resp: wire.Response, 
 test_daemon_browser_login_starts_and_cancels_over_websocket :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    dir := test_make_dir("yuke-daemon-auth-browser")
-    defer os.remove_all(dir)
-    testing.expect(t, os.chmod(dir, provider_auth.AUTH_DIR_PERMISSIONS) == nil, "secure auth directory")
-    path, _ := os.join_path({dir, "auth.json"}, context.temp_allocator)
-
     obs := Handler_Obs {
         method = .Auth_Login,
         params = wire.Auth_Login_Params{provider_id = provider_auth.CODEX_PROVIDER_ID, flow = .Browser},
         check = check_auth_browser_start_cancel,
     }
-    run_handler(t, &obs, auth_path = path)
+    run_handler(t, &obs)
 }
 
 @(test)

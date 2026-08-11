@@ -70,7 +70,6 @@ test_config_dir_names_the_app_directory :: proc(t: ^testing.T) {
     defer sync.mutex_unlock(&env_lock)
 
     testing.expect_value(t, APP_DIR, "yuke")
-    testing.expect_value(t, AUTH_FILE, "auth.json")
 
     dir := config_dir(context.temp_allocator)
 
@@ -130,43 +129,4 @@ test_db_and_blob_paths_derive_from_the_data_directory :: proc(t: ^testing.T) {
 
     testing.expect_value(t, db_path_in("/data/yuke", context.temp_allocator), want_db)
     testing.expect_value(t, blob_dir_in("/data/yuke", context.temp_allocator), want_blobs)
-}
-
-@(test)
-test_auth_path_honors_xdg_on_unix :: proc(t: ^testing.T) {
-    sync.mutex_lock(&env_lock)
-    defer sync.mutex_unlock(&env_lock)
-
-    when ODIN_OS != .Windows {
-        prior, had := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
-        defer env_restore("XDG_CONFIG_HOME", prior, had)
-
-        testing.expect(t, os.set_env("XDG_CONFIG_HOME", "/tmp/xdg") == nil, "set xdg")
-
-        want_dir, _ := filepath.join({"/tmp/xdg", APP_DIR}, context.temp_allocator)
-        want, _ := filepath.join({want_dir, AUTH_FILE}, context.temp_allocator)
-
-        testing.expect_value(t, auth_path(context.temp_allocator), want)
-    }
-}
-
-@(test)
-test_auth_path_falls_back_to_home_dot_config :: proc(t: ^testing.T) {
-    sync.mutex_lock(&env_lock)
-    defer sync.mutex_unlock(&env_lock)
-
-    when ODIN_OS != .Windows {
-        xdg_prior, xdg_had := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
-        home_prior, home_had := os.lookup_env(HOME_ENV, context.temp_allocator)
-        defer env_restore("XDG_CONFIG_HOME", xdg_prior, xdg_had)
-        defer env_restore(HOME_ENV, home_prior, home_had)
-
-        os.unset_env("XDG_CONFIG_HOME")
-        testing.expect(t, os.set_env(HOME_ENV, "/tmp/home") == nil, "set home")
-
-        want_dir, _ := filepath.join({"/tmp/home", ".config", APP_DIR}, context.temp_allocator)
-        want, _ := filepath.join({want_dir, AUTH_FILE}, context.temp_allocator)
-
-        testing.expect_value(t, auth_path(context.temp_allocator), want)
-    }
 }

@@ -18,11 +18,11 @@ validated and committed before delivery. Live droppable deltas alone may be shed
 other send failures close the connection. Resync folds the durable log and reads only
 the config revisions referenced by its transcript page and open turn.
 
-Provider auth keeps its store, curl client, callback listener, timers, and active work
-in `Provider_Auth`. Codex and xAI support browser and device login; browser login is
-local-transport only. Login, refresh, and credential mutation are single-flight; every
-login has a deadline. Credential files are replaced atomically, and a terminal refresh
-rejection removes the stale credential instead of retrying it forever.
+Provider auth loads OAuth credentials from the daemon's SQLite store into fixed live
+slots. Codex and xAI support browser and device login; browser login is local-transport
+only. Login and refresh are single-flight, every login has a deadline, and credentials
+are committed before their live slot changes. A terminal refresh rejection removes the
+stale credential instead of retrying it forever.
 
 Blob uploads stream into unique temporary files and are finalized on the worker pool.
 After digest verification, a hard link publishes the content address atomically without

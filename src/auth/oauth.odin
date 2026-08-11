@@ -17,13 +17,74 @@ import "src:secret"
 // is driven by a `^Provider` descriptor or is a pure helper; per-provider files
 // carry only the descriptor and the account-id projection that genuinely differ.
 
+// OAuth credentials retained only by the daemon. Every string is owned by the
+// containing daemon state or a short-lived operation.
+OAuth_Credentials :: struct {
+    access_token:  string,
+    refresh_token: string,
+    expires_at_ms: u64,
+    account_id:    string,
+}
+
 // Errors from the OAuth flow mechanics (URL/body building, response parsing).
-// Distinct from the store's `Error`; peer input degrades to these, never asserts.
+// Peer input degrades to these, never asserts.
 OAuth_Error :: enum {
     None,
     Out_Of_Memory,
     Invalid_Input,
     Invalid_Response,
+}
+
+credentials_valid_for :: proc(provider: ^Provider, credentials: OAuth_Credentials) -> bool {
+    assert(provider != nil, "credential validation needs a provider")
+
+    return(
+        credentials.access_token != "" &&
+        credentials.refresh_token != "" &&
+        credentials.expires_at_ms > 0 &&
+        (provider.kind != .Codex || credentials.account_id != "") \
+    )
+}
+
+credentials_destroy :: proc(credentials: ^OAuth_Credentials, allocator := context.allocator) {
+    assert(credentials != nil, "credential cleanup needs a value")
+    secret.string_destroy(&credentials.access_token, allocator)
+    secret.string_destroy(&credentials.refresh_token, allocator)
+    secret.string_destroy(&credentials.account_id, allocator)
+    credentials^ = {}
+}
+
+credentials_clone :: proc(
+    source: OAuth_Credentials,
+    allocator := context.allocator,
+) -> (
+    out: OAuth_Credentials,
+    err: OAuth_Error,
+) {
+    defer if err != .None {
+        credentials_destroy(&out, allocator)
+    }
+
+    out.expires_at_ms = source.expires_at_ms
+    access, access_aerr := strings.clone(source.access_token, allocator)
+    if access_aerr != nil {
+        return {}, .Out_Of_Memory
+    }
+    out.access_token = access
+
+    refresh, refresh_aerr := strings.clone(source.refresh_token, allocator)
+    if refresh_aerr != nil {
+        return {}, .Out_Of_Memory
+    }
+    out.refresh_token = refresh
+
+    account, account_aerr := strings.clone(source.account_id, allocator)
+    if account_aerr != nil {
+        return {}, .Out_Of_Memory
+    }
+    out.account_id = account
+
+    return out, .None
 }
 
 // Generic bound on an OAuth authorization code, shared across providers.
@@ -438,7 +499,7 @@ refresh_response_parse :: proc(
 ) {
     assert(provider != nil, "refresh parse needs a provider")
 
-    if !credentials_valid(existing) {
+    if !credentials_valid_for(provider, existing) {
         return {}, .Invalid_Input
     }
 
@@ -536,7 +597,7 @@ refresh_response_parse :: proc(
         credentials.refresh_token = refresh_clone
     }
 
-    assert(credentials_valid(credentials), "refresh merge preserves complete credentials")
+    assert(credentials_valid_for(provider, credentials), "refresh merge preserves complete credentials")
 
     return credentials, .None
 }

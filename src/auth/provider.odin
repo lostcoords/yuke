@@ -15,7 +15,7 @@ Provider :: struct {
     // Closed provider identity; selects protocol behavior without parallel profiles.
     kind:                       Kind,
 
-    // Stable id; the key under `providers` in auth.json and on the wire.
+    // Stable id used by durable credentials and on the wire.
     id:                         string,
 
     // Public OAuth client id. These are desktop clients with no secret.

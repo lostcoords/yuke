@@ -51,8 +51,7 @@ Error :: enum {
     // newer daemon.
     Store_Failed,
 
-    // The private credential store, OAuth client, or loopback callback listener
-    // could not be initialized.
+    // The OAuth HTTP client could not be initialized.
     Auth_Failed,
 
     // The configured script root's entry script raised. Serving with a script tier the
@@ -68,8 +67,8 @@ DATA_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 
 // Listen and identity options. Zero-valued fields default in `start`. When `yuked.js` in the
 // script root calls `defineConfig`, its values supersede `host`, `port`, the data directory
-// (`db_path`/`blob_dir`), `auth_token`, and `relay_cloud_url` here; `daemon_version`, `js_root`,
-// and `auth_path` are always the caller's.
+// (`db_path`/`blob_dir`), `auth_token`, and `relay_cloud_url` here; `daemon_version` and
+// `js_root` are always the caller's.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:            string,
@@ -95,9 +94,6 @@ Options :: struct {
     // Platform data directory holding the device identity, read at start for the /identity device
     // id. Empty omits it. Same source the relay reads; the manifest never relocates it.
     data_dir:        string,
-
-    // Private provider credential file. Empty disables WebSocket OAuth methods.
-    auth_path:       string,
 
     // Directory the script tier reads: `yuked.js` is evaluated at startup and every
     // `yuke:fs` path must resolve inside it. Empty disables `yuke:fs` and runs no script.
@@ -301,13 +297,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         version = "0.0.0"
     }
 
-    // Bootstrap clones: version and the credential path do not come from the manifest — the
-    // path is where the manifest itself lives, and secrets stay out of it.
+    // The version does not come from the manifest.
     cloned_version, version_aerr := strings.clone(version, allocator)
-    cloned_auth_path, auth_path_aerr := strings.clone(options.auth_path, allocator)
     d.daemon_version = cloned_version
-    d.provider_auth.path = cloned_auth_path
-    if version_aerr != nil || auth_path_aerr != nil {
+    if version_aerr != nil {
         return .Out_Of_Memory
     }
 
@@ -421,10 +414,6 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         }
     }
 
-    if auth_err := provider_auth_init(d); auth_err != .None {
-        return auth_err
-    }
-
     // The `initialize` result advertises `blob_upload` from this field alone, so an
     // unusable directory must fail the start rather than 500 every upload.
     if d.blob_dir != "" {
@@ -465,6 +454,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     d.store = opened
     d.seq_high = marks
+
+    if auth_err := provider_auth_init(d); auth_err != .None {
+        return auth_err
+    }
 
     callbacks := ws.Server_Callbacks {
         on_open    = ws_on_open,
@@ -735,7 +728,6 @@ free_config :: proc(d: ^Daemon) {
     delete(d.device_id, d.allocator)
     delete(d.blob_dir, d.allocator)
     secret.string_destroy(&d.auth_token, d.allocator)
-    delete(d.provider_auth.path, d.allocator)
     secret.string_destroy(&d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
     for o in d.allowed_origins {
@@ -745,7 +737,6 @@ free_config :: proc(d: ^Daemon) {
     d.daemon_version = ""
     d.device_id = ""
     d.blob_dir = ""
-    d.provider_auth.path = ""
     d.relay_cloud_url = ""
     d.allowed_origins = nil
 }
