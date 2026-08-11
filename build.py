@@ -78,10 +78,11 @@ PACKAGES = (
     Package("relay", "src/relay", "link envelope, control-plane client, Noise session, dial/pump"),
     Package("term", "src/term", "terminal input, session, and the nbio driver", windows_test=True),
     Package("ui", "src/term/ui", "cells, grapheme pool, paint", windows_test=True),
+    Package("tui", "src/tui", "interactive terminal client: term drive, QuickJS host, ui paint", needs=("quickjs",)),
     Package(
         "yuke",
         "src/yuke",
-        "unified binary: client TUI, daemon, and login subcommands",
+        "unified binary: dispatch over the tui, daemon, and login subcommands",
         in_aggregate=False,
         needs=BINDINGS,
     ),

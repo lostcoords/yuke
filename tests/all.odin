@@ -12,6 +12,7 @@ import _ "src:relay"
 import _ "src:secret"
 import _ "src:term"
 import _ "src:term/ui"
+import _ "src:tui"
 import _ "src:wire"
 
 import _ "libs:bindings/curl"

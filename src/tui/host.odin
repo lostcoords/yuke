@@ -1,4 +1,4 @@
-package main
+package tui
 
 /*
 Client host: QuickJS + yuke:term + double-buffered ui paint.

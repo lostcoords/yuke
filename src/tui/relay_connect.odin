@@ -10,7 +10,7 @@ connect promise) or hands a live transport to `Host.daemon` (where `client_on_re
 the promise). The control-plane HTTP client is owned by the host and reused across attempts —
 `client_destroy` may not run inside a curl callback, so it is torn down only at host teardown.
 */
-package main
+package tui
 
 import "core:crypto/ecdh"
 import "core:log"
@@ -423,6 +423,13 @@ remote_rx_reset :: proc(rx: ^Remote_Rx) {
     clear(&rx.body)
     rx.overflow = false
 }
+
+// Control-plane defaults, resolved identically by `yuke login` so client and enrollment agree.
+@(private = "file")
+DEFAULT_CLOUD_URL :: "https://platform.yuke.sh"
+
+@(private = "file")
+CLOUD_URL_ENV :: "YUKE_CLOUD_URL"
 
 // The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the hosted
 // default. Mirrors `yuke login`, so the client and enrollment resolve the same control plane.

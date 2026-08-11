@@ -1,7 +1,7 @@
 /*
 yuke client (default subcommand): term drive + QuickJS (`yuke:term`) + ui paint.
 */
-package main
+package tui
 
 import "core:bufio"
 import "core:fmt"
@@ -30,8 +30,8 @@ on_event :: proc(user: rawptr, ev: term.Event) {
     host_on_term_event(&app.host, ev)
 }
 
-// The default subcommand: run the interactive TUI client until the host is done.
-client_run :: proc() {
+// Run the interactive TUI client until the host is done. The binary's default subcommand.
+run :: proc() {
     if err := nbio.acquire_thread_event_loop(); err != nil {
         fmt.eprintfln("nbio: %v", err)
         os.exit(1)

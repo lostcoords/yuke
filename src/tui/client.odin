@@ -1,4 +1,4 @@
-package main
+package tui
 
 /*
 Client-only QuickJS bridge to `src/client`. The native module is intentionally private:

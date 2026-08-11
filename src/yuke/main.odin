@@ -14,6 +14,8 @@ package main
 import "core:fmt"
 import "core:os"
 
+import tui "src:tui"
+
 main :: proc() {
     sub := os.args[1] if len(os.args) > 1 else ""
 
@@ -28,7 +30,7 @@ main :: proc() {
         usage()
 
     case:
-        client_run()
+        tui.run()
     }
 }
 

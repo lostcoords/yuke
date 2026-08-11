@@ -1,4 +1,4 @@
-package main
+package tui
 
 /*
 Client script tier: the `yuke:term` module and the glue that binds this process's Host to
