@@ -7,7 +7,6 @@ import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:strings"
-import "core:sys/posix"
 import http "libs:http"
 import http_server "libs:http/server"
 import ws "libs:websocket"
@@ -282,10 +281,9 @@ route_blob_get :: proc(ctx: ^Http_Context) {
     }
 
     // Closes the lstat/open TOCTOU: `nbio.open_sync` has no O_NOFOLLOW, so a path swap
-    // could hand back a symlink target. Confirm the opened handle matches by comparing
-    // inodes, the only identity `os.File_Info` exposes.
-    opened: posix.stat_t
-    if posix.fstat(posix.FD(i32(file)), &opened) != .OK || u128(u64(opened.st_ino)) != info.inode {
+    // could hand back a symlink target. Confirm the opened handle still refers to the file
+    // we validated before serving its bytes.
+    if !blob_handle_matches(file, info) {
         nbio.close(file, l = d.loop)
         blob_not_found(c)
         return
