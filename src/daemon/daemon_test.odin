@@ -18,8 +18,8 @@ import curl "libs:bindings/curl"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
-import provider_auth "src:auth"
 import client "src:client"
+import "src:daemon/oauth"
 import store "src:daemon/store"
 import wire "src:wire"
 
@@ -396,8 +396,8 @@ test_make_dir :: proc(name: string) -> string {
 test_oauth_store_write :: proc(
     t: ^testing.T,
     path: string,
-    kind: provider_auth.Kind,
-    credentials: provider_auth.OAuth_Credentials,
+    kind: oauth.Kind,
+    credentials: oauth.OAuth_Credentials,
 ) -> bool {
     opened, open_err := store.open(path)
     if !testing.expect_value(t, open_err, nil) {
@@ -405,7 +405,7 @@ test_oauth_store_write :: proc(
     }
     defer store.close(opened)
 
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
     write_err := store.credential_oauth_upsert(
         opened,
         provider.id,
@@ -570,10 +570,10 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
     xai_entry: Maybe(wire.Auth_Provider)
     for entry in result.providers {
         switch string(entry.provider_id) {
-        case provider_auth.CODEX_PROVIDER_ID:
+        case oauth.CODEX_PROVIDER_ID:
             codex_entry = entry
 
-        case provider_auth.XAI_PROVIDER_ID:
+        case oauth.XAI_PROVIDER_ID:
             xai_entry = entry
         }
     }
@@ -631,7 +631,7 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
     defer os.remove_all(dir)
     path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    credentials := provider_auth.OAuth_Credentials {
+    credentials := oauth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
@@ -668,7 +668,7 @@ test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
     defer os.remove_all(dir)
     path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    credentials := provider_auth.OAuth_Credentials {
+    credentials := oauth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = 1,
@@ -718,7 +718,7 @@ test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
 
     stored := false
     for row in rows {
-        if row.provider_id == provider_auth.CODEX_PROVIDER_ID {
+        if row.provider_id == oauth.CODEX_PROVIDER_ID {
             stored = true
             testing.expect(t, row.expires_at_ms > credentials.expires_at_ms, "stored expiry was refreshed")
         }
@@ -794,7 +794,7 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
     defer os.remove_all(dir)
     path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    credentials := provider_auth.OAuth_Credentials {
+    credentials := oauth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
@@ -835,7 +835,7 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
     testing.expect(t, provider_refresh(&d) == nil, "terminal response releases the refresh")
     _, signed_in := provider_credentials_get(&d, .Xai)
     testing.expect(t, !signed_in, "terminal refresh signs the provider out")
-    testing.expect(t, !test_store_credential_present(t, d.store, provider_auth.XAI_PROVIDER_ID), "removal is durable")
+    testing.expect(t, !test_store_credential_present(t, d.store, oauth.XAI_PROVIDER_ID), "removal is durable")
 }
 
 check_auth_logout :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -859,7 +859,7 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
     defer os.remove_all(dir)
     path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
 
-    credentials := provider_auth.OAuth_Credentials {
+    credentials := oauth.OAuth_Credentials {
         access_token  = "access",
         refresh_token = "refresh",
         expires_at_ms = 1_900_000_000_000,
@@ -871,7 +871,7 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
 
     obs := Handler_Obs {
         method = .Auth_Logout,
-        params = wire.Auth_Logout_Params{provider_id = provider_auth.CODEX_PROVIDER_ID},
+        params = wire.Auth_Logout_Params{provider_id = oauth.CODEX_PROVIDER_ID},
         check = check_auth_logout,
     }
     run_handler(t, &obs, db_path = path)
@@ -883,7 +883,7 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
     defer store.close(reopened)
     testing.expect(
         t,
-        !test_store_credential_present(t, reopened, provider_auth.CODEX_PROVIDER_ID),
+        !test_store_credential_present(t, reopened, oauth.CODEX_PROVIDER_ID),
         "logout is durable before its response",
     )
 }
@@ -911,11 +911,7 @@ check_auth_browser_start_cancel :: proc(c: ^client.Client, resp: wire.Response, 
         if !testing.expect(t, is_browser, "auth.login returns browser details") {
             return true
         }
-        testing.expect(
-            t,
-            strings.has_prefix(result.auth_url, provider_auth.CODEX_AUTHORIZE_URL),
-            "Codex authorize URL",
-        )
+        testing.expect(t, strings.has_prefix(result.auth_url, oauth.CODEX_AUTHORIZE_URL), "Codex authorize URL")
         testing.expect(t, strings.contains(result.auth_url, "code_challenge_method=S256"), "browser login uses PKCE")
 
         o.auth_stage = 1
@@ -945,7 +941,7 @@ test_daemon_browser_login_starts_and_cancels_over_websocket :: proc(t: ^testing.
 
     obs := Handler_Obs {
         method = .Auth_Login,
-        params = wire.Auth_Login_Params{provider_id = provider_auth.CODEX_PROVIDER_ID, flow = .Browser},
+        params = wire.Auth_Login_Params{provider_id = oauth.CODEX_PROVIDER_ID, flow = .Browser},
         check = check_auth_browser_start_cancel,
     }
     run_handler(t, &obs)

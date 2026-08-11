@@ -1,4 +1,4 @@
-package auth
+package oauth
 
 import "core:crypto"
 import "core:crypto/sha2"

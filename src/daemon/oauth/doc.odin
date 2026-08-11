@@ -7,4 +7,4 @@ Codex login parsing requires a complete initial token set; refresh parsing inste
 merges independently optional token fields and retains the existing account id when
 no new ID token is returned.
 */
-package auth
+package oauth

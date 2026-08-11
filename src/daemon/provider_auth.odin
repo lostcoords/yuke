@@ -11,7 +11,7 @@ import "core:time"
 import curl "libs:bindings/curl"
 import http "libs:http"
 import http_server "libs:http/server"
-import provider_auth "src:auth"
+import "src:daemon/oauth"
 import "src:daemon/store"
 import "src:secret"
 import wire "src:wire"
@@ -68,14 +68,14 @@ Bounded_Response :: struct {
 // One daemon-owned login attempt; borrows no frame/connection, so it survives
 // requester disconnect. `kind` resolves its immutable provider descriptor.
 Provider_Login :: struct {
-    kind:           provider_auth.Kind,
+    kind:           oauth.Kind,
     id:             wire.Login_Id,
     requested_flow: wire.Auth_Flow,
     phase:          Provider_Login_Phase,
-    authorization:  provider_auth.Authorization_Flow,
+    authorization:  oauth.Authorization_Flow,
     request_ticket: Conn_Ticket,
     request_id:     wire.Request_Id,
-    device:         provider_auth.Device_Session,
+    device:         oauth.Device_Session,
     poll_timer:     ^nbio.Operation,
     deadline_timer: ^nbio.Operation,
     transfer:       curl.Transfer,
@@ -84,7 +84,7 @@ Provider_Login :: struct {
 
 // One daemon-owned refresh. `kind` resolves its immutable provider descriptor.
 Provider_Refresh :: struct {
-    kind:     provider_auth.Kind,
+    kind:     oauth.Kind,
     transfer: curl.Transfer,
     response: Bounded_Response,
 }
@@ -97,7 +97,7 @@ OAuth_Operation :: union {
 
 // Live OAuth credentials, login/refresh state, callback listener, and HTTP client.
 Provider_Auth :: struct {
-    credentials:    [provider_auth.Kind]provider_auth.OAuth_Credentials,
+    credentials:    [oauth.Kind]oauth.OAuth_Credentials,
     callback:       http_server.Server,
     router:         Http_Router,
     callback_route: [1]Http_Route,
@@ -124,9 +124,9 @@ provider_refresh :: proc(d: ^Daemon) -> ^Provider_Refresh {
 
 provider_credentials_get :: proc(
     d: ^Daemon,
-    kind: provider_auth.Kind,
+    kind: oauth.Kind,
 ) -> (
-    credentials: ^provider_auth.OAuth_Credentials,
+    credentials: ^oauth.OAuth_Credentials,
     present: bool,
 ) {
     assert(d != nil, "credential lookup needs daemon state")
@@ -137,33 +137,20 @@ provider_credentials_get :: proc(
         return nil, false
     }
 
-    assert(
-        provider_auth.credentials_valid_for(provider_auth.provider(kind), credentials^),
-        "live credentials are valid",
-    )
+    assert(oauth.credentials_valid_for(oauth.provider(kind), credentials^), "live credentials are valid")
 
     return credentials, true
 }
 
-provider_credentials_install :: proc(
-    d: ^Daemon,
-    kind: provider_auth.Kind,
-    credentials: ^provider_auth.OAuth_Credentials,
-) {
+provider_credentials_install :: proc(d: ^Daemon, kind: oauth.Kind, credentials: ^oauth.OAuth_Credentials) {
     assert(d != nil && credentials != nil, "credential install needs owned state")
-    assert(
-        provider_auth.credentials_valid_for(provider_auth.provider(kind), credentials^),
-        "installed credentials are valid",
-    )
+    assert(oauth.credentials_valid_for(oauth.provider(kind), credentials^), "installed credentials are valid")
     current := &d.provider_auth.credentials[kind]
     assert(credentials != current, "credential install cannot move a slot into itself")
 
     if current.access_token != "" {
-        assert(
-            provider_auth.credentials_valid_for(provider_auth.provider(kind), current^),
-            "replaced credentials are valid",
-        )
-        provider_auth.credentials_destroy(current, d.allocator)
+        assert(oauth.credentials_valid_for(oauth.provider(kind), current^), "replaced credentials are valid")
+        oauth.credentials_destroy(current, d.allocator)
     } else {
         assert(current^ == {}, "an empty credential slot has no partial state")
     }
@@ -171,7 +158,7 @@ provider_credentials_install :: proc(
     credentials^ = {}
 }
 
-provider_credentials_remove :: proc(d: ^Daemon, kind: provider_auth.Kind) -> bool {
+provider_credentials_remove :: proc(d: ^Daemon, kind: oauth.Kind) -> bool {
     assert(d != nil, "credential removal needs daemon state")
     credentials := &d.provider_auth.credentials[kind]
 
@@ -180,23 +167,16 @@ provider_credentials_remove :: proc(d: ^Daemon, kind: provider_auth.Kind) -> boo
         return false
     }
 
-    assert(
-        provider_auth.credentials_valid_for(provider_auth.provider(kind), credentials^),
-        "removed credentials are valid",
-    )
-    provider_auth.credentials_destroy(credentials, d.allocator)
+    assert(oauth.credentials_valid_for(oauth.provider(kind), credentials^), "removed credentials are valid")
+    oauth.credentials_destroy(credentials, d.allocator)
 
     return true
 }
 
-provider_credentials_write :: proc(
-    d: ^Daemon,
-    kind: provider_auth.Kind,
-    credentials: provider_auth.OAuth_Credentials,
-) -> store.Error {
+provider_credentials_write :: proc(d: ^Daemon, kind: oauth.Kind, credentials: oauth.OAuth_Credentials) -> store.Error {
     assert(d != nil && d.store != nil, "credential write needs an open daemon store")
-    provider := provider_auth.provider(kind)
-    assert(provider_auth.credentials_valid_for(provider, credentials), "credential write needs valid credentials")
+    provider := oauth.provider(kind)
+    assert(oauth.credentials_valid_for(provider, credentials), "credential write needs valid credentials")
 
     return store.credential_oauth_upsert(
         d.store,
@@ -224,18 +204,18 @@ provider_credentials_load :: proc(d: ^Daemon) -> store.Error {
             continue
         }
 
-        kind, known := provider_auth.kind_from_id(row.provider_id)
+        kind, known := oauth.kind_from_id(row.provider_id)
         if !known {
             continue
         }
 
-        credentials := provider_auth.OAuth_Credentials {
+        credentials := oauth.OAuth_Credentials {
             access_token  = row.access_token,
             refresh_token = row.refresh_token,
             expires_at_ms = row.expires_at_ms,
             account_id    = row.account_id,
         }
-        if !provider_auth.credentials_valid_for(provider_auth.provider(kind), credentials) {
+        if !oauth.credentials_valid_for(oauth.provider(kind), credentials) {
             log.warnf("daemon: ignoring incomplete OAuth credentials for %s", row.provider_id)
             continue
         }
@@ -252,7 +232,7 @@ provider_credentials_load :: proc(d: ^Daemon) -> store.Error {
 provider_credentials_destroy :: proc(d: ^Daemon) {
     assert(d != nil, "credential cleanup needs daemon state")
 
-    for kind in provider_auth.Kind {
+    for kind in oauth.Kind {
         _ = provider_credentials_remove(d, kind)
     }
 }
@@ -292,7 +272,7 @@ provider_auth_init :: proc(d: ^Daemon) -> Error {
     return .None
 }
 
-auth_callback_open :: proc(d: ^Daemon, provider: ^provider_auth.Provider) -> Error {
+auth_callback_open :: proc(d: ^Daemon, provider: ^oauth.Provider) -> Error {
     assert(d != nil && d.store != nil && d.provider_auth.curl_ready, "auth callback needs initialized auth")
     assert(d.provider_auth.operation == nil, "auth callback opens before publishing its login")
     assert(provider != nil && len(provider.callback_ports) > 0, "auth callback opens for a browser provider")
@@ -392,18 +372,18 @@ provider_auth_destroy :: proc(d: ^Daemon) {
 
 // The first signed-in provider already inside its proactive refresh window.
 // One clock reading, never clones a secret.
-provider_refresh_due :: proc(d: ^Daemon) -> (kind: provider_auth.Kind, found: bool) {
+provider_refresh_due :: proc(d: ^Daemon) -> (kind: oauth.Kind, found: bool) {
     assert(d != nil && d.provider_auth.curl_ready, "refresh scan needs initialized auth")
     now := now_ms()
 
-    for candidate in provider_auth.Kind {
-        provider := provider_auth.provider(candidate)
+    for candidate in oauth.Kind {
+        provider := oauth.provider(candidate)
         credentials, present := provider_credentials_get(d, candidate)
         if !present {
             continue
         }
 
-        if provider_auth.oauth_needs_refresh(provider, credentials.expires_at_ms, now) {
+        if oauth.oauth_needs_refresh(provider, credentials.expires_at_ms, now) {
             return candidate, true
         }
     }
@@ -474,7 +454,7 @@ provider_refresh_start :: proc(d: ^Daemon) -> bool {
         return true
     }
 
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
     credentials, present := provider_credentials_get(d, kind)
     assert(present, "refresh scan returned a signed-in provider")
 
@@ -485,11 +465,7 @@ provider_refresh_start :: proc(d: ^Daemon) -> bool {
     refresh^ = {}
     refresh.kind = kind
 
-    body, content_type, body_err := provider_auth.refresh_request_body(
-        provider,
-        credentials.refresh_token,
-        d.allocator,
-    )
+    body, content_type, body_err := oauth.refresh_request_body(provider, credentials.refresh_token, d.allocator)
     if body_err != .None {
         provider_refresh_free(d, refresh)
         return false
@@ -533,12 +509,12 @@ provider_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
     assert(refresh != nil, "refresh completion lost its owner")
     assert(refresh.transfer.state == .Done, "refresh completion needs a terminal transfer")
 
-    provider := provider_auth.provider(refresh.kind)
+    provider := oauth.provider(refresh.kind)
     response := bounded_response_body(&refresh.response)
     if result.code != .Ok || result.status < 200 || result.status >= 300 || refresh.response.overflow {
         permanent :=
             (result.status == 400 || result.status == 401) &&
-            provider_auth.refresh_failure_permanent(provider, response, d.allocator)
+            oauth.refresh_failure_permanent(provider, response, d.allocator)
         if permanent {
             log.warnf("daemon: %s refresh token is no longer usable; interactive login is required", provider.id)
         } else {
@@ -571,13 +547,7 @@ provider_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
     existing, present := provider_credentials_get(d, refresh.kind)
     assert(present, "an active refresh has live credentials")
 
-    credentials, parse_err := provider_auth.refresh_response_parse(
-        provider,
-        response,
-        existing^,
-        now_ms(),
-        d.allocator,
-    )
+    credentials, parse_err := oauth.refresh_response_parse(provider, response, existing^, now_ms(), d.allocator)
     if parse_err != .None {
         d.provider_auth.operation = nil
         provider_refresh_free(d, refresh)
@@ -591,7 +561,7 @@ provider_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
     d.provider_auth.operation = nil
     provider_refresh_free(d, refresh)
     if write_err != nil {
-        provider_auth.credentials_destroy(&credentials, d.allocator)
+        oauth.credentials_destroy(&credentials, d.allocator)
         log.errorf("daemon: %s refreshed credentials could not be stored: %v", provider.id, write_err)
     } else {
         provider_credentials_install(d, provider.kind, &credentials)
@@ -678,8 +648,8 @@ route_auth_callback :: proc(ctx: ^Http_Context) {
         return
     }
 
-    code, decode_err := provider_auth.query_value_decode(raw_code, d.allocator)
-    if decode_err != .None || code == "" || len(code) > provider_auth.AUTHORIZATION_CODE_MAX_BYTES {
+    code, decode_err := oauth.query_value_decode(raw_code, d.allocator)
+    if decode_err != .None || code == "" || len(code) > oauth.AUTHORIZATION_CODE_MAX_BYTES {
         http_server.respond_text(ctx.conn, .Bad_Request, "invalid authorization code")
         return
     }
@@ -701,9 +671,9 @@ provider_token_exchange_start :: proc(d: ^Daemon, code: string) -> bool {
     assert(login != nil, "token exchange needs a pending login")
     assert(login.phase == .Browser_Awaiting_Callback, "token exchange started in the wrong phase")
     assert(login.transfer.state != .Running, "pending login already has a transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
-    body, body_err := provider_auth.authorization_code_body(provider, login.authorization, code, d.allocator)
+    body, body_err := oauth.authorization_code_body(provider, login.authorization, code, d.allocator)
     if body_err != .None {
         return false
     }
@@ -751,7 +721,7 @@ provider_token_request_start :: proc(d: ^Daemon, body: string) -> bool {
     login := provider_login(d)
     assert(login != nil, "token request needs a pending login")
     assert(login.transfer.state != .Running, "pending login already has a transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
     provider_response_reset(login)
 
@@ -779,9 +749,9 @@ provider_device_user_code_start :: proc(d: ^Daemon) -> bool {
     assert(login != nil, "device-code request needs a pending login")
     assert(login.requested_flow == .Device_Code, "device-code request needs the device flow")
     assert(login.transfer.state != .Running, "device-code request raced another transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
-    body, content_type, body_err := provider_auth.device_auth_body(provider, AUTH_ORIGINATOR, d.allocator)
+    body, content_type, body_err := oauth.device_auth_body(provider, AUTH_ORIGINATOR, d.allocator)
     if body_err != .None {
         return false
     }
@@ -803,9 +773,9 @@ provider_device_poll_start :: proc(d: ^Daemon) -> bool {
     assert(login.requested_flow == .Device_Code, "device poll needs the device flow")
     assert(login.poll_timer == nil, "device poll started with a live timer")
     assert(login.transfer.state != .Running, "device poll raced another transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
-    body, content_type, body_err := provider_auth.device_poll_body(provider, login.device, d.allocator)
+    body, content_type, body_err := oauth.device_poll_body(provider, login.device, d.allocator)
     if body_err != .None {
         return false
     }
@@ -834,7 +804,7 @@ provider_device_request_start :: proc(
     assert(url != nil && body != "" && content_type != "" && on_done != nil, "device request needs complete input")
     assert(phase == .Device_Requesting_Code || phase == .Device_Polling, "device request has the wrong phase")
     assert(login.transfer.state != .Running, "device request raced another transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
     provider_response_reset(login)
 
@@ -925,9 +895,9 @@ provider_token_on_done :: proc(user: rawptr, result: curl.Result) {
 provider_persist_login_response :: proc(d: ^Daemon) {
     login := provider_login(d)
     assert(login != nil, "token persistence needs a pending login")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
-    credentials, parse_err := provider_auth.token_response_parse(
+    credentials, parse_err := oauth.token_response_parse(
         provider,
         bounded_response_body(&login.response),
         now_ms(),
@@ -937,7 +907,7 @@ provider_persist_login_response :: proc(d: ^Daemon) {
         provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "token response was invalid"})
         return
     }
-    defer provider_auth.credentials_destroy(&credentials, d.allocator)
+    defer oauth.credentials_destroy(&credentials, d.allocator)
 
     if write_err := provider_credentials_write(d, login.kind, credentials); write_err != nil {
         log.errorf("daemon: %s login credentials could not be stored: %v", provider.id, write_err)
@@ -955,7 +925,7 @@ provider_device_user_code_on_done :: proc(user: rawptr, result: curl.Result) {
     assert(login != nil, "device-code completion lost its login")
     assert(login.phase == .Device_Requesting_Code, "device-code completion arrived in the wrong phase")
     assert(login.transfer.state == .Done, "device-code completion needs a terminal transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
     if result.code != .Ok || result.status < 200 || result.status >= 300 || login.response.overflow {
         provider_login_request_error(d, "device-code request failed")
@@ -963,7 +933,7 @@ provider_device_user_code_on_done :: proc(user: rawptr, result: curl.Result) {
         return
     }
 
-    device, parse_err := provider_auth.device_auth_parse(provider, bounded_response_body(&login.response), d.allocator)
+    device, parse_err := oauth.device_auth_parse(provider, bounded_response_body(&login.response), d.allocator)
     if parse_err != .None {
         provider_login_request_error(d, "device-code response was invalid")
         provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device-code response was invalid"})
@@ -1012,14 +982,14 @@ provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
     assert(login != nil, "device poll completion lost its login")
     assert(login.phase == .Device_Polling, "device poll completion arrived in the wrong phase")
     assert(login.transfer.state == .Done, "device poll completion needs a terminal transfer")
-    provider := provider_auth.provider(login.kind)
+    provider := oauth.provider(login.kind)
 
     if result.code != .Ok || login.response.overflow {
         provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device approval poll failed"})
         return
     }
 
-    outcome, classify_err := provider_auth.device_poll_classify(
+    outcome, classify_err := oauth.device_poll_classify(
         provider,
         result.status,
         bounded_response_body(&login.response),
@@ -1031,24 +1001,24 @@ provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
     }
 
     switch step in outcome {
-    case provider_auth.Device_Pending:
+    case oauth.Device_Pending:
         provider_device_poll_wait(d)
 
-    case provider_auth.Device_Slow_Down:
+    case oauth.Device_Slow_Down:
         login.device.interval_s = min(
             login.device.interval_s + DEVICE_SLOW_DOWN_BUMP_S,
-            provider_auth.DEVICE_POLL_INTERVAL_MAX_S,
+            oauth.DEVICE_POLL_INTERVAL_MAX_S,
         )
         provider_device_poll_wait(d)
 
-    case provider_auth.Device_Tokens:
+    case oauth.Device_Tokens:
         provider_persist_login_response(d)
 
-    case provider_auth.Device_Exchange:
+    case oauth.Device_Exchange:
         grant := step.grant
-        defer provider_auth.device_grant_destroy(&grant, d.allocator)
+        defer oauth.device_grant_destroy(&grant, d.allocator)
 
-        body, body_err := provider_auth.device_grant_body(provider, grant, d.allocator)
+        body, body_err := oauth.device_grant_body(provider, grant, d.allocator)
         if body_err != .None {
             provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
             return
@@ -1059,7 +1029,7 @@ provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
             provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
         }
 
-    case provider_auth.Device_Failed:
+    case oauth.Device_Failed:
         provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = step.message})
     }
 }
@@ -1122,9 +1092,9 @@ provider_login_on_deadline :: proc(op: ^nbio.Operation, d: ^Daemon) {
 }
 
 // Public current state for one authentication-capable provider.
-provider_state :: proc(d: ^Daemon, kind: provider_auth.Kind) -> wire.Auth_Provider {
+provider_state :: proc(d: ^Daemon, kind: oauth.Kind) -> wire.Auth_Provider {
     assert(d != nil && d.provider_auth.curl_ready, "provider state needs initialized auth")
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
 
     pending: Maybe(wire.Auth_Login_Summary)
     if login := provider_login(d); login != nil && login.kind == kind {
@@ -1151,8 +1121,8 @@ method_auth_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil && conn.state == .Ready, "auth.list needs a Ready connection")
     assert(req.method == .Auth_List, "auth.list received another method")
 
-    providers: [provider_auth.Kind]wire.Auth_Provider
-    for kind in provider_auth.Kind {
+    providers: [oauth.Kind]wire.Auth_Provider
+    for kind in oauth.Kind {
         providers[kind] = provider_state(conn.daemon, kind)
     }
     send_result(conn, req.id, wire.Auth_List_Result{providers = slice.enumerated_array(&providers)}, sa)
@@ -1164,12 +1134,12 @@ method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     d := conn.daemon
     params := req.params.(wire.Auth_Login_Params)
 
-    kind, kind_ok := provider_auth.kind_from_id(string(params.provider_id))
+    kind, kind_ok := oauth.kind_from_id(string(params.provider_id))
     if !kind_ok {
         send_error(conn, req.id, .Bad_Request, "unknown authentication provider", sa)
         return
     }
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
 
     if params.flow != .Browser && params.flow != .Device_Code {
         send_error(conn, req.id, .Bad_Request, "provider does not support the requested login flow", sa)
@@ -1211,7 +1181,7 @@ method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         }
 
         callback_port := http_server.bound_port(&d.provider_auth.callback)
-        authorization, flow_err := provider_auth.authorization_flow_create(
+        authorization, flow_err := oauth.authorization_flow_create(
             provider,
             callback_port,
             AUTH_ORIGINATOR,
@@ -1283,12 +1253,12 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     d := conn.daemon
     params := req.params.(wire.Auth_Logout_Params)
 
-    kind, kind_ok := provider_auth.kind_from_id(string(params.provider_id))
+    kind, kind_ok := oauth.kind_from_id(string(params.provider_id))
     if !kind_ok {
         send_error(conn, req.id, .Bad_Request, "unknown authentication provider", sa)
         return
     }
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
 
     if auth_busy(d) {
         send_error(conn, req.id, .Overloaded, "provider authentication is busy", sa)
@@ -1332,13 +1302,13 @@ provider_login_finish :: proc(d: ^Daemon, outcome: wire.Auth_Login_Outcome) {
 
 provider_login_finished :: proc(
     d: ^Daemon,
-    kind: provider_auth.Kind,
+    kind: oauth.Kind,
     login_id: wire.Login_Id,
     outcome: wire.Auth_Login_Outcome,
 ) {
     assert(d != nil && d.provider_auth.curl_ready, "login completion needs initialized auth")
     assert(wire.auth_login_outcome_validate(outcome) == .None, "daemon built an invalid auth outcome")
-    provider := provider_auth.provider(kind)
+    provider := oauth.provider(kind)
     finished := wire.Auth_Login_Finished_Data {
         login_id    = login_id,
         provider_id = wire.Provider_Id(provider.id),
@@ -1350,7 +1320,7 @@ provider_login_finished :: proc(
     provider_refresh_schedule(d)
 }
 
-auth_changed_broadcast :: proc(d: ^Daemon, kind: provider_auth.Kind) {
+auth_changed_broadcast :: proc(d: ^Daemon, kind: oauth.Kind) {
     assert(d != nil && d.provider_auth.curl_ready, "auth.changed needs initialized auth")
     _ = broadcast(d, wire.Auth_Changed_Data{provider = provider_state(d, kind)})
 }
@@ -1394,8 +1364,8 @@ provider_login_free :: proc(d: ^Daemon, login: ^Provider_Login) {
 
     assert(login.poll_timer == nil, "login cleanup with a live poll timer")
     assert(login.deadline_timer == nil, "login cleanup with a live deadline timer")
-    provider_auth.authorization_flow_destroy(&login.authorization, d.allocator)
-    provider_auth.device_session_destroy(&login.device, d.allocator)
+    oauth.authorization_flow_destroy(&login.authorization, d.allocator)
+    oauth.device_session_destroy(&login.device, d.allocator)
     provider_login_request_clear(d, login)
     bounded_response_reset(&login.response)
     login^ = {}

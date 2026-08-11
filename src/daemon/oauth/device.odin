@@ -1,4 +1,4 @@
-package auth
+package oauth
 
 import "core:encoding/json"
 import "core:math"

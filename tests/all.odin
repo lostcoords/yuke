@@ -1,8 +1,8 @@
 package tests
 
-import _ "src:auth"
 import _ "src:client"
 import _ "src:daemon"
+import _ "src:daemon/oauth"
 import _ "src:daemon/store"
 import _ "src:daemon/store/queries"
 import _ "src:js"
