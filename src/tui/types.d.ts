@@ -687,18 +687,21 @@ declare module "yuke:ui" {
 }
 
 declare module "yuke:defaults" {
+  import type { KeyEvent } from "yuke:term";
   import type { TickRequest, View } from "yuke:core";
 
   export class HomeView extends View {
     get name(): "home";
     tick(): void;
     needsTick(): TickRequest | null;
+    onKey(ev: KeyEvent): boolean;
     draw(): void;
   }
 
   export class ShellView extends View {
     get name(): "shell";
     draw(): void;
+    onKey(ev: KeyEvent): boolean;
   }
 
   export const home: HomeView;

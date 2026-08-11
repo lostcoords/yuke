@@ -5,6 +5,13 @@ import { term } from "yuke:term";
 import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit } from "yuke:core";
 import { ui, List, Transcript } from "yuke:ui";
 
+// The ":" command line: prompt links to Normal, an unmatched word shows in red.
+Object.assign(style.groups, {
+  YukeCmdline: { link: "Normal" },
+  YukeCmdlineErr: { fg: 203, bold: true },
+});
+style.invalidate();
+
 // Brand banner; falls back to plain "yuke" when the terminal is too narrow or short.
 const YUKE_BANNER = [
   "██╗   ██╗██╗   ██╗██╗  ██╗███████╗",
@@ -233,10 +240,6 @@ const homeList = new List({
   isSelectable: (line) => line.kind === "session_title",
 });
 
-function moveSelection(delta) {
-  homeList.move(delta);
-}
-
 function selectedSession() {
   const line = homeList.selected();
   return line ? line.session : null;
@@ -322,6 +325,12 @@ class HomeView extends View {
     return null;
   }
 
+  // Selection movement rides the shared list vocabulary (j/k, ctrl+d/u, gg, G); actions (open,
+  // new, explore) stay command-bound so they show in the palette and the ":" line.
+  onKey(ev) {
+    return homeList.onKey(ev);
+  }
+
   draw() {
     const w = term.width;
     const h = term.height;
@@ -403,7 +412,7 @@ class HomeView extends View {
     }
 
     if (h > 0) {
-      const left = "j/k · ↵ open · n new · q quit";
+      const left = "j/k · ↵ open · n new · - explore · : command";
       const right = w + "×" + h;
       text(padX, h - 1, clip(left, innerW), "YukeFooter");
       if (innerW > left.length + right.length + 2) {
@@ -509,7 +518,7 @@ class ShellView extends View {
     if (bodyH > 0) this.transcript.draw({ x: padX, y: bodyTop, w: innerW, h: bodyH });
 
     if (h > 0) {
-      const left = "j/k · ^d/^u · g/end · s stream" + (this.streaming ? " ●" : "") + " · b bench · esc back · q quit";
+      const left = "j/k · ^d/^u · g/G · s stream" + (this.streaming ? " ●" : "") + " · b bench · esc back · : command";
       const bench = this.benchFps ? this.benchFps + "fps " + this.benchMs + "ms · " : "";
       const right = bench + this.transcript.pager.rows.length + "rows " + w + "×" + h;
       text(padX, footerY, clip(left, innerW), "YukeFooter");
@@ -655,39 +664,143 @@ function openPalette() {
   });
 }
 
+// --- command line -------------------------------------------------------------------------
+// A vim-style ":" line: matches a command's short name (after its last ":") exactly or by
+// unique prefix, gated to commands available in the current context — ":q" quits, ":e" explores.
+function commandShortNames() {
+  const names = Object.create(null);
+  for (const full in command.map) {
+    if (!commandAvailable(command.map[full])) continue;
+
+    const short = full.slice(full.lastIndexOf(":") + 1);
+    if (!names[short]) names[short] = full;
+  }
+  return names;
+}
+
+function resolveCommand(word) {
+  const names = commandShortNames();
+  if (names[word]) return names[word];
+
+  let hit = null;
+  for (const short in names) {
+    if (short.indexOf(word) !== 0) continue;
+    if (hit) return null; // ambiguous prefix
+    hit = names[short];
+  }
+  return hit;
+}
+
+// A single bottom row that edits a command word and runs it on Enter. Modal, so it owns every
+// keystroke while open; Esc — or Backspace past the prompt — cancels.
+class CommandLine {
+  constructor() {
+    this.text = "";
+    this.error = "";
+  }
+
+  get name() {
+    return "command-line";
+  }
+
+  draw() {
+    const w = term.width;
+    const h = term.height;
+    if (h <= 0 || w <= 0) return;
+
+    const y = h - 1;
+    const err = this.error !== "";
+    fill(0, y, w, 1, "Normal");
+    text(0, y, clip(err ? this.error : ":" + this.text, w), err ? "YukeCmdlineErr" : "YukeCmdline");
+  }
+
+  cursor() {
+    if (this.error) return null;
+
+    return { x: Math.min(term.width - 1, 1 + this.text.length), y: term.height - 1, visible: true };
+  }
+
+  submit() {
+    const word = this.text.trim();
+    if (word === "") {
+      root.popOverlay(this);
+      return;
+    }
+
+    const name = resolveCommand(word);
+    if (!name) {
+      this.error = "not a command: " + word;
+      return;
+    }
+
+    root.popOverlay(this);
+    command.perform(name);
+  }
+
+  onKey(ev) {
+    const s = strokeOf(ev);
+
+    if (s === "esc") {
+      root.popOverlay(this);
+      return true;
+    }
+
+    if (s === "enter") {
+      this.submit();
+      return true;
+    }
+
+    if (s === "backspace") {
+      if (this.text === "") root.popOverlay(this);
+      else this.text = this.text.slice(0, -1);
+      this.error = "";
+      return true;
+    }
+
+    // A printable char extends the word; any modifier past Shift means a shortcut, not text.
+    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~1) === 0) {
+      this.text += ev.char;
+      this.error = "";
+    }
+
+    return true; // modal: consume every key
+  }
+}
+
+function openCommandLine() {
+  return root.pushOverlay(new CommandLine());
+}
+
 // --- commands + keymaps -------------------------------------------------------------------
+command.add(null, {
+  "app:quit": () => quit(),
+  "ui:palette": () => openPalette(),
+});
+
 command.add("home", {
-  "home:quit": () => quit(),
   "home:new": () => createAndOpen(),
-  "home:next": () => moveSelection(1),
-  "home:prev": () => moveSelection(-1),
   "home:open": () => openSelected(),
   "home:explorer": () => openExplorer("/Users/xyaman/Work"),
 });
 
 command.add("shell", {
-  "shell:quit": () => quit(),
   "shell:back": () => {
     openSession = null;
     root.setActive(home);
   },
 });
 
-command.add(null, {
-  "palette:open": () => openPalette(),
-});
-
+// Selection/scroll strokes are owned by the widgets (List/Pager); the keymap binds actions.
 keymap.add({
-  "q": ["home:quit", "shell:quit"],
   "n": "home:new",
-  "j": "home:next",
-  "down": "home:next",
-  "k": "home:prev",
-  "up": "home:prev",
   "enter": "home:open",
+  "-": "home:explorer",
   "esc": "shell:back",
-  "e": "home:explorer",
-  "ctrl+p": "palette:open",
+  " ": "ui:palette",
+  ":": () => {
+    openCommandLine();
+    return true;
+  },
 });
 
 seedDummy();

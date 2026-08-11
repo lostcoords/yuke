@@ -29,6 +29,50 @@ const PAGE_FALLBACK = 10;
 // Left gutter reserved for a transcript row's marker; body text is indented past it.
 const TX_GUTTER = 2;
 
+// Shift bit in the host modifier mask (js.odin: Shift=1). strokeOf folds Shift into the base
+// char, so a shifted letter (G, our "bottom") is recovered from the raw event instead.
+const MOD_SHIFT = 1;
+
+// The base letter of a shifted char event, or "" if not one. Kitty sets the Shift modifier;
+// a legacy terminal just uppercases the char — either way, distinguishes G from g after strokeOf folds them together.
+function shiftedChar(ev) {
+  if (ev.code !== "char" || !ev.char) return "";
+  if (ev.char !== ev.char.toLowerCase()) return ev.char.toLowerCase();
+  if ((ev.mods | 0) & MOD_SHIFT) return ev.char.toLowerCase();
+  return "";
+}
+
+// Shared nav vocabulary for every scrollable widget: j/k move, ctrl+d/u page, gg/G top/bottom.
+// Returns "pending_g" when a first g was swallowed; `gPending` is the caller's memory of it.
+function navAction(ev, gPending) {
+  const s = strokeOf(ev);
+  const sc = shiftedChar(ev);
+  if (gPending && s === "g" && !sc) return "top"; // second g of gg
+
+  switch (s) {
+    case "j":
+    case "down":
+      return "down";
+    case "k":
+    case "up":
+      return "up";
+    case "ctrl+d":
+    case "page_down":
+      return "page_down";
+    case "ctrl+u":
+    case "page_up":
+      return "page_up";
+    case "home":
+      return "top";
+    case "end":
+      return "bottom";
+    case "g":
+      return sc === "g" ? "bottom" : "pending_g"; // G is bottom; g starts gg
+  }
+
+  return "";
+}
+
 // A scrollable, selectable list rendered into a caller-assigned rect. Items are opaque
 // values; `format(item, i)` maps each to a display row and `key(item)` gives a stable
 // identity, so the selection follows its item across a re-sorted `items` rather than sliding
@@ -52,6 +96,7 @@ export class List {
     this.selectedKey = null;
     this.scroll = 0; // first visible row index
     this._page = PAGE_FALLBACK; // last drawn height, for page moves
+    this._gPending = false; // a g awaiting its pair (gg = top)
     this.setItems(opts.items || []);
   }
 
@@ -135,14 +180,15 @@ export class List {
   }
 
   // A nav key the list consumes; Enter/Esc belong to the owner. Returns whether handled.
-  // Switches on the canonical stroke, so a modified key (e.g. ctrl+j) is declined, not eaten.
+  // Shares navAction with the pager so both move by the same vocabulary (j/k, ctrl+d/u, gg, G).
   onKey(ev) {
-    switch (strokeOf(ev)) {
-      case "j":
+    const act = navAction(ev, this._gPending);
+    this._gPending = act === "pending_g";
+
+    switch (act) {
       case "down":
         this.move(1);
         return true;
-      case "k":
       case "up":
         this.move(-1);
         return true;
@@ -152,13 +198,16 @@ export class List {
       case "page_up":
         this.move(-this._page);
         return true;
-      case "home":
+      case "top":
         this.moveToEdge(-1);
         return true;
-      case "end":
+      case "bottom":
         this.moveToEdge(1);
         return true;
+      case "pending_g":
+        return true; // swallow the first g of gg
     }
+
     return false;
   }
 
@@ -216,6 +265,7 @@ export class Pager {
     this.scroll = 0;
     this.stuck = true; // follow the bottom
     this._h = 0; // last drawn height
+    this._gPending = false; // a g awaiting its pair (gg = top)
   }
 
   _maxScroll() {
@@ -279,31 +329,32 @@ export class Pager {
 
   onKey(ev) {
     const page = Math.max(1, this._h - 1);
-    switch (strokeOf(ev)) {
-      case "j":
+    const act = navAction(ev, this._gPending);
+    this._gPending = act === "pending_g";
+
+    switch (act) {
       case "down":
         this.scrollBy(1);
         return true;
-      case "k":
       case "up":
         this.scrollBy(-1);
         return true;
-      case "ctrl+d":
       case "page_down":
         this.scrollBy(page);
         return true;
-      case "ctrl+u":
       case "page_up":
         this.scrollBy(-page);
         return true;
-      case "g":
-      case "home":
+      case "top":
         this.toTop();
         return true;
-      case "end":
+      case "bottom":
         this.toBottom();
         return true;
+      case "pending_g":
+        return true; // swallow the first g of gg
     }
+
     return false;
   }
 }
