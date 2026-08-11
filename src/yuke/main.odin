@@ -18,6 +18,15 @@ import tui "src:tui"
 
 main :: proc() {
     sub := os.args[1] if len(os.args) > 1 else ""
+    rest := os.args[2] if len(os.args) > 2 else ""
+
+    // `yuke <command> help|--help|-h` shows that command's help, mirroring `yuke help <command>`.
+    // `help` itself is excluded so `yuke help --help` falls to the help case below.
+    if help_flag(rest) && sub != "help" && command_exists(sub) {
+        help_command(sub)
+
+        return
+    }
 
     switch sub {
     case "daemon":
@@ -30,13 +39,16 @@ main :: proc() {
         login_run()
 
     case "help", "--help", "-h":
-        if len(os.args) > 2 {
-            help_command(os.args[2])
-        } else {
+        if rest == "" || help_flag(rest) {
             usage()
+        } else {
+            help_command(rest)
         }
 
-    case:
+    case "":
         tui.run()
+
+    case:
+        usage_unknown(sub)
     }
 }
