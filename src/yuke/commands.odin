@@ -61,7 +61,7 @@ COMMANDS := []Command {
         summary = "enroll this device with the control plane",
         detail = {
             "  --force          re-enroll even if an identity already exists",
-            "  --name <name>    device name (default $HOSTNAME)",
+            "  --name <name>    device name (default: machine hostname)",
             "  --cloud <url>    control-plane base URL (default $YUKE_CLOUD_URL)",
         },
     },

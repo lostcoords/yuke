@@ -209,8 +209,8 @@ login_run :: proc() {
 }
 
 // Parse `yuke login` flags: `--force`, `--name <n>`/`--name=<n>`, `--cloud <url>`/`--cloud=<url>`.
-// `name` defaults to `$HOSTNAME` (then a fixed fallback); `cloud` to `$YUKE_CLOUD_URL` or the dev
-// default. Returns ok=false on an unknown flag or a missing value, having reported it.
+// `name` defaults to the machine hostname (then `"unknown device"`); `cloud` to `$YUKE_CLOUD_URL`
+// or the hosted default. Returns ok=false on an unknown flag or a missing value, having reported it.
 @(private = "file")
 login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     opts.cloud = login_default_cloud()
@@ -260,13 +260,13 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     }
 
     if opts.name == "" {
-        opts.name = "yuke-device"
+        opts.name = "unknown device"
     }
 
     return opts, true
 }
 
-// The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the dev default.
+// The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the hosted default.
 @(private = "file")
 login_default_cloud :: proc() -> string {
     if v, set := os.lookup_env(CLOUD_URL_ENV, context.allocator); set && v != "" {
@@ -276,14 +276,14 @@ login_default_cloud :: proc() -> string {
     return DEFAULT_CLOUD_URL
 }
 
-// The default device name: `$HOSTNAME` when set, else empty (the caller supplies a fallback).
+// The default device name: OS hostname when available, else `"unknown device"`.
 @(private = "file")
 login_default_name :: proc() -> string {
-    if v, set := os.lookup_env("HOSTNAME", context.allocator); set && v != "" {
-        return v
+    if name := login_hostname(); name != "" {
+        return name
     }
 
-    return ""
+    return "unknown device"
 }
 
 // One POST's accumulated response, filled by the curl callbacks below.
