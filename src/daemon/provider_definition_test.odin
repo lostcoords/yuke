@@ -7,6 +7,7 @@ import "core:path/filepath"
 import "core:testing"
 
 import "libs:testsupport"
+import catalog "src:daemon/catalog"
 import js "src:js"
 import wire "src:wire"
 
@@ -42,12 +43,11 @@ provider_test_error :: proc(t: ^testing.T, name: string, source: string) -> Erro
     return err
 }
 
-// Imported modules may contribute providers, and registration remains open through top-level
-// await. Finalization preserves the captured value, not later JavaScript object mutations.
+// Multiple defineProvider calls contribute providers, and registration remains open across a
+// top-level await. Finalization preserves the captured value, not later JavaScript object mutations.
 @(test)
 test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-    context.logger = log.nil_logger()
 
     root := test_make_dir("provider-valid")
     defer os.remove_all(root)
@@ -55,22 +55,13 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
     provider_test_write(
         t,
         root,
-        "providers.js",
+        JS_ENTRY_FILE,
         `
             import { defineProvider } from "yuke:daemon"
 
             const definition = { modelsDev: "openai" }
             defineProvider("openai", definition)
             definition.modelsDev = "anthropic"
-        `,
-    )
-    provider_test_write(
-        t,
-        root,
-        JS_ENTRY_FILE,
-        `
-            import "./providers.js"
-            import { defineProvider } from "yuke:daemon"
 
             await Promise.resolve()
 
@@ -87,10 +78,16 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
                     contextWindow: 128000,
                     maxOutputTokens: 16000,
                     reasoningLevels: ["low", "medium", "high"],
-                    defaultReasoning: "medium",
+                    reasoningFormat: "openrouter-effort",
+                    reasoningReplay: "reasoning-content",
                     supportsVision: false,
                     supportsTools: true,
+                    supportsTemperature: true,
                     cost: { input: 1.25, output: 5, cacheRead: 0.25, cacheWrite: 0 },
+                }],
+                modelOverrides: [{
+                    id: "gpt-5",
+                    reasoningLevels: ["low", "high"],
                 }],
             })
 
@@ -105,7 +102,10 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
     defer nbio.release_thread_event_loop()
 
     d: Daemon
+    saved_logger := context.logger
+    context.logger = log.nil_logger()
     err := start(&d, nbio.current_thread_event_loop(), {host = "127.0.0.1", port = 0, js_root = root})
+    context.logger = saved_logger
     if !testing.expect_value(t, err, Error.None) {
         return
     }
@@ -142,12 +142,25 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
         testing.expect_value(t, model.context_window, u64(128000))
         testing.expect_value(t, model.max_output_tokens, u64(16000))
         testing.expect_value(t, model.default_reasoning, "medium")
+        testing.expect_value(t, model.reasoning_format, catalog.Reasoning_Format.Openrouter_Effort)
+        testing.expect_value(t, model.reasoning_replay, catalog.Reasoning_Replay.Reasoning_Content)
         testing.expect(t, !model.supports_vision, "vision support is captured exactly")
         testing.expect(t, model.supports_tools, "tool support is captured exactly")
+        testing.expect(t, model.supports_temperature, "temperature support is captured exactly")
         testing.expect_value(t, model.cost.input, 1.25)
         testing.expect_value(t, model.cost.output, 5.0)
         testing.expect_value(t, model.cost.cache_read, 0.25)
         testing.expect_value(t, model.cost.cache_write, 0.0)
+    }
+
+    if testing.expect_value(t, len(company.overrides), 1) {
+        override := company.overrides[0]
+        testing.expect_value(t, override.id, "company/gpt-5")
+        testing.expect_value(t, override.default_reasoning, "high")
+        if testing.expect_value(t, len(override.reasoning_levels), 2) {
+            testing.expect_value(t, override.reasoning_levels[0], "low")
+            testing.expect_value(t, override.reasoning_levels[1], "high")
+        }
     }
 
     local := d.providers.definitions[2]
@@ -236,14 +249,20 @@ test_define_provider_rejects_invalid_registries :: proc(t: ^testing.T) {
             "provider-model-map",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: { gpt: {} } })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: { gpt: {} },
+                })
             `,
         },
         {
             "provider-incomplete-model",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{ id: "gpt" }] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ id: "gpt" }],
+                })
             `,
         },
         {
@@ -253,76 +272,187 @@ test_define_provider_rejects_invalid_registries :: proc(t: ^testing.T) {
                 const model = id => ({
                     id, upstreamId: id, name: id,
                     contextWindow: 128000, maxOutputTokens: 16000,
-                    reasoningLevels: [], defaultReasoning: "",
-                    supportsVision: false, supportsTools: true,
+                    reasoningLevels: [],
+                    supportsVision: false, supportsTools: true, supportsTemperature: true,
                     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 })
-                defineProvider("openai", { modelsDev: "openai", models: [model("gpt"), model("gpt")] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [model("gpt"), model("gpt")],
+                })
             `,
         },
         {
             "provider-unsafe-token-count",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{
-                    id: "gpt", upstreamId: "gpt", name: "GPT",
-                    contextWindow: 9007199254740992, maxOutputTokens: 1,
-                    reasoningLevels: [], defaultReasoning: "",
-                    supportsVision: false, supportsTools: true,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                }] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{
+                        id: "gpt", upstreamId: "gpt", name: "GPT",
+                        contextWindow: 9007199254740992, maxOutputTokens: 1,
+                        reasoningLevels: [],
+                        supportsVision: false, supportsTools: true, supportsTemperature: true,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
+                })
             `,
         },
         {
             "provider-zero-token-count",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{
-                    id: "gpt", upstreamId: "gpt", name: "GPT",
-                    contextWindow: 128000, maxOutputTokens: 0,
-                    reasoningLevels: [], defaultReasoning: "",
-                    supportsVision: false, supportsTools: true,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                }] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{
+                        id: "gpt", upstreamId: "gpt", name: "GPT",
+                        contextWindow: 128000, maxOutputTokens: 0,
+                        reasoningLevels: [],
+                        supportsVision: false, supportsTools: true, supportsTemperature: true,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
+                })
             `,
         },
         {
             "provider-public-model-id-too-long",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{
-                    id: "x".repeat(128), upstreamId: "gpt", name: "GPT",
-                    contextWindow: 128000, maxOutputTokens: 16000,
-                    reasoningLevels: [], defaultReasoning: "",
-                    supportsVision: false, supportsTools: true,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                }] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{
+                        id: "x".repeat(128), upstreamId: "gpt", name: "GPT",
+                        contextWindow: 128000, maxOutputTokens: 16000,
+                        reasoningLevels: [],
+                        supportsVision: false, supportsTools: true, supportsTemperature: true,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
+                })
             `,
         },
         {
-            "provider-reasoning-default",
+            "provider-default-reasoning-field",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{
-                    id: "gpt", upstreamId: "gpt", name: "GPT",
-                    contextWindow: 128000, maxOutputTokens: 16000,
-                    reasoningLevels: ["low", "high"], defaultReasoning: "medium",
-                    supportsVision: false, supportsTools: true,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                }] })
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ ...M, defaultReasoning: "" }],
+                })
+            `,
+        },
+        {
+            "provider-reasoning-budget-field",
+            `
+                import { defineProvider } from "yuke:daemon"
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ ...M, reasoningBudget: { min: 1, max: 2 } }],
+                })
+            `,
+        },
+        {
+            "provider-missing-temperature",
+            `
+                import { defineProvider } from "yuke:daemon"
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{
+                        id: "gpt", upstreamId: "gpt", name: "GPT",
+                        contextWindow: 128000, maxOutputTokens: 16000,
+                        reasoningLevels: [],
+                        supportsVision: false, supportsTools: true,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
+                })
+            `,
+        },
+        {
+            "provider-unknown-reasoning-format",
+            `
+                import { defineProvider } from "yuke:daemon"
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ ...M, reasoningFormat: "bogus" }],
+                })
+            `,
+        },
+        {
+            "provider-unknown-reasoning-replay",
+            `
+                import { defineProvider } from "yuke:daemon"
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ ...M, reasoningReplay: "bogus" }],
+                })
+            `,
+        },
+        {
+            "provider-incompatible-reasoning-format",
+            `
+                import { defineProvider } from "yuke:daemon"
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{ ...M, reasoningFormat: "anthropic-adaptive" }],
+                })
+            `,
+        },
+        {
+            "provider-models-without-endpoint",
+            `
+                import { defineProvider } from "yuke:daemon"
+                const M = { id: "gpt", upstreamId: "gpt", name: "GPT", contextWindow: 128000, maxOutputTokens: 16000, reasoningLevels: [], supportsVision: false, supportsTools: true, supportsTemperature: true, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+                defineProvider("openai", { modelsDev: "openai", models: [M] })
+            `,
+        },
+        {
+            "provider-overrides-without-models-dev",
+            `
+                import { defineProvider } from "yuke:daemon"
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    modelOverrides: [{ id: "gpt", reasoningLevels: [] }],
+                })
+            `,
+        },
+        {
+            "provider-duplicate-override",
+            `
+                import { defineProvider } from "yuke:daemon"
+                defineProvider("openai", {
+                    modelsDev: "openai",
+                    modelOverrides: [{ id: "gpt", reasoningLevels: [] }, { id: "gpt", reasoningLevels: [] }],
+                })
+            `,
+        },
+        {
+            "provider-override-unknown-field",
+            `
+                import { defineProvider } from "yuke:daemon"
+                defineProvider("openai", {
+                    modelsDev: "openai",
+                    modelOverrides: [{ id: "gpt", reasoningLevels: [], name: "nope" }],
+                })
             `,
         },
         {
             "provider-negative-cost",
             `
                 import { defineProvider } from "yuke:daemon"
-                defineProvider("openai", { modelsDev: "openai", models: [{
-                    id: "gpt", upstreamId: "gpt", name: "GPT",
-                    contextWindow: 128000, maxOutputTokens: 16000,
-                    reasoningLevels: [], defaultReasoning: "",
-                    supportsVision: false, supportsTools: true,
-                    cost: { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 },
-                }] })
+                defineProvider("local", {
+                    baseUrl: "http://127.0.0.1:11434/v1", protocol: "openai-chat",
+                    models: [{
+                        id: "gpt", upstreamId: "gpt", name: "GPT",
+                        contextWindow: 128000, maxOutputTokens: 16000,
+                        reasoningLevels: [],
+                        supportsVision: false, supportsTools: true, supportsTemperature: true,
+                        cost: { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
+                })
             `,
         },
         {

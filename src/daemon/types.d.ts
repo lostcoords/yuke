@@ -20,6 +20,19 @@ declare module "yuke:daemon" {
 
   export type ProviderProtocol = "anthropic-messages" | "openai-chat" | "openai-responses";
 
+  // Reasoning request-body shape. Omit for the protocol's ordinary shape ("native"); the rest
+  // are protocol-specific exceptions validated against `protocol`.
+  export type ReasoningFormat =
+    | "native"
+    | "openai-effort-toggle-off"
+    | "openrouter-effort"
+    | "zai-toggle"
+    | "qwen-thinking"
+    | "anthropic-adaptive";
+
+  // Assistant field replayed across a tool-use round. Omit for "none".
+  export type ReasoningReplay = "none" | "reasoning-content" | "reasoning-details";
+
   export interface ProviderModelCost {
     input: number;
     output: number;
@@ -27,6 +40,8 @@ declare module "yuke:daemon" {
     cacheWrite: number;
   }
 
+  // A complete custom model. The session default reasoning level is derived from
+  // `reasoningLevels`, not supplied.
   export interface ProviderModelDefinition {
     id: string;
     upstreamId: string;
@@ -34,10 +49,18 @@ declare module "yuke:daemon" {
     contextWindow: number;
     maxOutputTokens: number;
     reasoningLevels: string[];
-    defaultReasoning: string;
     supportsVision: boolean;
     supportsTools: boolean;
+    supportsTemperature: boolean;
+    reasoningFormat?: ReasoningFormat;
+    reasoningReplay?: ReasoningReplay;
     cost: ProviderModelCost;
+  }
+
+  // Tune an imported models.dev model in place. Allowed only alongside `modelsDev`.
+  export interface ProviderModelOverride {
+    id: string;
+    reasoningLevels: string[];
   }
 
   export interface ProviderDefinition {
@@ -46,7 +69,10 @@ declare module "yuke:daemon" {
     protocol?: ProviderProtocol;
     credentialEnv?: string[];
     modelsDev?: string;
+    // Custom models require a resolvable endpoint (`baseUrl` + `protocol`).
     models?: ProviderModelDefinition[];
+    // Overrides require `modelsDev`.
+    modelOverrides?: ProviderModelOverride[];
   }
 
   // Register one provider during initial yuked.js evaluation. Provider and model IDs must be unique.

@@ -1034,21 +1034,26 @@ reasoning_levels_clone :: proc(
     return levels, .None
 }
 
-@(private)
-reasoning_default_clone :: proc(levels: []string, allocator: mem.Allocator) -> (string, Normalize_Error) {
+// Deterministic session default from the effective reasoning levels: prefer "medium",
+// otherwise the middle level, and no default for an empty set. Shared with the daemon
+// JavaScript provider surface so imported and custom models derive one identical rule.
+default_reasoning_level :: proc(levels: []string) -> string {
     if len(levels) == 0 {
-        return clone_owned("", allocator)
+        return ""
     }
 
-    selected := levels[len(levels) / 2]
     for level in levels {
         if level == "medium" {
-            selected = level
-            break
+            return level
         }
     }
 
-    return clone_owned(selected, allocator)
+    return levels[len(levels) / 2]
+}
+
+@(private)
+reasoning_default_clone :: proc(levels: []string, allocator: mem.Allocator) -> (string, Normalize_Error) {
+    return clone_owned(default_reasoning_level(levels), allocator)
 }
 
 @(private)
