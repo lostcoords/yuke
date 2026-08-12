@@ -12,6 +12,7 @@ import "core:nbio"
 import "core:net"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 
 import ws "libs:websocket"
 import "src:secret"
@@ -259,6 +260,8 @@ link_dial :: proc(
     cbs: Link_Callbacks,
     user_data: rawptr = nil,
     allocator := context.allocator,
+    keepalive_interval: time.Duration = 0,
+    keepalive_pong_deadline: time.Duration = 0,
 ) -> ws.Client_Error {
     assert(l != nil, "link_dial needs link storage")
     assert(loop != nil, "link_dial needs an event loop")
@@ -282,10 +285,12 @@ link_dial :: proc(
     defer secret.string_destroy(&path, context.temp_allocator)
 
     options := ws.Options {
-        scheme = endpoint.scheme,
-        host   = endpoint.host,
-        port   = endpoint.port,
-        path   = path,
+        scheme                  = endpoint.scheme,
+        host                    = endpoint.host,
+        port                    = endpoint.port,
+        path                    = path,
+        keepalive_interval      = keepalive_interval,
+        keepalive_pong_deadline = keepalive_pong_deadline,
     }
 
     callbacks := ws.Callbacks {

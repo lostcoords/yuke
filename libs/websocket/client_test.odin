@@ -72,6 +72,9 @@ Srv :: struct {
     pong:           [64]byte,
     pong_len:       int,
 
+    // Count of client keepalive Pings the server answered with a Pong.
+    pings_ponged:   int,
+
     // A Close frame was read back from the client.
     close_seen:     bool,
 
@@ -945,6 +948,188 @@ test_client_ping_pong :: proc(t: ^testing.T) {
     thread.join(server)
     testing.expect(t, s.got_pong, "server should read back a Pong")
     testing.expect_value(t, string(s.pong[:s.pong_len]), "ping-payload")
+}
+
+// --- 6b. Keepalive ------------------------------------------------------------
+
+// Server that upgrades and then never answers a Ping. It only drains the socket so the
+// client's keepalive Ping lands; the missing Pong must trip the client's deadline.
+srv_keepalive_silent :: proc(s: ^Srv) {
+    defer free_all(context.temp_allocator)
+
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
+    if !ok {
+        return
+    }
+    defer net.close(listener)
+    defer net.close(conn)
+
+    if !srv_upgrade(conn) {
+        return
+    }
+
+    // Read until the client gives up and closes the transport; never send a Pong.
+    scratch: [512]byte
+    for {
+        n, rerr := net.recv_tcp(conn, scratch[:])
+        if rerr != nil || n == 0 {
+            break
+        }
+    }
+
+    s.ok = true
+}
+
+// A keepalive-enabled client whose peer stops ponging fails with `.Keepalive_Timeout`.
+@(test)
+test_client_keepalive_timeout :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    s := Srv{}
+    server := thread.create_and_start_with_poly_data(&s, srv_keepalive_silent)
+    defer {
+        thread.join(server)
+        thread.destroy(server)
+    }
+
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
+        return
+    }
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    obs: Client_Obs
+
+    callbacks := Callbacks {
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
+        on_message = obs_on_message,
+        on_close = obs_on_close,
+        on_error = obs_on_error,
+    }
+
+    c: Client
+    cerr := client_connect(
+        &c,
+        loop,
+        {
+            host = "127.0.0.1",
+            port = s.port,
+            path = "/ws",
+            keepalive_interval = 40 * time.Millisecond,
+            keepalive_pong_deadline = 40 * time.Millisecond,
+        },
+        callbacks,
+        &obs,
+    )
+    testing.expect_value(t, cerr, Client_Error.None)
+
+    nbio.run_until(&obs.done)
+    client_destroy(&c)
+
+    testing.expect(t, obs.opened, "on_open should fire")
+    testing.expect_value(t, obs.err, Client_Error.Keepalive_Timeout)
+    testing.expect_value(t, obs.terminal_count, 1)
+    testing.expect_value(t, obs.state_at_term, Client_State.Closed)
+}
+
+// Server that answers three consecutive keepalive Pings with Pongs, then closes cleanly.
+srv_keepalive_ponder :: proc(s: ^Srv) {
+    defer free_all(context.temp_allocator)
+
+    listener, conn, ok := srv_accept(&s.port, &s.listening)
+    if !ok {
+        return
+    }
+    defer net.close(listener)
+    defer net.close(conn)
+
+    if !srv_upgrade(conn) {
+        return
+    }
+
+    r := Srv_Frame_Reader {
+        conn = conn,
+    }
+    for s.pings_ponged < 3 {
+        op, pl, fok := srv_next_frame(&r)
+        if !fok {
+            return
+        }
+
+        if op == .Ping {
+            srv_send_frame(conn, true, .Pong, pl)
+            s.pings_ponged += 1
+        }
+    }
+
+    // End gracefully so the client's on_close reports Normal_Closure.
+    body: [2]byte
+    srv_send_frame(conn, true, .Connection_Close, srv_close_body(&body, u16(Close_Code.Normal_Closure)))
+    srv_next_frame(&r)
+    s.ok = true
+}
+
+// A keepalive-enabled client stays Open across several intervals while its peer keeps
+// ponging, then closes cleanly — the heartbeat never trips a live link.
+@(test)
+test_client_keepalive_stays_open :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    s := Srv{}
+    server := thread.create_and_start_with_poly_data(&s, srv_keepalive_ponder)
+    defer {
+        thread.join(server)
+        thread.destroy(server)
+    }
+
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
+        return
+    }
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    obs: Client_Obs
+
+    callbacks := Callbacks {
+        on_open = proc(c: ^Client) {o := (^Client_Obs)(c.user_data); o.opened = true},
+        on_message = obs_on_message,
+        on_close = obs_on_close,
+        on_error = obs_on_error,
+    }
+
+    c: Client
+    // A short interval keeps the test quick; a generous pong deadline rules out a
+    // false timeout under scheduler jitter.
+    cerr := client_connect(
+        &c,
+        loop,
+        {
+            host = "127.0.0.1",
+            port = s.port,
+            path = "/ws",
+            keepalive_interval = 20 * time.Millisecond,
+            keepalive_pong_deadline = time.Second,
+        },
+        callbacks,
+        &obs,
+    )
+    testing.expect_value(t, cerr, Client_Error.None)
+
+    nbio.run_until(&obs.done)
+    client_destroy(&c)
+
+    testing.expect(t, obs.opened, "on_open should fire")
+    testing.expect_value(t, obs.err, Client_Error.None)
+    testing.expect_value(t, obs.message_count, 0)
+    testing.expect_value(t, obs.close_code, Close_Code.Normal_Closure)
+    testing.expect_value(t, obs.terminal_count, 1)
+
+    thread.join(server)
+    testing.expect_value(t, s.pings_ponged, 3)
 }
 
 // --- 7. Peer close with a code -----------------------------------------------

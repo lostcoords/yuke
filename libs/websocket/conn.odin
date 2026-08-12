@@ -49,6 +49,7 @@ Conn_Error :: enum {
     Invalid_Close_Code,
     Not_Open,
     Canceled,
+    Keepalive_Timeout,
     Too_Many_Connections,
 }
 
@@ -59,117 +60,130 @@ Conn_Core :: struct {
     // @private
     // Which side of the connection this is. Clients mask every frame they send and
     // reject masked frames; servers do the reverse (RFC 6455 §5.3).
-    role:                      Role,
+    role:                                        Role,
 
     // @private
     // Borrowed event loop; the driver submits ops to it but never runs it.
-    loop:                      ^nbio.Event_Loop,
+    loop:                                        ^nbio.Event_Loop,
 
     // @private
-    allocator:                 mem.Allocator,
-    socket:                    net.TCP_Socket,
+    allocator:                                   mem.Allocator,
+    socket:                                      net.TCP_Socket,
 
     // @private
     // Whether `socket` was acquired; guards teardown from `close(0)` when a client
     // dial failed before one existed. Always set for an adopted server connection.
-    has_socket:                bool,
+    has_socket:                                  bool,
 
     // @private
     // Set when this connection runs over TLS: libcurl owns the session and the socket,
     // and every byte moves through it. Nil for a plain `ws://` connection, which is
     // every server connection. Owned by `Client`; see `Tls_Pipe`.
-    tls:                       ^Tls_Pipe,
-    state:                     Conn_State,
+    tls:                                         ^Tls_Pipe,
+    state:                                       Conn_State,
 
     // @private
     // Sans-IO reassembler fed by every receive.
-    decoder:                   Decoder,
+    decoder:                                     Decoder,
 
     // @private
     // Reused destination for each socket receive.
-    recv_buf:                  []byte,
+    recv_buf:                                    []byte,
 
     // @private
     // Inbound single-frame cap (mirrors the decoder's cap for send-side checks).
-    max_frame_bytes:           int,
+    max_frame_bytes:                             int,
 
     // @private
     // Maximum application-frame bytes pending in `send_queue` + `send_batch`.
-    max_send_queue_bytes:      int,
+    max_send_queue_bytes:                        int,
 
     // @private
     // Overall deadline for a WebSocket closing handshake.
-    close_timeout:             time.Duration,
+    close_timeout:                               time.Duration,
 
     // @private
     // Encoded frames waiting to be written, in order; each is owned.
-    send_queue:                [dynamic][]byte,
+    send_queue:                                  [dynamic][]byte,
 
     // @private
     // The frames of the in-flight coalesced send, in order; each is owned until the
     // one vectored send covering the whole batch completes. Empty when idle; the
     // backing capacity is reused across sends (no per-send allocation once warm).
-    send_batch:                [dynamic][]byte,
+    send_batch:                                  [dynamic][]byte,
 
     // @private
     // True while a send is in flight; gates the one-frame-at-a-time queue.
-    sending:                   bool,
+    sending:                                     bool,
 
     // @private
     // Bytes currently owned by `send_queue` + `send_batch`.
-    pending_send_bytes:        int,
+    pending_send_bytes:                          int,
 
     // @private
     // Whether this endpoint's Close frame finished writing.
-    close_sent:                bool,
+    close_sent:                                  bool,
 
     // @private
     // Whether a valid peer Close frame was received.
-    close_received:            bool,
+    close_received:                              bool,
 
     // @private
     // Close code to report to the close callback after teardown completes.
-    close_code:                Close_Code,
+    close_code:                                  Close_Code,
 
     // @private
     // Error to report to the error callback; `.None` selects the close callback
     // instead. Latched before teardown so the terminal callback can fire on socket
     // close.
-    terminal_error:            Conn_Error,
+    terminal_error:                              Conn_Error,
 
     // @private
     // Outstanding op handles, one per lane (recv and send overlap while Open).
     // Cleared at the top of their own callback; teardown removes the rest.
     // `dial_op` is client-only.
-    dial_op, recv_op, send_op: ^nbio.Operation,
+    dial_op, recv_op, send_op:                   ^nbio.Operation,
 
     // @private
     // Closing-handshake deadline; independent of the steady-state receive.
-    close_timeout_op:          ^nbio.Operation,
+    close_timeout_op:                            ^nbio.Operation,
+
+    // @private
+    // Client-initiated keepalive: ping every interval, fail if the pong misses the deadline.
+    // Both zero disables it; only the client role arms it.
+    keepalive_interval, keepalive_pong_deadline: time.Duration,
+
+    // @private
+    // Keepalive timer, mirroring `close_timeout_op`: armed only while Open, cancelled on exit.
+    keepalive_op:                                ^nbio.Operation,
+
+    // @private
+    // A keepalive ping is outstanding, its pong not yet seen. Bounds in-flight pings to one.
+    keepalive_awaiting_pong:                     bool,
 
     // @private
     // Guards exactly one terminal callback.
-    terminal_fired:            bool,
+    terminal_fired:                              bool,
 
     // @private
     // Role adapter delivering one complete application message. `data` is borrowed
     // for the call and freed after it returns. Set at init, never nil.
-    message:                   proc(core: ^Conn_Core, kind: Message_Kind, data: []byte),
+    message:                                     proc(core: ^Conn_Core, kind: Message_Kind, data: []byte),
 
     // @private
     // Role adapter for the one terminal callback: recovers the owner from `core`
     // and dispatches its close/error callback. Set at init, never nil.
-    terminal:                  proc(core: ^Conn_Core),
+    terminal:                                    proc(core: ^Conn_Core),
 
     // @private
     // Role adapter fired when the send queue drains empty while Open. nil when the
     // role has no drain notification (the client driver has none).
-    drained:                   proc(core: ^Conn_Core),
+    drained:                                     proc(core: ^Conn_Core),
 
     // Opaque application pointer, assigned directly (nil until set). The driver never
     // touches it; a callback reaches it as `c.user_data` and may free any state it
     // owns from the close/error callback.
-    user_data:                 rawptr,
+    user_data:                                   rawptr,
 }
 
 // Submit the next steady-state receive (no timeout; the peer may idle).
@@ -271,6 +285,13 @@ conn_drain_decoder :: proc(core: ^Conn_Core) -> bool {
 
         case .Pong:
             owned_bytes_destroy(msg.data, core.allocator)
+
+            // A pong we awaited proves the transport is alive: drop back to the ping interval.
+            // Never assert here — an unsolicited pong is peer input.
+            if core.state == .Open && core.keepalive_awaiting_pong {
+                conn_keepalive_cancel(core)
+                conn_keepalive_arm(core)
+            }
 
         case .Close:
             parsed, perr := parse_close(msg.data)
@@ -391,10 +412,11 @@ conn_enqueue :: proc(core: ^Conn_Core, frame: []byte, control: bool) -> Conn_Err
     return .None
 }
 
-// Encode and queue a control frame (Pong), using the control-frame send reserve.
+// Encode and queue a control frame (auto-Pong or keepalive Ping), using the control-frame
+// send reserve so a full application queue cannot starve it.
 @(private)
 conn_enqueue_control :: proc(core: ^Conn_Core, opcode: Op_Code, payload: []byte) -> Conn_Error {
-    assert(opcode == .Pong, "unexpected automatic control opcode")
+    assert(opcode == .Ping || opcode == .Pong, "unexpected automatic control opcode")
     assert(len(payload) <= 125, "control payload exceeds protocol maximum")
 
     frame, aerr := conn_encode(core, opcode, payload)
@@ -403,6 +425,63 @@ conn_enqueue_control :: proc(core: ^Conn_Core, opcode: Op_Code, payload: []byte)
     }
 
     return conn_enqueue(core, frame, true)
+}
+
+// Arm the keepalive timer at the ping interval. No-op when disabled (interval 0). Only the
+// client role calls it, on entry to Open.
+@(private)
+conn_keepalive_arm :: proc(core: ^Conn_Core) {
+    assert(core.state == .Open, "keepalive armed outside Open")
+    assert(core.keepalive_op == nil, "keepalive timer armed twice")
+    assert(!core.keepalive_awaiting_pong, "keepalive armed with a ping still outstanding")
+
+    if core.keepalive_interval <= 0 {
+        return
+    }
+
+    core.keepalive_op = nbio.timeout_poly(core.keepalive_interval, core, conn_on_keepalive, core.loop)
+}
+
+// Cancel the keepalive timer and clear the awaiting-pong flag. Idempotent: called on leaving
+// Open and again in teardown.
+@(private)
+conn_keepalive_cancel :: proc(core: ^Conn_Core) {
+    if core.keepalive_op != nil {
+        nbio.remove(core.keepalive_op)
+        core.keepalive_op = nil
+    }
+
+    core.keepalive_awaiting_pong = false
+}
+
+// Keepalive timer fired. A ping already outstanding means the pong deadline was missed — fail
+// the link, which flows into the embedder's reconnect. Otherwise ping and re-arm at the deadline.
+@(private)
+conn_on_keepalive :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
+    assert(op == core.keepalive_op, "keepalive completion does not match stored operation")
+    assert(core.state == .Open, "keepalive fired outside Open")
+    core.keepalive_op = nil
+
+    if core.keepalive_awaiting_pong {
+        conn_fail(core, .Keepalive_Timeout)
+
+        return
+    }
+
+    if ctrl_err := conn_enqueue_control(core, .Ping, nil); ctrl_err != .None {
+        conn_fail(core, ctrl_err)
+
+        return
+    }
+
+    // A coalesce failure inside the send pump may have torn the connection down; never arm
+    // the deadline timer past teardown.
+    if core.state != .Open {
+        return
+    }
+
+    core.keepalive_awaiting_pong = true
+    core.keepalive_op = nbio.timeout_poly(core.keepalive_pong_deadline, core, conn_on_keepalive, core.loop)
 }
 
 // Coalesce the queued frames into one vectored send if none is in flight. Whole
@@ -520,6 +599,9 @@ conn_begin_close :: proc(core: ^Conn_Core, wire_code: Maybe(Close_Code), report_
         core.state = .Open
         return err
     }
+
+    // Committed to closing: stop the keepalive heartbeat now that we have left Open.
+    conn_keepalive_cancel(core)
 
     core.close_timeout_op = nbio.timeout_poly(core.close_timeout, core, conn_on_close_timeout, core.loop)
     conn_ensure_close_recv(core)
@@ -663,6 +745,8 @@ conn_cancel_pending_ops :: proc(core: ^Conn_Core) {
         nbio.remove(core.close_timeout_op)
         core.close_timeout_op = nil
     }
+
+    conn_keepalive_cancel(core)
 }
 
 // Widen and narrow between the core error and each role's public enum. These are
@@ -687,6 +771,7 @@ CONN_ERROR_OF_CLIENT := [Client_Error]Conn_Error {
     .Invalid_Close_Code = .Invalid_Close_Code,
     .Not_Open           = .Not_Open,
     .Canceled           = .Canceled,
+    .Keepalive_Timeout  = .Keepalive_Timeout,
 }
 
 // `Too_Many_Connections` is server-only; `client_error` asserts it never arrives, so
@@ -708,6 +793,7 @@ CLIENT_ERROR_OF_CONN := [Conn_Error]Client_Error {
     .Invalid_Close_Code   = .Invalid_Close_Code,
     .Not_Open             = .Not_Open,
     .Canceled             = .Canceled,
+    .Keepalive_Timeout    = .Keepalive_Timeout,
     .Too_Many_Connections = .None,
 }
 
@@ -745,6 +831,7 @@ SERVER_ERROR_OF_CONN := [Conn_Error]Server_Error {
     .Invalid_Close_Code   = .Invalid_Close_Code,
     .Not_Open             = .Not_Open,
     .Canceled             = .None,
+    .Keepalive_Timeout    = .None,
     .Too_Many_Connections = .Too_Many_Connections,
 }
 
@@ -772,7 +859,8 @@ server_error :: proc(err: Conn_Error) -> Server_Error {
         err != .Dial_Failed &&
         err != .Handshake_Failed &&
         err != .Timed_Out &&
-        err != .Canceled,
+        err != .Canceled &&
+        err != .Keepalive_Timeout,
         "client-only error surfaced on an adopted connection",
     )
 

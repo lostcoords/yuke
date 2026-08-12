@@ -67,6 +67,9 @@ Client_Error :: enum {
 
     // The application canceled a dial or upgrade before the connection opened.
     Canceled,
+
+    // A keepalive ping went unanswered past its pong deadline; the link is presumed dead.
+    Keepalive_Timeout,
 }
 
 // How the connection reaches the server. `Ws` is a plain socket this package drives on
@@ -80,42 +83,49 @@ Scheme :: enum {
 // Connect and protocol options. Zero-valued fields default in `client_connect`.
 Options :: struct {
     // Transport for this connection.
-    scheme:               Scheme,
+    scheme:                  Scheme,
 
     // Hostname or dotted IPv4 address (no brackets, no scheme).
-    host:                 string,
+    host:                    string,
 
     // TCP port.
-    port:                 int,
+    port:                    int,
 
     // Request path including the leading `/`.
-    path:                 string,
+    path:                    string,
 
     // Extra request headers, spliced verbatim: a run of `name: value\r\n` lines
     // (e.g. `Authorization: Bearer <token>\r\n`). Empty adds none.
-    extra_headers:        string,
+    extra_headers:           string,
 
     // Reject any single inbound frame larger than this many bytes.
-    max_frame_bytes:      int,
+    max_frame_bytes:         int,
 
     // Reject any reassembled inbound message larger than this many bytes.
-    max_message_bytes:    int,
+    max_message_bytes:       int,
 
     // Size of the buffer handed to each socket receive.
-    recv_chunk_bytes:     int,
+    recv_chunk_bytes:        int,
 
     // Timeout applied to the TCP connect and each handshake read/write.
-    handshake_timeout:    time.Duration,
+    handshake_timeout:       time.Duration,
 
     // Maximum bytes owned by queued and in-flight application frames.
-    max_send_queue_bytes: int,
+    max_send_queue_bytes:    int,
 
     // Maximum wait for the peer's Close after a close handshake begins.
-    close_timeout:        time.Duration,
+    close_timeout:           time.Duration,
+
+    // Interval between client-initiated keepalive pings. 0 disables keepalive entirely.
+    keepalive_interval:      time.Duration,
+
+    // Wait for the pong answering a keepalive ping before failing with `.Keepalive_Timeout`.
+    // Required when `keepalive_interval` is non-zero.
+    keepalive_pong_deadline: time.Duration,
 
     // `Wss` only: PEM bundle to verify the server against. Empty uses libcurl's own
     // default store.
-    ca_file:              string,
+    ca_file:                 string,
 }
 
 // Fired once the upgrade succeeds and the connection is Open.
@@ -238,7 +248,11 @@ client_connect :: proc(
        opts.handshake_timeout <= 0 ||
        opts.max_send_queue_bytes < opts.max_frame_bytes + MAX_HEADER_BYTES ||
        opts.max_send_queue_bytes > max(int) - SEND_CONTROL_RESERVE_BYTES ||
-       opts.close_timeout <= 0 {
+       opts.close_timeout <= 0 ||
+       opts.keepalive_interval < 0 ||
+       opts.keepalive_pong_deadline < 0 ||
+       (opts.keepalive_interval > 0 && opts.keepalive_pong_deadline <= 0) ||
+       (opts.keepalive_interval == 0 && opts.keepalive_pong_deadline > 0) {
         return .Invalid_Options
     }
 
@@ -261,6 +275,8 @@ client_connect :: proc(
     c.handshake_timeout = opts.handshake_timeout
     c.max_send_queue_bytes = opts.max_send_queue_bytes
     c.close_timeout = opts.close_timeout
+    c.keepalive_interval = opts.keepalive_interval
+    c.keepalive_pong_deadline = opts.keepalive_pong_deadline
     c.cbs = callbacks
     c.user_data = user_data
 
@@ -465,6 +481,7 @@ client_destroy :: proc(c: ^Client) {
     assert(c.recv_op == nil, "client_destroy with recv outstanding")
     assert(c.send_op == nil, "client_destroy with send outstanding")
     assert(c.close_timeout_op == nil, "client_destroy with close timeout outstanding")
+    assert(c.keepalive_op == nil, "client_destroy with keepalive timer outstanding")
     assert(c.pending_send_bytes == send_queue_bytes(c.send_queue[:], c.send_batch[:]), "pending send byte mismatch")
 
     decoder_destroy(&c.decoder)
@@ -706,6 +723,7 @@ client_handshake_received :: proc(c: ^Client, received: int, result: Io_Result) 
 
     // `on_open` or a pipelined frame may have begun a close; only read on if Open.
     if c.state == .Open {
+        conn_keepalive_arm(&c.core)
         conn_start_recv(&c.core)
     } else if c.state == .Closing {
         conn_ensure_close_recv(&c.core)

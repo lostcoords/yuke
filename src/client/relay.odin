@@ -17,10 +17,17 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:nbio"
 import "core:strings"
+import "core:time"
 
 import ws "libs:websocket"
 import relay "src:relay"
 import "src:secret"
+
+// Client-initiated keepalive on the /connect link, mirroring the daemon's /link keepalive. A
+// half-open socket left by suspend/resume surfaces as a transport error instead of a hung
+// session; stays well under the proxy idle window (Cloudflare ~100s).
+RELAY_KEEPALIVE_INTERVAL :: 25 * time.Second
+RELAY_KEEPALIVE_PONG_DEADLINE :: 10 * time.Second
 
 // Relay backend behind a `Transport`: one `/connect` link, the initiator Noise session, and
 // the reassembler for inbound fragments. Heap-owned by `relay_create` so its address is
@@ -168,6 +175,8 @@ relay_open :: proc(t: Transport, c: ^Client) -> ws.Client_Error {
         callbacks,
         backend,
         backend.allocator,
+        keepalive_interval = RELAY_KEEPALIVE_INTERVAL,
+        keepalive_pong_deadline = RELAY_KEEPALIVE_PONG_DEADLINE,
     )
     if err != .None {
         return err

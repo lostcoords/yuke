@@ -35,6 +35,11 @@ import relay "src:relay"
 RELAY_BACKOFF_MIN :: 1 * time.Second
 RELAY_BACKOFF_MAX :: 30 * time.Second
 
+// Daemon-originated keepalive on the relay link: ping interval and pong deadline. Self-heals a
+// half-open socket left by suspend/resume; stays well under the proxy idle window (Cloudflare ~100s).
+RELAY_KEEPALIVE_INTERVAL :: 25 * time.Second
+RELAY_KEEPALIVE_PONG_DEADLINE :: 10 * time.Second
+
 // Bounds for one link-ticket fetch on the relay's own curl client.
 RELAY_TICKET_CONNECT_TIMEOUT :: 15 * time.Second
 RELAY_TICKET_TOTAL_TIMEOUT :: 30 * time.Second
@@ -663,8 +668,18 @@ relay_dial :: proc(r: ^Relay) {
         on_error         = relay_on_error,
     }
 
-    if err := relay.link_dial(&r.link, r.daemon.loop, endpoint, .Link, r.ticket, callbacks, r, r.daemon.allocator);
-       err != .None {
+    if err := relay.link_dial(
+        &r.link,
+        r.daemon.loop,
+        endpoint,
+        .Link,
+        r.ticket,
+        callbacks,
+        r,
+        r.daemon.allocator,
+        keepalive_interval = RELAY_KEEPALIVE_INTERVAL,
+        keepalive_pong_deadline = RELAY_KEEPALIVE_PONG_DEADLINE,
+    ); err != .None {
         log.errorf("daemon: relay dial failed: %v", err)
         relay_schedule_reconnect(r)
 
