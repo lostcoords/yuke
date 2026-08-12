@@ -1,6 +1,5 @@
 package daemon
 
-import "core:log"
 import "core:nbio"
 import "core:testing"
 
@@ -162,7 +161,8 @@ resync_build_quiet :: proc(
     Resync_Error,
 ) {
     saved := context.logger
-    context.logger = log.nil_logger()
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved)
     result, err := resync_build(d, params, context.temp_allocator)
     context.logger = saved
 
@@ -963,9 +963,19 @@ corrupt_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome, _:
         o.resync_code = bad.error.code
     }
 
-    // The connection outlives the fault: a log we cannot fold is not a protocol
-    // violation, so the next request must still be answered.
-    client.client_send_request(c, .Session_List, wire.Session_List_Params{}, corrupt_on_list)
+    // The connection outlives the fault: a log we cannot fold is not a protocol violation, so
+    // the next request must still be answered. Valid params — a zero-value scope/population
+    // emits an undecodable frame that would close the connection for the wrong reason.
+    client.client_send_request(
+        c,
+        .Session_List,
+        wire.Session_List_Params {
+            scope = wire.Session_Scope_All{},
+            population = wire.Session_Population_Top_Level{},
+            view = .Active_Recent,
+        },
+        corrupt_on_list,
+    )
 }
 
 corrupt_on_list :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
@@ -1000,7 +1010,10 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
 
     // The unfoldable row is logged as an error, which the runner would otherwise count
     // as a test failure; the assertions below are the check.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()

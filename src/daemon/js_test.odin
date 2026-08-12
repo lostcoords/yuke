@@ -1,6 +1,5 @@
 package daemon
 
-import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:path/filepath"
@@ -259,7 +258,10 @@ test_js_unknown_module_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // Drives an error path on purpose; the runner fails on any error-level log, and this
     // test asserts the outcome instead. nbio callbacks inherit this context.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir("js-unknown-module")
     defer os.remove_all(root)
@@ -306,7 +308,10 @@ test_js_entry_script_failure_refuses_the_start :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // Drives an error path on purpose; the runner fails on any error-level log, and this
     // test asserts the outcome instead. nbio callbacks inherit this context.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir("js-entry-broken")
     defer os.remove_all(root)
@@ -343,7 +348,10 @@ test_js_root_without_an_entry_script_starts :: proc(t: ^testing.T) {
 @(test)
 test_js_unreadable_entry_refuses_the_start :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir("js-entry-unreadable")
     defer os.remove_all(root)
@@ -366,7 +374,10 @@ test_js_fs_is_unavailable_without_a_root :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // Drives an error path on purpose; the runner fails on any error-level log, and this
     // test asserts the outcome instead. nbio callbacks inherit this context.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -389,7 +400,10 @@ test_js_root_must_be_a_directory :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // Drives an error path on purpose; the runner fails on any error-level log, and this
     // test asserts the outcome instead. nbio callbacks inherit this context.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     dir := test_make_dir("js-root-file")
     defer os.remove_all(dir)

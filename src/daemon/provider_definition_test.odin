@@ -1,6 +1,5 @@
 package daemon
 
-import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:path/filepath"
@@ -20,7 +19,10 @@ provider_test_write :: proc(t: ^testing.T, dir: string, name: string, source: st
 
 @(private = "file")
 provider_test_start :: proc(t: ^testing.T, name: string, source: string, d: ^Daemon) -> Error {
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir(name)
     defer os.remove_all(root)
@@ -103,7 +105,8 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
 
     d: Daemon
     saved_logger := context.logger
-    context.logger = log.nil_logger()
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
     err := start(&d, nbio.current_thread_event_loop(), {host = "127.0.0.1", port = 0, js_root = root})
     context.logger = saved_logger
     if !testing.expect_value(t, err, Error.None) {
@@ -508,13 +511,17 @@ test_define_provider_rejects_bad_call_shapes :: proc(t: ^testing.T) {
 }
 
 // A JavaScript catch cannot turn an exhausted native capture allocator into a successful entry.
-// Each failure point must also release any earlier allocation from the same capture.
+// Each failure point must also release any earlier allocation from the same capture. Capturing
+// one provider makes two counted allocations (id and text clones), so the sweep covers 0 and 1.
 @(test)
 test_define_provider_reports_native_capture_oom :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
-    for fail_at := 0; fail_at < 3; fail_at += 1 {
+    for fail_at := 0; fail_at < 2; fail_at += 1 {
         root := test_make_dir("provider-capture-oom")
 
         nbio.acquire_thread_event_loop()
@@ -583,7 +590,10 @@ test_define_provider_rejects_registration_after_start :: proc(t: ^testing.T) {
     }
     defer test_teardown(&d)
 
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
     accepted := js.eval_module(
         &d.js,
         "late-provider.js",

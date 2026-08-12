@@ -1,10 +1,10 @@
 package client
 
-import "core:log"
 import "core:mem"
 import "core:reflect"
 import "core:strings"
 import "core:testing"
+import "libs:testsupport"
 import ws "libs:websocket"
 import wire "src:wire"
 
@@ -433,7 +433,8 @@ test_terminal_close_completes_pending_before_close_callback :: proc(t: ^testing.
 @(test)
 test_transport_failure_completes_pending_before_error_callback :: proc(t: ^testing.T) {
     saved_logger := context.logger
-    context.logger = log.nil_logger()
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
     defer context.logger = saved_logger
 
     sink: Sink

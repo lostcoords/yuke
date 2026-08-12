@@ -1,7 +1,6 @@
 package daemon
 
 import "core:fmt"
-import "core:log"
 import "core:nbio"
 import "core:net"
 import "core:os"
@@ -524,7 +523,10 @@ test_daemon_exhausted_sequence_is_reported :: proc(t: ^testing.T) {
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()
 
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     d: Daemon
     derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
@@ -533,7 +535,7 @@ test_daemon_exhausted_sequence_is_reported :: proc(t: ^testing.T) {
     session := pump_test_session('e')
     daemon_test_session_create(t, &d, session)
     testing.expect_value(t, broadcast(&d, pump_run_started(session)), Pump_Error.None)
-    exhaust := fmt.tprintf("UPDATE session_meta SET seq_high = %d", wire.MAX_WIRE_INTEGER)
+    exhaust := fmt.tprintf("UPDATE sessions SET seq_high = %d", wire.MAX_WIRE_INTEGER)
     testing.expect_value(t, sqlite.exec(d.store.writer, exhaust), sqlite.Result.Ok)
     delete_key(&d.seq_high, session)
 
@@ -604,7 +606,10 @@ test_daemon_start_refuses_a_damaged_database :: proc(t: ^testing.T) {
 
     // The refusal is logged as an error, which the runner would otherwise count as a
     // test failure; the assertions below are the check.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     // A damaged database is reported, not crashed on, and nothing is left listening.
     d: Daemon
@@ -688,7 +693,10 @@ test_daemon_over_cap_durable_broadcast_is_refused_before_the_log :: proc(t: ^tes
 
     // The refusal is logged as an error, which the runner would otherwise count as a
     // test failure; the assertions below are the check.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     d: Daemon
     derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})
@@ -874,7 +882,10 @@ test_daemon_refused_append_broadcasts_nothing :: proc(t: ^testing.T) {
 
     // The refused append is logged as an error, which the runner would otherwise count
     // as a test failure; the assertions below are the check.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     d: Daemon
     derr := start(&d, loop, {host = "127.0.0.1", port = 0, db_path = path})

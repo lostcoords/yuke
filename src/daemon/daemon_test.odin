@@ -3,7 +3,6 @@ package daemon
 import "core:crypto"
 import "core:encoding/base64"
 import "core:fmt"
-import "core:log"
 import "core:mem"
 import "core:nbio"
 import "core:net"
@@ -17,6 +16,7 @@ import "core:unicode/utf8"
 import curl "libs:bindings/curl"
 import http_server "libs:http/server"
 import "libs:offload"
+import "libs:testsupport"
 import ws "libs:websocket"
 import client "src:client"
 import "src:daemon/oauth"
@@ -2260,7 +2260,10 @@ test_daemon_truncated_response_aborts_the_connection :: proc(t: ^testing.T) {
 
     // The refused encode is logged as an error, which the runner would otherwise count
     // as a test failure; the assertions below are the check.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     // Smaller than the shortest response text, so the encode latches its truncation.
     backing: [16]byte

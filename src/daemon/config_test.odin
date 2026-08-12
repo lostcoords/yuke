@@ -5,6 +5,7 @@ import "core:nbio"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
+import "libs:testsupport"
 
 // A 32-byte unreserved token: the minimum `auth_token_valid` accepts, so the manifest can set
 // authorization and the test can read it back off the daemon.
@@ -23,7 +24,10 @@ write_entry :: proc(t: ^testing.T, dir: string, source: string) {
 // The logger is silenced because the error cases drive error-level logs the runner fails on.
 @(private = "file")
 entry_start :: proc(t: ^testing.T, name: string, source: string) -> Error {
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir(name)
     defer os.remove_all(root)
@@ -122,7 +126,10 @@ test_define_config_reads_a_secret_with_top_level_await :: proc(t: ^testing.T) {
 test_entry_without_define_config_runs_on_defaults :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // The "did not call defineConfig" path warns; keep the runner quiet.
-    context.logger = log.nil_logger()
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
 
     root := test_make_dir("cfg-none")
     defer os.remove_all(root)
