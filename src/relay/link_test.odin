@@ -41,19 +41,20 @@ test_relay_url_parse :: proc(t: ^testing.T) {
     }
 }
 
-// The pump's policy: text is fatal, a SEALED needs a live peer, CONTROL routes by type,
-// and every malformed envelope maps to `.Fail` with its distinct error.
+// The pump's policy: text is fatal, a SEALED needs a live peer, CONTROL routes by type, the daemon's
+// `.Link` carries a one-byte channel prefix, and every malformed envelope maps to `.Fail`.
 @(test)
 test_link_dispatch :: proc(t: ^testing.T) {
     binary :: ws.Message_Kind.Binary
 
     action: Link_Action
+    channel: u8
     payload: []u8
     reason: string
     err: Error
 
     // A text data frame is a protocol violation regardless of its bytes.
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         .Text,
         transmute([]u8)string("hello"),
@@ -64,39 +65,46 @@ test_link_dispatch :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Error.Text)
 
     // A SEALED before peer_attached is misordered and dropped, not delivered.
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         binary,
-        []u8{u8(Frame_Type.Sealed), 0xaa},
+        link_wrap(0, []u8{u8(Frame_Type.Sealed), 0xaa}),
         false,
         context.temp_allocator,
     )
     testing.expect_value(t, action, Link_Action.Drop)
     testing.expect_value(t, err, Error.None)
 
-    // The same SEALED once attached is delivered, payload aliasing the source bytes.
-    msg := []u8{u8(Frame_Type.Sealed), 0xaa, 0xbb}
-    action, payload, reason, err = link_dispatch(.Link, binary, msg, true, context.temp_allocator)
+    // The same SEALED once attached is delivered on its channel, payload aliasing the source bytes.
+    frame := []u8{u8(Frame_Type.Sealed), 0xaa, 0xbb}
+    msg := link_wrap(7, frame)
+    action, channel, payload, reason, err = link_dispatch(.Link, binary, msg, true, context.temp_allocator)
     testing.expect_value(t, action, Link_Action.Sealed)
     testing.expect_value(t, err, Error.None)
-    testing.expect(t, raw_data(payload) == raw_data(msg[1:]), "sealed payload must alias the message")
+    testing.expect_value(t, channel, u8(7))
+    testing.expect(
+        t,
+        raw_data(payload) == raw_data(msg[2:]),
+        "sealed payload must alias the message past the channel and tag",
+    )
 
-    // CONTROL peer_attached routes to `.Peer_Attached`.
-    action, payload, reason, err = link_dispatch(
+    // CONTROL peer_attached routes to `.Peer_Attached`, carrying its channel.
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         binary,
-        control_frame(`{"type":"peer_attached"}`),
+        link_wrap(3, control_frame(`{"type":"peer_attached"}`)),
         false,
         context.temp_allocator,
     )
     testing.expect_value(t, action, Link_Action.Peer_Attached)
     testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, channel, u8(3))
 
     // CONTROL peer_gone routes to `.Peer_Gone` and carries its reason.
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         binary,
-        control_frame(`{"type":"peer_gone","reason":"replaced"}`),
+        link_wrap(0, control_frame(`{"type":"peer_gone","reason":"replaced"}`)),
         true,
         context.temp_allocator,
     )
@@ -105,33 +113,34 @@ test_link_dispatch :: proc(t: ^testing.T) {
     testing.expect(t, reason == "replaced", "peer_gone must carry its reason")
 
     // An unknown CONTROL type and malformed CONTROL both fail with their distinct error.
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         binary,
-        control_frame(`{"type":"nope"}`),
+        link_wrap(0, control_frame(`{"type":"nope"}`)),
         true,
         context.temp_allocator,
     )
     testing.expect_value(t, action, Link_Action.Fail)
     testing.expect_value(t, err, Error.Control_Unknown)
 
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Link,
         binary,
-        control_frame(`not json`),
+        link_wrap(0, control_frame(`not json`)),
         true,
         context.temp_allocator,
     )
     testing.expect_value(t, action, Link_Action.Fail)
     testing.expect_value(t, err, Error.Control_Malformed)
 
-    // The client's /connect link is attached from open and never receives CONTROL: a SEALED
-    // is delivered, and any CONTROL — even a well-formed peer_attached — fails the link.
-    action, payload, reason, err = link_dispatch(.Connect, binary, msg, true, context.temp_allocator)
+    // The client's /connect link is attached from open, carries no channel prefix, and never receives
+    // CONTROL: a SEALED is delivered on channel 0, and any CONTROL fails the link.
+    action, channel, payload, reason, err = link_dispatch(.Connect, binary, frame, true, context.temp_allocator)
     testing.expect_value(t, action, Link_Action.Sealed)
     testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, channel, u8(0))
 
-    action, payload, reason, err = link_dispatch(
+    action, channel, payload, reason, err = link_dispatch(
         .Connect,
         binary,
         control_frame(`{"type":"peer_attached"}`),
@@ -141,18 +150,19 @@ test_link_dispatch :: proc(t: ^testing.T) {
     testing.expect_value(t, action, Link_Action.Fail)
     testing.expect_value(t, err, Error.Control_Unexpected)
 
-    // Envelope-level malformations surface through `.Fail` with the decode error.
+    // Envelope malformations on `.Link` surface through `.Fail`, after the channel byte is stripped.
     Case :: struct {
         msg:  []u8,
         want: Error,
     }
     envelope_cases := []Case {
-        {[]u8{}, .Empty},
-        {[]u8{u8(Frame_Type.Sealed)}, .Empty_Payload},
-        {[]u8{0x03, 0x00}, .Unknown_Type},
+        {[]u8{}, .Empty}, // no channel byte
+        {[]u8{0x00}, .Empty}, // channel present, frame empty
+        {[]u8{0x00, u8(Frame_Type.Sealed)}, .Empty_Payload}, // channel + lone type byte
+        {[]u8{0x00, 0x03, 0x00}, .Unknown_Type}, // channel + unknown type
     }
     for c in envelope_cases {
-        a, _, _, e := link_dispatch(.Link, binary, c.msg, true, context.temp_allocator)
+        a, _, _, _, e := link_dispatch(.Link, binary, c.msg, true, context.temp_allocator)
         testing.expect_value(t, a, Link_Action.Fail)
         testing.expectf(t, e == c.want, "envelope %v: got %v, want %v", c.msg, e, c.want)
     }
@@ -164,4 +174,13 @@ test_link_dispatch :: proc(t: ^testing.T) {
 @(private = "file")
 control_frame :: proc(body: string) -> []u8 {
     return frame_encode(Frame{type = .Control, payload = transmute([]u8)body}, context.temp_allocator)
+}
+
+// Prefix a /link channel byte onto a frame, as the relay does on the daemon hop.
+@(private = "file")
+link_wrap :: proc(channel: u8, frame: []u8) -> []u8 {
+    out := make([]u8, 1 + len(frame), context.temp_allocator)
+    out[0] = channel
+    copy(out[1:], frame)
+    return out
 }

@@ -90,6 +90,10 @@ Link :: struct {
     attached:  bool,
 
     // @private
+    // Channel of the message being dispatched (the /link routing id); valid only during a callback.
+    channel:   u8,
+
+    // @private
     // Scratch for one inbound CONTROL decode, reset per message.
     scratch:   virtual.Arena,
 
@@ -119,8 +123,9 @@ Link_Action :: enum {
 // Decide what an inbound message means. Pure — no socket, no callbacks — so the pump's
 // rules are testable directly: text is fatal, a SEALED needs a live peer, CONTROL routes
 // by type. CONTROL is relay→daemon only, so on the client's `.Connect` route it is a
-// violation. On `.Sealed` the returned payload aliases `msg`; on `.Peer_Gone` `reason` is
-// allocated from `allocator`. `err` is set only for `.Fail`, naming why the link closes.
+// violation. On the daemon's `.Link` the relay prefixes a one-byte `channel`, stripped and
+// returned here (0 on `.Connect`). On `.Sealed` the returned payload aliases `msg`; on
+// `.Peer_Gone` `reason` is allocated from `allocator`. `err` is set only for `.Fail`.
 link_dispatch :: proc(
     route: Link_Route,
     kind: ws.Message_Kind,
@@ -129,6 +134,7 @@ link_dispatch :: proc(
     allocator := context.allocator,
 ) -> (
     action: Link_Action,
+    channel: u8,
     payload: []u8,
     reason: string,
     err: Error,
@@ -136,38 +142,50 @@ link_dispatch :: proc(
     if kind != .Binary {
         // The socket answers ping/pong/close itself, so only a text data frame reaches
         // here — and the envelope rides only binary.
-        return .Fail, nil, "", .Text
+        return .Fail, 0, nil, "", .Text
     }
 
-    frame, ferr := frame_decode(msg)
+    // The daemon's `.Link` prefixes a one-byte channel that routes the frame to one of several
+    // clients; the client's `.Connect` carries no prefix (one session per socket).
+    body := msg
+    if route == .Link {
+        if len(msg) == 0 {
+            return .Fail, 0, nil, "", .Empty
+        }
+
+        channel = msg[0]
+        body = msg[1:]
+    }
+
+    frame, ferr := frame_decode(body)
     if ferr != .None {
-        return .Fail, nil, "", ferr
+        return .Fail, 0, nil, "", ferr
     }
 
     switch frame.type {
     case .Sealed:
         if !attached {
-            return .Drop, nil, "", .None
+            return .Drop, 0, nil, "", .None
         }
 
-        return .Sealed, frame.payload, "", .None
+        return .Sealed, channel, frame.payload, "", .None
 
     case .Control:
         if route == .Connect {
-            return .Fail, nil, "", .Control_Unexpected
+            return .Fail, 0, nil, "", .Control_Unexpected
         }
 
         ctrl, cerr := control_decode(frame.payload, allocator)
         if cerr != .None {
-            return .Fail, nil, "", cerr
+            return .Fail, 0, nil, "", cerr
         }
 
         switch ctrl.kind {
         case .Peer_Attached:
-            return .Peer_Attached, nil, "", .None
+            return .Peer_Attached, channel, nil, "", .None
 
         case .Peer_Gone:
-            return .Peer_Gone, nil, ctrl.reason, .None
+            return .Peer_Gone, channel, nil, ctrl.reason, .None
         }
     }
 
@@ -295,6 +313,14 @@ link_open :: proc(l: ^Link) -> bool {
     return l.sock.state == .Open
 }
 
+// The /link channel of the message being dispatched, for a `.Link` owner to read inside
+// on_sealed/on_peer_attached/on_peer_gone. Always 0 on the client's `.Connect`.
+link_channel :: proc(l: ^Link) -> u8 {
+    assert(l != nil, "link_channel needs a link")
+
+    return l.channel
+}
+
 // Cancel an in-flight dial or upgrade before the link opens; the terminal callback reports
 // the cancellation. Valid only while the link is still opening — use `link_close` once Open.
 link_cancel :: proc(l: ^Link) {
@@ -366,7 +392,14 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
     temp := virtual.arena_temp_begin(&l.scratch)
     defer virtual.arena_temp_end(temp)
 
-    action, payload, reason, err := link_dispatch(l.route, kind, data, l.attached, virtual.arena_allocator(&l.scratch))
+    action, channel, payload, reason, err := link_dispatch(
+        l.route,
+        kind,
+        data,
+        l.attached,
+        virtual.arena_allocator(&l.scratch),
+    )
+    l.channel = channel
 
     switch action {
     case .Peer_Attached:
