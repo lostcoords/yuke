@@ -2,6 +2,7 @@ package tests
 
 import _ "src:client"
 import _ "src:daemon"
+import _ "src:daemon/catalog"
 import _ "src:daemon/oauth"
 import _ "src:daemon/store"
 import _ "src:daemon/store/queries"

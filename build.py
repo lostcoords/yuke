@@ -67,6 +67,7 @@ PACKAGES = (
     Package("paths", "src/paths", "shared platform config-directory resolution"),
     Package("client", "src/client", "session replica"),
     Package("daemon", "src/daemon", "front-door routes plus the initialize exchange"),
+    Package("catalog", "src/daemon/catalog", "models.dev selection, decoding, and normalization"),
     Package("js", "src/js", "shared QuickJS host plus the yuke:fs module"),
     Package("store", "src/daemon/store", "open/configure plus the migration runner"),
     Package(
