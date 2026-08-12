@@ -7,23 +7,27 @@ import "core:strings"
 import qjs "libs:bindings/quickjs"
 import js "src:js"
 
-// The daemon's own script module `yuke:daemon`: `defineConfig`, so `yuked.js` supplies host/
-// port/db/blob/auth_token/log_level as JavaScript. Installed beside `yuke:fs` when a root exists.
-CONFIG_MODULE :: "yuke:daemon"
+// Daemon-only script registrations installed beside `yuke:fs` when a root exists.
+SCRIPT_MODULE :: "yuke:daemon"
 
 @(rodata)
-CONFIG_EXPORTS := []string{"defineConfig"}
+SCRIPT_EXPORTS := []string{"defineConfig", "defineProvider"}
 
-config_module :: proc() -> js.Module {
-    return {name = CONFIG_MODULE, init = config_module_init, exports = CONFIG_EXPORTS}
+script_module :: proc() -> js.Module {
+    return {name = SCRIPT_MODULE, init = script_module_init, exports = SCRIPT_EXPORTS}
 }
 
-config_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
+script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
-    fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
+    config_fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
+    provider_fn := qjs.new_function(ctx, define_provider, "defineProvider", 2)
 
-    if !qjs.set_module_export(ctx, m, "defineConfig", fn) {
+    if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) {
+        return -1
+    }
+
+    if !qjs.set_module_export(ctx, m, "defineProvider", provider_fn) {
         return -1
     }
 

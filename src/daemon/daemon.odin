@@ -38,7 +38,7 @@ Protocol_State :: enum {
 Error :: enum {
     None,
 
-    // A required pointer, host, or authentication option was invalid.
+    // A required pointer, startup option, or script definition was invalid.
     Invalid_Options,
 
     // Binding/listening on the endpoint failed.
@@ -214,6 +214,11 @@ Daemon :: struct {
     config_json:     string,
     config_seen:     bool,
 
+    // @private
+    // JavaScript provider/model registry. Startup finalization replaces serialized captures
+    // with typed owned records and wipes the capture buffers.
+    providers:       Provider_Registry,
+
     // Log level resolved from the manifest (`info` when unset). The caller owns
     // the logger, so it reads this after `start` and installs the matching one.
     log_level:       log.Level,
@@ -327,6 +332,14 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     if js_err != .None {
         return js_err
+    }
+
+    if definitions_err := provider_definitions_finalize(d); definitions_err != .None {
+        if definitions_err == .Invalid_Options {
+            log.error("daemon: yuked.js provider definitions are invalid")
+        }
+
+        return definitions_err
     }
 
     // Backs the config decode; proc-scoped because `host`/`db_path` are read later in `start`.
@@ -725,8 +738,8 @@ clone_string_slice :: proc(src: []string, allocator: mem.Allocator) -> (out: []s
     return dst, true
 }
 
-// Release the owned config strings, resetting them to empty. Every teardown path can call
-// this without knowing how far `start` got.
+// Release the owned config and provider definitions, resetting them to empty. Every teardown
+// path can call this without knowing how far `start` got.
 free_config :: proc(d: ^Daemon) {
     assert(d != nil, "daemon config cleanup needs daemon state")
 
@@ -740,6 +753,7 @@ free_config :: proc(d: ^Daemon) {
         delete(o, d.allocator)
     }
     delete(d.allowed_origins, d.allocator)
+    provider_definitions_destroy(d)
     d.daemon_version = ""
     d.device_id = ""
     d.blob_dir = ""

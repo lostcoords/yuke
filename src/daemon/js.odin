@@ -14,7 +14,7 @@ import js "src:js"
 JS_ENTRY_FILE :: "yuked.js"
 
 // Bring up the script tier. The daemon takes every limit `src/js` defaults to and installs
-// `yuke:fs` plus its own `yuke:daemon` (`defineConfig`) — both only when a root gives an entry
+// `yuke:fs` plus its own `yuke:daemon` registrations — both only when a root gives an entry
 // script to evaluate.
 js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     assert(d != nil, "js_init needs daemon state")
@@ -26,9 +26,15 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     count := 0
 
     if root != "" {
+        captures, capture_err := make([dynamic]Provider_Capture, 0, 4, allocator)
+        if capture_err != nil {
+            return .Out_Of_Memory
+        }
+        d.providers.captures = captures
+
         modules[count] = js.fs_module()
         count += 1
-        modules[count] = config_module()
+        modules[count] = script_module()
         count += 1
     }
 
@@ -92,7 +98,17 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, 
         return false, .Script_Failed
     }
 
-    if !js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator) {
+    assert(!d.providers.registration_open, "provider registration opened outside entry evaluation")
+    assert(!d.providers.capture_oom, "provider registration retained an allocation failure")
+    d.providers.registration_open = true
+    evaluated_ok := js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator)
+    d.providers.registration_open = false
+
+    if d.providers.capture_oom {
+        return false, .Out_Of_Memory
+    }
+
+    if !evaluated_ok {
         return false, .Script_Failed
     }
 

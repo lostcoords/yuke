@@ -17,4 +17,38 @@ declare module "yuke:daemon" {
   // Register the daemon configuration, returning it so `export default defineConfig({...})` reads
   // naturally. Call at most once, at module top level.
   export function defineConfig(config: DaemonConfig): DaemonConfig;
+
+  export type ProviderProtocol = "anthropic-messages" | "openai-chat" | "openai-responses";
+
+  export interface ProviderModelCost {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  }
+
+  export interface ProviderModelDefinition {
+    id: string;
+    upstreamId: string;
+    name: string;
+    contextWindow: number;
+    maxOutputTokens: number;
+    reasoningLevels: string[];
+    defaultReasoning: string;
+    supportsVision: boolean;
+    supportsTools: boolean;
+    cost: ProviderModelCost;
+  }
+
+  export interface ProviderDefinition {
+    name?: string;
+    baseUrl?: string;
+    protocol?: ProviderProtocol;
+    credentialEnv?: string[];
+    modelsDev?: string;
+    models?: ProviderModelDefinition[];
+  }
+
+  // Register one provider during initial yuked.js evaluation. Provider and model IDs must be unique.
+  export function defineProvider(id: string, definition: ProviderDefinition): ProviderDefinition;
 }

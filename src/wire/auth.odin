@@ -984,7 +984,7 @@ auth_changed_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Changed_Data, 
     return data, .None
 }
 
-@(private)
+// Verify the bounded lowercase identifier used by provider-scoped wire fields.
 provider_id_validate :: proc(provider_id: Provider_Id) -> Validation_Error {
     enforce_bounded(64, provider_id) or_return
 
