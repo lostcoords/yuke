@@ -1,9 +1,9 @@
-// yuke:defaults — the bundled default UI: a session home screen and a placeholder shell,
-// built on yuke:core as View subclasses with commands and keymaps. A user's yuke.js layers on
-// top of this (adds keymaps, patches these prototypes, swaps the active view).
+// yuke:defaults — bundled default UI: a split shell (sidebar | main) with local daemon
+// connect, command palette, ":" line, and a stub workspace explorer. A user's yuke.js layers
+// on top (keymaps, prototype patches, view swaps). Session list / transcript / composer are
 import { term } from "yuke:term";
 import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit, config } from "yuke:core";
-import { ui, List, Transcript } from "yuke:ui";
+import { ui } from "yuke:ui";
 import { connect, connectionState } from "yuke:client";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
@@ -13,538 +13,141 @@ Object.assign(style.groups, {
 });
 style.invalidate();
 
-// Brand banner; falls back to plain "yuke" when the terminal is too narrow or short.
-const YUKE_BANNER = [
-  "██╗   ██╗██╗   ██╗██╗  ██╗███████╗",
-  "╚██╗ ██╔╝██║   ██║██║ ██╔╝██╔════╝",
-  " ╚████╔╝ ██║   ██║█████╔╝ █████╗  ",
-  "  ╚██╔╝  ██║   ██║██╔═██╗ ██╔══╝  ",
-  "   ██║   ╚██████╔╝██║  ██╗███████╗",
-  "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝",
-];
-const YUKE_BANNER_W = YUKE_BANNER[0].length;
-const YUKE_BANNER_H = YUKE_BANNER.length;
+// Stub explorer root until workspace.browse is wired.
+const EXPLORER_ROOT = "/Users/xyaman/Work";
 
-// Blank rows above the block logo, given up before the logo itself when the header is short.
-const BRAND_PAD_TOP = 1;
+// Minimum sidebar width in cells; shrinks on very narrow terminals.
+const SIDEBAR_MIN = 18;
+const SIDEBAR_MAX = 36;
+const SIDEBAR_FRAC = 0.3;
 
-// Centered brand: block logo when it fits, else plain "yuke".
-function paintBrand(w, y, rows, group) {
-  if (rows <= 0 || w <= 0) return;
-
-  if (rows >= YUKE_BANNER_H && w >= YUKE_BANNER_W) {
-    const x = Math.floor((w - YUKE_BANNER_W) / 2);
-    for (let i = 0; i < YUKE_BANNER_H; i++) {
-      text(x, y + i, YUKE_BANNER[i], group);
-    }
-    return;
-  }
-
-  const word = "yuke";
-  const x = Math.max(0, Math.floor((w - word.length) / 2));
-  text(x, y, word, group);
-}
-
-function paintCentered(y, s, w, group) {
-  s = String(s);
-  if (w <= 0 || !s) return;
-  const clipped = clip(s, w);
-  const x = Math.max(0, Math.floor((w - clipped.length) / 2));
-  text(x, y, clipped, group);
-}
-
-// Spinner shown on a running session; its period is also the repaint rate while anything runs.
-const SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-const SPINNER_PERIOD_MS = 100;
-
-function spinnerDraw(x, y, phase) {
-  text(x, y, SPINNER_FRAMES[phase], "YukeSpinner");
-}
-
-// Dummy catalog (no daemon). Shapes mirror wire Session-ish fields.
-const THIS_WS = {
-  id: "ws_me",
-  root: "/Users/xyaman/Work/yuke-odin",
-};
-
-const OTHER_WS = [
-  { id: "ws_other", root: "/Users/xyaman/Work/other-app" },
-  { id: "ws_mono", root: "/Users/xyaman/Work/monorepo" },
-];
-
-const CURRENT_LIMIT = 5;
-const OTHERS_WINDOW_MS = 30 * 60 * 1000;
-const DEFAULT_PROFILE = "default";
-const DEFAULT_MODEL = "opus";
-
-let nowMs = Date.now();
-let nextId = 100;
-
-let sessions = [];
-
-function seedDummy() {
-  nowMs = Date.now();
-  sessions = [
-    { id: "s1", workspace_id: THIS_WS.id, title: "Fix SIGWINCH under tmux", updated_at_ms: nowMs - 12 * 60e3, running: false, profile: "default", model: "opus", message_count: 14 },
-    { id: "s2", workspace_id: THIS_WS.id, title: "Session list UI sketch", updated_at_ms: nowMs - 60 * 60e3, running: false, profile: "default", model: "sonnet", message_count: 8 },
-    { id: "s3", workspace_id: THIS_WS.id, title: "Wire protocol cleanup", updated_at_ms: nowMs - 3 * 60 * 60e3, running: false, profile: "strict", model: "opus", message_count: 32 },
-    { id: "s4", workspace_id: THIS_WS.id, title: "QuickJS host polish", updated_at_ms: nowMs - 24 * 60 * 60e3, running: false, profile: "default", model: "haiku", message_count: 5 },
-    { id: "s5", workspace_id: THIS_WS.id, title: "termdrive relay review", updated_at_ms: nowMs - 2 * 24 * 60 * 60e3, running: false, profile: "default", model: "opus", message_count: 21 },
-    { id: "s6", workspace_id: THIS_WS.id, title: "Older idle session (hidden by cap)", updated_at_ms: nowMs - 10 * 24 * 60 * 60e3, running: false, profile: "default", model: "opus", message_count: 3 },
-    { id: "s7", workspace_id: "ws_other", title: "Investigate flaky CI", updated_at_ms: nowMs - 4 * 60e3, running: true, profile: "ci", model: "sonnet", message_count: 6 },
-    { id: "s8", workspace_id: "ws_mono", title: "Agent tools permissions", updated_at_ms: nowMs - 25 * 60e3, running: false, profile: "default", model: "opus", message_count: 11 },
-    { id: "s9", workspace_id: "ws_mono", title: "Stale elsewhere (hidden by window)", updated_at_ms: nowMs - 2 * 60 * 60e3, running: false, profile: "default", model: "opus", message_count: 2 },
-  ];
-}
-
-function wsById(id) {
-  if (id === THIS_WS.id) return THIS_WS;
-  for (let i = 0; i < OTHER_WS.length; i++) {
-    if (OTHER_WS[i].id === id) return OTHER_WS[i];
-  }
-  return { id: id, root: id };
-}
-
-function wsLabel(root) {
-  if (!root) return "?";
-  const parts = String(root).split("/").filter(Boolean);
-  if (parts.length === 0) return root;
-  if (parts.length === 1) return parts[0];
-  return parts[parts.length - 2] + "/" + parts[parts.length - 1];
-}
-
-const AGO_UNITS = [
-  [31536000, "y"],
-  [2592000, "mo"],
-  [604800, "w"],
-  [86400, "d"],
-  [3600, "h"],
-  [60, "m"],
-];
-
-function agoLabel(deltaMs) {
-  const s = Math.floor(Math.max(0, deltaMs) / 1000);
-  if (s < 60) return "now";
-
-  for (let i = 0; i < AGO_UNITS.length; i++) {
-    const n = Math.floor(s / AGO_UNITS[i][0]);
-    if (n >= 1) return n + AGO_UNITS[i][1];
+function paintRuleV(x, y, h, group) {
+  if (h <= 0) return;
+  for (let row = 0; row < h; row++) {
+    text(x, y + row, "│", group);
   }
 }
 
-function sessionMeta(s) {
-  const parts = [];
-  if (s.profile) parts.push(s.profile);
-  if (s.model) parts.push(s.model);
-  parts.push(agoLabel(nowMs - s.updated_at_ms));
-  return parts.join(" · ");
-}
-
-// Catalog slices used by header counts + list.
-function catalogSlices() {
-  nowMs = Date.now();
-
-  const current = sessions
-    .filter((s) => s.workspace_id === THIS_WS.id)
-    .sort((a, b) => b.updated_at_ms - a.updated_at_ms || a.title.localeCompare(b.title));
-
-  let idle = 0;
-  const here = [];
-  for (let i = 0; i < current.length; i++) {
-    const s = current[i];
-    if (s.running) {
-      here.push(s);
-    } else {
-      idle++;
-      if (idle <= CURRENT_LIMIT) here.push(s);
-    }
+// Sidebar width for the current terminal; main gets the rest past a one-cell rule.
+function layout(w, h) {
+  if (w < 2) {
+    return { sidebarW: w, mainX: w, mainW: 0, h: h };
   }
 
-  const others = sessions
-    .filter((s) => {
-      if (s.workspace_id === THIS_WS.id) return false;
-      if (s.running) return true;
-      return nowMs - s.updated_at_ms < OTHERS_WINDOW_MS;
-    })
-    .sort((a, b) => {
-      if (a.running !== b.running) return a.running ? -1 : 1;
-      return b.updated_at_ms - a.updated_at_ms || a.title.localeCompare(b.title);
-    });
+  let sidebarW = Math.floor(w * SIDEBAR_FRAC);
+  if (sidebarW < SIDEBAR_MIN) sidebarW = Math.min(SIDEBAR_MIN, w - 1);
+  if (sidebarW > SIDEBAR_MAX) sidebarW = SIDEBAR_MAX;
+  if (sidebarW >= w) sidebarW = w - 1;
 
-  return { here: here, others: others };
+  const mainX = sidebarW + 1;
+  const mainW = Math.max(0, w - mainX);
+  return { sidebarW, mainX, mainW, h };
 }
 
-// Logical list items (selection walks sessions only).
-function buildItems(slices) {
-  const { here, others } = slices || catalogSlices();
-  const items = [];
-
-  items.push({ kind: "section", text: "here · " + here.length });
-  if (here.length === 0) {
-    items.push({ kind: "empty", text: "no sessions yet — press n" });
-  } else {
-    for (let i = 0; i < here.length; i++) {
-      items.push({ kind: "session", session: here[i] });
-    }
-  }
-
-  if (others.length > 0) {
-    items.push({ kind: "blank" });
-    items.push({ kind: "section", text: "elsewhere · " + others.length });
-
-    const order = [];
-    for (let i = 0; i < others.length; i++) {
-      const id = others[i].workspace_id;
-      if (order.indexOf(id) < 0) order.push(id);
-    }
-    for (let oi = 0; oi < order.length; oi++) {
-      const wid = order[oi];
-      if (oi > 0) items.push({ kind: "blank" });
-      items.push({ kind: "workspace", text: wsLabel(wsById(wid).root) });
-      for (let i = 0; i < others.length; i++) {
-        if (others[i].workspace_id === wid) {
-          items.push({ kind: "session", session: others[i] });
-        }
-      }
-    }
-  }
-
-  return items;
-}
-
-// Flatten to paint lines (session → title + meta).
-function flattenLines(items) {
-  const lines = [];
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    if (it.kind === "session") {
-      lines.push({ kind: "session_title", session: it.session });
-      lines.push({ kind: "session_meta", session: it.session });
-    } else {
-      lines.push(it);
-    }
-  }
-  return lines;
-}
-
-// --- shared selection state ---------------------------------------------------------------
-// Selection and scroll live in a List (yuke:ui). Its items are the flattened paint lines;
-// only session_title lines are selectable, and the selection is keyed by session id, so a
-// re-sort between paints never slides it. The list owns scroll-to-visible; HomeView renders
-// the rows itself using its `scroll`. `selected()` is a session's title line — `.session` is
-// the session.
-let openSession = null;
-let tickPhase = 0;
-
-const homeList = new List({
-  key: (line) => (line.session ? line.session.id : null),
-  isSelectable: (line) => line.kind === "session_title",
-});
-
-function selectedSession() {
-  const line = homeList.selected();
-  return line ? line.session : null;
-}
-
-function openSelected() {
-  const s = selectedSession();
-  if (!s) return;
-
-  openSession = { id: s.id, title: s.title };
-  root.setActive(shell);
-}
-
-function createAndOpen() {
-  nowMs = Date.now();
-  const id = "s_" + nextId++;
-  const s = {
-    id: id,
-    workspace_id: THIS_WS.id,
-    title: "Untitled",
-    updated_at_ms: nowMs,
-    running: false,
-    profile: DEFAULT_PROFILE,
-    model: DEFAULT_MODEL,
-    message_count: 0,
-  };
-  sessions.unshift(s);
-  openSession = { id: s.id, title: s.title };
-  homeList.selectedKey = s.id;
-  root.setActive(shell);
-}
-
-function paintRule(y, padX, innerW) {
-  if (innerW <= 0) return;
-  text(padX, y, "─".repeat(innerW), "YukeRule");
-}
-
-// Header rows granted for a wanted height, keeping at least one body row when possible.
-function headerFit(want, h, footerRows) {
-  if (h - footerRows >= 2) return Math.min(want, h - footerRows - 1);
-  return Math.min(want, Math.max(0, h - footerRows));
-}
-
-// Layout: footer always last row; header collapses so body never shares footer cells.
-function homeLayout(w, h) {
-  const footerRows = h > 0 ? 1 : 0;
-  const wantBanner = w >= YUKE_BANNER_W;
-
-  let padTop = wantBanner ? BRAND_PAD_TOP : 0;
-  let brandH = wantBanner ? YUKE_BANNER_H : 1;
-  let headerH = headerFit(padTop + brandH + 4, h, footerRows);
-
-  if (wantBanner && headerH < padTop + YUKE_BANNER_H) {
-    padTop = 0;
-    headerH = headerFit(brandH + 4, h, footerRows);
-  }
-
-  if (wantBanner && headerH < YUKE_BANNER_H) {
-    brandH = 1;
-    headerH = headerFit(brandH + 4, h, footerRows);
-  }
-
-  const bodyTop = headerH;
-  const bodyBot = h - footerRows - 1;
-  const bodyH = Math.max(0, bodyBot - bodyTop + 1);
-  return { headerH, bodyTop, bodyH, footerRows, brandH, padTop };
-}
-
-// --- home view ----------------------------------------------------------------------------
-class HomeView extends View {
-  get name() {
-    return "home";
-  }
-
-  tick() {
-    tickPhase = (tickPhase + 1) % SPINNER_FRAMES.length;
-  }
-
-  needsTick() {
-    for (let i = 0; i < sessions.length; i++) {
-      if (sessions[i].running) return { periodMs: SPINNER_PERIOD_MS };
-    }
-    return null;
-  }
-
-  // Selection movement rides the shared list vocabulary (j/k, ctrl+d/u, gg, G); actions (open,
-  // new, explore) stay command-bound so they show in the palette and the ":" line.
-  onKey(ev) {
-    return homeList.onKey(ev);
-  }
-
-  draw() {
-    const w = term.width;
-    const h = term.height;
-    const slices = catalogSlices();
-    const items = buildItems(slices);
-    const lines = flattenLines(items);
-    const here = slices.here;
-    const others = slices.others;
-
-    homeList.setItems(lines);
-
-    const padX = w >= 48 ? 3 : w >= 32 ? 2 : 1;
-    const { headerH, bodyTop, bodyH, brandH, padTop } = homeLayout(w, h);
-    const innerW = Math.max(0, w - padX * 2);
-
-    homeList.ensureVisible(bodyH);
-
-    fill(0, 0, w, h, "Normal");
-
-    if (headerH > padTop) {
-      paintBrand(w, padTop, Math.min(brandH, headerH - padTop), "YukeBrand");
-    }
-
-    let y = padTop + brandH;
-    if (headerH > y) {
-      const status = here.length + " here · " + others.length + " elsewhere · " + connectionLabel();
-      paintCentered(y, status, w, "YukeStatus");
-      y++;
-    }
-    if (headerH > y) {
-      paintCentered(y, THIS_WS.root, w, "YukeHeader");
-      y++;
-    }
-    if (headerH > y) {
-      paintRule(y, padX, innerW);
-      y++;
-    }
-
-    for (let row = 0; row < bodyH; row++) {
-      const li = homeList.scroll + row;
-      if (li >= lines.length) break;
-      const line = lines[li];
-      const screenY = bodyTop + row;
-
-      if (line.kind === "blank") continue;
-
-      if (line.kind === "section") {
-        text(padX, screenY, clip(line.text, innerW), "YukeSection");
-        continue;
-      }
-
-      if (line.kind === "workspace") {
-        text(padX, screenY, clip(line.text, innerW), "YukeWorkspace");
-        continue;
-      }
-
-      if (line.kind === "empty") {
-        text(padX + 2, screenY, clip(line.text, Math.max(0, innerW - 2)), "YukeEmpty");
-        continue;
-      }
-
-      const s = line.session;
-      const isSel = s.id === homeList.selectedKey;
-      if (isSel && innerW > 0) fill(padX, screenY, innerW, 1, "YukeSessionSel");
-
-      const contentX = padX + 3;
-      const contentW = Math.max(0, w - padX - 1 - contentX);
-
-      if (line.kind === "session_title") {
-        if (s.running) spinnerDraw(padX + 1, screenY, tickPhase);
-        text(contentX, screenY, clip(s.title, contentW), isSel ? "YukeSessionSel" : "YukeSession");
-        continue;
-      }
-
-      if (line.kind === "session_meta") {
-        text(contentX, screenY, clip(sessionMeta(s), contentW), isSel ? "YukeSessionMetaSel" : "YukeSessionMeta");
-        continue;
-      }
-    }
-
-    if (h > 0) {
-      const left = "j/k · ↵ open · n new · - explore · : command";
-      const right = w + "×" + h;
-      text(padX, h - 1, clip(left, innerW), "YukeFooter");
-      if (innerW > left.length + right.length + 2) {
-        text(w - padX - right.length, h - 1, right, "YukeFooter");
-      }
-    }
-  }
-}
-
-// --- shell view ---------------------------------------------------------------------------
-// A stubbed session transcript for exercising the Transcript pager without a daemon: seeded
-// user/assistant text messages, plus a keyboard-toggled fake stream that appends words to the
-// last assistant message so follow-bottom, re-wrap, and resize reflow can be tested live.
-const LOREM =
-  "The quick brown fox jumps over the lazy dog. Word wrapping has to stay cell-accurate for wide 漢字 and emoji 😊 runs. " +
-  "Paragraphs wrap greedily at spaces; a single word longer than the width hard-breaks by grapheme cluster. ";
-
-const STREAM_WORDS = "streaming a delta here appends one token at a time to watch the tail follow the bottom edge".split(" ");
-let streamPhase = 0;
-
-function stubMessages() {
-  const msgs = [];
-  for (let i = 0; i < 150; i++) {
-    msgs.push({ type: "user", id: "u" + i, rev: 0, content: [{ type: "text", text: "Question " + i + ": " + LOREM.slice(0, 30 + ((i * 37) % 160)) }] });
-    msgs.push({ type: "assistant", id: "a" + i, rev: 0, content: [{ type: "text", text: "Answer " + i + ". " + LOREM.repeat(1 + (i % 3)) }] });
-  }
-  return msgs;
-}
-
-class ShellView extends View {
+// --- app shell ----------------------------------------------------------------------------
+// One root view: left session sidebar (empty until Phase 1), right main pane (empty until an
+// open session). Focus is sidebar | main so Phase 1 can attach list vs transcript keys.
+class AppView extends View {
   constructor() {
     super();
-    this.transcript = new Transcript();
-    this.streaming = false;
-    this._seeded = false;
+    this.focus = "sidebar"; // "sidebar" | "main"
   }
 
   get name() {
-    return "shell";
-  }
-
-  _ensure() {
-    if (this._seeded) return;
-    this.transcript.setMessages(stubMessages());
-    this._seeded = true;
-  }
-
-  needsTick() {
-    return this.streaming ? { periodMs: 60 } : null;
-  }
-
-  tick() {
-    if (!this.streaming) return;
-
-    const msgs = this.transcript.messages;
-    const last = msgs[msgs.length - 1];
-    if (last && last.type === "assistant") {
-      last.content[0].text += " " + STREAM_WORDS[streamPhase++ % STREAM_WORDS.length];
-      last.rev++;
-      this.transcript.touch();
-    }
-  }
-
-  // Scroll through every position painting each frame, to time worst-case scroll throughput
-  // (layout is cached, so this measures paint + buffer diff + flush).
-  runBenchmark() {
-    const pager = this.transcript.pager;
-    const saved = { scroll: pager.scroll, stuck: pager.stuck };
-    const span = Math.max(1, pager._maxScroll());
-    const N = 1000;
-
-    pager.stuck = false;
-    const t0 = Date.now();
-    for (let i = 0; i < N; i++) {
-      pager.scroll = i % span;
-      root.draw();
-    }
-    const dt = Math.max(1, Date.now() - t0);
-
-    pager.scroll = saved.scroll;
-    pager.stuck = saved.stuck;
-    this.benchFps = Math.round((N * 1000) / dt);
-    this.benchMs = (dt / N).toFixed(2);
-  }
-
-  draw() {
-    this._ensure();
-
-    const w = term.width;
-    const h = term.height;
-    const title = openSession ? openSession.title : "session";
-    const padX = w >= 48 ? 3 : w >= 32 ? 2 : 1;
-    const innerW = Math.max(0, w - padX * 2);
-    const footerY = h > 0 ? h - 1 : 0;
-    const bodyTop = 3;
-    const bodyH = Math.max(0, footerY - bodyTop);
-
-    fill(0, 0, w, h, "Normal");
-    if (h > 0) text(padX, 0, "yuke", "YukeBrand");
-    if (h > 1) text(padX, 1, clip(title, innerW), "YukeShellTitle");
-    if (h > 2) paintRule(2, padX, innerW);
-
-    if (bodyH > 0) this.transcript.draw({ x: padX, y: bodyTop, w: innerW, h: bodyH });
-
-    if (h > 0) {
-      const left = "j/k · ^d/^u · g/G · s stream" + (this.streaming ? " ●" : "") + " · b bench · esc back · : command";
-      const bench = this.benchFps ? this.benchFps + "fps " + this.benchMs + "ms · " : "";
-      const right = bench + this.transcript.pager.rows.length + "rows " + w + "×" + h;
-      text(padX, footerY, clip(left, innerW), "YukeFooter");
-      if (innerW > left.length + right.length + 2) {
-        text(w - padX - right.length, footerY, right, "YukeStatus");
-      }
-    }
+    return "app";
   }
 
   onKey(ev) {
-    switch (strokeOf(ev)) {
-      case "s":
-        this.streaming = !this.streaming;
-        return true;
-      case "b":
-        this.runBenchmark();
-        return true;
+    const s = strokeOf(ev);
+
+    if (s === "tab") {
+      this.focus = this.focus === "sidebar" ? "main" : "sidebar";
+      return true;
     }
 
-    return this.transcript.onKey(ev);
+    return false;
+  }
+
+  draw() {
+    const w = term.width;
+    const h = term.height;
+    fill(0, 0, w, h, "Normal");
+    if (w <= 0 || h <= 0) return;
+
+    const { sidebarW, mainX, mainW } = layout(w, h);
+    this._drawSidebar(0, 0, sidebarW, h);
+    if (mainX < w) {
+      paintRuleV(mainX - 1, 0, h, "YukeRule");
+      this._drawMain(mainX, 0, mainW, h);
+    }
+  }
+
+  _drawSidebar(x, y, sw, h) {
+    if (sw <= 0 || h <= 0) return;
+
+    const pad = sw >= 4 ? 1 : 0;
+    const iw = Math.max(0, sw - pad * 2);
+    let row = y;
+
+    if (row < y + h) {
+      text(x + pad, row, clip("yuke", iw), "YukeBrand");
+      row++;
+    }
+
+    if (row < y + h) {
+      const st = "local · " + connectionLabel();
+      text(x + pad, row, clip(st, iw), "YukeStatus");
+      row++;
+    }
+
+    if (row < y + h) {
+      text(x + pad, row, clip("─".repeat(iw), iw), "YukeRule");
+      row++;
+    }
+
+    if (row < y + h) {
+      const st = connectionState();
+      const msg =
+        st === "ready" ? "no sessions" : st === "connecting" || st === "closing" ? "…" : "not connected";
+      text(x + pad, row, clip(msg, iw), "YukeEmpty");
+      row++;
+    }
+
+    if (h > 0) {
+      const hint = this.focus === "sidebar" ? "tab main · - explore · : " : "tab · - · :";
+      text(x + pad, y + h - 1, clip(hint, iw), "YukeFooter");
+    }
+  }
+
+  _drawMain(x, y, mw, h) {
+    if (mw <= 0 || h <= 0) return;
+
+    const pad = mw >= 4 ? 1 : 0;
+    const iw = Math.max(0, mw - pad * 2);
+    const st = connectionState();
+
+    let msg;
+    if (st !== "ready") {
+      msg = st === "connecting" ? "connecting to local daemon…" : "daemon offline — :connect to retry";
+    } else {
+      msg = "select a session";
+    }
+
+    // Center the placeholder in the main pane body (leave a footer row for hints).
+    const bodyH = Math.max(0, h - 1);
+    const cy = y + Math.floor(Math.max(0, bodyH - 1) / 2);
+    if (bodyH > 0) {
+      text(x + pad, cy, clip(msg, iw), "YukeEmpty");
+    }
+
+    if (h > 0) {
+      const left = this.focus === "main" ? "tab sidebar · space palette · : command" : "space palette · : command";
+      text(x + pad, y + h - 1, clip(left, iw), "YukeFooter");
+    }
   }
 }
 
-const home = new HomeView();
-const shell = new ShellView();
+const app = new AppView();
 
 // --- explorer -----------------------------------------------------------------------------
 // A directory navigator over the daemon's workspace.browse shape. The data is stubbed here
@@ -843,7 +446,7 @@ const connection = {
   },
 };
 
-// Header status: connected / connecting / offline with a retry countdown.
+// Sidebar/main status: connected / connecting / offline with a retry countdown.
 function connectionLabel() {
   const st = connectionState();
   if (st === "ready") return "connected";
@@ -863,27 +466,11 @@ command.add(null, {
   "app:quit": () => quit(),
   "ui:palette": () => openPalette(),
   "app:connect": () => connection.attempt(),
+  "app:explorer": () => openExplorer(EXPLORER_ROOT),
 });
 
-command.add("home", {
-  "home:new": () => createAndOpen(),
-  "home:open": () => openSelected(),
-  "home:explorer": () => openExplorer("/Users/xyaman/Work"),
-});
-
-command.add("shell", {
-  "shell:back": () => {
-    openSession = null;
-    root.setActive(home);
-  },
-});
-
-// Selection/scroll strokes are owned by the widgets (List/Pager); the keymap binds actions.
 keymap.add({
-  "n": "home:new",
-  "enter": "home:open",
-  "-": "home:explorer",
-  "esc": "shell:back",
+  "-": "app:explorer",
   " ": "ui:palette",
   ":": () => {
     openCommandLine();
@@ -891,9 +478,8 @@ keymap.add({
   },
 });
 
-seedDummy();
-root.setActive(home);
+root.setActive(app);
 root.addService(connection);
 
-// Exported so a user's yuke.js can reference the stock views (swap, subclass, or patch).
-export { home, shell, HomeView, ShellView };
+// Exported so a user's yuke.js can reference the stock view (swap, subclass, or patch).
+export { app, AppView, openExplorer, openPalette, openCommandLine, connection };
