@@ -224,13 +224,19 @@ Daemon :: struct {
 // `nil` rather than a later connection.
 Conn_Ticket :: distinct u64
 
-// The transport a `Conn` rides. A local client rides the WebSocket server; a relay client
-// rides the daemon's single relay link, whose session and socket live on `d.relay`. Exactly
-// one variant is set. The session, store, and pump below the transport are identical for
-// both — only the send/close/liveness ops differ.
+// A relay client's slot on the shared link: the `Relay` plus the one-byte `channel` the relay
+// multiplexes it under. Its Noise session and bridged `Conn` live in `relay.peers[channel]`.
+Relay_Client :: struct {
+    relay:   ^Relay,
+    channel: u8,
+}
+
+// The transport a `Conn` rides. A local client rides the WebSocket server; a relay client rides
+// one channel of the daemon's shared relay link. Exactly one variant is set. The session, store,
+// and pump below the transport are identical for both — only the send/close/liveness ops differ.
 Conn_Transport :: union {
     ^ws.Server_Conn,
-    ^Relay,
+    Relay_Client,
 }
 
 // One accepted connection, local or relay. A local connection is created in `ws_on_open`
@@ -1200,8 +1206,8 @@ conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
             ws.server_abort(t, close_err)
         }
 
-    case ^Relay:
-        relay_conn_close(t)
+    case Relay_Client:
+        relay_conn_close(t.relay, t.channel)
     }
 }
 
@@ -1223,8 +1229,8 @@ conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     case ^ws.Server_Conn:
         ws.server_abort(t, err)
 
-    case ^Relay:
-        relay_conn_close(t)
+    case Relay_Client:
+        relay_conn_close(t.relay, t.channel)
     }
 }
 
@@ -1240,8 +1246,8 @@ conn_send_text :: proc(conn: ^Conn, bytes: []byte) -> ws.Server_Error {
     case ^ws.Server_Conn:
         return ws.server_send_text(t, bytes)
 
-    case ^Relay:
-        return relay_conn_send(t, bytes)
+    case Relay_Client:
+        return relay_conn_send(t.relay, t.channel, bytes)
     }
 
     unreachable()
@@ -1257,8 +1263,8 @@ conn_tx_open :: proc(conn: ^Conn) -> bool {
     case ^ws.Server_Conn:
         return t.state == .Open
 
-    case ^Relay:
-        return relay_conn_open(t)
+    case Relay_Client:
+        return relay_conn_open(t.relay, t.channel)
     }
 
     unreachable()
@@ -1305,9 +1311,10 @@ conn_free :: proc(conn: ^Conn) {
         assert(t.user_data == conn, "connection cleanup crossed transport ownership")
         t.user_data = nil
 
-    case ^Relay:
-        assert(t.conn == conn, "relay cleanup crossed connection ownership")
-        t.conn = nil
+    case Relay_Client:
+        peer := &t.relay.peers[t.channel]
+        assert(peer.conn == conn, "relay cleanup crossed connection ownership")
+        peer.conn = nil
     }
 
     delete(conn.client_name, conn.allocator)

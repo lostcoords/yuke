@@ -37,3 +37,40 @@ test_relay_cloud_url_normalization :: proc(t: ^testing.T) {
         }
     }
 }
+
+// Two clients bridged on independent channels stay independent: a per-channel close frees only
+// that channel's `Conn` and slot and never disturbs the other's conn or established state.
+@(test)
+test_relay_channels_are_independent :: proc(t: ^testing.T) {
+    d: Daemon
+    d.allocator = context.allocator
+    d.conns = make(map[Conn_Ticket]^Conn, 8, context.allocator)
+    defer delete(d.conns)
+
+    r: Relay
+    r.daemon = &d
+
+    for ch in u8(0) ..< 2 {
+        conn := conn_register(&d, Relay_Client{relay = &r, channel = ch})
+        testing.expect(t, conn != nil, "bridging a channel registers a conn")
+        r.peers[ch].active = true
+        r.peers[ch].established = true
+        r.peers[ch].conn = conn
+    }
+
+    kept := r.peers[1].conn
+
+    relay_conn_close(&r, 0)
+
+    testing.expect(t, !r.peers[0].active, "channel 0 is idle after teardown")
+    testing.expect(t, r.peers[0].conn == nil, "channel 0 conn is freed")
+    testing.expect(t, len(d.conns) == 1, "only channel 0's conn is unregistered")
+    testing.expect(t, r.peers[1].active, "channel 1 stays active")
+    testing.expect(t, r.peers[1].established, "channel 1 stays established")
+    testing.expect(t, r.peers[1].conn == kept, "channel 1 conn is untouched")
+
+    relay_conn_close(&r, 1)
+
+    testing.expect(t, r.peers[1].conn == nil, "channel 1 conn is freed on its own teardown")
+    testing.expect(t, len(d.conns) == 0, "no bridged conns remain")
+}

@@ -67,38 +67,43 @@ Link_Callbacks :: struct {
 Link :: struct {
     // @private
     // WebSocket client driving the socket. `user_data` points back to this link.
-    sock:      ws.Client,
+    sock:       ws.Client,
 
     // @private
     // Borrowed event loop the socket runs on.
-    loop:      ^nbio.Event_Loop,
+    loop:       ^nbio.Event_Loop,
 
     // @private
     // Backs the scratch arena and outlives the link.
-    allocator: mem.Allocator,
+    allocator:  mem.Allocator,
 
     // @private
     // Owner callbacks.
-    cbs:       Link_Callbacks,
+    cbs:        Link_Callbacks,
 
     // @private
     // Which route this link dialed.
-    route:     Link_Route,
+    route:      Link_Route,
 
     // @private
-    // Whether a peer is currently spliced in. A SEALED frame is only valid while true.
-    attached:  bool,
+    // Whether any peer is currently spliced in. A SEALED frame is only valid while true.
+    attached:   bool,
+
+    // @private
+    // Attached-peer count on a `.Link`; `attached` stays true until the last peer leaves, so one
+    // peer going away never ungates the others. Always 0/1 in effect on the client's `.Connect`.
+    peer_count: int,
 
     // @private
     // Channel of the message being dispatched (the /link routing id); valid only during a callback.
-    channel:   u8,
+    channel:    u8,
 
     // @private
     // Scratch for one inbound CONTROL decode, reset per message.
-    scratch:   virtual.Arena,
+    scratch:    virtual.Arena,
 
     // Owner pointer, set by `link_dial` and recovered by the owner's callbacks. Borrowed.
-    user_data: rawptr,
+    user_data:  rawptr,
 }
 
 // What an inbound link message means, decided from its kind and bytes. `.Fail` names a
@@ -306,6 +311,19 @@ link_send_binary :: proc(l: ^Link, bytes: []u8) -> ws.Client_Error {
     return ws.client_send_binary(&l.sock, bytes)
 }
 
+// Queue one SEALED (or handshake) frame on the daemon's `.Link`, prefixed with the routing
+// `channel` the relay reads to fan out to one client. The prefixed buffer is built in temp
+// storage and copied into the send queue, so the caller's `bytes` are neither retained nor mutated.
+link_send_channel :: proc(l: ^Link, channel: u8, bytes: []u8) -> ws.Client_Error {
+    assert(l != nil, "link_send_channel needs a link")
+
+    prefixed := make([]u8, 1 + len(bytes), context.temp_allocator)
+    prefixed[0] = channel
+    copy(prefixed[1:], bytes)
+
+    return ws.client_send_binary(&l.sock, prefixed)
+}
+
 // Whether the link's socket is Open — the liveness a bridged connection reports.
 link_open :: proc(l: ^Link) -> bool {
     assert(l != nil, "link_open needs a link")
@@ -403,6 +421,7 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
 
     switch action {
     case .Peer_Attached:
+        l.peer_count += 1
         l.attached = true
 
         if l.cbs.on_peer_attached != nil {
@@ -410,7 +429,9 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
         }
 
     case .Peer_Gone:
-        l.attached = false
+        // Clamp: an untrusted relay could send peer_gone with no matching peer_attached.
+        l.peer_count = max(0, l.peer_count - 1)
+        l.attached = l.peer_count > 0
 
         if l.cbs.on_peer_gone != nil {
             l.cbs.on_peer_gone(l, reason)

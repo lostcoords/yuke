@@ -7,6 +7,8 @@ import "core:mem/virtual"
 import store "src:daemon/store"
 import wire "src:wire"
 
+import ws "libs:websocket"
+
 // Why a broadcast never reached the fan-out. A durable broadcast that fails here was
 // neither logged nor delivered, so the stream stays contiguous.
 Pump_Error :: enum {
@@ -336,14 +338,22 @@ pump_send :: proc(
     pump_fan_out(d, name, session, frame)
 }
 
-// Deliver an encoded broadcast to every connection its class admits. Closing a connection
-// defers its release to the loop, so the connection table is stable across this walk.
+// Deliver an encoded broadcast to every connection its class admits. A relay conn tears down
+// synchronously (unlike the local transport's deferred terminal), so failed sends are collected and
+// aborted after the walk — the connection table must stay stable while we range over it.
 @(private)
 pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.Session_Id), frame: []byte) {
     assert(d != nil, "fan-out needs daemon state")
     assert(len(frame) > 0, "a fanned-out broadcast is already encoded")
 
     class := wire.broadcast_name_class(name)
+
+    Pending_Abort :: struct {
+        conn: ^Conn,
+        err:  ws.Server_Error,
+    }
+    aborts: [dynamic]Pending_Abort
+    aborts.allocator = context.temp_allocator
 
     for _, conn in d.conns {
         if conn.state != .Ready {
@@ -385,7 +395,12 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
             continue
         }
 
-        conn_abort(conn, send_err)
+        append(&aborts, Pending_Abort{conn = conn, err = send_err})
+    }
+
+    // Aborts run after the walk: a relay conn's teardown frees it and deletes it from `d.conns`.
+    for a in aborts {
+        conn_abort(a.conn, a.err)
     }
 }
 

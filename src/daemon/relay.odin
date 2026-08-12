@@ -7,8 +7,9 @@
 // The link is kept up for the daemon's whole serving life: if it drops — relay restart,
 // network, or a client dropped on a protocol error — the daemon re-dials with capped
 // exponential backoff and re-parks. The relay is an addition to the front door, never a
-// replacement: a parse or dial failure leaves the local daemon serving. v1 carries one
-// client per link — closing a relay connection closes the whole link.
+// replacement: a parse or dial failure leaves the local daemon serving. Several clients share
+// the one link, each its own Noise session keyed by the relay's one-byte channel (`peers`);
+// closing one client tears down just its channel, while the link dropping tears down all.
 package daemon
 
 import "core:crypto/ecdh"
@@ -40,6 +41,10 @@ RELAY_TICKET_TOTAL_TIMEOUT :: 30 * time.Second
 
 // The control-plane path a daemon POSTs its device credential to for a link ticket.
 RELAY_LINK_TICKETS_PATH :: "/api/v1/link_tickets"
+
+// Daemon-side upper bound on concurrent clients multiplexed over one link; the relay enforces
+// the real per-grant cap below this. A channel id at or above it is a protocol violation.
+RELAY_MAX_CHANNELS :: 8
 
 // Validate and remove trailing slashes from a control-plane base URL. Remote
 // endpoints require HTTPS; plaintext HTTP is limited to literal IPv4 loopback.
@@ -175,9 +180,28 @@ Relay_State :: enum {
     Closed,
 }
 
-// The daemon's relay link, its Noise session, and the one bridged connection at a time.
-// Heap-owned by the daemon so its address is stable for the link's owner back-reference and
-// the bridged `Conn`'s transport arm.
+// One client's end-to-end session multiplexed onto the shared link, keyed by the relay's
+// one-byte channel. Zero value (`active = false`) is an idle channel slot; sessions and
+// reassemblers are init on attach and destroyed on teardown.
+Relay_Peer :: struct {
+    // Whether this channel currently holds an attached client.
+    active:      bool,
+
+    // Whether the Noise handshake completed; gates transport frames and sealing.
+    established: bool,
+
+    // The live Noise session with this channel's client.
+    session:     relay.Session,
+
+    // The bridged connection for this client, or nil until the handshake completes.
+    conn:        ^Conn,
+
+    // Reassembles a wire frame fragmented across several inbound SEALED frames on this channel.
+    recv_reasm:  relay.Reassembler,
+}
+
+// The daemon's relay link and its per-channel client sessions. Heap-owned by the daemon so its
+// address is stable for the link's owner back-reference and the bridged `Conn`s' transport arm.
 Relay :: struct {
     // Owning daemon, recovered by the link callbacks.
     daemon:          ^Daemon,
@@ -205,21 +229,15 @@ Relay :: struct {
     // identity's `identity.key`.
     static_key:      ecdh.Private_Key,
 
-    // The live Noise session with the current peer, valid between peer_attached and the peer
-    // leaving; `established` gates transport frames.
-    session:         relay.Session,
-    established:     bool,
+    // Per-channel client sessions, indexed by the relay's routing byte. All-zero is an idle
+    // channel; the relay caps the live count below `RELAY_MAX_CHANNELS`.
+    peers:           [RELAY_MAX_CHANNELS]Relay_Peer,
 
-    // The bridged connection for the current peer, or nil when none is attached.
-    conn:            ^Conn,
-
-    // Scratch for one inbound handshake/transport decode, reset per frame.
+    // Scratch for one inbound handshake/transport decode, reset per frame. Shared across channels:
+    // the nbio loop is single-threaded, so exactly one frame is in flight at a time.
     recv_scratch:    virtual.Arena,
 
-    // Reassembles a wire frame fragmented across several inbound SEALED frames.
-    recv_reasm:      relay.Reassembler,
-
-    // Scratch for one outbound seal, reset per frame.
+    // Scratch for one outbound seal, reset per frame. Shared like `recv_scratch`.
     send_scratch:    virtual.Arena,
 
     // Lifecycle state and the reconnect machinery.
@@ -266,8 +284,6 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
 
         return .Out_Of_Memory
     }
-
-    relay.reassembler_init(&r.recv_reasm, d.allocator)
 
     if curl.client_init(&r.curl_client, d.loop, d.allocator) != .None {
         relay_free_partial(r)
@@ -400,11 +416,16 @@ relay_destroy :: proc(d: ^Daemon) {
 
     r := d.relay
     assert(r.state == .Closed, "relay destroyed before it closed")
-    assert(r.conn == nil, "relay destroyed with a live bridged connection")
     assert(r.reconnect_timer == nil, "relay destroyed with a pending reconnect timer")
 
-    relay.session_destroy(&r.session)
-    relay.reassembler_destroy(&r.recv_reasm)
+    // The link's terminal tore every peer down before reaching `.Closed`; clean up defensively
+    // in case a slot survived, wiping its key material either way.
+    for ch in 0 ..< RELAY_MAX_CHANNELS {
+        assert(r.peers[ch].conn == nil, "relay destroyed with a live bridged connection")
+        relay.session_destroy(&r.peers[ch].session)
+        relay.reassembler_destroy(&r.peers[ch].recv_reasm)
+    }
+
     if r.curl_ready {
         curl.client_destroy(&r.curl_client)
     }
@@ -425,14 +446,17 @@ relay_destroy :: proc(d: ^Daemon) {
     d.relay = nil
 }
 
-// Seal one plaintext wire frame and queue it on the link — the relay half of
+// Seal one plaintext wire frame and queue it on `channel` of the link — the relay half of
 // `conn_send_text`. The bytes are copied into the link's send queue, so the scratch is reset
 // on return. The client-side result is mapped onto the `ws.Server_Error` the daemon's send
 // policy speaks.
-relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
+relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_Error {
     assert(r != nil, "relay send needs relay state")
-    assert(r.established, "relay send before the handshake completed")
+    assert(int(channel) < RELAY_MAX_CHANNELS, "relay send needs an in-range channel")
+    assert(r.peers[channel].established, "relay send before the handshake completed")
     assert(len(plaintext) > 0, "relay send needs a non-empty frame")
+
+    peer := &r.peers[channel]
 
     temp := virtual.arena_temp_begin(&r.send_scratch)
     defer secret.arena_temp_destroy(temp)
@@ -447,14 +471,14 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
         lo := i * relay.TRANSPORT_CHUNK_MAX
         hi := min(lo + relay.TRANSPORT_CHUNK_MAX, len(plaintext))
 
-        frame, serr := relay.transport_seal_chunk(&r.session, plaintext[lo:hi], i, count, scratch)
+        frame, serr := relay.transport_seal_chunk(&peer.session, plaintext[lo:hi], i, count, scratch)
         if serr != .None {
             log.errorf("daemon: relay seal failed: %v", serr)
 
             return .Send_Failed
         }
 
-        send_err := tx_error_client(relay.link_send_binary(&r.link, frame))
+        send_err := tx_error_client(relay.link_send_channel(&r.link, channel, frame))
         if send_err == .None {
             continue
         }
@@ -476,20 +500,22 @@ relay_conn_send :: proc(r: ^Relay, plaintext: []byte) -> ws.Server_Error {
     return .None
 }
 
-// Whether the relay connection can still be answered: the link is open and the session is
-// established. The liveness half of `conn_resolve` for a relay `Conn`.
-relay_conn_open :: proc(r: ^Relay) -> bool {
+// Whether the relay connection can still be answered: the link is open and the channel's session
+// is established. The liveness half of `conn_resolve` for a relay `Conn`.
+relay_conn_open :: proc(r: ^Relay, channel: u8) -> bool {
     assert(r != nil, "relay liveness needs relay state")
+    assert(int(channel) < RELAY_MAX_CHANNELS, "relay liveness needs an in-range channel")
 
-    return relay.link_open(&r.link) && r.established
+    return relay.link_open(&r.link) && r.peers[channel].established
 }
 
-// Close a relay connection. v1 carries one client per link, so closing the connection closes
-// the whole link; its terminal then frees the bridged `Conn` and re-parks.
-relay_conn_close :: proc(r: ^Relay) {
+// Close one relay client: a daemon-initiated close tears down just its channel locally, leaving
+// the shared link and every other channel untouched. No control message reaches the relay.
+relay_conn_close :: proc(r: ^Relay, channel: u8) {
     assert(r != nil, "relay close needs relay state")
+    assert(int(channel) < RELAY_MAX_CHANNELS, "relay close needs an in-range channel")
 
-    _ = relay.link_close(&r.link)
+    relay_peer_teardown(r, channel)
 }
 
 // Free a partly-built relay during `relay_connect` rollback. Safe on any prefix of the fields
@@ -504,7 +530,6 @@ relay_free_partial :: proc(r: ^Relay) {
     secret.string_destroy(&r.credential, r.daemon.allocator)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
-    relay.reassembler_destroy(&r.recv_reasm)
     ecdh.private_key_clear(&r.static_key)
     free(r, r.daemon.allocator)
 }
@@ -696,20 +721,34 @@ relay_on_down :: proc(r: ^Relay) {
     relay_schedule_reconnect(r)
 }
 
-// Tear down the bridged connection for the current peer, if any. Latches it Closed and frees
-// it, which severs `r.conn`. The Noise session is reset so a fresh peer re-handshakes.
+// Tear down one channel's client: latch its bridged `Conn` Closed and free it (which severs
+// `peers[channel].conn`), destroy its session and reassembler, and return the slot to idle.
 @(private = "file")
-relay_teardown :: proc(r: ^Relay) {
-    if r.conn != nil {
-        r.conn.state = .Closed
-        conn_free(r.conn)
+relay_peer_teardown :: proc(r: ^Relay, channel: u8) {
+    assert(int(channel) < RELAY_MAX_CHANNELS, "relay teardown needs an in-range channel")
+
+    peer := &r.peers[channel]
+    if peer.conn != nil {
+        peer.conn.state = .Closed
+        conn_free(peer.conn)
     }
 
-    assert(r.conn == nil, "relay teardown left a dangling connection")
+    assert(peer.conn == nil, "relay teardown left a dangling connection")
 
-    relay.session_destroy(&r.session)
-    relay.reassembler_reset(&r.recv_reasm)
-    r.established = false
+    relay.session_destroy(&peer.session)
+    relay.reassembler_destroy(&peer.recv_reasm)
+    peer^ = {}
+}
+
+// Tear down every active channel — the link went down or the relay is stopping. The shared
+// scratch arenas are left intact for the next dial.
+@(private = "file")
+relay_teardown :: proc(r: ^Relay) {
+    for ch in 0 ..< RELAY_MAX_CHANNELS {
+        if r.peers[ch].active {
+            relay_peer_teardown(r, u8(ch))
+        }
+    }
 }
 
 // Recover the owning relay state from a link callback.
@@ -739,60 +778,81 @@ relay_on_parked :: proc(l: ^relay.Link) {
 @(private = "file")
 relay_on_peer_attached :: proc(l: ^relay.Link) {
     r := relay_of(l)
+    ch := relay.link_channel(l)
 
-    // The relay is an untrusted middlebox, so its CONTROL sequencing is peer input, not an
-    // invariant to assert: a second peer_attached with no intervening peer_gone is a
-    // protocol violation. Fail closed by dropping the link rather than crashing.
-    if r.conn != nil || r.established {
-        log.warn("daemon: relay peer_attached while a peer was bridged; closing link")
+    // The relay is an untrusted middlebox, so its channel assignment is peer input, not an
+    // invariant to assert: a channel out of range or already active is a protocol violation.
+    // Fail closed by dropping the link rather than crashing.
+    if int(ch) >= RELAY_MAX_CHANNELS || r.peers[ch].active {
+        log.warnf("daemon: relay peer_attached on a bad or busy channel %d; closing link", ch)
         _ = relay.link_close(l)
 
         return
     }
 
-    relay.session_init_responder(&r.session, &r.static_key, transmute([]u8)string(relay.NOISE_PROLOGUE_V1))
-    r.established = false
-    log.info("daemon: relay peer attached, awaiting handshake")
+    peer := &r.peers[ch]
+    relay.session_init_responder(&peer.session, &r.static_key, transmute([]u8)string(relay.NOISE_PROLOGUE_V1))
+    relay.reassembler_init(&peer.recv_reasm, r.daemon.allocator)
+    peer.active = true
+    peer.established = false
+    log.infof("daemon: relay peer attached on channel %d, awaiting handshake", ch)
 }
 
 @(private = "file")
 relay_on_peer_gone :: proc(l: ^relay.Link, reason: string) {
     r := relay_of(l)
-    log.infof("daemon: relay peer gone (%s)", reason)
-    relay_teardown(r)
+    ch := relay.link_channel(l)
+    log.infof("daemon: relay peer gone on channel %d (%s)", ch, reason)
+
+    if int(ch) < RELAY_MAX_CHANNELS && r.peers[ch].active {
+        relay_peer_teardown(r, ch)
+    }
 }
 
-// One SEALED payload from the peer. Before the handshake completes it is the initiator's
-// first message: respond, split, and bridge a `Conn`. After, it is a transport frame:
-// decrypt it and feed the plaintext to `handle_text` as if it arrived on a local socket.
+// One SEALED payload from the peer on its channel. Before the handshake completes it is the
+// initiator's first message: respond, split, and bridge a `Conn`. After, it is a transport frame:
+// decrypt it and feed the plaintext to `handle_text` as if it arrived on a local socket. A stray
+// frame on an inactive or out-of-range channel is tolerated (dropped) — the link stays up.
 @(private = "file")
 relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     r := relay_of(l)
+    ch := relay.link_channel(l)
+
+    if int(ch) >= RELAY_MAX_CHANNELS || !r.peers[ch].active {
+        log.warnf("daemon: relay SEALED on inactive channel %d, dropping", ch)
+
+        return
+    }
+
+    peer := &r.peers[ch]
 
     temp := virtual.arena_temp_begin(&r.recv_scratch)
     defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&r.recv_scratch)
 
-    if !r.established {
-        reply, herr := relay.session_respond(&r.session, payload, scratch)
+    if !peer.established {
+        reply, herr := relay.session_respond(&peer.session, payload, scratch)
         if herr != .None {
-            log.errorf("daemon: relay handshake rejected: %v", herr)
-            _ = relay.link_close(l, ws.Close_Code(1002))
+            // A per-channel handshake failure tears down only this client; the shared link and
+            // every other channel stay up (no daemon→relay control message).
+            log.errorf("daemon: relay handshake rejected on channel %d: %v", ch, herr)
+            relay_peer_teardown(r, ch)
 
             return
         }
 
         frame := relay.frame_encode(relay.Frame{type = .Sealed, payload = reply}, scratch)
-        if send_err := relay.link_send_binary(l, frame); send_err != .None {
+        if send_err := relay.link_send_channel(l, ch, frame); send_err != .None {
+            // A send failure is a fault of the shared socket, not this channel, so close the link.
             log.errorf("daemon: relay handshake reply failed: %v", send_err)
             _ = relay.link_close(l)
 
             return
         }
 
-        r.established = true
+        peer.established = true
 
-        conn := conn_register(r.daemon, r)
+        conn := conn_register(r.daemon, Relay_Client{relay = r, channel = ch})
         if conn == nil {
             log.error("daemon: out of memory bridging a relay connection")
             _ = relay.link_close(l)
@@ -800,16 +860,17 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
             return
         }
 
-        r.conn = conn
-        log.info("daemon: relay session established")
+        peer.conn = conn
+        log.infof("daemon: relay session established on channel %d", ch)
 
         return
     }
 
-    frame, done, ok := relay.transport_open_fragment(&r.session, &r.recv_reasm, payload, scratch)
+    frame, done, ok := relay.transport_open_fragment(&peer.session, &peer.recv_reasm, payload, scratch)
     if !ok {
-        log.error("daemon: relay frame rejected")
-        _ = relay.link_close(l, .Protocol_Error)
+        // A desynced cipher is unrecoverable, but only for this channel — tear it down alone.
+        log.errorf("daemon: relay frame rejected on channel %d", ch)
+        relay_peer_teardown(r, ch)
 
         return
     }
@@ -818,11 +879,11 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
         return
     }
 
-    if r.conn != nil && r.conn.state != .Closed {
-        handle_text(r.conn, frame)
+    if peer.conn != nil && peer.conn.state != .Closed {
+        handle_text(peer.conn, frame)
     }
 
-    relay.reassembler_reset(&r.recv_reasm)
+    relay.reassembler_reset(&peer.recv_reasm)
 }
 
 @(private = "file")

@@ -50,7 +50,7 @@ provider_login_flow_allowed :: proc(conn: ^Conn, flow: wire.Auth_Flow) -> bool {
         return true
     }
 
-    _, relayed := conn.tx.(^Relay)
+    _, relayed := conn.tx.(Relay_Client)
     return !relayed
 }
 
@@ -1315,8 +1315,9 @@ provider_api_key_transport_allowed :: proc(conn: ^Conn) -> bool {
     assert(conn != nil && conn.tx != nil, "API-key admission needs a transport")
 
     switch t in conn.tx {
-    case ^Relay:
-        assert(t.conn == conn && t.established, "API-key relay admission needs an established peer")
+    case Relay_Client:
+        peer := &t.relay.peers[t.channel]
+        assert(peer.conn == conn && peer.established, "API-key relay admission needs an established peer")
         return true
 
     case ^ws.Server_Conn:

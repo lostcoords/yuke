@@ -1167,7 +1167,7 @@ test_browser_login_is_local_only :: proc(t: ^testing.T) {
 
     relay_tx: Relay
     remote := Conn {
-        tx = &relay_tx,
+        tx = Relay_Client{relay = &relay_tx},
     }
     testing.expect(t, !provider_login_flow_allowed(&remote, .Browser), "relay browser login is refused")
     testing.expect(t, provider_login_flow_allowed(&remote, .Device_Code), "relay device login is admitted")
@@ -1175,13 +1175,12 @@ test_browser_login_is_local_only :: proc(t: ^testing.T) {
 
 @(test)
 test_api_key_write_is_admitted_over_established_relay :: proc(t: ^testing.T) {
-    relay_tx := Relay {
-        established = true,
-    }
+    relay_tx: Relay
+    relay_tx.peers[0].established = true
     conn := Conn {
-        tx = &relay_tx,
+        tx = Relay_Client{relay = &relay_tx, channel = 0},
     }
-    relay_tx.conn = &conn
+    relay_tx.peers[0].conn = &conn
 
     testing.expect(t, provider_api_key_transport_allowed(&conn), "encrypted relay admits API keys")
 }
