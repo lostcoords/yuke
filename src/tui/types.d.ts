@@ -209,6 +209,8 @@ declare module "yuke:core" {
 
   export interface KeymapApi {
     map: Record<string, Array<string | KeymapHandler>>;
+    prefixes: Record<string, boolean>;
+    pending: string | null;
     add(bindings: Record<string, KeymapBinding>, overwrite?: boolean): void;
     onKey(ev: KeyEvent): boolean;
   }
@@ -262,6 +264,26 @@ declare module "yuke:core" {
     onStart?(): void;
     needsTick?(): TickRequest | null;
     tick?(): void;
+  }
+
+  // A focus target: a pane with a rect, key handling, and rect-aware drawing.
+  export interface Pane {
+    rect: Rect;
+    name?: string;
+    onKey?(ev: KeyEvent): boolean;
+    draw(focused: boolean): void;
+  }
+
+  export type FocusDir = "h" | "j" | "k" | "l";
+
+  export class Focus {
+    panes: Pane[];
+    current: Pane | null;
+    constructor();
+    add(pane: Pane): Pane;
+    set(pane: Pane): void;
+    cycle(step: number): void;
+    dir(d: FocusDir): void;
   }
 
   export class RootView {
@@ -485,10 +507,37 @@ declare module "yuke:client" {
     total: number;
   }
 
+  export type SessionSync = "needs_resync" | "resyncing" | "synced";
+
+  export interface TranscriptPart {
+    type: "text" | "reasoning";
+    text: string;
+  }
+
+  export interface TranscriptMessage {
+    type: "user" | "assistant";
+    id: number;
+    content: TranscriptPart[];
+  }
+
+  export interface SessionSnapshot {
+    sessionId: string;
+    sync: SessionSync;
+    rev: number;
+    hasMore: boolean;
+    messages: TranscriptMessage[];
+    active: TranscriptMessage | null;
+  }
+
   export function connect(options: ConnectOptions): Promise<void>;
   export function disconnect(): void;
   export function connectionState(): ConnectionState;
   export function sessionList(params?: SessionListParams): Promise<SessionListResult>;
+  export function sessionOpen(id: string): void;
+  export function sessionClose(): void;
+  export function sessionRev(): number;
+  export function sessionResync(): Promise<void>;
+  export function sessionSnapshot(): SessionSnapshot | null;
 }
 
 declare module "yuke:ui" {
@@ -711,12 +760,44 @@ declare module "yuke:ui" {
 
 declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
-  import type { Service, View } from "yuke:core";
+  import type { Focus, Pane, Rect, Service, View } from "yuke:core";
+  import type { SessionActivity } from "yuke:client";
 
-  export type AppFocus = "sidebar" | "main";
+  export interface SessionRow {
+    id: string;
+    title: string;
+    activity: SessionActivity;
+  }
+
+  export class SessionList implements Pane {
+    rect: Rect;
+    rows: SessionRow[];
+    selected: number;
+    scroll: number;
+    activeId: string | null;
+    loaded: boolean;
+    loading: boolean;
+    get name(): "sessions";
+    syncConnection(): void;
+    refresh(): void;
+    clear(): void;
+    move(delta: number): void;
+    current(): SessionRow | null;
+    onKey(ev: KeyEvent): boolean;
+    draw(focused: boolean): void;
+  }
+
+  export class MainPane implements Pane {
+    rect: Rect;
+    get name(): "main";
+    onKey(ev: KeyEvent): boolean;
+    draw(focused: boolean): void;
+  }
 
   export class AppView extends View {
-    focus: AppFocus;
+    sidebar: SessionList;
+    main: MainPane;
+    focus: Focus;
     get name(): "app";
     onKey(ev: KeyEvent): boolean;
     draw(): void;

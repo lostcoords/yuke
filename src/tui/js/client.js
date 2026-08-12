@@ -59,3 +59,31 @@ export function sessionList(params = {}) {
     ...params,
   });
 }
+
+// Track `id` as the one open session, dropping any prior one. It needs a resync before folding.
+export function sessionOpen(id) {
+  native.sessionOpen(id);
+}
+
+// Stop tracking the open session and free its replica.
+export function sessionClose() {
+  native.sessionClose();
+}
+
+// The open session's change counter, or -1 when none is open. Poll this; pull a snapshot only
+// when it moves.
+export function sessionRev() {
+  return native.sessionRev();
+}
+
+// Resync the open session, installing the ordered cut so broadcasts resume folding.
+export function sessionResync() {
+  return native.sessionResync().catch((reason) => {
+    throw clientError(reason);
+  });
+}
+
+// The folded transcript for the open session, or null when none is open.
+export function sessionSnapshot() {
+  return JSON.parse(native.sessionSnapshot());
+}

@@ -12,6 +12,7 @@ written to the terminal.
 import "core:fmt"
 import "core:io"
 import "core:mem"
+import "core:mem/virtual"
 import "core:nbio"
 import "core:os"
 import "core:strings"
@@ -96,6 +97,14 @@ Host :: struct {
     // QuickJS promise functions, so it must be closed before `js` is released.
     daemon:           Daemon_Connection,
 
+    // The one session the UI has open, folding live broadcasts into a replica. Torn down when
+    // the connection closes and before `js` is released.
+    open_session:     Open_Session,
+
+    // Reset per snapshot build; retains its block across polls so a repaint accrues no heap
+    // churn. Not the shared temp allocator, which this host never resets per frame.
+    snapshot_scratch: virtual.Arena,
+
     // One in-flight remote (relay) connect attempt, or nil. Owns the control-plane fetch state
     // until it hands a live transport to `daemon`; canceled before `js` is released so its
     // promise settles while the context is alive.
@@ -145,6 +154,11 @@ host_init :: proc(
     }
     h.buf = buf
     h.has_buf = true
+
+    if virtual.arena_init_growing(&h.snapshot_scratch) != nil {
+        host_set_last_err(h, "snapshot scratch arena unavailable")
+        return false
+    }
 
     if perr := offload.pool_init(&h.pool, loop, FS_WORKERS); perr != .None {
         host_set_last_err(h, fmt.tprintf("fs pool: %v", perr))
@@ -264,6 +278,9 @@ host_destroy :: proc(h: ^Host) {
     }
 
     js.destroy(&h.js)
+
+    virtual.arena_check_temp(&h.snapshot_scratch)
+    virtual.arena_destroy(&h.snapshot_scratch)
 
     if h.has_buf {
         ui.buffer_destroy(&h.buf)
@@ -497,6 +514,20 @@ host_ensure_frame :: proc(h: ^Host) {
 host_start :: proc(h: ^Host) {
     obj := qjs.new_object(h.js.ctx)
     _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "start"))
+    defer qjs.free_value(h.js.ctx, obj)
+
+    host_dispatch(h, obj)
+}
+
+// Repaint after an out-of-band open-session change (a folded broadcast or installed resync). Like
+// a tick, any dispatched event redraws. Never called from a native call, to avoid re-entering a draw.
+host_dispatch_session :: proc(h: ^Host) {
+    if h.done || h.js.ctx == nil {
+        return
+    }
+
+    obj := qjs.new_object(h.js.ctx)
+    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "session"))
     defer qjs.free_value(h.js.ctx, obj)
 
     host_dispatch(h, obj)

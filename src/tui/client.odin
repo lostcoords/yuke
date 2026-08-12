@@ -60,6 +60,7 @@ client_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     _ = qjs.set_property(ctx, native, "disconnect", qjs.new_function(ctx, client_js_disconnect, "disconnect", 0))
     _ = qjs.set_property(ctx, native, "request", qjs.new_function(ctx, client_js_request, "request", 2))
     _ = qjs.set_property(ctx, native, "state", qjs.new_function(ctx, client_js_state, "state", 0))
+    session_native_install(ctx, native)
 
     if !qjs.set_module_export(ctx, m, "native", native) {
         return -1
@@ -149,9 +150,10 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     }
 
     callbacks := client.Client_Callbacks {
-        on_ready = client_on_ready,
-        on_close = client_on_close,
-        on_error = client_on_error,
+        on_ready     = client_on_ready,
+        on_broadcast = client_on_broadcast,
+        on_close     = client_on_close,
+        on_error     = client_on_error,
     }
 
     open_err := client.client_open(&h.daemon.client, transport, "yuke", "0.1.0", callbacks, h, h.allocator)
@@ -373,7 +375,7 @@ client_promise_new :: proc(h: ^Host) -> (job: ^Client_Promise, promise: qjs.Valu
     return job, promise
 }
 
-@(private = "file")
+@(private)
 client_promise_resolve :: proc(job: ^Client_Promise, value: qjs.Value, drain: bool) {
     client_promise_settle(job, value, true, drain)
 }
@@ -431,6 +433,9 @@ client_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
     h := (^Host)(c.user_data)
     assert(&h.daemon.client == c && h.daemon.live, "close callback crossed connections")
 
+    // The live stream is gone; drop the replica so a reconnect re-opens from a fresh resync.
+    open_session_teardown(h)
+
     if h.daemon.connect_job != nil {
         job := h.daemon.connect_job
         h.daemon.connect_job = nil
@@ -481,6 +486,10 @@ client_on_request_complete :: proc(c: ^client.Client, outcome: client.Request_Ou
 daemon_connection_destroy :: proc(h: ^Host) {
     assert(h != nil, "daemon connection destroy needs a host")
 
+    // A clean close frees this via `on_close`; do it up front too, for a connection that never
+    // reached `.Closed`.
+    open_session_teardown(h)
+
     if !h.daemon.live {
         return
     }
@@ -523,7 +532,7 @@ client_state_wire :: proc(state: client.Protocol_State) -> string {
     unreachable()
 }
 
-@(private = "file")
+@(private)
 client_protocol_error_wire :: proc(err: client.Protocol_Error) -> string {
     switch err {
     case .None:

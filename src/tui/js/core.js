@@ -316,29 +316,52 @@ function normalizePredicate(predicate) {
 }
 
 // --- keymap -------------------------------------------------------------------------------
-// A stroke maps to an ordered list of command names / functions; on a key, the first entry
-// whose predicate matches (or function returns !== false) wins. This ordered fallthrough is how
-// one stroke means different things in different views. add() prepends so later (user) bindings
-// take priority.
+// Each key maps to ordered handlers tried until one matches; add() prepends so later bindings win.
+// A key may chord as "prefix stroke" (e.g. "ctrl+w h"): the prefix arms, the next stroke completes.
 export const keymap = {
   map: Object.create(null),
+  prefixes: Object.create(null), // first stroke of any chord -> true
+  pending: null, // armed prefix awaiting its completion stroke
 
   add(bindings, overwrite) {
-    for (const stroke in bindings) {
-      const key = normalizeStroke(stroke);
-      const value = bindings[stroke];
+    for (const seq in bindings) {
+      const key = normalizeSeq(seq);
+      const value = bindings[seq];
       const list = Array.isArray(value) ? value.slice() : [value];
       if (overwrite || !this.map[key]) {
         this.map[key] = list;
       } else {
         this.map[key] = list.concat(this.map[key]);
       }
+
+      const sp = key.indexOf(" ");
+      if (sp > 0) this.prefixes[key.slice(0, sp)] = true;
     }
   },
 
-  // Try the bound commands for this key event; returns whether one handled it.
+  // Try the bound commands for this key event; returns whether one handled it. A pending prefix
+  // consumes its follow-up whether or not the chord resolves.
   onKey(ev) {
-    const cmds = this.map[strokeOf(ev)];
+    const s = strokeOf(ev);
+    if (!s) return false;
+
+    if (this.pending) {
+      const prefix = this.pending;
+      this.pending = null;
+      // Accept the completion with or without a held modifier (ctrl+w h and ctrl+w ctrl+h).
+      this._perform(this.map[prefix + " " + s] || this.map[prefix + " " + stripCtrl(s)], ev);
+      return true;
+    }
+
+    if (this.prefixes[s]) {
+      this.pending = s;
+      return true;
+    }
+
+    return this._perform(this.map[s], ev);
+  },
+
+  _perform(cmds, ev) {
     if (!cmds) return false;
 
     for (const c of cmds) {
@@ -351,6 +374,24 @@ export const keymap = {
     return false;
   },
 };
+
+// Normalize a binding key: each space-separated stroke canonicalized, rejoined with one space. A
+// whitespace-only key is the space stroke itself, not a chord, so it is normalized whole.
+function normalizeSeq(seq) {
+  const s = String(seq);
+  if (s.trim() === "") return normalizeStroke(s);
+
+  return s
+    .trim()
+    .split(/\s+/)
+    .map(normalizeStroke)
+    .join(" ");
+}
+
+// Drop a leading ctrl so a chord completion matches whether or not ctrl stayed held.
+function stripCtrl(stroke) {
+  return stroke.indexOf("ctrl+") === 0 ? stroke.slice(5) : stroke;
+}
 
 // Modifier bit layout from the host (js.odin): Shift=1, Alt=2, Ctrl=4, Super=8.
 const MOD_SHIFT = 1;
@@ -443,6 +484,61 @@ export class View {
   // commits only the focused layer's cursor, so an overlay cannot leak the base's.
   cursor() {
     return null;
+  }
+}
+
+// --- focus ---------------------------------------------------------------------------------
+// A flat set of focusable panes with a current one; directional movement is geometric over each
+// pane's `rect`, cycling is by registration order. A view holds one and routes keys to `current`.
+export class Focus {
+  constructor() {
+    this.panes = [];
+    this.current = null;
+  }
+
+  add(pane) {
+    this.panes.push(pane);
+    if (this.current == null) this.current = pane;
+    return pane;
+  }
+
+  set(pane) {
+    if (this.panes.indexOf(pane) >= 0) this.current = pane;
+  }
+
+  cycle(step) {
+    if (this.panes.length === 0) return;
+    let i = this.panes.indexOf(this.current);
+    if (i < 0) i = 0;
+    this.current = this.panes[(i + step + this.panes.length) % this.panes.length];
+  }
+
+  // Move to the nearest pane whose center lies in direction d ("h"|"j"|"k"|"l"), scoring by
+  // distance along that axis plus a penalty for cross-axis offset so aligned panes win.
+  dir(d) {
+    const cur = this.current;
+    if (!cur || !cur.rect) return;
+
+    const cx = cur.rect.x + cur.rect.w / 2;
+    const cy = cur.rect.y + cur.rect.h / 2;
+    let best = null;
+    let bestScore = Infinity;
+    for (const p of this.panes) {
+      if (p === cur || !p.rect) continue;
+
+      const dx = p.rect.x + p.rect.w / 2 - cx;
+      const dy = p.rect.y + p.rect.h / 2 - cy;
+      const along = d === "h" ? -dx : d === "l" ? dx : d === "k" ? -dy : dy;
+      if (along <= 0) continue;
+
+      const cross = d === "h" || d === "l" ? Math.abs(dy) : Math.abs(dx);
+      const score = along + cross * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    if (best) this.current = best;
   }
 }
 

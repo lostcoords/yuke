@@ -2,9 +2,9 @@
 // connect, command palette, ":" line, and a stub workspace explorer. A user's yuke.js layers
 // on top (keymaps, prototype patches, view swaps). Session list / transcript / composer are
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, View, root, quit, config } from "yuke:core";
+import { command, keymap, style, clip, fill, text, strokeOf, View, Focus, root, quit, config } from "yuke:core";
 import { ui } from "yuke:ui";
-import { connect, connectionState } from "yuke:client";
+import * as client from "yuke:client";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
 Object.assign(style.groups, {
@@ -44,45 +44,114 @@ function layout(w, h) {
   return { sidebarW, mainX, mainW, h };
 }
 
-// --- app shell ----------------------------------------------------------------------------
-// One root view: left session sidebar (empty until Phase 1), right main pane (empty until an
-// open session). Focus is sidebar | main so Phase 1 can attach list vs transcript keys.
-class AppView extends View {
+// --- panes ----------------------------------------------------------------------------------
+// Panes are focus targets: each owns its rect, draw(focused), and onKey(ev) (returns whether it
+// consumed the key). AppView composes them; a `Focus` routes keys to the current one.
+const SESSION_POLL_MS = 2000;
+
+function sessionTitle(s) {
+  const t = (s.title || "").trim();
+  return t !== "" ? t : "untitled";
+}
+
+// A one-cell activity mark: "!" needs attention, "●" working, "" idle.
+function activityMark(activity) {
+  const type = activity && activity.state ? activity.state.type : "idle";
+  if (type === "waiting_permission") return "!";
+  return type === "idle" ? "" : "●";
+}
+
+// The sidebar pane: the session.list rows, a cursor, and the active (opened) id. Loads on connect,
+// clears on drop; Enter only marks a row active for now — opening it is a later package.
+class SessionList {
   constructor() {
-    super();
-    this.focus = "sidebar"; // "sidebar" | "main"
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.rows = []; // [{ id, title, activity }]
+    this.selected = 0;
+    this.scroll = 0;
+    this.activeId = null;
+    this.loaded = false;
+    this.loading = false;
+    this.wasReady = false;
   }
 
   get name() {
-    return "app";
+    return "sessions";
+  }
+
+  // Load on the ready edge, clear on the drop edge; retry a failed load while still ready.
+  syncConnection() {
+    const ready = client.connectionState() === "ready";
+    if (ready && !this.wasReady) {
+      this.wasReady = true;
+      this.refresh();
+    } else if (!ready && this.wasReady) {
+      this.wasReady = false;
+      this.clear();
+      root.invalidate();
+    } else if (ready && !this.loaded && !this.loading) {
+      this.refresh();
+    }
+  }
+
+  refresh() {
+    if (client.connectionState() !== "ready" || this.loading) return;
+
+    this.loading = true;
+    client.sessionList().then(
+      (res) => {
+        this.loading = false;
+        this.loaded = true;
+        this.rows = res.items.map((it) => ({ id: it.session.id, title: sessionTitle(it.session), activity: it.activity }));
+        if (this.selected >= this.rows.length) this.selected = Math.max(0, this.rows.length - 1);
+        root.invalidate();
+      },
+      () => {
+        this.loading = false;
+        root.invalidate();
+      },
+    );
+  }
+
+  clear() {
+    this.rows = [];
+    this.selected = 0;
+    this.scroll = 0;
+    this.activeId = null;
+    this.loaded = false;
+  }
+
+  move(delta) {
+    if (this.rows.length === 0) return;
+    this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + delta));
+  }
+
+  current() {
+    return this.rows[this.selected] || null;
   }
 
   onKey(ev) {
-    const s = strokeOf(ev);
-
-    if (s === "tab") {
-      this.focus = this.focus === "sidebar" ? "main" : "sidebar";
-      return true;
+    switch (strokeOf(ev)) {
+      case "j":
+      case "down":
+        this.move(1);
+        return true;
+      case "k":
+      case "up":
+        this.move(-1);
+        return true;
+      case "enter": {
+        const row = this.current();
+        if (row) this.activeId = row.id;
+        return true;
+      }
     }
 
     return false;
   }
 
-  draw() {
-    const w = term.width;
-    const h = term.height;
-    fill(0, 0, w, h, "Normal");
-    if (w <= 0 || h <= 0) return;
-
-    const { sidebarW, mainX, mainW } = layout(w, h);
-    this._drawSidebar(0, 0, sidebarW, h);
-    if (mainX < w) {
-      paintRuleV(mainX - 1, 0, h, "YukeRule");
-      this._drawMain(mainX, 0, mainW, h);
-    }
-  }
-
-  _drawSidebar(x, y, sw, h) {
+  draw(focused) {
+    const { x, y, w: sw, h } = this.rect;
     if (sw <= 0 || h <= 0) return;
 
     const pad = sw >= 4 ? 1 : 0;
@@ -95,8 +164,7 @@ class AppView extends View {
     }
 
     if (row < y + h) {
-      const st = "local · " + connectionLabel();
-      text(x + pad, row, clip(st, iw), "YukeStatus");
+      text(x + pad, row, clip("local · " + connectionLabel(), iw), "YukeStatus");
       row++;
     }
 
@@ -105,26 +173,75 @@ class AppView extends View {
       row++;
     }
 
-    if (row < y + h) {
-      const st = connectionState();
-      const msg =
-        st === "ready" ? "no sessions" : st === "connecting" || st === "closing" ? "…" : "not connected";
-      text(x + pad, row, clip(msg, iw), "YukeEmpty");
-      row++;
-    }
+    const footerY = y + h - 1;
+    this._drawRows(x + pad, row, iw, Math.max(0, footerY - row), focused);
 
-    if (h > 0) {
-      const hint = this.focus === "sidebar" ? "tab main · - explore · : " : "tab · - · :";
-      text(x + pad, y + h - 1, clip(hint, iw), "YukeFooter");
+    if (footerY >= y) {
+      text(x + pad, footerY, clip("j/k move · ↵ open · ^w h/l pane", iw), "YukeFooter");
     }
   }
 
-  _drawMain(x, y, mw, h) {
+  // The rows, or an empty/status line. Scrolls to keep the cursor in view.
+  _drawRows(x, top, w, h, focused) {
+    if (h <= 0 || w <= 0) return;
+
+    const st = client.connectionState();
+    if (st !== "ready") {
+      text(x, top, clip(st === "connecting" || st === "closing" ? "…" : "not connected", w), "YukeEmpty");
+      return;
+    }
+
+    if (this.rows.length === 0) {
+      text(x, top, clip(this.loading ? "loading…" : "no sessions", w), "YukeEmpty");
+      return;
+    }
+
+    let first = this.scroll;
+    if (this.selected < first) first = this.selected;
+    if (this.selected >= first + h) first = this.selected - h + 1;
+    this.scroll = first;
+
+    for (let i = 0; i < h && first + i < this.rows.length; i++) {
+      const idx = first + i;
+      const rowY = top + i;
+      const data = this.rows[idx];
+      const isCursor = idx === this.selected && focused;
+      const isActive = data.id === this.activeId;
+
+      if (isCursor) fill(x, rowY, w, 1, "YukeSessionSel");
+
+      const mark = activityMark(data.activity);
+      const markW = mark ? 2 : 0;
+      const prefix = isActive ? "▸ " : "  ";
+      text(x, rowY, clip(prefix + data.title, Math.max(0, w - markW)), isCursor ? "YukeSessionSel" : "YukeSession");
+      if (mark) {
+        text(x + w - 1, rowY, mark, isCursor ? "YukeSessionMetaSel" : "YukeSessionMeta");
+      }
+    }
+  }
+}
+
+// The main pane: a placeholder until a transcript + composer land in a later package.
+class MainPane {
+  constructor() {
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  get name() {
+    return "main";
+  }
+
+  onKey(_ev) {
+    return false;
+  }
+
+  draw(_focused) {
+    const { x, y, w: mw, h } = this.rect;
     if (mw <= 0 || h <= 0) return;
 
     const pad = mw >= 4 ? 1 : 0;
     const iw = Math.max(0, mw - pad * 2);
-    const st = connectionState();
+    const st = client.connectionState();
 
     let msg;
     if (st !== "ready") {
@@ -141,8 +258,56 @@ class AppView extends View {
     }
 
     if (h > 0) {
-      const left = this.focus === "main" ? "tab sidebar · space palette · : command" : "space palette · : command";
-      text(x + pad, y + h - 1, clip(left, iw), "YukeFooter");
+      text(x + pad, y + h - 1, clip("space palette · : command", iw), "YukeFooter");
+    }
+  }
+}
+
+// --- app shell ----------------------------------------------------------------------------
+// The one root view: a two-pane shell (sidebar | main) owning layout, focus, and session-load.
+// Panes are focus targets in a `Focus`; keys route to the focused pane, focus:* moves between them.
+class AppView extends View {
+  constructor() {
+    super();
+    this.sidebar = new SessionList();
+    this.main = new MainPane();
+    this.focus = new Focus();
+    this.focus.add(this.sidebar);
+    this.focus.add(this.main);
+  }
+
+  get name() {
+    return "app";
+  }
+
+  // Session load-on-connect / clear-on-drop, plus the repaint heartbeat while connected.
+  needsTick() {
+    return client.connectionState() === "ready" || this.sidebar.loaded ? { periodMs: SESSION_POLL_MS } : null;
+  }
+
+  tick() {
+    this.sidebar.syncConnection();
+  }
+
+  onKey(ev) {
+    const pane = this.focus.current;
+    return pane && pane.onKey ? pane.onKey(ev) : false;
+  }
+
+  draw() {
+    const w = term.width;
+    const h = term.height;
+    fill(0, 0, w, h, "Normal");
+    if (w <= 0 || h <= 0) return;
+
+    const { sidebarW, mainX, mainW } = layout(w, h);
+    this.sidebar.rect = { x: 0, y: 0, w: sidebarW, h: h };
+    this.main.rect = { x: mainX, y: 0, w: mainW, h: h };
+
+    this.sidebar.draw(this.focus.current === this.sidebar);
+    if (mainX < w) {
+      paintRuleV(mainX - 1, 0, h, "YukeRule");
+      this.main.draw(this.focus.current === this.main);
     }
   }
 }
@@ -393,7 +558,7 @@ const connection = {
   },
 
   attempt() {
-    if (connectionState() !== "disconnected") return;
+    if (client.connectionState() !== "disconnected") return;
 
     this.nextRetryAt = 0;
     const d = config.daemon;
@@ -401,7 +566,7 @@ const connection = {
     if (d.token) opts.token = d.token;
 
     try {
-      connect(opts).then(
+      client.connect(opts).then(
         () => {
           root.invalidate();
         },
@@ -424,7 +589,7 @@ const connection = {
 
   // Ready always polls (drop → UI). Offline polls when auto-reconnect is on or a countdown is live.
   needsTick() {
-    const st = connectionState();
+    const st = client.connectionState();
     if (st === "ready") return { periodMs: READY_POLL_MS };
     if (st === "connecting" || st === "closing") return { periodMs: RETRY_POLL_MS };
     if (config.daemon.autoConnect !== false || this.nextRetryAt > 0) {
@@ -435,7 +600,7 @@ const connection = {
 
   // Auto path only: arm a retry if none is pending, else dial when due. Manual mode never retries.
   tick() {
-    if (connectionState() !== "disconnected") return;
+    if (client.connectionState() !== "disconnected") return;
     if (config.daemon.autoConnect === false) return;
 
     if (this.nextRetryAt === 0) {
@@ -448,7 +613,7 @@ const connection = {
 
 // Sidebar/main status: connected / connecting / offline with a retry countdown.
 function connectionLabel() {
-  const st = connectionState();
+  const st = client.connectionState();
   if (st === "ready") return "connected";
   if (st === "connecting") return "connecting…";
   if (st === "closing") return "disconnecting…";
@@ -469,6 +634,25 @@ command.add(null, {
   "app:explorer": () => openExplorer(EXPLORER_ROOT),
 });
 
+// Focus commands act on the active view's `focus` (a Focus), injected by the predicate — so one
+// binding moves focus in whatever view is active, and a user can rebind it to any stroke.
+command.add(
+  () => (root.active && root.active.focus ? [true, root.active.focus] : [false]),
+  {
+    "focus:left": (f) => moveFocus(f, "dir", "h"),
+    "focus:down": (f) => moveFocus(f, "dir", "j"),
+    "focus:up": (f) => moveFocus(f, "dir", "k"),
+    "focus:right": (f) => moveFocus(f, "dir", "l"),
+    "focus:next": (f) => moveFocus(f, "cycle", 1),
+    "focus:prev": (f) => moveFocus(f, "cycle", -1),
+  },
+);
+
+function moveFocus(focus, method, arg) {
+  focus[method](arg);
+  root.invalidate();
+}
+
 keymap.add({
   "-": "app:explorer",
   " ": "ui:palette",
@@ -476,10 +660,15 @@ keymap.add({
     openCommandLine();
     return true;
   },
+  "ctrl+w h": "focus:left",
+  "ctrl+w j": "focus:down",
+  "ctrl+w k": "focus:up",
+  "ctrl+w l": "focus:right",
+  "ctrl+w w": "focus:next",
 });
 
 root.setActive(app);
 root.addService(connection);
 
-// Exported so a user's yuke.js can reference the stock view (swap, subclass, or patch).
-export { app, AppView, openExplorer, openPalette, openCommandLine, connection };
+// Exported so a user's yuke.js can reference the stock views (swap, subclass, or patch).
+export { app, AppView, SessionList, MainPane, openExplorer, openPalette, openCommandLine, connection };

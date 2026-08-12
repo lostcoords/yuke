@@ -343,9 +343,10 @@ remote_ticket_done :: proc(user: rawptr, result: curl.Result) {
     }
 
     callbacks := client.Client_Callbacks {
-        on_ready = client_on_ready,
-        on_close = client_on_close,
-        on_error = client_on_error,
+        on_ready     = client_on_ready,
+        on_broadcast = client_on_broadcast,
+        on_close     = client_on_close,
+        on_error     = client_on_error,
     }
 
     open_err := client.client_open(&h.daemon.client, transport, "yuke", "0.1.0", callbacks, h, h.allocator)
