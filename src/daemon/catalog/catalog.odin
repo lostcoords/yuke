@@ -212,7 +212,6 @@ result_destroy :: proc(result: ^Result) {
     result^ = {}
 }
 
-@(private)
 provider_destroy :: proc(item: ^Provider, allocator: mem.Allocator) {
     assert(item != nil, "catalog provider cleanup needs a provider")
 
@@ -232,7 +231,6 @@ provider_destroy :: proc(item: ^Provider, allocator: mem.Allocator) {
     item^ = {}
 }
 
-@(private)
 model_destroy :: proc(model: ^Model, allocator: mem.Allocator) {
     assert(model != nil, "catalog model cleanup needs a model")
 
