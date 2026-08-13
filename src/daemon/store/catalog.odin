@@ -70,17 +70,12 @@ Catalog_Provider :: struct {
     credential_env: []string,
 }
 
-// A complete imported or custom model, including private inference metadata.
+// A complete imported or custom model, including private inference metadata. The
+// embedded `model` is the canonical resolved-model field set shared with the
+// decoder (`catalog.Model`) and the effective resolver.
 Catalog_Complete_Model :: struct {
-    source:               Catalog_Source,
-    info:                 wire.Model_Info,
-    upstream_id:          string,
-    endpoint:             provider.Endpoint,
-    supports_temperature: bool,
-    reasoning_replay:     model_catalog.Reasoning_Replay,
-    reasoning_format:     model_catalog.Reasoning_Format,
-    reasoning_budget_min: Maybe(i64),
-    reasoning_budget_max: Maybe(u64),
+    source:      Catalog_Source,
+    using model: model_catalog.Model,
 }
 
 // A JavaScript reasoning-level overlay. It intentionally owns no transport fields.
@@ -615,28 +610,30 @@ catalog_model_from_row :: proc(
 
         borrowed: Catalog_Model = Catalog_Complete_Model {
             source = source,
-            info = {
-                id = wire.Model_Id(row.public_model_id),
-                provider = provider_id,
-                name = name,
-                context_window = context_window,
-                max_output_tokens = max_output_tokens,
-                supports_vision = supports_vision,
-                supports_tools = supports_tools,
-                cost = {
-                    input = cost_input,
-                    output = cost_output,
-                    cache_read = cost_cache_read,
-                    cache_write = cost_cache_write,
+            model = {
+                info = {
+                    id = wire.Model_Id(row.public_model_id),
+                    provider = provider_id,
+                    name = name,
+                    context_window = context_window,
+                    max_output_tokens = max_output_tokens,
+                    supports_vision = supports_vision,
+                    supports_tools = supports_tools,
+                    cost = {
+                        input = cost_input,
+                        output = cost_output,
+                        cache_read = cost_cache_read,
+                        cache_write = cost_cache_write,
+                    },
                 },
+                upstream_id = upstream_id,
+                endpoint = {base_url = base_url, protocol = protocol},
+                supports_temperature = supports_temperature,
+                reasoning_replay = replay,
+                reasoning_format = format,
+                reasoning_budget_min = row.reasoning_budget_min,
+                reasoning_budget_max = row.reasoning_budget_max,
             },
-            upstream_id = upstream_id,
-            endpoint = {base_url = base_url, protocol = protocol},
-            supports_temperature = supports_temperature,
-            reasoning_replay = replay,
-            reasoning_format = format,
-            reasoning_budget_min = row.reasoning_budget_min,
-            reasoning_budget_max = row.reasoning_budget_max,
         }
         if !catalog_model_provider_valid(borrowed, data.providers[provider_index]) {
             return nil, .Invalid_Row

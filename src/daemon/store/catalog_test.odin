@@ -583,22 +583,24 @@ test_catalog_model :: proc(source: Catalog_Source, provider_id, local_id: string
 
     return Catalog_Complete_Model {
         source = source,
-        info = {
-            id = wire.Model_Id(public_id),
-            provider = wire.Provider_Id(provider_id),
-            name = "GPT",
-            context_window = 128_000,
-            max_output_tokens = 16_000,
-            reasoning_levels = TEST_CATALOG_LEVELS[:],
-            default_reasoning = "medium",
-            supports_vision = true,
-            supports_tools = true,
-            cost = {input = 2.0, output = 10.0, cache_read = 0.5, cache_write = 1.0},
+        model = {
+            info = {
+                id = wire.Model_Id(public_id),
+                provider = wire.Provider_Id(provider_id),
+                name = "GPT",
+                context_window = 128_000,
+                max_output_tokens = 16_000,
+                reasoning_levels = TEST_CATALOG_LEVELS[:],
+                default_reasoning = "medium",
+                supports_vision = true,
+                supports_tools = true,
+                cost = {input = 2.0, output = 10.0, cache_read = 0.5, cache_write = 1.0},
+            },
+            upstream_id = local_id,
+            endpoint = {base_url = "https://api.openai.com/v1", protocol = .Openai_Responses},
+            supports_temperature = true,
+            reasoning_replay = .Reasoning_Details,
+            reasoning_format = .Native,
         },
-        upstream_id = local_id,
-        endpoint = {base_url = "https://api.openai.com/v1", protocol = .Openai_Responses},
-        supports_temperature = true,
-        reasoning_replay = .Reasoning_Details,
-        reasoning_format = .Native,
     }
 }
