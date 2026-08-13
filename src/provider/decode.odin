@@ -4,9 +4,11 @@ import "base:runtime"
 import "core:encoding/json"
 import "core:math"
 
+import "src:wire"
+
 // Largest integer every supported JSON number representation carries exactly.
 // Provider counters outside this range degrade per the helper that reads them.
-MAX_EXACT_JSON_INTEGER :: u64(9_007_199_254_740_991)
+MAX_EXACT_JSON_INTEGER :: u64(wire.MAX_WIRE_INTEGER)
 
 // Parse one provider event as a JSON object. Unknown members stay permitted,
 // duplicate members and trailing values do not. The tree is allocated into
