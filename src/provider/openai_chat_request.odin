@@ -8,6 +8,8 @@ import "src:wire"
 
 // Reasoning effort level, sent verbatim on the wire. `None` is the literal
 // "none" some 2026 models accept; `Minimal` keeps older-model compatibility.
+// `Max` arrived with the gpt-5.6 family; Codex models stop at `Xhigh`. Catalog
+// resolution only ever picks a level the resolved model advertises.
 Openai_Effort :: enum {
     None,
     Minimal,
@@ -15,6 +17,7 @@ Openai_Effort :: enum {
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 // Which request-body control carries the reasoning knob. OpenAI-compatible
@@ -99,6 +102,7 @@ openai_effort_wire := [Openai_Effort]string {
     .Medium  = "medium",
     .High    = "high",
     .Xhigh   = "xhigh",
+    .Max     = "max",
 }
 
 // Assistant field name a reasoning-replay mode writes under.
@@ -820,7 +824,7 @@ openai_message_sep :: proc(out: ^Openai_Message_Writer) -> Transport_Error {
     return .None
 }
 
-#assert(len(Openai_Effort) == 6)
+#assert(len(Openai_Effort) == 7)
 #assert(len(Openai_Thinking_Format) == 9)
 #assert(len(Openai_Reasoning_Replay) == 4)
 #assert(len(Openai_Max_Tokens_Field) == 2)
