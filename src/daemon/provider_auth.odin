@@ -796,7 +796,7 @@ provider_token_request_start :: proc(d: ^Daemon, body: string) -> bool {
     assert(login.transfer.state != .Running, "pending login already has a transfer")
     provider := oauth.provider(login.kind)
 
-    provider_response_reset(login)
+    bounded_response_reset(&login.response)
 
     transfer_err := auth_transfer_start(
         d,
@@ -879,7 +879,7 @@ provider_device_request_start :: proc(
     assert(login.transfer.state != .Running, "device request raced another transfer")
     provider := oauth.provider(login.kind)
 
-    provider_response_reset(login)
+    bounded_response_reset(&login.response)
 
     transfer_err := auth_transfer_start(d, &login.transfer, url, body, content_type, provider_token_on_body, on_done)
     if transfer_err != .None {
@@ -927,13 +927,6 @@ bounded_response_body :: proc(response: ^Bounded_Response) -> string {
     assert(response != nil, "response body needs a buffer")
 
     return string(response.bytes[:response.filled])
-}
-
-provider_response_reset :: proc(login: ^Provider_Login) {
-    assert(login != nil, "OAuth response reset needs a login")
-    assert(login.transfer.state != .Running, "OAuth response reset raced a transfer")
-
-    bounded_response_reset(&login.response)
 }
 
 provider_token_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
