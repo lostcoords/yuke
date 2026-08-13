@@ -78,6 +78,15 @@ COMMANDS := []Command {
             "on the command line or returned by the daemon.",
         },
     },
+    {
+        name = "catalog",
+        args = "<verb>",
+        summary = "manage the local model catalog",
+        detail = {
+            "  yuke catalog list               show the daemon's current models",
+            "  yuke catalog refresh            fetch models.dev and rebuild the catalog on the daemon",
+        },
+    },
     {name = "help", args = "[command]", summary = "show this message, or the detail for one command", detail = {}},
 }
 

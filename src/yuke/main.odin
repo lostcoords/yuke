@@ -6,6 +6,7 @@ yuke: one binary, a handful of subcommands over a single `~/.config/yuke` identi
   yuke service    install/manage the daemon as a background OS service
   yuke login      device-code enrollment against the control plane
   yuke provider   list and change daemon-owned provider credentials
+  yuke catalog    refresh the daemon's model catalog from models.dev
 
 Role is per-invocation, not a persisted identity: the same device credential backs the client,
 the daemon, and login. This file only routes; each subcommand's body lives in its own
@@ -41,6 +42,11 @@ main :: proc() {
 
     case "provider":
         if code := provider_run(); code != 0 {
+            os.exit(code)
+        }
+
+    case "catalog":
+        if code := catalog_run(); code != 0 {
             os.exit(code)
         }
 
