@@ -1,8 +1,11 @@
 package daemon
 
+import "core:mem"
+import "core:nbio"
 import "core:testing"
 
 import store "src:daemon/store"
+import wire "src:wire"
 
 @(private)
 catalog_test_store :: proc(t: ^testing.T, d: ^Daemon) -> ^store.Store {
@@ -85,4 +88,39 @@ test_catalog_refresh_settle_rejects_transport_failure :: proc(t: ^testing.T) {
 
     outcome := catalog_refresh_settle(&d, .Couldnt_Connect, 0, false, nil, "")
     testing.expect(t, !outcome.ok, "a transport failure is an error")
+}
+
+// The in-flight fetch owns its request id: the inbound frame's arena is reset and wiped
+// when the request returns, long before the fetch completes.
+@(test)
+test_catalog_refresh_owns_its_request_id :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    d: Daemon
+    d.loop = nbio.current_thread_event_loop()
+    s := refresh_op_daemon(t, &d)
+    defer store.close(s)
+    defer catalog_state_destroy(&d)
+
+    testing.expect_value(t, catalog_refresh_init(&d), Error.None)
+    defer catalog_refresh_destroy(&d)
+
+    // Stands in for the frame arena: the bytes the id points at are reused and wiped as
+    // soon as the request that carried it returns.
+    borrowed: [7]byte
+    copy(borrowed[:], `"req-1"`)
+
+    testing.expect(t, catalog_refresh_begin(&d, 7, wire.Request_Id(string(borrowed[:]))), "the fetch starts")
+    defer catalog_refresh_shutdown(&d)
+
+    mem.zero_slice(borrowed[:])
+
+    op := d.catalog_refresh.operation
+    if testing.expect(t, op != nil, "the started fetch is the live operation") {
+        testing.expect_value(t, string(op.request_id), `"req-1"`)
+        testing.expect_value(t, wire.req_id_validate(op.request_id), wire.Validation_Error.None)
+    }
 }

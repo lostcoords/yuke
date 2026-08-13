@@ -36,6 +36,9 @@ Catalog_Refresh :: struct {
 Catalog_Refresh_Op :: struct {
     transfer:   curl.Transfer,
     ticket:     Conn_Ticket,
+
+    // Owned clone of the request id the response correlates against. The inbound frame's
+    // arena is reset and wiped when the request returns, long before this fetch completes.
     request_id: wire.Request_Id,
     feed:       [dynamic]byte,
     overflow:   bool,
@@ -97,8 +100,16 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     }
     op^ = {}
     op.ticket = ticket
-    op.request_id = request_id
     op.feed.allocator = d.allocator
+
+    cloned_id, id_err := strings.clone(string(request_id), d.allocator)
+    if id_err != nil {
+        free(op, d.allocator)
+
+        return false
+    }
+
+    op.request_id = wire.Request_Id(cloned_id)
     d.catalog_refresh.operation = op
 
     scratch: virtual.Arena
@@ -215,9 +226,6 @@ catalog_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
     assert(op != nil, "catalog refresh completion lost its owner")
     assert(op.transfer.state == .Done, "catalog refresh completion needs a terminal transfer")
 
-    ticket := op.ticket
-    request_id := op.request_id
-
     outcome := catalog_refresh_settle(
         d,
         result.code,
@@ -227,8 +235,11 @@ catalog_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
         string(op.etag[:op.etag_len]),
     )
 
+    // The slot is released before the answer so the next refresh may start, but the
+    // operation outlives it: the response borrows the id the operation owns.
+    ticket := op.ticket
     d.catalog_refresh.operation = nil
-    catalog_refresh_free(d, op)
+    defer catalog_refresh_free(d, op)
 
     if outcome.changed {
         _ = broadcast(d, wire.Catalog_Changed_Data{catalog_rev = d.catalog.rev, health = d.catalog.health})
@@ -247,9 +258,9 @@ catalog_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
             catalog_rev = d.catalog.rev,
             health      = d.catalog.health,
         }
-        send_result(conn, request_id, result_payload, conn.allocator)
+        send_result(conn, op.request_id, result_payload, conn.allocator)
     } else {
-        send_error(conn, request_id, .Internal, outcome.message, conn.allocator)
+        send_error(conn, op.request_id, .Internal, outcome.message, conn.allocator)
     }
 }
 
@@ -313,6 +324,7 @@ catalog_refresh_free :: proc(d: ^Daemon, op: ^Catalog_Refresh_Op) {
     assert(op.transfer.state != .Running, "catalog refresh cleanup with a live transfer")
 
     delete(op.feed)
+    delete(string(op.request_id), d.allocator)
     op^ = {}
     free(op, d.allocator)
 }
