@@ -559,8 +559,8 @@ reasoning_format_decode :: proc(
         return .Native, .None
     }
 
-    mapped, ok := reasoning_format_from_script(name)
-    if !ok || !reasoning_format_compatible(protocol, mapped) {
+    mapped, ok := catalog.reasoning_format_from_string(name)
+    if !ok || !catalog.reasoning_format_compatible(protocol, mapped) {
         return .Native, .Invalid
     }
 
@@ -584,73 +584,12 @@ reasoning_replay_decode :: proc(
         return .None, .None
     }
 
-    mapped, ok := reasoning_replay_from_script(name)
+    mapped, ok := catalog.reasoning_replay_from_string(name)
     if !ok {
         return .None, .Invalid
     }
 
     return mapped, .None
-}
-
-reasoning_format_from_script :: proc(name: string) -> (catalog.Reasoning_Format, bool) {
-    switch name {
-    case "native":
-        return .Native, true
-
-    case "openai-effort-toggle-off":
-        return .Openai_Effort_Toggle_Off, true
-
-    case "openrouter-effort":
-        return .Openrouter_Effort, true
-
-    case "zai-toggle":
-        return .Zai_Toggle, true
-
-    case "qwen-thinking":
-        return .Qwen_Thinking, true
-
-    case "anthropic-adaptive":
-        return .Anthropic_Adaptive, true
-    }
-
-    return {}, false
-}
-
-reasoning_replay_from_script :: proc(name: string) -> (catalog.Reasoning_Replay, bool) {
-    switch name {
-    case "none":
-        return .None, true
-
-    case "reasoning-content":
-        return .Reasoning_Content, true
-
-    case "reasoning-details":
-        return .Reasoning_Details, true
-    }
-
-    return {}, false
-}
-
-// A custom model's request format must match its provider protocol. `Native` is always the
-// protocol's ordinary shape; the remaining formats are protocol-specific exceptions.
-reasoning_format_compatible :: proc(protocol: wire.Provider_Protocol, format: catalog.Reasoning_Format) -> bool {
-    switch protocol {
-    case .Anthropic_Messages:
-        return format == .Native || format == .Anthropic_Adaptive
-
-    case .Openai_Chat:
-        #partial switch format {
-        case .Native, .Openai_Effort_Toggle_Off, .Openrouter_Effort, .Zai_Toggle, .Qwen_Thinking:
-            return true
-        }
-
-        return false
-
-    case .Openai_Responses:
-        return format == .Native
-    }
-
-    return false
 }
 
 provider_overrides_decode :: proc(

@@ -91,6 +91,11 @@ Insert_Config_Params :: struct {
     reasoning:  string,
 }
 
+Catalog_Source_Size_Row :: struct {
+    providers: u64,
+    models:    u64,
+}
+
 Session_Config_Row :: struct {
     config_rev: wire.Config_Rev,
     model:      string,
@@ -137,6 +142,68 @@ Session_Page_Row :: struct {
 
 Session_Count_Row :: struct {
     total: u64,
+}
+
+Delete_Catalog_Provider_Params :: struct {
+    provider_id: string,
+    source:      string,
+}
+
+Delete_Catalog_Source_Params :: struct {
+    source: string,
+}
+
+Catalog_Source_Size_Params :: struct {
+    source: string,
+}
+
+Insert_Catalog_Provider_Params :: struct {
+    provider_id:   string,
+    source:        string,
+    models_dev_id: Maybe(string),
+    name:          Maybe(string),
+    base_url:      Maybe(string),
+    protocol:      Maybe(string),
+    etag:          Maybe(string),
+}
+
+Insert_Catalog_Provider_Env_Params :: struct {
+    provider_id: string,
+    source:      string,
+    ordinal:     int,
+    name:        string,
+}
+
+Insert_Catalog_Model_Params :: struct {
+    public_model_id:      string,
+    provider_id:          string,
+    source:               string,
+    kind:                 string,
+    upstream_id:          Maybe(string),
+    name:                 Maybe(string),
+    context_window:       Maybe(u64),
+    max_output_tokens:    Maybe(u64),
+    base_url:             Maybe(string),
+    protocol:             Maybe(string),
+    supports_temperature: Maybe(bool),
+    reasoning_replay:     Maybe(string),
+    reasoning_format:     Maybe(string),
+    reasoning_budget_min: Maybe(i64),
+    reasoning_budget_max: Maybe(u64),
+    supports_vision:      Maybe(bool),
+    supports_tools:       Maybe(bool),
+    cost_input:           Maybe(f64),
+    cost_output:          Maybe(f64),
+    cost_cache_read:      Maybe(f64),
+    cost_cache_write:     Maybe(f64),
+}
+
+Insert_Catalog_Model_Level_Params :: struct {
+    public_model_id: string,
+    source:          string,
+    kind:            string,
+    ordinal:         int,
+    level:           string,
 }
 
 Clear_Configs_Params :: struct {
@@ -263,6 +330,13 @@ Session_Count_Params :: struct {
 
 @(private)
 Query_Id :: enum {
+    Delete_Catalog_Provider,
+    Delete_Catalog_Source,
+    Catalog_Source_Size,
+    Insert_Catalog_Provider,
+    Insert_Catalog_Provider_Env,
+    Insert_Catalog_Model,
+    Insert_Catalog_Model_Level,
     Clear_Configs,
     Set_Session_Config,
     Set_Prompt,
@@ -288,71 +362,107 @@ Query_Id :: enum {
 
 @(private, rodata)
 QUERY_SQL := [Query_Id]string {
-    .Clear_Configs        = `DELETE FROM session_configs WHERE session_id = :session_id;`,
-    .Set_Session_Config   = `UPDATE sessions
+    .Delete_Catalog_Provider     = `DELETE FROM catalog_providers
+    WHERE provider_id = :provider_id AND source = :source;`,
+    .Delete_Catalog_Source       = `DELETE FROM catalog_providers WHERE source = :source;`,
+    .Catalog_Source_Size         = `SELECT
+    (SELECT count(*) FROM catalog_providers WHERE source = :source) AS providers,
+    (SELECT count(*) FROM catalog_models WHERE source = :source) AS models;`,
+    .Insert_Catalog_Provider     = `INSERT INTO catalog_providers(
+    provider_id, source, models_dev_id, name, base_url, protocol, etag
+)
+VALUES (
+    :provider_id, :source, :models_dev_id, :name, :base_url, :protocol, :etag
+);`,
+    .Insert_Catalog_Provider_Env = `INSERT INTO catalog_provider_env(provider_id, source, ordinal, name)
+VALUES (:provider_id, :source, :ordinal, :name);`,
+    .Insert_Catalog_Model        = `INSERT INTO catalog_models(
+    public_model_id, provider_id, source, kind,
+    upstream_id, name, context_window, max_output_tokens,
+    base_url, protocol, supports_temperature,
+    reasoning_replay, reasoning_format,
+    reasoning_budget_min, reasoning_budget_max,
+    supports_vision, supports_tools,
+    cost_input, cost_output, cost_cache_read, cost_cache_write
+)
+VALUES (
+    :public_model_id, :provider_id, :source, :kind,
+    :upstream_id, :name, :context_window, :max_output_tokens,
+    :base_url, :protocol, :supports_temperature,
+    :reasoning_replay, :reasoning_format,
+    :reasoning_budget_min, :reasoning_budget_max,
+    :supports_vision, :supports_tools,
+    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
+);`,
+    .Insert_Catalog_Model_Level  = `INSERT INTO catalog_model_reasoning_levels(
+    public_model_id, source, kind, ordinal, level
+)
+VALUES (:public_model_id, :source, :kind, :ordinal, :level);`,
+    .Clear_Configs               = `DELETE FROM session_configs WHERE session_id = :session_id;`,
+    .Set_Session_Config          = `UPDATE sessions
     SET config_rev = :config_rev, model = :model, reasoning = :reasoning
     WHERE id = :session_id;`,
-    .Set_Prompt           = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
+    .Set_Prompt                  = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
     SELECT :session_id, :prompt WHERE :prompt IS NOT NULL;`,
-    .Session_Config       = `SELECT config_rev, model, reasoning FROM session_configs
+    .Session_Config              = `SELECT config_rev, model, reasoning FROM session_configs
     WHERE session_id = :session_id AND config_rev = :requested_rev;`,
-    .Upsert_Api_Key       = `INSERT OR REPLACE INTO provider_credentials(provider_id, kind, api_key)
+    .Upsert_Api_Key              = `INSERT OR REPLACE INTO provider_credentials(provider_id, kind, api_key)
 VALUES (:provider_id, 'api_key', :api_key);`,
-    .Upsert_OAuth         = `INSERT OR REPLACE INTO provider_credentials(
+    .Upsert_OAuth                = `INSERT OR REPLACE INTO provider_credentials(
     provider_id, kind, access_token, refresh_token, expires_at_ms, account_id
 )
 VALUES (
     :provider_id, 'oauth', :access_token, :refresh_token, :expires_at_ms, :account_id
 );`,
-    .Remove_Credential    = `DELETE FROM provider_credentials WHERE provider_id = :provider_id;`,
-    .Append_Event         = `INSERT INTO events(session_id, seq, name, payload)
+    .Remove_Credential           = `DELETE FROM provider_credentials WHERE provider_id = :provider_id;`,
+    .Append_Event                = `INSERT INTO events(session_id, seq, name, payload)
     VALUES (:session_id, :seq, :name, :payload);`,
-    .Advance_Seq          = `UPDATE sessions SET seq_high = :seq
+    .Advance_Seq                 = `UPDATE sessions SET seq_high = :seq
     WHERE id = :session_id AND seq_high = :seq - 1;`,
-    .Bump_Ids             = `UPDATE sessions SET
+    .Bump_Ids                    = `UPDATE sessions SET
     message_id_high = MAX(message_id_high, :message_id_high),
     run_id_high     = MAX(run_id_high, :run_id_high),
     input_id_high   = MAX(input_id_high, :input_id_high),
     config_rev_high = MAX(config_rev_high, :config_rev_high)
     WHERE id = :session_id;`,
-    .Read_High            = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    .Read_High                   = `SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
     FROM sessions WHERE id = :session_id;`,
-    .Truncate_Messages    = `DELETE FROM messages
+    .Truncate_Messages           = `DELETE FROM messages
     WHERE session_id = :session_id AND message_id >= :first_removed_id;`,
-    .Count_Messages       = `UPDATE sessions SET
+    .Count_Messages              = `UPDATE sessions SET
     message_count = message_count + :delta,
     updated_at_ms = MAX(updated_at_ms, COALESCE(:updated_at_ms, 0))
     WHERE id = :session_id;`,
-    .Session_History_Page = `SELECT m.message_id, m.seq, e.payload
+    .Session_History_Page        = `SELECT m.message_id, m.seq, e.payload
     FROM messages m
     JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
     WHERE m.session_id = :session_id
       AND (:cursor_message_id IS NULL OR m.message_id < :cursor_message_id)
     ORDER BY m.message_id DESC
     LIMIT :limit;`,
-    .Set_Open_Run         = `UPDATE sessions SET
+    .Set_Open_Run                = `UPDATE sessions SET
     open_run_id            = :open_run_id,
     open_run_kind          = :open_run_kind,
     open_run_reason        = :open_run_reason,
     open_run_config_rev    = :open_run_config_rev,
     open_run_started_at_ms = :open_run_started_at_ms
     WHERE id = :session_id;`,
-    .Clear_Open_Run       = `UPDATE sessions SET
+    .Clear_Open_Run              = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
     open_run_reason        = NULL,
     open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id AND open_run_id = :open_run_id;`,
-    .Reset_Open_Run       = `UPDATE sessions SET
+    .Reset_Open_Run              = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
     open_run_reason        = NULL,
     open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id;`,
-    .Session_Exists       = `SELECT 1 FROM sessions WHERE id = :session_id;`,
-    .Session_Snapshot     = `SELECT
+    .Session_Exists              = `SELECT 1 FROM sessions WHERE id = :session_id;`,
+    .Session_Snapshot            = `SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
@@ -361,7 +471,7 @@ VALUES (
     open_run_id, open_run_kind, open_run_reason, open_run_config_rev, open_run_started_at_ms
 FROM sessions
 WHERE id = :session_id;`,
-    .Session_Page         = `SELECT
+    .Session_Page                = `SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
@@ -377,7 +487,7 @@ WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
        OR (updated_at_ms = :cursor_updated_at_ms AND id < :cursor_id))
 ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;`,
-    .Session_Count        = `SELECT count(*) AS total FROM sessions
+    .Session_Count               = `SELECT count(*) AS total FROM sessions
 WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)
   AND (:job_id       IS NULL OR job_id       = :job_id)
@@ -385,30 +495,92 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
 }
 
 Queries :: struct {
-    clear_configs:        sqlite.Bind_Mapping(Clear_Configs_Params),
-    set_session_config:   sqlite.Bind_Mapping(Set_Session_Config_Params),
-    set_prompt:           sqlite.Bind_Mapping(Set_Prompt_Params),
-    session_config:       sqlite.Reader(Session_Config_Params, Session_Config_Row),
-    upsert_api_key:       sqlite.Bind_Mapping(Upsert_Api_Key_Params),
-    upsert_oauth:         sqlite.Bind_Mapping(Upsert_OAuth_Params),
-    remove_credential:    sqlite.Bind_Mapping(Remove_Credential_Params),
-    append_event:         sqlite.Bind_Mapping(Append_Event_Params),
-    advance_seq:          sqlite.Bind_Mapping(Advance_Seq_Params),
-    bump_ids:             sqlite.Bind_Mapping(Bump_Ids_Params),
-    read_high:            sqlite.Reader(Read_High_Params, Read_High_Row),
-    truncate_messages:    sqlite.Bind_Mapping(Truncate_Messages_Params),
-    count_messages:       sqlite.Bind_Mapping(Count_Messages_Params),
-    session_history_page: sqlite.Reader(Session_History_Page_Params, Session_History_Page_Row),
-    set_open_run:         sqlite.Bind_Mapping(Set_Open_Run_Params),
-    clear_open_run:       sqlite.Bind_Mapping(Clear_Open_Run_Params),
-    reset_open_run:       sqlite.Bind_Mapping(Reset_Open_Run_Params),
-    session_exists:       sqlite.Bind_Mapping(Session_Exists_Params),
-    session_snapshot:     sqlite.Reader(Session_Snapshot_Params, Session_Row),
-    session_page:         sqlite.Reader(Session_Page_Params, Session_Page_Row),
-    session_count:        sqlite.Reader(Session_Count_Params, Session_Count_Row),
+    delete_catalog_provider:     sqlite.Bind_Mapping(Delete_Catalog_Provider_Params),
+    delete_catalog_source:       sqlite.Bind_Mapping(Delete_Catalog_Source_Params),
+    catalog_source_size:         sqlite.Reader(Catalog_Source_Size_Params, Catalog_Source_Size_Row),
+    insert_catalog_provider:     sqlite.Bind_Mapping(Insert_Catalog_Provider_Params),
+    insert_catalog_provider_env: sqlite.Bind_Mapping(Insert_Catalog_Provider_Env_Params),
+    insert_catalog_model:        sqlite.Bind_Mapping(Insert_Catalog_Model_Params),
+    insert_catalog_model_level:  sqlite.Bind_Mapping(Insert_Catalog_Model_Level_Params),
+    clear_configs:               sqlite.Bind_Mapping(Clear_Configs_Params),
+    set_session_config:          sqlite.Bind_Mapping(Set_Session_Config_Params),
+    set_prompt:                  sqlite.Bind_Mapping(Set_Prompt_Params),
+    session_config:              sqlite.Reader(Session_Config_Params, Session_Config_Row),
+    upsert_api_key:              sqlite.Bind_Mapping(Upsert_Api_Key_Params),
+    upsert_oauth:                sqlite.Bind_Mapping(Upsert_OAuth_Params),
+    remove_credential:           sqlite.Bind_Mapping(Remove_Credential_Params),
+    append_event:                sqlite.Bind_Mapping(Append_Event_Params),
+    advance_seq:                 sqlite.Bind_Mapping(Advance_Seq_Params),
+    bump_ids:                    sqlite.Bind_Mapping(Bump_Ids_Params),
+    read_high:                   sqlite.Reader(Read_High_Params, Read_High_Row),
+    truncate_messages:           sqlite.Bind_Mapping(Truncate_Messages_Params),
+    count_messages:              sqlite.Bind_Mapping(Count_Messages_Params),
+    session_history_page:        sqlite.Reader(Session_History_Page_Params, Session_History_Page_Row),
+    set_open_run:                sqlite.Bind_Mapping(Set_Open_Run_Params),
+    clear_open_run:              sqlite.Bind_Mapping(Clear_Open_Run_Params),
+    reset_open_run:              sqlite.Bind_Mapping(Reset_Open_Run_Params),
+    session_exists:              sqlite.Bind_Mapping(Session_Exists_Params),
+    session_snapshot:            sqlite.Reader(Session_Snapshot_Params, Session_Row),
+    session_page:                sqlite.Reader(Session_Page_Params, Session_Page_Row),
+    session_count:               sqlite.Reader(Session_Count_Params, Session_Count_Row),
 }
 
 queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.allocator) -> sqlite.Error {
+    delete_catalog_provider_stmt := sqlite.prepare(db, QUERY_SQL[.Delete_Catalog_Provider]) or_return
+    delete_catalog_provider_bind, delete_catalog_provider_bind_err := sqlite.bind_prepare(
+        delete_catalog_provider_stmt,
+        Delete_Catalog_Provider_Params,
+    )
+    assert(delete_catalog_provider_bind_err == .None, "generated statement matches its generated struct")
+    queries.delete_catalog_provider = delete_catalog_provider_bind
+    delete_catalog_source_stmt := sqlite.prepare(db, QUERY_SQL[.Delete_Catalog_Source]) or_return
+    delete_catalog_source_bind, delete_catalog_source_bind_err := sqlite.bind_prepare(
+        delete_catalog_source_stmt,
+        Delete_Catalog_Source_Params,
+    )
+    assert(delete_catalog_source_bind_err == .None, "generated statement matches its generated struct")
+    queries.delete_catalog_source = delete_catalog_source_bind
+    catalog_source_size_stmt := sqlite.prepare(db, QUERY_SQL[.Catalog_Source_Size]) or_return
+    catalog_source_size_reader, catalog_source_size_reader_err := sqlite.reader_prepare(
+        catalog_source_size_stmt,
+        Catalog_Source_Size_Params,
+        Catalog_Source_Size_Row,
+        allocator,
+    )
+    if catalog_source_size_reader_err == .Out_Of_Memory {
+        sqlite.finalize(catalog_source_size_stmt)
+        return catalog_source_size_reader_err
+    }
+    assert(catalog_source_size_reader_err == .None, "generated statement matches its generated struct")
+    queries.catalog_source_size = catalog_source_size_reader
+    insert_catalog_provider_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Provider]) or_return
+    insert_catalog_provider_bind, insert_catalog_provider_bind_err := sqlite.bind_prepare(
+        insert_catalog_provider_stmt,
+        Insert_Catalog_Provider_Params,
+    )
+    assert(insert_catalog_provider_bind_err == .None, "generated statement matches its generated struct")
+    queries.insert_catalog_provider = insert_catalog_provider_bind
+    insert_catalog_provider_env_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Provider_Env]) or_return
+    insert_catalog_provider_env_bind, insert_catalog_provider_env_bind_err := sqlite.bind_prepare(
+        insert_catalog_provider_env_stmt,
+        Insert_Catalog_Provider_Env_Params,
+    )
+    assert(insert_catalog_provider_env_bind_err == .None, "generated statement matches its generated struct")
+    queries.insert_catalog_provider_env = insert_catalog_provider_env_bind
+    insert_catalog_model_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Model]) or_return
+    insert_catalog_model_bind, insert_catalog_model_bind_err := sqlite.bind_prepare(
+        insert_catalog_model_stmt,
+        Insert_Catalog_Model_Params,
+    )
+    assert(insert_catalog_model_bind_err == .None, "generated statement matches its generated struct")
+    queries.insert_catalog_model = insert_catalog_model_bind
+    insert_catalog_model_level_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Model_Level]) or_return
+    insert_catalog_model_level_bind, insert_catalog_model_level_bind_err := sqlite.bind_prepare(
+        insert_catalog_model_level_stmt,
+        Insert_Catalog_Model_Level_Params,
+    )
+    assert(insert_catalog_model_level_bind_err == .None, "generated statement matches its generated struct")
+    queries.insert_catalog_model_level = insert_catalog_model_level_bind
     clear_configs_stmt := sqlite.prepare(db, QUERY_SQL[.Clear_Configs]) or_return
     clear_configs_bind, clear_configs_bind_err := sqlite.bind_prepare(clear_configs_stmt, Clear_Configs_Params)
     assert(clear_configs_bind_err == .None, "generated statement matches its generated struct")
@@ -560,6 +732,14 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
 }
 
 queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
+    sqlite.finalize(queries.delete_catalog_provider.statement)
+    sqlite.finalize(queries.delete_catalog_source.statement)
+    sqlite.finalize(queries.catalog_source_size.statement)
+    sqlite.reader_destroy(&queries.catalog_source_size, allocator)
+    sqlite.finalize(queries.insert_catalog_provider.statement)
+    sqlite.finalize(queries.insert_catalog_provider_env.statement)
+    sqlite.finalize(queries.insert_catalog_model.statement)
+    sqlite.finalize(queries.insert_catalog_model_level.statement)
     sqlite.finalize(queries.clear_configs.statement)
     sqlite.finalize(queries.set_session_config.statement)
     sqlite.finalize(queries.set_prompt.statement)
@@ -587,6 +767,48 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.reader_destroy(&queries.session_page, allocator)
     sqlite.finalize(queries.session_count.statement)
     sqlite.reader_destroy(&queries.session_count, allocator)
+}
+
+delete_catalog_provider :: proc(q: ^Queries, params_in: Delete_Catalog_Provider_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.delete_catalog_provider, &params)
+}
+
+delete_catalog_source :: proc(q: ^Queries, params_in: Delete_Catalog_Source_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.delete_catalog_source, &params)
+}
+
+catalog_source_size :: proc(
+    q: ^Queries,
+    params_in: Catalog_Source_Size_Params,
+    allocator := context.allocator,
+) -> (
+    Catalog_Source_Size_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_one(&q.catalog_source_size, &params, allocator)
+}
+
+insert_catalog_provider :: proc(q: ^Queries, params_in: Insert_Catalog_Provider_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.insert_catalog_provider, &params)
+}
+
+insert_catalog_provider_env :: proc(q: ^Queries, params_in: Insert_Catalog_Provider_Env_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.insert_catalog_provider_env, &params)
+}
+
+insert_catalog_model :: proc(q: ^Queries, params_in: Insert_Catalog_Model_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.insert_catalog_model, &params)
+}
+
+insert_catalog_model_level :: proc(q: ^Queries, params_in: Insert_Catalog_Model_Level_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.insert_catalog_model_level, &params)
 }
 
 clear_configs :: proc(q: ^Queries, params_in: Clear_Configs_Params) -> sqlite.Result {

@@ -57,6 +57,84 @@ Reasoning_Format :: enum {
 #assert(len(Reasoning_Replay) == 3)
 #assert(len(Reasoning_Format) == 6)
 
+@(rodata)
+reasoning_replay_string := [Reasoning_Replay]string {
+    .None              = "none",
+    .Reasoning_Content = "reasoning-content",
+    .Reasoning_Details = "reasoning-details",
+}
+
+@(rodata)
+reasoning_format_string := [Reasoning_Format]string {
+    .Native                   = "native",
+    .Openai_Effort_Toggle_Off = "openai-effort-toggle-off",
+    .Openrouter_Effort        = "openrouter-effort",
+    .Zai_Toggle               = "zai-toggle",
+    .Qwen_Thinking            = "qwen-thinking",
+    .Anthropic_Adaptive       = "anthropic-adaptive",
+}
+
+reasoning_replay_valid :: proc(value: Reasoning_Replay) -> bool {
+    return int(value) >= 0 && int(value) < len(reasoning_replay_string)
+}
+
+reasoning_replay_to_string :: proc(value: Reasoning_Replay) -> string {
+    assert(reasoning_replay_valid(value), "a reasoning replay value is closed")
+
+    return reasoning_replay_string[value]
+}
+
+reasoning_replay_from_string :: proc(name: string) -> (Reasoning_Replay, bool) {
+    for candidate, value in reasoning_replay_string {
+        if candidate == name {
+            return value, true
+        }
+    }
+
+    return {}, false
+}
+
+reasoning_format_valid :: proc(value: Reasoning_Format) -> bool {
+    return int(value) >= 0 && int(value) < len(reasoning_format_string)
+}
+
+reasoning_format_to_string :: proc(value: Reasoning_Format) -> string {
+    assert(reasoning_format_valid(value), "a reasoning format value is closed")
+
+    return reasoning_format_string[value]
+}
+
+reasoning_format_from_string :: proc(name: string) -> (Reasoning_Format, bool) {
+    for candidate, value in reasoning_format_string {
+        if candidate == name {
+            return value, true
+        }
+    }
+
+    return {}, false
+}
+
+// A custom model's request format must match its resolved provider protocol.
+reasoning_format_compatible :: proc(protocol: wire.Provider_Protocol, format: Reasoning_Format) -> bool {
+    switch protocol {
+    case .Anthropic_Messages:
+        return format == .Native || format == .Anthropic_Adaptive
+
+    case .Openai_Chat:
+        #partial switch format {
+        case .Native, .Openai_Effort_Toggle_Off, .Openrouter_Effort, .Zai_Toggle, .Qwen_Thinking:
+            return true
+        }
+
+        return false
+
+    case .Openai_Responses:
+        return format == .Native
+    }
+
+    return false
+}
+
 // One normalized models.dev model. Every string and slice is owned.
 Model :: struct {
     info:                 wire.Model_Info,

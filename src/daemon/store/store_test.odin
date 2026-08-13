@@ -31,6 +31,8 @@ test_open_creates_schema_at_latest_version :: proc(t: ^testing.T) {
     testing.expect(t, table_exists(s.writer, "events"), "0001 creates events")
     testing.expect(t, table_exists(s.writer, "messages"), "0001 creates messages")
     testing.expect(t, table_exists(s.writer, "provider_credentials"), "0001 creates provider credentials")
+    testing.expect(t, table_exists(s.writer, "catalog_providers"), "0001 creates catalog providers")
+    testing.expect(t, table_exists(s.writer, "catalog_models"), "0001 creates catalog models")
 
     // Both must be settled before WAL and before any transaction; a silent
     // default here would disable every cascade and halve the page budget.

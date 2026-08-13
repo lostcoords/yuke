@@ -1,6 +1,7 @@
 /*
-The store package owns the daemon's SQLite database: provider credentials, the
-`events` log of record, and derived per-session state.
+The store package owns the daemon's SQLite database: provider credentials,
+provider/model catalog sources, the `events` log of record, and derived
+per-session state.
 
 `open` opens the single writer (`Readwrite|Create|Nomutex`), sets
 `busy_timeout`, runs a `quick_check`, and validates `application_id` and
@@ -21,10 +22,12 @@ applied forward-only; there are no down scripts. Each pending step runs in its o
 user_version`, which is the applied-version record. A database whose `user_version`
 exceeds the last embedded step was written by a newer daemon and is refused.
 
-Shipped migration text is immutable. `migration_hash` records an FNV-1a of each
-step's exact bytes when it is applied, and every open checks that the embedded
-text still matches what the database was migrated with; a mismatch is refused
-with `Migration_Drift`.
+The pre-release initial schema may be rebased while private databases remain
+disposable. `migration_hash` still records an FNV-1a of each step's exact bytes
+when it is applied, and every open checks that the embedded text still matches
+what the database was migrated with; an older rebased database is refused with
+`Migration_Drift` and must be recreated. Once database compatibility is promised,
+applied migration text becomes immutable and changes append a new step.
 
 `event_append` writes the event row and the session's `seq_high` from the same
 bound value inside one `BEGIN IMMEDIATE` transaction, so the log and the mark

@@ -44,6 +44,10 @@ Store_Error :: enum {
     // bounded store representation. Rejected before any value is bound to SQLite.
     Invalid_Credential,
 
+    // A catalog source record is malformed, internally inconsistent, or exceeds
+    // its bounded store representation. No replacement is committed.
+    Invalid_Catalog,
+
     // `quick_check` reported damage. A file SQLite refuses outright arrives as its
     // own `.Corrupt` / `.Not_A_Db` instead.
     Integrity_Failed,

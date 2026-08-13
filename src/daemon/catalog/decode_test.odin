@@ -8,6 +8,35 @@ import testsupport "libs:testsupport"
 import wire "src:wire"
 
 @(test)
+test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {
+    for value in Reasoning_Replay {
+        name := reasoning_replay_to_string(value)
+        decoded, ok := reasoning_replay_from_string(name)
+        testing.expect(t, ok, "every replay value has a name")
+        testing.expect_value(t, decoded, value)
+    }
+    _, replay_ok := reasoning_replay_from_string("future")
+    testing.expect(t, !replay_ok, "unknown replay names remain closed")
+
+    for value in Reasoning_Format {
+        name := reasoning_format_to_string(value)
+        decoded, ok := reasoning_format_from_string(name)
+        testing.expect(t, ok, "every format value has a name")
+        testing.expect_value(t, decoded, value)
+    }
+    _, format_ok := reasoning_format_from_string("future")
+    testing.expect(t, !format_ok, "unknown format names remain closed")
+
+    testing.expect(t, reasoning_format_compatible(.Anthropic_Messages, .Anthropic_Adaptive), "adaptive is Anthropic")
+    testing.expect(
+        t,
+        !reasoning_format_compatible(.Openai_Responses, .Anthropic_Adaptive),
+        "adaptive is not Responses",
+    )
+    testing.expect(t, reasoning_format_compatible(.Openai_Chat, .Qwen_Thinking), "Qwen is OpenAI-compatible")
+}
+
+@(test)
 test_decode_materializes_only_selected_provider :: proc(t: ^testing.T) {
     feed := `{
         "ignored":{"this":"is not a provider","large":[1,2,{"nested":true}]},
