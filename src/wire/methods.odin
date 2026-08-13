@@ -675,6 +675,9 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
     case .Workspace_Browse:
         params = Workspace_Browse_Params{}
 
+    case .Session_Create:
+        params = Create_Session{}
+
     case .Cron_List:
         params = Cron_List_Params{}
 

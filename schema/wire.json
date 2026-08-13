@@ -94,7 +94,7 @@
       "doc": "Create a new session.",
       "params": "Create_Session",
       "result": "Session_Result",
-      "paramsOptional": false
+      "paramsOptional": true
     },
     {
       "name": "session.patch",
@@ -3527,9 +3527,9 @@
           "doc": "Profile name to resolve config from.",
           "presence": "optional",
           "bound": {
-            "kind": "unbounded",
-            "expr": "",
-            "value": 0
+            "kind": "bounded",
+            "expr": "64",
+            "value": 64
           }
         },
         {
@@ -3538,9 +3538,9 @@
           "doc": "Model id override.",
           "presence": "optional",
           "bound": {
-            "kind": "unbounded",
-            "expr": "",
-            "value": 0
+            "kind": "bounded",
+            "expr": "128",
+            "value": 128
           }
         },
         {
@@ -3549,9 +3549,9 @@
           "doc": "Reasoning level override.",
           "presence": "optional",
           "bound": {
-            "kind": "unbounded",
-            "expr": "",
-            "value": 0
+            "kind": "bounded",
+            "expr": "32",
+            "value": 32
           }
         },
         {

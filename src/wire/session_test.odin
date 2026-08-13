@@ -725,6 +725,30 @@ test_create_session_omitted_vs_explicit :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_create_session_bounds :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    v := decoder_init(`{"profile":"review","model":"openai/gpt","reasoning":"high"}`, context.temp_allocator)
+    create, derr := create_session_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    testing.expect(t, create_session_validate(create) == .None, "bounded overrides validate")
+
+    // Each override is refused at the bound of the `Session` field it becomes.
+    over_profile := create
+    over_profile.profile = strings.repeat("p", 65, context.temp_allocator)
+    testing.expect(t, create_session_validate(over_profile) == .Overflow, "oversized profile rejected")
+
+    over_model := create
+    over_model.model = strings.repeat("m", 129, context.temp_allocator)
+    testing.expect(t, create_session_validate(over_model) == .Overflow, "oversized model rejected")
+
+    over_reasoning := create
+    over_reasoning.reasoning = strings.repeat("r", 33, context.temp_allocator)
+    testing.expect(t, create_session_validate(over_reasoning) == .Overflow, "oversized reasoning rejected")
+}
+
+@(test)
 test_session_patch_bounds :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)

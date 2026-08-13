@@ -1638,18 +1638,24 @@
         },
         "model": {
           "description": "Model id override.",
-          "type": "string"
+          "maxLength": 128,
+          "type": "string",
+          "x-maxUtf8Bytes": 128
         },
         "permission": {
           "$ref": "#/$defs/Permission_Mode"
         },
         "profile": {
           "description": "Profile name to resolve config from.",
-          "type": "string"
+          "maxLength": 64,
+          "type": "string",
+          "x-maxUtf8Bytes": 64
         },
         "reasoning": {
           "description": "Reasoning level override.",
-          "type": "string"
+          "maxLength": 32,
+          "type": "string",
+          "x-maxUtf8Bytes": 32
         },
         "system_prompt": {
           "anyOf": [
@@ -4618,8 +4624,7 @@
           "required": [
             "jsonrpc",
             "id",
-            "method",
-            "params"
+            "method"
           ],
           "type": "object"
         },

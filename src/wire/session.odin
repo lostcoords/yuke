@@ -92,15 +92,15 @@ Create_Session :: struct {
     // Filesystem path; omitted resolves to the home directory.
     workspace_path: Maybe(string),
 
-    // @unbounded
+    // @bounded 64
     // Profile name to resolve config from.
     profile:        Maybe(string),
 
-    // @unbounded
+    // @bounded 128
     // Model id override.
     model:          Maybe(string),
 
-    // @unbounded
+    // @bounded 32
     // Reasoning level override.
     reasoning:      Maybe(string),
 
@@ -145,11 +145,21 @@ create_session_emit :: proc(e: ^Emitter, self: Create_Session) {
     object_end(e)
 }
 
-// Verify annotated field bounds.
-// Kept for consistency.
+// Verify annotated field bounds. Each override is held to the `Session` field it lands in,
+// the same bounds `Session_Patch` enforces on the two it shares.
 create_session_validate :: proc(self: Create_Session) -> Validation_Error {
-    // Create_Session's request fields carry no bounds
-    // (`workspace_path`/`system_prompt` are @unbounded; the rest are unmarked).
+    if profile, ok := self.profile.?; ok {
+        enforce_bounded(64, profile) or_return
+    }
+
+    if model, ok := self.model.?; ok {
+        enforce_bounded(128, model) or_return
+    }
+
+    if reasoning, ok := self.reasoning.?; ok {
+        enforce_bounded(32, reasoning) or_return
+    }
+
     return .None
 }
 
