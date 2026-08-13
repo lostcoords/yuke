@@ -5,7 +5,23 @@ import "core:slice"
 import "core:testing"
 
 import testsupport "libs:testsupport"
+import provider "src:provider"
 import wire "src:wire"
+
+@(test)
+test_transport_flavor_from_npm :: proc(t: ^testing.T) {
+    // Real OpenAI chat counts output with max_completion_tokens; compatible chat uses max_tokens.
+    openai_chat, _ := transport_flavor("@ai-sdk/openai", .Openai_Chat)
+    testing.expect_value(t, openai_chat, provider.Openai_Max_Tokens_Field.Max_Completion_Tokens)
+
+    compatible_chat, _ := transport_flavor("@ai-sdk/openai-compatible", .Openai_Chat)
+    testing.expect_value(t, compatible_chat, provider.Openai_Max_Tokens_Field.Max_Tokens)
+
+    // Non-chat protocols do not use the field; it defaults.
+    responses, dialect := transport_flavor("@ai-sdk/openai", .Openai_Responses)
+    testing.expect_value(t, responses, provider.Openai_Max_Tokens_Field.Max_Tokens)
+    testing.expect_value(t, dialect, provider.Openai_Responses_Dialect.Standard)
+}
 
 @(test)
 test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {

@@ -492,6 +492,7 @@ model_normalize :: proc(
     out.reasoning_format = reasoning.format
     out.reasoning_budget_min = reasoning.budget_min
     out.reasoning_budget_max = reasoning.budget_max
+    out.max_tokens_field, out.responses_dialect = transport_flavor(npm, endpoint.protocol)
 
     if wire.model_info_validate(out.info) != .None {
         return .Filtered

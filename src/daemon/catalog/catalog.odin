@@ -169,6 +169,26 @@ Model :: struct {
     reasoning_format:     Reasoning_Format,
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
+    max_tokens_field:     provider.Openai_Max_Tokens_Field,
+    responses_dialect:    provider.Openai_Responses_Dialect,
+}
+
+// Request wire-shape facts from the models.dev npm package: real OpenAI chat counts output
+// with `max_completion_tokens`, every other OpenAI-compatible endpoint with `max_tokens`.
+// Only the field matching the resolved protocol is consulted at request assembly.
+transport_flavor :: proc(
+    npm: string,
+    protocol: wire.Provider_Protocol,
+) -> (
+    provider.Openai_Max_Tokens_Field,
+    provider.Openai_Responses_Dialect,
+) {
+    max_tokens := provider.Openai_Max_Tokens_Field.Max_Tokens
+    if protocol == .Openai_Chat && npm == "@ai-sdk/openai" {
+        max_tokens = .Max_Completion_Tokens
+    }
+
+    return max_tokens, .Standard
 }
 
 // One selected and normalized models.dev provider. Every string and slice is owned.
