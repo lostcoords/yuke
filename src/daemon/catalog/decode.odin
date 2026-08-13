@@ -2,12 +2,10 @@ package catalog
 
 import "base:runtime"
 import "core:encoding/json"
-import "core:math"
 import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
 import "core:strings"
-import "core:unicode/utf8"
 
 import provider "src:provider"
 import wire "src:wire"
@@ -438,9 +436,10 @@ model_normalize :: proc(
         return .Filtered
     }
 
-    context_window, context_present, context_valid := object_positive_u64(object, "limit", "context")
-    max_output_tokens, output_present, output_valid := object_positive_u64(object, "limit", "output")
-    if !context_present || !context_valid || !output_present || !output_valid {
+    limit, limit_valid := object_member_object(object, "limit")
+    context_window, context_present, context_valid := object_positive_u64(limit, "context")
+    max_output_tokens, output_present, output_valid := object_positive_u64(limit, "output")
+    if !limit_valid || !context_present || !context_valid || !output_present || !output_valid {
         return .Filtered
     }
 
@@ -492,7 +491,7 @@ model_normalize :: proc(
     out.reasoning_format = reasoning.format
     out.reasoning_budget_min = reasoning.budget_min
     out.reasoning_budget_max = reasoning.budget_max
-    out.max_tokens_field, out.responses_dialect = transport_flavor(npm, endpoint.protocol)
+    out.max_tokens_field = max_tokens_field_resolve(npm, endpoint.protocol)
 
     if wire.model_info_validate(out.info) != .None {
         return .Filtered
@@ -1010,9 +1009,8 @@ reasoning_levels_clone :: proc(
     return levels, .None
 }
 
-// Deterministic session default from the effective reasoning levels: prefer "medium",
-// otherwise the middle level, and no default for an empty set. Shared with the daemon
-// JavaScript provider surface so imported and custom models derive one identical rule.
+// Prefer "medium", otherwise the middle level, and no default for an empty set. Imported
+// and custom models share this one rule so their defaults cannot diverge.
 default_reasoning_level :: proc(levels: []string) -> string {
     if len(levels) == 0 {
         return ""
@@ -1048,122 +1046,6 @@ cost_normalize :: proc(object: json.Object) -> (cost: wire.Model_Cost, err: Norm
     }
 
     return {input = input, output = output, cache_read = cache_read, cache_write = cache_write}, .None
-}
-
-@(private)
-object_string :: proc(
-    object: json.Object,
-    name: string,
-    max_bytes: int,
-    allow_empty: bool,
-) -> (
-    value: string,
-    present: bool,
-    valid: bool,
-) {
-    assert(max_bytes > 0, "an external string field needs a positive bound")
-
-    member, found := object[name]
-    if !found {
-        return "", false, true
-    }
-
-    text, ok := member.(json.String)
-    if !ok || (!allow_empty && len(text) == 0) || len(text) > max_bytes || !utf8.valid_string(text) {
-        return "", true, false
-    }
-
-    return text, true, true
-}
-
-@(private)
-object_bool :: proc(object: json.Object, name: string) -> (value: bool, present, valid: bool) {
-    member, found := object[name]
-    if !found {
-        return false, false, true
-    }
-
-    boolean, ok := member.(json.Boolean)
-    if !ok {
-        return false, true, false
-    }
-
-    return bool(boolean), true, true
-}
-
-@(private)
-object_positive_u64 :: proc(
-    object: json.Object,
-    object_name, field_name: string,
-) -> (
-    value: u64,
-    present, valid: bool,
-) {
-    member, found := object[object_name]
-    if !found {
-        return 0, false, true
-    }
-
-    nested, object_ok := member.(json.Object)
-    if !object_ok {
-        return 0, true, false
-    }
-
-    number, field_present := nested[field_name]
-    if !field_present {
-        return 0, false, true
-    }
-
-    parsed, parsed_ok := json_integer_i64(number)
-    if !parsed_ok || parsed <= 0 || parsed > wire.MAX_WIRE_INTEGER {
-        return 0, true, false
-    }
-
-    return u64(parsed), true, true
-}
-
-@(private)
-object_nonnegative_f64 :: proc(object: json.Object, name: string) -> (value: f64, present, valid: bool) {
-    member, found := object[name]
-    if !found {
-        return 0, false, true
-    }
-
-    #partial switch number in member {
-    case json.Integer:
-        value = f64(number)
-
-    case json.Float:
-        value = f64(number)
-
-    case:
-        return 0, true, false
-    }
-
-    if value < 0 || math.is_nan(value) || math.is_inf(value) {
-        return 0, true, false
-    }
-
-    return value, true, true
-}
-
-@(private)
-json_integer_i64 :: proc(value: json.Value) -> (i64, bool) {
-    #partial switch number in value {
-    case json.Integer:
-        return i64(number), true
-
-    case json.Float:
-        if !math.is_nan(number) &&
-           !math.is_inf(number) &&
-           math.floor(number) == number &&
-           number >= f64(min(i64)) &&
-           number <= f64(max(i64)) {
-            return i64(number), true
-        }
-    }
-
-    return 0, false
 }
 
 @(private)

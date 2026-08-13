@@ -79,3 +79,25 @@ test_run_connection_build_binds_the_provider_credential :: proc(t: ^testing.T) {
     testing.expect(t, is_api, "an api-key provider binds an Api_Key auth")
     testing.expect_value(t, api_key.key, "sk-test")
 }
+
+@(test)
+test_run_responses_dialect_follows_the_credential :: proc(t: ^testing.T) {
+    testing.expect_value(t, run_responses_dialect(nil), provider.Openai_Responses_Dialect.Standard)
+    testing.expect_value(
+        t,
+        run_responses_dialect(provider.Api_Key{key = "sk-test"}),
+        provider.Openai_Responses_Dialect.Standard,
+    )
+    testing.expect_value(
+        t,
+        run_responses_dialect(provider.Xai_OAuth{access_token = "token"}),
+        provider.Openai_Responses_Dialect.Standard,
+    )
+
+    // Only the ChatGPT-account backend takes the restricted dialect.
+    testing.expect_value(
+        t,
+        run_responses_dialect(provider.Codex_OAuth{access_token = "token", account_id = "acct"}),
+        provider.Openai_Responses_Dialect.Codex,
+    )
+}

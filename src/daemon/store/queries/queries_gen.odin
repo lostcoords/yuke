@@ -188,6 +188,7 @@ Insert_Catalog_Model_Params :: struct {
     supports_temperature: Maybe(bool),
     reasoning_replay:     Maybe(string),
     reasoning_format:     Maybe(string),
+    max_tokens_field:     Maybe(string),
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
     supports_vision:      Maybe(bool),
@@ -196,8 +197,6 @@ Insert_Catalog_Model_Params :: struct {
     cost_output:          Maybe(f64),
     cost_cache_read:      Maybe(f64),
     cost_cache_write:     Maybe(f64),
-    max_tokens_field:     Maybe(i64),
-    responses_dialect:    Maybe(i64),
 }
 
 Insert_Catalog_Model_Level_Params :: struct {
@@ -382,21 +381,19 @@ VALUES (:provider_id, :source, :ordinal, :name);`,
     public_model_id, provider_id, source, kind,
     upstream_id, name, context_window, max_output_tokens,
     base_url, protocol, supports_temperature,
-    reasoning_replay, reasoning_format,
+    reasoning_replay, reasoning_format, max_tokens_field,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write,
-    max_tokens_field, responses_dialect
+    cost_input, cost_output, cost_cache_read, cost_cache_write
 )
 VALUES (
     :public_model_id, :provider_id, :source, :kind,
     :upstream_id, :name, :context_window, :max_output_tokens,
     :base_url, :protocol, :supports_temperature,
-    :reasoning_replay, :reasoning_format,
+    :reasoning_replay, :reasoning_format, :max_tokens_field,
     :reasoning_budget_min, :reasoning_budget_max,
     :supports_vision, :supports_tools,
-    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
-    :max_tokens_field, :responses_dialect
+    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
 );`,
     .Insert_Catalog_Model_Level  = `INSERT INTO catalog_model_reasoning_levels(
     public_model_id, source, kind, ordinal, level

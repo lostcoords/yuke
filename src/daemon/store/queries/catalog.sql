@@ -53,6 +53,7 @@ VALUES (:provider_id, :source, :ordinal, :name);
 -- supports_temperature: bool
 -- reasoning_replay: string
 -- reasoning_format: string
+-- max_tokens_field: string
 -- reasoning_budget_min: i64
 -- reasoning_budget_max: u64
 -- supports_vision: bool
@@ -61,27 +62,23 @@ VALUES (:provider_id, :source, :ordinal, :name);
 -- cost_output: f64
 -- cost_cache_read: f64
 -- cost_cache_write: f64
--- max_tokens_field: i64
--- responses_dialect: i64
 INSERT INTO catalog_models(
     public_model_id, provider_id, source, kind,
     upstream_id, name, context_window, max_output_tokens,
     base_url, protocol, supports_temperature,
-    reasoning_replay, reasoning_format,
+    reasoning_replay, reasoning_format, max_tokens_field,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write,
-    max_tokens_field, responses_dialect
+    cost_input, cost_output, cost_cache_read, cost_cache_write
 )
 VALUES (
     :public_model_id, :provider_id, :source, :kind,
     :upstream_id, :name, :context_window, :max_output_tokens,
     :base_url, :protocol, :supports_temperature,
-    :reasoning_replay, :reasoning_format,
+    :reasoning_replay, :reasoning_format, :max_tokens_field,
     :reasoning_budget_min, :reasoning_budget_max,
     :supports_vision, :supports_tools,
-    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
-    :max_tokens_field, :responses_dialect
+    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
 );
 
 -- name: Insert_Catalog_Model_Level :exec

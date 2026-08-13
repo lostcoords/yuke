@@ -9,24 +9,23 @@ import provider "src:provider"
 import wire "src:wire"
 
 @(test)
-test_transport_flavor_from_npm :: proc(t: ^testing.T) {
+test_max_tokens_field_from_npm :: proc(t: ^testing.T) {
     // Real OpenAI chat counts output with max_completion_tokens; compatible chat uses max_tokens.
-    openai_chat, _ := transport_flavor("@ai-sdk/openai", .Openai_Chat)
+    openai_chat := max_tokens_field_resolve("@ai-sdk/openai", .Openai_Chat)
     testing.expect_value(t, openai_chat, provider.Openai_Max_Tokens_Field.Max_Completion_Tokens)
 
-    compatible_chat, _ := transport_flavor("@ai-sdk/openai-compatible", .Openai_Chat)
+    compatible_chat := max_tokens_field_resolve("@ai-sdk/openai-compatible", .Openai_Chat)
     testing.expect_value(t, compatible_chat, provider.Openai_Max_Tokens_Field.Max_Tokens)
 
     // Non-chat protocols do not use the field; it defaults.
-    responses, dialect := transport_flavor("@ai-sdk/openai", .Openai_Responses)
+    responses := max_tokens_field_resolve("@ai-sdk/openai", .Openai_Responses)
     testing.expect_value(t, responses, provider.Openai_Max_Tokens_Field.Max_Tokens)
-    testing.expect_value(t, dialect, provider.Openai_Responses_Dialect.Standard)
 }
 
 @(test)
 test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {
     for value in Reasoning_Replay {
-        name := reasoning_replay_to_string(value)
+        name := reasoning_replay_string[value]
         decoded, ok := reasoning_replay_from_string(name)
         testing.expect(t, ok, "every replay value has a name")
         testing.expect_value(t, decoded, value)
@@ -35,7 +34,7 @@ test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {
     testing.expect(t, !replay_ok, "unknown replay names remain closed")
 
     for value in Reasoning_Format {
-        name := reasoning_format_to_string(value)
+        name := reasoning_format_string[value]
         decoded, ok := reasoning_format_from_string(name)
         testing.expect(t, ok, "every format value has a name")
         testing.expect_value(t, decoded, value)

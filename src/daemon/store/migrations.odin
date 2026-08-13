@@ -15,10 +15,7 @@ Migration :: struct {
 
 // Applied in order; entry i brings the database to version i+1.
 @(private, rodata)
-MIGRATIONS := [?]Migration {
-    {version = 1, sql = #load("migrations/0001_initial.sql", string)},
-    {version = 2, sql = #load("migrations/0002_model_transport.sql", string)},
-}
+MIGRATIONS := [?]Migration{{version = 1, sql = #load("migrations/0001_initial.sql", string)}}
 
 // Runner bookkeeping rather than schema: one row per applied step, checked on
 // every open so embedded text cannot drift from an applied database.

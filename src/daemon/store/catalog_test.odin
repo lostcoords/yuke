@@ -29,7 +29,7 @@ test_catalog_sources_round_trip_without_flattening_collisions :: proc(t: ^testin
 
     javascript_provider := test_catalog_provider(.Javascript, "openai")
     javascript_model: Catalog_Model = test_catalog_model(.Javascript, "openai", "gpt-5")
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = []string{"low", "max"},
@@ -65,7 +65,7 @@ test_catalog_sources_round_trip_without_flattening_collisions :: proc(t: ^testin
         }
     }
 
-    imported_index, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, "model")
+    imported_index, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, .Model)
     testing.expect(t, imported_found, "the imported model row remains distinct")
     if imported_found {
         model, model_ok := data.models[imported_index].(Catalog_Complete_Model)
@@ -80,12 +80,12 @@ test_catalog_sources_round_trip_without_flattening_collisions :: proc(t: ^testin
         }
     }
 
-    _, custom_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, "model")
-    override_index, override_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, "override")
+    _, custom_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, .Model)
+    override_index, override_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, .Override)
     testing.expect(t, custom_found, "a colliding custom row is preserved for overlay validation")
     testing.expect(t, override_found, "a colliding override row is preserved for overlay validation")
     if override_found {
-        model, model_ok := data.models[override_index].(Catalog_Model_Override)
+        model, model_ok := data.models[override_index].(model_catalog.Model_Override)
         testing.expect(t, model_ok, "the override remains a partial arm")
         if model_ok {
             testing.expect_value(t, model.default_reasoning, "max")
@@ -105,7 +105,7 @@ test_catalog_javascript_replace_removes_stale_rows_and_reveals_imported :: proc(
     testing.expect_value(t, catalog_imported_replace(s, imported_provider, []Catalog_Model{imported_model}), nil)
 
     javascript_provider := test_catalog_provider(.Javascript, "openai")
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = []string{"high"},
@@ -124,7 +124,7 @@ test_catalog_javascript_replace_removes_stale_rows_and_reveals_imported :: proc(
     testing.expect_value(t, len(data.providers), 1)
     testing.expect_value(t, len(data.models), 1)
     testing.expect_value(t, data.providers[0].source, Catalog_Source.Models_Dev)
-    _, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, "model")
+    _, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, .Model)
     testing.expect(t, imported_found, "source cleanup reveals the imported model")
 }
 
@@ -141,7 +141,7 @@ test_catalog_sources_survive_store_restart :: proc(t: ^testing.T) {
     testing.expect_value(t, catalog_imported_replace(s, imported_provider, []Catalog_Model{imported_model}), nil)
 
     javascript_provider := test_catalog_provider(.Javascript, "openai")
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = []string{"high"},
@@ -163,8 +163,8 @@ test_catalog_sources_survive_store_restart :: proc(t: ^testing.T) {
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 2)
     testing.expect_value(t, len(data.models), 2)
-    _, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, "model")
-    _, override_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, "override")
+    _, imported_found := catalog_model_find(data.models[:], "openai/gpt-5", .Models_Dev, .Model)
+    _, override_found := catalog_model_find(data.models[:], "openai/gpt-5", .Javascript, .Override)
     testing.expect(t, imported_found && override_found, "both source identities survive reopening yuked.db")
 }
 
@@ -197,8 +197,8 @@ test_catalog_imported_replace_is_transactional :: proc(t: ^testing.T) {
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 1)
     testing.expect_value(t, len(data.models), 1)
-    _, old_found := catalog_model_find(data.models[:], "openai/old", .Models_Dev, "model")
-    _, new_found := catalog_model_find(data.models[:], "openai/new", .Models_Dev, "model")
+    _, old_found := catalog_model_find(data.models[:], "openai/old", .Models_Dev, .Model)
+    _, new_found := catalog_model_find(data.models[:], "openai/new", .Models_Dev, .Model)
     testing.expect(t, old_found, "a failed replacement rolls the deleted snapshot back")
     testing.expect(t, !new_found, "a failed replacement commits no new suffix")
 }
@@ -236,8 +236,8 @@ test_catalog_javascript_replace_is_transactional :: proc(t: ^testing.T) {
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 1)
     testing.expect_value(t, len(data.models), 1)
-    _, old_found := catalog_model_find(data.models[:], "openai/old", .Javascript, "model")
-    _, new_found := catalog_model_find(data.models[:], "openai/new", .Javascript, "model")
+    _, old_found := catalog_model_find(data.models[:], "openai/old", .Javascript, .Model)
+    _, new_found := catalog_model_find(data.models[:], "openai/new", .Javascript, .Model)
     testing.expect(t, old_found, "a failed JavaScript replacement restores the deleted source")
     testing.expect(t, !new_found, "a failed JavaScript replacement commits no new suffix")
 }
@@ -277,14 +277,14 @@ test_catalog_imported_replace_preserves_source_bounds :: proc(t: ^testing.T) {
                 public_model_id, provider_id, source, kind,
                 upstream_id, name, context_window, max_output_tokens,
                 base_url, protocol, supports_temperature,
-                reasoning_replay, reasoning_format,
+                reasoning_replay, reasoning_format, max_tokens_field,
                 supports_vision, supports_tools,
                 cost_input, cost_output, cost_cache_read, cost_cache_write
              )
              SELECT printf('p000/m%04d', value), 'p000', 'models_dev', 'model',
                     printf('m%04d', value), 'Model', 1, 1,
                     'https://example.test/v1', 'openai-responses', 1,
-                    'none', 'native', 0, 0, 0.0, 0.0, 0.0, 0.0
+                    'none', 'native', 'max-tokens', 0, 0, 0.0, 0.0, 0.0, 0.0
              FROM model_number`,
         ),
         sqlite.Result.Ok,
@@ -338,7 +338,7 @@ test_catalog_javascript_models_match_provider_shape :: proc(t: ^testing.T) {
 
     endpoint_provider := test_catalog_provider(.Javascript, "openai")
     endpoint_provider.models_dev_id = ""
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = []string{"low", "high"},
@@ -451,7 +451,7 @@ test_catalog_load_allocation_failures_leak_nothing :: proc(t: ^testing.T) {
     testing.expect_value(t, catalog_imported_replace(s, imported_provider, []Catalog_Model{imported_model}), nil)
 
     javascript_provider := test_catalog_provider(.Javascript, "openai")
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = []string{"low", "high"},

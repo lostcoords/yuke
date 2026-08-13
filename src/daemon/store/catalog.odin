@@ -35,11 +35,10 @@ CATALOG_MODELS_LOAD_SQL :: `SELECT
     public_model_id, provider_id, source, kind,
     upstream_id, name, context_window, max_output_tokens,
     base_url, protocol, supports_temperature,
-    reasoning_replay, reasoning_format,
+    reasoning_replay, reasoning_format, max_tokens_field,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write,
-    max_tokens_field, responses_dialect
+    cost_input, cost_output, cost_cache_read, cost_cache_write
 FROM catalog_models
 ORDER BY public_model_id, source, kind`
 
@@ -56,6 +55,25 @@ ORDER BY l.public_model_id, l.source, l.kind, l.ordinal`
 Catalog_Source :: enum {
     Models_Dev,
     Javascript,
+}
+
+// Whether a model row is a complete inference record or a partial JavaScript overlay.
+// Kind stays in the primary key so an overlay never overwrites the record it overlays.
+Catalog_Kind :: enum {
+    Model,
+    Override,
+}
+
+@(private, rodata)
+catalog_source_string := [Catalog_Source]string {
+    .Models_Dev = "models_dev",
+    .Javascript = "javascript",
+}
+
+@(private, rodata)
+catalog_kind_string := [Catalog_Kind]string {
+    .Model    = "model",
+    .Override = "override",
 }
 
 // One source-specific provider. Empty optional strings mean absent; `has_endpoint`
@@ -78,17 +96,9 @@ Catalog_Complete_Model :: struct {
     using model: model_catalog.Model,
 }
 
-// A JavaScript reasoning-level overlay. It intentionally owns no transport fields.
-Catalog_Model_Override :: struct {
-    id:                wire.Model_Id,
-    provider_id:       wire.Provider_Id,
-    reasoning_levels:  []string,
-    default_reasoning: string,
-}
-
 Catalog_Model :: union {
     Catalog_Complete_Model,
-    Catalog_Model_Override,
+    model_catalog.Model_Override,
 }
 
 // Owned raw source records. Complete model provider ids and override provider ids
@@ -134,6 +144,7 @@ Catalog_Model_Row :: struct {
     supports_temperature: Maybe(bool),
     reasoning_replay:     Maybe(string) `sql:",borrowed"`,
     reasoning_format:     Maybe(string) `sql:",borrowed"`,
+    max_tokens_field:     Maybe(string) `sql:",borrowed"`,
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
     supports_vision:      Maybe(bool),
@@ -142,8 +153,6 @@ Catalog_Model_Row :: struct {
     cost_output:          Maybe(f64),
     cost_cache_read:      Maybe(f64),
     cost_cache_write:     Maybe(f64),
-    max_tokens_field:     Maybe(i64),
-    responses_dialect:    Maybe(i64),
 }
 
 @(private)
@@ -179,10 +188,10 @@ catalog_imported_replace :: proc(s: ^Store, item: Catalog_Provider, models: []Ca
 
     queries.delete_catalog_provider(
         &s.queries,
-        {provider_id = item.id, source = catalog_source_to_string(.Models_Dev)},
+        {provider_id = item.id, source = catalog_source_string[.Models_Dev]},
     ) or_return
 
-    size, size_err := queries.catalog_source_size(&s.queries, {source = catalog_source_to_string(.Models_Dev)})
+    size, size_err := queries.catalog_source_size(&s.queries, {source = catalog_source_string[.Models_Dev]})
     if size_err != nil {
         return read_err(size_err)
     }
@@ -221,7 +230,7 @@ catalog_javascript_replace :: proc(s: ^Store, providers: []Catalog_Provider, mod
         }
     }
 
-    queries.delete_catalog_source(&s.queries, {source = catalog_source_to_string(.Javascript)}) or_return
+    queries.delete_catalog_source(&s.queries, {source = catalog_source_string[.Javascript]}) or_return
     for item in providers {
         catalog_provider_insert(s, item) or_return
     }
@@ -240,7 +249,7 @@ catalog_provider_insert :: proc(s: ^Store, item: Catalog_Provider) -> Error {
 
     params := queries.Insert_Catalog_Provider_Params {
         provider_id = item.id,
-        source      = catalog_source_to_string(item.source),
+        source      = catalog_source_string[item.source],
     }
     if item.models_dev_id != "" {
         params.models_dev_id = item.models_dev_id
@@ -260,7 +269,7 @@ catalog_provider_insert :: proc(s: ^Store, item: Catalog_Provider) -> Error {
     for name, ordinal in item.credential_env {
         queries.insert_catalog_provider_env(
             &s.queries,
-            {provider_id = item.id, source = catalog_source_to_string(item.source), ordinal = ordinal, name = name},
+            {provider_id = item.id, source = catalog_source_string[item.source], ordinal = ordinal, name = name},
         ) or_return
     }
 
@@ -281,8 +290,8 @@ catalog_model_insert :: proc(s: ^Store, value: Catalog_Model) -> Error {
         params = {
             public_model_id      = model.info.id,
             provider_id          = model.info.provider,
-            source               = catalog_source_to_string(model.source),
-            kind                 = "model",
+            source               = catalog_source_string[model.source],
+            kind                 = catalog_kind_string[.Model],
             upstream_id          = model.upstream_id,
             name                 = model.info.name,
             context_window       = model.info.context_window,
@@ -290,8 +299,9 @@ catalog_model_insert :: proc(s: ^Store, value: Catalog_Model) -> Error {
             base_url             = model.endpoint.base_url,
             protocol             = wire.provider_protocol_to_wire(model.endpoint.protocol),
             supports_temperature = model.supports_temperature,
-            reasoning_replay     = model_catalog.reasoning_replay_to_string(model.reasoning_replay),
-            reasoning_format     = model_catalog.reasoning_format_to_string(model.reasoning_format),
+            reasoning_replay     = model_catalog.reasoning_replay_string[model.reasoning_replay],
+            reasoning_format     = model_catalog.reasoning_format_string[model.reasoning_format],
+            max_tokens_field     = model_catalog.max_tokens_field_string[model.max_tokens_field],
             reasoning_budget_min = model.reasoning_budget_min,
             reasoning_budget_max = model.reasoning_budget_max,
             supports_vision      = model.info.supports_vision,
@@ -300,18 +310,16 @@ catalog_model_insert :: proc(s: ^Store, value: Catalog_Model) -> Error {
             cost_output          = model.info.cost.output,
             cost_cache_read      = model.info.cost.cache_read,
             cost_cache_write     = model.info.cost.cache_write,
-            max_tokens_field     = i64(model.max_tokens_field),
-            responses_dialect    = i64(model.responses_dialect),
         }
         levels = model.info.reasoning_levels
 
-    case Catalog_Model_Override:
+    case model_catalog.Model_Override:
         assert(catalog_override_valid(model), "catalog model insert needs a validated override")
         params = {
             public_model_id = model.id,
             provider_id     = model.provider_id,
-            source          = catalog_source_to_string(.Javascript),
-            kind            = "override",
+            source          = catalog_source_string[.Javascript],
+            kind            = catalog_kind_string[.Override],
         }
         levels = model.reasoning_levels
     }
@@ -570,62 +578,112 @@ catalog_model_from_row :: proc(
     }
     provider_id := data.providers[provider_index].id
 
-    switch row.kind {
-    case "model":
-        upstream_id, has_upstream := row.upstream_id.?
-        name, has_name := row.name.?
-        context_window, has_context := row.context_window.?
-        max_output_tokens, has_output := row.max_output_tokens.?
-        base_url, has_base_url := row.base_url.?
-        protocol_name, has_protocol := row.protocol.?
-        supports_temperature, has_temperature := row.supports_temperature.?
-        replay_name, has_replay := row.reasoning_replay.?
-        format_name, has_format := row.reasoning_format.?
-        supports_vision, has_vision := row.supports_vision.?
-        supports_tools, has_tools := row.supports_tools.?
-        cost_input, has_cost_input := row.cost_input.?
-        cost_output, has_cost_output := row.cost_output.?
-        cost_cache_read, has_cost_read := row.cost_cache_read.?
-        cost_cache_write, has_cost_write := row.cost_cache_write.?
-        max_tokens_raw, has_max_tokens := row.max_tokens_field.?
-        dialect_raw, has_dialect := row.responses_dialect.?
-        if !has_upstream ||
-           !has_name ||
-           !has_context ||
-           !has_output ||
-           !has_base_url ||
-           !has_protocol ||
-           !has_temperature ||
-           !has_replay ||
-           !has_format ||
-           !has_vision ||
-           !has_tools ||
-           !has_cost_input ||
-           !has_cost_output ||
-           !has_cost_read ||
-           !has_cost_write ||
-           !has_max_tokens ||
-           !has_dialect {
+    kind, kind_ok := catalog_kind_from_string(row.kind)
+    if !kind_ok {
+        return nil, .Invalid_Row
+    }
+
+    // Every row is first assembled borrowing the SQLite columns and validated in that
+    // form; only a row that passes is cloned into owned storage.
+    borrowed: Catalog_Model
+    switch kind {
+    case .Model:
+        complete, complete_ok := catalog_complete_model_from_row(row, source, provider_id)
+        if !complete_ok {
             return nil, .Invalid_Row
         }
+        borrowed = complete
 
-        protocol, protocol_ok := wire.provider_protocol_from_wire(protocol_name)
-        replay, replay_ok := model_catalog.reasoning_replay_from_string(replay_name)
-        format, format_ok := model_catalog.reasoning_format_from_string(format_name)
-        if !protocol_ok || !replay_ok || !format_ok {
+    case .Override:
+        if source != .Javascript || !catalog_model_row_is_override(row) {
             return nil, .Invalid_Row
         }
-
-        if max_tokens_raw < 0 ||
-           max_tokens_raw >= i64(len(provider.Openai_Max_Tokens_Field)) ||
-           dialect_raw < 0 ||
-           dialect_raw >= i64(len(provider.Openai_Responses_Dialect)) {
-            return nil, .Invalid_Row
+        borrowed = model_catalog.Model_Override {
+            id          = wire.Model_Id(row.public_model_id),
+            provider_id = provider_id,
         }
-        max_tokens_field := provider.Openai_Max_Tokens_Field(max_tokens_raw)
-        responses_dialect := provider.Openai_Responses_Dialect(dialect_raw)
+    }
 
-        borrowed: Catalog_Model = Catalog_Complete_Model {
+    if !catalog_model_provider_valid(borrowed, data.providers[provider_index]) {
+        return nil, .Invalid_Row
+    }
+
+    switch value in borrowed {
+    case Catalog_Complete_Model:
+        owned, clone_err := model_catalog.model_clone(value.model, wire.Provider_Id(provider_id), allocator)
+        if clone_err != nil {
+            return nil, .Alloc_Failed
+        }
+        model = Catalog_Complete_Model {
+            source = source,
+            model  = owned,
+        }
+
+    case model_catalog.Model_Override:
+        model = model_catalog.Model_Override {
+            id          = wire.Model_Id(catalog_string_clone(row.public_model_id, allocator) or_return),
+            provider_id = provider_id,
+        }
+    }
+
+    return model, nil
+}
+
+// Assemble a complete model borrowing the row's columns. Every complete-model column is
+// required; the schema enforces the same shape, so a missing one is a corrupt row.
+@(private)
+catalog_complete_model_from_row :: proc(
+    row: Catalog_Model_Row,
+    source: Catalog_Source,
+    provider_id: string,
+) -> (
+    model: Catalog_Complete_Model,
+    ok: bool,
+) {
+    upstream_id, has_upstream := row.upstream_id.?
+    name, has_name := row.name.?
+    context_window, has_context := row.context_window.?
+    max_output_tokens, has_output := row.max_output_tokens.?
+    base_url, has_base_url := row.base_url.?
+    protocol_name, has_protocol := row.protocol.?
+    supports_temperature, has_temperature := row.supports_temperature.?
+    replay_name, has_replay := row.reasoning_replay.?
+    format_name, has_format := row.reasoning_format.?
+    max_tokens_name, has_max_tokens := row.max_tokens_field.?
+    supports_vision, has_vision := row.supports_vision.?
+    supports_tools, has_tools := row.supports_tools.?
+    cost_input, has_cost_input := row.cost_input.?
+    cost_output, has_cost_output := row.cost_output.?
+    cost_cache_read, has_cost_read := row.cost_cache_read.?
+    cost_cache_write, has_cost_write := row.cost_cache_write.?
+    if !has_upstream ||
+       !has_name ||
+       !has_context ||
+       !has_output ||
+       !has_base_url ||
+       !has_protocol ||
+       !has_temperature ||
+       !has_replay ||
+       !has_format ||
+       !has_max_tokens ||
+       !has_vision ||
+       !has_tools ||
+       !has_cost_input ||
+       !has_cost_output ||
+       !has_cost_read ||
+       !has_cost_write {
+        return {}, false
+    }
+
+    protocol, protocol_ok := wire.provider_protocol_from_wire(protocol_name)
+    replay, replay_ok := model_catalog.reasoning_replay_from_string(replay_name)
+    format, format_ok := model_catalog.reasoning_format_from_string(format_name)
+    max_tokens_field, max_tokens_ok := model_catalog.max_tokens_field_from_string(max_tokens_name)
+    if !protocol_ok || !replay_ok || !format_ok || !max_tokens_ok {
+        return {}, false
+    }
+
+    return Catalog_Complete_Model {
             source = source,
             model = {
                 info = {
@@ -651,69 +709,9 @@ catalog_model_from_row :: proc(
                 reasoning_budget_min = row.reasoning_budget_min,
                 reasoning_budget_max = row.reasoning_budget_max,
                 max_tokens_field = max_tokens_field,
-                responses_dialect = responses_dialect,
             },
-        }
-        if !catalog_model_provider_valid(borrowed, data.providers[provider_index]) {
-            return nil, .Invalid_Row
-        }
-
-        complete: Catalog_Complete_Model
-        defer if err != nil {
-            catalog_complete_model_destroy(&complete, allocator)
-        }
-        complete.source = source
-        complete.info.id = wire.Model_Id(catalog_string_clone(row.public_model_id, allocator) or_return)
-        complete.info.provider = provider_id
-        complete.info.name = catalog_string_clone(name, allocator) or_return
-        complete.info.context_window = context_window
-        complete.info.max_output_tokens = max_output_tokens
-        complete.info.supports_vision = supports_vision
-        complete.info.supports_tools = supports_tools
-        complete.info.cost = {
-            input       = cost_input,
-            output      = cost_output,
-            cache_read  = cost_cache_read,
-            cache_write = cost_cache_write,
-        }
-        complete.upstream_id = catalog_string_clone(upstream_id, allocator) or_return
-        complete.endpoint = {
-            base_url = catalog_string_clone(base_url, allocator) or_return,
-            protocol = protocol,
-        }
-        complete.supports_temperature = supports_temperature
-        complete.reasoning_replay = replay
-        complete.reasoning_format = format
-        complete.reasoning_budget_min = row.reasoning_budget_min
-        complete.reasoning_budget_max = row.reasoning_budget_max
-        complete.max_tokens_field = max_tokens_field
-        complete.responses_dialect = responses_dialect
-        model = complete
-
-    case "override":
-        if source != .Javascript || !catalog_model_row_is_override(row) {
-            return nil, .Invalid_Row
-        }
-
-        borrowed: Catalog_Model = Catalog_Model_Override {
-            id          = wire.Model_Id(row.public_model_id),
-            provider_id = provider_id,
-        }
-        if !catalog_model_provider_valid(borrowed, data.providers[provider_index]) {
-            return nil, .Invalid_Row
-        }
-
-        override := Catalog_Model_Override {
-            id          = wire.Model_Id(catalog_string_clone(row.public_model_id, allocator) or_return),
-            provider_id = provider_id,
-        }
-        model = override
-
-    case:
-        return nil, .Invalid_Row
-    }
-
-    return model, nil
+        },
+        true
 }
 
 @(private)
@@ -767,7 +765,7 @@ catalog_loaded_model_finalize :: proc(model: ^Catalog_Model, allocator: mem.Allo
         assert(value.info.default_reasoning == "", "loaded complete model derives its default once")
         value.info.default_reasoning = owned
 
-    case Catalog_Model_Override:
+    case model_catalog.Model_Override:
         assert(value.default_reasoning == "", "loaded override derives its default once")
         value.default_reasoning = owned
     }
@@ -875,8 +873,7 @@ catalog_models_valid :: proc(models: []Catalog_Model, providers: []Catalog_Provi
 
         public_id := catalog_model_public_id(model)
         for previous in models[:i] {
-            previous_provider, previous_source, previous_kind := catalog_model_key(previous)
-            _ = previous_provider
+            _, previous_source, previous_kind := catalog_model_key(previous)
             if catalog_model_public_id(previous) == public_id &&
                previous_source == model_source &&
                previous_kind == kind {
@@ -906,7 +903,7 @@ catalog_model_provider_valid :: proc(model: Catalog_Model, item: Catalog_Provide
             (source != .Javascript || (item.has_endpoint && item.endpoint == value.endpoint)) \
         )
 
-    case Catalog_Model_Override:
+    case model_catalog.Model_Override:
         return source == .Javascript && item.models_dev_id != "" && catalog_override_valid(value)
     }
 
@@ -927,8 +924,6 @@ catalog_complete_model_valid :: proc(model: Catalog_Complete_Model) -> bool {
        !catalog_bounded_string_valid(model.endpoint.base_url, 4096) ||
        provider.endpoint_validate(model.endpoint) != .None ||
        !catalog_reasoning_levels_valid(model.info.reasoning_levels, model.info.default_reasoning) ||
-       !model_catalog.reasoning_replay_valid(model.reasoning_replay) ||
-       !model_catalog.reasoning_format_valid(model.reasoning_format) ||
        !model_catalog.reasoning_format_compatible(model.endpoint.protocol, model.reasoning_format) {
         return false
     }
@@ -953,7 +948,7 @@ catalog_complete_model_valid :: proc(model: Catalog_Complete_Model) -> bool {
 }
 
 @(private)
-catalog_override_valid :: proc(model: Catalog_Model_Override) -> bool {
+catalog_override_valid :: proc(model: model_catalog.Model_Override) -> bool {
     return(
         wire.provider_id_validate(model.provider_id) == .None &&
         catalog_public_model_id_valid(model.id, model.provider_id) &&
@@ -1035,49 +1030,30 @@ catalog_loaded_data_valid :: proc(data: Catalog_Data) -> bool {
     return true
 }
 
+// An override row carries only its key: every complete-model column must be NULL.
 @(private)
 catalog_model_row_is_override :: proc(row: Catalog_Model_Row) -> bool {
-    _, has_upstream := row.upstream_id.?
-    _, has_name := row.name.?
-    _, has_context := row.context_window.?
-    _, has_output := row.max_output_tokens.?
-    _, has_base_url := row.base_url.?
-    _, has_protocol := row.protocol.?
-    _, has_temperature := row.supports_temperature.?
-    _, has_replay := row.reasoning_replay.?
-    _, has_format := row.reasoning_format.?
-    _, has_budget_min := row.reasoning_budget_min.?
-    _, has_budget_max := row.reasoning_budget_max.?
-    _, has_vision := row.supports_vision.?
-    _, has_tools := row.supports_tools.?
-    _, has_cost_input := row.cost_input.?
-    _, has_cost_output := row.cost_output.?
-    _, has_cost_read := row.cost_cache_read.?
-    _, has_cost_write := row.cost_cache_write.?
-    _, has_max_tokens := row.max_tokens_field.?
-    _, has_dialect := row.responses_dialect.?
+    present :=
+        row.upstream_id != nil ||
+        row.name != nil ||
+        row.context_window != nil ||
+        row.max_output_tokens != nil ||
+        row.base_url != nil ||
+        row.protocol != nil ||
+        row.supports_temperature != nil ||
+        row.reasoning_replay != nil ||
+        row.reasoning_format != nil ||
+        row.max_tokens_field != nil ||
+        row.reasoning_budget_min != nil ||
+        row.reasoning_budget_max != nil ||
+        row.supports_vision != nil ||
+        row.supports_tools != nil ||
+        row.cost_input != nil ||
+        row.cost_output != nil ||
+        row.cost_cache_read != nil ||
+        row.cost_cache_write != nil
 
-    return(
-        !has_upstream &&
-        !has_name &&
-        !has_context &&
-        !has_output &&
-        !has_base_url &&
-        !has_protocol &&
-        !has_temperature &&
-        !has_replay &&
-        !has_format &&
-        !has_budget_min &&
-        !has_budget_max &&
-        !has_vision &&
-        !has_tools &&
-        !has_cost_input &&
-        !has_cost_output &&
-        !has_cost_read &&
-        !has_cost_write &&
-        !has_max_tokens &&
-        !has_dialect \
-    )
+    return !present
 }
 
 @(private)
@@ -1103,7 +1079,7 @@ catalog_model_find :: proc(
     models: []Catalog_Model,
     public_model_id: string,
     source: Catalog_Source,
-    kind: string,
+    kind: Catalog_Kind,
 ) -> (
     index: int,
     found: bool,
@@ -1119,15 +1095,15 @@ catalog_model_find :: proc(
 }
 
 @(private)
-catalog_model_key :: proc(model: Catalog_Model) -> (provider_id: string, source: Catalog_Source, kind: string) {
+catalog_model_key :: proc(model: Catalog_Model) -> (provider_id: string, source: Catalog_Source, kind: Catalog_Kind) {
     assert(model != nil, "a catalog model key needs an arm")
 
     switch value in model {
     case Catalog_Complete_Model:
-        return value.info.provider, value.source, "model"
+        return value.info.provider, value.source, .Model
 
-    case Catalog_Model_Override:
-        return value.provider_id, .Javascript, "override"
+    case model_catalog.Model_Override:
+        return value.provider_id, .Javascript, .Override
     }
 
     unreachable()
@@ -1141,7 +1117,7 @@ catalog_model_public_id :: proc(model: Catalog_Model) -> string {
     case Catalog_Complete_Model:
         return value.info.id
 
-    case Catalog_Model_Override:
+    case model_catalog.Model_Override:
         return value.id
     }
 
@@ -1157,7 +1133,7 @@ catalog_model_levels :: proc(model: ^Catalog_Model) -> ^[]string {
     case Catalog_Complete_Model:
         return &value.info.reasoning_levels
 
-    case Catalog_Model_Override:
+    case model_catalog.Model_Override:
         return &value.reasoning_levels
     }
 
@@ -1186,35 +1162,14 @@ catalog_model_destroy :: proc(model: ^Catalog_Model, allocator: mem.Allocator) {
 
     switch &value in model {
     case Catalog_Complete_Model:
-        catalog_complete_model_destroy(&value, allocator)
+        model_catalog.model_destroy(&value.model, allocator)
 
-    case Catalog_Model_Override:
-        delete(value.id, allocator)
-        for level in value.reasoning_levels {
-            delete(level, allocator)
-        }
-        delete(value.reasoning_levels, allocator)
-        delete(value.default_reasoning, allocator)
+    case model_catalog.Model_Override:
+        model_catalog.model_override_destroy(&value, allocator)
 
     case nil:
     }
     model^ = nil
-}
-
-@(private)
-catalog_complete_model_destroy :: proc(model: ^Catalog_Complete_Model, allocator: mem.Allocator) {
-    assert(model != nil, "complete catalog model cleanup needs a model")
-
-    delete(model.info.id, allocator)
-    delete(model.info.name, allocator)
-    for level in model.info.reasoning_levels {
-        delete(level, allocator)
-    }
-    delete(model.info.reasoning_levels, allocator)
-    delete(model.info.default_reasoning, allocator)
-    delete(model.upstream_id, allocator)
-    delete(model.endpoint.base_url, allocator)
-    model^ = {}
 }
 
 @(private)
@@ -1271,37 +1226,23 @@ catalog_bounded_string_valid :: proc(value: string, max_bytes: int) -> bool {
 }
 
 @(private)
-catalog_source_to_string :: proc(source: Catalog_Source) -> string {
-    switch source {
-    case .Models_Dev:
-        return "models_dev"
-
-    case .Javascript:
-        return "javascript"
-    }
-
-    unreachable()
-}
-
-@(private)
 catalog_source_from_string :: proc(value: string) -> (Catalog_Source, bool) {
-    switch value {
-    case "models_dev":
-        return .Models_Dev, true
-
-    case "javascript":
-        return .Javascript, true
+    for candidate, source in catalog_source_string {
+        if candidate == value {
+            return source, true
+        }
     }
 
     return {}, false
 }
 
 @(private)
-catalog_kind_from_string :: proc(value: string) -> (string, bool) {
-    switch value {
-    case "model", "override":
-        return value, true
+catalog_kind_from_string :: proc(value: string) -> (Catalog_Kind, bool) {
+    for candidate, kind in catalog_kind_string {
+        if candidate == value {
+            return kind, true
+        }
     }
 
-    return "", false
+    return {}, false
 }

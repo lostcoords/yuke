@@ -12,10 +12,8 @@ Run_Bind_Error :: enum {
     Missing_Credential,
 }
 
-// Resolve a public model id to its effective row. The row carries everything a run
-// needs: upstream id, endpoint/protocol, temperature support, and reasoning metadata.
-// The returned pointer borrows `effective` and is valid only while it lives; the id is
-// matched exactly and used as a key, never as an index.
+// The id is matched exactly and used as a key, never as an index. The returned pointer
+// borrows `effective` and is valid only while it lives.
 run_model_resolve :: proc(effective: store.Effective_Catalog, public_id: string) -> (^catalog.Model, bool) {
     for &provider in effective.providers {
         for &model in provider.models {
@@ -28,9 +26,8 @@ run_model_resolve :: proc(effective: store.Effective_Catalog, public_id: string)
     return nil, false
 }
 
-// Build the provider connection for a resolved model: validate the endpoint before
-// attaching any credential, then bind the model's provider credential. A missing
-// credential is a normal error, never an assertion.
+// The endpoint validates before any credential is attached. A missing credential is a
+// normal error, never an assertion.
 run_connection_build :: proc(d: ^Daemon, model: ^catalog.Model) -> (provider.Connection, Run_Bind_Error) {
     assert(d != nil && model != nil, "connection build needs a daemon and a model")
 
@@ -45,6 +42,16 @@ run_connection_build :: proc(d: ^Daemon, model: ^catalog.Model) -> (provider.Con
     }
 
     return {endpoint = endpoint, auth = auth}, .None
+}
+
+// The ChatGPT-account Codex backend rejects the sampling limits an OpenAI API key
+// accepts, so the Responses dialect follows the bound credential, not model metadata.
+run_responses_dialect :: proc(auth: provider.Auth) -> provider.Openai_Responses_Dialect {
+    if _, codex := auth.(provider.Codex_OAuth); codex {
+        return .Codex
+    }
+
+    return .Standard
 }
 
 // Resolve the credential for a logical provider: its saved API key, else its OAuth

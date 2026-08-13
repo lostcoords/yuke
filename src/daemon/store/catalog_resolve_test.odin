@@ -235,7 +235,7 @@ test_resolve_matched_override_replaces_only_levels :: proc(t: ^testing.T) {
         res_provider(.Models_Dev, "openai", "openai", "OpenAI", "https://api.openai.com/v1", true, RES_ENV[:]),
         res_provider(.Javascript, "openai", "openai", "", "", false, nil),
     }
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = RES_OVERRIDE_LEVELS[:],
@@ -323,7 +323,7 @@ test_resolve_unmatched_override_invalidates_provider :: proc(t: ^testing.T) {
         res_provider(.Javascript, "openai", "openai", "", "", false, nil),
         res_provider(.Models_Dev, "xai", "xai", "xAI", "https://api.x.ai/v1", true, RES_ENV[:]),
     }
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/ghost",
         provider_id       = "openai",
         reasoning_levels  = RES_OVERRIDE_LEVELS[:],
@@ -455,7 +455,7 @@ test_resolve_reveal_after_javascript_removed :: proc(t: ^testing.T) {
         res_provider(.Models_Dev, "openai", "openai", "OpenAI", "https://api.openai.com/v1", true, RES_ENV[:]),
         res_provider(.Javascript, "openai", "openai", "", "", false, nil),
     }
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = RES_OVERRIDE_LEVELS[:],
@@ -545,7 +545,7 @@ test_resolve_releases_every_owned_allocation_on_oom :: proc(t: ^testing.T) {
         res_provider(.Models_Dev, "openai", "openai", "OpenAI", "https://api.openai.com/v1", true, RES_ENV[:]),
         res_provider(.Javascript, "openai", "openai", "Custom", "https://proxy.test/v1", true, RES_ENV_ALT[:]),
     }
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = RES_OVERRIDE_LEVELS[:],
@@ -693,7 +693,7 @@ test_resolve_stale_override_is_ignored_and_does_not_collide :: proc(t: ^testing.
         res_provider(.Models_Dev, "openai", "openai", "OpenAI", "https://api.openai.com/v1", true, RES_ENV[:]),
         res_provider(.Javascript, "openai", "stale", "Custom", "https://proxy.test/v1", true, RES_ENV_ALT[:]),
     }
-    override: Catalog_Model = Catalog_Model_Override {
+    override: Catalog_Model = model_catalog.Model_Override {
         id                = "openai/gpt-5",
         provider_id       = "openai",
         reasoning_levels  = RES_OVERRIDE_LEVELS[:],

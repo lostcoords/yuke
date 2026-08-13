@@ -1,6 +1,8 @@
 package catalog
 
+import "base:runtime"
 import "core:mem"
+import "core:strings"
 
 import provider "src:provider"
 import wire "src:wire"
@@ -57,7 +59,9 @@ Reasoning_Format :: enum {
 
 #assert(len(Reasoning_Replay) == 3)
 #assert(len(Reasoning_Format) == 6)
+#assert(len(provider.Openai_Max_Tokens_Field) == 2)
 
+// Persisted names for the closed enums the store keeps on a model row.
 @(rodata)
 reasoning_replay_string := [Reasoning_Replay]string {
     .None              = "none",
@@ -75,14 +79,10 @@ reasoning_format_string := [Reasoning_Format]string {
     .Anthropic_Adaptive       = "anthropic-adaptive",
 }
 
-reasoning_replay_valid :: proc(value: Reasoning_Replay) -> bool {
-    return int(value) >= 0 && int(value) < len(reasoning_replay_string)
-}
-
-reasoning_replay_to_string :: proc(value: Reasoning_Replay) -> string {
-    assert(reasoning_replay_valid(value), "a reasoning replay value is closed")
-
-    return reasoning_replay_string[value]
+@(rodata)
+max_tokens_field_string := [provider.Openai_Max_Tokens_Field]string {
+    .Max_Completion_Tokens = "max-completion-tokens",
+    .Max_Tokens            = "max-tokens",
 }
 
 reasoning_replay_from_string :: proc(name: string) -> (Reasoning_Replay, bool) {
@@ -95,18 +95,18 @@ reasoning_replay_from_string :: proc(name: string) -> (Reasoning_Replay, bool) {
     return {}, false
 }
 
-reasoning_format_valid :: proc(value: Reasoning_Format) -> bool {
-    return int(value) >= 0 && int(value) < len(reasoning_format_string)
-}
-
-reasoning_format_to_string :: proc(value: Reasoning_Format) -> string {
-    assert(reasoning_format_valid(value), "a reasoning format value is closed")
-
-    return reasoning_format_string[value]
-}
-
 reasoning_format_from_string :: proc(name: string) -> (Reasoning_Format, bool) {
     for candidate, value in reasoning_format_string {
+        if candidate == name {
+            return value, true
+        }
+    }
+
+    return {}, false
+}
+
+max_tokens_field_from_string :: proc(name: string) -> (provider.Openai_Max_Tokens_Field, bool) {
+    for candidate, value in max_tokens_field_string {
         if candidate == name {
             return value, true
         }
@@ -170,25 +170,38 @@ Model :: struct {
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
     max_tokens_field:     provider.Openai_Max_Tokens_Field,
-    responses_dialect:    provider.Openai_Responses_Dialect,
 }
 
-// Request wire-shape facts from the models.dev npm package: real OpenAI chat counts output
-// with `max_completion_tokens`, every other OpenAI-compatible endpoint with `max_tokens`.
-// Only the field matching the resolved protocol is consulted at request assembly.
-transport_flavor :: proc(
-    npm: string,
-    protocol: wire.Provider_Protocol,
-) -> (
-    provider.Openai_Max_Tokens_Field,
-    provider.Openai_Responses_Dialect,
-) {
-    max_tokens := provider.Openai_Max_Tokens_Field.Max_Tokens
+// Real OpenAI chat counts output with `max_completion_tokens`; every other
+// OpenAI-compatible endpoint uses `max_tokens`. Consulted only by the chat protocol.
+max_tokens_field_resolve :: proc(npm: string, protocol: wire.Provider_Protocol) -> provider.Openai_Max_Tokens_Field {
     if protocol == .Openai_Chat && npm == "@ai-sdk/openai" {
-        max_tokens = .Max_Completion_Tokens
+        return .Max_Completion_Tokens
     }
 
-    return max_tokens, .Standard
+    return .Max_Tokens
+}
+
+// A reasoning-level overlay on a model that is defined elsewhere. It carries no
+// transport fields: the overlaid record keeps those. `provider_id` is borrowed from
+// the owning provider; `default_reasoning` is derived, never authored.
+Model_Override :: struct {
+    id:                wire.Model_Id,
+    provider_id:       wire.Provider_Id,
+    reasoning_levels:  []string,
+    default_reasoning: string,
+}
+
+model_override_destroy :: proc(override: ^Model_Override, allocator: mem.Allocator) {
+    assert(override != nil, "model override cleanup needs an override")
+
+    delete(override.id, allocator)
+    for level in override.reasoning_levels {
+        delete(level, allocator)
+    }
+    delete(override.reasoning_levels, allocator)
+    delete(override.default_reasoning, allocator)
+    override^ = {}
 }
 
 // One selected and normalized models.dev provider. Every string and slice is owned.
@@ -249,6 +262,66 @@ provider_destroy :: proc(item: ^Provider, allocator: mem.Allocator) {
     delete(item.source_id, allocator)
     delete(item.id, allocator)
     item^ = {}
+}
+
+// Deep-clone a model. `info.provider` borrows `provider_id` instead of cloning it,
+// because a provider owns the id its models point at.
+model_clone :: proc(
+    src: Model,
+    provider_id: wire.Provider_Id,
+    allocator: mem.Allocator,
+) -> (
+    model: Model,
+    err: runtime.Allocator_Error,
+) {
+    model = src
+    model.info.provider = string(provider_id)
+    model.info.id = ""
+    model.info.name = ""
+    model.info.reasoning_levels = nil
+    model.info.default_reasoning = ""
+    model.upstream_id = ""
+    model.endpoint.base_url = ""
+    defer if err != nil {
+        model_destroy(&model, allocator)
+    }
+
+    model.info.id = wire.Model_Id(strings.clone(string(src.info.id), allocator) or_return)
+    model.info.name = strings.clone(src.info.name, allocator) or_return
+    model.info.reasoning_levels = string_slice_clone(src.info.reasoning_levels, allocator) or_return
+    model.info.default_reasoning = strings.clone(src.info.default_reasoning, allocator) or_return
+    model.upstream_id = strings.clone(src.upstream_id, allocator) or_return
+    model.endpoint.base_url = strings.clone(src.endpoint.base_url, allocator) or_return
+
+    return model, nil
+}
+
+// Clone a bounded slice of owned strings. An empty input yields nil, not an allocation.
+string_slice_clone :: proc(
+    values: []string,
+    allocator: mem.Allocator,
+) -> (
+    owned: []string,
+    err: runtime.Allocator_Error,
+) {
+    if len(values) == 0 {
+        return nil, nil
+    }
+
+    owned = make([]string, len(values), allocator) or_return
+    defer if err != nil {
+        for value in owned {
+            delete(value, allocator)
+        }
+        delete(owned, allocator)
+        owned = nil
+    }
+
+    for value, index in values {
+        owned[index] = strings.clone(value, allocator) or_return
+    }
+
+    return owned, nil
 }
 
 model_destroy :: proc(model: ^Model, allocator: mem.Allocator) {

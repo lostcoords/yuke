@@ -104,6 +104,7 @@ CREATE TABLE catalog_models (
     supports_temperature INTEGER,
     reasoning_replay     TEXT,
     reasoning_format     TEXT,
+    max_tokens_field     TEXT,
     reasoning_budget_min INTEGER, -- i64
     reasoning_budget_max INTEGER, -- u64
     supports_vision INTEGER,
@@ -131,6 +132,7 @@ CREATE TABLE catalog_models (
         'native', 'openai-effort-toggle-off', 'openrouter-effort',
         'zai-toggle', 'qwen-thinking', 'anthropic-adaptive'
     )),
+    CHECK (max_tokens_field IS NULL OR max_tokens_field IN ('max-completion-tokens', 'max-tokens')),
     CHECK (reasoning_budget_min IS NULL OR (typeof(reasoning_budget_min) = 'integer' AND reasoning_budget_min BETWEEN -1 AND 9007199254740991)),
     CHECK (reasoning_budget_max IS NULL OR (typeof(reasoning_budget_max) = 'integer' AND reasoning_budget_max BETWEEN 0 AND 9007199254740991)),
     CHECK (reasoning_budget_min IS NULL OR reasoning_budget_max IS NULL OR reasoning_budget_min <= reasoning_budget_max),
@@ -147,6 +149,7 @@ CREATE TABLE catalog_models (
             base_url IS NOT NULL AND protocol IS NOT NULL AND
             supports_temperature IS NOT NULL AND
             reasoning_replay IS NOT NULL AND reasoning_format IS NOT NULL AND
+            max_tokens_field IS NOT NULL AND
             supports_vision IS NOT NULL AND supports_tools IS NOT NULL AND
             cost_input IS NOT NULL AND cost_output IS NOT NULL AND
             cost_cache_read IS NOT NULL AND cost_cache_write IS NOT NULL) OR
@@ -156,6 +159,7 @@ CREATE TABLE catalog_models (
             base_url IS NULL AND protocol IS NULL AND
             supports_temperature IS NULL AND
             reasoning_replay IS NULL AND reasoning_format IS NULL AND
+            max_tokens_field IS NULL AND
             reasoning_budget_min IS NULL AND reasoning_budget_max IS NULL AND
             supports_vision IS NULL AND supports_tools IS NULL AND
             cost_input IS NULL AND cost_output IS NULL AND

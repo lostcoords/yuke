@@ -38,7 +38,7 @@ Resolve_Group :: struct {
     javascript:      ^Catalog_Provider,
     imported_models: [dynamic]^Catalog_Complete_Model,
     custom_models:   [dynamic]^Catalog_Complete_Model,
-    overrides:       [dynamic]^Catalog_Model_Override,
+    overrides:       [dynamic]^model_catalog.Model_Override,
 }
 
 // Resolve the raw catalog into its owned effective form. Pure (no SQLite/network/creds):
@@ -154,7 +154,7 @@ resolve_groups_build :: proc(
                 }
             }
 
-        case Catalog_Model_Override:
+        case model_catalog.Model_Override:
             group := find(&groups, string(value.provider_id), scratch) or_return
             if _, append_err := append(&group.overrides, &value); append_err != nil {
                 return groups, .Alloc_Failed
@@ -221,7 +221,7 @@ resolve_group :: proc(
 
     // Overrides apply only against an adopted snapshot; each must match exactly one imported
     // public model id, and an unmatched override invalidates the whole provider.
-    override_for := make([]^Catalog_Model_Override, len(group.imported_models) if use_imported else 0, scratch)
+    override_for := make([]^model_catalog.Model_Override, len(group.imported_models) if use_imported else 0, scratch)
     if snapshot {
         for override in group.overrides {
             matched := false
@@ -273,7 +273,7 @@ resolve_provider_build :: proc(
     credential_env: []string,
     group: ^Resolve_Group,
     use_imported: bool,
-    override_for: []^Catalog_Model_Override,
+    override_for: []^model_catalog.Model_Override,
     result: ^Effective_Catalog,
     total_models: ^int,
 ) -> (
@@ -292,11 +292,15 @@ resolve_provider_build :: proc(
     item.name = catalog_string_clone(name, allocator) or_return
     item.endpoint.base_url = catalog_string_clone(endpoint.base_url, allocator) or_return
     item.endpoint.protocol = endpoint.protocol
-    item.credential_env = resolve_string_slice_clone(credential_env, allocator) or_return
+    env_clone, env_err := model_catalog.string_slice_clone(credential_env, allocator)
+    if env_err != nil {
+        return .Alloc_Failed
+    }
+    item.credential_env = env_clone
 
     if use_imported {
         for imported_model, index in group.imported_models {
-            model := resolve_model_clone(&imported_model.model, item.id, override_for[index], allocator) or_return
+            model := resolve_model_clone(imported_model.model, item.id, override_for[index], allocator) or_return
             if _, append_err := append(&item.models, model); append_err != nil {
                 model_catalog.model_destroy(&model, allocator)
                 return .Alloc_Failed
@@ -305,7 +309,7 @@ resolve_provider_build :: proc(
     }
 
     for custom in group.custom_models {
-        model := resolve_model_clone(&custom.model, item.id, nil, allocator) or_return
+        model := resolve_model_clone(custom.model, item.id, nil, allocator) or_return
         if _, append_err := append(&item.models, model); append_err != nil {
             model_catalog.model_destroy(&model, allocator)
             return .Alloc_Failed
@@ -335,77 +339,30 @@ resolve_provider_build :: proc(
     return nil
 }
 
-// Deep-clone one resolved model into owned storage. `provider_id` is borrowed by the
-// model's `info.provider`. An override substitutes only the reasoning levels and default.
+// Clone one resolved model into owned storage. An override substitutes the reasoning
+// levels and default before the clone, so only the chosen set is ever allocated.
 @(private)
 resolve_model_clone :: proc(
-    src: ^model_catalog.Model,
+    src: model_catalog.Model,
     provider_id: wire.Provider_Id,
-    override: ^Catalog_Model_Override,
+    override: ^model_catalog.Model_Override,
     allocator: mem.Allocator,
 ) -> (
     model: model_catalog.Model,
     err: Error,
 ) {
-    model.info.provider = string(provider_id)
-    model.info.context_window = src.info.context_window
-    model.info.max_output_tokens = src.info.max_output_tokens
-    model.info.supports_vision = src.info.supports_vision
-    model.info.supports_tools = src.info.supports_tools
-    model.info.cost = src.info.cost
-    model.supports_temperature = src.supports_temperature
-    model.reasoning_replay = src.reasoning_replay
-    model.reasoning_format = src.reasoning_format
-    model.reasoning_budget_min = src.reasoning_budget_min
-    model.reasoning_budget_max = src.reasoning_budget_max
-    model.max_tokens_field = src.max_tokens_field
-    model.responses_dialect = src.responses_dialect
-    model.endpoint.protocol = src.endpoint.protocol
-
-    defer if err != nil {
-        model_catalog.model_destroy(&model, allocator)
-    }
-
-    levels := src.info.reasoning_levels
-    default := src.info.default_reasoning
+    source := src
     if override != nil {
-        levels = override.reasoning_levels
-        default = override.default_reasoning
+        source.info.reasoning_levels = override.reasoning_levels
+        source.info.default_reasoning = override.default_reasoning
     }
 
-    model.info.id = wire.Model_Id(catalog_string_clone(string(src.info.id), allocator) or_return)
-    model.info.name = catalog_string_clone(src.info.name, allocator) or_return
-    model.info.reasoning_levels = resolve_string_slice_clone(levels, allocator) or_return
-    model.info.default_reasoning = catalog_string_clone(default, allocator) or_return
-    model.upstream_id = catalog_string_clone(src.upstream_id, allocator) or_return
-    model.endpoint.base_url = catalog_string_clone(src.endpoint.base_url, allocator) or_return
-
-    return model, nil
-}
-
-@(private)
-resolve_string_slice_clone :: proc(values: []string, allocator: mem.Allocator) -> (owned: []string, err: Error) {
-    if len(values) == 0 {
-        return nil, nil
+    clone, clone_err := model_catalog.model_clone(source, provider_id, allocator)
+    if clone_err != nil {
+        return {}, .Alloc_Failed
     }
 
-    allocation_err: mem.Allocator_Error
-    owned, allocation_err = make([]string, len(values), allocator)
-    if allocation_err != nil {
-        return nil, .Alloc_Failed
-    }
-    defer if err != nil {
-        for value in owned {
-            delete(value, allocator)
-        }
-        delete(owned, allocator)
-    }
-
-    for value, index in values {
-        owned[index] = catalog_string_clone(value, allocator) or_return
-    }
-
-    return owned, nil
+    return clone, nil
 }
 
 @(private)
