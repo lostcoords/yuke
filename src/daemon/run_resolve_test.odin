@@ -38,6 +38,7 @@ test_run_model_resolve_finds_exact_and_misses :: proc(t: ^testing.T) {
     testing.expect_value(t, string(hit.info.id), "openai/gpt-5")
     testing.expect_value(t, hit.upstream_id, "gpt-5")
     testing.expect_value(t, hit.endpoint.base_url, "https://api.openai.com/v1")
+    testing.expect_value(t, hit.max_tokens_field, provider.Openai_Max_Tokens_Field.Max_Tokens)
 
     _, unknown := run_model_resolve(effective, "openai/nope")
     testing.expect(t, !unknown, "an unknown public id does not resolve")

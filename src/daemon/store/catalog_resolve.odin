@@ -358,6 +358,8 @@ resolve_model_clone :: proc(
     model.reasoning_format = src.reasoning_format
     model.reasoning_budget_min = src.reasoning_budget_min
     model.reasoning_budget_max = src.reasoning_budget_max
+    model.max_tokens_field = src.max_tokens_field
+    model.responses_dialect = src.responses_dialect
     model.endpoint.protocol = src.endpoint.protocol
 
     defer if err != nil {

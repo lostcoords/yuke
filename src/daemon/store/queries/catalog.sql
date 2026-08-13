@@ -61,6 +61,8 @@ VALUES (:provider_id, :source, :ordinal, :name);
 -- cost_output: f64
 -- cost_cache_read: f64
 -- cost_cache_write: f64
+-- max_tokens_field: i64
+-- responses_dialect: i64
 INSERT INTO catalog_models(
     public_model_id, provider_id, source, kind,
     upstream_id, name, context_window, max_output_tokens,
@@ -68,7 +70,8 @@ INSERT INTO catalog_models(
     reasoning_replay, reasoning_format,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write
+    cost_input, cost_output, cost_cache_read, cost_cache_write,
+    max_tokens_field, responses_dialect
 )
 VALUES (
     :public_model_id, :provider_id, :source, :kind,
@@ -77,7 +80,8 @@ VALUES (
     :reasoning_replay, :reasoning_format,
     :reasoning_budget_min, :reasoning_budget_max,
     :supports_vision, :supports_tools,
-    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
+    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
+    :max_tokens_field, :responses_dialect
 );
 
 -- name: Insert_Catalog_Model_Level :exec

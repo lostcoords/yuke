@@ -38,7 +38,8 @@ CATALOG_MODELS_LOAD_SQL :: `SELECT
     reasoning_replay, reasoning_format,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write
+    cost_input, cost_output, cost_cache_read, cost_cache_write,
+    max_tokens_field, responses_dialect
 FROM catalog_models
 ORDER BY public_model_id, source, kind`
 
@@ -141,6 +142,8 @@ Catalog_Model_Row :: struct {
     cost_output:          Maybe(f64),
     cost_cache_read:      Maybe(f64),
     cost_cache_write:     Maybe(f64),
+    max_tokens_field:     Maybe(i64),
+    responses_dialect:    Maybe(i64),
 }
 
 @(private)
@@ -297,6 +300,8 @@ catalog_model_insert :: proc(s: ^Store, value: Catalog_Model) -> Error {
             cost_output          = model.info.cost.output,
             cost_cache_read      = model.info.cost.cache_read,
             cost_cache_write     = model.info.cost.cache_write,
+            max_tokens_field     = i64(model.max_tokens_field),
+            responses_dialect    = i64(model.responses_dialect),
         }
         levels = model.info.reasoning_levels
 
@@ -582,6 +587,8 @@ catalog_model_from_row :: proc(
         cost_output, has_cost_output := row.cost_output.?
         cost_cache_read, has_cost_read := row.cost_cache_read.?
         cost_cache_write, has_cost_write := row.cost_cache_write.?
+        max_tokens_raw, has_max_tokens := row.max_tokens_field.?
+        dialect_raw, has_dialect := row.responses_dialect.?
         if !has_upstream ||
            !has_name ||
            !has_context ||
@@ -596,7 +603,9 @@ catalog_model_from_row :: proc(
            !has_cost_input ||
            !has_cost_output ||
            !has_cost_read ||
-           !has_cost_write {
+           !has_cost_write ||
+           !has_max_tokens ||
+           !has_dialect {
             return nil, .Invalid_Row
         }
 
@@ -606,6 +615,15 @@ catalog_model_from_row :: proc(
         if !protocol_ok || !replay_ok || !format_ok {
             return nil, .Invalid_Row
         }
+
+        if max_tokens_raw < 0 ||
+           max_tokens_raw >= i64(len(provider.Openai_Max_Tokens_Field)) ||
+           dialect_raw < 0 ||
+           dialect_raw >= i64(len(provider.Openai_Responses_Dialect)) {
+            return nil, .Invalid_Row
+        }
+        max_tokens_field := provider.Openai_Max_Tokens_Field(max_tokens_raw)
+        responses_dialect := provider.Openai_Responses_Dialect(dialect_raw)
 
         borrowed: Catalog_Model = Catalog_Complete_Model {
             source = source,
@@ -632,6 +650,8 @@ catalog_model_from_row :: proc(
                 reasoning_format = format,
                 reasoning_budget_min = row.reasoning_budget_min,
                 reasoning_budget_max = row.reasoning_budget_max,
+                max_tokens_field = max_tokens_field,
+                responses_dialect = responses_dialect,
             },
         }
         if !catalog_model_provider_valid(borrowed, data.providers[provider_index]) {
@@ -666,6 +686,8 @@ catalog_model_from_row :: proc(
         complete.reasoning_format = format
         complete.reasoning_budget_min = row.reasoning_budget_min
         complete.reasoning_budget_max = row.reasoning_budget_max
+        complete.max_tokens_field = max_tokens_field
+        complete.responses_dialect = responses_dialect
         model = complete
 
     case "override":
@@ -1032,6 +1054,8 @@ catalog_model_row_is_override :: proc(row: Catalog_Model_Row) -> bool {
     _, has_cost_output := row.cost_output.?
     _, has_cost_read := row.cost_cache_read.?
     _, has_cost_write := row.cost_cache_write.?
+    _, has_max_tokens := row.max_tokens_field.?
+    _, has_dialect := row.responses_dialect.?
 
     return(
         !has_upstream &&
@@ -1050,7 +1074,9 @@ catalog_model_row_is_override :: proc(row: Catalog_Model_Row) -> bool {
         !has_cost_input &&
         !has_cost_output &&
         !has_cost_read &&
-        !has_cost_write \
+        !has_cost_write &&
+        !has_max_tokens &&
+        !has_dialect \
     )
 }
 

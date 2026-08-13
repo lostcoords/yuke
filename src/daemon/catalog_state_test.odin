@@ -57,6 +57,7 @@ state_model :: proc(
             supports_temperature = true,
             reasoning_replay = .None,
             reasoning_format = .Native,
+            max_tokens_field = .Max_Tokens,
         },
     }
 }

@@ -5,6 +5,7 @@ import "core:mem"
 import "core:testing"
 
 import model_catalog "src:daemon/catalog"
+import provider "src:provider"
 import wire "src:wire"
 
 import "libs:bindings/sqlite"
@@ -71,6 +72,7 @@ test_catalog_sources_round_trip_without_flattening_collisions :: proc(t: ^testin
         testing.expect(t, model_ok, "the imported row is complete")
         if model_ok {
             testing.expect_value(t, model.upstream_id, "gpt-5")
+            testing.expect_value(t, model.max_tokens_field, provider.Openai_Max_Tokens_Field.Max_Tokens)
             testing.expect_value(t, model.info.default_reasoning, "medium")
             testing.expect_value(t, model.reasoning_replay, model_catalog.Reasoning_Replay.Reasoning_Details)
             testing.expect_value(t, model.reasoning_format, model_catalog.Reasoning_Format.Native)
@@ -601,6 +603,7 @@ test_catalog_model :: proc(source: Catalog_Source, provider_id, local_id: string
             supports_temperature = true,
             reasoning_replay = .Reasoning_Details,
             reasoning_format = .Native,
+            max_tokens_field = .Max_Tokens,
         },
     }
 }

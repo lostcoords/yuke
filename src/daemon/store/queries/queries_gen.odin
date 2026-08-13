@@ -196,6 +196,8 @@ Insert_Catalog_Model_Params :: struct {
     cost_output:          Maybe(f64),
     cost_cache_read:      Maybe(f64),
     cost_cache_write:     Maybe(f64),
+    max_tokens_field:     Maybe(i64),
+    responses_dialect:    Maybe(i64),
 }
 
 Insert_Catalog_Model_Level_Params :: struct {
@@ -383,7 +385,8 @@ VALUES (:provider_id, :source, :ordinal, :name);`,
     reasoning_replay, reasoning_format,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
-    cost_input, cost_output, cost_cache_read, cost_cache_write
+    cost_input, cost_output, cost_cache_read, cost_cache_write,
+    max_tokens_field, responses_dialect
 )
 VALUES (
     :public_model_id, :provider_id, :source, :kind,
@@ -392,7 +395,8 @@ VALUES (
     :reasoning_replay, :reasoning_format,
     :reasoning_budget_min, :reasoning_budget_max,
     :supports_vision, :supports_tools,
-    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
+    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
+    :max_tokens_field, :responses_dialect
 );`,
     .Insert_Catalog_Model_Level  = `INSERT INTO catalog_model_reasoning_levels(
     public_model_id, source, kind, ordinal, level
