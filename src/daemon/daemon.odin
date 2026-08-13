@@ -57,6 +57,9 @@ Error :: enum {
     // The models.dev refresh HTTP client could not be initialized.
     Catalog_Failed,
 
+    // The provider inference transport could not be initialized.
+    Provider_Failed,
+
     // The configured script root's entry script raised. Serving with a script tier the
     // operator believes is loaded would be worse than refusing to start.
     Script_Failed,
