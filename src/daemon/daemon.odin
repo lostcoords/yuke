@@ -176,6 +176,10 @@ Daemon :: struct {
     catalog:         Daemon_Catalog,
 
     // @private
+    // The async models.dev fetch service: shared curl client and single-flight slot.
+    catalog_refresh: Catalog_Refresh,
+
+    // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
     seq_high:        map[wire.Session_Id]wire.Seq,
@@ -488,6 +492,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return auth_err
     }
 
+    if refresh_err := catalog_refresh_init(d); refresh_err != .None {
+        return refresh_err
+    }
+
     callbacks := ws.Server_Callbacks {
         on_open    = ws_on_open,
         on_message = ws_on_message,
@@ -591,6 +599,7 @@ start_rollback :: proc(d: ^Daemon) {
     assert(d != nil, "daemon rollback needs daemon state")
     assert(d.front_door.state == .Idle, "failed front door retained active state")
 
+    catalog_refresh_shutdown(d)
     provider_auth_shutdown(d)
     js.ops_close(&d.js)
 
@@ -601,6 +610,7 @@ start_rollback :: proc(d: ^Daemon) {
     // Drain first: a completion in flight settles a promise in the context js.destroy frees.
     workers_stop(d)
     provider_auth_destroy(d)
+    catalog_refresh_destroy(d)
     js.destroy(&d.js)
     store_close(d)
 
@@ -644,6 +654,7 @@ shutdown :: proc(d: ^Daemon) {
 
     log.info("daemon: shutdown started")
     http_server.shutdown(&d.front_door)
+    catalog_refresh_shutdown(d)
     provider_auth_shutdown(d)
     js.ops_close(&d.js)
     ws.server_shutdown(&d.ws_server)
@@ -689,6 +700,7 @@ destroy :: proc(d: ^Daemon) {
     // `yuke:fs` completion settles a promise in the context released just below.
     workers_stop(d)
     provider_auth_destroy(d)
+    catalog_refresh_destroy(d)
     js.destroy(&d.js)
     ws.server_destroy(&d.ws_server)
     relay_destroy(d)
@@ -950,6 +962,9 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     case .Catalog_List:
         method_catalog_list(conn, req, sa)
 
+    case .Catalog_Refresh:
+        method_catalog_refresh(conn, req, sa)
+
     case .Auth_List:
         method_auth_list(conn, req, sa)
 
@@ -989,7 +1004,6 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
          .Session_History,
          .Permission_Decide,
          .Session_Config,
-         .Catalog_Refresh,
          .Workspace_Remove,
          .Workspace_Skills,
          .Permission_Rules,
@@ -1083,6 +1097,30 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         health      = d.catalog.health,
     }
     send_result(conn, req.id, result, sa)
+}
+
+// `catalog.refresh` starts an async models.dev fetch and answers when it lands: the
+// caller gets the new revision and health, or an error. Single-flight — a second
+// refresh while one runs is refused. The reply is deferred to the fetch completion.
+method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
+    assert(conn != nil, "catalog.refresh needs connection state")
+    assert(conn.state == .Ready, "catalog.refresh ran outside Ready")
+    assert(req.method == .Catalog_Refresh, "catalog.refresh received another method")
+
+    d := conn.daemon
+    if !d.catalog_refresh.ready || d.catalog_refresh.stopping {
+        send_error(conn, req.id, .Internal, "catalog refresh is unavailable", sa)
+        return
+    }
+
+    if catalog_refresh_busy(d) {
+        send_error(conn, req.id, .Overloaded, "a catalog refresh is already in progress", sa)
+        return
+    }
+
+    if !catalog_refresh_begin(d, conn.ticket, req.id) {
+        send_error(conn, req.id, .Internal, "catalog refresh could not start", sa)
+    }
 }
 
 // `workspace.describe` on a real path: the path walk is offloaded, and the completion
