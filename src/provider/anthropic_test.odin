@@ -672,7 +672,7 @@ test_anthropic_surfaces_scratch_arena_exhaustion :: proc(t: ^testing.T) {
 
     ts.failing_allocator_init(&failing, context.allocator, 0)
     raw := `{"x":1}`
-    _, arguments_err := anthropic_tool_arguments(transmute([]byte)raw, ts.failing_allocator(&failing))
+    _, arguments_err := tool_arguments(transmute([]byte)raw, ts.failing_allocator(&failing))
     testing.expect_value(t, arguments_err, Transport_Error.Resource_Exhausted)
 }
 

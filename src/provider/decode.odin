@@ -154,3 +154,27 @@ decode_usage_u64 :: proc(object: json.Object, name: string) -> u64 {
 
     return 0
 }
+
+// Validate a tool call's argument bytes as a JSON object and return them unchanged,
+// substituting an empty object for empty input. Shared by every request builder.
+tool_arguments :: proc(
+    bytes: []byte,
+    scratch_allocator: runtime.Allocator,
+) -> (
+    arguments: string,
+    err: Transport_Error,
+) {
+    if len(bytes) == 0 {
+        return "{}", .None
+    }
+
+    raw := string(bytes)
+    value, _, parse_err := decode_json_object(raw, scratch_allocator)
+    if parse_err != .None {
+        return "", parse_err
+    }
+
+    json.destroy_value(value, scratch_allocator)
+
+    return raw, .None
+}

@@ -482,7 +482,7 @@ openai_responses_finalize_tool :: proc(
         return .None
     }
 
-    validated, validate_err := openai_tool_arguments(arguments, scratch_allocator)
+    validated, validate_err := tool_arguments(arguments, scratch_allocator)
     if validate_err != .None {
         return validate_err
     }

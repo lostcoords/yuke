@@ -621,7 +621,7 @@ anthropic_decode_content_block_stop :: proc(
         assert(len(decoder.open_block.tool.id) > 0, "an open tool block retains its id")
         assert(len(decoder.open_block.tool.name) > 0, "an open tool block retains its name")
 
-        arguments, arguments_err := anthropic_tool_arguments(decoder.open_block.tool.arguments[:], scratch_allocator)
+        arguments, arguments_err := tool_arguments(decoder.open_block.tool.arguments[:], scratch_allocator)
         if arguments_err != .None {
             return nil, arguments_err
         }
@@ -744,29 +744,4 @@ anthropic_terminal_event :: proc(decoder: ^Anthropic_Decoder) -> (Maybe(Stream_E
         usage  = usage,
     }
     return stream_event, .None
-}
-
-// Validate a complete argument accumulation as exactly one JSON object. This
-// is structural validation only; successful bytes remain unchanged.
-@(private)
-anthropic_tool_arguments :: proc(
-    bytes: []byte,
-    scratch_allocator: runtime.Allocator,
-) -> (
-    arguments: string,
-    err: Transport_Error,
-) {
-    if len(bytes) == 0 {
-        return "{}", .None
-    }
-
-    raw := string(bytes)
-    value, _, parse_err := decode_json_object(raw, scratch_allocator)
-    if parse_err != .None {
-        return "", parse_err
-    }
-
-    json.destroy_value(value, scratch_allocator)
-
-    return raw, .None
 }

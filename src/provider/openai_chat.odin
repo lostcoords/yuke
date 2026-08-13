@@ -481,7 +481,7 @@ openai_chat_terminal :: proc(
             continue
         }
 
-        arguments, arguments_err := openai_tool_arguments(entry.arguments[:], scratch_allocator)
+        arguments, arguments_err := tool_arguments(entry.arguments[:], scratch_allocator)
         if arguments_err != .None {
             return arguments_err
         }
@@ -519,32 +519,6 @@ openai_chat_terminal :: proc(
     }
 
     return .None
-}
-
-// Validate a complete argument accumulation as exactly one JSON object. This is
-// structural validation only; successful bytes remain unchanged, and an empty
-// accumulation becomes `{}`.
-@(private)
-openai_tool_arguments :: proc(
-    bytes: []byte,
-    scratch_allocator: runtime.Allocator,
-) -> (
-    arguments: string,
-    err: Transport_Error,
-) {
-    if len(bytes) == 0 {
-        return "{}", .None
-    }
-
-    raw := string(bytes)
-    value, _, parse_err := decode_json_object(raw, scratch_allocator)
-    if parse_err != .None {
-        return "", parse_err
-    }
-
-    json.destroy_value(value, scratch_allocator)
-
-    return raw, .None
 }
 
 // Normalize the OpenAI-compatible finish-reason set. Values without a faithful
