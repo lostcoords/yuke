@@ -36,9 +36,12 @@ Anthropic_Thinking_Adaptive :: struct {
     display: Maybe(Anthropic_Thinking_Display),
 }
 
+// Smallest thinking budget the endpoint accepts.
+ANTHROPIC_THINKING_BUDGET_MIN :: 1024
+
 // Legacy token-budget thinking for older models and compatible endpoints.
 Anthropic_Thinking_Enabled :: struct {
-    // Thinking-token budget; at least 1024 and below `max_output_tokens`.
+    // Thinking-token budget; at least `ANTHROPIC_THINKING_BUDGET_MIN` and below `max_output_tokens`.
     budget_tokens: u64,
 
     // Whether response thinking text is summarized or omitted; absent uses the
@@ -188,7 +191,8 @@ anthropic_request_validate :: proc(
 
         case Anthropic_Thinking_Enabled:
             thinking_on = true
-            if thinking.budget_tokens < 1024 || thinking.budget_tokens >= request.max_output_tokens {
+            if thinking.budget_tokens < ANTHROPIC_THINKING_BUDGET_MIN ||
+               thinking.budget_tokens >= request.max_output_tokens {
                 return .Invalid_Request
             }
 
