@@ -55,7 +55,8 @@ page_store :: proc(t: ^testing.T, name: string, sessions: ..wire.Session) -> (^S
     testing.expect_value(t, err, nil)
 
     for session in sessions {
-        testing.expect_value(t, session_create(s, session, nil), nil)
+        _, create_err := session_create(s, test_workspace(session.workspace_id), session, nil)
+        testing.expect_value(t, create_err, nil)
     }
 
     return s, path

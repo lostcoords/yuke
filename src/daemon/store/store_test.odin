@@ -338,12 +338,19 @@ test_session_create_is_all_or_nothing :: proc(t: ^testing.T) {
 
     testing.expect_value(t, sqlite.exec(s.writer, "DROP TABLE session_prompts"), sqlite.Result.Ok)
 
-    session := test_session(0x8d)
-    testing.expect(t, session_create(s, test_session_summary(session), "be brief") != nil, "the prompt insert fails")
+    summary := test_session_summary(test_session(0x8d))
+    _, create_err := session_create(s, test_workspace(summary.workspace_id), summary, "be brief")
+    testing.expect(t, create_err != nil, "the prompt insert fails")
 
     count, count_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM sessions")
     testing.expect_value(t, count_err, sqlite.Result.Ok)
     testing.expect_value(t, count, i64(0))
+
+    // The workspace is written in the same transaction, so a rolled-back session must not
+    // leave one behind: the daemon would then never announce it.
+    workspaces, workspaces_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM workspaces")
+    testing.expect_value(t, workspaces_err, sqlite.Result.Ok)
+    testing.expect_value(t, workspaces, i64(0))
 }
 
 @(private = "file")

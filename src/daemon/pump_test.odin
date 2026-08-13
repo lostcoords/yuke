@@ -1141,13 +1141,20 @@ daemon_test_session :: proc(id: wire.Session_Id) -> wire.Session {
     }
 }
 
+// The workspace every synthetic session is created into; `sessions.workspace_id`
+// references it, so it is written with the first session and matched by the rest.
+daemon_test_workspace :: proc() -> wire.Workspace {
+    return wire.Workspace{id = wire.Workspace_Id(pump_test_session('f')), root = "/test", title = "test"}
+}
+
 // Every event carries a foreign key into `sessions`, so a synthetic id needs its
-// registry row before the pump can log anything for it. The daemon has no session
-// engine yet, so tests stand in for what `session.create` will do.
+// registry row before the pump can log anything for it. Writes the rows `session.create`
+// would, without minting an index revision or announcing anything.
 daemon_test_session_create :: proc(t: ^testing.T, d: ^Daemon, ids: ..wire.Session_Id) {
     assert(d.store != nil, "a serving daemon always owns an event store")
 
     for id in ids {
-        testing.expect_value(t, store.session_create(d.store, daemon_test_session(id), nil), nil)
+        _, err := store.session_create(d.store, daemon_test_workspace(), daemon_test_session(id), nil)
+        testing.expect_value(t, err, nil)
     }
 }

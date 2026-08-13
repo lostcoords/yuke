@@ -66,13 +66,24 @@ session_filter_values :: proc(filter: Session_Filter) -> Session_Filter_Values {
     return values
 }
 
-// Write the registry row; events and projected messages carry a foreign key into it. The system
-// prompt lands in the same transaction so a half-created session refuses its own retry.
-session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(string)) -> (err: Error) {
+// Write the registry row; events and projected messages carry a foreign key into it. The
+// system prompt and the owning workspace land in the same transaction, so a half-created
+// session refuses its own retry and never announces a workspace it did not keep.
+// `workspace_created` reports that this session was the first in its workspace.
+session_create :: proc(
+    s: ^Store,
+    workspace: wire.Workspace,
+    session: wire.Session,
+    system_prompt: Maybe(string),
+) -> (
+    workspace_created: bool,
+    err: Error,
+) {
     assert(s != nil, "session_create needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
     assert(session.origin != nil, "a session carries its origin")
     assert(session.updated_at_ms >= session.created_at_ms, "a session is never updated before it was created")
+    assert(session.workspace_id == workspace.id, "a session is created into the workspace it names")
 
     params := queries.Create_Session_Params {
         id            = session.id,
@@ -114,18 +125,23 @@ session_create :: proc(s: ^Store, session: wire.Session, system_prompt: Maybe(st
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
     // A failed ROLLBACK leaves the transaction open, which outlives this call, so it
-    // replaces the original error rather than being dropped.
+    // replaces the original error rather than being dropped. The workspace row goes back
+    // with everything else, so the flag has to unwind too: `or_return` returns whatever
+    // the named results already hold.
     defer if err != nil {
+        workspace_created = false
+
         if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
             err = rollback
         }
     }
 
+    workspace_created = workspace_insert(s, workspace) or_return
     sqlite.execute(&s.inserts.create_session, &params) or_return
     session_prompt_set(s, session.id, system_prompt) or_return
     sqlite.txn_commit(s.writer) or_return
 
-    return nil
+    return workspace_created, nil
 }
 
 // Read the public summary and open-run projection from one session row. Every

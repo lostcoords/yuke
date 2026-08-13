@@ -176,8 +176,12 @@ test_session_prompt_is_stored_only_when_present :: proc(t: ^testing.T) {
     testing.expect_value(t, err, nil)
     defer close(s)
 
-    testing.expect_value(t, session_create(s, test_session_summary(with_prompt), "be helpful"), nil)
-    testing.expect_value(t, session_create(s, test_session_summary(without), nil), nil)
+    kept := test_session_summary(with_prompt)
+    bare := test_session_summary(without)
+    _, kept_err := session_create(s, test_workspace(kept.workspace_id), kept, "be helpful")
+    _, bare_err := session_create(s, test_workspace(bare.workspace_id), bare, nil)
+    testing.expect_value(t, kept_err, nil)
+    testing.expect_value(t, bare_err, nil)
 
     testing.expect_value(t, prompt_rows(s, with_prompt), i64(1))
     testing.expect_value(t, prompt_rows(s, without), i64(0))

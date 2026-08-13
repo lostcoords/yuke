@@ -190,13 +190,29 @@ CREATE TABLE catalog_model_reasoning_levels (
 CREATE INDEX catalog_models_by_provider
     ON catalog_models(provider_id, source, public_model_id, kind);
 
+-- Every root a session runs in. `id` is derived from `root`, so a row is written once
+-- and never updated: the same directory always hashes to the same id and title. Kept
+-- because that derivation is one-way — without the root here, a restart could not tell
+-- a client which directory a session belongs to.
+CREATE TABLE workspaces (
+    id    BLOB PRIMARY KEY CHECK (typeof(id) = 'blob' AND length(id) = 16), -- wire.Workspace_Id
+    root  TEXT NOT NULL    CHECK (typeof(root)  = 'text' AND length(root) > 0),
+    title TEXT NOT NULL    CHECK (typeof(title) = 'text' AND length(title) <= 256),
+
+    -- One row per directory in both directions: the id is a hash of the root, so a
+    -- second root reaching an existing id is a collision, not a re-registration.
+    UNIQUE (root)
+) WITHOUT ROWID;
+
 -- Primary state, not derived: session.summary_changed is Ungated and never reaches the
 -- log, so nothing here rebuilds by replay. Carries the id-minting marks too, one row per
 -- session, and `origin` flattened from the Session_Origin union with each arm's ids
 -- non-null exactly for that arm.
 CREATE TABLE sessions (
     id           BLOB PRIMARY KEY CHECK (typeof(id) = 'blob' AND length(id) = 16), -- wire.Session_Id
-    workspace_id BLOB NOT NULL    CHECK (typeof(workspace_id) = 'blob' AND length(workspace_id) = 16), -- wire.Workspace_Id
+    workspace_id BLOB NOT NULL -- wire.Workspace_Id
+        CHECK (typeof(workspace_id) = 'blob' AND length(workspace_id) = 16)
+        REFERENCES workspaces(id),
 
     origin            TEXT NOT NULL CHECK (origin IN ('root', 'child', 'fork', 'cron')),
     parent_id         BLOB    CHECK (parent_id IS NULL OR (typeof(parent_id) = 'blob' AND length(parent_id) = 16)), -- wire.Session_Id

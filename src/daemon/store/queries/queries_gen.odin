@@ -144,6 +144,12 @@ Session_Count_Row :: struct {
     total: u64,
 }
 
+Workspace_Page_Row :: struct {
+    id:    wire.Workspace_Id,
+    root:  string,
+    title: string,
+}
+
 Delete_Catalog_Provider_Params :: struct {
     provider_id: string,
     source:      string,
@@ -329,6 +335,16 @@ Session_Count_Params :: struct {
     top_level:    bool,
 }
 
+Insert_Workspace_Params :: struct {
+    id:    wire.Workspace_Id,
+    root:  string,
+    title: string,
+}
+
+Workspace_Page_Params :: struct {
+    limit: int,
+}
+
 @(private)
 Query_Id :: enum {
     Delete_Catalog_Provider,
@@ -359,6 +375,8 @@ Query_Id :: enum {
     Session_Snapshot,
     Session_Page,
     Session_Count,
+    Insert_Workspace,
+    Workspace_Page,
 }
 
 @(private, rodata)
@@ -493,6 +511,9 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)
   AND (:job_id       IS NULL OR job_id       = :job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));`,
+    .Insert_Workspace            = `INSERT INTO workspaces(id, root, title) VALUES (:id, :root, :title)
+    ON CONFLICT(id) DO NOTHING;`,
+    .Workspace_Page              = `SELECT id, root, title FROM workspaces ORDER BY root LIMIT :limit;`,
 }
 
 Queries :: struct {
@@ -524,6 +545,8 @@ Queries :: struct {
     session_snapshot:            sqlite.Reader(Session_Snapshot_Params, Session_Row),
     session_page:                sqlite.Reader(Session_Page_Params, Session_Page_Row),
     session_count:               sqlite.Reader(Session_Count_Params, Session_Count_Row),
+    insert_workspace:            sqlite.Bind_Mapping(Insert_Workspace_Params),
+    workspace_page:              sqlite.Reader(Workspace_Page_Params, Workspace_Page_Row),
 }
 
 queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.allocator) -> sqlite.Error {
@@ -729,6 +752,26 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     }
     assert(session_count_reader_err == .None, "generated statement matches its generated struct")
     queries.session_count = session_count_reader
+    insert_workspace_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Workspace]) or_return
+    insert_workspace_bind, insert_workspace_bind_err := sqlite.bind_prepare(
+        insert_workspace_stmt,
+        Insert_Workspace_Params,
+    )
+    assert(insert_workspace_bind_err == .None, "generated statement matches its generated struct")
+    queries.insert_workspace = insert_workspace_bind
+    workspace_page_stmt := sqlite.prepare(db, QUERY_SQL[.Workspace_Page]) or_return
+    workspace_page_reader, workspace_page_reader_err := sqlite.reader_prepare(
+        workspace_page_stmt,
+        Workspace_Page_Params,
+        Workspace_Page_Row,
+        allocator,
+    )
+    if workspace_page_reader_err == .Out_Of_Memory {
+        sqlite.finalize(workspace_page_stmt)
+        return workspace_page_reader_err
+    }
+    assert(workspace_page_reader_err == .None, "generated statement matches its generated struct")
+    queries.workspace_page = workspace_page_reader
     return nil
 }
 
@@ -768,6 +811,9 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.reader_destroy(&queries.session_page, allocator)
     sqlite.finalize(queries.session_count.statement)
     sqlite.reader_destroy(&queries.session_count, allocator)
+    sqlite.finalize(queries.insert_workspace.statement)
+    sqlite.finalize(queries.workspace_page.statement)
+    sqlite.reader_destroy(&queries.workspace_page, allocator)
 }
 
 delete_catalog_provider :: proc(q: ^Queries, params_in: Delete_Catalog_Provider_Params) -> sqlite.Result {
@@ -942,4 +988,22 @@ session_count :: proc(
 ) {
     params := params_in
     return sqlite.read_one(&q.session_count, &params, allocator)
+}
+
+insert_workspace :: proc(q: ^Queries, params_in: Insert_Workspace_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.insert_workspace, &params)
+}
+
+workspace_page :: proc(
+    q: ^Queries,
+    params_in: Workspace_Page_Params,
+    allocator := context.allocator,
+    cap_hint := 0,
+) -> (
+    []Workspace_Page_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_all(&q.workspace_page, &params, allocator, cap_hint)
 }

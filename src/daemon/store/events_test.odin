@@ -705,6 +705,16 @@ test_session :: proc(tag: byte) -> wire.Session_Id {
     return wire.Session_Id(id)
 }
 
+// The workspace a synthetic session is created into. `sessions.workspace_id` references
+// it, so the first session naming an id writes the row and later ones match it; roots
+// stay distinct per id because the table holds one row per directory.
+@(private)
+test_workspace :: proc(id: wire.Workspace_Id) -> wire.Workspace {
+    root := id
+
+    return wire.Workspace{id = id, root = fmt.tprintf("/test/%s", string(root[:])), title = "test"}
+}
+
 @(private)
 test_session_summary :: proc(id: wire.Session_Id) -> wire.Session {
     return wire.Session {
@@ -727,7 +737,9 @@ test_session_summary :: proc(id: wire.Session_Id) -> wire.Session {
 @(private)
 test_session_create :: proc(t: ^testing.T, s: ^Store, ids: ..wire.Session_Id) {
     for id in ids {
-        testing.expect_value(t, session_create(s, test_session_summary(id), nil), nil)
+        session := test_session_summary(id)
+        _, err := session_create(s, test_workspace(session.workspace_id), session, nil)
+        testing.expect_value(t, err, nil)
     }
 }
 

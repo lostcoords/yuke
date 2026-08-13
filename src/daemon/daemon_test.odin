@@ -98,9 +98,15 @@ cli_on_ready :: proc(c: ^client.Client, hello: wire.Initialize_Result) {
     o.cron_revision = hello.cron_revision
 
     if o.send_request_on_ready {
-        // A method with no dispatch handler; its empty params validate, so the request
-        // reaches the router and falls through to the `Unknown_Method` arm.
-        client.client_send_request(c, .Session_Create, wire.Create_Session{}, cli_on_response)
+        // A method with no dispatch handler. The params are well-formed — a patch of
+        // nothing against a well-formed id — so the request passes validation, reaches
+        // the router, and falls through to the `Unknown_Method` arm.
+        client.client_send_request(
+            c,
+            .Session_Patch,
+            wire.Session_Patch_Params{session_id = pump_test_session('a')},
+            cli_on_response,
+        )
     } else {
         client.client_close(c)
     }
@@ -214,7 +220,7 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
     testing.expect(t, obs.ready, "client should reach Ready")
     testing.expect(t, obs.got_response, "a request after Ready must be answered, not dropped")
     testing.expect(t, obs.resp_is_error, "the answer must be an error response")
-    // `session.create` is a valid method the router does not handle, so it answers
+    // `session.patch` is a valid method the router does not handle, so it answers
     // with `Unknown_Method` rather than dropping the request.
     testing.expect_value(t, obs.resp_error_code, wire.Error_Code.Unknown_Method)
     testing.expect_value(t, obs.err, client.Protocol_Error.None)
@@ -344,7 +350,8 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: .
     obs.daemon = &d
 
     for session in sessions {
-        testing.expect_value(t, store.session_create(d.store, session, nil), nil)
+        _, create_err := store.session_create(d.store, daemon_test_workspace(), session, nil)
+        testing.expect_value(t, create_err, nil)
     }
 
     c: client.Client
