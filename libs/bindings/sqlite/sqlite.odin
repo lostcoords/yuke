@@ -380,6 +380,25 @@ step :: proc(stmt: ^Stmt) -> Result {
     return c_step(stmt)
 }
 
+// Advance a row-reading loop: `.Row` yields a row, `.Done` ends it, and any error
+// propagates through `rc`. Callers loop `for { if !step_row(st) or_return { break } }`.
+@(require_results)
+step_row :: proc(stmt: ^Stmt) -> (has_row: bool, rc: Result) {
+    assert(stmt != nil, "step_row needs a statement")
+
+    result := step(stmt)
+    if result == .Row {
+        return true, .Ok
+    }
+    if is_error(result) {
+        return false, result
+    }
+
+    assert(result == .Done, "step_row either yields a row or completes")
+
+    return false, .Ok
+}
+
 // Reset a statement and release its parameter memory. Both calls always run, and
 // the result is `reset`'s, which reports the preceding step's failure.
 reset_and_clear :: proc(stmt: ^Stmt) -> Result {

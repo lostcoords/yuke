@@ -89,14 +89,7 @@ credential_statuses_load :: proc(
     }
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return nil, rc
-            }
-
-            assert(rc == .Done, "a credential status read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
@@ -144,14 +137,7 @@ credentials_load :: proc(s: ^Store, allocator := context.allocator) -> (credenti
     }
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return nil, rc
-            }
-
-            assert(rc == .Done, "a credential read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
