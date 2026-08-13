@@ -145,7 +145,7 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
 // nothing is imported or a load fails, making the next request unconditional.
 @(private)
 catalog_current_etag :: proc(d: ^Daemon, allocator: mem.Allocator) -> string {
-    data, load_err := store.catalog_data_load(d.store, allocator)
+    data, load_err := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, allocator)
     if load_err != nil {
         return ""
     }

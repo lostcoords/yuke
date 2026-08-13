@@ -32,7 +32,7 @@ catalog_state_load :: proc(d: ^Daemon) -> store.Error {
     defer virtual.arena_destroy(&scratch)
     sa := virtual.arena_allocator(&scratch)
 
-    data := store.catalog_data_load(d.store, sa) or_return
+    data := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, sa) or_return
     effective := store.catalog_resolve(data, sa) or_return
 
     models, ok := catalog_models_view(effective, sa)
@@ -68,7 +68,7 @@ catalog_resolve_current :: proc(
     assert(d != nil, "catalog resolve needs daemon state")
     assert(d.store != nil, "catalog resolve needs an open store")
 
-    data := store.catalog_data_load(d.store, allocator) or_return
+    data := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, allocator) or_return
     defer store.catalog_data_destroy(&data)
 
     // The resolver clones everything it keeps, so the raw rows are freed here and the

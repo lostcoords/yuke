@@ -16,10 +16,15 @@ CATALOG_MODELS_PER_SOURCE_MAX :: wire.LIMITS.max_catalog_models
 CATALOG_CREDENTIAL_ENV_MAX :: 32
 CATALOG_ETAG_MAX_BYTES :: 4096
 
+// Load every provider. A run passes one provider id instead, so it reads only the rows
+// that can affect its own model; `?1` is that filter.
+CATALOG_ALL_PROVIDERS :: ""
+
 @(private)
 CATALOG_PROVIDERS_LOAD_SQL :: `SELECT
     provider_id, source, models_dev_id, name, base_url, protocol, etag
 FROM catalog_providers
+WHERE (?1 = '' OR provider_id = ?1)
 ORDER BY provider_id, source`
 
 @(private)
@@ -28,6 +33,7 @@ CATALOG_PROVIDER_ENV_LOAD_SQL :: `SELECT
     (SELECT count(*) FROM catalog_provider_env AS all_env
         WHERE all_env.provider_id = e.provider_id AND all_env.source = e.source) AS total
 FROM catalog_provider_env AS e
+WHERE (?1 = '' OR e.provider_id = ?1)
 ORDER BY e.provider_id, e.source, e.ordinal`
 
 @(private)
@@ -40,8 +46,11 @@ CATALOG_MODELS_LOAD_SQL :: `SELECT
     supports_vision, supports_tools,
     cost_input, cost_output, cost_cache_read, cost_cache_write
 FROM catalog_models
+WHERE (?1 = '' OR provider_id = ?1)
 ORDER BY public_model_id, source, kind`
 
+// Levels carry no provider id of their own, so the filter joins through the model row
+// the levels belong to. The `total` subselect stays unscoped: it counts one model's set.
 @(private)
 CATALOG_MODEL_LEVELS_LOAD_SQL :: `SELECT
     l.public_model_id, l.source, l.kind, l.ordinal, l.level,
@@ -49,6 +58,9 @@ CATALOG_MODEL_LEVELS_LOAD_SQL :: `SELECT
         WHERE all_levels.public_model_id = l.public_model_id
           AND all_levels.source = l.source AND all_levels.kind = l.kind) AS total
 FROM catalog_model_reasoning_levels AS l
+JOIN catalog_models AS m
+    ON m.public_model_id = l.public_model_id AND m.source = l.source AND m.kind = l.kind
+WHERE (?1 = '' OR m.provider_id = ?1)
 ORDER BY l.public_model_id, l.source, l.kind, l.ordinal`
 
 // Durable origin of a provider/model record. Source stays in every primary key.
@@ -343,7 +355,14 @@ catalog_model_insert :: proc(s: ^Store, value: Catalog_Model) -> Error {
 
 // Load every raw source row in stable key order. This does not apply JavaScript
 // overlays; it preserves the records the later resolver must compare.
-catalog_data_load :: proc(s: ^Store, allocator := context.allocator) -> (data: Catalog_Data, err: Error) {
+catalog_data_load :: proc(
+    s: ^Store,
+    provider_id: string,
+    allocator := context.allocator,
+) -> (
+    data: Catalog_Data,
+    err: Error,
+) {
     assert(s != nil, "catalog_data_load needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
     assert(allocator.procedure != nil, "a catalog read needs an allocator")
@@ -356,10 +375,10 @@ catalog_data_load :: proc(s: ^Store, allocator := context.allocator) -> (data: C
         catalog_data_destroy(&loaded)
     }
 
-    catalog_providers_load(s, &loaded) or_return
-    catalog_provider_env_load(s, &loaded) or_return
-    catalog_models_load(s, &loaded) or_return
-    catalog_model_levels_load(s, &loaded) or_return
+    catalog_providers_load(s, &loaded, provider_id) or_return
+    catalog_provider_env_load(s, &loaded, provider_id) or_return
+    catalog_models_load(s, &loaded, provider_id) or_return
+    catalog_model_levels_load(s, &loaded, provider_id) or_return
 
     for &model in loaded.models {
         catalog_loaded_model_finalize(&model, allocator) or_return
@@ -388,13 +407,14 @@ catalog_data_destroy :: proc(data: ^Catalog_Data) {
 }
 
 @(private)
-catalog_providers_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
+catalog_providers_load :: proc(s: ^Store, data: ^Catalog_Data, provider_id: string) -> Error {
     assert(s != nil, "catalog provider load needs a store")
     assert(data != nil, "catalog provider load needs output data")
     assert(len(data.providers) == 0, "catalog provider load starts empty")
 
     st := sqlite.prepare(s.writer, CATALOG_PROVIDERS_LOAD_SQL) or_return
     defer sqlite.finalize(st)
+    sqlite.bind_text(st, 1, provider_id) or_return
 
     for {
         if has_row := sqlite.step_row(st) or_return; !has_row {
@@ -488,12 +508,13 @@ catalog_provider_from_row :: proc(
 }
 
 @(private)
-catalog_provider_env_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
+catalog_provider_env_load :: proc(s: ^Store, data: ^Catalog_Data, provider_id: string) -> Error {
     assert(s != nil, "catalog provider environment load needs a store")
     assert(data != nil, "catalog provider environment load needs output data")
 
     st := sqlite.prepare(s.writer, CATALOG_PROVIDER_ENV_LOAD_SQL) or_return
     defer sqlite.finalize(st)
+    sqlite.bind_text(st, 1, provider_id) or_return
 
     for {
         if has_row := sqlite.step_row(st) or_return; !has_row {
@@ -524,13 +545,14 @@ catalog_provider_env_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
 }
 
 @(private)
-catalog_models_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
+catalog_models_load :: proc(s: ^Store, data: ^Catalog_Data, provider_id: string) -> Error {
     assert(s != nil, "catalog model load needs a store")
     assert(data != nil, "catalog model load needs output data")
     assert(len(data.models) == 0, "catalog model load starts empty")
 
     st := sqlite.prepare(s.writer, CATALOG_MODELS_LOAD_SQL) or_return
     defer sqlite.finalize(st)
+    sqlite.bind_text(st, 1, provider_id) or_return
 
     for {
         if has_row := sqlite.step_row(st) or_return; !has_row {
@@ -715,12 +737,13 @@ catalog_complete_model_from_row :: proc(
 }
 
 @(private)
-catalog_model_levels_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
+catalog_model_levels_load :: proc(s: ^Store, data: ^Catalog_Data, provider_id: string) -> Error {
     assert(s != nil, "catalog model level load needs a store")
     assert(data != nil, "catalog model level load needs output data")
 
     st := sqlite.prepare(s.writer, CATALOG_MODEL_LEVELS_LOAD_SQL) or_return
     defer sqlite.finalize(st)
+    sqlite.bind_text(st, 1, provider_id) or_return
 
     for {
         if has_row := sqlite.step_row(st) or_return; !has_row {

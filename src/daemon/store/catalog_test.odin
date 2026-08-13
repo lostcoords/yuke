@@ -45,7 +45,7 @@ test_catalog_sources_round_trip_without_flattening_collisions :: proc(t: ^testin
         nil,
     )
 
-    data, load_err := catalog_data_load(s)
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, nil)
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 2)
@@ -118,7 +118,7 @@ test_catalog_javascript_replace_removes_stale_rows_and_reveals_imported :: proc(
     )
     testing.expect_value(t, catalog_javascript_replace(s, nil, nil), nil)
 
-    data, load_err := catalog_data_load(s)
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, nil)
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 1)
@@ -158,7 +158,7 @@ test_catalog_sources_survive_store_restart :: proc(t: ^testing.T) {
     testing.expect_value(t, reopen_err, nil)
     defer close(reopened)
 
-    data, load_err := catalog_data_load(reopened)
+    data, load_err := catalog_data_load(reopened, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, nil)
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 2)
@@ -192,7 +192,7 @@ test_catalog_imported_replace_is_transactional :: proc(t: ^testing.T) {
     new_model: Catalog_Model = test_catalog_model(.Models_Dev, "openai", "new")
     testing.expect_value(t, catalog_imported_replace(s, item, []Catalog_Model{new_model}), sqlite.Result.Constraint)
 
-    data, load_err := catalog_data_load(s)
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, nil)
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 1)
@@ -231,7 +231,7 @@ test_catalog_javascript_replace_is_transactional :: proc(t: ^testing.T) {
         sqlite.Result.Constraint,
     )
 
-    data, load_err := catalog_data_load(s)
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, nil)
     defer catalog_data_destroy(&data)
     testing.expect_value(t, len(data.providers), 1)
@@ -383,7 +383,7 @@ test_catalog_load_rejects_javascript_model_provider_mismatch :: proc(t: ^testing
         sqlite.Result.Ok,
     )
 
-    data, load_err := catalog_data_load(s)
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, Store_Error.Invalid_Row)
     testing.expect(t, data.providers == nil && data.models == nil, "a mismatched custom endpoint returns no data")
 
@@ -400,7 +400,7 @@ test_catalog_load_rejects_javascript_model_provider_mismatch :: proc(t: ^testing
         sqlite.Result.Ok,
     )
 
-    data, load_err = catalog_data_load(s)
+    data, load_err = catalog_data_load(s, CATALOG_ALL_PROVIDERS)
     testing.expect_value(t, load_err, Store_Error.Invalid_Row)
     testing.expect(t, data.providers == nil && data.models == nil, "an unbacked override returns no data")
 }
@@ -471,7 +471,7 @@ test_catalog_load_allocation_failures_leak_nothing :: proc(t: ^testing.T) {
 
         failing: testsupport.Failing_Allocator
         testsupport.failing_allocator_init(&failing, tracked, fail_at)
-        data, load_err := catalog_data_load(s, testsupport.failing_allocator(&failing))
+        data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS, testsupport.failing_allocator(&failing))
 
         if load_err == nil {
             completed = true
@@ -529,7 +529,7 @@ test_catalog_load_rejects_corrupt_rows_without_leaking_prefix :: proc(t: ^testin
     mem.tracking_allocator_init(&track, context.allocator)
     defer mem.tracking_allocator_destroy(&track)
 
-    data, load_err := catalog_data_load(s, mem.tracking_allocator(&track))
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS, mem.tracking_allocator(&track))
     testing.expect_value(t, load_err, Store_Error.Invalid_Row)
     testing.expect(t, data.providers == nil && data.models == nil, "a corrupt suffix returns no valid prefix")
     testing.expect_value(t, len(track.allocation_map), 0)
@@ -556,7 +556,7 @@ test_catalog_load_validates_borrowed_text_before_cloning :: proc(t: ^testing.T) 
 
     failing: testsupport.Failing_Allocator
     testsupport.failing_allocator_init(&failing, context.allocator, 0)
-    data, load_err := catalog_data_load(s, testsupport.failing_allocator(&failing))
+    data, load_err := catalog_data_load(s, CATALOG_ALL_PROVIDERS, testsupport.failing_allocator(&failing))
     testing.expect_value(t, load_err, Store_Error.Invalid_Row)
     testing.expect(t, data.providers == nil && data.models == nil, "invalid borrowed text allocates no output")
 }
