@@ -120,8 +120,8 @@ run_anthropic_thinking_on :: proc(thinking: provider.Anthropic_Thinking) -> bool
 }
 
 // Token budget for a level on a budget-shaped row, which is the only kind the decoder
-// gives bounds to. `max` spends the whole ceiling and any other on-level spends half.
-// A budget the builder would reject yields `false`, leaving the provider default.
+// gives bounds to. The budget shares one ceiling with the answer, so even `max` leaves
+// the response a quarter of it. A budget the row or the builder rejects yields `false`.
 @(private)
 run_anthropic_budget :: proc(model: ^catalog.Model, level: string) -> (budget: u64, budgeted: bool) {
     minimum, has_minimum := model.reasoning_budget_min.?
@@ -130,18 +130,17 @@ run_anthropic_budget :: proc(model: ^catalog.Model, level: string) -> (budget: u
         return 0, false
     }
 
-    ceiling := model.info.max_output_tokens - 1
-    if has_maximum && maximum < ceiling {
-        ceiling = maximum
+    cap := model.info.max_output_tokens
+    budget = (cap / 4) * 3 if level == "max" else cap / 2
+    if has_maximum && maximum < budget {
+        budget = maximum
     }
-
-    budget = ceiling if level == "max" else ceiling / 2
     if has_minimum && minimum > 0 && u64(minimum) > budget {
         budget = u64(minimum)
     }
     budget = max(budget, provider.ANTHROPIC_THINKING_BUDGET_MIN)
 
-    if budget >= model.info.max_output_tokens {
+    if budget >= cap {
         return 0, false
     }
 
@@ -209,7 +208,7 @@ run_openai_replay :: proc(replay: catalog.Reasoning_Replay) -> provider.Openai_R
 }
 
 // `off` is the effort literal `none`, which every format above turns into its own
-// disabled shape. OpenAI's scale stops at `xhigh`, so a `max` level saturates there.
+// disabled shape. A level only reaches here when the resolved row advertises it.
 @(private)
 run_openai_effort :: proc(level: string) -> Maybe(provider.Openai_Effort) {
     switch level {
@@ -228,8 +227,11 @@ run_openai_effort :: proc(level: string) -> Maybe(provider.Openai_Effort) {
     case "high":
         return provider.Openai_Effort.High
 
-    case "xhigh", "max":
+    case "xhigh":
         return provider.Openai_Effort.Xhigh
+
+    case "max":
+        return provider.Openai_Effort.Max
     }
 
     return nil

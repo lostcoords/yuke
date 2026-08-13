@@ -138,8 +138,8 @@ test_run_request_maps_openai_chat_reasoning_formats :: proc(t: ^testing.T) {
         {.Openai_Effort_Toggle_Off, "off", `"thinking":{"type":"disabled"}`},
         {.Zai_Toggle, "high", `"thinking":{"type":"enabled","clear_thinking":false}`},
         {.Qwen_Thinking, "off", `"enable_thinking":false`},
-        // OpenAI's effort scale stops at xhigh, so a max level saturates there.
-        {.Native, "max", `"reasoning_effort":"xhigh"`},
+        // gpt-5.6 added max; a row only offers it when the model advertises it.
+        {.Native, "max", `"reasoning_effort":"max"`},
     }
 
     levels := [?]string{"off", "low", "medium", "high", "max"}
@@ -158,6 +158,37 @@ test_run_request_maps_openai_chat_reasoning_formats :: proc(t: ^testing.T) {
             body,
         )
     }
+}
+
+@(test)
+test_run_request_budgets_thinking_below_the_output_cap :: proc(t: ^testing.T) {
+    // Shape of the real anthropic/claude-sonnet-4-5 row: budget_tokens with min=1024,
+    // no max, and a 64000 output cap. The budget shares that cap with the answer.
+    levels := [?]string{"off", "high", "max"}
+    model := request_test_model(.Anthropic_Messages, levels[:], .Native)
+    model.info.max_output_tokens = 64_000
+    model.reasoning_budget_min = i64(1024)
+
+    high := request_test_build(t, &model, "high")
+    defer delete(high)
+    testing.expect(t, strings.contains(high, `"thinking":{"type":"enabled","budget_tokens":32000}`), high)
+
+    maxed := request_test_build(t, &model, "max")
+    defer delete(maxed)
+    testing.expect(t, strings.contains(maxed, `"thinking":{"type":"enabled","budget_tokens":48000}`), maxed)
+
+    // Even at max the answer keeps room; a budget at or above the cap is refused.
+    testing.expect(t, !strings.contains(maxed, `"budget_tokens":64000`), "max never spends the whole cap")
+
+    off := request_test_build(t, &model, "off")
+    defer delete(off)
+    testing.expect(t, strings.contains(off, `"thinking":{"type":"disabled"}`), "off disables thinking")
+
+    // A row with no bounds is not budget-shaped and takes the effort control instead.
+    effort_row := request_test_model(.Anthropic_Messages, levels[:], .Native)
+    effort := request_test_build(t, &effort_row, "max")
+    defer delete(effort)
+    testing.expect(t, strings.contains(effort, `"output_config":{"effort":"max"}`), effort)
 }
 
 @(test)
