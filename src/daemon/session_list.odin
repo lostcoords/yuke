@@ -27,8 +27,20 @@ MAX_FILTER_KEY_BYTES :: 2 * (1 + size_of(wire.Session_Id))
 @(private = "file")
 MAX_CURSOR_BYTES :: MAX_FILTER_KEY_BYTES + 2 + MAX_CURSOR_TIMESTAMP_DIGITS + size_of(wire.Session_Id)
 
+// The compact index revision every announcement and snapshot carries. Daemon-lifetime,
+// so a client that reconnects sees it restart and refetches; minted from 1 because the
+// wire reserves 0 for "this daemon has changed nothing yet".
+session_revision_next :: proc(d: ^Daemon) -> wire.Session_Revision {
+    assert(d != nil, "a session index revision needs daemon state")
+    assert(u64(d.session_revision) < wire.MAX_SESSION_REVISION, "the session index revision is exhausted")
+
+    d.session_revision += 1
+
+    return d.session_revision
+}
+
 // `session.list` over the registry: page, continuation, and total read straight from
-// SQLite. `revision` stays 0 (no index changes yet); every session reads back idle
+// SQLite, at the daemon's current index revision. Every session reads back idle
 // (no session engine exists).
 method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.list needs connection state")
@@ -116,7 +128,7 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
 
     result := wire.Session_List_Result {
-        revision = 0,
+        revision = d.session_revision,
         items    = items,
         total    = total,
     }

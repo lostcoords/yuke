@@ -118,125 +118,131 @@ Options :: struct {
 // `start`/`shutdown`/`destroy`.
 Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
-    front_door:      http_server.Server,
+    front_door:       http_server.Server,
 
     // HTTP routes and pre-match middleware for the front door. `user_data` is this
     // `^Daemon`, and every callback receives it typed as `Http_Context.user_data`.
-    router:          Http_Router,
+    router:           Http_Router,
 
     // WebSocket server fed by `http`, driven through `ws.server_*`. Its
     // per-connection callbacks recover this `^Daemon` via `wsc.server.user_data`.
-    ws_server:       ws.Server,
+    ws_server:        ws.Server,
 
     // @private
     // Borrowed event loop the transport submits ops to; never run here.
-    loop:            ^nbio.Event_Loop,
+    loop:             ^nbio.Event_Loop,
 
     // @private
     // Backs the owned config strings and every connection's `Conn`. Must outlive
     // the daemon.
-    allocator:       mem.Allocator,
+    allocator:        mem.Allocator,
 
     // @private
     // Owned daemon version string, reported in every `initialize` result.
-    daemon_version:  string,
+    daemon_version:   string,
 
     // @private
     // Enrolled device id advertised on /identity for local discovery, loaded at start from the
     // same device identity the relay uses. Empty when this machine is not enrolled. Owned.
-    device_id:       string,
+    device_id:        string,
 
     // @private
     // Owned blob directory; empty when `/blob` is disabled.
-    blob_dir:        string,
+    blob_dir:         string,
 
     // @private
     // See `WORKER_COUNT`.
-    workers:         offload.Pool,
+    workers:          offload.Pool,
 
     // @private
     // Live bounded filesystem jobs across all connections.
-    workspace_jobs:  int,
+    fs_jobs:          int,
 
     // @private
     // Owned bearer token; empty when authorization is disabled.
-    auth_token:      string,
+    auth_token:       string,
 
     // @private
     // Owned browser-origin allowlist consulted by `middleware_admit`. Empty admits none.
-    allowed_origins: []string,
+    allowed_origins:  []string,
 
     // @private
     // Event log of record, open for the daemon's whole serving life. File-backed
     // when configured and process-lifetime in-memory otherwise.
-    store:           ^store.Store,
+    store:            ^store.Store,
 
     // @private
     // Provider credentials, OAuth transfers, callback listener, and active work.
-    provider_auth:   Provider_Auth,
+    provider_auth:    Provider_Auth,
 
     // @private
     // Current catalog identity: the revision plus the small health block, resolved at
     // startup. The full model list is re-derived per catalog.list, never retained.
-    catalog:         Daemon_Catalog,
+    catalog:          Daemon_Catalog,
 
     // @private
     // The async models.dev fetch service: shared curl client and single-flight slot.
-    catalog_refresh: Catalog_Refresh,
+    catalog_refresh:  Catalog_Refresh,
 
     // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
-    seq_high:        map[wire.Session_Id]wire.Seq,
+    seq_high:         map[wire.Session_Id]wire.Seq,
+
+    // @private
+    // Compact session-index revision, raised by every change to the index. Daemon-lifetime
+    // and deliberately not recovered: a restart resets it to 0, which is exactly the
+    // "nothing announced yet" a reconnecting client must refetch against.
+    session_revision: wire.Session_Revision,
 
     // @private
     // Scratch for one broadcast's encode; a single `Arena_Temp` spans the whole fan-out so
     // a shed marker minted mid-send shares it with the frame in flight.
-    pump_scratch:    virtual.Arena,
+    pump_scratch:     virtual.Arena,
 
     // @private
     // Shared scratch for one inbound frame; each `handle_text` wraps it in an `Arena_Temp`.
-    frame_scratch:   virtual.Arena,
+    frame_scratch:    virtual.Arena,
 
     // @private
     // Live connections keyed by the ticket that outlives them. Sized for the transport's
     // connection cap in `start`, so an admitted connection never allocates to register.
-    conns:           map[Conn_Ticket]^Conn,
+    conns:            map[Conn_Ticket]^Conn,
 
     // @private
     // Monotonic ticket source; incremented before use so zero is never issued.
-    next_ticket:     Conn_Ticket,
+    next_ticket:      Conn_Ticket,
 
     // @private
     // The outbound relay link, or nil when no relay is configured. Shares this daemon's
     // loop, store, and connection table; connected after `start` via `relay_connect`.
-    relay:           ^Relay,
+    relay:            ^Relay,
 
     // @private
     // Control-plane base URL the relay fetches link tickets from, resolved in `start` from the
     // manifest's `relayCloudUrl` or the hosted default. Owned; freed in the config cleanup.
-    relay_cloud_url: string,
+    relay_cloud_url:  string,
 
     // @private
     // Script tier: one QuickJS runtime for the whole daemon. Torn down after the worker
     // pool drains, since an in-flight host op owns a promise in its context.
-    js:              js.Host,
+    js:               js.Host,
 
     // @private
     // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
     // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
     // before serving, leaving both zero.
-    config_json:     string,
-    config_seen:     bool,
+    config_json:      string,
+    config_seen:      bool,
 
     // @private
     // JavaScript provider/model registry. Startup finalization replaces serialized captures
     // with typed owned records and wipes the capture buffers.
-    providers:       Provider_Registry,
+    providers:        Provider_Registry,
 
     // Log level resolved from the manifest (`info` when unset). The caller owns
     // the logger, so it reads this after `start` and installs the matching one.
-    log_level:       log.Level,
+    log_level:        log.Level,
 }
 
 // Connection identity that outlives the `Conn`, so async work can resolve it later
@@ -276,8 +282,8 @@ Conn :: struct {
     allocator:          mem.Allocator,
     state:              Protocol_State,
 
-    // Workspace jobs still owned by this connection's ticket.
-    workspace_jobs:     int,
+    // Filesystem jobs still owned by this connection's ticket.
+    fs_jobs:            int,
 
     // Retained client name from `initialize`; an owned `strings.clone` for
     // identity/logging, freed with the `Conn`. Never the borrowed frame slice.
@@ -699,7 +705,7 @@ destroy :: proc(d: ^Daemon) {
         "destroy before workers drained",
     )
     assert(js.ops_idle(&d.js), "destroy before JavaScript host operations drained")
-    assert(d.workspace_jobs == 0, "destroy with workspace jobs in flight")
+    assert(d.fs_jobs == 0, "destroy with filesystem jobs in flight")
 
     // Order matters: draining runs every outstanding completion on this loop, and a
     // `yuke:fs` completion settles a promise in the context released just below.
@@ -997,8 +1003,10 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     case .Session_Resync:
         method_session_resync(conn, req, sa)
 
-    case .Session_Create,
-         .Session_Patch,
+    case .Session_Create:
+        method_session_create(conn, req, sa)
+
+    case .Session_Patch,
          .Session_Remove,
          .Session_Fork,
          .Session_Compact,
@@ -1133,7 +1141,7 @@ method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     assert(req.method == .Workspace_Describe, "workspace.describe received another method")
 
     params := req.params.(wire.Workspace_Describe_Params)
-    workspace_job_submit(conn, req.id, .Describe, params.path, "", 0)
+    fs_job_submit(conn, req.id, .Describe, params.path)
 }
 
 // `workspace.browse`: immediate subdirectories only, sorted case-insensitively,
@@ -1157,18 +1165,7 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         page_size = int(limit)
     }
 
-    // Reading the environment touches no filesystem, so the default is resolved here and
-    // the worker only ever sees a concrete path.
-    target: string
-    if p, ok := params.path.?; ok {
-        target = p
-    } else if home := paths.home_dir(sa); home != "" {
-        target = home
-    } else {
-        target = "/"
-    }
-
-    workspace_job_submit(conn, req.id, .Browse, target, cursor, page_size)
+    fs_job_submit(conn, req.id, .Browse, fs_target_path(params.path, sa), cursor, page_size)
 }
 
 // Validate and emit a successful response. The result is built from already-trusted
@@ -1242,14 +1239,26 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
         capabilities += {.Blob_Upload}
     }
 
+    // A registry read that fails leaves the snapshot empty rather than refusing the
+    // connection: a client rediscovers a workspace from the session rows it lists.
+    workspaces, workspaces_err := store.workspace_page(conn.daemon.store, wire.LIMITS.max_workspaces, allocator)
+    if workspaces_err != nil {
+        log.errorf("daemon: initialize could not read the workspace registry: %v", workspaces_err)
+        workspaces = nil
+    }
+
+    if len(workspaces) == wire.LIMITS.max_workspaces {
+        log.warnf("daemon: the workspace snapshot filled its %d-row bound", wire.LIMITS.max_workspaces)
+    }
+
     result := wire.Initialize_Result {
         protocol = wire.PROTOCOL_VERSION,
         daemon = {version = conn.daemon.daemon_version, server_now_ms = now_ms()},
         capabilities = capabilities,
-        workspaces = nil,
+        workspaces = workspaces,
         profiles = nil,
         agents = nil,
-        session_revision = 0,
+        session_revision = conn.daemon.session_revision,
         cron_revision = 0,
         catalog_rev = conn.daemon.catalog.rev,
         catalog_health = conn.daemon.catalog.health,
