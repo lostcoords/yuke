@@ -8,6 +8,7 @@ import "core:testing"
 import "libs:testsupport"
 import catalog "src:daemon/catalog"
 import js "src:js"
+import provider "src:provider"
 import wire "src:wire"
 
 @(private = "file")
@@ -139,26 +140,33 @@ test_define_provider_builds_an_owned_registry_after_entry_settles :: proc(t: ^te
     }
     if testing.expect_value(t, len(company.models), 1) {
         model := company.models[0]
-        testing.expect_value(t, model.id, "company/company-code")
+        testing.expect_value(t, model.info.id, "company/company-code")
+        testing.expect_value(t, model.info.provider, "company")
         testing.expect_value(t, model.upstream_id, "company-code-v2")
-        testing.expect_value(t, model.name, "Company Code")
-        testing.expect_value(t, model.context_window, u64(128000))
-        testing.expect_value(t, model.max_output_tokens, u64(16000))
-        testing.expect_value(t, model.default_reasoning, "medium")
+        testing.expect_value(t, model.info.name, "Company Code")
+        testing.expect_value(t, model.info.context_window, u64(128000))
+        testing.expect_value(t, model.info.max_output_tokens, u64(16000))
+        testing.expect_value(t, model.info.default_reasoning, "medium")
         testing.expect_value(t, model.reasoning_format, catalog.Reasoning_Format.Openrouter_Effort)
         testing.expect_value(t, model.reasoning_replay, catalog.Reasoning_Replay.Reasoning_Content)
-        testing.expect(t, !model.supports_vision, "vision support is captured exactly")
-        testing.expect(t, model.supports_tools, "tool support is captured exactly")
+        testing.expect(t, !model.info.supports_vision, "vision support is captured exactly")
+        testing.expect(t, model.info.supports_tools, "tool support is captured exactly")
         testing.expect(t, model.supports_temperature, "temperature support is captured exactly")
-        testing.expect_value(t, model.cost.input, 1.25)
-        testing.expect_value(t, model.cost.output, 5.0)
-        testing.expect_value(t, model.cost.cache_read, 0.25)
-        testing.expect_value(t, model.cost.cache_write, 0.0)
+        testing.expect_value(t, model.info.cost.input, 1.25)
+        testing.expect_value(t, model.info.cost.output, 5.0)
+        testing.expect_value(t, model.info.cost.cache_read, 0.25)
+        testing.expect_value(t, model.info.cost.cache_write, 0.0)
+
+        // A custom model inherits its provider's endpoint and the compatible ceiling field.
+        testing.expect_value(t, model.endpoint.base_url, "https://models.company.test/v1")
+        testing.expect_value(t, model.endpoint.protocol, wire.Provider_Protocol.Openai_Chat)
+        testing.expect_value(t, model.max_tokens_field, provider.Openai_Max_Tokens_Field.Max_Tokens)
     }
 
     if testing.expect_value(t, len(company.overrides), 1) {
         override := company.overrides[0]
         testing.expect_value(t, override.id, "company/gpt-5")
+        testing.expect_value(t, override.provider_id, "company")
         testing.expect_value(t, override.default_reasoning, "high")
         if testing.expect_value(t, len(override.reasoning_levels), 2) {
             testing.expect_value(t, override.reasoning_levels[0], "low")

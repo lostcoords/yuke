@@ -3,7 +3,6 @@ package daemon
 import "base:runtime"
 import "core:c"
 import "core:encoding/json"
-import "core:math"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
@@ -20,7 +19,6 @@ PROVIDER_DEFINITIONS_MAX_BYTES :: 8 * mem.Megabyte
 PROVIDER_DEFINITIONS_MAX :: 256
 PROVIDER_CREDENTIAL_ENV_MAX :: 32
 PROVIDER_BASE_URL_MAX_BYTES :: 4096
-JAVASCRIPT_MAX_EXACT_INTEGER :: u64(9_007_199_254_740_991)
 
 Provider_Capture :: struct {
     id:         string,
@@ -35,35 +33,9 @@ Provider_Registry :: struct {
     definitions:       []Provider_Definition,
 }
 
-// One JavaScript-authored complete custom model. All strings and slices are daemon-owned.
-// `default_reasoning` is derived from `reasoning_levels`, not accepted from JavaScript.
-Model_Definition :: struct {
-    id:                   wire.Model_Id,
-    upstream_id:          string,
-    name:                 string,
-    context_window:       u64,
-    max_output_tokens:    u64,
-    reasoning_levels:     []string,
-    default_reasoning:    string,
-    reasoning_format:     catalog.Reasoning_Format,
-    reasoning_replay:     catalog.Reasoning_Replay,
-    supports_vision:      bool,
-    supports_tools:       bool,
-    supports_temperature: bool,
-    cost:                 wire.Model_Cost,
-}
-
-// One JavaScript-authored override of an imported models.dev model. `id` is the
-// provider-qualified public id; it is matched against the imported catalog at overlay
-// resolution, not here. `default_reasoning` is derived from `reasoning_levels`.
-Model_Override :: struct {
-    id:                wire.Model_Id,
-    reasoning_levels:  []string,
-    default_reasoning: string,
-}
-
 // One JavaScript-authored provider with its custom models and imported-model overrides.
-// Owned by the daemon.
+// Owned by the daemon. Models and overrides use the shared catalog shapes, so the
+// definitions persist without translation; their provider ids borrow `id`.
 Provider_Definition :: struct {
     id:             wire.Provider_Id,
     name:           string,
@@ -72,8 +44,8 @@ Provider_Definition :: struct {
     has_endpoint:   bool,
     credential_env: []string,
     models_dev:     string,
-    models:         []Model_Definition,
-    overrides:      []Model_Override,
+    models:         []catalog.Model,
+    overrides:      []catalog.Model_Override,
 }
 
 Provider_Definition_Error :: enum {
@@ -264,10 +236,10 @@ provider_definition_decode :: proc(
         return .Invalid
     }
 
-    name, name_present, name_valid := provider_json_string(object, "name", 128)
-    base_url, base_present, base_valid := provider_json_string(object, "baseUrl", PROVIDER_BASE_URL_MAX_BYTES)
-    protocol_name, protocol_present, protocol_valid := provider_json_string(object, "protocol", 32)
-    models_dev, models_dev_present, models_dev_valid := provider_json_string(object, "modelsDev", 64)
+    name, name_present, name_valid := catalog.object_string(object, "name", 128, false)
+    base_url, base_present, base_valid := catalog.object_string(object, "baseUrl", PROVIDER_BASE_URL_MAX_BYTES, false)
+    protocol_name, protocol_present, protocol_valid := catalog.object_string(object, "protocol", 32, false)
+    models_dev, models_dev_present, models_dev_valid := catalog.object_string(object, "modelsDev", 64, false)
     if !name_valid || !base_valid || !protocol_valid || !models_dev_valid {
         return .Invalid
     }
@@ -299,24 +271,8 @@ provider_definition_decode :: proc(
         return .Invalid
     }
 
-    credential_env, credential_err := provider_credential_env_decode(object, allocator)
-    if credential_err != .None {
-        return credential_err
-    }
-    out.credential_env = credential_env
-
-    models, models_err := provider_models_decode(object, id, protocol, allocator)
-    if models_err != .None {
-        return models_err
-    }
-    out.models = models
-
-    overrides, overrides_err := provider_overrides_decode(object, id, allocator)
-    if overrides_err != .None {
-        return overrides_err
-    }
-    out.overrides = overrides
-
+    // The definition's own id and base URL are cloned first: its models and overrides
+    // borrow them rather than each cloning the provider prefix again.
     out.id = provider_string_clone(id, allocator) or_return
     if name_present {
         out.name = provider_string_clone(name, allocator) or_return
@@ -330,16 +286,39 @@ provider_definition_decode :: proc(
     out.protocol = protocol
     out.has_endpoint = base_present
 
+    credential_env, credential_err := provider_credential_env_decode(object, allocator)
+    if credential_err != .None {
+        return credential_err
+    }
+    out.credential_env = credential_env
+
+    endpoint := provider.Endpoint {
+        base_url = out.base_url,
+        protocol = protocol,
+    }
+
+    models, models_err := provider_models_decode(object, out.id, endpoint, allocator)
+    if models_err != .None {
+        return models_err
+    }
+    out.models = models
+
+    overrides, overrides_err := provider_overrides_decode(object, out.id, allocator)
+    if overrides_err != .None {
+        return overrides_err
+    }
+    out.overrides = overrides
+
     return .None
 }
 
 provider_models_decode :: proc(
     object: json.Object,
-    provider_id: string,
-    protocol: wire.Provider_Protocol,
+    provider_id: wire.Provider_Id,
+    endpoint: provider.Endpoint,
     allocator: mem.Allocator,
 ) -> (
-    models: []Model_Definition,
+    models: []catalog.Model,
     err: Provider_Definition_Error,
 ) {
     value, present := object["models"]
@@ -353,7 +332,7 @@ provider_models_decode :: proc(
     }
 
     allocation_err: runtime.Allocator_Error
-    models, allocation_err = make([]Model_Definition, len(array), allocator)
+    models, allocation_err = make([]catalog.Model, len(array), allocator)
     if allocation_err != nil {
         return nil, .Out_Of_Memory
     }
@@ -368,13 +347,13 @@ provider_models_decode :: proc(
             return models, .Invalid
         }
 
-        if model_err := model_definition_decode(&models[i], provider_id, protocol, model, allocator);
+        if model_err := model_definition_decode(&models[i], provider_id, endpoint, model, allocator);
            model_err != .None {
             return models, model_err
         }
 
         for previous in models[:i] {
-            if previous.id == models[i].id {
+            if previous.info.id == models[i].info.id {
                 return models, .Invalid
             }
         }
@@ -384,27 +363,28 @@ provider_models_decode :: proc(
 }
 
 model_definition_decode :: proc(
-    out: ^Model_Definition,
-    provider_id: string,
-    protocol: wire.Provider_Protocol,
+    out: ^catalog.Model,
+    provider_id: wire.Provider_Id,
+    endpoint: provider.Endpoint,
     object: json.Object,
     allocator: mem.Allocator,
 ) -> (
     err: Provider_Definition_Error,
 ) {
     assert(out != nil, "model decode needs output storage")
-    assert(out.id == "" && out.reasoning_levels == nil, "model decode needs empty output storage")
+    assert(out.info.id == "" && out.info.reasoning_levels == nil, "model decode needs empty output storage")
+    assert(provider.endpoint_validate(endpoint) == .None, "a custom model needs a validated provider endpoint")
     defer if err != .None {
-        model_definition_destroy(out, allocator)
+        catalog.model_destroy(out, allocator)
     }
 
     if !model_fields_valid(object) {
         return .Invalid
     }
 
-    local_id, id_present, id_valid := provider_json_string(object, "id", 128)
-    upstream_id, upstream_present, upstream_valid := provider_json_string(object, "upstreamId", 128)
-    name, name_present, name_valid := provider_json_string(object, "name", 128)
+    local_id, id_present, id_valid := catalog.object_string(object, "id", 128, false)
+    upstream_id, upstream_present, upstream_valid := catalog.object_string(object, "upstreamId", 128, false)
+    name, name_present, name_valid := catalog.object_string(object, "name", 128, false)
     if !id_present || !id_valid || !upstream_present || !upstream_valid || !name_present || !name_valid {
         return .Invalid
     }
@@ -413,11 +393,11 @@ model_definition_decode :: proc(
         return .Invalid
     }
 
-    context_window, context_present, context_valid := provider_json_positive_u64(object, "contextWindow")
-    max_output_tokens, output_present, output_valid := provider_json_positive_u64(object, "maxOutputTokens")
-    supports_vision, vision_present, vision_valid := provider_json_bool(object, "supportsVision")
-    supports_tools, tools_present, tools_valid := provider_json_bool(object, "supportsTools")
-    supports_temperature, temperature_present, temperature_valid := provider_json_bool(object, "supportsTemperature")
+    context_window, context_present, context_valid := catalog.object_positive_u64(object, "contextWindow")
+    max_output_tokens, output_present, output_valid := catalog.object_positive_u64(object, "maxOutputTokens")
+    supports_vision, vision_present, vision_valid := catalog.object_bool(object, "supportsVision")
+    supports_tools, tools_present, tools_valid := catalog.object_bool(object, "supportsTools")
+    supports_temperature, temperature_present, temperature_valid := catalog.object_bool(object, "supportsTemperature")
     if !context_present ||
        !context_valid ||
        !output_present ||
@@ -431,7 +411,7 @@ model_definition_decode :: proc(
         return .Invalid
     }
 
-    reasoning_format, format_err := reasoning_format_decode(object, protocol)
+    reasoning_format, format_err := reasoning_format_decode(object, endpoint.protocol)
     if format_err != .None {
         return format_err
     }
@@ -445,42 +425,40 @@ model_definition_decode :: proc(
     if reasoning_err != .None {
         return reasoning_err
     }
-    out.reasoning_levels = reasoning_levels
+    out.info.reasoning_levels = reasoning_levels
 
     cost, cost_err := provider_cost_decode(object)
     if cost_err != .None {
         return cost_err
     }
 
-    out.id = provider_string_concatenate({provider_id, "/", local_id}, allocator) or_return
-    out.upstream_id = provider_string_clone(upstream_id, allocator) or_return
-    out.name = provider_string_clone(name, allocator) or_return
-    out.default_reasoning = provider_string_clone(
+    out.info.id = wire.Model_Id(provider_string_concatenate({string(provider_id), "/", local_id}, allocator) or_return)
+    out.info.provider = string(provider_id)
+    out.info.name = provider_string_clone(name, allocator) or_return
+    out.info.default_reasoning = provider_string_clone(
         catalog.default_reasoning_level(reasoning_levels),
         allocator,
     ) or_return
-    out.context_window = context_window
-    out.max_output_tokens = max_output_tokens
+    out.info.context_window = context_window
+    out.info.max_output_tokens = max_output_tokens
+    out.info.supports_vision = supports_vision
+    out.info.supports_tools = supports_tools
+    out.info.cost = cost
+
+    out.upstream_id = provider_string_clone(upstream_id, allocator) or_return
+    out.endpoint = {
+        base_url = provider_string_clone(endpoint.base_url, allocator) or_return,
+        protocol = endpoint.protocol,
+    }
+    out.supports_temperature = supports_temperature
     out.reasoning_format = reasoning_format
     out.reasoning_replay = reasoning_replay
-    out.supports_vision = supports_vision
-    out.supports_tools = supports_tools
-    out.supports_temperature = supports_temperature
-    out.cost = cost
 
-    projected := wire.Model_Info {
-        id                = out.id,
-        provider          = provider_id,
-        name              = out.name,
-        context_window    = out.context_window,
-        max_output_tokens = out.max_output_tokens,
-        reasoning_levels  = out.reasoning_levels,
-        default_reasoning = out.default_reasoning,
-        supports_vision   = out.supports_vision,
-        supports_tools    = out.supports_tools,
-        cost              = out.cost,
-    }
-    if wire.model_info_validate(projected) != .None {
+    // A JavaScript provider names no npm package, so a custom model takes the
+    // OpenAI-compatible ceiling field rather than the real-OpenAI one.
+    out.max_tokens_field = catalog.max_tokens_field_resolve("", endpoint.protocol)
+
+    if wire.model_info_validate(out.info) != .None {
         return .Invalid
     }
 
@@ -549,7 +527,7 @@ reasoning_format_decode :: proc(
     format: catalog.Reasoning_Format,
     err: Provider_Definition_Error,
 ) {
-    name, present, valid := provider_json_string(object, "reasoningFormat", 32)
+    name, present, valid := catalog.object_string(object, "reasoningFormat", 32, false)
     if !valid {
         return .Native, .Invalid
     }
@@ -574,7 +552,7 @@ reasoning_replay_decode :: proc(
     replay: catalog.Reasoning_Replay,
     err: Provider_Definition_Error,
 ) {
-    name, present, valid := provider_json_string(object, "reasoningReplay", 32)
+    name, present, valid := catalog.object_string(object, "reasoningReplay", 32, false)
     if !valid {
         return .None, .Invalid
     }
@@ -593,10 +571,10 @@ reasoning_replay_decode :: proc(
 
 provider_overrides_decode :: proc(
     object: json.Object,
-    provider_id: string,
+    provider_id: wire.Provider_Id,
     allocator: mem.Allocator,
 ) -> (
-    overrides: []Model_Override,
+    overrides: []catalog.Model_Override,
     err: Provider_Definition_Error,
 ) {
     value, present := object["modelOverrides"]
@@ -610,7 +588,7 @@ provider_overrides_decode :: proc(
     }
 
     allocation_err: runtime.Allocator_Error
-    overrides, allocation_err = make([]Model_Override, len(array), allocator)
+    overrides, allocation_err = make([]catalog.Model_Override, len(array), allocator)
     if allocation_err != nil {
         return nil, .Out_Of_Memory
     }
@@ -640,8 +618,8 @@ provider_overrides_decode :: proc(
 }
 
 model_override_decode :: proc(
-    out: ^Model_Override,
-    provider_id: string,
+    out: ^catalog.Model_Override,
+    provider_id: wire.Provider_Id,
     object: json.Object,
     allocator: mem.Allocator,
 ) -> (
@@ -650,14 +628,14 @@ model_override_decode :: proc(
     assert(out != nil, "model override decode needs output storage")
     assert(out.id == "" && out.reasoning_levels == nil, "model override decode needs empty output storage")
     defer if err != .None {
-        model_override_destroy(out, allocator)
+        catalog.model_override_destroy(out, allocator)
     }
 
     if !model_override_fields_valid(object) {
         return .Invalid
     }
 
-    local_id, id_present, id_valid := provider_json_string(object, "id", 128)
+    local_id, id_present, id_valid := catalog.object_string(object, "id", 128, false)
     if !id_present || !id_valid {
         return .Invalid
     }
@@ -672,7 +650,8 @@ model_override_decode :: proc(
     }
     out.reasoning_levels = reasoning_levels
 
-    out.id = provider_string_concatenate({provider_id, "/", local_id}, allocator) or_return
+    out.id = wire.Model_Id(provider_string_concatenate({string(provider_id), "/", local_id}, allocator) or_return)
+    out.provider_id = provider_id
     out.default_reasoning = provider_string_clone(
         catalog.default_reasoning_level(reasoning_levels),
         allocator,
@@ -692,10 +671,10 @@ provider_cost_decode :: proc(object: json.Object) -> (cost: wire.Model_Cost, err
         return {}, .Invalid
     }
 
-    input, input_present, input_valid := provider_json_nonnegative_f64(cost_object, "input")
-    output, output_present, output_valid := provider_json_nonnegative_f64(cost_object, "output")
-    cache_read, read_present, read_valid := provider_json_nonnegative_f64(cost_object, "cacheRead")
-    cache_write, write_present, write_valid := provider_json_nonnegative_f64(cost_object, "cacheWrite")
+    input, input_present, input_valid := catalog.object_nonnegative_f64(cost_object, "input")
+    output, output_present, output_valid := catalog.object_nonnegative_f64(cost_object, "output")
+    cache_read, read_present, read_valid := catalog.object_nonnegative_f64(cost_object, "cacheRead")
+    cache_write, write_present, write_valid := catalog.object_nonnegative_f64(cost_object, "cacheWrite")
     if !input_present ||
        !input_valid ||
        !output_present ||
@@ -761,90 +740,6 @@ provider_credential_env_decode :: proc(
     }
 
     return names, .None
-}
-
-provider_json_string :: proc(
-    object: json.Object,
-    name: string,
-    max_bytes: int,
-) -> (
-    value: string,
-    present: bool,
-    valid: bool,
-) {
-    assert(max_bytes > 0, "a string member needs a positive bound")
-
-    member, found := object[name]
-    if !found {
-        return "", false, true
-    }
-
-    text, ok := member.(json.String)
-    if !ok || len(text) == 0 || len(text) > max_bytes || !utf8.valid_string(text) {
-        return "", true, false
-    }
-
-    return text, true, true
-}
-
-provider_json_positive_u64 :: proc(object: json.Object, name: string) -> (value: u64, present, valid: bool) {
-    member, found := object[name]
-    if !found {
-        return 0, false, true
-    }
-
-    #partial switch number in member {
-    case json.Integer:
-        if number > 0 && u64(number) <= JAVASCRIPT_MAX_EXACT_INTEGER {
-            return u64(number), true, true
-        }
-
-    case json.Float:
-        if number > 0 && number <= f64(JAVASCRIPT_MAX_EXACT_INTEGER) && math.floor(number) == number {
-            return u64(number), true, true
-        }
-    }
-
-    return 0, true, false
-}
-
-provider_json_nonnegative_f64 :: proc(object: json.Object, name: string) -> (value: f64, present, valid: bool) {
-    member, found := object[name]
-    if !found {
-        return 0, false, true
-    }
-
-    number_value: f64
-    #partial switch number in member {
-    case json.Integer:
-        number_value = f64(number)
-
-    case json.Float:
-        number_value = number
-
-    case:
-        return 0, true, false
-    }
-
-    if number_value < 0 || math.is_nan(number_value) || math.is_inf(number_value) {
-        return 0, true, false
-    }
-
-    return number_value, true, true
-}
-
-provider_json_bool :: proc(object: json.Object, name: string) -> (value: bool, present, valid: bool) {
-    member, found := object[name]
-    if !found {
-        return false, false, true
-    }
-
-    boolean, ok := member.(json.Boolean)
-    if !ok {
-        return false, true, false
-    }
-
-    return bool(boolean), true, true
 }
 
 provider_fields_valid :: proc(object: json.Object) -> bool {
@@ -1006,42 +901,18 @@ provider_definition_destroy :: proc(definition: ^Provider_Definition, allocator:
     definition^ = {}
 }
 
-model_definition_slice_destroy :: proc(models: []Model_Definition, allocator: mem.Allocator) {
+// A definition's models and overrides borrow its provider id, so both are released
+// before the definition's own strings.
+model_definition_slice_destroy :: proc(models: []catalog.Model, allocator: mem.Allocator) {
     for &model in models {
-        model_definition_destroy(&model, allocator)
+        catalog.model_destroy(&model, allocator)
     }
     delete(models, allocator)
 }
 
-model_override_slice_destroy :: proc(overrides: []Model_Override, allocator: mem.Allocator) {
+model_override_slice_destroy :: proc(overrides: []catalog.Model_Override, allocator: mem.Allocator) {
     for &override in overrides {
-        model_override_destroy(&override, allocator)
+        catalog.model_override_destroy(&override, allocator)
     }
     delete(overrides, allocator)
-}
-
-model_override_destroy :: proc(override: ^Model_Override, allocator: mem.Allocator) {
-    assert(override != nil, "model override cleanup needs an override")
-
-    delete(override.id, allocator)
-    for level in override.reasoning_levels {
-        delete(level, allocator)
-    }
-    delete(override.reasoning_levels, allocator)
-    delete(override.default_reasoning, allocator)
-    override^ = {}
-}
-
-model_definition_destroy :: proc(model: ^Model_Definition, allocator: mem.Allocator) {
-    assert(model != nil, "model definition cleanup needs a model")
-
-    delete(model.id, allocator)
-    delete(model.upstream_id, allocator)
-    delete(model.name, allocator)
-    for level in model.reasoning_levels {
-        delete(level, allocator)
-    }
-    delete(model.reasoning_levels, allocator)
-    delete(model.default_reasoning, allocator)
-    model^ = {}
 }
