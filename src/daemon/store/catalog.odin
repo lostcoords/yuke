@@ -14,7 +14,6 @@ import "libs:bindings/sqlite"
 CATALOG_PROVIDERS_PER_SOURCE_MAX :: 256
 CATALOG_MODELS_PER_SOURCE_MAX :: wire.LIMITS.max_catalog_models
 CATALOG_CREDENTIAL_ENV_MAX :: 32
-CATALOG_ENV_NAME_MAX_BYTES :: 128
 CATALOG_ETAG_MAX_BYTES :: 4096
 
 @(private)
@@ -391,14 +390,7 @@ catalog_providers_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return rc
-            }
-
-            assert(rc == .Done, "a catalog provider read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
@@ -497,21 +489,14 @@ catalog_provider_env_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return rc
-            }
-
-            assert(rc == .Done, "a catalog provider environment read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
         row: Catalog_Provider_Env_Row
         sqlite.scan_row(st, &row, data.allocator) or_return
         source, source_ok := catalog_source_from_string(row.source)
-        if !source_ok || !catalog_env_name_valid(row.name) {
+        if !source_ok || !model_catalog.env_name_valid(row.name) {
             return .Invalid_Row
         }
 
@@ -525,24 +510,7 @@ catalog_provider_env_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
         }
 
         item := &data.providers[provider_index]
-        if row.ordinal == 0 {
-            if item.credential_env != nil {
-                return .Invalid_Row
-            }
-
-            allocation_err: mem.Allocator_Error
-            item.credential_env, allocation_err = make([]string, int(row.total), data.allocator)
-            if allocation_err != nil {
-                return .Alloc_Failed
-            }
-        } else if len(item.credential_env) != int(row.total) {
-            return .Invalid_Row
-        }
-
-        if item.credential_env[row.ordinal] != "" {
-            return .Invalid_Row
-        }
-        item.credential_env[row.ordinal] = catalog_string_clone(row.name, data.allocator) or_return
+        catalog_ordinal_fill(&item.credential_env, row.ordinal, row.total, row.name, data.allocator) or_return
     }
 
     return nil
@@ -558,14 +526,7 @@ catalog_models_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return rc
-            }
-
-            assert(rc == .Done, "a catalog model read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
@@ -746,14 +707,7 @@ catalog_model_levels_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        rc := sqlite.step(st)
-
-        if rc != .Row {
-            if sqlite.is_error(rc) {
-                return rc
-            }
-
-            assert(rc == .Done, "a catalog model level read either yields a row or completes")
+        if has_row := sqlite.step_row(st) or_return; !has_row {
             break
         }
 
@@ -761,7 +715,7 @@ catalog_model_levels_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
         sqlite.scan_row(st, &row, data.allocator) or_return
         source, source_ok := catalog_source_from_string(row.source)
         kind, kind_ok := catalog_kind_from_string(row.kind)
-        if !source_ok || !kind_ok || !catalog_bounded_string_valid(row.level, 32, false) {
+        if !source_ok || !kind_ok || !catalog_bounded_string_valid(row.level, 32) {
             return .Invalid_Row
         }
 
@@ -775,24 +729,7 @@ catalog_model_levels_load :: proc(s: ^Store, data: ^Catalog_Data) -> Error {
         }
 
         levels := catalog_model_levels(&data.models[model_index])
-        if row.ordinal == 0 {
-            if levels^ != nil {
-                return .Invalid_Row
-            }
-
-            allocation_err: mem.Allocator_Error
-            levels^, allocation_err = make([]string, int(row.total), data.allocator)
-            if allocation_err != nil {
-                return .Alloc_Failed
-            }
-        } else if len(levels^) != int(row.total) {
-            return .Invalid_Row
-        }
-
-        if levels^[row.ordinal] != "" {
-            return .Invalid_Row
-        }
-        levels^[row.ordinal] = catalog_string_clone(row.level, data.allocator) or_return
+        catalog_ordinal_fill(levels, row.ordinal, row.total, row.level, data.allocator) or_return
     }
 
     return nil
@@ -850,7 +787,7 @@ catalog_provider_valid :: proc(item: Catalog_Provider) -> bool {
     switch item.source {
     case .Models_Dev:
         if wire.provider_id_validate(item.models_dev_id) != .None ||
-           !catalog_bounded_string_valid(item.name, 128, false) ||
+           !catalog_bounded_string_valid(item.name, 128) ||
            !item.has_endpoint {
             return false
         }
@@ -862,13 +799,13 @@ catalog_provider_valid :: proc(item: Catalog_Provider) -> bool {
         if item.models_dev_id != "" && wire.provider_id_validate(item.models_dev_id) != .None {
             return false
         }
-        if item.name != "" && !catalog_bounded_string_valid(item.name, 128, false) {
+        if item.name != "" && !catalog_bounded_string_valid(item.name, 128) {
             return false
         }
     }
 
     if item.has_endpoint {
-        if !catalog_bounded_string_valid(item.endpoint.base_url, 4096, false) ||
+        if !catalog_bounded_string_valid(item.endpoint.base_url, 4096) ||
            provider.endpoint_validate(item.endpoint) != .None {
             return false
         }
@@ -876,12 +813,12 @@ catalog_provider_valid :: proc(item: Catalog_Provider) -> bool {
         return false
     }
 
-    if item.etag != "" && !catalog_bounded_string_valid(item.etag, CATALOG_ETAG_MAX_BYTES, false) {
+    if item.etag != "" && !catalog_bounded_string_valid(item.etag, CATALOG_ETAG_MAX_BYTES) {
         return false
     }
 
     for name, i in item.credential_env {
-        if !catalog_env_name_valid(name) {
+        if !model_catalog.env_name_valid(name) {
             return false
         }
 
@@ -963,13 +900,13 @@ catalog_complete_model_valid :: proc(model: Catalog_Complete_Model) -> bool {
     if wire.model_info_validate(model.info) != .None ||
        wire.provider_id_validate(model.info.provider) != .None ||
        !catalog_public_model_id_valid(model.info.id, model.info.provider) ||
-       !catalog_bounded_string_valid(model.info.name, 128, false) ||
-       !catalog_bounded_string_valid(model.upstream_id, 128, false) ||
+       !catalog_bounded_string_valid(model.info.name, 128) ||
+       !catalog_bounded_string_valid(model.upstream_id, 128) ||
        model.info.context_window == 0 ||
        model.info.context_window > wire.MAX_WIRE_INTEGER ||
        model.info.max_output_tokens == 0 ||
        model.info.max_output_tokens > wire.MAX_WIRE_INTEGER ||
-       !catalog_bounded_string_valid(model.endpoint.base_url, 4096, false) ||
+       !catalog_bounded_string_valid(model.endpoint.base_url, 4096) ||
        provider.endpoint_validate(model.endpoint) != .None ||
        !catalog_reasoning_levels_valid(model.info.reasoning_levels, model.info.default_reasoning) ||
        !model_catalog.reasoning_replay_valid(model.reasoning_replay) ||
@@ -1013,7 +950,7 @@ catalog_reasoning_levels_valid :: proc(levels: []string, default: string) -> boo
     }
 
     for level, i in levels {
-        if !catalog_bounded_string_valid(level, 32, false) {
+        if !catalog_bounded_string_valid(level, 32) {
             return false
         }
 
@@ -1029,7 +966,7 @@ catalog_reasoning_levels_valid :: proc(levels: []string, default: string) -> boo
 
 @(private)
 catalog_public_model_id_valid :: proc(id: wire.Model_Id, provider_id: wire.Provider_Id) -> bool {
-    if !catalog_bounded_string_valid(id, 128, false) ||
+    if !catalog_bounded_string_valid(id, 128) ||
        len(id) <= len(provider_id) + 1 ||
        !strings.has_prefix(id, provider_id) ||
        id[len(provider_id)] != '/' {
@@ -1269,33 +1206,47 @@ catalog_string_clone :: proc(value: string, allocator: mem.Allocator) -> (owned:
     return owned, nil
 }
 
+// Place one ordinal-indexed value into an owned slice reconstructed from source
+// rows. `ordinal == 0` allocates the slice at its declared total; later ordinals
+// require the same total and an empty slot. The caller bounds `ordinal` and `total`.
 @(private)
-catalog_bounded_string_valid :: proc(value: string, max_bytes: int, allow_empty: bool) -> bool {
-    assert(max_bytes > 0, "a catalog string bound is positive")
+catalog_ordinal_fill :: proc(
+    slot: ^[]string,
+    ordinal: int,
+    total: u64,
+    value: string,
+    allocator: mem.Allocator,
+) -> Error {
+    assert(slot != nil, "ordinal fill needs a slot")
+    assert(ordinal >= 0 && u64(ordinal) < total, "ordinal fill stays within its total")
 
-    return (allow_empty || len(value) > 0) && len(value) <= max_bytes && utf8.valid_string(value)
+    if ordinal == 0 {
+        if slot^ != nil {
+            return .Invalid_Row
+        }
+
+        allocation_err: mem.Allocator_Error
+        slot^, allocation_err = make([]string, int(total), allocator)
+        if allocation_err != nil {
+            return .Alloc_Failed
+        }
+    } else if len(slot^) != int(total) {
+        return .Invalid_Row
+    }
+
+    if slot^[ordinal] != "" {
+        return .Invalid_Row
+    }
+    slot^[ordinal] = catalog_string_clone(value, allocator) or_return
+
+    return nil
 }
 
 @(private)
-catalog_env_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 || len(name) > CATALOG_ENV_NAME_MAX_BYTES {
-        return false
-    }
+catalog_bounded_string_valid :: proc(value: string, max_bytes: int) -> bool {
+    assert(max_bytes > 0, "a catalog string bound is positive")
 
-    for byte, i in transmute([]byte)name {
-        if i == 0 {
-            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') {
-                return false
-            }
-        } else if byte != '_' &&
-           !(byte >= 'a' && byte <= 'z') &&
-           !(byte >= 'A' && byte <= 'Z') &&
-           !(byte >= '0' && byte <= '9') {
-            return false
-        }
-    }
-
-    return true
+    return len(value) > 0 && len(value) <= max_bytes && utf8.valid_string(value)
 }
 
 @(private)

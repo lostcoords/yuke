@@ -90,7 +90,7 @@ test_decode_materializes_only_selected_provider :: proc(t: ^testing.T) {
     testing.expect_value(t, model.info.default_reasoning, "medium")
     testing.expect(t, model.info.supports_vision, "image input should project to vision")
     testing.expect(t, model.info.supports_tools, "tool_call should project to tools")
-    testing.expect(t, !model.temperature, "temperature false should be retained")
+    testing.expect(t, !model.supports_temperature, "temperature false should be retained")
     testing.expect_value(t, model.info.cost.input, 2.5)
     testing.expect_value(t, model.info.cost.cache_write, 0.0)
 }

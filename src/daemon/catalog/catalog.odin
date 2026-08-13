@@ -10,6 +10,7 @@ SELECTIONS_MAX :: 256
 PROVIDER_NAME_MAX_BYTES :: 128
 PACKAGE_MAX_BYTES :: 128
 BASE_URL_MAX_BYTES :: 4096
+ENV_NAME_MAX_BYTES :: 128
 
 Selection :: struct {
     // Public provider identity used by Yuke.
@@ -135,12 +136,35 @@ reasoning_format_compatible :: proc(protocol: wire.Provider_Protocol, format: Re
     return false
 }
 
+// A provider credential environment-variable name: a non-empty ASCII identifier
+// within the shared bound. Shared by the decoder, the store, and JavaScript config.
+env_name_valid :: proc(name: string) -> bool {
+    if len(name) == 0 || len(name) > ENV_NAME_MAX_BYTES {
+        return false
+    }
+
+    for byte, i in transmute([]byte)name {
+        if i == 0 {
+            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') {
+                return false
+            }
+        } else if byte != '_' &&
+           !(byte >= 'a' && byte <= 'z') &&
+           !(byte >= 'A' && byte <= 'Z') &&
+           !(byte >= '0' && byte <= '9') {
+            return false
+        }
+    }
+
+    return true
+}
+
 // One normalized models.dev model. Every string and slice is owned.
 Model :: struct {
     info:                 wire.Model_Info,
     upstream_id:          string,
     endpoint:             provider.Endpoint,
-    temperature:          bool,
+    supports_temperature: bool,
     reasoning_replay:     Reasoning_Replay,
     reasoning_format:     Reasoning_Format,
     reasoning_budget_min: Maybe(i64),

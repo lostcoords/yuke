@@ -478,7 +478,7 @@ model_normalize :: proc(
     out.info.context_window = context_window
     out.info.max_output_tokens = max_output_tokens
     out.info.reasoning_levels = reasoning_levels_clone(reasoning, allocator) or_return
-    out.info.default_reasoning = reasoning_default_clone(out.info.reasoning_levels, allocator) or_return
+    out.info.default_reasoning = clone_owned(default_reasoning_level(out.info.reasoning_levels), allocator) or_return
     out.info.supports_vision = vision
     out.info.supports_tools = tools
     out.info.cost = cost
@@ -487,7 +487,7 @@ model_normalize :: proc(
         base_url = clone_owned(endpoint.base_url, allocator) or_return,
         protocol = endpoint.protocol,
     }
-    out.temperature = temperature
+    out.supports_temperature = temperature
     out.reasoning_replay = replay
     out.reasoning_format = reasoning.format
     out.reasoning_budget_min = reasoning.budget_min
@@ -672,28 +672,6 @@ credential_env_normalize :: proc(
 }
 
 @(private)
-env_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 || len(name) > 128 {
-        return false
-    }
-
-    for byte, i in transmute([]byte)name {
-        if i == 0 {
-            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') {
-                return false
-            }
-        } else if byte != '_' &&
-           !(byte >= 'a' && byte <= 'z') &&
-           !(byte >= 'A' && byte <= 'Z') &&
-           !(byte >= '0' && byte <= '9') {
-            return false
-        }
-    }
-
-    return true
-}
-
-@(private)
 model_modalities :: proc(object: json.Object) -> (input, output, vision, valid: bool) {
     value, present := object["modalities"]
     if !present {
@@ -826,10 +804,6 @@ reasoning_normalize :: proc(
 
     switch protocol {
     case .Anthropic_Messages:
-        if primary_kind == .Toggle {
-            spec.format = .Anthropic_Adaptive
-        }
-
         switch primary_kind {
         case .Effort:
             reasoning_level_add(&spec, "off")
@@ -842,6 +816,7 @@ reasoning_normalize :: proc(
             spec.budget_min, spec.budget_max = reasoning_budget(primary) or_return
 
         case .Toggle:
+            spec.format = .Anthropic_Adaptive
             reasoning_level_add(&spec, "off")
             reasoning_level_add(&spec, "high")
 
@@ -1049,11 +1024,6 @@ default_reasoning_level :: proc(levels: []string) -> string {
     }
 
     return levels[len(levels) / 2]
-}
-
-@(private)
-reasoning_default_clone :: proc(levels: []string, allocator: mem.Allocator) -> (string, Normalize_Error) {
-    return clone_owned(default_reasoning_level(levels), allocator)
 }
 
 @(private)

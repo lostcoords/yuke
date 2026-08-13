@@ -19,7 +19,6 @@ import wire "src:wire"
 PROVIDER_DEFINITIONS_MAX_BYTES :: 8 * mem.Megabyte
 PROVIDER_DEFINITIONS_MAX :: 256
 PROVIDER_CREDENTIAL_ENV_MAX :: 32
-PROVIDER_CREDENTIAL_ENV_NAME_MAX_BYTES :: 128
 PROVIDER_BASE_URL_MAX_BYTES :: 4096
 JAVASCRIPT_MAX_EXACT_INTEGER :: u64(9_007_199_254_740_991)
 
@@ -265,10 +264,10 @@ provider_definition_decode :: proc(
         return .Invalid
     }
 
-    name, name_present, name_valid := provider_json_string(object, "name", 128, false)
-    base_url, base_present, base_valid := provider_json_string(object, "baseUrl", PROVIDER_BASE_URL_MAX_BYTES, false)
-    protocol_name, protocol_present, protocol_valid := provider_json_string(object, "protocol", 32, false)
-    models_dev, models_dev_present, models_dev_valid := provider_json_string(object, "modelsDev", 64, false)
+    name, name_present, name_valid := provider_json_string(object, "name", 128)
+    base_url, base_present, base_valid := provider_json_string(object, "baseUrl", PROVIDER_BASE_URL_MAX_BYTES)
+    protocol_name, protocol_present, protocol_valid := provider_json_string(object, "protocol", 32)
+    models_dev, models_dev_present, models_dev_valid := provider_json_string(object, "modelsDev", 64)
     if !name_valid || !base_valid || !protocol_valid || !models_dev_valid {
         return .Invalid
     }
@@ -403,9 +402,9 @@ model_definition_decode :: proc(
         return .Invalid
     }
 
-    local_id, id_present, id_valid := provider_json_string(object, "id", 128, false)
-    upstream_id, upstream_present, upstream_valid := provider_json_string(object, "upstreamId", 128, false)
-    name, name_present, name_valid := provider_json_string(object, "name", 128, false)
+    local_id, id_present, id_valid := provider_json_string(object, "id", 128)
+    upstream_id, upstream_present, upstream_valid := provider_json_string(object, "upstreamId", 128)
+    name, name_present, name_valid := provider_json_string(object, "name", 128)
     if !id_present || !id_valid || !upstream_present || !upstream_valid || !name_present || !name_valid {
         return .Invalid
     }
@@ -550,7 +549,7 @@ reasoning_format_decode :: proc(
     format: catalog.Reasoning_Format,
     err: Provider_Definition_Error,
 ) {
-    name, present, valid := provider_json_string(object, "reasoningFormat", 32, false)
+    name, present, valid := provider_json_string(object, "reasoningFormat", 32)
     if !valid {
         return .Native, .Invalid
     }
@@ -575,7 +574,7 @@ reasoning_replay_decode :: proc(
     replay: catalog.Reasoning_Replay,
     err: Provider_Definition_Error,
 ) {
-    name, present, valid := provider_json_string(object, "reasoningReplay", 32, false)
+    name, present, valid := provider_json_string(object, "reasoningReplay", 32)
     if !valid {
         return .None, .Invalid
     }
@@ -658,7 +657,7 @@ model_override_decode :: proc(
         return .Invalid
     }
 
-    local_id, id_present, id_valid := provider_json_string(object, "id", 128, false)
+    local_id, id_present, id_valid := provider_json_string(object, "id", 128)
     if !id_present || !id_valid {
         return .Invalid
     }
@@ -743,7 +742,7 @@ provider_credential_env_decode :: proc(
 
     for item, i in array {
         name, name_ok := item.(json.String)
-        if !name_ok || !provider_env_name_valid(name) {
+        if !name_ok || !catalog.env_name_valid(name) {
             return names, .Invalid
         }
 
@@ -768,7 +767,6 @@ provider_json_string :: proc(
     object: json.Object,
     name: string,
     max_bytes: int,
-    allow_empty: bool,
 ) -> (
     value: string,
     present: bool,
@@ -782,7 +780,7 @@ provider_json_string :: proc(
     }
 
     text, ok := member.(json.String)
-    if !ok || (!allow_empty && len(text) == 0) || len(text) > max_bytes || !utf8.valid_string(text) {
+    if !ok || len(text) == 0 || len(text) > max_bytes || !utf8.valid_string(text) {
         return "", true, false
     }
 
@@ -925,27 +923,6 @@ provider_protocol_from_script :: proc(name: string) -> (wire.Provider_Protocol, 
     }
 
     return {}, false
-}
-
-provider_env_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 || len(name) > PROVIDER_CREDENTIAL_ENV_NAME_MAX_BYTES {
-        return false
-    }
-
-    for byte, i in transmute([]byte)name {
-        if i == 0 {
-            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') {
-                return false
-            }
-        } else if byte != '_' &&
-           !(byte >= 'a' && byte <= 'z') &&
-           !(byte >= 'A' && byte <= 'Z') &&
-           !(byte >= '0' && byte <= '9') {
-            return false
-        }
-    }
-
-    return true
 }
 
 provider_string_clone :: proc(
