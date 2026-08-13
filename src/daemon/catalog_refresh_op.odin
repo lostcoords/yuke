@@ -22,8 +22,7 @@ CATALOG_REFRESH_TOTAL_TIMEOUT :: 60 * time.Second
 CATALOG_REFRESH_ETAG_MAX :: 4096
 
 // The async models.dev fetch service: one shared curl client and a single-flight
-// operation slot. Trigger-agnostic — a wire method drives it today; a future cron job
-// can start the same operation.
+// operation slot. Trigger-agnostic — a wire method drives it today.
 Catalog_Refresh :: struct {
     curl:      curl.Client,
     ready:     bool,
@@ -31,10 +30,8 @@ Catalog_Refresh :: struct {
     stopping:  bool,
 }
 
-// One in-flight fetch. `transfer` is embedded and its address is held by libcurl, so the
-// operation must never move while live. `ticket`/`request_id` name the client to answer
-// on completion (`ticket == 0` for a non-client trigger). The feed accumulates into a
-// heap buffer bounded by `catalog.FEED_MAX_BYTES`; `etag` captures the response ETag.
+// One in-flight fetch. `transfer`'s address is held by libcurl, so the operation must never
+// move while live. `ticket`/`request_id` name the client to answer (`ticket == 0`: no client).
 @(private)
 Catalog_Refresh_Op :: struct {
     transfer:   curl.Transfer,
@@ -86,10 +83,8 @@ catalog_refresh_busy :: proc(d: ^Daemon) -> bool {
     return d.catalog_refresh.operation != nil
 }
 
-// Start a fetch for the requester named by `ticket`/`request_id`. Single-flight: the
-// caller must check `catalog_refresh_busy` first. Reads the current feed ETag for a
-// conditional request. Returns false if the transfer could not be set up (nothing is
-// left in flight); on success exactly one completion follows.
+// Start a fetch for `ticket`/`request_id`. Single-flight: the caller checks
+// `catalog_refresh_busy` first. Returns false on setup failure; on success one completion follows.
 catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.Request_Id) -> bool {
     assert(d != nil && d.store != nil, "catalog refresh needs an open store")
     assert(d.catalog_refresh.ready, "catalog refresh needs an initialized client")
@@ -146,9 +141,8 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     return true
 }
 
-// The current feed ETag: any imported provider carries the ETag of the last refresh, so
-// they share one value. Empty when nothing is imported or a load fails, making the next
-// request unconditional. Borrows `allocator`.
+// The current feed ETag: imported providers share the last refresh's ETag. Empty when
+// nothing is imported or a load fails, making the next request unconditional.
 @(private)
 catalog_current_etag :: proc(d: ^Daemon, allocator: mem.Allocator) -> string {
     data, load_err := store.catalog_data_load(d.store, allocator)
@@ -269,8 +263,7 @@ Catalog_Refresh_Outcome :: struct {
 }
 
 // Network-independent completion logic, tested directly: classify the HTTP result and,
-// on a fresh 200, build the selection and apply the feed. A 304 keeps the current
-// snapshot; any other non-success preserves it and reports an error.
+// on a fresh 200, apply the feed. A 304 keeps the current snapshot; other errors preserve it.
 @(private)
 catalog_refresh_settle :: proc(
     d: ^Daemon,

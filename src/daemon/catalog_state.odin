@@ -8,23 +8,19 @@ import "core:strings"
 import store "src:daemon/store"
 import wire "src:wire"
 
-// Every resolver issue comes from a distinct imported provider, and imported providers
-// are capped per source, so the skipped list always fits its wire bound. Keep the caps
-// coupled: raising the provider cap without the skipped bound would make legitimate
-// persisted data fail the bound assertion in `catalog_health_build`.
+// Imported providers are capped per source and each resolver issue names a distinct one,
+// so the skipped list always fits its wire bound; keep the two caps coupled.
 #assert(store.CATALOG_PROVIDERS_PER_SOURCE_MAX <= wire.LIMITS.max_skipped_providers)
 
-// The daemon's current catalog identity. It holds only the revision and the small
-// health block — never the full model list, which is re-derived into request scratch
-// on demand. Rebuilt at startup and after every refresh.
+// The daemon's current catalog identity: only the revision and the small health block,
+// never the full model list (re-derived into request scratch on demand).
 Daemon_Catalog :: struct {
     rev:    wire.Catalog_Rev,
     health: wire.Catalog_Health,
 }
 
 // Resolve the persisted catalog, recompute the revision, and rebuild the owned health
-// block. Idempotent: any previous health is freed first, so refresh reuses it. The full
-// effective catalog is built in local scratch and dropped; only `rev` and `health` last.
+// block. Idempotent: previous health is freed first; only `rev` and `health` persist.
 catalog_state_load :: proc(d: ^Daemon) -> store.Error {
     assert(d != nil, "catalog state load needs daemon state")
     assert(d.store != nil, "catalog state load needs an open store")
@@ -60,9 +56,8 @@ catalog_state_destroy :: proc(d: ^Daemon) {
     d.catalog.rev = {}
 }
 
-// Load and resolve the current persisted catalog into `allocator`. The caller reads the
-// bounded result from request scratch and never retains it; the raw rows and the effective
-// catalog both live in `allocator` and its borrowed views are valid until it is reset.
+// Load and resolve the current persisted catalog into `allocator`. Raw rows and the
+// effective catalog both live there; borrowed views are valid until it is reset.
 catalog_resolve_current :: proc(
     d: ^Daemon,
     allocator: mem.Allocator,
@@ -81,9 +76,8 @@ catalog_resolve_current :: proc(
     return store.catalog_resolve(data, allocator)
 }
 
-// Build the owned health block from resolver issues. Resolver skips are configuration
-// problems; credential-driven skips are layered on elsewhere. `skipped` is sorted by
-// provider so the block — and the revision that covers it — is deterministic.
+// Build the owned health block from resolver issues. `skipped` is sorted by provider so
+// the block — and the revision that covers it — is deterministic.
 catalog_health_build :: proc(
     issues: []store.Effective_Issue,
     allocator: mem.Allocator,

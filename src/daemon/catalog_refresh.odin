@@ -7,14 +7,8 @@ import catalog "src:daemon/catalog"
 import store "src:daemon/store"
 import wire "src:wire"
 
-// Build the models.dev import selection from what this daemon cares about: JavaScript
-// providers that name a models.dev source, and providers with a saved credential (the
-// public id is used as the source key). Deduplicated by provider id. `allocator` should
-// be scratch — intermediates and the borrowed selection strings live there and are not
-// freed individually.
-//
-// Not yet covered: selecting a provider solely because one of its declared credential
-// env vars is set — that needs the feed's env names, so it belongs to a feed pre-scan.
+// Build the models.dev import selection: JavaScript providers naming a models.dev source,
+// plus providers with a saved credential. Deduplicated by id; `allocator` should be scratch.
 catalog_selections_build :: proc(
     d: ^Daemon,
     allocator: mem.Allocator,
@@ -63,12 +57,8 @@ catalog_selection_add :: proc(selections: ^[dynamic]catalog.Selection, id, sourc
     return nil
 }
 
-// Apply one fetched models.dev feed: decode the selected provider subtrees, replace each
-// imported snapshot transactionally with `feed_etag`, then re-resolve so `d.catalog`
-// reflects the new content. Reports whether the effective revision moved. The feed is
-// untrusted: a decode failure replaces nothing and preserves the previous snapshot; a
-// per-provider replace is transactional, so a mid-run failure leaves committed providers
-// intact and still re-syncs `d.catalog` to the store.
+// Apply one fetched models.dev feed: decode, transactionally replace each imported snapshot
+// with `feed_etag`, re-resolve. Untrusted feed: a decode failure preserves the old snapshot.
 catalog_refresh_apply :: proc(
     d: ^Daemon,
     feed: []byte,

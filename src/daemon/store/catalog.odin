@@ -70,9 +70,8 @@ Catalog_Provider :: struct {
     credential_env: []string,
 }
 
-// A complete imported or custom model, including private inference metadata. The
-// embedded `model` is the canonical resolved-model field set shared with the
-// decoder (`catalog.Model`) and the effective resolver.
+// A complete imported or custom model, including private inference metadata. The embedded
+// `model` is the canonical `catalog.Model` field set shared with the decoder and resolver.
 Catalog_Complete_Model :: struct {
     source:      Catalog_Source,
     using model: model_catalog.Model,
@@ -1203,9 +1202,8 @@ catalog_string_clone :: proc(value: string, allocator: mem.Allocator) -> (owned:
     return owned, nil
 }
 
-// Place one ordinal-indexed value into an owned slice reconstructed from source
-// rows. `ordinal == 0` allocates the slice at its declared total; later ordinals
-// require the same total and an empty slot. The caller bounds `ordinal` and `total`.
+// Place one ordinal-indexed value into an owned slice reconstructed from source rows.
+// `ordinal == 0` allocates at the declared total; later ordinals require the same total.
 @(private)
 catalog_ordinal_fill :: proc(
     slot: ^[]string,

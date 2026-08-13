@@ -174,8 +174,7 @@ Daemon :: struct {
 
     // @private
     // Current catalog identity: the revision plus the small health block, resolved at
-    // startup. The full model list is re-derived into request scratch per catalog.list,
-    // never retained.
+    // startup. The full model list is re-derived per catalog.list, never retained.
     catalog:         Daemon_Catalog,
 
     // @private
@@ -1060,9 +1059,8 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
 }
 
-// `catalog.list`: `unchanged` when the client already holds the current revision,
-// otherwise a `full` snapshot of the visible models re-derived from the store into
-// request scratch, plus the daemon's held revision and health.
+// `catalog.list`: `unchanged` when the client already holds the current revision, else a
+// `full` snapshot of the visible models re-derived from the store, plus the held rev and health.
 method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "catalog.list needs connection state")
     assert(conn.state == .Ready, "catalog.list ran outside Ready")
@@ -1076,9 +1074,8 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    // Re-derive the visible model list into request scratch; the daemon holds only the
-    // revision and health. The persisted catalog is stable between refreshes, so this
-    // view is consistent with `d.catalog.rev`.
+    // Re-derive the visible model list into request scratch; the daemon holds only rev and
+    // health. The persisted catalog is stable between refreshes, so this matches `d.catalog.rev`.
     effective, resolve_err := catalog_resolve_current(d, sa)
     if resolve_err != nil {
         send_error(conn, req.id, .Internal, "catalog unavailable", sa)
@@ -1091,9 +1088,8 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    // `send_result` asserts the result validates; these models come straight from
-    // persisted rows, so store-write validation must stay at least as strict as wire
-    // validation (it is: `catalog_model_valid` runs `model_info_validate` on write).
+    // `send_result` asserts the result validates; these models come from persisted rows, so
+    // store-write validation must stay at least as strict as wire validation (it is).
     result := wire.Catalog_List_Result_Full {
         catalog_rev = d.catalog.rev,
         models      = models,
@@ -1102,9 +1098,8 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     send_result(conn, req.id, result, sa)
 }
 
-// `catalog.refresh` starts an async models.dev fetch and answers when it lands: the
-// caller gets the new revision and health, or an error. Single-flight — a second
-// refresh while one runs is refused. The reply is deferred to the fetch completion.
+// `catalog.refresh` starts an async models.dev fetch and answers when it lands with the
+// new revision and health, or an error. Single-flight; the reply is deferred to completion.
 method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "catalog.refresh needs connection state")
     assert(conn.state == .Ready, "catalog.refresh ran outside Ready")

@@ -9,11 +9,8 @@ import wire "src:wire"
 @(private, rodata)
 REV_HEX_DIGITS := "0123456789abcdef"
 
-// Flatten the effective catalog's visible models into one list ordered by public
-// model id. Each `Model_Info` borrows the effective catalog's owned strings, so the
-// view must not outlive `effective`; only the returned slice is owned by `allocator`.
-// The order matches the resolver's (providers by id, models by public id), so the
-// same list feeds both `catalog_rev` and the `catalog.list` response.
+// Flatten the effective catalog's visible models into one list. Each `Model_Info` borrows
+// `effective`'s strings; the resolver order feeds both `catalog_rev` and `catalog.list`.
 catalog_models_view :: proc(
     effective: store.Effective_Catalog,
     allocator := context.allocator,
@@ -48,16 +45,8 @@ catalog_models_view :: proc(
     return view, true
 }
 
-// Compute the catalog revision over the exact `catalog.list` content a client caches:
-// the visible model list plus the health block. Any change to a client-visible field
-// changes the digest, so `since_rev == current` soundly means the cached result is
-// still accurate. It does not cover private inference metadata. The caller must supply
-// `models` and `health.skipped` in a deterministic order (the resolver's), matching
-// the order the `catalog.list` response emits.
-//
-// The value is a SHA-256 hex digest, the 64 lowercase-hex bytes `Catalog_Rev` requires.
-// Clients treat it as opaque, so the length-prefixed preimage need not match any wire
-// encoding — only determinism and sensitivity matter.
+// SHA-256 hex digest over the `catalog.list` content a client caches (visible models plus
+// health), so `since_rev == current` means the cache is accurate; caller supplies resolver order.
 catalog_rev :: proc(models: []wire.Model_Info, health: wire.Catalog_Health) -> wire.Catalog_Rev {
     assert(len(models) <= int(wire.LIMITS.max_catalog_models), "the rev covers a bounded catalog")
 

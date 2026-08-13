@@ -8,9 +8,8 @@ import model_catalog "src:daemon/catalog"
 import provider "src:provider"
 import wire "src:wire"
 
-// Why a provider produced no effective models. Resolution is atomic per provider:
-// a custom/imported public-id collision or an override that matches no imported
-// model drops the whole provider and records one issue; siblings are unaffected.
+// Why a provider produced no effective models. Resolution is atomic per provider: a
+// collision or unmatched override drops the whole provider and records one issue.
 Effective_Error :: enum {
     Collision,
     Unmatched_Override,
@@ -22,9 +21,8 @@ Effective_Issue :: struct {
     error:       Effective_Error,
 }
 
-// The owned effective catalog overlaid from the raw imported and JavaScript sources.
-// It is independent of the raw `Catalog_Data` and is destroyed on its own. Providers
-// are ordered by id; each provider's models are ordered by public model id.
+// The owned effective catalog overlaid from the raw sources, independent of `Catalog_Data`.
+// Providers are ordered by id; each provider's models by public model id.
 Effective_Catalog :: struct {
     providers: [dynamic]model_catalog.Provider,
     issues:    [dynamic]Effective_Issue,
@@ -43,11 +41,8 @@ Resolve_Group :: struct {
     overrides:       [dynamic]^Catalog_Model_Override,
 }
 
-// Resolve the raw catalog into its owned effective form. Pure: no SQLite, network,
-// credential lookup, broadcasts, or caching. Per-provider collisions/unmatched
-// overrides are isolated as issues; a provider that resolves to no models is dropped
-// silently; only a global model-count overflow fails the whole call. Ownership of
-// `data` stays with the caller.
+// Resolve the raw catalog into its owned effective form. Pure (no SQLite/network/creds):
+// per-provider issues are isolated, only a model-count overflow fails; `data` stays the caller's.
 catalog_resolve :: proc(
     data: Catalog_Data,
     allocator := context.allocator,
@@ -224,9 +219,8 @@ resolve_group :: proc(
     // snapshot. A stale or endpoint-only JavaScript overlay drops them.
     use_imported := imp != nil && (js == nil || snapshot)
 
-    // Overrides only apply against an adopted snapshot; each must match exactly one
-    // imported public model id. Model index tracks which imported model each override
-    // rewrites; an unmatched override invalidates the whole provider.
+    // Overrides apply only against an adopted snapshot; each must match exactly one imported
+    // public model id, and an unmatched override invalidates the whole provider.
     override_for := make([]^Catalog_Model_Override, len(group.imported_models) if use_imported else 0, scratch)
     if snapshot {
         for override in group.overrides {
@@ -322,9 +316,8 @@ resolve_provider_build :: proc(
         return string(a.info.id) < string(b.info.id)
     })
 
-    // A provider with no effective models can never be a resolution target and may
-    // carry no usable endpoint (a stale snapshot that inherits nothing). Drop it
-    // rather than emit a degenerate entry.
+    // A provider with no effective models can never be a resolution target and may carry
+    // no usable endpoint (a stale snapshot). Drop it rather than emit a degenerate entry.
     if len(item.models) == 0 {
         model_catalog.provider_destroy(&item, allocator)
         return nil
@@ -343,8 +336,7 @@ resolve_provider_build :: proc(
 }
 
 // Deep-clone one resolved model into owned storage. `provider_id` is borrowed by the
-// model's `info.provider`, matching the ownership the effective provider expects. An
-// override substitutes only the reasoning levels and their derived default.
+// model's `info.provider`. An override substitutes only the reasoning levels and default.
 @(private)
 resolve_model_clone :: proc(
     src: ^model_catalog.Model,
