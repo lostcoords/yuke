@@ -246,9 +246,10 @@ assistant_part_emit :: proc(e: ^Emitter, self: Assistant_Part) {
         field_u64(e, "id", u64(v.id))
         field_string(e, "text", v.text)
 
-        if v.signature != "" {
-            field_string(e, "signature", v.signature)
-        }
+        // Always written: the field is required, and "the provider issued none" is the
+        // empty string rather than an absent member. Omitting it makes every strict
+        // receiver reject the frame.
+        field_string(e, "signature", v.signature)
 
     case Redacted_Reasoning_Part:
         field_string(e, "type", "redacted_reasoning")

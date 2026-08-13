@@ -426,15 +426,16 @@ test_reasoning_signature_emitted :: proc(t: ^testing.T) {
     testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":0,"text":"hm","signature":"ErUBCkYIB"}`)
 }
 
-// An unsigned reasoning part must not write an empty `signature`, so a provider that
-// issues none produces exactly the pre-signature encoding.
+// An unsigned reasoning part still writes `signature`, as the empty string. The field is
+// required, so a receiver generated from the schema refuses a frame that omits it; "the
+// provider issued none" is a value here, not an absent member.
 @(test)
-test_reasoning_signature_omitted_when_empty :: proc(t: ^testing.T) {
+test_reasoning_signature_written_when_empty :: proc(t: ^testing.T) {
     e: Emitter
     emitter_init(&e, context.temp_allocator)
     defer emitter_destroy(&e)
     assistant_part_emit(&e, Reasoning_Part{id = 1, text = "hm"})
-    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":1,"text":"hm"}`)
+    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":1,"text":"hm","signature":""}`)
 }
 
 // Rows written before the field existed decode unchanged, with no signature.
