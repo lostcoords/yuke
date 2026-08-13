@@ -1006,12 +1006,14 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     case .Session_Create:
         method_session_create(conn, req, sa)
 
+    case .Session_Send_Input:
+        method_session_send_input(conn, req, sa)
+
     case .Session_Patch,
          .Session_Remove,
          .Session_Fork,
          .Session_Compact,
          .Session_Rewind,
-         .Session_Send_Input,
          .Session_Cancel_Input,
          .Session_Cancel_Run,
          .Session_History,
