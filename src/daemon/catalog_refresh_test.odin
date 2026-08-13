@@ -1,0 +1,104 @@
+package daemon
+
+import "core:mem/virtual"
+import "core:testing"
+
+import catalog "src:daemon/catalog"
+import store "src:daemon/store"
+
+@(private, rodata)
+REFRESH_FEED := `{"openai":{"id":"openai","env":["OPENAI_API_KEY"],"npm":"@ai-sdk/openai","name":"OpenAI","models":{"gpt":{"id":"gpt","name":"GPT","tool_call":true,"reasoning_options":[{"type":"effort","values":["low","medium","high"]}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":1000,"output":100}}}}}`
+
+@(test)
+test_catalog_refresh_apply_imports_and_moves_rev :: proc(t: ^testing.T) {
+    d: Daemon
+    d.allocator = context.allocator
+    s, open_err := store.open_memory()
+    testing.expect_value(t, open_err, nil)
+    d.store = s
+    defer store.close(s)
+    defer catalog_state_destroy(&d)
+
+    testing.expect_value(t, catalog_state_load(&d), nil)
+    empty_rev := d.catalog.rev
+
+    selections := []catalog.Selection{{provider_id = "openai", source_id = "openai"}}
+    changed, err := catalog_refresh_apply(&d, transmute([]byte)REFRESH_FEED, `"feed-1"`, selections)
+    testing.expect_value(t, err, nil)
+    testing.expect(t, changed, "importing a provider moves the revision")
+    testing.expect(t, d.catalog.rev != empty_rev, "the held revision moved")
+
+    effective, resolve_err := catalog_resolve_current(&d, context.allocator)
+    testing.expect_value(t, resolve_err, nil)
+    defer store.effective_catalog_destroy(&effective)
+    view, ok := catalog_models_view(effective, context.allocator)
+    defer delete(view)
+    testing.expect(t, ok, "the view allocates")
+    testing.expect_value(t, len(view), 1)
+    testing.expect_value(t, view[0].provider, "openai")
+
+    // Applying the same feed again changes nothing.
+    changed_again, again_err := catalog_refresh_apply(&d, transmute([]byte)REFRESH_FEED, `"feed-1"`, selections)
+    testing.expect_value(t, again_err, nil)
+    testing.expect(t, !changed_again, "re-importing identical content leaves the revision unchanged")
+}
+
+@(test)
+test_catalog_refresh_apply_preserves_snapshot_on_decode_error :: proc(t: ^testing.T) {
+    d: Daemon
+    d.allocator = context.allocator
+    s, open_err := store.open_memory()
+    testing.expect_value(t, open_err, nil)
+    d.store = s
+    defer store.close(s)
+    defer catalog_state_destroy(&d)
+
+    testing.expect_value(t, catalog_state_load(&d), nil)
+    selections := []catalog.Selection{{provider_id = "openai", source_id = "openai"}}
+    _, import_err := catalog_refresh_apply(&d, transmute([]byte)REFRESH_FEED, `"feed-1"`, selections)
+    testing.expect_value(t, import_err, nil)
+    imported_rev := d.catalog.rev
+
+    // A malformed feed replaces nothing and preserves the previous snapshot.
+    changed, err := catalog_refresh_apply(&d, transmute([]byte)string("this is not json"), `"feed-2"`, selections)
+    testing.expect(t, err != nil, "a malformed feed is rejected")
+    testing.expect(t, !changed, "a rejected feed does not move the revision")
+    testing.expect_value(t, d.catalog.rev, imported_rev)
+}
+
+@(test)
+test_catalog_selections_build_from_credentials_and_javascript :: proc(t: ^testing.T) {
+    d: Daemon
+    d.allocator = context.allocator
+    s, open_err := store.open_memory()
+    testing.expect_value(t, open_err, nil)
+    d.store = s
+    defer store.close(s)
+
+    d.providers.definitions = []Provider_Definition{{id = "company", models_dev = "company-src"}}
+    testing.expect_value(t, store.credential_api_key_upsert(s, "openai", "sk-test"), nil)
+
+    arena: virtual.Arena
+    testing.expect_value(t, virtual.arena_init_growing(&arena), nil)
+    defer virtual.arena_destroy(&arena)
+
+    selections, err := catalog_selections_build(&d, virtual.arena_allocator(&arena))
+    testing.expect_value(t, err, nil)
+    testing.expect_value(t, len(selections), 2)
+
+    found_company := false
+    found_openai := false
+    for selection in selections {
+        switch string(selection.provider_id) {
+        case "company":
+            found_company = true
+            testing.expect_value(t, selection.source_id, "company-src")
+
+        case "openai":
+            found_openai = true
+            testing.expect_value(t, selection.source_id, "openai")
+        }
+    }
+    testing.expect(t, found_company, "a JavaScript provider naming models.dev is selected")
+    testing.expect(t, found_openai, "a provider with a saved credential is selected")
+}
