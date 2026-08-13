@@ -2,14 +2,12 @@ package main
 
 import "core:crypto"
 import "core:fmt"
-import "core:nbio"
 import "core:os"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
 
 import client "src:client"
-import daemon "src:daemon"
 import "src:secret"
 import term "src:term"
 import wire "src:wire"
@@ -31,11 +29,7 @@ Provider_State :: struct {
     action:      Provider_Action,
     provider_id: string,
     api_key:     string,
-    client:      ^client.Client,
     stage:       int,
-    failed:      bool,
-    timed_out:   bool,
-    done:        bool,
 }
 
 Provider_Prompt_Error :: enum {
@@ -76,59 +70,7 @@ provider_run :: proc() -> int {
         }
     }
 
-    if err := nbio.acquire_thread_event_loop(); err != nil {
-        fmt.eprintfln("yuke provider: event loop unavailable: %v", err)
-        return 1
-    }
-    defer nbio.release_thread_event_loop()
-
-    loop := nbio.current_thread_event_loop()
-    transport, transport_err := client.ws_create(
-        loop,
-        {
-            host = "127.0.0.1",
-            port = daemon.DEFAULT_PORT,
-            path = "/ws",
-            max_frame_bytes = wire.LIMITS.max_frame_bytes,
-            max_message_bytes = wire.LIMITS.max_frame_bytes,
-        },
-    )
-    if transport_err != .None {
-        fmt.eprintfln("yuke provider: could not prepare the daemon connection: %v", transport_err)
-        return 1
-    }
-
-    c: client.Client
-    state.client = &c
-    open_err := client.client_open(
-        &c,
-        transport,
-        "yuke-provider",
-        DAEMON_VERSION,
-        {on_ready = provider_on_ready, on_close = provider_on_close, on_error = provider_on_error},
-        &state,
-    )
-    if open_err != .None {
-        fmt.eprintfln("yuke provider: could not connect to the daemon: %v", open_err)
-        return 1
-    }
-
-    timeout := nbio.timeout_poly(PROVIDER_REQUEST_TIMEOUT, &state, provider_on_timeout, loop)
-    nbio.run_until(&state.done)
-    if !state.timed_out {
-        nbio.remove(timeout)
-    }
-
-    client.client_destroy(&c)
-    if state.timed_out {
-        fmt.eprintln("yuke provider: the daemon did not answer in time")
-        return 1
-    }
-    if state.failed {
-        return 1
-    }
-
-    return 0
+    return daemon_session_run("yuke provider", PROVIDER_REQUEST_TIMEOUT, provider_on_ready, &state)
 }
 
 provider_args_parse :: proc(args: []string) -> (options: Provider_Options, ok: bool) {
@@ -145,54 +87,38 @@ provider_args_parse :: proc(args: []string) -> (options: Provider_Options, ok: b
     return {}, false
 }
 
-provider_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
-    state := (^Provider_State)(c.user_data)
-    send_err: client.Protocol_Error
+provider_on_ready :: proc(s: ^Daemon_Session) {
+    state := (^Provider_State)(s.user)
 
     switch state.action {
     case .List, .Remove_Key:
-        _, send_err = client.client_send_request(c, .Auth_List, wire.Empty{}, provider_on_response)
+        daemon_session_send(s, .Auth_List, wire.Empty{}, provider_on_response)
 
     case .Set_Key:
-        _, send_err = client.client_send_request(
-            c,
+        daemon_session_send(
+            s,
             .Auth_Set_Api_Key,
             wire.Auth_Set_Api_Key_Params{provider_id = wire.Provider_Id(state.provider_id), api_key = state.api_key},
             provider_on_response,
         )
         secret.string_destroy(&state.api_key)
     }
-
-    if send_err != .None {
-        fmt.eprintfln("yuke provider: request could not be sent: %v", send_err)
-        state.failed = true
-        client.client_close(c)
-    }
 }
 
 provider_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
-    state := (^Provider_State)(c.user_data)
-    answered, has_response := outcome.(client.Request_Response)
-    if !has_response {
-        state.failed = true
+    s, result, ok := daemon_session_result(c, outcome)
+    if ok && provider_response_apply(s, result) {
         return
-    }
-
-    switch response in answered.response {
-    case wire.Response_Error:
-        fmt.eprintfln("yuke provider: daemon rejected the request: %s", response.error.message)
-        state.failed = true
-
-    case wire.Response_Ok:
-        if provider_response_apply(c, response.result, state) {
-            return
-        }
     }
 
     client.client_close(c)
 }
 
-provider_response_apply :: proc(c: ^client.Client, result: wire.Response_Result, state: ^Provider_State) -> bool {
+// Apply one success result. Returns true when a follow-up request is in flight and the
+// session must stay open; false when this subcommand is finished.
+provider_response_apply :: proc(s: ^Daemon_Session, result: wire.Response_Result) -> bool {
+    state := (^Provider_State)(s.user)
+
     switch state.action {
     case .List:
         listed := result.(wire.Auth_List_Result)
@@ -213,26 +139,21 @@ provider_response_apply :: proc(c: ^client.Client, result: wire.Response_Result,
 
                 if len(provider.login_flows) > 0 {
                     fmt.eprintfln("yuke provider: %s uses OAuth; remove-key cannot log it out", state.provider_id)
-                    state.failed = true
+                    s.failed = true
                     return false
                 }
                 break
             }
 
             state.stage = 1
-            _, send_err := client.client_send_request(
-                c,
+            daemon_session_send(
+                s,
                 .Auth_Logout,
                 wire.Auth_Logout_Params{provider_id = wire.Provider_Id(state.provider_id)},
                 provider_on_response,
             )
-            if send_err != .None {
-                fmt.eprintfln("yuke provider: removal could not be sent: %v", send_err)
-                state.failed = true
-                return false
-            }
 
-            return true
+            return !s.failed
         }
 
         _ = result.(wire.Empty)
@@ -256,31 +177,6 @@ provider_list_print :: proc(providers: []wire.Auth_Provider) {
         state := provider.restart_required ? "restart required" : "current"
         fmt.printfln("%s\t%s\t%s", provider.provider_id, credential, state)
     }
-}
-
-provider_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
-    state := (^Provider_State)(c.user_data)
-    state.done = true
-}
-
-provider_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
-    state := (^Provider_State)(c.user_data)
-    if !state.failed {
-        if err == .Transport_Failed {
-            fmt.eprintfln("yuke provider: daemon connection failed: %v", c.transport_error)
-        } else {
-            fmt.eprintfln("yuke provider: daemon protocol failed: %v", err)
-        }
-    }
-    state.failed = true
-    if c.state == .Closed {
-        state.done = true
-    }
-}
-
-provider_on_timeout :: proc(_: ^nbio.Operation, state: ^Provider_State) {
-    state.timed_out = true
-    client.client_close(state.client)
 }
 
 provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
