@@ -22,19 +22,6 @@ method_session_create :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     fs_job_submit(conn, req.id, .Create_Session, fs_target_path(params.workspace_path, sa), create = params)
 }
 
-// The compact index revision every announcement and snapshot carries. Daemon-lifetime, so
-// a client that reconnects sees it restart and refetches; minted from 1 because the wire
-// reserves 0 for "this daemon has changed nothing yet".
-@(private = "file")
-session_revision_next :: proc(d: ^Daemon) -> wire.Session_Revision {
-    assert(d != nil, "a session index revision needs daemon state")
-    assert(u64(d.session_revision) < wire.MAX_SESSION_REVISION, "the session index revision is exhausted")
-
-    d.session_revision += 1
-
-    return d.session_revision
-}
-
 // Persist the session into its resolved workspace and answer. `workspace.created` is
 // announced first, so a client is never told about a session in a workspace it has never
 // heard of.
