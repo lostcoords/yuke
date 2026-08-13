@@ -21,8 +21,6 @@ CATALOG_REFRESH_TOTAL_TIMEOUT :: 60 * time.Second
 @(private)
 CATALOG_REFRESH_ETAG_MAX :: 4096
 
-#assert(CATALOG_REFRESH_ETAG_MAX <= 4096)
-
 // The async models.dev fetch service: one shared curl client and a single-flight
 // operation slot. Trigger-agnostic — a wire method drives it today; a future cron job
 // can start the same operation.
@@ -54,7 +52,7 @@ catalog_refresh_init :: proc(d: ^Daemon) -> Error {
     assert(!d.catalog_refresh.ready, "catalog refresh initialized twice")
 
     if curl_err := curl.client_init(&d.catalog_refresh.curl, d.loop, d.allocator); curl_err != .None {
-        return .Store_Failed
+        return .Catalog_Failed
     }
     d.catalog_refresh.ready = true
 

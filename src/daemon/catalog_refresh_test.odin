@@ -12,14 +12,10 @@ REFRESH_FEED := `{"openai":{"id":"openai","env":["OPENAI_API_KEY"],"npm":"@ai-sd
 @(test)
 test_catalog_refresh_apply_imports_and_moves_rev :: proc(t: ^testing.T) {
     d: Daemon
-    d.allocator = context.allocator
-    s, open_err := store.open_memory()
-    testing.expect_value(t, open_err, nil)
-    d.store = s
+    s := refresh_op_daemon(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
-    testing.expect_value(t, catalog_state_load(&d), nil)
     empty_rev := d.catalog.rev
 
     selections := []catalog.Selection{{provider_id = "openai", source_id = "openai"}}
@@ -46,14 +42,10 @@ test_catalog_refresh_apply_imports_and_moves_rev :: proc(t: ^testing.T) {
 @(test)
 test_catalog_refresh_apply_preserves_snapshot_on_decode_error :: proc(t: ^testing.T) {
     d: Daemon
-    d.allocator = context.allocator
-    s, open_err := store.open_memory()
-    testing.expect_value(t, open_err, nil)
-    d.store = s
+    s := refresh_op_daemon(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
-    testing.expect_value(t, catalog_state_load(&d), nil)
     selections := []catalog.Selection{{provider_id = "openai", source_id = "openai"}}
     _, import_err := catalog_refresh_apply(&d, transmute([]byte)REFRESH_FEED, `"feed-1"`, selections)
     testing.expect_value(t, import_err, nil)
@@ -69,10 +61,7 @@ test_catalog_refresh_apply_preserves_snapshot_on_decode_error :: proc(t: ^testin
 @(test)
 test_catalog_selections_build_from_credentials_and_javascript :: proc(t: ^testing.T) {
     d: Daemon
-    d.allocator = context.allocator
-    s, open_err := store.open_memory()
-    testing.expect_value(t, open_err, nil)
-    d.store = s
+    s := catalog_test_store(t, &d)
     defer store.close(s)
 
     d.providers.definitions = []Provider_Definition{{id = "company", models_dev = "company-src"}}

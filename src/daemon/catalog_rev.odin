@@ -64,7 +64,7 @@ catalog_rev :: proc(models: []wire.Model_Info, health: wire.Catalog_Health) -> w
     ctx: sha2.Context_256
     sha2.init_256(&ctx)
 
-    rev_bytes(&ctx, transmute([]byte)string("yuke.catalog.rev.v1"))
+    sha2.update(&ctx, transmute([]byte)string("yuke.catalog.rev.v1"))
 
     rev_u64(&ctx, u64(len(models)))
     for model in models {
@@ -121,11 +121,6 @@ rev_skip_reason_tag :: proc(reason: wire.Skip_Reason) -> u8 {
     }
 
     return 0
-}
-
-@(private)
-rev_bytes :: proc(ctx: ^sha2.Context_256, data: []byte) {
-    sha2.update(ctx, data)
 }
 
 @(private)

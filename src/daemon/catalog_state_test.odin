@@ -64,10 +64,7 @@ state_model :: proc(
 @(test)
 test_catalog_state_resolves_on_load :: proc(t: ^testing.T) {
     d: Daemon
-    d.allocator = context.allocator
-    s, open_err := store.open_memory()
-    testing.expect_value(t, open_err, nil)
-    d.store = s
+    s := catalog_test_store(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
@@ -115,10 +112,7 @@ test_catalog_state_resolves_on_load :: proc(t: ^testing.T) {
 @(test)
 test_catalog_state_reload_frees_prior_health :: proc(t: ^testing.T) {
     d: Daemon
-    d.allocator = context.allocator
-    s, open_err := store.open_memory()
-    testing.expect_value(t, open_err, nil)
-    d.store = s
+    s := catalog_test_store(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 

@@ -5,11 +5,16 @@ import "core:testing"
 import store "src:daemon/store"
 
 @(private)
-refresh_op_daemon :: proc(t: ^testing.T, d: ^Daemon) -> ^store.Store {
+catalog_test_store :: proc(t: ^testing.T, d: ^Daemon) -> ^store.Store {
     d.allocator = context.allocator
     s, open_err := store.open_memory()
     testing.expect_value(t, open_err, nil)
     d.store = s
+    return s
+}
+
+refresh_op_daemon :: proc(t: ^testing.T, d: ^Daemon) -> ^store.Store {
+    s := catalog_test_store(t, d)
     testing.expect_value(t, catalog_state_load(d), nil)
     return s
 }

@@ -44,7 +44,7 @@ catalog_state_load :: proc(d: ^Daemon) -> store.Error {
         return .Alloc_Failed
     }
 
-    health := catalog_health_build(effective.issues[:], nil, d.allocator) or_return
+    health := catalog_health_build(effective.issues[:], d.allocator) or_return
 
     catalog_state_destroy(d)
     d.catalog.health = health
@@ -86,7 +86,6 @@ catalog_resolve_current :: proc(
 // provider so the block — and the revision that covers it — is deterministic.
 catalog_health_build :: proc(
     issues: []store.Effective_Issue,
-    load_error: Maybe(string),
     allocator: mem.Allocator,
 ) -> (
     health: wire.Catalog_Health,
@@ -122,14 +121,6 @@ catalog_health_build :: proc(
         })
     }
 
-    if message, present := load_error.?; present {
-        owned, clone_err := strings.clone(message, allocator)
-        if clone_err != nil {
-            return health, .Alloc_Failed
-        }
-        health.load_error = owned
-    }
-
     return health, nil
 }
 
@@ -155,9 +146,6 @@ catalog_health_destroy :: proc(health: ^wire.Catalog_Health, allocator: mem.Allo
         delete(skipped.provider, allocator)
     }
     delete(health.skipped, allocator)
-    if message, present := health.load_error.?; present {
-        delete(message, allocator)
-    }
 
     health^ = {}
 }
