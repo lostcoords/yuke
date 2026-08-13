@@ -96,6 +96,10 @@ Catalog_Source_Size_Row :: struct {
     models:    u64,
 }
 
+Session_Prompt_Row :: struct {
+    prompt: string,
+}
+
 Session_Config_Row :: struct {
     config_rev: wire.Config_Rev,
     model:      string,
@@ -229,6 +233,10 @@ Set_Prompt_Params :: struct {
     prompt:     Maybe(string),
 }
 
+Session_Prompt_Params :: struct {
+    session_id: wire.Session_Id,
+}
+
 Session_Config_Params :: struct {
     session_id:    wire.Session_Id,
     requested_rev: wire.Config_Rev,
@@ -357,6 +365,7 @@ Query_Id :: enum {
     Clear_Configs,
     Set_Session_Config,
     Set_Prompt,
+    Session_Prompt,
     Session_Config,
     Upsert_Api_Key,
     Upsert_OAuth,
@@ -423,6 +432,7 @@ VALUES (:public_model_id, :source, :kind, :ordinal, :level);`,
     WHERE id = :session_id;`,
     .Set_Prompt                  = `INSERT OR REPLACE INTO session_prompts(session_id, prompt)
     SELECT :session_id, :prompt WHERE :prompt IS NOT NULL;`,
+    .Session_Prompt              = `SELECT prompt FROM session_prompts WHERE session_id = :session_id;`,
     .Session_Config              = `SELECT config_rev, model, reasoning FROM session_configs
     WHERE session_id = :session_id AND config_rev = :requested_rev;`,
     .Upsert_Api_Key              = `INSERT OR REPLACE INTO provider_credentials(provider_id, kind, api_key)
@@ -527,6 +537,7 @@ Queries :: struct {
     clear_configs:               sqlite.Bind_Mapping(Clear_Configs_Params),
     set_session_config:          sqlite.Bind_Mapping(Set_Session_Config_Params),
     set_prompt:                  sqlite.Bind_Mapping(Set_Prompt_Params),
+    session_prompt:              sqlite.Reader(Session_Prompt_Params, Session_Prompt_Row),
     session_config:              sqlite.Reader(Session_Config_Params, Session_Config_Row),
     upsert_api_key:              sqlite.Bind_Mapping(Upsert_Api_Key_Params),
     upsert_oauth:                sqlite.Bind_Mapping(Upsert_OAuth_Params),
@@ -620,6 +631,19 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     set_prompt_bind, set_prompt_bind_err := sqlite.bind_prepare(set_prompt_stmt, Set_Prompt_Params)
     assert(set_prompt_bind_err == .None, "generated statement matches its generated struct")
     queries.set_prompt = set_prompt_bind
+    session_prompt_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Prompt]) or_return
+    session_prompt_reader, session_prompt_reader_err := sqlite.reader_prepare(
+        session_prompt_stmt,
+        Session_Prompt_Params,
+        Session_Prompt_Row,
+        allocator,
+    )
+    if session_prompt_reader_err == .Out_Of_Memory {
+        sqlite.finalize(session_prompt_stmt)
+        return session_prompt_reader_err
+    }
+    assert(session_prompt_reader_err == .None, "generated statement matches its generated struct")
+    queries.session_prompt = session_prompt_reader
     session_config_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Config]) or_return
     session_config_reader, session_config_reader_err := sqlite.reader_prepare(
         session_config_stmt,
@@ -787,6 +811,8 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.clear_configs.statement)
     sqlite.finalize(queries.set_session_config.statement)
     sqlite.finalize(queries.set_prompt.statement)
+    sqlite.finalize(queries.session_prompt.statement)
+    sqlite.reader_destroy(&queries.session_prompt, allocator)
     sqlite.finalize(queries.session_config.statement)
     sqlite.reader_destroy(&queries.session_config, allocator)
     sqlite.finalize(queries.upsert_api_key.statement)
@@ -871,6 +897,18 @@ set_session_config :: proc(q: ^Queries, params_in: Set_Session_Config_Params) ->
 set_prompt :: proc(q: ^Queries, params_in: Set_Prompt_Params) -> sqlite.Result {
     params := params_in
     return sqlite.execute(&q.set_prompt, &params)
+}
+
+session_prompt :: proc(
+    q: ^Queries,
+    params_in: Session_Prompt_Params,
+    allocator := context.allocator,
+) -> (
+    Session_Prompt_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_one(&q.session_prompt, &params, allocator)
 }
 
 session_config :: proc(

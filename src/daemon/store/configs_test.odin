@@ -186,6 +186,17 @@ test_session_prompt_is_stored_only_when_present :: proc(t: ^testing.T) {
     testing.expect_value(t, prompt_rows(s, with_prompt), i64(1))
     testing.expect_value(t, prompt_rows(s, without), i64(0))
 
+    // The run path reads it back through the same absence: no row is `found = false`,
+    // never an error and never an empty prompt a request would then send.
+    kept_prompt, kept_found, kept_read := session_prompt_get(s, with_prompt, context.temp_allocator)
+    testing.expect_value(t, kept_read, nil)
+    testing.expect(t, kept_found, "a stored prompt reads back")
+    testing.expect_value(t, kept_prompt, "be helpful")
+
+    _, bare_found, bare_read := session_prompt_get(s, without, context.temp_allocator)
+    testing.expect_value(t, bare_read, nil)
+    testing.expect(t, !bare_found, "a session created without a prompt has none to read")
+
     stored, stored_err := sqlite.query_one_text(
         s.writer,
         fmt.tprintf("SELECT prompt FROM session_prompts WHERE session_id = x'%s'", hex_session(with_prompt)),

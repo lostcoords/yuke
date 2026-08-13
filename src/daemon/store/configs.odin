@@ -89,6 +89,33 @@ config_read_result :: proc(
     return wire.Run_Config(row), true, nil
 }
 
+// The system prompt a run sends, cloned into `allocator`. A session that was created
+// without one has no row, which is `found = false` rather than an error.
+session_prompt_get :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+    allocator: mem.Allocator,
+) -> (
+    prompt: string,
+    found: bool,
+    err: Error,
+) {
+    assert(s != nil, "session_prompt_get needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a prompt read needs an allocator")
+
+    row, sqlite_err := queries.session_prompt(&s.queries, {session_id = session}, allocator)
+    if sqlite_err != nil {
+        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
+            return "", false, nil
+        }
+
+        return "", false, read_err(sqlite_err)
+    }
+
+    return row.prompt, true, nil
+}
+
 // `Default` is resolved to its text before it reaches here; nil stores nothing
 // and reads back as `system_prompt: null`.
 @(private)

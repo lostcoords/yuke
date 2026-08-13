@@ -19,6 +19,12 @@ UPDATE sessions
 INSERT OR REPLACE INTO session_prompts(session_id, prompt)
     SELECT :session_id, :prompt WHERE :prompt IS NOT NULL;
 
+-- name: Session_Prompt :one
+-- The prompt a run sends. No row means none was set, which is not an error.
+-- session_id: wire.Session_Id!
+-- prompt: string!
+SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+
 -- name: Session_Config :one
 -- session_id: wire.Session_Id!
 -- requested_rev: wire.Config_Rev!
