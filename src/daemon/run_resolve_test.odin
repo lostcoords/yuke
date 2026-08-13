@@ -125,6 +125,64 @@ test_run_model_load_reads_only_the_owning_provider :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_endpoint_is_loopback :: proc(t: ^testing.T) {
+    Case :: struct {
+        base_url: string,
+        loopback: bool,
+    }
+
+    cases := [?]Case {
+        {"http://127.0.0.1:11434/v1", true},
+        {"http://127.5.6.7:8080/v1", true},
+        {"http://localhost:1234/v1", true},
+        {"http://LOCALHOST:1234/v1", true},
+        {"http://ollama.localhost:1234/v1", true},
+        {"http://[::1]:1234/v1", true},
+        {"https://api.openai.com/v1", false},
+        {"https://api.minimax.io/anthropic/v1", false},
+        {"http://10.0.0.4:11434/v1", false},
+        {"http://notlocalhost.example.com/v1", false},
+    }
+    for c in cases {
+        endpoint := provider.Endpoint {
+            base_url = c.base_url,
+            protocol = .Openai_Chat,
+        }
+        testing.expectf(
+            t,
+            endpoint_is_loopback(endpoint) == c.loopback,
+            "%s loopback should be %v",
+            c.base_url,
+            c.loopback,
+        )
+    }
+}
+
+@(test)
+test_run_connection_build_allows_an_unauthenticated_local_endpoint :: proc(t: ^testing.T) {
+    d: Daemon
+    s := catalog_test_store(t, &d)
+    defer store.close(s)
+
+    local := state_provider(.Models_Dev, "ollama", "ollama", "Ollama", "http://127.0.0.1:11434/v1", true, STATE_ENV[:])
+    model := state_model(.Models_Dev, "ollama", "ollama/llama", "llama", "http://127.0.0.1:11434/v1")
+    testing.expect_value(t, store.catalog_imported_replace(s, local, []store.Catalog_Model{model}), nil)
+
+    effective, row, err := run_model_load(&d, "ollama/llama", context.allocator)
+    testing.expect_value(t, err, Run_Resolve_Error.None)
+    defer store.effective_catalog_destroy(&effective)
+
+    d.provider_auth.api_keys = make(map[string]string, 2, context.allocator)
+    defer delete(d.provider_auth.api_keys)
+
+    // No credential is saved for this provider, but the endpoint is on this machine.
+    connection, bind_err := run_connection_build(&d, row)
+    testing.expect_value(t, bind_err, Run_Bind_Error.None)
+    testing.expect(t, connection.auth == nil, "a local endpoint binds no credential")
+    testing.expect_value(t, connection.endpoint.base_url, "http://127.0.0.1:11434/v1")
+}
+
+@(test)
 test_run_responses_dialect_follows_the_credential :: proc(t: ^testing.T) {
     testing.expect_value(t, run_responses_dialect(nil), provider.Openai_Responses_Dialect.Standard)
     testing.expect_value(

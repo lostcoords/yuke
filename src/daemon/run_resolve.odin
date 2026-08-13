@@ -1,8 +1,10 @@
 package daemon
 
 import "core:mem"
+import "core:net"
 import "core:strings"
 
+import http_server "libs:http/server"
 import catalog "src:daemon/catalog"
 import "src:daemon/oauth"
 import store "src:daemon/store"
@@ -99,11 +101,41 @@ run_connection_build :: proc(d: ^Daemon, model: ^catalog.Model) -> (provider.Con
     }
 
     auth, bind_err := run_credential_bind(d, model.info.provider)
+
+    // A model server on this machine authenticates nothing, so a missing credential is
+    // not an error there. Every routable endpoint still requires one.
+    if bind_err == .Missing_Credential && endpoint_is_loopback(endpoint) {
+        auth, bind_err = nil, .None
+    }
     if bind_err != .None {
         return {}, bind_err
     }
 
     return {endpoint = endpoint, auth = auth}, .None
+}
+
+// Whether an endpoint addresses this machine. `localhost` and the reserved `.localhost`
+// suffix count without a lookup; anything else must parse as a loopback IP literal.
+endpoint_is_loopback :: proc(endpoint: provider.Endpoint) -> bool {
+    host := provider.url_host(endpoint.base_url)
+    if host == "" {
+        return false
+    }
+
+    if strings.has_suffix(host, ".") {
+        host = host[:len(host) - 1]
+    }
+    if strings.equal_fold(host, "localhost") ||
+       strings.has_suffix(strings.to_lower(host, context.temp_allocator), ".localhost") {
+        return true
+    }
+
+    address := net.parse_address(host)
+    if address == nil {
+        return false
+    }
+
+    return http_server.address_is_loopback(address)
 }
 
 // The ChatGPT-account Codex backend rejects the sampling limits an OpenAI API key
