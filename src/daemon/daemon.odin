@@ -185,6 +185,17 @@ Daemon :: struct {
     catalog_refresh:  Catalog_Refresh,
 
     // @private
+    // The provider inference service. One slot for the whole daemon, so one turn runs at a
+    // time; a session whose turn cannot start right now is told the session is busy.
+    runs:             Run_Service,
+
+    // @private
+    // Live engine state per session: the turn in flight and the inputs waiting behind it.
+    // An entry exists exactly while a session has one or the other, so an idle daemon holds
+    // nothing. Owned here because a canceled turn fires no completion of its own.
+    sessions:         map[wire.Session_Id]^Session_Live,
+
+    // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
     seq_high:         map[wire.Session_Id]wire.Seq,
@@ -203,6 +214,12 @@ Daemon :: struct {
     // @private
     // Shared scratch for one inbound frame; each `handle_text` wraps it in an `Arena_Temp`.
     frame_scratch:    virtual.Arena,
+
+    // @private
+    // Scratch for assembling one turn: the transcript page, its decoded messages, and the
+    // provider body. Separate from `frame_scratch` because that one is wiped byte by byte
+    // on release for the secrets a frame can carry, and a transcript has none.
+    turn_scratch:     virtual.Arena,
 
     // @private
     // Live connections keyed by the ticket that outlives them. Sized for the transport's
@@ -507,6 +524,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return refresh_err
     }
 
+    if run_err := run_service_init(&d.runs, loop, allocator); run_err != .None {
+        return run_err
+    }
+
     callbacks := ws.Server_Callbacks {
         on_open    = ws_on_open,
         on_message = ws_on_message,
@@ -548,6 +569,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     d.conns = conns
 
     if virtual.arena_init_growing(&d.pump_scratch) != nil {
+        return .Out_Of_Memory
+    }
+
+    if virtual.arena_init_growing(&d.turn_scratch) != nil {
         return .Out_Of_Memory
     }
 
@@ -611,6 +636,7 @@ start_rollback :: proc(d: ^Daemon) {
     assert(d.front_door.state == .Idle, "failed front door retained active state")
 
     catalog_refresh_shutdown(d)
+    runs_stop(d)
     provider_auth_shutdown(d)
     js.ops_close(&d.js)
 
@@ -622,6 +648,7 @@ start_rollback :: proc(d: ^Daemon) {
     workers_stop(d)
     provider_auth_destroy(d)
     catalog_refresh_destroy(d)
+    run_service_destroy(&d.runs)
     js.destroy(&d.js)
     store_close(d)
 
@@ -634,8 +661,12 @@ start_rollback :: proc(d: ^Daemon) {
     virtual.arena_destroy(&d.pump_scratch)
     virtual.arena_check_temp(&d.frame_scratch)
     virtual.arena_destroy(&d.frame_scratch)
+    virtual.arena_check_temp(&d.turn_scratch)
+    virtual.arena_destroy(&d.turn_scratch)
     delete(d.conns)
     d.conns = nil
+    delete(d.sessions)
+    d.sessions = nil
     free_config(d)
 }
 
@@ -666,6 +697,7 @@ shutdown :: proc(d: ^Daemon) {
     log.info("daemon: shutdown started")
     http_server.shutdown(&d.front_door)
     catalog_refresh_shutdown(d)
+    runs_stop(d)
     provider_auth_shutdown(d)
     js.ops_close(&d.js)
     ws.server_shutdown(&d.ws_server)
@@ -712,6 +744,7 @@ destroy :: proc(d: ^Daemon) {
     workers_stop(d)
     provider_auth_destroy(d)
     catalog_refresh_destroy(d)
+    run_service_destroy(&d.runs)
     js.destroy(&d.js)
     ws.server_destroy(&d.ws_server)
     relay_destroy(d)
@@ -723,8 +756,12 @@ destroy :: proc(d: ^Daemon) {
     virtual.arena_destroy(&d.pump_scratch)
     virtual.arena_check_temp(&d.frame_scratch)
     virtual.arena_destroy(&d.frame_scratch)
+    virtual.arena_check_temp(&d.turn_scratch)
+    virtual.arena_destroy(&d.turn_scratch)
     delete(d.conns)
     d.conns = nil
+    delete(d.sessions)
+    d.sessions = nil
     free_config(d)
 }
 
@@ -1009,13 +1046,17 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     case .Session_Send_Input:
         method_session_send_input(conn, req, sa)
 
+    case .Session_Cancel_Run:
+        method_session_cancel_run(conn, req, sa)
+
+    case .Session_Cancel_Input:
+        method_session_cancel_input(conn, req, sa)
+
     case .Session_Patch,
          .Session_Remove,
          .Session_Fork,
          .Session_Compact,
          .Session_Rewind,
-         .Session_Cancel_Input,
-         .Session_Cancel_Run,
          .Session_History,
          .Permission_Decide,
          .Session_Config,
@@ -1207,7 +1248,14 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     assert(conn.tx != nil, "response send needs transport state")
     // `initialize` is answered while still Awaiting_Initialize; every other response is Ready.
     assert(conn.state != .Closed, "response sent after protocol close")
-    assert(wire.response_validate(resp) == .None, "daemon built an invalid response frame")
+    // An assert with no context is expensive to diagnose once it fires in production, and
+    // this one only fires on our own bug: name the fault and the frame before dying.
+    verr := wire.response_validate(resp)
+    if verr != .None {
+        response_invalid_report(resp, verr)
+    }
+
+    assert(verr == .None, "daemon built an invalid response frame")
 
     e, ok := wire.response_encode(resp, allocator)
     defer wire.emitter_destroy(&e)
@@ -1268,6 +1316,28 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
 
     assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
     return send_response(conn, wire.response_ok_build(id, result), allocator)
+}
+
+// Name the fault and the frame that carried it, separating a bad correlation id from a bad
+// payload: `send_result` already validated the payload, so a fault surviving to here is
+// usually the id. The id's bytes are never logged — a stale one points into reused frame
+// memory, which may hold another request's content.
+@(private = "file")
+response_invalid_report :: proc(resp: wire.Response, err: wire.Validation_Error) {
+    id: wire.Request_Id
+    if answered, is_ok := resp.(wire.Response_Ok); is_ok {
+        id = answered.id
+    } else {
+        id = resp.(wire.Response_Error).id
+    }
+
+    log.errorf(
+        "daemon: invalid response frame: %v %T id_bytes=%d id_valid=%v",
+        err,
+        resp,
+        len(string(id)),
+        wire.req_id_validate(id) == .None,
+    )
 }
 
 // Close a connection with `CLOSE.protocol_error` for a framing/sequence violation

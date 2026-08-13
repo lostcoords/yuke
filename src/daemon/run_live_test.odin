@@ -125,9 +125,9 @@ live_turn_run :: proc(t: ^testing.T, model: ^catalog.Model, reasoning: string, p
     turn.text = strings.builder_make(context.allocator)
     turn.reasoning = strings.builder_make(context.allocator)
 
-    started := run_begin(&service, connection, body, {on_event = live_on_event, on_done = live_on_done, user = &turn})
-    testing.expect(t, started, "the live turn started")
-    if !started {
+    op := run_begin(&service, connection, body, {on_event = live_on_event, on_done = live_on_done, user = &turn})
+    testing.expect(t, op != nil, "the live turn started")
+    if op == nil {
         return turn
     }
 
@@ -140,6 +140,7 @@ live_turn_run :: proc(t: ^testing.T, model: ^catalog.Model, reasoning: string, p
 
     if run_service_busy(&service) {
         run_service_shutdown(&service)
+        run_cancel(&service, op)
     }
 
     return turn

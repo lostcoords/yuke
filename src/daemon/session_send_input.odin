@@ -6,8 +6,8 @@ import "core:mem"
 import store "src:daemon/store"
 import wire "src:wire"
 
-// `session.send_input`: mint the input, announce it live, and commit it as a user
-// message. No engine runs it yet, so every accepted input answers `queued`.
+// `session.send_input`: mint the input and announce it live, then either start the turn it
+// feeds or leave it queued behind the one already running.
 method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.send_input needs connection state")
     assert(conn.state == .Ready, "session.send_input ran outside Ready")
@@ -18,17 +18,8 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     d := conn.daemon
     assert(d.store != nil, "a serving daemon always owns an event store")
 
-    _, found, serr := store.session_snapshot(d.store, params.session_id, sa)
-    if serr != nil {
-        log.errorf("daemon: session.send_input could not read the session: %v", serr)
-        send_error(conn, req.id, .Internal, "could not read session", sa)
-
-        return
-    }
-
-    if !found {
-        send_error(conn, req.id, .Unknown_Session, "unknown session", sa)
-
+    snapshot, ok := session_require(conn, req, params.session_id, sa)
+    if !ok {
         return
     }
 
@@ -49,10 +40,22 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
         return
     }
 
+    // The store's mark only covers inputs whose user message committed, so an input queued
+    // behind the live turn is not in it yet; the session's own tail carries those.
+    input_id := session_input_high(d, params.session_id, hw.input_id) + 1
+
+    // Queued behind the live turn: announced now, committed only when it is promoted. The
+    // client dequeues on that commit, so committing here would empty its queue while the
+    // input still waited.
+    if session_live_run(d, params.session_id) != nil {
+        send_input_queue(conn, req, input_id, raw.content, sa)
+
+        return
+    }
+
     // Minted and committed with no suspension point in between: the handler runs to
     // completion on the reactor, so no other turn can hand out the same pair. The commit
     // raises both marks in its own transaction.
-    input_id := hw.input_id + 1
     message_id := hw.message_id + 1
     now := now_ms()
 
@@ -75,6 +78,14 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     ticket := conn.ticket
     published := send_input_publish(d, params.session_id, queued, committed, sa)
 
+    // The input is durable whether or not a turn follows it, so a refused turn answers an
+    // error over a committed message rather than pretending the input was never accepted.
+    run_id: wire.Run_Id
+    start_err := Run_Start_Error.None
+    if published {
+        run_id, start_err = run_turn_start(d, snapshot.session)
+    }
+
     answer := conn_resolve(d, ticket)
     if answer == nil {
         return
@@ -86,7 +97,84 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
         return
     }
 
+    if start_err != .None {
+        code, message := send_input_start_error(start_err)
+        send_error(answer, req.id, code, message, sa)
+
+        return
+    }
+
+    send_result(answer, req.id, wire.Session_Send_Input_Result_Started{input_id = input_id, run_id = run_id}, sa)
+}
+
+// Accept an input behind the session's live turn. Nothing durable happens here: the input
+// is announced and retained, and its user message commits when the turn ahead of it ends.
+@(private = "file")
+send_input_queue :: proc(
+    conn: ^Conn,
+    req: wire.Request,
+    input_id: wire.Input_Id,
+    content: []wire.Content_Part,
+    sa: mem.Allocator,
+) {
+    d := conn.daemon
+    params := req.params.(wire.Session_Send_Input_Params)
+
+    if session_queue_depth(d, params.session_id) >= wire.LIMITS.max_queued_inputs {
+        send_error(conn, req.id, .Queue_Full, "the session's input queue is full", sa)
+
+        return
+    }
+
+    if !session_queue_push(d, params.session_id, input_id, content) {
+        send_error(conn, req.id, .Internal, "could not queue the input", sa)
+
+        return
+    }
+
+    queued := wire.Queued_Input {
+        input_id     = input_id,
+        content      = content,
+        queued_at_ms = now_ms(),
+    }
+
+    ticket := conn.ticket
+
+    if perr := broadcast(d, wire.Input_Queued_Data{session_id = params.session_id, input = queued}); perr != .None {
+        log.errorf("daemon: session.send_input could not announce input %d: %v", input_id, perr)
+        _ = session_queue_remove(d, params.session_id, input_id)
+
+        if answer := conn_resolve(d, ticket); answer != nil {
+            send_error(answer, req.id, .Internal, "could not accept input", sa)
+        }
+
+        return
+    }
+
+    answer := conn_resolve(d, ticket)
+    if answer == nil {
+        return
+    }
+
     send_result(answer, req.id, wire.Session_Send_Input_Result_Queued{input_id = input_id}, sa)
+}
+
+// How a refused turn is reported. The input itself was accepted, so these describe the
+// run that did not start, not the send that did.
+@(private = "file")
+send_input_start_error :: proc(err: Run_Start_Error) -> (wire.Error_Code, string) {
+    #partial switch err {
+    case .No_Model:
+        return .Bad_Request, "the session names no model"
+
+    case .Unknown_Model:
+        return .Unsupported_Model, "the session's model is not in the catalog"
+
+    case .Unbindable:
+        return .Unsupported_Model, "the session's model has no usable endpoint or credential"
+    }
+
+    return .Internal, "the turn could not be started"
 }
 
 // Announce the input, commit it as a user message, and refresh the index. An input
@@ -127,7 +215,7 @@ send_input_publish :: proc(
 
 // Re-announce the session summary the commit moved: `session.list` orders on
 // `updated_at_ms`. Read back rather than patched: the store owns that fold.
-@(private = "file")
+@(private)
 session_summary_announce :: proc(d: ^Daemon, session: wire.Session_Id, sa: mem.Allocator) {
     assert(d != nil, "announcing a summary needs daemon state")
     assert(d.store != nil, "a serving daemon always owns an event store")

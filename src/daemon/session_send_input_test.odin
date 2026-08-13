@@ -14,44 +14,67 @@ import wire "src:wire"
 // replica, so the announced pair is checked against the client model that consumes it.
 Input_Obs :: struct {
     // Session to subscribe to and address.
-    session:   wire.Session_Id,
+    session:        wire.Session_Id,
 
     // Inputs to send, one after the previous is answered.
-    inputs:    []wire.Input,
-    sent:      int,
+    inputs:         []wire.Input,
+    sent:           int,
 
     // Input ids answered, in request order; short when a send answered with an error.
-    accepted:  [dynamic]wire.Input_Id,
+    accepted:       [dynamic]wire.Input_Id,
+
+    // Run ids answered, for the sends that started a turn.
+    runs:           [dynamic]wire.Run_Id,
 
     // Error code of the last answered request; `is_error` says whether it means anything.
-    is_error:  bool,
-    code:      wire.Error_Code,
+    is_error:       bool,
+    code:           wire.Error_Code,
 
     // Broadcast names delivered, in arrival order, with the payloads worth reading back
     // cloned out of the frame arena they borrow.
-    names:     [dynamic]wire.Broadcast_Name,
-    queued:    [dynamic]wire.Queued_Input,
-    committed: [dynamic]wire.User_Message,
-    summaries: [dynamic]wire.Session,
+    names:          [dynamic]wire.Broadcast_Name,
+
+    // Arrival wall clock per broadcast, parallel to `names`, for proving that a stream is
+    // delivered as it arrives rather than in one flush at the end.
+    times:          [dynamic]u64,
+    queued:         [dynamic]wire.Queued_Input,
+    committed:      [dynamic]wire.User_Message,
+    assistants:     [dynamic]wire.Assistant_Message,
+    summaries:      [dynamic]wire.Session,
+
+    // A `run.done` arrived, so the turn this driver started has finished.
+    turn_done:      bool,
+
+    // Issue one `session.cancel_run` once every input is answered, optionally naming a
+    // run, and keep what it answered. `cancel_input` names a queued input instead.
+    cancel_input:   Maybe(wire.Input_Id),
+    cancel:         bool,
+    cancel_run:     Maybe(wire.Run_Id),
+    cancel_sent:    bool,
+    canceled:       wire.Session_Cancel_Run_Result,
+    canceled_input: wire.Input_Id,
 
     // The replica every broadcast is folded into, and the first refusal it reported.
-    replica:   client.Session_Replica,
-    apply_err: client.Replica_Error,
+    replica:        client.Session_Replica,
+    apply_err:      client.Replica_Error,
 
     // Every request has been answered.
-    settled:   bool,
+    settled:        bool,
 
     // Terminal callback fired.
-    done:      bool,
+    done:           bool,
 }
 
 input_obs_init :: proc(o: ^Input_Obs, session: wire.Session_Id, inputs: []wire.Input) {
     o.session = session
     o.inputs = inputs
     o.accepted = make([dynamic]wire.Input_Id, context.temp_allocator)
+    o.runs = make([dynamic]wire.Run_Id, context.temp_allocator)
     o.names = make([dynamic]wire.Broadcast_Name, context.temp_allocator)
+    o.times = make([dynamic]u64, context.temp_allocator)
     o.queued = make([dynamic]wire.Queued_Input, context.temp_allocator)
     o.committed = make([dynamic]wire.User_Message, context.temp_allocator)
+    o.assistants = make([dynamic]wire.Assistant_Message, context.temp_allocator)
     o.summaries = make([dynamic]wire.Session, context.temp_allocator)
     client.replica_init(&o.replica, context.allocator, session)
 }
@@ -87,6 +110,30 @@ input_on_sub :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawp
 // marks the first one raised.
 input_send_next :: proc(c: ^client.Client, o: ^Input_Obs) {
     if o.sent == len(o.inputs) {
+        if input_id, cancels_input := o.cancel_input.?; cancels_input && !o.cancel_sent {
+            o.cancel_sent = true
+            client.client_send_request(
+                c,
+                .Session_Cancel_Input,
+                wire.Session_Cancel_Input_Params{session_id = o.session, input_id = input_id},
+                input_on_cancel,
+            )
+
+            return
+        }
+
+        if o.cancel && !o.cancel_sent {
+            o.cancel_sent = true
+            client.client_send_request(
+                c,
+                .Session_Cancel_Run,
+                wire.Session_Cancel_Run_Params{session_id = o.session, run_id = o.cancel_run},
+                input_on_cancel,
+            )
+
+            return
+        }
+
         o.settled = true
         return
     }
@@ -114,8 +161,13 @@ input_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _:
         o.is_error = false
 
         if result, ok := resp.result.(wire.Session_Send_Input_Result); ok {
-            if q, is_queued := result.(wire.Session_Send_Input_Result_Queued); is_queued {
-                append(&o.accepted, q.input_id)
+            switch answer in result {
+            case wire.Session_Send_Input_Result_Started:
+                append(&o.accepted, answer.input_id)
+                append(&o.runs, answer.run_id)
+
+            case wire.Session_Send_Input_Result_Queued:
+                append(&o.accepted, answer.input_id)
             }
         }
 
@@ -127,18 +179,56 @@ input_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _:
     input_send_next(c, o)
 }
 
+// The cancel is the driver's last request, so its answer settles the run.
+input_on_cancel :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
+    o := (^Input_Obs)(c.user_data)
+    o.settled = true
+
+    answered, has_response := outcome.(client.Request_Response)
+    if !has_response {
+        return
+    }
+
+    switch resp in answered.response {
+    case wire.Response_Ok:
+        o.is_error = false
+
+        if result, ok := resp.result.(wire.Session_Cancel_Run_Result); ok {
+            o.canceled = result
+        }
+
+        if result, ok := resp.result.(wire.Session_Cancel_Input_Result); ok {
+            o.canceled_input = result.canceled_input
+        }
+
+    case wire.Response_Error:
+        o.is_error = true
+        o.code = resp.error.code
+    }
+}
+
 input_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     o := (^Input_Obs)(c.user_data)
     append(&o.names, bc.method)
+    append(&o.times, now_ms())
 
     #partial switch v in bc.params {
     case wire.Input_Queued_Data:
         append(&o.queued, wire.queued_input_clone(v.input, context.temp_allocator))
 
     case wire.Message_Committed_Data:
-        if user, is_user := v.message.(wire.User_Message); is_user {
-            append(&o.committed, wire.user_message_clone(user, context.temp_allocator))
+        switch message in v.message {
+        case wire.User_Message:
+            append(&o.committed, wire.user_message_clone(message, context.temp_allocator))
+
+        case wire.Assistant_Message:
+            append(&o.assistants, wire.assistant_message_clone(message, context.temp_allocator))
+
+        case wire.Compaction_Message:
         }
+
+    case wire.Run_Done_Data:
+        o.turn_done = true
 
     case wire.Session_Summary_Changed_Data:
         append(&o.summaries, wire.session_clone(v.session, context.temp_allocator))
@@ -219,11 +309,11 @@ test_session_send_input_commits_the_user_message :: proc(t: ^testing.T) {
     c: client.Client
     input_client_run(t, &c, loop, bound_port(&d), &obs)
 
-    // Both sends answered `queued`, since nothing runs and nothing waits.
-    if testing.expect_value(t, len(obs.accepted), 2) {
-        testing.expect_value(t, obs.accepted[0], wire.Input_Id(1))
-        testing.expect_value(t, obs.accepted[1], wire.Input_Id(2))
-    }
+    // The fixture's model is in no catalog, so no turn starts. The input is durable
+    // either way: a refused turn does not undo the message the user already sent.
+    testing.expect(t, obs.is_error, "a session whose model resolves to nothing starts no turn")
+    testing.expect_value(t, obs.code, wire.Error_Code.Unsupported_Model)
+    testing.expect_value(t, len(obs.runs), 0)
 
     // `input.queued` precedes the commit it explains, and the index is refreshed after
     // the commit that moved it.
