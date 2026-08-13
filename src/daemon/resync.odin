@@ -13,7 +13,7 @@ import wire "src:wire"
 Resync_Error :: enum {
     None,
 
-    // The session has no durable stream, so nothing ever wrote it.
+    // The session has no registry row, so it was never created.
     Unknown_Session,
 
     // The store refused a read; nothing about the session is known right now.
@@ -74,20 +74,15 @@ resync_build :: proc(
         return {}, .Store_Failed
     }
 
-    // The high-water is the session's existence test: the pump advances it in the same
-    // transaction as the first row. `d.seq_high` lags the log it recovers from, so it is not consulted.
-    if hw.seq == 0 {
-        return {}, .Unknown_Session
-    }
-
+    // The registry row is the existence test, not the high-water: `session.create` writes
+    // the row, and a session that has never been written to still resyncs as an empty cut.
     snapshot, found, serr := store.session_snapshot(d.store, params.session_id, sa)
     if serr != nil {
         log.errorf("daemon: resync session read failed: %v", serr)
         return {}, .Store_Failed
     }
     if !found {
-        log.error("daemon: resync high-water names no session row")
-        return {}, .Corrupt_Log
+        return {}, .Unknown_Session
     }
 
     page_size := wire.LIMITS.default_page_size

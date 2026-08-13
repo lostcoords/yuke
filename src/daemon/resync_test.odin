@@ -262,6 +262,34 @@ test_daemon_resync_cut_derives_from_the_log :: proc(t: ^testing.T) {
     )
 }
 
+// A session exists from the moment `session.create` writes its row, which is before
+// anything has been appended to it. The cut is empty rather than refused: a client that
+// creates a session and resyncs it immediately is asking about a session that is real.
+@(test)
+test_daemon_resync_of_a_session_with_no_events_is_an_empty_cut :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    resync_with_daemon(t, "daemon-resync-eventless", proc(t: ^testing.T, d: ^Daemon) {
+        session := pump_test_session('a')
+        daemon_test_session_create(t, d, session)
+
+        cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+        testing.expect_value(t, err, Resync_Error.None)
+        testing.expect_value(t, cut.base_seq, wire.Seq(0))
+        testing.expect_value(t, len(cut.messages), 0)
+        testing.expect_value(t, len(cut.configs), 0)
+        testing.expect(t, !cut.has_more, "an empty transcript has nothing older")
+        testing.expect_value(t, cut.item.session.id, session)
+
+        _, finalized := cut.highest_finalized_message_id.?
+        testing.expect(t, !finalized, "a session that minted no message id has no boundary")
+
+        _, idle := cut.item.activity.state.(wire.Activity_State_Idle)
+        testing.expect(t, idle, "a session with no run is idle")
+        testing.expect_value(t, wire.session_resync_result_validate(cut), wire.Validation_Error.None)
+    })
+}
+
 @(test)
 test_daemon_resync_of_an_unknown_session_is_refused :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
