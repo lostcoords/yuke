@@ -558,7 +558,7 @@ test_daemon_catalog_list_unchanged_when_since_rev_matches :: proc(t: ^testing.T)
 
     obs := Handler_Obs {
         method = .Catalog_List,
-        params = wire.Catalog_List_Params{since_rev = empty_catalog_rev()},
+        params = wire.Catalog_List_Params{since_rev = catalog_rev(nil, {})},
         check = check_catalog_unchanged,
     }
     run_handler(t, &obs)

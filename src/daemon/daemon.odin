@@ -170,6 +170,12 @@ Daemon :: struct {
     provider_auth:   Provider_Auth,
 
     // @private
+    // Current catalog identity: the revision plus the small health block, resolved at
+    // startup. The full model list is re-derived into request scratch per catalog.list,
+    // never retained.
+    catalog:         Daemon_Catalog,
+
+    // @private
     // Per-session durable high-water: the pump's seq authority. Recovered from the
     // store on first touch, so an absent entry is re-read rather than assumed zero.
     seq_high:        map[wire.Session_Id]wire.Seq,
@@ -474,6 +480,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     d.store = opened
     d.seq_high = marks
 
+    if catalog_err := catalog_state_load(d); catalog_err != nil {
+        return .Store_Failed
+    }
+
     if auth_err := provider_auth_init(d); auth_err != .None {
         return auth_err
     }
@@ -705,6 +715,7 @@ store_close :: proc(d: ^Daemon) {
         return
     }
 
+    catalog_state_destroy(d)
     store.close(d.store)
     delete(d.seq_high)
     d.store = nil
@@ -1032,30 +1043,45 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
 }
 
-// `catalog.list` before any catalog is loaded: `unchanged` when the client already
-// holds the empty revision, otherwise a `full` snapshot with no models and empty
-// health. Both carry the all-zero catalog hash the initialize snapshot reports.
+// `catalog.list`: `unchanged` when the client already holds the current revision,
+// otherwise a `full` snapshot of the visible models re-derived from the store into
+// request scratch, plus the daemon's held revision and health.
 method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "catalog.list needs connection state")
     assert(conn.state == .Ready, "catalog.list ran outside Ready")
     assert(req.method == .Catalog_List, "catalog.list received another method")
 
+    d := conn.daemon
     params := req.params.(wire.Catalog_List_Params)
-    empty := empty_catalog_rev()
 
-    result: wire.Catalog_List_Result
-    if since, ok := params.since_rev.?; ok && since == empty {
-        result = wire.Catalog_List_Result_Unchanged {
-            catalog_rev = empty,
-        }
-    } else {
-        result = wire.Catalog_List_Result_Full {
-            catalog_rev = empty,
-            models = nil,
-            health = {skipped = nil, load_error = nil},
-        }
+    if since, ok := params.since_rev.?; ok && since == d.catalog.rev {
+        send_result(conn, req.id, wire.Catalog_List_Result_Unchanged{catalog_rev = d.catalog.rev}, sa)
+        return
     }
 
+    // Re-derive the visible model list into request scratch; the daemon holds only the
+    // revision and health. The persisted catalog is stable between refreshes, so this
+    // view is consistent with `d.catalog.rev`.
+    effective, resolve_err := catalog_resolve_current(d, sa)
+    if resolve_err != nil {
+        send_error(conn, req.id, .Internal, "catalog unavailable", sa)
+        return
+    }
+
+    models, ok := catalog_models_view(effective, sa)
+    if !ok {
+        send_error(conn, req.id, .Internal, "catalog unavailable", sa)
+        return
+    }
+
+    // `send_result` asserts the result validates; these models come straight from
+    // persisted rows, so store-write validation must stay at least as strict as wire
+    // validation (it is: `catalog_model_valid` runs `model_info_validate` on write).
+    result := wire.Catalog_List_Result_Full {
+        catalog_rev = d.catalog.rev,
+        models      = models,
+        health      = d.catalog.health,
+    }
     send_result(conn, req.id, result, sa)
 }
 
@@ -1186,8 +1212,8 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
         agents = nil,
         session_revision = 0,
         cron_revision = 0,
-        catalog_rev = empty_catalog_rev(),
-        catalog_health = {skipped = nil, load_error = nil},
+        catalog_rev = conn.daemon.catalog.rev,
+        catalog_health = conn.daemon.catalog.health,
     }
 
     assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
@@ -1340,15 +1366,4 @@ conn_free :: proc(conn: ^Conn) {
 // Daemon wall-clock epoch milliseconds, for the `initialize` result's clock.
 now_ms :: proc() -> u64 {
     return u64(time.to_unix_nanoseconds(time.now()) / 1_000_000)
-}
-
-// Catalog revision emitted before any catalog is loaded: the all-zero hash, which
-// is valid lowercase hex and so passes `initialize_result_validate`.
-empty_catalog_rev :: proc() -> wire.Catalog_Rev {
-    out: [64]u8
-    for i in 0 ..< 64 {
-        out[i] = '0'
-    }
-
-    return wire.Catalog_Rev(out)
 }
