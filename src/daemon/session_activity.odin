@@ -32,8 +32,33 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
         started_at_ms = run.started_at_ms,
     }
 
+    // A running tool outranks the stream: the turn is waiting on it, not on the provider.
+    // The first one still running names the phase when several run at once.
+    for &block, index in run.blocks {
+        if block.kind != .Tool {
+            continue
+        }
+
+        running, is_running := block.tool_state.(wire.Tool_State_Running)
+        if !is_running {
+            continue
+        }
+
+        activity.state = wire.Activity_State_Running_Tool {
+            run_id        = run.run_id,
+            message_id    = run.message_id,
+            part_id       = wire.Part_Id(index),
+            tool_name     = block.name,
+            started_at_ms = running.started_at_ms,
+        }
+
+        assert(wire.session_activity_validate(activity) == .None, "the engine built an invalid activity")
+
+        return activity
+    }
+
     // Only a reasoning block names a phase of its own, and only while it is the one
-    // receiving deltas. Tool and permission phases arrive with the tools.
+    // receiving deltas. A permission phase arrives with permissions.
     if len(run.blocks) > 0 {
         index := len(run.blocks) - 1
         block := &run.blocks[index]

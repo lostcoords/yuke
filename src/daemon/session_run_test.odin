@@ -3,6 +3,8 @@ package daemon
 import "core:fmt"
 import "core:nbio"
 import "core:net"
+import "core:os"
+import "core:path/filepath"
 import "core:testing"
 import "core:time"
 
@@ -108,6 +110,29 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta"
 data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Tokyo\"}"}}
 
 data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}
+
+data: {"type":"message_stop"}
+
+`
+
+// Two calls in one round. Their handlers use a barrier in the join test, so neither can
+// settle unless both start before the daemon drains their promises.
+@(private = "file")
+RUN_FAKE_TOOL_JOIN_STREAM :: `data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"first","input":{}}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_2","name":"second","input":{}}}
+
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+
+data: {"type":"content_block_stop","index":1}
 
 data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}
 
@@ -334,6 +359,7 @@ Run_Env :: struct {
     obs:     Input_Obs,
     fake:    Run_Fake,
     path:    string,
+    js_root: string,
     session: wire.Session_Id,
 }
 
@@ -349,6 +375,7 @@ run_env_start :: proc(
     status := "200 OK",
     content_type := "text/event-stream",
     body := RUN_FAKE_STREAM,
+    entry := "",
 ) {
     env.path = testsupport.sqlite_db_path(t, name)
     env.session = pump_test_session('a')
@@ -357,7 +384,21 @@ run_env_start :: proc(
     env.fake.hold = hold
     base_url := run_fake_start(t, &env.fake, loop, status, content_type, body)
 
-    testing.expect_value(t, start(&env.d, loop, {host = "127.0.0.1", port = 0, db_path = env.path}), Error.None)
+    js_root := ""
+    if entry != "" {
+        js_root = test_make_dir(name)
+        env.js_root = js_root
+
+        script, join_err := filepath.join({js_root, JS_ENTRY_FILE}, context.temp_allocator)
+        testing.expect(t, join_err == nil, "the entry path joins")
+        testing.expect_value(t, os.write_entire_file(script, transmute([]byte)entry), nil)
+    }
+
+    testing.expect_value(
+        t,
+        start(&env.d, loop, {host = "127.0.0.1", port = 0, db_path = env.path, js_root = js_root}),
+        Error.None,
+    )
     run_fake_catalog(t, &env.d, base_url)
     run_fake_session(t, &env.d, env.session)
 
@@ -375,6 +416,10 @@ run_env_stop :: proc(t: ^testing.T, env: ^Run_Env) {
     input_client_stop(t, &env.c, &env.d, &env.obs)
     run_fake_stop(t, &env.fake)
     testsupport.sqlite_db_remove(env.path)
+
+    if env.js_root != "" {
+        os.remove_all(env.js_root)
+    }
 }
 
 // One text part, the shape every one of these tests sends.
@@ -1059,10 +1104,10 @@ test_session_run_is_concurrent_across_sessions :: proc(t: ^testing.T) {
     run_fake_stop(t, &fake)
 }
 
-// A tool call enters the transcript as a pending part, announced live and committed with the
-// turn. Nothing executes it yet, which is what `pending` says.
+// A call naming a tool nothing registered fails rather than committing pending: every
+// request builder refuses a transcript carrying a pending tool part.
 @(test)
-test_session_run_commits_a_tool_call_as_a_pending_part :: proc(t: ^testing.T) {
+test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     nbio.acquire_thread_event_loop()
@@ -1106,8 +1151,10 @@ test_session_run_commits_a_tool_call_as_a_pending_part :: proc(t: ^testing.T) {
     testing.expect(t, has_call_id, "the part carries the provider's call id")
     testing.expect_value(t, call_id, "toolu_1")
 
-    _, pending := tool.state.(wire.Tool_State_Pending)
-    testing.expect(t, pending, "nothing executes the call yet")
+    failed, is_error := tool.state.(wire.Tool_State_Error)
+    testing.expect(t, is_error, "an unregistered tool cannot run")
+    testing.expect_value(t, failed.message, "unknown tool")
+    testing.expect_value(t, failed.duration_ms, u64(0))
 
     // Announced once, at the terminal that names the tool, rather than at the block start
     // where there is nothing to render.
@@ -1119,4 +1166,277 @@ test_session_run_commits_a_tool_call_as_a_pending_part :: proc(t: ^testing.T) {
     }
 
     testing.expect_value(t, added, 1)
+}
+
+// The whole round trip: yuked.js registers the tool, the model calls it, the handler awaits a
+// host op, and the turn commits only once the handler's promise settles.
+@(test)
+test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    // `exec` proves the join runs through the drain hook: the handler cannot settle until a
+    // command finishes on a worker thread, long after the provider turn completed.
+    entry := `
+        import { defineTool } from "yuke:daemon"
+        import { exec } from "yuke:exec"
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: async ({ city }) => {
+                const r = await exec("printf sunny")
+
+                return { weather: r.stdout, city }
+            },
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-exec",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    if !testing.expect_value(t, len(obs.assistants), 1) {
+        return
+    }
+
+    content := obs.assistants[0].content
+    if !testing.expect_value(t, len(content), 1) {
+        return
+    }
+
+    tool, is_tool := content[0].(wire.Tool_Part)
+    if !testing.expect(t, is_tool, "the call commits as a tool part") {
+        return
+    }
+
+    completed, is_completed := tool.state.(wire.Tool_State_Completed)
+    if !testing.expect(t, is_completed, "the handler completed the call") {
+        return
+    }
+
+    testing.expect_value(t, completed.output, `{"weather":"sunny","city":"Tokyo"}`)
+
+    // Running, then completed: a client watches the call rather than only its result.
+    states := 0
+    for name in obs.names {
+        if name == .Tool_State_Changed {
+            states += 1
+        }
+    }
+
+    testing.expect_value(t, states, 2)
+
+    // The turn reported the tool it was waiting on.
+    saw_running_tool := false
+    for activity in obs.activities {
+        if running, is_running := activity.state.(wire.Activity_State_Running_Tool); is_running {
+            saw_running_tool = true
+            testing.expect_value(t, running.tool_name, "get_weather")
+        }
+    }
+
+    testing.expect(t, saw_running_tool, "the session reported running_tool while the handler ran")
+}
+
+// Calls in one provider round start together and commit in provider block order only after
+// the last promise settles.
+@(test)
+test_session_run_joins_concurrent_tool_calls :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    entry := `
+        import { defineTool } from "yuke:daemon"
+
+        let started = 0
+        let release
+        const barrier = new Promise(resolve => { release = resolve })
+
+        const join = (output, fails = false) => {
+            started += 1
+            if (started === 2) release()
+
+            return barrier.then(() => {
+                if (fails) throw new Error(output)
+
+                return output
+            })
+        }
+
+        defineTool("first", {
+            description: "First call",
+            handler: () => join("one"),
+        })
+        defineTool("second", {
+            description: "Second call",
+            handler: () => join("two failed", true),
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-join",
+        run_env_input("run both", &parts, &inputs),
+        body = RUN_FAKE_TOOL_JOIN_STREAM,
+        entry = entry,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    if !testing.expect_value(t, len(obs.assistants), 1) {
+        return
+    }
+
+    content := obs.assistants[0].content
+    if !testing.expect_value(t, len(content), 2) {
+        return
+    }
+
+    first, first_is_tool := content[0].(wire.Tool_Part)
+    if testing.expect(t, first_is_tool, "the first joined part is a tool") {
+        completed, is_completed := first.state.(wire.Tool_State_Completed)
+        if testing.expect(t, is_completed, "the first joined call completed") {
+            testing.expect_value(t, completed.output, "one")
+        }
+    }
+
+    second, second_is_tool := content[1].(wire.Tool_Part)
+    if testing.expect(t, second_is_tool, "the second joined part is a tool") {
+        failed, is_error := second.state.(wire.Tool_State_Error)
+        if testing.expect(t, is_error, "the second joined call failed") {
+            testing.expect_value(t, failed.message, "Error: two failed")
+        }
+    }
+}
+
+// A synchronous throw answers the model with the failure instead of stalling the turn. The
+// call goes through the host entry so its deadline applies and its exception is cleared.
+@(test)
+test_session_run_reports_a_throwing_tool_as_an_error :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    entry := `
+        import { defineTool } from "yuke:daemon"
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: () => { throw new Error("no station") },
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-throw",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    if !testing.expect_value(t, len(obs.assistants), 1) {
+        return
+    }
+
+    content := obs.assistants[0].content
+    if !testing.expect_value(t, len(content), 1) {
+        return
+    }
+
+    tool, is_tool := content[0].(wire.Tool_Part)
+    if !testing.expect(t, is_tool, "the call commits as a tool part") {
+        return
+    }
+
+    failed, is_error := tool.state.(wire.Tool_State_Error)
+    testing.expect(t, is_error, "a throwing handler fails its call")
+    testing.expect_value(t, failed.message, "Error: no station")
+}
+
+// A turn waiting on a handler is still cancelable. It owns no provider op by then, so the
+// cancel path must not assume one, and the handler's promise must be released with the run.
+@(test)
+test_session_cancel_run_during_a_tool_call :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    entry := `
+        import { defineTool } from "yuke:daemon"
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: () => new Promise(() => {}),
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-cancel-tool",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    // Cancel only once the handler is outstanding: that is the state with no provider op.
+    started := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            run := session_live_run(&env.d, env.session)
+
+            return run != nil && run.tools_open > 0
+        }, "the handler starts")
+
+    if !testing.expect(t, started, "the tool call should be outstanding") {
+        return
+    }
+
+    run_id, canceled := run_turn_cancel(&env.d, env.session)
+    testing.expect(t, canceled, "a turn waiting on a handler is cancelable")
+    testing.expect_value(t, run_id, wire.Run_Id(1))
+    pump_settle()
+
+    // The handler never settles, so nothing may have been committed.
+    testing.expect_value(t, len(obs.assistants), 0)
 }

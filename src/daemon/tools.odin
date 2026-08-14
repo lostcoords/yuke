@@ -361,6 +361,19 @@ tools_definitions :: proc(d: ^Daemon, allocator: mem.Allocator) -> []provider.To
     return out
 }
 
+// The registered tool of that name, or nil. Tools are few, so a scan is the lookup.
+tools_find :: proc(d: ^Daemon, name: string) -> ^Daemon_Tool {
+    assert(d != nil, "a tool lookup needs daemon state")
+
+    for &tool in d.tools {
+        if tool.name == name {
+            return &tool
+        }
+    }
+
+    return nil
+}
+
 // Release every handler before the context that made them is freed.
 tools_destroy :: proc(d: ^Daemon) {
     assert(d != nil, "tool teardown needs daemon state")

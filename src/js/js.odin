@@ -42,6 +42,10 @@ Module :: struct {
 // Script-fault reporting; policy is embedder-owned (TUI must not write stderr on alt screen).
 Report :: #type proc(user: rawptr, source: string, text: string)
 
+// Called after each drain, on the loop thread and outside the JS entry, so an embedder can
+// observe promises it is waiting on without polling.
+On_Drain :: #type proc(user: rawptr)
+
 // Resolves non-native import specs to ES source. `owned` true: loader frees `source` after compile.
 Resolve :: #type proc(user: rawptr, name: string, allocator: mem.Allocator) -> (source: string, owned: bool, ok: bool)
 
@@ -57,6 +61,7 @@ Options :: struct {
     exec_pool:    ^offload.Pool,
     user:         rawptr,
     report:       Report,
+    on_drain:     On_Drain,
     // Nil keeps the loader closed — unknown specifier throws.
     resolve:      Resolve,
     // Zero takes the matching `DEFAULT_*`.
@@ -76,6 +81,7 @@ Host :: struct {
     exec_pool:   ^offload.Pool,
     user:        rawptr,
     report:      Report,
+    on_drain:    On_Drain,
     resolve:     Resolve,
     // Owned copy of the caller's module set.
     modules:     []Module,
@@ -102,6 +108,7 @@ init :: proc(h: ^Host, options: Options) -> Error {
 
     h.user = options.user
     h.report = options.report
+    h.on_drain = options.on_drain
     h.resolve = options.resolve
     h.allocator = options.allocator
     h.deadline = options.deadline if options.deadline > 0 else DEFAULT_DEADLINE
@@ -447,9 +454,7 @@ call :: proc(
     assert(h != nil, "a call needs a host")
     assert(h.ctx != nil, "a call needs a live context")
 
-    enter(h)
-    result = qjs.call(h.ctx, fn, this, args)
-    leave(h)
+    result = call_value(h, fn, this, args)
 
     if qjs.is_exception(result) {
         report_exception(h, source)
@@ -459,6 +464,19 @@ call :: proc(
     }
 
     return result, true
+}
+
+// Invoke `fn` under the deadline and leave any exception pending for the caller to take.
+// Caller owns the result.
+call_value :: proc(h: ^Host, fn: qjs.Value, this: qjs.Value, args: []qjs.Value) -> qjs.Value {
+    assert(h != nil, "a call needs a host")
+    assert(h.ctx != nil, "a call needs a live context")
+
+    enter(h)
+    result := qjs.call(h.ctx, fn, this, args)
+    leave(h)
+
+    return result
 }
 
 // Run microtasks the last entry queued so host-settled promises reach continuations.
@@ -476,6 +494,11 @@ drain :: proc(h: ^Host, budget: time.Duration = 0) {
 
     if failed {
         report_exception(h, "microtask")
+    }
+
+    // After `leave`, so the hook may enter JS again if it needs to.
+    if h.on_drain != nil {
+        h.on_drain(h.user)
     }
 }
 

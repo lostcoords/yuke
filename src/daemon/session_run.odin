@@ -5,6 +5,7 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 
+import qjs "libs:bindings/quickjs"
 import catalog "src:daemon/catalog"
 import store "src:daemon/store"
 import provider "src:provider"
@@ -45,20 +46,29 @@ Run_Start_Error :: enum {
 // block carries only its terminal metadata — so the run accumulates it here.
 @(private)
 Run_Block :: struct {
-    block_id:  provider.Stream_Block_Id,
-    kind:      provider.Stream_Block_Kind,
+    block_id:      provider.Stream_Block_Id,
+    kind:          provider.Stream_Block_Kind,
 
     // The block's accumulated content: assistant text, reasoning, or a tool call's argument
     // JSON. A tool block fills this once at its terminal rather than from deltas.
-    text:      strings.Builder,
-    signature: string,
+    text:          strings.Builder,
+    signature:     string,
 
     // Tool blocks only. The provider names the tool in the terminal, never at the start.
-    call_id:   string,
-    name:      string,
+    call_id:       string,
+    name:          string,
+
+    // Nil until the call starts, which `run_part_build` reads as pending.
+    tool_state:    wire.Tool_State,
+    tool_started:  u64,
+
+    // A handler's promise, owned while `tool_awaiting`. Polled rather than continued into,
+    // so cancelling a run never leaves JS holding a pointer to it.
+    tool_promise:  qjs.Value,
+    tool_awaiting: bool,
 
     // Set by this block's terminal. A closed reasoning block is no longer the live phase.
-    closed:    bool,
+    closed:        bool,
 }
 
 // What `Tool_Part.name` admits. A provider that exceeds it is not trusted to have named a
@@ -83,6 +93,11 @@ Session_Live :: struct {
 Run :: struct {
     daemon:        ^Daemon,
     session:       wire.Session_Id,
+
+    // Tool calls still awaiting a handler, and whether their join owns the commit. The turn
+    // commits when the count reaches zero.
+    tools_open:    int,
+    tools_joining: bool,
 
     // The provider turn this run is streaming, or nil once it has completed.
     op:            ^Run_Op,
@@ -487,13 +502,12 @@ run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
             call_id = block.call_id
         }
 
-        return wire.Tool_Part {
-            id = id,
-            call_id = call_id,
-            name = block.name,
-            arguments = text,
-            state = wire.Tool_State_Pending{},
+        state := block.tool_state
+        if state == nil {
+            state = wire.Tool_State_Pending{}
         }
+
+        return wire.Tool_Part{id = id, call_id = call_id, name = block.name, arguments = text, state = state}
     }
 
     return wire.Text_Part{id = id, text = text}
@@ -518,6 +532,18 @@ run_on_result :: proc(user: rawptr, result: provider.Turn_Result) {
         return
     }
 
+    // Tools run before the commit: a transcript carrying a pending tool part is refused by
+    // every request builder, so the message that holds one must never reach the log.
+    if run_tools_begin(run) {
+        return
+    }
+
+    run_commit(run)
+}
+
+// Commit the draft as the turn's assistant message and end the run.
+@(private)
+run_commit :: proc(run: ^Run) {
     content := make([]wire.Assistant_Part, len(run.blocks), run.allocator)
     for &block, index in run.blocks {
         content[index] = run_part_build(&block, index)
@@ -568,9 +594,12 @@ run_turn_cancel :: proc(d: ^Daemon, session: wire.Session_Id) -> (wire.Run_Id, b
         return 0, false
     }
 
-    assert(run.op != nil, "a live run owns its provider turn")
-    run_cancel(&d.runs, run.op)
-    run.op = nil
+    // A run executing tools has already released its provider op, and is still cancelable:
+    // the handlers are what the turn is waiting on.
+    if run.op != nil {
+        run_cancel(&d.runs, run.op)
+        run.op = nil
+    }
 
     run_id := run.run_id
     run_end(run, wire.Run_Outcome_Canceled{})
@@ -629,6 +658,8 @@ run_close :: proc(run: ^Run) {
 // and on the shutdown path, where a canceled turn fires no completion of its own.
 run_free :: proc(run: ^Run) {
     assert(run != nil, "freeing a run needs a run")
+
+    run_tools_release(run)
 
     allocator := run.daemon.allocator
     virtual.arena_destroy(&run.arena)

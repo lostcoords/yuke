@@ -501,6 +501,14 @@ eval_function :: proc(ctx: ^Context, fun_obj: Value) -> Value {
     return c_eval_function(ctx, fun_obj)
 }
 
+// Parse `text` as JSON. Satisfies `is_exception` on malformed input, leaving the exception
+// pending. Caller owns the result.
+parse_json :: proc(ctx: ^Context, text: string, filename: cstring = "<json>") -> Value {
+    assert(ctx != nil, "parse_json needs a context")
+
+    return c_parse_json(ctx, cstring(raw_data(text)), c.size_t(len(text)), filename)
+}
+
 // Whether `v` is callable. Needs a context because a function is an object whose class the
 // runtime resolves; the tag-based predicates in `value.odin` cannot tell.
 is_function :: proc(ctx: ^Context, v: Value) -> bool {

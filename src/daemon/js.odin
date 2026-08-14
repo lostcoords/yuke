@@ -57,6 +57,7 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
         exec_pool = &d.exec_workers,
         user      = d,
         report    = js_report,
+        on_drain  = js_on_drain,
         allocator = allocator,
     }
 
