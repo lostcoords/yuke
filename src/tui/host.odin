@@ -168,9 +168,8 @@ host_init :: proc(
     h.has_pool = true
 
     // The working directory is the workspace in practice — the client is run from the
-    // project it edits — and it is what `yuke:fs` contains every path to. When the client
-    // gains a daemon connection this becomes the resolved workspace root; the containment
-    // check does not change.
+    // project it edits — and it is what a relative script path resolves against. When the
+    // client gains a daemon connection this becomes the resolved workspace root.
     root, root_err := os.get_working_directory(allocator)
     if root_err != nil {
         host_set_last_err(h, "cannot resolve the working directory")
@@ -186,7 +185,7 @@ host_init :: proc(
     h.config_root = paths.config_dir(allocator)
     h.data_root = paths.data_dir(allocator)
 
-    modules := [3]js.Module{js.fs_module(), term_module(), client_module()}
+    modules := [5]js.Module{js.fs_module(), js.exec_module(), js.diff_module(), term_module(), client_module()}
 
     // 16 MiB rather than the shared default: a TUI's scripts are widgets and keymaps, and
     // anything approaching this is a runaway. The deadline is deliberately the shared one —
@@ -194,7 +193,7 @@ host_init :: proc(
     // the user is watching happen.
     options := js.Options {
         modules      = modules[:],
-        root         = root,
+        base         = root,
         pool         = &h.pool,
         user         = h,
         report       = host_report,
@@ -207,7 +206,7 @@ host_init :: proc(
     case .None:
 
     case .Invalid_Root:
-        host_set_last_err(h, "working directory is not a usable fs root")
+        host_set_last_err(h, "working directory is not a usable base")
         return false
 
     case .Out_Of_Memory:

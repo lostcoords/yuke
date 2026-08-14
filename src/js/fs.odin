@@ -2,6 +2,7 @@ package js
 
 import "base:runtime"
 import "core:c"
+import "core:crypto/sha2"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
@@ -10,66 +11,96 @@ import "core:strings"
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
 
-// Read-only filesystem access rooted at `Host.root`; needs root and pool.
+// Filesystem access for host scripts. Every path follows `path_resolve`; nothing here is
+// contained, because a caller that also has `yuke:exec` could walk around any containment.
 FS_MODULE :: "yuke:fs"
 
-// Declared up front because ES modules resolve bindings before any module body runs.
+// Declared up front because ES modules resolve bindings before any module body runs. Flat
+// exports rather than one object: `import * as fs from "yuke:fs"` still reads as a namespace.
 @(rodata)
-FS_EXPORTS := []string{"fs"}
+FS_EXPORTS := []string{"readFile", "writeFile", "edit", "readDir", "stat", "exists", "hash"}
 
-// Throws unless the host was given a root and a pool.
+// Largest file `readFile` materializes or `hash` digests; the result is held until the
+// promise settles.
+FS_MAX_FILE_BYTES :: 8 * mem.Megabyte
+
+// Job arena block size; a mid-sized read fits one block.
+@(private = "file")
+FS_JOB_BLOCK_BYTES :: 64 * mem.Kilobyte
+
+// Throws unless the host was given a pool.
 fs_module :: proc() -> Module {
     return {name = FS_MODULE, init = fs_module_init, exports = FS_EXPORTS}
 }
 
-// Max file `readFile` materializes; result is held until the promise settles.
-FS_MAX_FILE_BYTES :: 8 * mem.Megabyte
-
-// Job arena block size equals OOB threshold so mid-sized reads fit one path.
-FS_JOB_BLOCK_BYTES :: 2 * mem.Kilobyte
-
+@(private = "file")
 Fs_Op :: enum {
     Read_File,
-    Stat,
+    Write_File,
+    Edit,
     Read_Dir,
+    Stat,
+    Exists,
+    Hash,
 }
 
-// Peer/input failures become rejected promises, never assertions.
+// Script and input failures become rejected promises, never assertions.
+@(private = "file")
 Fs_Error :: enum {
     None,
-    Denied,
     Unreadable,
+    Unwritable,
     Too_Large,
+    No_Match,
+    Ambiguous,
 }
 
-// One in-flight yuke:fs call; Host.pending counts these (settle Values live in the context).
+// One in-flight call. Inputs are cloned into `arena` on the loop thread and the worker writes
+// only into the same arena, so neither side touches the other's allocator.
+@(private = "file")
 Fs_Job :: struct {
-    task:      offload.Task(Fs_Job),
-    host:      ^Host,
-    op:        Fs_Op,
-    path:      string,
-    resolve:   qjs.Value,
-    reject:    qjs.Value,
-    outcome:   Maybe(Fs_Error),
-    contents:  []byte,
-    info:      os.File_Info,
-    entries:   []os.File_Info,
-    // Process heap, not host allocator: worker is sole writer while loop uses host's.
-    arena:     mem.Dynamic_Arena,
-    allocator: mem.Allocator,
+    task:        offload.Task(Fs_Job),
+    host:        ^Host,
+    op:          Fs_Op,
+    path:        string,
+    text:        string,
+    replacement: string,
+    replace_all: bool,
+    outcome:     Maybe(Fs_Error),
+    contents:    []byte,
+    count:       int,
+    present:     bool,
+    digest:      string,
+    info:        os.File_Info,
+    entries:     []os.File_Info,
+    resolve:     qjs.Value,
+    reject:      qjs.Value,
+    arena:       mem.Dynamic_Arena,
+    allocator:   mem.Allocator,
 }
 
 // Every export returns a promise so the single runtime is never blocked.
+@(private = "file")
 fs_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
-    fs := qjs.new_object(ctx)
-    _ = qjs.set_property(ctx, fs, "readFile", qjs.new_function(ctx, fs_read_file, "readFile", 1))
-    _ = qjs.set_property(ctx, fs, "stat", qjs.new_function(ctx, fs_stat, "stat", 1))
-    _ = qjs.set_property(ctx, fs, "readDir", qjs.new_function(ctx, fs_read_dir, "readDir", 1))
-
-    if !qjs.set_module_export(ctx, m, "fs", fs) {
-        return -1
+    exports := [?]struct {
+        name:  cstring,
+        entry: qjs.C_Function,
+        argc:  int,
+    } {
+        {"readFile", fs_read_file, 1},
+        {"writeFile", fs_write_file, 2},
+        {"edit", fs_edit, 4},
+        {"readDir", fs_read_dir, 1},
+        {"stat", fs_stat, 1},
+        {"exists", fs_exists, 1},
+        {"hash", fs_hash, 1},
+    }
+    for export in exports {
+        if !qjs.set_module_export(ctx, m, export.name, qjs.new_function(ctx, export.entry, export.name, export.argc)) {
+            return -1
+        }
     }
 
     return 0
@@ -78,52 +109,135 @@ fs_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
 @(private = "file")
 fs_read_file :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
-    return fs_begin(ctx, .Read_File, argc, argv)
+
+    job, thrown, ok := fs_begin(ctx, .Read_File, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    return fs_submit(ctx, job)
 }
 
 @(private = "file")
-fs_stat :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+fs_write_file :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
-    return fs_begin(ctx, .Stat, argc, argv)
+
+    job, thrown, ok := fs_begin(ctx, .Write_File, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    if failure, got := arg_string(ctx, argv, argc, 1, job.allocator, &job.text); !got {
+        fs_job_free(job)
+
+        return failure
+    }
+
+    return fs_submit(ctx, job)
+}
+
+// `edit(path, oldText, newText, replaceAll?)` — the target is named by content, because a
+// line number goes stale the moment anything above it changes.
+@(private = "file")
+fs_edit :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+
+    job, thrown, ok := fs_begin(ctx, .Edit, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    fields := [2]^string{&job.text, &job.replacement}
+
+    for out, index in fields {
+        if failure, got := arg_string(ctx, argv, argc, c.int(index) + 1, job.allocator, out); !got {
+            fs_job_free(job)
+
+            return failure
+        }
+    }
+
+    if argc > 3 && !qjs.is_undefined(argv[3]) {
+        replace_all, read := qjs.to_bool(ctx, argv[3])
+
+        if !read {
+            fs_job_free(job)
+
+            return qjs.throw_type_error(ctx, "yuke:fs edit expects a boolean replaceAll")
+        }
+
+        job.replace_all = replace_all
+    }
+
+    return fs_submit(ctx, job)
 }
 
 @(private = "file")
 fs_read_dir :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
 
-    return fs_begin(ctx, .Read_Dir, argc, argv)
+    job, thrown, ok := fs_begin(ctx, .Read_Dir, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    return fs_submit(ctx, job)
 }
 
-// Bad argument throws synchronously; unreadable path rejects instead.
 @(private = "file")
-fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
-    h := (^Host)(qjs.get_context_opaque(ctx))
+fs_stat :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
 
-    if h == nil || h.root == "" {
-        return qjs.throw_type_error(ctx, "yuke:fs needs a configured js root")
+    job, thrown, ok := fs_begin(ctx, .Stat, argc, argv)
+    if !ok {
+        return thrown
     }
 
-    // Closed while abandoning a failed eval_module so TLA continuations cannot re-submit.
+    return fs_submit(ctx, job)
+}
+
+@(private = "file")
+fs_exists :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+
+    job, thrown, ok := fs_begin(ctx, .Exists, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    return fs_submit(ctx, job)
+}
+
+@(private = "file")
+fs_hash :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+
+    job, thrown, ok := fs_begin(ctx, .Hash, argc, argv)
+    if !ok {
+        return thrown
+    }
+
+    return fs_submit(ctx, job)
+}
+
+// Allocate the job, its arena, and its path. A bad argument throws synchronously; an
+// unusable path rejects later, because only the worker can tell.
+@(private = "file")
+fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) -> (^Fs_Job, qjs.Value, bool) {
+    h := host_of(ctx)
+
+    if h == nil || h.pool == nil {
+        return nil, qjs.throw_type_error(ctx, "yuke:fs needs a configured worker pool"), false
+    }
+
+    // Closed while abandoning a failed eval so continuations cannot re-submit.
     if !h.ops_open {
-        return qjs.throw_type_error(ctx, "yuke:fs is closed")
+        return nil, qjs.throw_type_error(ctx, "yuke:fs is closed"), false
     }
-
-    if argc < 1 || !qjs.is_string(argv[0]) {
-        return qjs.throw_type_error(ctx, "yuke:fs expects a path string")
-    }
-
-    requested, got := qjs.to_string(ctx, argv[0])
-    if !got {
-        return qjs.throw_type_error(ctx, "yuke:fs could not read its path argument")
-    }
-
-    defer qjs.free_string(ctx, requested)
-
-    assert(h.pool != nil, "an installed fs module always has a pool")
 
     job, aerr := new(Fs_Job, h.allocator)
     if aerr != nil {
-        return qjs.throw_type_error(ctx, "out of memory")
+        return nil, qjs.throw_type_error(ctx, "out of memory"), false
     }
 
     job^ = {}
@@ -138,32 +252,45 @@ fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) 
     )
     job.allocator = mem.dynamic_arena_allocator(&job.arena)
 
-    // join keeps even absolute args under root; containment below is the only escape hatch.
-    joined, join_err := filepath.join({h.root, requested}, job.allocator)
+    requested: string
 
-    if join_err != nil {
+    if thrown, got := arg_string(ctx, argv, argc, 0, job.allocator, &requested); !got {
         fs_job_free(job)
-        return qjs.throw_type_error(ctx, "out of memory")
+
+        return nil, thrown, false
     }
 
-    job.path = joined
+    resolved, resolved_ok := path_resolve(h.base, requested, job.allocator)
+    if !resolved_ok {
+        fs_job_free(job)
 
+        return nil, qjs.throw_type_error(ctx, "yuke:fs expects an absolute path"), false
+    }
+
+    job.path = resolved
+
+    return job, qjs.undefined(), true
+}
+
+@(private = "file")
+fs_submit :: proc(ctx: ^qjs.Context, job: ^Fs_Job) -> qjs.Value {
     promise, resolve, reject := qjs.new_promise(ctx)
     if qjs.is_exception(promise) {
         fs_job_free(job)
+
         return promise
     }
 
     job.resolve = resolve
     job.reject = reject
-    h.pending += 1
+    op_begin(job.host)
 
-    offload.submit(h.pool, job, fs_job_run, fs_job_done)
+    offload.submit(job.host.pool, job, fs_job_run, fs_job_done)
 
     return promise
 }
 
-// Worker: touch only `job`, never the context. Canonicalize before containment.
+// Worker: touch only `job`, never the context.
 @(private = "file")
 fs_job_run :: proc(job: ^Fs_Job) {
     assert(job.host != nil, "a host op lost its host")
@@ -174,51 +301,21 @@ fs_job_run :: proc(job: ^Fs_Job) {
 
 @(private = "file")
 fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
-    canonical, cerr := os.get_absolute_path(job.path, job.allocator)
-    if cerr != nil {
-        return .Denied
-    }
-
-    if !path_contained(job.host.root, canonical) {
-        return .Denied
-    }
-
     switch job.op {
     case .Read_File:
-        // Open once: size guard must run before materializing the read.
-        handle, oerr := os.open(canonical)
-        if oerr != nil {
-            return .Unreadable
-        }
+        contents, err := fs_read_contents(job)
+        job.contents = transmute([]byte)contents
 
-        defer os.close(handle)
+        return err
 
-        size, serr := os.file_size(handle)
-        if serr != nil {
-            return .Unreadable
-        }
+    case .Write_File:
+        return fs_write_contents(job)
 
-        if size > FS_MAX_FILE_BYTES {
-            return .Too_Large
-        }
-
-        contents, read_err := os.read_entire_file(f = handle, allocator = job.allocator)
-        if read_err != nil {
-            return .Unreadable
-        }
-
-        job.contents = contents
-
-    case .Stat:
-        info, ierr := os.stat(canonical, job.allocator)
-        if ierr != nil {
-            return .Unreadable
-        }
-
-        job.info = info
+    case .Edit:
+        return fs_edit_contents(job)
 
     case .Read_Dir:
-        handle, oerr := os.open(canonical)
+        handle, oerr := os.open(job.path)
         if oerr != nil {
             return .Unreadable
         }
@@ -231,30 +328,152 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
         }
 
         job.entries = entries
+
+        return .None
+
+    case .Stat:
+        info, ierr := os.stat(job.path, job.allocator)
+        if ierr != nil {
+            return .Unreadable
+        }
+
+        job.info = info
+
+        return .None
+
+    case .Exists:
+        job.present = os.exists(job.path)
+
+        return .None
+
+    case .Hash:
+        return fs_hash_contents(job)
     }
+
+    unreachable()
+}
+
+@(private = "file")
+fs_read_contents :: proc(job: ^Fs_Job) -> (contents: string, err: Fs_Error) {
+    handle, oerr := os.open(job.path)
+    if oerr != nil {
+        return "", .Unreadable
+    }
+
+    defer os.close(handle)
+
+    // Open once: the size guard must run before the read materializes anything.
+    size, serr := os.file_size(handle)
+    if serr != nil {
+        return "", .Unreadable
+    }
+
+    if size > FS_MAX_FILE_BYTES {
+        return "", .Too_Large
+    }
+
+    data, rerr := os.read_entire_file(f = handle, allocator = job.allocator)
+    if rerr != nil {
+        return "", .Unreadable
+    }
+
+    return string(data), .None
+}
+
+@(private = "file")
+fs_write_contents :: proc(job: ^Fs_Job) -> Fs_Error {
+    // Writing a new file in a new directory is ordinary, so the parents are made rather than
+    // reported as a missing-path failure.
+    if parent := filepath.dir(job.path); parent != "" {
+        if mkerr := os.make_directory_all(parent); mkerr != nil && !os.is_dir(parent) {
+            return .Unwritable
+        }
+    }
+
+    if werr := os.write_entire_file(job.path, transmute([]byte)job.text); werr != nil {
+        return .Unwritable
+    }
+
+    job.count = len(job.text)
 
     return .None
 }
 
-// Path is root or beneath it; separator test stops sibling prefix matches.
-// Shared by yuke:fs (canonical) and the module loader resolver (normalized).
-path_contained :: proc(root: string, path: string) -> bool {
-    assert(root != "", "containment needs a root")
-
-    if path == root {
-        return true
+@(private = "file")
+fs_edit_contents :: proc(job: ^Fs_Job) -> Fs_Error {
+    contents, err := fs_read_contents(job)
+    if err != .None {
+        return err
     }
 
-    if !strings.has_prefix(path, root) {
-        return false
+    occurrences := strings.count(contents, job.text)
+    if occurrences == 0 {
+        return .No_Match
     }
 
-    rest := path[len(root):]
+    if occurrences > 1 && !job.replace_all {
+        return .Ambiguous
+    }
 
-    return len(rest) > 0 && rest[0] == filepath.SEPARATOR
+    replaced, _ := strings.replace(
+        contents,
+        job.text,
+        job.replacement,
+        occurrences if job.replace_all else 1,
+        job.allocator,
+    )
+
+    if werr := os.write_entire_file(job.path, transmute([]byte)replaced); werr != nil {
+        return .Unwritable
+    }
+
+    job.count = occurrences if job.replace_all else 1
+
+    return .None
 }
 
-// Loop thread: settle, free job, drain. Context is live — embedder drains before destroy.
+// Absent is not a failure: a null hash is how a caller tells a new file from one it has not
+// read yet, which is what a read-before-edit guard is built on.
+@(private = "file")
+fs_hash_contents :: proc(job: ^Fs_Job) -> Fs_Error {
+    if !os.exists(job.path) {
+        job.present = false
+
+        return .None
+    }
+
+    contents, err := fs_read_contents(job)
+    if err != .None {
+        return err
+    }
+
+    hasher: sha2.Context_256
+    sha2.init_256(&hasher)
+    sha2.update(&hasher, transmute([]byte)contents)
+
+    digest: [sha2.DIGEST_SIZE_256]byte
+    sha2.final(&hasher, digest[:])
+
+    hex, hex_err := make([]u8, 2 * len(digest), job.allocator)
+    if hex_err != nil {
+        return .Unreadable
+    }
+
+    for value, index in digest {
+        hex[index * 2] = FS_HEX_DIGITS[value >> 4]
+        hex[index * 2 + 1] = FS_HEX_DIGITS[value & 0xf]
+    }
+
+    job.digest = string(hex)
+    job.present = true
+
+    return .None
+}
+
+@(private = "file", rodata)
+FS_HEX_DIGITS := "0123456789abcdef"
+
+// Loop thread: settle, free job, drain. The context is live — the embedder drains before destroy.
 @(private = "file")
 fs_job_done :: proc(job: ^Fs_Job) {
     outcome, decided := job.outcome.?
@@ -263,15 +482,11 @@ fs_job_done :: proc(job: ^Fs_Job) {
     h := job.host
     assert(h != nil, "a host op lost its host")
     assert(h.ctx != nil, "a host op completed after its context was freed")
-    assert(h.pending > 0, "a host op completed without being counted")
 
     defer fs_job_free(job)
 
-    h.pending -= 1
     fs_settle(job, outcome)
-
-    // Settling only queues the reaction; continuations run here.
-    drain(h)
+    op_end(h)
 }
 
 // Settle can only except if already settled, which cannot happen for a job-owned promise.
@@ -304,8 +519,8 @@ fs_value :: proc(job: ^Fs_Job) -> qjs.Value {
     case .Read_File:
         return qjs.new_string(ctx, string(job.contents))
 
-    case .Stat:
-        return fs_info_object(ctx, job.info)
+    case .Write_File, .Edit:
+        return qjs.new_f64(f64(job.count))
 
     case .Read_Dir:
         list := qjs.new_array(ctx)
@@ -315,17 +530,26 @@ fs_value :: proc(job: ^Fs_Job) -> qjs.Value {
         }
 
         return list
+
+    case .Stat:
+        return fs_info_object(ctx, job.info)
+
+    case .Exists:
+        return qjs.new_bool(job.present)
+
+    case .Hash:
+        return qjs.new_string(ctx, job.digest) if job.present else qjs.null()
     }
 
     unreachable()
 }
 
-// `name` is basename only — absolute paths would leak the root into the sandbox.
 @(private = "file")
 fs_info_object :: proc(ctx: ^qjs.Context, info: os.File_Info) -> qjs.Value {
     obj := qjs.new_object(ctx)
 
     _ = qjs.set_property(ctx, obj, "name", qjs.new_string(ctx, filepath.base(info.fullpath)))
+    _ = qjs.set_property(ctx, obj, "path", qjs.new_string(ctx, info.fullpath))
     _ = qjs.set_property(ctx, obj, "size", qjs.new_f64(f64(info.size)))
     _ = qjs.set_property(ctx, obj, "isDirectory", qjs.new_bool(info.type == .Directory))
     _ = qjs.set_property(ctx, obj, "isFile", qjs.new_bool(info.type == .Regular))
@@ -339,20 +563,26 @@ fs_error_message :: proc(err: Fs_Error) -> string {
     case .None:
         unreachable()
 
-    case .Denied:
-        return "path is outside the js root"
-
     case .Unreadable:
         return "path could not be read"
 
+    case .Unwritable:
+        return "path could not be written"
+
     case .Too_Large:
-        return "file is too large to read"
+        return "file is too large"
+
+    case .No_Match:
+        return "old text was not found"
+
+    case .Ambiguous:
+        return "old text is not unique; pass replaceAll or give more context"
     }
 
     unreachable()
 }
 
-// Arena owns every path/buffer/entry; nothing is reachable after destroy.
+// The arena owns every path, buffer, and entry; nothing is reachable after destroy.
 @(private = "file")
 fs_job_free :: proc(job: ^Fs_Job) {
     assert(job != nil, "host op cleanup needs job state")

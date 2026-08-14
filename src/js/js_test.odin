@@ -150,7 +150,7 @@ test_an_unlisted_module_is_not_installed :: proc(t: ^testing.T) {
 
     testing.expect(
         t,
-        !eval_module(&h, "fs.js", `import { fs } from "yuke:fs"`, context.temp_allocator),
+        !eval_module(&h, "fs.js", `import * as fs from "yuke:fs"`, context.temp_allocator),
         "yuke:fs should be unavailable",
     )
 
@@ -268,7 +268,7 @@ test_top_level_await_fs_rejection :: proc(t: ^testing.T) {
             &h,
             {
                 modules = modules[:],
-                root = dir,
+                base = dir,
                 pool = &pool,
                 user = &probe,
                 report = probe_report,
@@ -279,7 +279,7 @@ test_top_level_await_fs_rejection :: proc(t: ^testing.T) {
     )
 
     source := `
-        import { fs } from "yuke:fs"
+        import * as fs from "yuke:fs"
         await fs.readFile("missing.txt")
     `
     testing.expect(
@@ -336,7 +336,7 @@ test_top_level_await_deadline_abandons_without_pending :: proc(t: ^testing.T) {
             &h,
             {
                 modules   = modules[:],
-                root      = dir,
+                base      = dir,
                 pool      = &pool,
                 user      = &probe,
                 report    = probe_report,
@@ -349,7 +349,7 @@ test_top_level_await_deadline_abandons_without_pending :: proc(t: ^testing.T) {
     )
 
     source := `
-        import { fs } from "yuke:fs"
+        import * as fs from "yuke:fs"
         await fs.readFile("a.txt")
         await fs.readFile("b.txt")
         globalThis.result = "done"
@@ -475,7 +475,7 @@ test_embedder_module_and_fs_coexist :: proc(t: ^testing.T) {
             &h,
             {
                 modules = modules[:],
-                root = root,
+                base = root,
                 pool = &pool,
                 user = &probe,
                 report = probe_report,
@@ -487,7 +487,7 @@ test_embedder_module_and_fs_coexist :: proc(t: ^testing.T) {
 
     source := `
         import { probe } from "test:probe"
-        import { fs } from "yuke:fs"
+        import * as fs from "yuke:fs"
         globalThis.result = "pending"
         fs.readDir(".").then(
             entries => { globalThis.result = probe.tag + ":" + (entries.length > 0) },
@@ -537,12 +537,12 @@ test_top_level_await_fs_read_file :: proc(t: ^testing.T) {
     h: Host
     testing.expect_value(
         t,
-        init(&h, {modules = modules[:], root = dir, pool = &pool, allocator = context.allocator}),
+        init(&h, {modules = modules[:], base = dir, pool = &pool, allocator = context.allocator}),
         Error.None,
     )
 
     source := `
-        import { fs } from "yuke:fs"
+        import * as fs from "yuke:fs"
         const text = await fs.readFile("note.txt")
         globalThis.result = text
     `
@@ -559,9 +559,10 @@ test_top_level_await_fs_read_file :: proc(t: ^testing.T) {
     destroy(&h)
 }
 
-// Listing yuke:fs without a root installs a module that refuses every call.
+// Every path op offloads, so listing yuke:fs without a pool installs a module that refuses
+// every call rather than one that blocks the loop thread.
 @(test)
-test_listed_fs_without_a_root_refuses_calls :: proc(t: ^testing.T) {
+test_listed_fs_without_a_pool_refuses_calls :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     probe: Probe
@@ -578,7 +579,7 @@ test_listed_fs_without_a_root_refuses_calls :: proc(t: ^testing.T) {
     defer destroy(&h)
 
     source := `
-        import { fs } from "yuke:fs"
+        import * as fs from "yuke:fs"
         globalThis.result = "imported"
         try { fs.readFile("x") } catch (e) { globalThis.result = "threw" }
     `

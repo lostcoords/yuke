@@ -4,6 +4,7 @@ import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "libs:testsupport"
 
@@ -97,17 +98,24 @@ test_define_config_reads_a_secret_with_top_level_await :: proc(t: ^testing.T) {
     testing.expect(t, join_err == nil, "the token path joins")
     testing.expect_value(t, os.write_entire_file(token_path, transmute([]byte)string(TEST_TOKEN + "\n")), nil)
 
-    write_entry(
-        t,
-        root,
-        `
+    // Absolute: the daemon sets no base, so a relative path has no single meaning there.
+    // Concatenated rather than interpolated, because `fmt` reads a `{` as a verb.
+    entry := strings.concatenate(
+        {
+            `
             import { defineConfig } from "yuke:daemon"
-            import { fs } from "yuke:fs"
+            import * as fs from "yuke:fs"
 
-            const token = (await fs.readFile("token")).trim()
+            const token = (await fs.readFile("`,
+            token_path,
+            `")).trim()
             export default defineConfig({ authToken: token })
         `,
+        },
+        context.temp_allocator,
     )
+
+    write_entry(t, root, entry)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()

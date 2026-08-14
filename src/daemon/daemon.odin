@@ -21,7 +21,11 @@ import "src:secret"
 import wire "src:wire"
 
 // nbio offload workers, for blocking filesystem calls off the reactor.
-WORKER_COUNT :: 2
+WORKER_COUNT :: 4
+
+// `yuke:host` commands run on their own workers: one command holds a worker for its whole
+// timeout, and `WORKER_COUNT` is what every filesystem call already waits on.
+EXEC_WORKER_COUNT :: 4
 
 Protocol_State :: enum {
     // Connection is Open; awaiting the client's `initialize` request.
@@ -101,8 +105,8 @@ Options :: struct {
     // id. Empty omits it. Same source the relay reads; the manifest never relocates it.
     data_dir:        string,
 
-    // Directory the script tier reads: `yuked.js` is evaluated at startup and every
-    // `yuke:fs` path must resolve inside it. Empty disables `yuke:fs` and runs no script.
+    // Directory `yuked.js` is read from at startup. Empty runs no script and installs no
+    // host modules. It does not bound the paths a script reaches; see `src/js/path.odin`.
     js_root:         string,
 
     // Control-plane base URL the relay fetches link tickets from. Empty defaults to
@@ -153,6 +157,10 @@ Daemon :: struct {
     // @private
     // See `WORKER_COUNT`.
     workers:          offload.Pool,
+
+    // @private
+    // See `EXEC_WORKER_COUNT`.
+    exec_workers:     offload.Pool,
 
     // @private
     // Live bounded filesystem jobs across all connections.
@@ -355,6 +363,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     // Started before the script tier: `yuke:fs` offloads onto it, and `workspace.describe`
     // walks paths on it whether or not a blob directory is configured.
     if perr := offload.pool_init(&d.workers, loop, WORKER_COUNT); perr != .None {
+        return .Invalid_Options
+    }
+
+    if perr := offload.pool_init(&d.exec_workers, loop, EXEC_WORKER_COUNT); perr != .None {
         return .Invalid_Options
     }
 
@@ -671,15 +683,21 @@ start_rollback :: proc(d: ^Daemon) {
 workers_stop :: proc(d: ^Daemon) {
     assert(d != nil, "worker teardown needs daemon state")
 
-    if !offload.pool_is_running(&d.workers) {
+    pool_stop(&d.workers)
+    pool_stop(&d.exec_workers)
+}
+
+@(private = "file")
+pool_stop :: proc(pool: ^offload.Pool) {
+    if !offload.pool_is_running(pool) {
         return
     }
 
-    if derr := offload.pool_drain(&d.workers); derr != nil {
+    if derr := offload.pool_drain(pool); derr != nil {
         log.errorf("daemon: worker drain failed: %v", derr)
     }
 
-    offload.pool_destroy(&d.workers)
+    offload.pool_destroy(pool)
 }
 
 // Stop accepting and close every live connection. Closing is async: run the loop
@@ -706,7 +724,7 @@ shutdown_complete :: proc(d: ^Daemon) -> bool {
     assert(d != nil, "a shutdown check needs daemon state")
 
     callback_done := d.provider_auth.callback.state == .Idle || d.provider_auth.callback.shutdown_complete
-    workers_done := !offload.pool_is_running(&d.workers) || offload.pool_outstanding(&d.workers) == 0
+    workers_done := pool_idle(&d.workers) && pool_idle(&d.exec_workers)
 
     return(
         d.front_door.shutdown_complete &&
@@ -716,6 +734,11 @@ shutdown_complete :: proc(d: ^Daemon) -> bool {
         workers_done &&
         js.ops_idle(&d.js) \
     )
+}
+
+@(private = "file")
+pool_idle :: proc(pool: ^offload.Pool) -> bool {
+    return !offload.pool_is_running(pool) || offload.pool_outstanding(pool) == 0
 }
 
 // Release both connection sets and the owned clones. Call only once both halves
@@ -728,10 +751,8 @@ destroy :: proc(d: ^Daemon) {
         "destroy before auth callback shutdown completed",
     )
     assert(d.ws_server.shutdown_complete, "destroy before WebSocket shutdown completed")
-    assert(
-        !offload.pool_is_running(&d.workers) || offload.pool_outstanding(&d.workers) == 0,
-        "destroy before workers drained",
-    )
+    assert(pool_idle(&d.workers), "destroy before workers drained")
+    assert(pool_idle(&d.exec_workers), "destroy before command workers drained")
     assert(js.ops_idle(&d.js), "destroy before JavaScript host operations drained")
     assert(d.fs_jobs == 0, "destroy with filesystem jobs in flight")
 
@@ -816,6 +837,7 @@ free_config :: proc(d: ^Daemon) {
     secret.string_destroy(&d.auth_token, d.allocator)
     secret.string_destroy(&d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
+    delete(d.js_root, d.allocator)
     for o in d.allowed_origins {
         delete(o, d.allocator)
     }
@@ -824,6 +846,7 @@ free_config :: proc(d: ^Daemon) {
     d.device_id = ""
     d.blob_dir = ""
     d.relay_cloud_url = ""
+    d.js_root = ""
     d.allowed_origins = nil
 }
 

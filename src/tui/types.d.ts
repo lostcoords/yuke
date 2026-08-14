@@ -1,5 +1,5 @@
 // Client script modules and onEvent. Keep in sync with *.js, host.odin, js.odin.
-// yuke:fs: src/js/types.d.ts
+// yuke:fs, yuke:exec, yuke:diff: src/js/types.d.ts
 /// <reference path="../js/types.d.ts" />
 
 declare module "yuke:term" {

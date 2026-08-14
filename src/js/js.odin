@@ -8,6 +8,7 @@ import "core:nbio"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 import qjs "libs:bindings/quickjs"
@@ -47,10 +48,13 @@ Resolve :: #type proc(user: rawptr, name: string, allocator: mem.Allocator) -> (
 Options :: struct {
     // Copied by `init`; each module's `name`/`exports` must still outlive the host.
     modules:      []Module,
-    // Canonicalized at init; empty leaves fs uninstalled (containment needs a root).
-    root:         string,
-    // Nil leaves fs uninstalled: blocking IO must not run on the loop thread.
+    // What a relative path resolves against, canonicalized at init. Empty rejects relative
+    // paths, which is what an embedder with no single workspace wants.
+    base:         string,
+    // Nil leaves the filesystem modules uninstalled: blocking IO must not run on the loop thread.
     pool:         ^offload.Pool,
+    // Commands hold a worker for their whole timeout. Nil runs them on `pool`.
+    exec_pool:    ^offload.Pool,
     user:         rawptr,
     report:       Report,
     // Nil keeps the loader closed — unknown specifier throws.
@@ -66,9 +70,10 @@ Options :: struct {
 Host :: struct {
     rt:          ^qjs.Runtime,
     ctx:         ^qjs.Context,
-    // Owned canonical yuke:fs root; empty when fs is not installed.
-    root:        string,
+    // Owned canonical base for relative paths; empty requires absolute ones.
+    base:        string,
     pool:        ^offload.Pool,
+    exec_pool:   ^offload.Pool,
     user:        rawptr,
     report:      Report,
     resolve:     Resolve,
@@ -83,10 +88,13 @@ Host :: struct {
     pending:     int,
     // False while abandoning a failed eval so settled continuations cannot submit new host ops.
     ops_open:    bool,
+    // Set on the loop thread by `ops_close`, read by workers. Long-running work stops early
+    // rather than making the embedder's drain wait it out.
+    cancelled:   bool,
     allocator:   mem.Allocator,
 }
 
-// Bring up runtime, limits, and loader. `yuke:fs` needs both a root and a pool.
+// Bring up runtime, limits, and loader. The filesystem modules need a pool.
 init :: proc(h: ^Host, options: Options) -> Error {
     assert(h != nil, "init needs host storage")
     assert(h.rt == nil, "a host is initialized once")
@@ -99,9 +107,14 @@ init :: proc(h: ^Host, options: Options) -> Error {
     h.deadline = options.deadline if options.deadline > 0 else DEFAULT_DEADLINE
     h.ops_open = true
 
-    // Both halves or neither: root without pool would block the caller; pool without root cannot contain.
-    if options.root != "" && options.pool != nil {
-        canonical, cerr := os.get_absolute_path(options.root, options.allocator)
+    // A base is optional; a pool is not, because every path op offloads.
+    if options.pool != nil {
+        h.pool = options.pool
+        h.exec_pool = options.exec_pool if options.exec_pool != nil else options.pool
+    }
+
+    if options.base != "" {
+        canonical, cerr := os.get_absolute_path(options.base, options.allocator)
         if cerr != nil {
             return .Invalid_Root
         }
@@ -117,8 +130,7 @@ init :: proc(h: ^Host, options: Options) -> Error {
             return .Out_Of_Memory
         }
 
-        h.root = cloned
-        h.pool = options.pool
+        h.base = cloned
     }
 
     if len(options.modules) > 0 {
@@ -172,9 +184,9 @@ destroy :: proc(h: ^Host) {
         h.rt = nil
     }
 
-    if h.root != "" {
-        delete(h.root, h.allocator)
-        h.root = ""
+    if h.base != "" {
+        delete(h.base, h.allocator)
+        h.base = ""
     }
 
     if h.modules != nil {
@@ -183,14 +195,24 @@ destroy :: proc(h: ^Host) {
     }
 
     h.pool = nil
+    h.exec_pool = nil
     h.user = nil
 }
 
-// Permanently refuse new host operations while allowing submitted ones to finish.
+// Permanently refuse new host operations while allowing submitted ones to finish. Work
+// already on a worker sees `cancelled` and stops at its next check.
 ops_close :: proc(h: ^Host) {
     assert(h != nil, "closing host operations needs a host")
 
     h.ops_open = false
+    sync.atomic_store(&h.cancelled, true)
+}
+
+// Worker side of `ops_close`.
+cancelled :: proc(h: ^Host) -> bool {
+    assert(h != nil, "a cancellation check needs a host")
+
+    return sync.atomic_load(&h.cancelled)
 }
 
 ops_idle :: proc(h: ^Host) -> bool {
@@ -198,6 +220,24 @@ ops_idle :: proc(h: ^Host) -> bool {
     assert(h.pending >= 0, "host operation count stays non-negative")
 
     return h.pending == 0
+}
+
+// A host op owns a live promise in this context, so the host cannot be destroyed while one
+// is outstanding. Every module that offloads counts through this pair.
+op_begin :: proc(h: ^Host) {
+    assert(h != nil, "a host op needs a host")
+    assert(h.ops_open, "a host op started after operations closed")
+
+    h.pending += 1
+}
+
+// Settle before calling this: `drain` runs the continuations the settle queued.
+op_end :: proc(h: ^Host) {
+    assert(h != nil, "a host op needs a host")
+    assert(h.pending > 0, "a host op completed without being counted")
+
+    h.pending -= 1
+    drain(h)
 }
 
 user_of :: proc(ctx: ^qjs.Context) -> rawptr {
@@ -208,6 +248,41 @@ user_of :: proc(ctx: ^qjs.Context) -> rawptr {
 
 host_of :: proc(ctx: ^qjs.Context) -> ^Host {
     return (^Host)(qjs.get_context_opaque(ctx))
+}
+
+// Clone one string argument into an arena. `ok` false leaves a pending exception, which the
+// caller returns after it releases whatever it had built.
+@(private)
+arg_string :: proc(
+    ctx: ^qjs.Context,
+    argv: [^]qjs.Value,
+    argc: c.int,
+    index: c.int,
+    allocator: mem.Allocator,
+    out: ^string,
+) -> (
+    qjs.Value,
+    bool,
+) {
+    if argc <= index || !qjs.is_string(argv[index]) {
+        return qjs.throw_type_error(ctx, "a string argument is required"), false
+    }
+
+    value, got := qjs.to_string(ctx, argv[index])
+    if !got {
+        return qjs.throw_type_error(ctx, "a string argument could not be read"), false
+    }
+
+    defer qjs.free_string(ctx, value)
+
+    owned, clone_err := strings.clone(value, allocator)
+    if clone_err != nil {
+        return qjs.throw_type_error(ctx, "out of memory"), false
+    }
+
+    out^ = owned
+
+    return qjs.undefined(), true
 }
 
 // Eval as ES module; false on failure. TLA drains microtasks and ticks the pool until settle or deadline;
