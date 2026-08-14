@@ -330,6 +330,29 @@ test_anthropic_rejects_malformed_tool_arguments_at_block_stop :: proc(t: ^testin
 }
 
 @(test)
+test_anthropic_rejects_duplicate_tool_ids :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    decoder := test_anthropic_decoder(t)
+    test_anthropic_start_message(t, &decoder)
+    test_anthropic_expect_started(
+        t,
+        &decoder,
+        `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"same","name":"first","input":{}}}`,
+        0,
+        .Tool,
+    )
+    _ = test_anthropic_expect_stopped(t, &decoder, `{"type":"content_block_stop","index":0}`, 0)
+
+    _, err := test_anthropic_decode(
+        t,
+        &decoder,
+        `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"same","name":"second","input":{}}}`,
+    )
+    testing.expect_value(t, err, Transport_Error.Parse_Error)
+}
+
+@(test)
 test_anthropic_stop_reason_mapping :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 

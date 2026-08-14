@@ -86,27 +86,35 @@ session_draft :: proc(
 ) -> (
     draft: Maybe(wire.Active_Draft),
     queued: []wire.Queued_Input,
+    ok: bool,
 ) {
     assert(d != nil, "reading a session draft needs daemon state")
     assert(allocator.procedure != nil, "building a draft needs an allocator")
 
     live := session_live(d, session)
     if live == nil {
-        return nil, nil
+        return nil, nil, true
     }
 
-    queued = live.queue[:]
+    queue_copy, queue_err := make([]wire.Queued_Input, len(live.queue), allocator)
+    if queue_err != nil {
+        return nil, nil, false
+    }
+    queued = queue_copy
+    for owned, index in live.queue {
+        queued[index] = owned.input
+    }
 
     run := live.run
     if run == nil {
-        return nil, queued
+        return nil, queued, true
     }
 
     // Each part carries what its block has accumulated, which is the offset the next
     // `message.part_delta` names, so folding that delta onto this cut leaves no gap.
     content, alloc_err := make([]wire.Assistant_Part, len(run.blocks), allocator)
     if alloc_err != nil {
-        return nil, queued
+        return nil, nil, false
     }
 
     for &block, index in run.blocks {
@@ -126,7 +134,7 @@ session_draft :: proc(
 
     assert(wire.active_draft_validate(open) == .None, "the engine built an invalid draft")
 
-    return open, queued
+    return open, queued, true
 }
 
 // Publish the session's activity. Called from the engine transitions rather than the

@@ -3,16 +3,25 @@ package daemon
 import "core:log"
 import "core:mem"
 import "core:mem/virtual"
+import "core:nbio"
 import "core:strings"
+import "core:time"
 
 import qjs "libs:bindings/quickjs"
 import catalog "src:daemon/catalog"
 import store "src:daemon/store"
+import js "src:js"
 import provider "src:provider"
 import wire "src:wire"
 
 // Agent a root session's turns are attributed to.
 RUN_AGENT :: "main"
+
+@(private = "file")
+RUN_DONE_RETRY_MIN :: 100 * time.Millisecond
+
+@(private = "file")
+RUN_DONE_RETRY_MAX :: 5 * time.Second
 
 // Why a turn could not be started. Every one of these is decided before `run.started`, so a
 // refusal announces nothing and leaves the transcript exactly as it was.
@@ -76,6 +85,19 @@ Run_Block :: struct {
 @(private = "file")
 TOOL_NAME_WIRE_MAX :: 128
 
+@(private)
+Run_Fault :: enum {
+    None,
+    Transcript_Limit,
+    Resource,
+}
+
+@(private = "file")
+Queued_Input_Owned :: struct {
+    arena: mem.Dynamic_Arena,
+    input: wire.Queued_Input,
+}
+
 // A session's live engine state: the turn in flight and the inputs waiting behind it.
 // One turn at a time per session, because two turns writing one transcript would
 // interleave its sequence; different sessions run concurrently on the shared transport.
@@ -84,8 +106,7 @@ Session_Live :: struct {
 
     // Accepted inputs not yet promoted to a user message, oldest first. Their content is
     // cloned out of the frame arena, which does not survive the request that queued them.
-    queue: [dynamic]wire.Queued_Input,
-    arena: virtual.Arena,
+    queue: [dynamic]Queued_Input_Owned,
 }
 
 // One live turn, from `run.started` to `run.done`. Owned by the daemon rather than the
@@ -94,9 +115,7 @@ Run :: struct {
     daemon:              ^Daemon,
     session:             wire.Session_Id,
 
-    // Tool calls still awaiting a handler, and whether their join owns the commit. The turn
-    // commits when the count reaches zero.
-    tools_open:          int,
+    // Whether the current promise join owns the commit.
     tools_joining:       bool,
 
     // The provider turn this run is streaming, or nil once it has completed.
@@ -109,6 +128,11 @@ Run :: struct {
     system_prompt:       Maybe(string),
     max_rounds:          Maybe(u64),
     rounds:              u64,
+    cancel:              ^js.Cancel_Scope,
+    cancel_signal:       qjs.Value,
+    pending_done:        Maybe(wire.Run_Done_Data),
+    done_retry:          ^nbio.Operation,
+    done_retry_delay:    time.Duration,
 
     // The revision this run announced, with the model and level it names. Cloned into the
     // run's arena: the snapshot they came from dies with the request that started the turn.
@@ -119,11 +143,13 @@ Run :: struct {
     // The current draft's lifetime. A run may commit several messages, so round data is
     // bulk-released after each commit instead of accumulating until `run.done`.
     round_started_at_ms: u64,
-    draft_open:          bool,
     round_arena:         virtual.Arena,
     round_allocator:     mem.Allocator,
     blocks:              [dynamic]Run_Block,
+    string_bytes:        int,
+    fault:               Run_Fault,
     finish:              wire.Stop_Reason,
+    finish_seen:         bool,
     usage:               wire.Token_Usage,
 
     // Owns the request snapshot and run metadata for the run's whole life.
@@ -223,6 +249,16 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
         }
     }
 
+    // Allocate the live owner before making the run durable. If this created an empty
+    // session slot, a pre-start failure below releases it again.
+    live := session_live_ensure(d, session.id)
+    if live == nil {
+        run_free(run)
+
+        return 0, .Start_Failed
+    }
+    assert(live.run == nil, "a session starts a turn while one is already live")
+
     started := wire.Run_Started_Data {
         session_id    = session.id,
         run_id        = run.run_id,
@@ -234,45 +270,16 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
     if perr := broadcast(d, started); perr != .None {
         log.errorf("daemon: session %v could not announce its run: %v", session.id, perr)
         run_free(run)
+        session_live_release(d, session.id)
 
         return 0, .Start_Failed
     }
 
     // Durable from here on: every later failure is a terminal `run.done`, never a
     // request error, because the log already says the run began.
-    live := session_live_ensure(d, session.id)
-    if live == nil {
-        run_free(run)
-
-        return 0, .Start_Failed
-    }
-
-    assert(live.run == nil, "a session starts a turn while one is already live")
     live.run = run
 
-    // Live-only: a client that connects mid-turn rebuilds the draft from resync instead.
-    started_draft := wire.Message_Started_Data {
-        session_id    = run.session,
-        message_id    = run.message_id,
-        run_id        = run.run_id,
-        config_rev    = run.config.config_rev,
-        agent         = RUN_AGENT,
-        created_at_ms = run.round_started_at_ms,
-    }
-    run.draft_open = true
-    _ = broadcast(d, started_draft)
-
-    // `run.started` says a run exists, not what it is doing.
-    session_activity_announce(d, session.id)
-
-    sink := Run_Sink {
-        on_event = run_on_stream,
-        on_done  = run_on_result,
-        user     = run,
-    }
-
-    run.op = run_begin(&d.runs, connection, body, sink)
-    if run.op == nil {
+    if !run_round_begin(run, connection, body) {
         // `run_fail` runs the terminal and releases the run, so the id is read first.
         run_id := run.run_id
         run_fail(run, .Provider, "the provider turn did not start")
@@ -325,23 +332,31 @@ run_new :: proc(
     run.allocator = virtual.arena_allocator(&run.arena)
     run.round_allocator = virtual.arena_allocator(&run.round_arena)
     run.blocks = make([dynamic]Run_Block, run.round_allocator)
+    run.string_bytes = len(RUN_AGENT)
     run.finish = .Unknown
     run.max_rounds = session.max_rounds
 
-    provider_id, provider_err := strings.clone(model.info.provider, run.allocator)
-    if provider_err != nil {
+    signal, cancel, cancel_ok := js.cancel_signal_new(&d.js)
+    if !cancel_ok {
         virtual.arena_destroy(&run.round_arena)
         virtual.arena_destroy(&run.arena)
         free(run, d.allocator)
 
         return nil, .Start_Failed
     }
+    run.cancel = cancel
+    run.cancel_signal = signal
+
+    provider_id, provider_err := strings.clone(model.info.provider, run.allocator)
+    if provider_err != nil {
+        run_free(run)
+
+        return nil, .Start_Failed
+    }
 
     owned_model, model_err := catalog.model_clone(model^, wire.Provider_Id(provider_id), run.allocator)
     if model_err != nil {
-        virtual.arena_destroy(&run.round_arena)
-        virtual.arena_destroy(&run.arena)
-        free(run, d.allocator)
+        run_free(run)
 
         return nil, .Start_Failed
     }
@@ -350,9 +365,7 @@ run_new :: proc(
     if value, has_prompt := prompt.?; has_prompt {
         owned_prompt, prompt_err := strings.clone(value, run.allocator)
         if prompt_err != nil {
-            virtual.arena_destroy(&run.round_arena)
-            virtual.arena_destroy(&run.arena)
-            free(run, d.allocator)
+            run_free(run)
 
             return nil, .Start_Failed
         }
@@ -390,6 +403,10 @@ run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
     assert(run != nil, "a stream event lost its run")
     assert(run.daemon != nil, "a run lost its daemon")
 
+    if run.fault != .None {
+        return
+    }
+
     switch v in event {
     case provider.Stream_Block_Started:
         run_block_open(run, v)
@@ -405,6 +422,7 @@ run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
 
     case provider.Stream_Done:
         run.finish = RUN_STOP_REASON[v.reason]
+        run.finish_seen = true
         run.usage = wire.Token_Usage {
             input       = v.usage.input,
             output      = v.usage.output,
@@ -416,12 +434,22 @@ run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
 }
 
 // Open one block as the next part ordinal.
-@(private = "file")
+@(private)
 run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
-    append(
+    if len(run.blocks) >= wire.LIMITS.max_message_parts {
+        run.fault = .Transcript_Limit
+
+        return
+    }
+
+    if _, err := append(
         &run.blocks,
         Run_Block{block_id = started.block_id, kind = started.kind, text = strings.builder_make(run.round_allocator)},
-    )
+    ); err != nil {
+        run.fault = .Resource
+
+        return
+    }
 
     index := len(run.blocks) - 1
 
@@ -452,8 +480,16 @@ run_block_fold :: proc(run: ^Run, block_id: provider.Stream_Block_Id, text: stri
         return
     }
 
+    if !run_string_add(run, len(text)) {
+        return
+    }
+
     offset := u64(len(strings.to_string(block.text)))
-    strings.write_string(&block.text, text)
+    if strings.write_string(&block.text, text) != len(text) {
+        run.fault = .Resource
+
+        return
+    }
 
     delta := wire.Part_Delta {
         session_id = run.session,
@@ -483,10 +519,10 @@ run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
 
     #partial switch result in stopped.result {
     case provider.Stream_Reasoning_Block:
-        block.signature = strings.clone(result.signature, run.round_allocator)
+        run_block_signature_set(run, block, result.signature)
 
     case provider.Stream_Redacted_Reasoning_Block:
-        block.signature = strings.clone(result.data, run.round_allocator)
+        run_block_signature_set(run, block, result.data)
 
     case provider.Stream_Tool_Block:
         run_tool_adopt(run, block, index, result.call)
@@ -504,9 +540,41 @@ run_tool_adopt :: proc(run: ^Run, block: ^Run_Block, index: int, call: provider.
         name = name[:utf8_floor(name, TOOL_NAME_WIRE_MAX)]
     }
 
-    block.name = strings.clone(name, run.round_allocator)
-    block.call_id = strings.clone(call.id, run.round_allocator)
-    strings.write_string(&block.text, call.arguments)
+    if !run_string_add(run, len(name) + len(call.id) + len(call.arguments)) {
+        // The tool part has not been announced. Neutral streams serialize block
+        // lifecycles, so it is normally the tail; removing it keeps resync valid.
+        if index == len(run.blocks) - 1 {
+            ordered_remove(&run.blocks, index)
+        }
+
+        return
+    }
+
+    owned_name, name_err := strings.clone(name, run.round_allocator)
+    owned_id, id_err := strings.clone(call.id, run.round_allocator)
+    if name_err != nil || id_err != nil {
+        run.fault = .Resource
+
+        // Nothing about this tool has been announced yet. Keeping the incomplete part
+        // would make a concurrent draft resync invalid, so remove the neutral stream's
+        // newest block before returning the run-local fault.
+        if index == len(run.blocks) - 1 {
+            ordered_remove(&run.blocks, index)
+        }
+
+        return
+    }
+    if strings.write_string(&block.text, call.arguments) != len(call.arguments) {
+        run.fault = .Resource
+
+        if index == len(run.blocks) - 1 {
+            ordered_remove(&run.blocks, index)
+        }
+
+        return
+    }
+    block.name = owned_name
+    block.call_id = owned_id
 
     added := wire.Message_Part_Added_Data {
         session_id = run.session,
@@ -514,6 +582,44 @@ run_tool_adopt :: proc(run: ^Run, block: ^Run_Block, index: int, call: provider.
         part       = run_part_build(block, index),
     }
     _ = broadcast(run.daemon, added)
+}
+
+@(private = "file")
+run_block_signature_set :: proc(run: ^Run, block: ^Run_Block, signature: string) {
+    if !run_string_add(run, len(signature)) {
+        return
+    }
+
+    owned, err := strings.clone(signature, run.round_allocator)
+    if err != nil {
+        run.fault = .Resource
+
+        return
+    }
+    block.signature = owned
+}
+
+// Reserve payload bytes before retaining provider or tool output. A fault latches for the
+// round; later stream events are ignored and the valid draft prefix is discarded.
+@(private)
+run_string_add :: proc(run: ^Run, bytes: int) -> bool {
+    assert(run != nil, "reserving draft bytes needs a run")
+    assert(run.string_bytes >= len(RUN_AGENT), "draft bytes include its agent")
+    assert(bytes >= 0, "draft byte growth is non-negative")
+
+    if run.fault != .None {
+        return false
+    }
+
+    if bytes > wire.LIMITS.max_message_string_bytes - run.string_bytes {
+        run.fault = .Transcript_Limit
+
+        return false
+    }
+
+    run.string_bytes += bytes
+
+    return true
 }
 
 // The largest length at or below `limit` that does not split a UTF-8 sequence.
@@ -592,13 +698,30 @@ run_on_result :: proc(user: rawptr, result: provider.Turn_Result) {
         return
     }
 
-    assert(run.finish != .Unknown, "a successful provider round carries its stop reason")
+    if run.fault != .None {
+        run_fail_fault(run)
+
+        return
+    }
+
+    if !run.finish_seen {
+        run_fail(run, .Protocol, "the provider response had no terminal event")
+
+        return
+    }
+
     assert(run.rounds < wire.MAX_WIRE_INTEGER, "a live run stays inside the wire round range")
     run.rounds += 1
 
     // Tools run before the commit: a transcript carrying a pending tool part is refused by
     // every request builder, so the message that holds one must never reach the log.
     if run_tools_begin(run) {
+        return
+    }
+
+    if run.fault != .None {
+        run_fail_fault(run)
+
         return
     }
 
@@ -611,11 +734,16 @@ run_on_result :: proc(user: rawptr, result: provider.Turn_Result) {
 run_commit :: proc(run: ^Run) {
     assert(run != nil && run.daemon != nil, "committing a round needs its run")
     assert(run.op == nil, "a round commits after its provider operation completes")
-    assert(run.draft_open, "only an announced draft can commit")
+    assert(run.round_allocator.procedure != nil, "only an announced draft can commit")
     assert(run.rounds > 0, "a committed round completed a provider request")
-    assert(run.tools_open == 0, "a round commits after every tool settles")
+    assert(run_tools_open(run) == 0, "a round commits after every tool settles")
 
-    content := make([]wire.Assistant_Part, len(run.blocks), run.round_allocator)
+    content, alloc_err := make([]wire.Assistant_Part, len(run.blocks), run.round_allocator)
+    if alloc_err != nil {
+        run_fail(run, .Internal, "the turn exhausted local resources")
+
+        return
+    }
     for &block, index in run.blocks {
         content[index] = run_part_build(&block, index)
     }
@@ -645,15 +773,17 @@ run_commit :: proc(run: ^Run) {
         return
     }
 
-    run.draft_open = false
+    finish := run.finish
+    continues := run_round_continues(run)
+    run_round_release(run)
 
-    if run_round_continues(run) {
+    if continues {
         run_round_start_next(run)
 
         return
     }
 
-    run_finish(run, wire.Run_Outcome_Turn{finish = run.finish, rounds = run.rounds}, now)
+    run_finish(run, wire.Run_Outcome_Turn{finish = finish, rounds = run.rounds}, now)
 }
 
 // Whether this committed round owes another provider request. A provider stop alone is not
@@ -693,12 +823,10 @@ run_round_continues :: proc(run: ^Run) -> bool {
 run_round_start_next :: proc(run: ^Run) {
     assert(run != nil && run.daemon != nil, "continuing a round needs its run")
     assert(session_live_run(run.daemon, run.session) == run, "a continuation needs its owned live run")
-    assert(run.op == nil && !run.draft_open, "a continuation starts between drafts")
-    assert(run.tools_open == 0 && !run.tools_joining, "a continuation starts after the tool join")
+    assert(run.op == nil && run.round_allocator.procedure == nil, "a continuation starts between drafts")
+    assert(run_tools_open(run) == 0 && !run.tools_joining, "a continuation starts after the tool join")
 
     d := run.daemon
-    run_round_release(run)
-
     temp := virtual.arena_temp_begin(&d.turn_scratch)
     defer virtual.arena_temp_end(temp)
     sa := virtual.arena_allocator(&d.turn_scratch)
@@ -763,8 +891,21 @@ run_round_start_next :: proc(run: ^Run) {
     run.message_id += 1
     run.round_started_at_ms = now_ms()
     run.finish = .Unknown
+    run.finish_seen = false
+    run.fault = .None
     run.usage = {}
-    run.draft_open = true
+    if !run_round_begin(run, connection, body) {
+        run_fail(run, .Provider, "the next provider round did not start")
+    }
+}
+
+// Announce one initialized draft, then hand its response sink to the provider transport.
+// The draft comes first so every stream callback has a client-visible owner.
+@(private = "file")
+run_round_begin :: proc(run: ^Run, connection: provider.Connection, body: string) -> bool {
+    assert(run != nil && run.daemon != nil, "starting a round needs its run")
+    assert(run.op == nil, "a provider round starts once")
+    assert(run.round_allocator.procedure != nil, "a provider round needs an initialized draft")
 
     started := wire.Message_Started_Data {
         session_id    = run.session,
@@ -774,18 +915,19 @@ run_round_start_next :: proc(run: ^Run) {
         agent         = RUN_AGENT,
         created_at_ms = run.round_started_at_ms,
     }
-    _ = broadcast(d, started)
-    session_activity_announce(d, run.session)
+    _ = broadcast(run.daemon, started)
+
+    // `run.started` says a run exists, not what it is doing.
+    session_activity_announce(run.daemon, run.session)
 
     sink := Run_Sink {
         on_event = run_on_stream,
         on_done  = run_on_result,
         user     = run,
     }
-    run.op = run_begin(&d.runs, connection, body, sink)
-    if run.op == nil {
-        run_fail(run, .Provider, "the next provider round did not start")
-    }
+    run.op = run_begin(&run.daemon.runs, connection, body, sink)
+
+    return run.op != nil
 }
 
 // Initialize storage for one draft. The run's stable arena is deliberately separate.
@@ -801,6 +943,7 @@ run_round_init :: proc(run: ^Run) -> bool {
 
     run.round_allocator = virtual.arena_allocator(&run.round_arena)
     run.blocks = make([dynamic]Run_Block, run.round_allocator)
+    run.string_bytes = len(RUN_AGENT)
 
     return true
 }
@@ -820,7 +963,10 @@ run_round_release :: proc(run: ^Run) {
     run.round_arena = {}
     run.round_allocator = {}
     run.blocks = nil
+    run.string_bytes = 0
+    run.fault = .None
     run.finish = .Unknown
+    run.finish_seen = false
     run.usage = {}
 }
 
@@ -829,6 +975,18 @@ run_round_release :: proc(run: ^Run) {
 @(private = "file")
 run_fail :: proc(run: ^Run, code: wire.Run_Error_Code, message: string) {
     run_end(run, wire.Run_Outcome_Failed{code = code, message = message})
+}
+
+@(private)
+run_fail_fault :: proc(run: ^Run) {
+    assert(run != nil, "failing a faulted run needs its run")
+    assert(run.fault != .None, "a run-local fault is latched before it is reported")
+
+    if run.fault == .Transcript_Limit {
+        run_fail(run, .Protocol, "the provider output exceeded transcript limits")
+    } else {
+        run_fail(run, .Internal, "the turn exhausted local resources")
+    }
 }
 
 // Cancel the live turn. `turn_cancel` is synchronous and fires no completion, so the
@@ -840,6 +998,15 @@ run_turn_cancel :: proc(d: ^Daemon, session: wire.Session_Id) -> (wire.Run_Id, b
     if run == nil {
         return 0, false
     }
+
+    if _, pending := run.pending_done.?; pending {
+        run_id := run.run_id
+        run_done_retry(run)
+
+        return run_id, true
+    }
+
+    js.cancel_trigger(&d.js, run.cancel, run.cancel_signal)
 
     // A run executing tools has already released its provider op, and is still cancelable:
     // the handlers are what the turn is waiting on.
@@ -858,13 +1025,13 @@ run_turn_cancel :: proc(d: ^Daemon, session: wire.Session_Id) -> (wire.Run_Id, b
 // index. Cancellation and failure differ only in the outcome they carry.
 @(private = "file")
 run_end :: proc(run: ^Run, outcome: wire.Run_Outcome) {
-    if run.draft_open {
+    if run.round_allocator.procedure != nil {
         discarded := wire.Message_Discarded_Data {
             session_id = run.session,
             message_id = run.message_id,
         }
         _ = broadcast(run.daemon, discarded)
-        run.draft_open = false
+        run_round_release(run)
     }
 
     run_finish(run, outcome, now_ms())
@@ -879,10 +1046,63 @@ run_finish :: proc(run: ^Run, outcome: wire.Run_Outcome, ended_at_ms: u64) {
         run_id = run.run_id,
         kind = .Turn,
         timing = wire.Run_Canceled_Timing{started_at_ms = run.started_at_ms, ended_at_ms = ended_at_ms},
-        outcome = outcome,
+        outcome = wire.run_outcome_clone(outcome, run.allocator),
     }
-    _ = broadcast(run.daemon, done)
 
+    if perr := broadcast(run.daemon, done); perr != .None {
+        log.errorf("daemon: session %v could not finish run %d: %v", run.session, run.run_id, perr)
+        run.pending_done = done
+
+        if perr == .Store_Failed {
+            run_done_retry_schedule(run)
+        }
+
+        return
+    }
+
+    session_summary_announce(run.daemon, run.session, run.allocator)
+    run_close(run)
+}
+
+@(private = "file")
+run_done_retry_schedule :: proc(run: ^Run) {
+    assert(run != nil && run.daemon != nil, "scheduling a run terminal needs its run")
+    assert(run.done_retry == nil, "a run terminal retry is scheduled once")
+    assert(run.pending_done != nil, "a terminal retry has a retained terminal")
+
+    if run.done_retry_delay == 0 {
+        run.done_retry_delay = RUN_DONE_RETRY_MIN
+    }
+
+    delay := run.done_retry_delay
+    run.done_retry_delay = min(delay * 2, RUN_DONE_RETRY_MAX)
+    run.done_retry = nbio.timeout_poly(delay, run, run_done_retry_on_timer, run.daemon.loop)
+}
+
+@(private = "file")
+run_done_retry_on_timer :: proc(op: ^nbio.Operation, run: ^Run) {
+    assert(run != nil, "a run terminal retry lost its run")
+    assert(run.done_retry == op, "a run terminal retry crossed ownership")
+
+    run.done_retry = nil
+    run_done_retry(run)
+}
+
+@(private = "file")
+run_done_retry :: proc(run: ^Run) {
+    done, pending := run.pending_done.?
+    assert(pending, "retrying a run terminal needs a retained terminal")
+
+    if perr := broadcast(run.daemon, done); perr != .None {
+        log.errorf("daemon: session %v still could not finish run %d: %v", run.session, run.run_id, perr)
+        if perr == .Store_Failed && run.done_retry == nil {
+            run_done_retry_schedule(run)
+        }
+
+        return
+    }
+
+    run.pending_done = nil
     session_summary_announce(run.daemon, run.session, run.allocator)
     run_close(run)
 }
@@ -911,7 +1131,16 @@ run_free :: proc(run: ^Run) {
 
     run_round_release(run)
 
+    if run.done_retry != nil {
+        nbio.remove(run.done_retry)
+        run.done_retry = nil
+    }
+
     allocator := run.daemon.allocator
+    js.cancel_trigger(&run.daemon.js, run.cancel, run.cancel_signal)
+    qjs.free_value(run.daemon.js.ctx, run.cancel_signal)
+    run.cancel_signal = {}
+    run.cancel = nil
     virtual.arena_destroy(&run.arena)
     free(run, allocator)
 }
@@ -1062,13 +1291,7 @@ session_live_ensure :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Session_Li
         return nil
     }
 
-    if virtual.arena_init_growing(&live.arena) != nil {
-        free(live, d.allocator)
-
-        return nil
-    }
-
-    live.queue = make([dynamic]wire.Queued_Input, virtual.arena_allocator(&live.arena))
+    live.queue = make([dynamic]Queued_Input_Owned, d.allocator)
 
     if map_insert(&d.sessions, session, live) == nil {
         session_live_free(d, live)
@@ -1079,13 +1302,16 @@ session_live_ensure :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Session_Li
     return live
 }
 
-// Release one session's state. Its queue and every cloned input die with the arena.
+// Release one session's state and every independently owned queued input.
 @(private = "file")
 session_live_free :: proc(d: ^Daemon, live: ^Session_Live) {
     assert(live != nil, "freeing session state needs state")
     assert(live.run == nil, "session state freed with a live turn")
 
-    virtual.arena_destroy(&live.arena)
+    for &queued in live.queue {
+        queued_input_owned_destroy(&queued)
+    }
+    delete(live.queue)
     free(live, d.allocator)
 }
 
@@ -1104,24 +1330,16 @@ session_live_release :: proc(d: ^Daemon, session: wire.Session_Id) {
 
 // Accept an input behind the session's live turn. The content is cloned into the session's
 // own arena: it was decoded into the frame arena, which is reset when the request returns.
-session_queue_push :: proc(
-    d: ^Daemon,
-    session: wire.Session_Id,
-    input_id: wire.Input_Id,
-    content: []wire.Content_Part,
-) -> bool {
+session_queue_push :: proc(d: ^Daemon, session: wire.Session_Id, queued: wire.Queued_Input) -> bool {
     live := session_live(d, session)
     assert(live != nil && live.run != nil, "an input queues only behind a live turn")
     assert(len(live.queue) < wire.LIMITS.max_queued_inputs, "the queue accepted an input past its bound")
 
-    queued := wire.Queued_Input {
-        input_id     = input_id,
-        content      = content,
-        queued_at_ms = now_ms(),
-    }
-    owned := wire.queued_input_clone(queued, virtual.arena_allocator(&live.arena))
+    owned := queued_input_owned_clone(queued, d.allocator)
 
     if _, err := append(&live.queue, owned); err != nil {
+        queued_input_owned_destroy(&owned)
+
         return false
     }
 
@@ -1148,7 +1366,7 @@ session_input_high :: proc(d: ^Daemon, session: wire.Session_Id, mark: wire.Inpu
         return mark
     }
 
-    tail := live.queue[len(live.queue) - 1].input_id
+    tail := live.queue[len(live.queue) - 1].input.input_id
     assert(tail >= mark, "a queued input predates the store's own mark")
 
     return tail
@@ -1162,8 +1380,9 @@ session_queue_remove :: proc(d: ^Daemon, session: wire.Session_Id, input_id: wir
         return false
     }
 
-    for queued, index in live.queue {
-        if queued.input_id == input_id {
+    for &queued, index in live.queue {
+        if queued.input.input_id == input_id {
+            queued_input_owned_destroy(&queued)
             ordered_remove(&live.queue, index)
             session_activity_announce(d, session)
 
@@ -1183,8 +1402,9 @@ session_queue_clear :: proc(d: ^Daemon, session: wire.Session_Id, sa: mem.Alloca
     }
 
     cleared := make([]wire.Input_Id, len(live.queue), sa)
-    for queued, index in live.queue {
-        cleared[index] = queued.input_id
+    for &queued, index in live.queue {
+        cleared[index] = queued.input.input_id
+        queued_input_owned_destroy(&queued)
     }
 
     clear(&live.queue)
@@ -1210,11 +1430,12 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
 
     next := live.queue[0]
     ordered_remove(&live.queue, 0)
+    defer queued_input_owned_destroy(&next)
 
     scratch: virtual.Arena
     if virtual.arena_init_growing(&scratch) != nil {
         log.errorf("daemon: session %v could not promote its queued input", session)
-        session_input_drop(d, session, next.input_id)
+        session_input_drop(d, session, next.input.input_id)
         session_promote_next(d, session)
 
         return
@@ -1226,7 +1447,7 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     snapshot, found, serr := store.session_snapshot(d.store, session, sa)
     if serr != nil || !found {
         log.errorf("daemon: session %v could not read the session behind its queue: %v", session, serr)
-        session_input_drop(d, session, next.input_id)
+        session_input_drop(d, session, next.input.input_id)
         session_promote_next(d, session)
 
         return
@@ -1235,7 +1456,7 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     hw, hw_err := store.high_water(d.store, session)
     if hw_err != nil {
         log.errorf("daemon: session %v could not read its marks to promote an input: %v", session, hw_err)
-        session_input_drop(d, session, next.input_id)
+        session_input_drop(d, session, next.input.input_id)
         session_promote_next(d, session)
 
         return
@@ -1246,14 +1467,14 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     // input still waited.
     committed := wire.User_Message {
         id = hw.message_id + 1,
-        content = next.content,
-        input_id = next.input_id,
+        content = next.input.content,
+        input_id = next.input.input_id,
         time = wire.Created_Time{created_at_ms = now_ms()},
     }
 
     if perr := broadcast(d, wire.Message_Committed_Data{session_id = session, message = committed}); perr != .None {
         log.errorf("daemon: session %v could not commit its queued input: %v", session, perr)
-        session_input_drop(d, session, next.input_id)
+        session_input_drop(d, session, next.input.input_id)
         session_promote_next(d, session)
 
         return
@@ -1269,6 +1490,23 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
         log.errorf("daemon: session %v could not run its queued input: %v", session, start_err)
         session_promote_next(d, session)
     }
+}
+
+@(private = "file")
+queued_input_owned_clone :: proc(src: wire.Queued_Input, backing: mem.Allocator) -> Queued_Input_Owned {
+    owned: Queued_Input_Owned
+    mem.dynamic_arena_init(&owned.arena, backing, backing)
+    owned.input = wire.queued_input_clone(src, mem.dynamic_arena_allocator(&owned.arena))
+
+    return owned
+}
+
+@(private = "file")
+queued_input_owned_destroy :: proc(owned: ^Queued_Input_Owned) {
+    assert(owned != nil, "destroying a queued input needs its owner")
+
+    mem.dynamic_arena_destroy(&owned.arena)
+    owned^ = {}
 }
 
 // Retract an input promoted out of the queue but never committed, so no subscriber holds

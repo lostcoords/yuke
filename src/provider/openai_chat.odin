@@ -475,6 +475,22 @@ openai_chat_terminal :: proc(
         openai_close_block(decoder, events) or_return
     }
 
+    for entry, index in decoder.pending_tools {
+        if len(entry.name) == 0 {
+            continue
+        }
+
+        if len(entry.id) == 0 {
+            return .Parse_Error
+        }
+
+        for prior in decoder.pending_tools[:index] {
+            if len(prior.name) > 0 && string(entry.id[:]) == string(prior.id[:]) {
+                return .Parse_Error
+            }
+        }
+    }
+
     tools := 0
     for &entry in decoder.pending_tools {
         if len(entry.name) == 0 {

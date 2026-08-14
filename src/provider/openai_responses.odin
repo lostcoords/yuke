@@ -425,7 +425,7 @@ openai_responses_item_done :: proc(
 // Finalize the completed function call. `arguments` on the done item is
 // authoritative when present; otherwise the accumulated delta fragments are
 // used. Empty arguments normalize to `{}`, and the whole is structurally
-// validated. A call missing its id or name is dropped.
+// validated. A completed call always has a non-empty, unique id and name.
 @(private)
 openai_responses_finalize_tool :: proc(
     decoder: ^Openai_Responses_Decoder,
@@ -477,9 +477,14 @@ openai_responses_finalize_tool :: proc(
     decoder.open_tool = {}
     decoder.tool_open = false
 
-    // A completed call without both a call id and a name has nothing to invoke.
     if len(call_id) == 0 || len(name) == 0 {
-        return .None
+        return .Parse_Error
+    }
+
+    for prior in decoder.tools {
+        if call_id == prior.id {
+            return .Parse_Error
+        }
     }
 
     validated, validate_err := tool_arguments(arguments, scratch_allocator)

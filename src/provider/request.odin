@@ -24,6 +24,10 @@ Request :: struct {
     // Resolved provider model id.
     model:             string,
 
+    // Public model id recorded in transcript provenance. Opaque provider state is
+    // replayed only when this and the protocol both match.
+    provenance_model:  string,
+
     // System prompt, omitted when absent or empty.
     system_prompt:     Maybe(string),
 
@@ -40,6 +44,34 @@ Request :: struct {
     // Optional sampling temperature. Model resolution is responsible for
     // omitting it on models that reject sampling controls.
     temperature:       Maybe(f64),
+}
+
+@(private = "package")
+Tool_Result :: struct {
+    content:  string,
+    is_error: bool,
+}
+
+@(private = "package")
+tool_result :: proc(state: wire.Tool_State) -> (Tool_Result, bool) {
+    switch value in state {
+    case wire.Tool_State_Completed:
+        return {content = value.output}, true
+
+    case wire.Tool_State_Error:
+        return {content = value.message, is_error = true}, true
+
+    case wire.Tool_State_Denied:
+        return {content = value.reason}, true
+
+    case wire.Tool_State_Canceled:
+        return {content = "canceled"}, true
+
+    case wire.Tool_State_Pending, wire.Tool_State_Waiting_Permission, wire.Tool_State_Running:
+        return {}, false
+    }
+
+    return {}, false
 }
 
 // Shared tool preflight for every protocol: each tool needs a non-empty valid

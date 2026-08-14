@@ -25,6 +25,9 @@ Resync_Error :: enum {
 
     // The finished cut failed the wire validator every outgoing frame is held to.
     Invalid_Cut,
+
+    // Request scratch could not hold the live portion of the cut.
+    Resource_Exhausted,
 }
 
 // `session.resync`: the full snapshot, read from the session's projections. Result data
@@ -45,7 +48,7 @@ method_session_resync :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     case .Unknown_Session:
         send_error(conn, req.id, .Unknown_Session, "unknown session", sa)
 
-    case .Store_Failed, .Corrupt_Log, .Invalid_Cut:
+    case .Store_Failed, .Corrupt_Log, .Invalid_Cut, .Resource_Exhausted:
         // All three are daemon-side faults: report `Internal`, keep the connection, and
         // never ship a snapshot we do not believe.
         send_error(conn, req.id, .Internal, "resync snapshot unavailable", sa)
@@ -110,7 +113,10 @@ resync_build :: proc(
     // The engine owns every live fact: a run does not outlive the process that started it,
     // so the log can say a run exists but never what it is producing.
     activity := session_activity(d, params.session_id)
-    active, queued := session_draft(d, params.session_id, sa)
+    active, queued, draft_ok := session_draft(d, params.session_id, sa)
+    if !draft_ok {
+        return {}, .Resource_Exhausted
+    }
 
     configs := make([dynamic]wire.Run_Config, 0, len(messages) + 1, sa)
 

@@ -118,7 +118,7 @@ openai_responses_request_body :: proc(
         writer = writer,
     }
     for message in request.messages {
-        openai_responses_write_message(&input, message, scratch_allocator) or_return
+        openai_responses_write_message(&input, message, request.provenance_model, scratch_allocator) or_return
     }
 
     if input.count == 0 {
@@ -172,6 +172,10 @@ openai_responses_request_validate :: proc(
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
     if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) {
+        return .Invalid_Request
+    }
+
+    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) {
         return .Invalid_Request
     }
 
@@ -255,6 +259,7 @@ openai_responses_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition
 openai_responses_write_message :: proc(
     out: ^Openai_Responses_Input_Writer,
     message: wire.Message,
+    provenance_model: string,
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
     assert(out != nil, "OpenAI responses message serialization needs output state")
@@ -265,7 +270,7 @@ openai_responses_write_message :: proc(
         return openai_responses_write_user_message(out, value, scratch_allocator)
 
     case wire.Assistant_Message:
-        return openai_responses_write_assistant_message(out, value)
+        return openai_responses_write_assistant_message(out, value, provenance_model)
 
     case wire.Compaction_Message:
         return openai_responses_write_compaction_message(out, value)
@@ -348,7 +353,13 @@ openai_responses_write_content_part :: proc(
 openai_responses_write_assistant_message :: proc(
     out: ^Openai_Responses_Input_Writer,
     message: wire.Assistant_Message,
+    provenance_model: string,
 ) -> Transport_Error {
+    replay_reasoning := false
+    if provenance, present := message.provenance.?; present {
+        replay_reasoning = provenance.protocol == .Openai_Responses && provenance.model == provenance_model
+    }
+
     for part in message.content {
         switch content in part {
         case wire.Text_Part:
@@ -359,12 +370,14 @@ openai_responses_write_assistant_message :: proc(
         case wire.Reasoning_Part:
             // Stateless replay omits the item id and emits only signed reasoning:
             // the backend rejects a prior reasoning item without encrypted state.
-            if len(content.signature) > 0 {
+            if replay_reasoning && len(content.signature) > 0 {
                 openai_responses_write_reasoning(out, content.text, content.signature) or_return
             }
 
         case wire.Redacted_Reasoning_Part:
-            openai_responses_write_reasoning(out, "", content.data) or_return
+            if replay_reasoning {
+                openai_responses_write_reasoning(out, "", content.data) or_return
+            }
 
         case wire.Tool_Part:
             openai_responses_write_function_call(out, content) or_return
@@ -447,29 +460,14 @@ openai_responses_write_function_call_output :: proc(
     call_id, has_call_id := tool.call_id.?
     assert(has_call_id && len(call_id) > 0, "validated OpenAI responses tool result has an id")
 
-    output: string
-    switch state in tool.state {
-    case wire.Tool_State_Completed:
-        output = state.output
-
-    case wire.Tool_State_Error:
-        output = state.message
-
-    case wire.Tool_State_Denied:
-        output = state.reason
-
-    case wire.Tool_State_Canceled:
-        output = "canceled"
-
-    case wire.Tool_State_Pending, wire.Tool_State_Waiting_Permission, wire.Tool_State_Running:
-        assert(false, "a validated OpenAI responses tool result is in a terminal state")
-    }
+    result, terminal := tool_result(tool.state)
+    assert(terminal, "a validated OpenAI responses tool result is in a terminal state")
 
     openai_responses_input_sep(out) or_return
     json_write(out.writer, `{"type":"function_call_output","call_id":`) or_return
     json_write_string(out.writer, call_id) or_return
     json_write(out.writer, `,"output":`) or_return
-    json_write_string(out.writer, output) or_return
+    json_write_string(out.writer, result.content) or_return
     return json_write(out.writer, `}`)
 }
 

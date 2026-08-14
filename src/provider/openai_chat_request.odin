@@ -719,27 +719,12 @@ openai_write_tool_message :: proc(out: ^Openai_Message_Writer, tool: wire.Tool_P
     call_id, has_call_id := tool.call_id.?
     assert(has_call_id && len(call_id) > 0, "validated OpenAI tool result has an id")
 
-    content: string
-    switch state in tool.state {
-    case wire.Tool_State_Completed:
-        content = state.output
-
-    case wire.Tool_State_Error:
-        content = state.message
-
-    case wire.Tool_State_Denied:
-        content = state.reason
-
-    case wire.Tool_State_Canceled:
-        content = "canceled"
-
-    case wire.Tool_State_Pending, wire.Tool_State_Waiting_Permission, wire.Tool_State_Running:
-        assert(false, "a validated OpenAI tool result is in a terminal state")
-    }
+    result, terminal := tool_result(tool.state)
+    assert(terminal, "a validated OpenAI tool result is in a terminal state")
 
     openai_message_sep(out) or_return
     json_write(out.writer, `{"role":"tool","content":`) or_return
-    json_write_string(out.writer, content) or_return
+    json_write_string(out.writer, result.content) or_return
     json_write(out.writer, `,"tool_call_id":`) or_return
     json_write_string(out.writer, call_id) or_return
     return json_write(out.writer, `}`)

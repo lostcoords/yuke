@@ -31,7 +31,7 @@ declare module "yuke:daemon" {
     description: string;
     /** Omit for a tool that takes no arguments. */
     params?: Record<string, ToolParam>;
-    handler: (args: A) => unknown | Promise<unknown>;
+    handler: (args: A, signal: YukeCancelSignal) => unknown | Promise<unknown>;
   }
 
   // Register a tool the model may call. The name is 1 to 64 characters of [A-Za-z0-9_-], and

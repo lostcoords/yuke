@@ -62,6 +62,9 @@ Anthropic_Decoder :: struct {
     // Number of tool blocks opened in this turn.
     tool_count:     int,
 
+    // Provider ids already accepted in this turn, for strict result correlation.
+    tool_ids:       [dynamic]string,
+
     // A valid `message_start` established the stream.
     started:        bool,
 
@@ -79,7 +82,14 @@ Anthropic_Decoder :: struct {
 // into `allocator` and frees none of it.
 anthropic_decoder_init :: proc(allocator := context.allocator) -> Anthropic_Decoder {
     assert(allocator.procedure != nil, "Anthropic decoder needs a valid turn allocator")
-    return {allocator = allocator, pending_reason = .Unknown}
+
+    decoder := Anthropic_Decoder {
+        allocator      = allocator,
+        pending_reason = .Unknown,
+    }
+    decoder.tool_ids.allocator = allocator
+
+    return decoder
 }
 
 // Decode one SSE `data` payload, appending its 0 or 1 neutral events to
@@ -371,6 +381,12 @@ anthropic_decode_content_block_start :: proc(
             return nil, .Parse_Error
         }
 
+        for prior in decoder.tool_ids {
+            if id == prior {
+                return nil, .Parse_Error
+            }
+        }
+
         owned_id, id_clone_err := strings.clone(id, decoder.allocator)
         if id_clone_err != nil {
             return nil, .Resource_Exhausted
@@ -391,6 +407,9 @@ anthropic_decode_content_block_start :: proc(
             id        = owned_id,
             name      = owned_name,
             arguments = arguments,
+        }
+        if _, append_err := append(&decoder.tool_ids, owned_id); append_err != nil {
+            return nil, .Resource_Exhausted
         }
         decoder.tool_count += 1
 

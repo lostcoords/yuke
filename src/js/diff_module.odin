@@ -25,6 +25,7 @@ diff_module :: proc() -> Module {
 Diff_Job :: struct {
     task:      offload.Task(Diff_Job),
     host:      ^Host,
+    cancel:    ^Cancel_Scope,
     path:      string,
     before:    string,
     after:     string,
@@ -90,6 +91,15 @@ diff_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
         }
     }
 
+    cancel, thrown, cancel_ok := cancel_arg(ctx, argc, argv, 3)
+    if !cancel_ok {
+        diff_job_free(job)
+
+        return thrown
+    }
+    job.cancel = cancel
+    cancel_retain(cancel)
+
     promise, resolve, reject := qjs.new_promise(ctx)
     if qjs.is_exception(promise) {
         diff_job_free(job)
@@ -111,7 +121,9 @@ diff_job_run :: proc(job: ^Diff_Job) {
     assert(job.host != nil, "a host op lost its host")
     assert(!job.done, "a host op ran twice")
 
-    job.file, job.ok = diff_text(job.path, job.before, job.after, job.allocator)
+    if !diff_job_cancelled(job) {
+        job.file, job.ok = diff_text(job.path, job.before, job.after, job.allocator)
+    }
     job.done = true
 }
 
@@ -129,8 +141,10 @@ diff_job_done :: proc(job: ^Diff_Job) {
     defer qjs.free_value(ctx, job.resolve)
     defer qjs.free_value(ctx, job.reject)
 
-    settle := job.resolve if job.ok else job.reject
-    value := diff_value(ctx, job.file) if job.ok else qjs.new_string(ctx, "change is too large to diff")
+    canceled := diff_job_cancelled(job)
+    settle := job.resolve if job.ok && !canceled else job.reject
+    message := "operation canceled" if canceled else "change is too large to diff"
+    value := diff_value(ctx, job.file) if job.ok && !canceled else qjs.new_string(ctx, message)
 
     defer qjs.free_value(ctx, value)
 
@@ -174,7 +188,15 @@ diff_job_free :: proc(job: ^Diff_Job) {
     assert(job.host != nil, "host op cleanup lost its host")
 
     allocator := job.host.allocator
+    cancel_release(job.cancel)
     mem.dynamic_arena_destroy(&job.arena)
 
     free(job, allocator)
+}
+
+@(private = "file")
+diff_job_cancelled :: proc(job: ^Diff_Job) -> bool {
+    assert(job != nil && job.host != nil, "a diff cancellation check needs its job")
+
+    return cancelled(job.host) || cancelled_scope(job.cancel)
 }

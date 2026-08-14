@@ -132,16 +132,16 @@ send_input_queue :: proc(
     // failed fan-out frees the connection that asked. A refused push announces nothing.
     ticket := conn.ticket
 
-    if !session_queue_push(d, params.session_id, input_id, content) {
-        send_error(conn, req.id, .Internal, "could not queue the input", sa)
-
-        return
-    }
-
     queued := wire.Queued_Input {
         input_id     = input_id,
         content      = content,
         queued_at_ms = now_ms(),
+    }
+
+    if !session_queue_push(d, params.session_id, queued) {
+        send_error(conn, req.id, .Internal, "could not queue the input", sa)
+
+        return
     }
 
     if perr := broadcast(d, wire.Input_Queued_Data{session_id = params.session_id, input = queued}); perr != .None {

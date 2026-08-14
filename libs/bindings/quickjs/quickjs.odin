@@ -118,6 +118,42 @@ run_pending_jobs :: proc(rt: ^Runtime) -> (executed: int, failed: bool) {
     return
 }
 
+// Register one native object class on a runtime. Class ids are process-global and minted
+// by QuickJS; the definition is copied by the runtime.
+class_register :: proc(rt: ^Runtime, definition: Class_Def) -> (Class_ID, bool) {
+    assert(rt != nil, "class registration needs a runtime")
+
+    id: Class_ID
+    owned_definition := definition
+    c_new_class_id(rt, &id)
+    if id == INVALID_CLASS_ID || c_new_class(rt, id, &owned_definition) != 0 {
+        return INVALID_CLASS_ID, false
+    }
+
+    return id, true
+}
+
+new_object_class :: proc(ctx: ^Context, class_id: Class_ID) -> Value {
+    assert(ctx != nil, "native object creation needs a context")
+    assert(class_id != INVALID_CLASS_ID, "native object creation needs a registered class")
+
+    return c_new_object_class(ctx, class_id)
+}
+
+set_opaque :: proc(value: Value, opaque: rawptr) -> bool {
+    return c_set_opaque(value, opaque) == 0
+}
+
+get_opaque :: proc(value: Value, class_id: Class_ID) -> rawptr {
+    assert(class_id != INVALID_CLASS_ID, "native object lookup needs a registered class")
+
+    return c_get_opaque(value, class_id)
+}
+
+get_class_id :: proc(value: Value) -> Class_ID {
+    return c_get_class_id(value)
+}
+
 // Create an execution context on `rt`. Several contexts may share one runtime
 // and its GC.
 context_new :: proc(rt: ^Runtime) -> ^Context {

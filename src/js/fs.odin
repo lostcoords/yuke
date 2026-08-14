@@ -53,6 +53,7 @@ Fs_Error :: enum {
     Too_Large,
     No_Match,
     Ambiguous,
+    Canceled,
 }
 
 // One in-flight call. Inputs are cloned into `arena` on the loop thread and the worker writes
@@ -61,6 +62,7 @@ Fs_Error :: enum {
 Fs_Job :: struct {
     task:        offload.Task(Fs_Job),
     host:        ^Host,
+    cancel:      ^Cancel_Scope,
     op:          Fs_Op,
     path:        string,
     text:        string,
@@ -252,6 +254,27 @@ fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) 
     )
     job.allocator = mem.dynamic_arena_allocator(&job.arena)
 
+    signal_index: c.int
+    switch op {
+    case .Read_File, .Read_Dir, .Stat, .Exists, .Hash:
+        signal_index = 1
+
+    case .Write_File:
+        signal_index = 2
+
+    case .Edit:
+        signal_index = 4
+    }
+
+    cancel, cancel_thrown, cancel_ok := cancel_arg(ctx, argc, argv, signal_index)
+    if !cancel_ok {
+        fs_job_free(job)
+
+        return nil, cancel_thrown, false
+    }
+    job.cancel = cancel
+    cancel_retain(cancel)
+
     requested: string
 
     if thrown, got := arg_string(ctx, argv, argc, 0, job.allocator, &requested); !got {
@@ -296,7 +319,7 @@ fs_job_run :: proc(job: ^Fs_Job) {
     assert(job.host != nil, "a host op lost its host")
     assert(job.outcome == nil, "a host op ran twice")
 
-    job.outcome = fs_pass(job)
+    job.outcome = .Canceled if fs_job_cancelled(job) else fs_pass(job)
 }
 
 @(private = "file")
@@ -382,12 +405,20 @@ fs_read_contents :: proc(job: ^Fs_Job) -> (contents: string, err: Fs_Error) {
 
 @(private = "file")
 fs_write_contents :: proc(job: ^Fs_Job) -> Fs_Error {
+    if fs_job_cancelled(job) {
+        return .Canceled
+    }
+
     // Writing a new file in a new directory is ordinary, so the parents are made rather than
     // reported as a missing-path failure.
     if parent := filepath.dir(job.path); parent != "" {
         if mkerr := os.make_directory_all(parent); mkerr != nil && !os.is_dir(parent) {
             return .Unwritable
         }
+    }
+
+    if fs_job_cancelled(job) {
+        return .Canceled
     }
 
     if werr := os.write_entire_file(job.path, transmute([]byte)job.text); werr != nil {
@@ -422,6 +453,10 @@ fs_edit_contents :: proc(job: ^Fs_Job) -> Fs_Error {
         occurrences if job.replace_all else 1,
         job.allocator,
     )
+
+    if fs_job_cancelled(job) {
+        return .Canceled
+    }
 
     if werr := os.write_entire_file(job.path, transmute([]byte)replaced); werr != nil {
         return .Unwritable
@@ -485,7 +520,7 @@ fs_job_done :: proc(job: ^Fs_Job) {
 
     defer fs_job_free(job)
 
-    fs_settle(job, outcome)
+    fs_settle(job, .Canceled if fs_job_cancelled(job) else outcome)
     op_end(h)
 }
 
@@ -577,6 +612,9 @@ fs_error_message :: proc(err: Fs_Error) -> string {
 
     case .Ambiguous:
         return "old text is not unique; pass replaceAll or give more context"
+
+    case .Canceled:
+        return "operation canceled"
     }
 
     unreachable()
@@ -589,7 +627,15 @@ fs_job_free :: proc(job: ^Fs_Job) {
     assert(job.host != nil, "host op cleanup lost its host")
 
     allocator := job.host.allocator
+    cancel_release(job.cancel)
     mem.dynamic_arena_destroy(&job.arena)
 
     free(job, allocator)
+}
+
+@(private = "file")
+fs_job_cancelled :: proc(job: ^Fs_Job) -> bool {
+    assert(job != nil && job.host != nil, "a filesystem cancellation check needs its job")
+
+    return cancelled(job.host) || cancelled_scope(job.cancel)
 }

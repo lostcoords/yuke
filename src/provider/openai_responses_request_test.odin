@@ -11,7 +11,10 @@ test_responses_user_message :: proc(parts: []wire.Content_Part) -> wire.Message 
 }
 
 @(private = "file")
-test_responses_assistant_message :: proc(parts: []wire.Assistant_Part) -> wire.Message {
+test_responses_assistant_message :: proc(
+    parts: []wire.Assistant_Part,
+    provenance: Maybe(wire.Turn_Provenance) = nil,
+) -> wire.Message {
     return wire.Assistant_Message {
         id = 2,
         run_id = 1,
@@ -20,12 +23,13 @@ test_responses_assistant_message :: proc(parts: []wire.Assistant_Part) -> wire.M
         content = parts,
         finish = wire.Stop_Reason.Tool_Calls,
         time = {created_at_ms = 2, completed_at_ms = 3},
+        provenance = provenance,
     }
 }
 
 @(private = "file")
 test_responses_request :: proc(messages: []wire.Message) -> Request {
-    return Request{model = "gpt-test", messages = messages, max_output_tokens = 4096}
+    return Request{model = "gpt-test", provenance_model = "gpt-test", messages = messages, max_output_tokens = 4096}
 }
 
 @(private = "file")
@@ -190,7 +194,11 @@ test_responses_request_replays_reasoning_text_and_function_items_in_order :: pro
             state = wire.Tool_State_Completed{output = "4", duration_ms = 1},
         },
     }
-    messages := [?]wire.Message{test_responses_assistant_message(parts[:])}
+    provenance := wire.Turn_Provenance {
+        protocol = .Openai_Responses,
+        model    = "gpt-test",
+    }
+    messages := [?]wire.Message{test_responses_assistant_message(parts[:], provenance)}
 
     body := test_responses_build(t, test_responses_request(messages[:]))
     testing.expect_value(
@@ -209,7 +217,11 @@ test_responses_request_skips_unsigned_reasoning_and_replays_redacted :: proc(t: 
         wire.Redacted_Reasoning_Part{id = 1, data = "blob1"},
         wire.Text_Part{id = 2, text = "visible"},
     }
-    messages := [?]wire.Message{test_responses_assistant_message(parts[:])}
+    provenance := wire.Turn_Provenance {
+        protocol = .Openai_Responses,
+        model    = "gpt-test",
+    }
+    messages := [?]wire.Message{test_responses_assistant_message(parts[:], provenance)}
 
     body := test_responses_build(t, test_responses_request(messages[:]))
     testing.expect_value(
@@ -217,6 +229,28 @@ test_responses_request_skips_unsigned_reasoning_and_replays_redacted :: proc(t: 
         body,
         `{"model":"gpt-test","instructions":"You are a helpful assistant.","input":[{"type":"reasoning","summary":[],"encrypted_content":"blob1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible"}]}],"store":false,"stream":true,"max_output_tokens":4096}`,
     )
+}
+
+@(test)
+test_responses_request_replays_only_matching_reasoning :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    parts := [?]wire.Assistant_Part {
+        wire.Reasoning_Part{id = 0, text = "private", signature = "opaque"},
+        wire.Text_Part{id = 1, text = "visible"},
+    }
+    cases := [?]wire.Turn_Provenance {
+        {protocol = .Openai_Chat, model = "gpt-test"},
+        {protocol = .Openai_Responses, model = "other-model"},
+    }
+
+    for provenance in cases {
+        messages := [?]wire.Message{test_responses_assistant_message(parts[:], provenance)}
+        body := test_responses_build(t, test_responses_request(messages[:]))
+
+        testing.expect(t, !strings.contains(body, `"encrypted_content"`), body)
+        testing.expect(t, strings.contains(body, `"text":"visible"`), body)
+    }
 }
 
 @(test)

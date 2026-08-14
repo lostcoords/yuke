@@ -1,6 +1,7 @@
 package daemon
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:nbio"
 import "core:net"
 import "core:os"
@@ -9,11 +10,13 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
+import sqlite "libs:bindings/sqlite"
 import http_server "libs:http/server"
 import "libs:testsupport"
 import client "src:client"
 import catalog "src:daemon/catalog"
 import store "src:daemon/store"
+import provider "src:provider"
 import wire "src:wire"
 
 // A turn that committed no message: the draft is announced, retracted, and the terminal
@@ -73,6 +76,18 @@ data: {"type":"message_stop"}
 
 @(private = "file")
 RUN_FAKE_STREAM :: RUN_FAKE_HEAD + RUN_FAKE_MIDDLE + RUN_FAKE_TAIL
+
+@(private = "file")
+RUN_FAKE_UNKNOWN_STOP_STREAM ::
+    RUN_FAKE_HEAD +
+    RUN_FAKE_MIDDLE +
+    `data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"future_reason"},"usage":{"output_tokens":2}}
+
+data: {"type":"message_stop"}
+
+`
 
 // A reasoning block that opens, streams, and closes before a text block answers. Enough to
 // prove the phase moves into `reasoning` and back out again.
@@ -629,6 +644,94 @@ test_session_send_input_runs_a_turn :: proc(t: ^testing.T) {
     testing.expect(t, obs.replica.active == nil, "the committed draft is no longer active")
 }
 
+// A new provider stop reason is normalized to the wire's explicit unknown value. The
+// terminal event's presence, not that value, proves the stream completed.
+@(test)
+test_session_run_commits_an_unknown_provider_stop_reason :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-unknown-stop",
+        run_env_input("hi", &parts, &inputs),
+        body = RUN_FAKE_UNKNOWN_STOP_STREAM,
+    )
+    defer run_env_stop(t, &env)
+
+    run_env_drive(t, &env)
+
+    if testing.expect_value(t, len(env.obs.assistants), 1) {
+        finish, present := env.obs.assistants[0].finish.?
+        testing.expect(t, present, "the committed turn carries its stop reason")
+        testing.expect_value(t, finish, wire.Stop_Reason.Unknown)
+    }
+}
+
+// A host operation can return more than one wire message may retain even when the provider
+// response itself was small. The daemon discards the round before `broadcast` can assert.
+@(test)
+test_session_run_rejects_tool_output_beyond_wire_limits :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    entry := `
+        import { defineTool } from "yuke:daemon"
+
+        defineTool("get_weather", {
+            description: "Return an oversized result",
+            params: { city: "string" },
+            handler: () => "x".repeat(1024 * 1024),
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-output-limit",
+        run_env_input("hi", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+        max_rounds = 1,
+    )
+    defer run_env_stop(t, &env)
+
+    run_env_drive(t, &env)
+
+    testing.expect_value(t, len(env.obs.assistants), 0)
+    testing.expect(t, session_live_run(&env.d, env.session) == nil, "the faulted run releases its live slot")
+}
+
+// The neutral provider representation has no part-count bound. The accumulator stops at
+// the wire bound before assigning an invalid ordinal; tool blocks avoid unrelated fan-out.
+@(test)
+test_run_block_open_enforces_wire_part_limit :: proc(t: ^testing.T) {
+    run: Run
+    testing.expect_value(t, virtual.arena_init_growing(&run.round_arena), nil)
+    defer virtual.arena_destroy(&run.round_arena)
+
+    run.round_allocator = virtual.arena_allocator(&run.round_arena)
+    run.blocks = make([dynamic]Run_Block, run.round_allocator)
+
+    for index in 0 ..< wire.LIMITS.max_message_parts + 1 {
+        run_block_open(&run, provider.Stream_Block_Started{block_id = provider.Stream_Block_Id(index), kind = .Tool})
+    }
+
+    testing.expect_value(t, len(run.blocks), wire.LIMITS.max_message_parts)
+    testing.expect_value(t, run.fault, Run_Fault.Transcript_Limit)
+}
+
 // A provider that refuses the turn still owes the transcript a terminal. The draft every
 // subscriber is holding is discarded, the run ends as failed, and the user message that
 // started it stays committed.
@@ -735,6 +838,54 @@ test_session_cancel_run_ends_the_live_turn :: proc(t: ^testing.T) {
 
     // The slot is free again: cancelling stops the turn without stopping the service.
     testing.expect(t, !run_service_busy(&d.runs), "a canceled turn releases the run slot")
+}
+
+// A transient store refusal cannot make memory claim a run ended while the durable log
+// still says it is open. The run retains its terminal and closes only after that append.
+@(test)
+test_session_run_retries_a_refused_terminal_append :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(t, &env, "session-terminal-retry", run_env_input("hi", &parts, &inputs), hold = true)
+    defer run_env_stop(t, &env)
+    run_env_drive(t, &env)
+
+    run := session_live_run(&env.d, env.session)
+    if !testing.expect(t, run != nil, "the held provider keeps its run live") {
+        return
+    }
+
+    // The store begins its own transaction for every durable event. Holding one open on
+    // the same connection makes that begin fail without damaging the schema or fixtures.
+    testing.expect_value(t, sqlite.txn_begin(env.d.store.writer, .Deferred), sqlite.Result.Ok)
+
+    run_id, canceled := run_turn_cancel(&env.d, env.session)
+    testing.expect(t, canceled, "the live run accepts cancellation")
+    testing.expect_value(t, run_id, wire.Run_Id(1))
+    _, retained := run.pending_done.?
+    testing.expect(t, retained, "a refused terminal remains owned by the run")
+    testing.expect(t, session_live_run(&env.d, env.session) == run, "the run cannot appear idle before its terminal")
+
+    testing.expect_value(t, sqlite.txn_rollback(env.d.store.writer), sqlite.Result.Ok)
+    testing.expect(t, testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+                return session_live_run(&env.d, env.session) == nil
+            }, "the retained terminal retries"), "the retained terminal should commit after the store recovers")
+    pump_settle()
+
+    testing.expect(t, session_live_run(&env.d, env.session) == nil, "the committed terminal releases the run")
+    testing.expect(t, env.obs.turn_done, "the retried terminal reaches subscribers")
+    testing.expect_value(t, env.obs.canceled_runs, 1)
 }
 
 // Cancelling when nothing runs is a success with a null run, and naming a run that is not
@@ -1284,8 +1435,8 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
         defineTool("get_weather", {
             description: "Report the weather",
             params: { city: "string" },
-            handler: async ({ city }) => {
-                const r = await exec("printf sunny")
+            handler: async ({ city }, signal) => {
+                const r = await exec("printf sunny", { signal })
 
                 return { weather: r.stdout, city }
             },
@@ -1572,7 +1723,7 @@ test_session_cancel_run_preserves_committed_tool_results :: proc(t: ^testing.T) 
     run := session_live_run(&env.d, env.session)
     if testing.expect(t, run != nil, "the second round should still own the run") {
         testing.expect_value(t, run.message_id, wire.Message_Id(3))
-        testing.expect(t, run.draft_open, "the second round announced its draft")
+        testing.expect(t, run.round_allocator.procedure != nil, "the second round announced its draft")
     }
 
     run_id, canceled := run_turn_cancel(&env.d, env.session)
@@ -1859,7 +2010,7 @@ test_session_cancel_run_during_a_tool_call :: proc(t: ^testing.T) {
     started := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
             run := session_live_run(&env.d, env.session)
 
-            return run != nil && run.tools_open > 0
+            return run != nil && run_tools_open(run) > 0
         }, "the handler starts")
 
     if !testing.expect(t, started, "the tool call should be outstanding") {
@@ -1873,4 +2024,119 @@ test_session_cancel_run_during_a_tool_call :: proc(t: ^testing.T) {
 
     // The handler never settles, so nothing may have been committed.
     testing.expect_value(t, len(obs.assistants), 0)
+}
+
+// Cancellation reaches the host job, not only the handler promise. The rejected await may
+// resume script code, but omitting the signal cannot escape the daemon's cancellation latch.
+@(test)
+test_session_cancel_run_stops_tool_host_operations :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    target := "/tmp/yuke-canceled-tool-write"
+    os.remove(target)
+    defer os.remove(target)
+
+    entry := `
+        import { defineTool } from "yuke:daemon";
+        import * as fs from "yuke:fs";
+        import { exec } from "yuke:exec";
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: async (_, signal) => {
+                try { await exec("sleep 30", { signal }) } catch {}
+                await fs.writeFile("/tmp/yuke-canceled-tool-write", "too late")
+                return "impossible"
+            },
+        })
+        `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-cancel-tool-host-op",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+    )
+    defer run_env_stop(t, &env)
+
+    run_env_drive(t, &env)
+
+    started := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            run := session_live_run(&env.d, env.session)
+
+            return run != nil && run_tools_open(run) > 0 && env.d.js.pending > 0
+        }, "the command starts")
+    if !testing.expect(t, started, "the host operation should be outstanding") {
+        return
+    }
+
+    _, canceled := run_turn_cancel(&env.d, env.session)
+    testing.expect(t, canceled, "the tool run is cancelable")
+
+    drained := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            return env.d.js.pending == 0
+        }, "the canceled command drains")
+    testing.expect(t, drained, "the canceled host operation should settle")
+    testing.expect(t, !os.exists(target), "post-cancel script code must not mutate files")
+    testing.expect_value(t, len(env.obs.assistants), 0)
+}
+
+// The cancellation scope is the run's lifetime, not only the explicit cancel path. A tool
+// cannot return synchronously and leave a signaled fire-and-forget host mutation behind it.
+@(test)
+test_session_completed_run_stops_unawaited_tool_host_operations :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    target := "/tmp/yuke-completed-tool-write"
+    os.remove(target)
+    defer os.remove(target)
+
+    entry := `
+        import { defineTool } from "yuke:daemon";
+        import { exec } from "yuke:exec";
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: (_, signal) => {
+                exec("sleep 1; touch /tmp/yuke-completed-tool-write", { signal })
+                return "sunny"
+            },
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-complete-tool-host-op",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+        max_rounds = 1,
+    )
+    defer run_env_stop(t, &env)
+
+    run_env_drive(t, &env)
+
+    testing.expect_value(t, len(env.obs.assistants), 1)
+    drained := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            return env.d.js.pending == 0
+        }, "the run-scoped command drains")
+    testing.expect(t, drained, "the unawaited host operation should settle")
+    testing.expect(t, !os.exists(target), "a completed run cannot leave a host mutation behind")
 }

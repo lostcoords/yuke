@@ -231,6 +231,24 @@ test_responses_stream_prefers_done_item_arguments :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_responses_stream_rejects_missing_or_duplicate_tool_ids :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    missing := [?]string {
+        `{"type":"response.output_item.done","item":{"type":"function_call","name":"ping","arguments":"{}"}}`,
+    }
+    _, missing_err := test_responses_drive(t, missing[:])
+    testing.expect_value(t, missing_err, Transport_Error.Parse_Error)
+
+    duplicate := [?]string {
+        `{"type":"response.output_item.done","item":{"type":"function_call","call_id":"same","name":"first","arguments":"{}"}}`,
+        `{"type":"response.output_item.done","item":{"type":"function_call","call_id":"same","name":"second","arguments":"{}"}}`,
+    }
+    _, duplicate_err := test_responses_drive(t, duplicate[:])
+    testing.expect_value(t, duplicate_err, Transport_Error.Parse_Error)
+}
+
+@(test)
 test_responses_stream_maps_incomplete_to_max_tokens :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 

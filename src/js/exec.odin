@@ -46,6 +46,7 @@ exec_module :: proc() -> Module {
 Exec_Job :: struct {
     task:      offload.Task(Exec_Job),
     host:      ^Host,
+    cancel:    ^Cancel_Scope,
     command:   string,
     cwd:       string,
     timeout:   time.Duration,
@@ -136,7 +137,31 @@ exec_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
 @(private = "file")
 exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qjs.Value) -> (qjs.Value, bool) {
     if argc < 2 || !qjs.is_object(argv[1]) {
+        if job.host.cancel_enforced {
+            return qjs.throw_type_error(ctx, "yuke:exec requires options with a run cancellation signal"), false
+        }
+
         return qjs.undefined(), true
+    }
+
+    signal := qjs.get_property(ctx, argv[1], "signal")
+    defer qjs.free_value(ctx, signal)
+
+    if qjs.is_exception(signal) {
+        return signal, false
+    }
+
+    if qjs.is_undefined(signal) || qjs.is_null(signal) {
+        if job.host.cancel_enforced {
+            return qjs.throw_type_error(ctx, "a run cancellation signal is required"), false
+        }
+    } else {
+        cancel, thrown, ok := cancel_value(ctx, signal)
+        if !ok {
+            return thrown, false
+        }
+        job.cancel = cancel
+        cancel_retain(cancel)
     }
 
     cwd := qjs.get_property(ctx, argv[1], "cwd")
@@ -182,6 +207,10 @@ exec_job_run :: proc(job: ^Exec_Job) {
     assert(job.timeout > 0, "a command carries a deadline")
 
     defer job.done = true
+
+    if exec_job_cancelled(job) {
+        return
+    }
 
     stdout_r, stdout_w, out_err := os.pipe()
     if out_err != nil {
@@ -295,7 +324,7 @@ exec_drain :: proc(job: ^Exec_Job, stdout_r: ^os.File, stderr_r: ^os.File, deadl
 
         // Draining the pool joins this worker, so a shutdown must not wait out a command
         // that still has ten minutes of its deadline left.
-        if cancelled(job.host) {
+        if exec_job_cancelled(job) {
             return .Cancelled
         }
 
@@ -365,8 +394,10 @@ exec_job_done :: proc(job: ^Exec_Job) {
     defer qjs.free_value(ctx, job.resolve)
     defer qjs.free_value(ctx, job.reject)
 
-    settle := job.resolve if job.started else job.reject
-    value := exec_value(ctx, job) if job.started else qjs.new_string(ctx, "command could not be started")
+    canceled := exec_job_cancelled(job)
+    settle := job.resolve if job.started && !canceled else job.reject
+    message := "operation canceled" if canceled else "command could not be started"
+    value := exec_value(ctx, job) if job.started && !canceled else qjs.new_string(ctx, message)
 
     defer qjs.free_value(ctx, value)
 
@@ -394,7 +425,15 @@ exec_job_free :: proc(job: ^Exec_Job) {
     assert(job.host != nil, "host op cleanup lost its host")
 
     allocator := job.host.allocator
+    cancel_release(job.cancel)
     mem.dynamic_arena_destroy(&job.arena)
 
     free(job, allocator)
+}
+
+@(private = "file")
+exec_job_cancelled :: proc(job: ^Exec_Job) -> bool {
+    assert(job != nil && job.host != nil, "an exec cancellation check needs its job")
+
+    return cancelled(job.host) || cancelled_scope(job.cancel)
 }

@@ -146,7 +146,7 @@ anthropic_request_body :: proc(
         writer = writer,
     }
     for message in request.messages {
-        anthropic_write_message(&messages, message, request.model) or_return
+        anthropic_write_message(&messages, message, request.provenance_model) or_return
     }
 
     if messages.message_count == 0 {
@@ -167,6 +167,10 @@ anthropic_request_validate :: proc(
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
     if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) {
+        return .Invalid_Request
+    }
+
+    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) {
         return .Invalid_Request
     }
 
@@ -461,11 +465,11 @@ anthropic_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition) -> Tr
 anthropic_write_message :: proc(
     out: ^Anthropic_Message_Writer,
     message: wire.Message,
-    model: string,
+    provenance_model: string,
 ) -> Transport_Error {
     assert(out != nil, "Anthropic message serialization needs output state")
     assert(out.writer.procedure != nil, "Anthropic message output needs a writer")
-    assert(len(model) > 0, "Anthropic message serialization needs a resolved model")
+    assert(len(provenance_model) > 0, "Anthropic message serialization needs a public model")
 
     switch value in message {
     case wire.User_Message:
@@ -489,7 +493,7 @@ anthropic_write_message :: proc(
         // All-or-nothing: the provider rejects a partially dropped sequence.
         replay_thinking := false
         if provenance, present := value.provenance.?; present {
-            replay_thinking = provenance.protocol == .Anthropic_Messages && provenance.model == model
+            replay_thinking = provenance.protocol == .Anthropic_Messages && provenance.model == provenance_model
         }
 
         if replay_thinking {
@@ -689,23 +693,8 @@ anthropic_write_tool_result_block :: proc(out: ^Anthropic_Message_Writer, tool: 
     call_id, has_call_id := tool.call_id.?
     assert(has_call_id && len(call_id) > 0, "validated Anthropic tool result has an id")
 
-    content: string
-    is_error := false
-    switch state in tool.state {
-    case wire.Tool_State_Completed:
-        content = state.output
-
-    case wire.Tool_State_Error:
-        content = state.message
-        is_error = true
-
-    case wire.Tool_State_Denied:
-        content = state.reason
-
-    case wire.Tool_State_Canceled:
-        content = "canceled"
-
-    case wire.Tool_State_Pending, wire.Tool_State_Waiting_Permission, wire.Tool_State_Running:
+    result, terminal := tool_result(tool.state)
+    if !terminal {
         return .Invalid_Request
     }
 
@@ -713,8 +702,8 @@ anthropic_write_tool_result_block :: proc(out: ^Anthropic_Message_Writer, tool: 
     json_write(out.writer, `{"type":"tool_result","tool_use_id":`) or_return
     json_write_string(out.writer, call_id) or_return
     json_write(out.writer, `,"content":`) or_return
-    json_write_string(out.writer, content) or_return
-    if is_error {
+    json_write_string(out.writer, result.content) or_return
+    if result.is_error {
         json_write(out.writer, `,"is_error":true`) or_return
     }
 

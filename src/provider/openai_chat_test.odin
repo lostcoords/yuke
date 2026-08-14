@@ -289,6 +289,27 @@ test_openai_stream_assembles_parallel_tool_calls_by_index :: proc(t: ^testing.T)
 }
 
 @(test)
+test_openai_stream_rejects_missing_or_duplicate_tool_ids :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    cases := [?][]string {
+        {
+            `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"first","arguments":"{}"}}]}}]}`,
+            `[DONE]`,
+        },
+        {
+            `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"same","function":{"name":"first","arguments":"{}"}},{"index":1,"id":"same","function":{"name":"second","arguments":"{}"}}]}}]}`,
+            `[DONE]`,
+        },
+    }
+
+    for payloads in cases {
+        _, err := test_openai_drive(t, payloads)
+        testing.expect_value(t, err, Transport_Error.Parse_Error)
+    }
+}
+
+@(test)
 test_openai_stream_finishes_without_done_sentinel :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 

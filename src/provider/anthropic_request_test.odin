@@ -31,7 +31,12 @@ test_anthropic_assistant_message :: proc(
 
 @(private = "file")
 test_anthropic_request :: proc(messages: []wire.Message) -> Request {
-    return Request{model = "claude-test", messages = messages, max_output_tokens = 4096}
+    return Request {
+        model = "claude-test",
+        provenance_model = "claude-test",
+        messages = messages,
+        max_output_tokens = 4096,
+    }
 }
 
 @(private = "file")

@@ -19,13 +19,17 @@ run_tools_begin :: proc(run: ^Run) -> bool {
     assert(run != nil, "starting tools needs a run")
     assert(run.daemon != nil, "starting tools needs daemon state")
     assert(run.op == nil, "tools start after the provider turn releases its op")
-    assert(run.tools_open == 0, "a round starts with no tool outstanding")
+    assert(run_tools_open(run) == 0, "a round starts with no tool outstanding")
     assert(!run.tools_joining, "a round starts before its tool join")
 
     d := run.daemon
     now := now_ms()
 
     for &block, index in run.blocks {
+        if run.fault != .None {
+            break
+        }
+
         if block.kind != .Tool || block.tool_state != nil {
             continue
         }
@@ -46,7 +50,7 @@ run_tools_begin :: proc(run: ^Run) -> bool {
 
     // A promise can already be settled without queuing a microtask.
     run_tools_poll(run)
-    if run.tools_open == 0 {
+    if run_tools_open(run) == 0 {
         return false
     }
 
@@ -85,7 +89,8 @@ run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Too
         return
     }
 
-    argv := [1]qjs.Value{args}
+    argv := [2]qjs.Value{args, run.cancel_signal}
+    js.cancel_enforce(&run.daemon.js)
     result := js.call_value(&run.daemon.js, tool.handler, qjs.undefined(), argv[:])
     qjs.free_value(ctx, args)
 
@@ -112,15 +117,12 @@ run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Too
 
     block.tool_promise = result
     block.tool_awaiting = true
-    run.tools_open += 1
 }
 
 // Settle whatever finished since the last drain.
 run_tools_poll :: proc(run: ^Run) {
     assert(run != nil, "polling tools needs a run")
     assert(run.daemon != nil, "polling tools needs daemon state")
-    assert(run.tools_open >= 0, "the open tool count is non-negative")
-
     ctx := run.daemon.js.ctx
     assert(ctx != nil, "polling tools needs a live context")
 
@@ -155,26 +157,13 @@ run_tools_poll :: proc(run: ^Run) {
         qjs.free_value(ctx, block.tool_promise)
         block.tool_promise = {}
         block.tool_awaiting = false
-        run.tools_open -= 1
-        assert(run.tools_open >= 0, "settling a tool cannot underflow the open count")
     }
-
-    awaiting := 0
-    for &block in run.blocks {
-        if block.tool_awaiting {
-            awaiting += 1
-        }
-    }
-
-    assert(awaiting == run.tools_open, "the open tool count matches the promises the run owns")
 }
 
 // Release any promise a canceled or failed run still owns.
 run_tools_release :: proc(run: ^Run) {
     assert(run != nil, "releasing tools needs a run")
     assert(run.daemon != nil, "releasing tools needs daemon state")
-    assert(run.tools_open >= 0, "the released tool count is non-negative")
-
     ctx := run.daemon.js.ctx
     assert(ctx != nil, "releasing tools needs a live context")
 
@@ -188,8 +177,20 @@ run_tools_release :: proc(run: ^Run) {
         block.tool_awaiting = false
     }
 
-    run.tools_open = 0
     run.tools_joining = false
+}
+
+run_tools_open :: proc(run: ^Run) -> int {
+    assert(run != nil, "counting open tools needs a run")
+
+    count := 0
+    for &block in run.blocks {
+        if block.tool_awaiting {
+            count += 1
+        }
+    }
+
+    return count
 }
 
 // Record a terminal state and announce it. The duration is filled here so every terminal
@@ -202,6 +203,30 @@ run_tool_settle :: proc(
     state: wire.Tool_State,
     duration_ms: Maybe(u64) = nil,
 ) {
+    if run.fault != .None {
+        return
+    }
+
+    bytes := 0
+    switch value in state {
+    case wire.Tool_State_Completed:
+        bytes = len(value.output)
+
+    case wire.Tool_State_Error:
+        bytes = len(value.message)
+
+    case wire.Tool_State_Pending,
+         wire.Tool_State_Waiting_Permission,
+         wire.Tool_State_Running,
+         wire.Tool_State_Denied,
+         wire.Tool_State_Canceled:
+        assert(false, "settling a tool needs a terminal execution state")
+    }
+
+    if !run_string_add(run, bytes) {
+        return
+    }
+
     elapsed: u64
 
     if duration, supplied := duration_ms.?; supplied {
@@ -337,8 +362,13 @@ run_tool_clone :: proc(run: ^Run, value: qjs.Value) -> string {
     defer qjs.free_string(ctx, text)
 
     cloned, err := strings.clone(text, run.round_allocator)
+    if err != nil {
+        run.fault = .Resource
 
-    return cloned if err == nil else ""
+        return ""
+    }
+
+    return cloned
 }
 
 // Loop thread, after every drain: settle what finished and commit a round that is done. The
@@ -349,7 +379,7 @@ js_on_drain :: proc(user: rawptr) {
 
     for _, live in d.sessions {
         run := live.run
-        if run != nil && run.tools_open > 0 {
+        if run != nil && run_tools_open(run) > 0 {
             run_tools_poll(run)
         }
     }
@@ -359,7 +389,7 @@ js_on_drain :: proc(user: rawptr) {
 
         for _, live in d.sessions {
             run := live.run
-            if run != nil && run.tools_joining && run.tools_open == 0 {
+            if run != nil && run.tools_joining && run_tools_open(run) == 0 {
                 joined = run
 
                 break
@@ -371,6 +401,10 @@ js_on_drain :: proc(user: rawptr) {
         }
 
         joined.tools_joining = false
-        run_commit(joined)
+        if joined.fault != .None {
+            run_fail_fault(joined)
+        } else {
+            run_commit(joined)
+        }
     }
 }

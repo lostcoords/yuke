@@ -28,6 +28,7 @@ run_request_build :: proc(
 
     turn := request
     turn.model = model.upstream_id
+    turn.provenance_model = string(model.info.id)
     turn.max_output_tokens = model.info.max_output_tokens
 
     // A model that rejects sampling controls never receives one, whatever the caller asked.

@@ -73,31 +73,35 @@ Options :: struct {
 
 // One QuickJS runtime+context via opaques (not globals). Drain the pool before destroy.
 Host :: struct {
-    rt:          ^qjs.Runtime,
-    ctx:         ^qjs.Context,
+    rt:              ^qjs.Runtime,
+    ctx:             ^qjs.Context,
     // Owned canonical base for relative paths; empty requires absolute ones.
-    base:        string,
-    pool:        ^offload.Pool,
-    exec_pool:   ^offload.Pool,
-    user:        rawptr,
-    report:      Report,
-    on_drain:    On_Drain,
-    resolve:     Resolve,
+    base:            string,
+    pool:            ^offload.Pool,
+    exec_pool:       ^offload.Pool,
+    user:            rawptr,
+    report:          Report,
+    on_drain:        On_Drain,
+    resolve:         Resolve,
     // Owned copy of the caller's module set.
-    modules:     []Module,
-    deadline:    time.Duration,
+    modules:         []Module,
+    deadline:        time.Duration,
     // Zero outside an entry; interrupt is a no-op then.
-    deadline_at: time.Time,
+    deadline_at:     time.Time,
     // Latched when the interrupt handler fired (vs ordinary exception).
-    interrupted: bool,
+    interrupted:     bool,
     // In-flight host ops owning live promises; must be 0 before destroy.
-    pending:     int,
+    pending:         int,
     // False while abandoning a failed eval so settled continuations cannot submit new host ops.
-    ops_open:    bool,
+    ops_open:        bool,
     // Set on the loop thread by `ops_close`, read by workers. Long-running work stops early
     // rather than making the embedder's drain wait it out.
-    cancelled:   bool,
-    allocator:   mem.Allocator,
+    cancelled:       bool,
+    // Native class for per-run cancellation signals.
+    cancel_class:    qjs.Class_ID,
+    // Latched by the daemon's first tool call: every later host op carries its run signal.
+    cancel_enforced: bool,
+    allocator:       mem.Allocator,
 }
 
 // Bring up runtime, limits, and loader. The filesystem modules need a pool.
@@ -164,6 +168,17 @@ init :: proc(h: ^Host, options: Options) -> Error {
     qjs.set_interrupt_handler(h.rt, interrupt, h)
     qjs.set_module_loader(h.rt, nil, module_loader, h)
 
+    cancel_class, cancel_ok := qjs.class_register(
+        h.rt,
+        qjs.Class_Def{class_name = "YukeCancelSignal", finalizer = cancel_signal_finalize},
+    )
+    if !cancel_ok {
+        destroy(h)
+
+        return .Out_Of_Memory
+    }
+    h.cancel_class = cancel_class
+
     h.ctx = qjs.context_new(h.rt)
     if h.ctx == nil {
         destroy(h)
@@ -204,6 +219,8 @@ destroy :: proc(h: ^Host) {
     h.pool = nil
     h.exec_pool = nil
     h.user = nil
+    h.cancel_class = qjs.INVALID_CLASS_ID
+    h.cancel_enforced = false
 }
 
 // Permanently refuse new host operations while allowing submitted ones to finish. Work
