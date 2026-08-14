@@ -1402,7 +1402,7 @@ test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
 
     failed, is_error := tool.state.(wire.Tool_State_Error)
     testing.expect(t, is_error, "an unregistered tool cannot run")
-    testing.expect_value(t, failed.message, "unknown tool")
+    testing.expect_value(t, failed.error, "unknown tool")
     testing.expect_value(t, failed.duration_ms, u64(0))
 
     // Announced once, at the terminal that names the tool, rather than at the block start
@@ -1911,7 +1911,7 @@ test_session_run_joins_concurrent_tool_calls :: proc(t: ^testing.T) {
     if testing.expect(t, second_is_tool, "the second joined part is a tool") {
         failed, is_error := second.state.(wire.Tool_State_Error)
         if testing.expect(t, is_error, "the second joined call failed") {
-            testing.expect_value(t, failed.message, "Error: two failed")
+            testing.expect_value(t, failed.error, "Error: two failed")
         }
     }
 }
@@ -1968,7 +1968,7 @@ test_session_run_reports_a_throwing_tool_as_an_error :: proc(t: ^testing.T) {
 
     failed, is_error := tool.state.(wire.Tool_State_Error)
     testing.expect(t, is_error, "a throwing handler fails its call")
-    testing.expect_value(t, failed.message, "Error: no station")
+    testing.expect_value(t, failed.error, "Error: no station")
 }
 
 // A turn waiting on a handler is still cancelable. It owns no provider op by then, so the

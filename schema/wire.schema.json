@@ -8436,7 +8436,7 @@
               "minimum": 0,
               "type": "integer"
             },
-            "message": {
+            "error": {
               "description": "Model-facing error text.",
               "type": "string"
             },
@@ -8455,7 +8455,7 @@
           },
           "required": [
             "type",
-            "message",
+            "error",
             "duration_ms"
           ],
           "title": "Tool_State_Error",
@@ -8615,7 +8615,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "message": {
+        "error": {
           "description": "Model-facing error text.",
           "type": "string"
         },
@@ -8629,7 +8629,7 @@
         }
       },
       "required": [
-        "message",
+        "error",
         "duration_ms"
       ],
       "type": "object"

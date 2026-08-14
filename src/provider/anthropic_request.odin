@@ -317,7 +317,7 @@ anthropic_message_supported :: proc(message: wire.Message) -> bool {
                     }
 
                 case wire.Tool_State_Error:
-                    if !utf8.valid_string(state.message) {
+                    if !utf8.valid_string(state.error) {
                         return false
                     }
 

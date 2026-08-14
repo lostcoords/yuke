@@ -145,7 +145,7 @@ test_anthropic_request_preserves_block_order_and_puts_results_first :: proc(t: ^
             call_id = "call_bad",
             name = "search",
             arguments = `{}`,
-            state = wire.Tool_State_Error{message = "boom", duration_ms = 1},
+            state = wire.Tool_State_Error{error = "boom", duration_ms = 1},
         },
         wire.Tool_Part {
             id = 5,

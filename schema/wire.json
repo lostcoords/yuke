@@ -4838,7 +4838,7 @@
       "doc": "Call failed.",
       "fields": [
         {
-          "name": "message",
+          "name": "error",
           "type": "string",
           "doc": "Model-facing error text.",
           "presence": "required",

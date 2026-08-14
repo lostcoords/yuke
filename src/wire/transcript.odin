@@ -368,7 +368,7 @@ Tool_State_Completed :: struct {
 Tool_State_Error :: struct {
     // @unbounded
     // Model-facing error text.
-    message:     string,
+    error:       string,
 
     // @bounded LIMITS.max_views_per_tool
     // Display-only rendering hints.
@@ -434,7 +434,7 @@ tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
 
     case Tool_State_Error:
         field_string(e, "type", "error")
-        field_string(e, "error", v.message)
+        field_string(e, "error", v.error)
 
         if views, ok := v.view.?; ok {
             _emit_view_slice(e, "view", views)
@@ -516,11 +516,7 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
             view = view_clone_slice(views, allocator)
         }
 
-        return Tool_State_Error {
-            message = strings.clone(v.message, allocator),
-            view = view,
-            duration_ms = v.duration_ms,
-        }
+        return Tool_State_Error{error = strings.clone(v.error, allocator), view = view, duration_ms = v.duration_ms}
 
     case Tool_State_Denied:
         return Tool_State_Denied{reason = strings.clone(v.reason, allocator), denied_by = v.denied_by}
@@ -1191,7 +1187,7 @@ _tool_state_string_bytes :: proc(self: Tool_State) -> int {
         return total
 
     case Tool_State_Error:
-        total := len(v.message)
+        total := len(v.error)
 
         if views, ok := v.view.?; ok {
             for view in views {
@@ -1681,7 +1677,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
             switch k {
             case "error":
-                st.message = dec_string(d) or_return
+                st.error = dec_string(d) or_return
                 seen += {.Msg}
 
             case "view":

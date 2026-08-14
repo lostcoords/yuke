@@ -37,7 +37,7 @@ run_tools_begin :: proc(run: ^Run) -> bool {
         tool := tools_find(d, block.name)
 
         if tool == nil {
-            run_tool_settle(run, &block, index, wire.Tool_State_Error{message = "unknown tool"}, 0)
+            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = "unknown tool"}, 0)
 
             continue
         }
@@ -150,7 +150,7 @@ run_tools_poll :: proc(run: ^Run) {
                 run_tool_raise(run, &block, index, "tool output was not JSON-serializable")
             }
         } else {
-            run_tool_settle(run, &block, index, wire.Tool_State_Error{message = run_tool_message(run, value)})
+            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = run_tool_message(run, value)})
         }
 
         qjs.free_value(ctx, value)
@@ -213,7 +213,7 @@ run_tool_settle :: proc(
         bytes = len(value.output)
 
     case wire.Tool_State_Error:
-        bytes = len(value.message)
+        bytes = len(value.error)
 
     case wire.Tool_State_Pending,
          wire.Tool_State_Waiting_Permission,
@@ -277,7 +277,7 @@ run_tool_state_set :: proc(run: ^Run, block: ^Run_Block, index: int, state: wire
 
 @(private = "file")
 run_tool_raise :: proc(run: ^Run, block: ^Run_Block, index: int, message: string) {
-    run_tool_settle(run, block, index, wire.Tool_State_Error{message = message})
+    run_tool_settle(run, block, index, wire.Tool_State_Error{error = message})
 }
 
 // The pending exception as model-facing text. Clears it, so a later entry does not inherit it.

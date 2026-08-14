@@ -225,6 +225,31 @@ test_assistant_part_tool_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_tool_error_state_roundtrip :: proc(t: ^testing.T) {
+    context.allocator = context.temp_allocator
+    defer free_all(context.temp_allocator)
+
+    input := `{"type":"error","error":"boom","duration_ms":7}`
+    v := decoder_init(input)
+
+    state, derr := tool_state_from_reader(&v)
+    testing.expect(t, derr == .None, "decode should succeed")
+    failed, ok := state.(Tool_State_Error)
+    testing.expect(t, ok, "state should be error")
+    testing.expect_value(t, failed.error, "boom")
+
+    e: Emitter
+    emitter_init(&e)
+    defer emitter_destroy(&e)
+    tool_state_emit(&e, state)
+    testing.expect_value(t, to_string(&e), input)
+
+    stale := decoder_init(`{"type":"error","message":"boom","duration_ms":7}`)
+    _, stale_err := tool_state_from_reader(&stale)
+    testing.expect(t, stale_err == .Mismatched_Payload, "the schema must not advertise a rejected member")
+}
+
+@(test)
 test_assistant_part_sibling_field_rejected :: proc(t: ^testing.T) {
     v := decoder_init(`{"type":"text","id":0,"text":"hi","name":"x"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
@@ -309,7 +334,7 @@ test_tool_part_permission_lifecycle :: proc(t: ^testing.T) {
     testing.expect(t, tool_part_validate(part) == .None, "decided completed must validate")
 
     part.state = Tool_State_Error {
-        message     = "boom",
+        error       = "boom",
         duration_ms = 1,
     }
     part.permission_state = offered

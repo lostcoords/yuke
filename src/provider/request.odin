@@ -59,7 +59,7 @@ tool_result :: proc(state: wire.Tool_State) -> (Tool_Result, bool) {
         return {content = value.output}, true
 
     case wire.Tool_State_Error:
-        return {content = value.message, is_error = true}, true
+        return {content = value.error, is_error = true}, true
 
     case wire.Tool_State_Denied:
         return {content = value.reason}, true
