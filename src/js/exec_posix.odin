@@ -85,7 +85,7 @@ exec_spawn :: proc(job: ^Exec_Job, stdout_w: ^os.File, stderr_w: ^os.File) -> (E
     }
 
     process: Exec_Process
-    if posix.posix_spawn(&process.pid, EXEC_SHELL, &actions, &attr, raw_data(args[:]), environ) != .NONE {
+    if posix.posix_spawn(&process.pid, EXEC_SHELL, &actions, &attr, raw_data(args[:]), posix.environ) != .NONE {
         return {}, false
     }
 
@@ -151,8 +151,6 @@ when ODIN_OS == .Darwin {
 // no constructors there.
 @(private = "file")
 foreign libc_ {
-    environ: [^]cstring
-
     posix_spawnattr_init :: proc(attr: ^Spawn_Attr) -> posix.Errno ---
     posix_spawnattr_destroy :: proc(attr: ^Spawn_Attr) -> posix.Errno ---
     posix_spawnattr_setflags :: proc(attr: ^Spawn_Attr, flags: c.short) -> posix.Errno ---
