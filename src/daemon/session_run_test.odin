@@ -96,6 +96,25 @@ data: {"type":"message_stop"}
 
 `
 
+// One tool call and nothing else. The block start names the tool, the arguments arrive as
+// JSON fragments, and the terminal completes the call.
+@(private = "file")
+RUN_FAKE_TOOL_STREAM :: `data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Tokyo\"}"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}
+
+data: {"type":"message_stop"}
+
+`
+
 // A loopback provider that answers one request with `RUN_FAKE_STREAM`. The daemon binds it
 // with no credential: `run_connection_build` exempts a loopback endpoint, which is what
 // makes an offline end-to-end turn possible at all.
@@ -1038,4 +1057,66 @@ test_session_run_is_concurrent_across_sessions :: proc(t: ^testing.T) {
     client.client_destroy(&beta_client)
     client.replica_destroy(&second.replica)
     run_fake_stop(t, &fake)
+}
+
+// A tool call enters the transcript as a pending part, announced live and committed with the
+// turn. Nothing executes it yet, which is what `pending` says.
+@(test)
+test_session_run_commits_a_tool_call_as_a_pending_part :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    if !testing.expect_value(t, len(obs.assistants), 1) {
+        return
+    }
+
+    message := obs.assistants[0]
+    testing.expect_value(t, message.finish, wire.Stop_Reason.Tool_Calls)
+
+    if !testing.expect_value(t, len(message.content), 1) {
+        return
+    }
+
+    tool, is_tool := message.content[0].(wire.Tool_Part)
+    if !testing.expect(t, is_tool, "the tool block commits as a tool part") {
+        return
+    }
+
+    testing.expect_value(t, tool.name, "get_weather")
+    testing.expect_value(t, tool.arguments, `{"city":"Tokyo"}`)
+
+    call_id, has_call_id := tool.call_id.?
+    testing.expect(t, has_call_id, "the part carries the provider's call id")
+    testing.expect_value(t, call_id, "toolu_1")
+
+    _, pending := tool.state.(wire.Tool_State_Pending)
+    testing.expect(t, pending, "nothing executes the call yet")
+
+    // Announced once, at the terminal that names the tool, rather than at the block start
+    // where there is nothing to render.
+    added := 0
+    for name in obs.names {
+        if name == .Message_Part_Added {
+            added += 1
+        }
+    }
+
+    testing.expect_value(t, added, 1)
 }

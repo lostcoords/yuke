@@ -47,12 +47,24 @@ Run_Start_Error :: enum {
 Run_Block :: struct {
     block_id:  provider.Stream_Block_Id,
     kind:      provider.Stream_Block_Kind,
+
+    // The block's accumulated content: assistant text, reasoning, or a tool call's argument
+    // JSON. A tool block fills this once at its terminal rather than from deltas.
     text:      strings.Builder,
     signature: string,
+
+    // Tool blocks only. The provider names the tool in the terminal, never at the start.
+    call_id:   string,
+    name:      string,
 
     // Set by this block's terminal. A closed reasoning block is no longer the live phase.
     closed:    bool,
 }
+
+// What `Tool_Part.name` admits. A provider that exceeds it is not trusted to have named a
+// tool we offered, but the part still has to be valid: `pump` asserts that.
+@(private = "file")
+TOOL_NAME_WIRE_MAX :: 128
 
 // A session's live engine state: the turn in flight and the inputs waiting behind it.
 // One turn at a time per session, because two turns writing one transcript would
@@ -328,22 +340,22 @@ run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
     }
 }
 
-// Open one block as the next part ordinal. A tool block is dropped: this slice advertises
-// no tools, so a provider that sends one anyway has nothing the transcript can render.
+// Open one block as the next part ordinal.
 @(private = "file")
 run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
-    if started.kind == .Tool {
-        log.warnf("daemon: session %v dropped an unsolicited tool block", run.session)
-
-        return
-    }
-
     append(
         &run.blocks,
         Run_Block{block_id = started.block_id, kind = started.kind, text = strings.builder_make(run.allocator)},
     )
 
     index := len(run.blocks) - 1
+
+    // A tool block announces at its terminal instead: the provider names the tool there, so
+    // until then there is no part a client could render.
+    if started.kind == .Tool {
+        return
+    }
+
     added := wire.Message_Part_Added_Data {
         session_id = run.session,
         message_id = run.message_id,
@@ -381,7 +393,7 @@ run_block_fold :: proc(run: ^Run, block_id: provider.Stream_Block_Id, text: stri
 // Close one block, keeping the terminal metadata only the reasoning arms carry.
 @(private = "file")
 run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
-    block, _ := run_block_find(run, stopped.block_id)
+    block, index := run_block_find(run, stopped.block_id)
     if block == nil {
         return
     }
@@ -400,7 +412,45 @@ run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
 
     case provider.Stream_Redacted_Reasoning_Block:
         block.signature = strings.clone(result.data, run.allocator)
+
+    case provider.Stream_Tool_Block:
+        run_tool_adopt(run, block, index, result.call)
     }
+}
+
+// Adopt the completed call and announce its part. Nothing executes it yet: the part enters
+// the transcript pending, which is what a client renders while a decision is outstanding.
+@(private = "file")
+run_tool_adopt :: proc(run: ^Run, block: ^Run_Block, index: int, call: provider.Tool_Call) {
+    name := call.name
+
+    if len(name) > TOOL_NAME_WIRE_MAX {
+        log.warnf("daemon: session %v truncated a %d byte tool name", run.session, len(name))
+        name = name[:utf8_floor(name, TOOL_NAME_WIRE_MAX)]
+    }
+
+    block.name = strings.clone(name, run.allocator)
+    block.call_id = strings.clone(call.id, run.allocator)
+    strings.write_string(&block.text, call.arguments)
+
+    added := wire.Message_Part_Added_Data {
+        session_id = run.session,
+        message_id = run.message_id,
+        part       = run_part_build(block, index),
+    }
+    _ = broadcast(run.daemon, added)
+}
+
+// The largest length at or below `limit` that does not split a UTF-8 sequence.
+@(private = "file")
+utf8_floor :: proc(text: string, limit: int) -> int {
+    end := min(limit, len(text))
+
+    for end > 0 && end < len(text) && text[end] & 0xC0 == 0x80 {
+        end -= 1
+    }
+
+    return end
 }
 
 // The open block `block_id` names and its part ordinal, or nil. Blocks are few and
@@ -429,6 +479,21 @@ run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
 
     case .Redacted_Reasoning:
         return wire.Redacted_Reasoning_Part{id = id, data = block.signature}
+
+    case .Tool:
+        call_id: Maybe(string)
+
+        if block.call_id != "" {
+            call_id = block.call_id
+        }
+
+        return wire.Tool_Part {
+            id = id,
+            call_id = call_id,
+            name = block.name,
+            arguments = text,
+            state = wire.Tool_State_Pending{},
+        }
     }
 
     return wire.Text_Part{id = id, text = text}
