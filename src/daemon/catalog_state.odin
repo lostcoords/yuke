@@ -1,50 +1,46 @@
 package daemon
 
-import "core:mem"
 import "core:mem/virtual"
-import "core:slice"
-import "core:strings"
 
+import catalog "src:daemon/catalog"
 import store "src:daemon/store"
 import wire "src:wire"
 
-// Imported providers are capped per source and each resolver issue names a distinct one,
-// so the skipped list always fits its wire bound; keep the two caps coupled.
-#assert(store.CATALOG_PROVIDERS_PER_SOURCE_MAX <= wire.LIMITS.max_skipped_providers)
-
-// The daemon's current catalog identity: only the revision and the small health block,
-// never the full model list (re-derived into request scratch on demand).
+// The persisted rows, the revision covering them, and the health block. Held rather than
+// re-derived: only `catalog.refresh` writes it, so it is immutable between revisions.
 Daemon_Catalog :: struct {
-    rev:    wire.Catalog_Rev,
-    health: wire.Catalog_Health,
+    rev:      wire.Catalog_Rev,
+    health:   wire.Catalog_Health,
+    snapshot: store.Catalog,
 }
 
-// Resolve the persisted catalog, recompute the revision, and rebuild the owned health
-// block. Idempotent: previous health is freed first; only `rev` and `health` persist.
+// Read the catalog and recompute the revision. The old snapshot is released only once the
+// replacement is in hand, so a failed reload keeps serving rather than emptying it.
 catalog_state_load :: proc(d: ^Daemon) -> store.Error {
     assert(d != nil, "catalog state load needs daemon state")
     assert(d.store != nil, "catalog state load needs an open store")
 
+    loaded := store.catalog_load(d.store, d.allocator) or_return
+
     scratch: virtual.Arena
     if virtual.arena_init_growing(&scratch) != nil {
+        store.catalog_destroy(&loaded)
+
         return .Alloc_Failed
     }
+
     defer virtual.arena_destroy(&scratch)
-    sa := virtual.arena_allocator(&scratch)
 
-    data := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, sa) or_return
-    effective := store.catalog_resolve(data, sa) or_return
-
-    models, ok := catalog_models_view(effective, sa)
+    models, ok := catalog_models_view(loaded, virtual.arena_allocator(&scratch))
     if !ok {
+        store.catalog_destroy(&loaded)
+
         return .Alloc_Failed
     }
-
-    health := catalog_health_build(effective.issues[:], d.allocator) or_return
 
     catalog_state_destroy(d)
-    d.catalog.health = health
-    d.catalog.rev = catalog_rev(models, health)
+    d.catalog.snapshot = loaded
+    d.catalog.rev = catalog_rev(models, d.catalog.health)
 
     return nil
 }
@@ -52,94 +48,25 @@ catalog_state_load :: proc(d: ^Daemon) -> store.Error {
 catalog_state_destroy :: proc(d: ^Daemon) {
     assert(d != nil, "catalog state teardown needs daemon state")
 
-    catalog_health_destroy(&d.catalog.health, d.allocator)
+    if d.catalog.snapshot.allocator.procedure != nil {
+        store.catalog_destroy(&d.catalog.snapshot)
+    }
+
     d.catalog.rev = {}
 }
 
-// Load and resolve the current persisted catalog into `allocator`. Raw rows and the
-// effective catalog both live there; borrowed views are valid until it is reset.
-catalog_resolve_current :: proc(
-    d: ^Daemon,
-    allocator: mem.Allocator,
-) -> (
-    effective: store.Effective_Catalog,
-    err: store.Error,
-) {
-    assert(d != nil, "catalog resolve needs daemon state")
-    assert(d.store != nil, "catalog resolve needs an open store")
+// The model a public id names, or nil. Ids are unique across the catalog, so the first
+// match is the only one; the pointer borrows the snapshot until a refresh replaces it.
+catalog_model_find :: proc(d: ^Daemon, public_id: string) -> ^catalog.Model {
+    assert(d != nil, "a model lookup needs daemon state")
 
-    data := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, allocator) or_return
-    defer store.catalog_data_destroy(&data)
-
-    // The resolver clones everything it keeps, so the raw rows are freed here and the
-    // effective catalog is independent of them.
-    return store.catalog_resolve(data, allocator)
-}
-
-// Build the owned health block from resolver issues. `skipped` is sorted by provider so
-// the block — and the revision that covers it — is deterministic.
-catalog_health_build :: proc(
-    issues: []store.Effective_Issue,
-    allocator: mem.Allocator,
-) -> (
-    health: wire.Catalog_Health,
-    err: store.Error,
-) {
-    assert(len(issues) <= wire.LIMITS.max_skipped_providers, "resolver issues fit the skipped-provider bound")
-
-    defer if err != nil {
-        catalog_health_destroy(&health, allocator)
-    }
-
-    if len(issues) > 0 {
-        skipped, make_err := make([]wire.Skipped_Provider, len(issues), allocator)
-        if make_err != nil {
-            return health, .Alloc_Failed
-        }
-        health.skipped = skipped
-
-        for issue, index in issues {
-            name, clone_err := strings.clone(string(issue.provider_id), allocator)
-            if clone_err != nil {
-                return health, .Alloc_Failed
-            }
-
-            health.skipped[index] = wire.Skipped_Provider {
-                provider = name,
-                reason = wire.Skip_Reason_Invalid_Config{message = catalog_skip_message(issue.error)},
+    for &item in d.catalog.snapshot.providers {
+        for &model in item.models {
+            if string(model.info.id) == public_id {
+                return &model
             }
         }
-
-        slice.sort_by(health.skipped, proc(a, b: wire.Skipped_Provider) -> bool {
-            return a.provider < b.provider
-        })
     }
 
-    return health, nil
-}
-
-// Static description for a resolver skip. Kept static so the health block owns no skip
-// message and `catalog_health_destroy` frees only the cloned provider name.
-@(private)
-catalog_skip_message :: proc(reason: store.Effective_Error) -> string {
-    switch reason {
-    case .Collision:
-        return "a custom model id collides with an imported model"
-
-    case .Unmatched_Override:
-        return "an override matches no imported model"
-    }
-
-    return ""
-}
-
-catalog_health_destroy :: proc(health: ^wire.Catalog_Health, allocator: mem.Allocator) {
-    assert(health != nil, "catalog health teardown needs a health block")
-
-    for skipped in health.skipped {
-        delete(skipped.provider, allocator)
-    }
-    delete(health.skipped, allocator)
-
-    health^ = {}
+    return nil
 }

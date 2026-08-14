@@ -24,10 +24,7 @@ test_catalog_refresh_apply_imports_and_moves_rev :: proc(t: ^testing.T) {
     testing.expect(t, changed, "importing a provider moves the revision")
     testing.expect(t, d.catalog.rev != empty_rev, "the held revision moved")
 
-    effective, resolve_err := catalog_resolve_current(&d, context.allocator)
-    testing.expect_value(t, resolve_err, nil)
-    defer store.effective_catalog_destroy(&effective)
-    view, ok := catalog_models_view(effective, context.allocator)
+    view, ok := catalog_models_view(d.catalog.snapshot, context.allocator)
     defer delete(view)
     testing.expect(t, ok, "the view allocates")
     testing.expect_value(t, len(view), 1)
@@ -59,13 +56,15 @@ test_catalog_refresh_apply_preserves_snapshot_on_decode_error :: proc(t: ^testin
 }
 
 @(test)
-test_catalog_selections_build_from_credentials_and_javascript :: proc(t: ^testing.T) {
+test_catalog_selections_build_from_credentials :: proc(t: ^testing.T) {
     d: Daemon
     s := catalog_test_store(t, &d)
     defer store.close(s)
 
-    d.providers.definitions = []Provider_Definition{{id = "company", models_dev = "company-src"}}
+    // A saved credential is the whole selection rule: a provider is imported because this
+    // daemon can authenticate to it, and each one names itself as its models.dev source.
     testing.expect_value(t, store.credential_api_key_upsert(s, "openai", "sk-test"), nil)
+    testing.expect_value(t, store.credential_api_key_upsert(s, "anthropic", "sk-test-2"), nil)
 
     arena: virtual.Arena
     testing.expect_value(t, virtual.arena_init_growing(&arena), nil)
@@ -75,19 +74,20 @@ test_catalog_selections_build_from_credentials_and_javascript :: proc(t: ^testin
     testing.expect_value(t, err, nil)
     testing.expect_value(t, len(selections), 2)
 
-    found_company := false
+    found_anthropic := false
     found_openai := false
     for selection in selections {
         switch string(selection.provider_id) {
-        case "company":
-            found_company = true
-            testing.expect_value(t, selection.source_id, "company-src")
+        case "anthropic":
+            found_anthropic = true
+            testing.expect_value(t, selection.source_id, "anthropic")
 
         case "openai":
             found_openai = true
             testing.expect_value(t, selection.source_id, "openai")
         }
     }
-    testing.expect(t, found_company, "a JavaScript provider naming models.dev is selected")
+
+    testing.expect(t, found_anthropic, "a provider with a saved credential is selected")
     testing.expect(t, found_openai, "a provider with a saved credential is selected")
 }

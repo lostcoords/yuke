@@ -97,7 +97,9 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
         return
     }
 
-    if start_err != .None {
+    // `Terminated` means the run was announced and then failed, so the send succeeded and
+    // the failure is already in the transcript as this run's `run.done`.
+    if start_err != .None && start_err != .Terminated {
         code, message := send_input_start_error(start_err)
         send_error(answer, req.id, code, message, sa)
 
@@ -126,6 +128,10 @@ send_input_queue :: proc(
         return
     }
 
+    // Taken before the push: accepting an input announces the new queue depth, and a
+    // failed fan-out frees the connection that asked. A refused push announces nothing.
+    ticket := conn.ticket
+
     if !session_queue_push(d, params.session_id, input_id, content) {
         send_error(conn, req.id, .Internal, "could not queue the input", sa)
 
@@ -137,8 +143,6 @@ send_input_queue :: proc(
         content      = content,
         queued_at_ms = now_ms(),
     }
-
-    ticket := conn.ticket
 
     if perr := broadcast(d, wire.Input_Queued_Data{session_id = params.session_id, input = queued}); perr != .None {
         log.errorf("daemon: session.send_input could not announce input %d: %v", input_id, perr)

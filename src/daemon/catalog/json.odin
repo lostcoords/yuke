@@ -6,8 +6,7 @@ import "core:unicode/utf8"
 
 import wire "src:wire"
 
-// Bounded readers for one member of an untrusted JSON object, shared by the models.dev
-// decoder and the JavaScript provider definitions. An absent member reads as
+// Bounded readers for one member of an untrusted JSON object. An absent member reads as
 // `(zero, false, true)`, so each caller decides whether absence is acceptable.
 
 object_string :: proc(

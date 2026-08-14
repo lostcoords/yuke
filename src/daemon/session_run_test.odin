@@ -9,11 +9,13 @@ import "core:time"
 import http_server "libs:http/server"
 import "libs:testsupport"
 import client "src:client"
+import catalog "src:daemon/catalog"
 import store "src:daemon/store"
 import wire "src:wire"
 
 // A turn that committed no message: the draft is announced, retracted, and the terminal
-// follows. Failure and cancellation announce the same sequence.
+// follows. Failure and cancellation announce the same sequence. No block ever opened, so
+// the only activity frames are the run going live and the run being released.
 @(private = "file", rodata)
 RUN_DISCARDED_NAMES := [?]wire.Broadcast_Name {
     .Input_Queued,
@@ -22,9 +24,11 @@ RUN_DISCARDED_NAMES := [?]wire.Broadcast_Name {
     .Config_Changed,
     .Run_Started,
     .Message_Started,
+    .Session_Activity_Changed,
     .Message_Discarded,
     .Run_Done,
     .Session_Summary_Changed,
+    .Session_Activity_Changed,
 }
 
 // Compare the broadcasts a driver recorded against the sequence the turn owes.
@@ -66,6 +70,31 @@ data: {"type":"message_stop"}
 
 @(private = "file")
 RUN_FAKE_STREAM :: RUN_FAKE_HEAD + RUN_FAKE_MIDDLE + RUN_FAKE_TAIL
+
+// A reasoning block that opens, streams, and closes before a text block answers. Enough to
+// prove the phase moves into `reasoning` and back out again.
+@(private = "file")
+RUN_FAKE_REASONING_STREAM :: `data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"consider"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}
+
+data: {"type":"content_block_stop","index":1}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}
+
+data: {"type":"message_stop"}
+
+`
 
 // A loopback provider that answers one request with `RUN_FAKE_STREAM`. The daemon binds it
 // with no credential: `run_connection_build` exempts a loopback endpoint, which is what
@@ -227,21 +256,21 @@ run_fake_stop :: proc(t: ^testing.T, fake: ^Run_Fake) {
 }
 
 // A single-model catalog whose endpoint is the fake. Written as an import, which is the
-// same path a models.dev refresh writes, so resolution sees an ordinary row.
+// same path a models.dev refresh writes, so the run path sees an ordinary row. The daemon
+// reloads its held snapshot afterwards, since the write alone does not move it.
 @(private = "file")
 run_fake_catalog :: proc(t: ^testing.T, d: ^Daemon, base_url: string) {
-    item := store.Catalog_Provider {
+    item := catalog.Provider {
         id = wire.Provider_Id("fake"),
-        source = .Models_Dev,
-        models_dev_id = "fake",
+        source_id = "fake",
         name = "Fake",
         endpoint = {base_url = base_url, protocol = .Anthropic_Messages},
-        has_endpoint = true,
-        etag = `"e"`,
     }
-    model := store.Catalog_Complete_Model {
-        source = .Models_Dev,
-        model = {
+    item.models.allocator = context.temp_allocator
+
+    _, append_err := append(
+        &item.models,
+        catalog.Model {
             info = {
                 id = wire.Model_Id("fake/model"),
                 provider = "fake",
@@ -254,12 +283,14 @@ run_fake_catalog :: proc(t: ^testing.T, d: ^Daemon, base_url: string) {
             endpoint = {base_url = base_url, protocol = .Anthropic_Messages},
             supports_temperature = true,
             reasoning_replay = .None,
-            reasoning_format = .Native,
+            thinking_format = .None,
             max_tokens_field = .Max_Tokens,
         },
-    }
+    )
+    testing.expect_value(t, append_err, nil)
 
-    testing.expect_value(t, store.catalog_imported_replace(d.store, item, []store.Catalog_Model{model}), nil)
+    testing.expect_value(t, store.catalog_imported_replace(d.store, item, `"e"`), nil)
+    testing.expect_value(t, catalog_state_load(d), nil)
 }
 
 // Register a session that names the fake's model, since the shared fixture names one no
@@ -368,7 +399,9 @@ test_session_send_input_runs_a_turn :: proc(t: ^testing.T) {
     }
 
     // The whole announced turn, in order: the input, its durable commit, the index, then
-    // the run's own config, start, draft, content, commit, and terminal.
+    // the run's own config, start, draft, content, commit, and terminal. Activity is
+    // announced when the run goes live, when a block opens, when a reasoning block closes,
+    // and when the queue settles — never per delta.
     committed := [?]wire.Broadcast_Name {
         .Input_Queued,
         .Message_Committed,
@@ -376,12 +409,15 @@ test_session_send_input_runs_a_turn :: proc(t: ^testing.T) {
         .Config_Changed,
         .Run_Started,
         .Message_Started,
+        .Session_Activity_Changed,
         .Message_Part_Added,
+        .Session_Activity_Changed,
         .Message_Part_Delta,
         .Message_Part_Delta,
         .Message_Committed,
         .Run_Done,
         .Session_Summary_Changed,
+        .Session_Activity_Changed,
     }
     expect_names(t, obs.names, committed[:])
 
@@ -740,6 +776,176 @@ test_session_send_input_queues_behind_a_live_turn :: proc(t: ^testing.T) {
 
     testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
     testing.expect_value(t, len(obs.replica.queued), 0)
+}
+
+// Nothing but the next start can write the terminal a dead run owed: shutdown announces
+// nothing. Without the sweep the log keeps an unfinished run for good.
+@(test)
+test_runs_recover_closes_a_run_the_previous_start_left_open :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    path := testsupport.sqlite_db_path(t, "session-run-recover")
+    defer testsupport.sqlite_db_remove(path)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    session := pump_test_session('e')
+
+    first: Daemon
+    testing.expect_value(t, start(&first, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    daemon_test_session_create(t, &first, session)
+    testing.expect_value(t, broadcast(&first, pump_run_started(session)), Pump_Error.None)
+
+    // Shutdown cancels the turn and announces nothing, which is exactly how the log is
+    // left mid-sentence.
+    test_teardown(&first)
+
+    second: Daemon
+    testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
+    defer test_teardown(&second)
+
+    rows := pump_events(t, second.store, session)
+
+    if testing.expect_value(t, len(rows), 2) {
+        testing.expect_value(t, rows[1].name, wire.Broadcast_Name.Run_Done)
+
+        dec := wire.decoder_init(rows[1].payload, context.temp_allocator)
+        done, derr := wire.broadcast_data_from_reader(.Run_Done, &dec)
+        testing.expect_value(t, derr, wire.Validation_Error.None)
+
+        terminal, is_done := done.(wire.Run_Done_Data)
+        if testing.expect(t, is_done, "the recovery event is a run terminal") {
+            testing.expect_value(t, terminal.run_id, wire.Run_Id(1))
+            testing.expect_value(t, terminal.kind, wire.Run_Kind.Turn)
+
+            failed, is_failed := terminal.outcome.(wire.Run_Outcome_Failed)
+            if testing.expect(t, is_failed, "a run nothing finished ended in failure") {
+                testing.expect_value(t, failed.code, wire.Run_Error_Code.Internal)
+            }
+        }
+    }
+
+    // The marker is cleared, so a second restart writes no second terminal.
+    snapshot, _, serr := store.session_snapshot(second.store, session, context.temp_allocator)
+    testing.expect_value(t, serr, nil)
+    testing.expect(t, snapshot.open_run == nil, "the sweep clears what it closed")
+
+    // Nothing is live, so the session reads back idle rather than carrying the dead run.
+    _, idle := session_activity(&second, session).state.(wire.Activity_State_Idle)
+    testing.expect(t, idle, "a recovered run leaves the session idle")
+}
+
+// The phases one turn moves through: only a reasoning block names a phase, so the run
+// reports it while that block streams and `running` on either side.
+@(test)
+test_session_activity_follows_the_reasoning_block :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-activity-phases",
+        run_env_input("hi", &parts, &inputs),
+        body = RUN_FAKE_REASONING_STREAM,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    // Live, reasoning opens, reasoning closes, text opens, and the queue settles.
+    if !testing.expect_value(t, len(obs.activities), 5) {
+        return
+    }
+
+    running_ids := [?]int{0, 2, 3}
+    for index in running_ids {
+        state, is_running := obs.activities[index].state.(wire.Activity_State_Running)
+        testing.expectf(t, is_running, "activity %d should be running", index)
+        testing.expect_value(t, state.run_id, wire.Run_Id(1))
+    }
+
+    reasoning, is_reasoning := obs.activities[1].state.(wire.Activity_State_Reasoning)
+    if testing.expect(t, is_reasoning, "an open reasoning block reports reasoning") {
+        testing.expect_value(t, reasoning.run_id, wire.Run_Id(1))
+        testing.expect_value(t, reasoning.message_id, wire.Message_Id(2))
+        testing.expect_value(t, reasoning.part_id, wire.Part_Id(0))
+    }
+
+    _, is_idle := obs.activities[4].state.(wire.Activity_State_Idle)
+    testing.expect(t, is_idle, "the terminal settles the session back to idle")
+    testing.expect_value(t, obs.activities[4].queued, u64(0))
+
+    // Every state that names a run carries the config that run announced.
+    for activity, index in obs.activities[:4] {
+        config, has_config := activity.config.?
+        testing.expectf(t, has_config, "activity %d names a run, so it carries its config", index)
+        testing.expect_value(t, config.model, "fake/model")
+    }
+}
+
+// A client that opens a session mid-turn has only the cut: `message.started` and
+// `input.queued` are live. Omitting either made the replica resync once per delta.
+@(test)
+test_session_resync_mid_turn_carries_the_draft_and_the_queue :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    first := [?]wire.Content_Part{wire.Content_Text{text = "one"}}
+    second := [?]wire.Content_Part{wire.Content_Text{text = "two"}}
+    inputs := [?]wire.Input{wire.Input_Content{content = first[:]}, wire.Input_Content{content = second[:]}}
+
+    env: Run_Env
+    run_env_start(t, &env, "session-resync-mid-turn", inputs[:], hold = true)
+    defer run_env_stop(t, &env)
+
+    d := &env.d
+    session := env.session
+
+    run_env_drive(t, &env)
+
+    // The provider is holding its request, so the turn is still live at the cut.
+    testing.expect(t, session_live_run(d, session) != nil, "the held turn is still live")
+
+    cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
+    testing.expect_value(t, err, Resync_Error.None)
+    testing.expect_value(t, wire.session_resync_result_validate(cut), wire.Validation_Error.None)
+
+    state, running := cut.item.activity.state.(wire.Activity_State_Running)
+    testing.expect(t, running, "a live turn reports running")
+    testing.expect_value(t, state.run_id, wire.Run_Id(1))
+    testing.expect_value(t, cut.item.activity.queued, u64(1))
+
+    // The draft names the message the run is producing, and its parts carry the offsets
+    // the next `message.part_delta` names.
+    active, drafted := cut.active.?
+    if testing.expect(t, drafted, "the open draft is in the cut") {
+        testing.expect_value(t, active.message.id, wire.Message_Id(2))
+        testing.expect_value(t, active.message.run_id, wire.Run_Id(1))
+        testing.expect_value(t, active.message.config_rev, wire.Config_Rev(1))
+        testing.expect_value(t, active.message.agent, RUN_AGENT)
+    }
+
+    // The waiting input is in the cut too, so a re-entered session shows a full queue.
+    if testing.expect_value(t, len(cut.queued), 1) {
+        testing.expect_value(t, cut.queued[0].input_id, wire.Input_Id(2))
+    }
+
+    // The draft's revision resolves against the page the same cut carries.
+    if testing.expect_value(t, len(cut.configs), 1) {
+        testing.expect_value(t, cut.configs[0].config_rev, wire.Config_Rev(1))
+        testing.expect_value(t, cut.configs[0].model, "fake/model")
+    }
 }
 
 // A queued input can be dropped before it runs, and the turn ahead of it is untouched.

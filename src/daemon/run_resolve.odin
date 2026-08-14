@@ -1,13 +1,11 @@
 package daemon
 
-import "core:mem"
 import "core:net"
 import "core:strings"
 
 import http_server "libs:http/server"
 import catalog "src:daemon/catalog"
 import "src:daemon/oauth"
-import store "src:daemon/store"
 import provider "src:provider"
 
 // Why a resolved model could not become a live provider connection.
@@ -15,79 +13,6 @@ Run_Bind_Error :: enum {
     None,
     Invalid_Endpoint,
     Missing_Credential,
-}
-
-// Why a public model id produced no row.
-Run_Resolve_Error :: enum {
-    None,
-    Unknown_Model,
-    Store_Failed,
-}
-
-// Load and resolve only the provider that owns `public_id`. Collisions and overrides are
-// provider-scoped, so one provider's rows decide the outcome and the run never reads the
-// whole catalog. The returned model borrows `effective`, which the caller destroys.
-run_model_load :: proc(
-    d: ^Daemon,
-    public_id: string,
-    allocator: mem.Allocator,
-) -> (
-    effective: store.Effective_Catalog,
-    model: ^catalog.Model,
-    err: Run_Resolve_Error,
-) {
-    assert(d != nil, "model load needs daemon state")
-    assert(d.store != nil, "model load needs an open store")
-
-    provider_id, named := run_provider_of(public_id)
-    if !named {
-        return {}, nil, .Unknown_Model
-    }
-
-    data, load_err := store.catalog_data_load(d.store, provider_id, allocator)
-    if load_err != nil {
-        return {}, nil, .Store_Failed
-    }
-    defer store.catalog_data_destroy(&data)
-
-    resolved, resolve_err := store.catalog_resolve(data, allocator)
-    if resolve_err != nil {
-        return {}, nil, .Store_Failed
-    }
-
-    row, found := run_model_resolve(resolved, public_id)
-    if !found {
-        store.effective_catalog_destroy(&resolved)
-        return {}, nil, .Unknown_Model
-    }
-
-    return resolved, row, .None
-}
-
-// The provider that owns a public model id: everything before the first `/`. The rest may
-// itself contain slashes, as `openrouter/openai/gpt-5` does.
-@(private)
-run_provider_of :: proc(public_id: string) -> (string, bool) {
-    slash := strings.index_byte(public_id, '/')
-    if slash <= 0 || slash == len(public_id) - 1 {
-        return "", false
-    }
-
-    return public_id[:slash], true
-}
-
-// The id is matched exactly and used as a key, never as an index. The returned pointer
-// borrows `effective` and is valid only while it lives.
-run_model_resolve :: proc(effective: store.Effective_Catalog, public_id: string) -> (^catalog.Model, bool) {
-    for &provider in effective.providers {
-        for &model in provider.models {
-            if string(model.info.id) == public_id {
-                return &model, true
-            }
-        }
-    }
-
-    return nil, false
 }
 
 // The endpoint validates before any credential is attached. A missing credential is a

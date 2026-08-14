@@ -1,13 +1,11 @@
 package daemon
 
-import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 import "core:time"
 
 import curl "libs:bindings/curl"
 import catalog "src:daemon/catalog"
-import store "src:daemon/store"
 import wire "src:wire"
 
 MODELS_DEV_URL :: "https://models.dev/api.json"
@@ -121,9 +119,11 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     defer virtual.arena_destroy(&scratch)
     sa := virtual.arena_allocator(&scratch)
 
+    // The feed's own validator, held with the catalog it validates; empty makes the
+    // request unconditional.
     headers: [dynamic]curl.Header
     headers.allocator = sa
-    if etag := catalog_current_etag(d, sa); etag != "" {
+    if etag := d.catalog.snapshot.feed_etag; etag != "" {
         append(&headers, curl.Header{name = "If-None-Match", value = etag})
     }
 
@@ -150,24 +150,6 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     assert(op.transfer.state == .Running, "a started catalog refresh owns a running transfer")
 
     return true
-}
-
-// The current feed ETag: imported providers share the last refresh's ETag. Empty when
-// nothing is imported or a load fails, making the next request unconditional.
-@(private)
-catalog_current_etag :: proc(d: ^Daemon, allocator: mem.Allocator) -> string {
-    data, load_err := store.catalog_data_load(d.store, store.CATALOG_ALL_PROVIDERS, allocator)
-    if load_err != nil {
-        return ""
-    }
-
-    for provider in data.providers {
-        if provider.source == .Models_Dev && provider.etag != "" {
-            return provider.etag
-        }
-    }
-
-    return ""
 }
 
 @(private)

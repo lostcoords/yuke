@@ -2,6 +2,7 @@ package daemon
 
 import "core:testing"
 
+import catalog "src:daemon/catalog"
 import store "src:daemon/store"
 import wire "src:wire"
 
@@ -11,65 +12,57 @@ STATE_LEVELS := [?]string{"low", "medium", "high"}
 @(private, rodata)
 STATE_ENV := [?]string{"OPENAI_API_KEY"}
 
+// One provider carrying a model per public id. Models allocate into the temp allocator, so
+// a caller may edit them before writing.
 @(private)
-state_provider :: proc(
-    source: store.Catalog_Source,
-    id, models_dev_id, name, base_url: string,
-    has_endpoint: bool,
-    cred: []string,
-) -> store.Catalog_Provider {
-    item := store.Catalog_Provider {
+state_provider :: proc(t: ^testing.T, id, base_url: string, public_ids: ..string) -> catalog.Provider {
+    item := catalog.Provider {
         id = wire.Provider_Id(id),
-        source = source,
-        models_dev_id = models_dev_id,
-        name = name,
+        source_id = id,
+        name = "OpenAI",
         endpoint = {base_url = base_url, protocol = .Openai_Responses},
-        has_endpoint = has_endpoint,
-        credential_env = cred,
+        credential_env = STATE_ENV[:],
     }
-    if source == .Models_Dev {
-        item.etag = `"e"`
+    item.models.allocator = context.temp_allocator
+
+    for public_id in public_ids {
+        _, append_err := append(&item.models, state_model(id, public_id, base_url))
+        testing.expect_value(t, append_err, nil)
     }
 
     return item
 }
 
 @(private)
-state_model :: proc(
-    source: store.Catalog_Source,
-    provider_id, public_id, upstream, base_url: string,
-) -> store.Catalog_Model {
-    return store.Catalog_Complete_Model {
-        source = source,
-        model = {
-            info = {
-                id = wire.Model_Id(public_id),
-                provider = provider_id,
-                name = "Model",
-                context_window = 1000,
-                max_output_tokens = 100,
-                reasoning_levels = STATE_LEVELS[:],
-                default_reasoning = "medium",
-                supports_tools = true,
-            },
-            upstream_id = upstream,
-            endpoint = {base_url = base_url, protocol = .Openai_Responses},
-            supports_temperature = true,
-            reasoning_replay = .None,
-            reasoning_format = .Native,
-            max_tokens_field = .Max_Tokens,
+state_model :: proc(provider_id, public_id, base_url: string) -> catalog.Model {
+    return catalog.Model {
+        info = {
+            id = wire.Model_Id(public_id),
+            provider = provider_id,
+            name = "Model",
+            context_window = 1000,
+            max_output_tokens = 100,
+            reasoning_levels = STATE_LEVELS[:],
+            default_reasoning = "medium",
+            supports_tools = true,
         },
+        upstream_id = "upstream",
+        endpoint = {base_url = base_url, protocol = .Openai_Responses},
+        supports_temperature = true,
+        reasoning_replay = .None,
+        thinking_format = .None,
+        max_tokens_field = .Max_Tokens,
     }
 }
 
 @(test)
-test_catalog_state_resolves_on_load :: proc(t: ^testing.T) {
+test_catalog_state_holds_the_snapshot_it_revised :: proc(t: ^testing.T) {
     d: Daemon
     s := catalog_test_store(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
-    // An empty store resolves to a valid, stable, model-free revision.
+    // An empty store loads to a valid, stable, model-free revision.
     testing.expect_value(t, catalog_state_load(&d), nil)
     empty_rev := d.catalog.rev
     for value in ([64]u8)(empty_rev) {
@@ -78,76 +71,69 @@ test_catalog_state_resolves_on_load :: proc(t: ^testing.T) {
     }
     testing.expect_value(t, len(d.catalog.health.skipped), 0)
     testing.expect_value(t, empty_rev, catalog_rev(nil, {}))
+    testing.expect_value(t, len(d.catalog.snapshot.providers), 0)
 
-    // Persist one imported provider and model.
-    provider := state_provider(
-        .Models_Dev,
-        "openai",
-        "openai",
-        "OpenAI",
-        "https://api.openai.com/v1",
-        true,
-        STATE_ENV[:],
-    )
-    model := state_model(.Models_Dev, "openai", "openai/gpt-5", "gpt-5", "https://api.openai.com/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, provider, []store.Catalog_Model{model}), nil)
+    item := state_provider(t, "openai", "https://api.openai.com/v1", "openai/gpt-5")
+    testing.expect_value(t, store.catalog_imported_replace(s, item, `"e"`), nil)
 
-    // Reloading moves the revision and makes the model visible.
+    // Reloading moves the revision, holds the new snapshot, and carries the feed's ETag.
     testing.expect_value(t, catalog_state_load(&d), nil)
     testing.expect(t, d.catalog.rev != empty_rev, "adding a model changes the revision")
+    testing.expect_value(t, d.catalog.snapshot.feed_etag, `"e"`)
 
-    effective, resolve_err := catalog_resolve_current(&d, context.allocator)
-    testing.expect_value(t, resolve_err, nil)
-    defer store.effective_catalog_destroy(&effective)
-    view, ok := catalog_models_view(effective, context.allocator)
+    view, ok := catalog_models_view(d.catalog.snapshot, context.allocator)
     defer delete(view)
     testing.expect(t, ok, "the view allocates")
-    testing.expect_value(t, len(view), 1)
-    testing.expect_value(t, string(view[0].id), "openai/gpt-5")
+    if testing.expect_value(t, len(view), 1) {
+        testing.expect_value(t, string(view[0].id), "openai/gpt-5")
+    }
 
-    // The held revision matches a freshly re-resolved view — the invariant catalog.list
-    // relies on when it derives models from scratch but replies with the held rev.
+    // The held revision covers the held snapshot — the invariant `catalog.list` relies on
+    // when it answers with the held rev and a view built from the same rows.
     testing.expect_value(t, d.catalog.rev, catalog_rev(view, d.catalog.health))
+
+    // The run path resolves against the same snapshot rather than reading the store.
+    found := catalog_model_find(&d, "openai/gpt-5")
+    if testing.expect(t, found != nil, "the held snapshot resolves a model by public id") {
+        testing.expect_value(t, found.upstream_id, "upstream")
+    }
+
+    testing.expect(t, catalog_model_find(&d, "openai/absent") == nil, "an unknown id resolves to nothing")
 }
 
 @(test)
-test_catalog_state_reload_frees_prior_health :: proc(t: ^testing.T) {
+test_catalog_state_reload_replaces_the_snapshot :: proc(t: ^testing.T) {
     d: Daemon
     s := catalog_test_store(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
-    imported := state_provider(
-        .Models_Dev,
-        "openai",
-        "openai",
-        "OpenAI",
-        "https://api.openai.com/v1",
-        true,
-        STATE_ENV[:],
-    )
-    imported_model := state_model(.Models_Dev, "openai", "openai/gpt-5", "gpt-5", "https://api.openai.com/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, imported, []store.Catalog_Model{imported_model}), nil)
-
-    // A JavaScript custom model colliding with the imported public id invalidates the
-    // whole provider, producing one skip in health.
-    js := state_provider(.Javascript, "openai", "openai", "Custom", "https://api.openai.com/v1", true, nil)
-    js_model := state_model(.Javascript, "openai", "openai/gpt-5", "custom", "https://api.openai.com/v1")
     testing.expect_value(
         t,
-        store.catalog_javascript_replace(s, []store.Catalog_Provider{js}, []store.Catalog_Model{js_model}),
+        store.catalog_imported_replace(
+            s,
+            state_provider(t, "openai", "https://api.openai.com/v1", "openai/gpt-5"),
+            "",
+        ),
         nil,
     )
-
     testing.expect_value(t, catalog_state_load(&d), nil)
-    testing.expect_value(t, len(d.catalog.health.skipped), 1)
-    testing.expect_value(t, d.catalog.health.skipped[0].provider, "openai")
-    _, is_invalid := d.catalog.health.skipped[0].reason.(wire.Skip_Reason_Invalid_Config)
-    testing.expect(t, is_invalid, "a collision is reported as invalid config")
+    first := d.catalog.rev
 
-    // Dropping the JavaScript source reveals the imported model; reloading frees the old
-    // non-empty health (its cloned provider name) without leaking and clears the skip.
-    testing.expect_value(t, store.catalog_javascript_replace(s, nil, nil), nil)
+    // A second load frees the snapshot it replaces rather than accumulating them, which
+    // the leak check on this package's tests is what actually proves.
+    testing.expect_value(
+        t,
+        store.catalog_imported_replace(
+            s,
+            state_provider(t, "openai", "https://api.openai.com/v1", "openai/gpt-6"),
+            "",
+        ),
+        nil,
+    )
     testing.expect_value(t, catalog_state_load(&d), nil)
-    testing.expect_value(t, len(d.catalog.health.skipped), 0)
+
+    testing.expect(t, d.catalog.rev != first, "replacing the model changes the revision")
+    testing.expect(t, catalog_model_find(&d, "openai/gpt-5") == nil, "the replaced model is gone")
+    testing.expect(t, catalog_model_find(&d, "openai/gpt-6") != nil, "the replacement is held")
 }

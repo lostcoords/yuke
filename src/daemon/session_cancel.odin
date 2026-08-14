@@ -37,13 +37,15 @@ method_session_cancel_run :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
 
     result := wire.Session_Cancel_Run_Result{}
 
+    // Taken before anything fans out: clearing the queue announces the new activity, and a
+    // failed fan-out frees the connection that asked — including this one.
+    ticket := conn.ticket
+
     // Cleared before the cancel, so the terminal does not promote an input the client
     // just asked to drop.
     if clear, asked := params.clear_queue.?; asked && clear {
         result.cleared_inputs = session_queue_clear(d, params.session_id, sa)
     }
-
-    ticket := conn.ticket
 
     for input in result.cleared_inputs {
         _ = broadcast(d, wire.Input_Canceled_Data{session_id = params.session_id, input_id = input})
@@ -80,13 +82,16 @@ method_session_cancel_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allo
         }
     }
 
+    // A successful removal announces the new activity, so the connection may be gone by
+    // the time this returns. The refusal below fans nothing out and still holds `conn`.
+    ticket := conn.ticket
+
     if !session_queue_remove(d, params.session_id, params.input_id) {
         send_error(conn, req.id, .Unknown_Input, "no queued input has that id", sa)
 
         return
     }
 
-    ticket := conn.ticket
     _ = broadcast(d, wire.Input_Canceled_Data{session_id = params.session_id, input_id = params.input_id})
 
     answer := conn_resolve(d, ticket)

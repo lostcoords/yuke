@@ -253,10 +253,10 @@ test_session_list_rejects_a_malformed_cursor :: proc(t: ^testing.T) {
     run_session_list(t, "list-bad-cursor", &obs, listed_session('a', 10, "only"))
 }
 
-// `active` selects sessions with a live run. With no engine there are none, so the empty
-// page is the answer even though the registry holds rows.
+// `active` selects a different population from the registry: a persisted session the engine
+// holds nothing for is not active, and one it does hold appears with no page read at all.
 @(test)
-test_session_list_active_view_is_empty_without_an_engine :: proc(t: ^testing.T) {
+test_session_list_active_view_follows_the_engine :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
@@ -265,8 +265,28 @@ test_session_list_active_view_is_empty_without_an_engine :: proc(t: ^testing.T) 
             return true
         }
 
-        testing.expect_value(o.t, len(result.items), 0)
-        testing.expect_value(o.t, result.total, u64(0))
+        // First answer: the registry row exists, but nothing tracks it.
+        if o.page == 0 {
+            testing.expect_value(o.t, len(result.items), 0)
+            testing.expect_value(o.t, result.total, u64(0))
+
+            o.page = 1
+            testing.expect(
+                o.t,
+                session_live_ensure(o.daemon, pump_test_session('a')) != nil,
+                "the engine takes the session",
+            )
+            client.client_send_request(c, .Session_List, o.params, handler_on_response)
+
+            return false
+        }
+
+        // Second answer: the same registry, one tracked session.
+        if testing.expect_value(o.t, len(result.items), 1) {
+            testing.expect_value(o.t, result.items[0].session.title, "idle")
+        }
+
+        testing.expect_value(o.t, result.total, u64(1))
 
         return true
     }
@@ -282,4 +302,85 @@ test_session_list_active_view_is_empty_without_an_engine :: proc(t: ^testing.T) 
     }
 
     run_session_list(t, "list-active", &obs, listed_session('a', 10, "idle"))
+}
+
+// The active view pages on the registry's keyset and cursor grammar, so a continuation is
+// minted exactly when rows remain and a null one really does end the selection.
+@(test)
+test_session_list_active_view_pages_through_a_cursor :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
+        result, ok := list_result(o.t, resp)
+        if !ok {
+            return true
+        }
+
+        // First answer: both rows are persisted, but the engine tracks neither.
+        if o.page == 0 {
+            testing.expect_value(o.t, len(result.items), 0)
+            testing.expect_value(o.t, result.total, u64(0))
+
+            o.page = 1
+            for tag in ([?]u8{'a', 'b'}) {
+                testing.expect(
+                    o.t,
+                    session_live_ensure(o.daemon, pump_test_session(tag)) != nil,
+                    "the engine takes the session",
+                )
+            }
+            client.client_send_request(c, .Session_List, o.params, handler_on_response)
+
+            return false
+        }
+
+        // `total` describes the whole selection on every page, as it does for the registry.
+        testing.expect_value(o.t, result.total, u64(2))
+        testing.expect_value(o.t, len(result.items), 1)
+
+        if o.page == 1 {
+            testing.expect_value(o.t, result.items[0].session.title, "newer")
+
+            cursor, paging := result.next_cursor.?
+            if !testing.expect(o.t, paging, "a page with a row behind it mints a continuation") {
+                return true
+            }
+
+            o.page = 2
+            client.client_send_request(
+                c,
+                .Session_List,
+                wire.Session_List_Params {
+                    scope = wire.Session_Scope_All{},
+                    population = wire.Session_Population_All{},
+                    view = .Active,
+                    limit = 1,
+                    cursor = cursor,
+                },
+                handler_on_response,
+            )
+
+            return false
+        }
+
+        // The second page resumed strictly below the first rather than repeating it.
+        testing.expect_value(o.t, result.items[0].session.title, "older")
+        _, more := result.next_cursor.?
+        testing.expect(o.t, !more, "the last page mints no continuation")
+
+        return true
+    }
+
+    obs := Handler_Obs {
+        method = .Session_List,
+        params = wire.Session_List_Params {
+            scope = wire.Session_Scope_All{},
+            population = wire.Session_Population_All{},
+            view = .Active,
+            limit = 1,
+        },
+        check = check,
+    }
+
+    run_session_list(t, "list-active-cursor", &obs, listed_session('a', 10, "older"), listed_session('b', 20, "newer"))
 }

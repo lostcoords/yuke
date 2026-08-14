@@ -37,6 +37,10 @@ Input_Obs :: struct {
     // Arrival wall clock per broadcast, parallel to `names`, for proving that a stream is
     // delivered as it arrives rather than in one flush at the end.
     times:          [dynamic]u64,
+
+    // Activity states delivered, in arrival order, so a test can assert the phases a turn
+    // moved through rather than only that it announced something.
+    activities:     [dynamic]wire.Session_Activity,
     queued:         [dynamic]wire.Queued_Input,
     committed:      [dynamic]wire.User_Message,
     assistants:     [dynamic]wire.Assistant_Message,
@@ -72,6 +76,7 @@ input_obs_init :: proc(o: ^Input_Obs, session: wire.Session_Id, inputs: []wire.I
     o.runs = make([dynamic]wire.Run_Id, context.temp_allocator)
     o.names = make([dynamic]wire.Broadcast_Name, context.temp_allocator)
     o.times = make([dynamic]u64, context.temp_allocator)
+    o.activities = make([dynamic]wire.Session_Activity, context.temp_allocator)
     o.queued = make([dynamic]wire.Queued_Input, context.temp_allocator)
     o.committed = make([dynamic]wire.User_Message, context.temp_allocator)
     o.assistants = make([dynamic]wire.Assistant_Message, context.temp_allocator)
@@ -226,6 +231,11 @@ input_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
 
         case wire.Compaction_Message:
         }
+
+    case wire.Session_Activity_Changed_Data:
+        activity := v.activity
+        activity.state = wire.activity_state_clone(v.activity.state, context.temp_allocator)
+        append(&o.activities, activity)
 
     case wire.Run_Done_Data:
         o.turn_done = true

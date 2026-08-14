@@ -330,17 +330,21 @@ test_daemon_durable_seq_recovers_across_restart :: proc(t: ^testing.T) {
     test_teardown(&first)
 
     // The high-water lives in the store, so a fresh daemon continues the stream
-    // instead of reissuing numbers.
+    // instead of reissuing numbers. Starting also closes the run the first daemon left
+    // open, so the terminal it owed lands before anything this one emits.
     second: Daemon
     testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
     testing.expect_value(t, broadcast(&second, pump_run_started(session)), Pump_Error.None)
 
     rows := pump_events(t, second.store, session)
 
-    if testing.expect_value(t, len(rows), 3) {
+    if testing.expect_value(t, len(rows), 4) {
         testing.expect_value(t, rows[0].seq, wire.Seq(1))
         testing.expect_value(t, rows[1].seq, wire.Seq(2))
         testing.expect_value(t, rows[2].seq, wire.Seq(3))
+        testing.expect_value(t, rows[2].name, wire.Broadcast_Name.Run_Done)
+        testing.expect_value(t, rows[3].seq, wire.Seq(4))
+        testing.expect_value(t, rows[3].name, wire.Broadcast_Name.Run_Started)
     }
 
     test_teardown(&second)
@@ -372,13 +376,14 @@ test_daemon_id_marks_recover_across_restart :: proc(t: ^testing.T) {
     test_teardown(&first)
 
     // Every minting family recovers with the seq; a zero here would let the next
-    // session engine reissue an id the transcript already folded.
+    // session engine reissue an id the transcript already folded. The seq advances by one
+    // more than the first daemon wrote, because starting closed the run it left open.
     second: Daemon
     testing.expect_value(t, start(&second, loop, {host = "127.0.0.1", port = 0, db_path = path}), Error.None)
 
     hw, herr := store.high_water(second.store, session)
     testing.expect_value(t, herr, nil)
-    testing.expect_value(t, hw.seq, wire.Seq(4))
+    testing.expect_value(t, hw.seq, wire.Seq(5))
     testing.expect_value(t, hw.message_id, wire.Message_Id(8))
     testing.expect_value(t, hw.run_id, wire.Run_Id(5))
     testing.expect_value(t, hw.config_rev, wire.Config_Rev(4))

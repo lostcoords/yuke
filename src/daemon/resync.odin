@@ -107,40 +107,17 @@ resync_build :: proc(
         boundary = hw.message_id
     }
 
-    activity := wire.Session_Activity {
-        state = wire.Activity_State_Idle{},
-    }
+    // The engine owns every live fact: a run does not outlive the process that started it,
+    // so the log can say a run exists but never what it is producing.
+    activity := session_activity(d, params.session_id)
+    active, queued := session_draft(d, params.session_id, sa)
 
     configs := make([dynamic]wire.Run_Config, 0, len(messages) + 1, sa)
 
-    // Until the session engine supplies its live state, the open run is the only activity
-    // the log reconstructs. Drafts and queued inputs are not rebuilt here.
-    if open, running := snapshot.open_run.?; running {
-        switch open.kind {
-        case .Turn:
-            // The turn's config is collected like every other, so an unannounced
-            // revision is diagnosed in one place.
-            resync_config_add(&configs, d.store, params.session_id, open.config_rev, sa) or_return
-            assert(len(configs) == 1, "the running config is the first one collected")
-
-            activity.state = wire.Activity_State_Running {
-                run_id        = open.run_id,
-                started_at_ms = open.started_at_ms,
-            }
-            activity.config = configs[0]
-
-        case .Compaction:
-            reason, has_reason := open.reason.?
-            assert(has_reason, "a compaction run carries its reason")
-
-            // `Activity_State_Compacting` carries no config; the run's revision is not
-            // hoisted or added to the configs page, which is why the wire type omits it.
-            activity.state = wire.Activity_State_Compacting {
-                run_id        = open.run_id,
-                reason        = reason,
-                started_at_ms = open.started_at_ms,
-            }
-        }
+    // Collected first, and from the run itself rather than the store: the draft names this
+    // revision, so a cut that could not resolve it would be unusable to the replica.
+    if running, has_run := activity.config.?; has_run {
+        append(&configs, running)
     }
 
     for message in messages {
@@ -164,6 +141,8 @@ resync_build :: proc(
         messages                     = messages,
         has_more                     = snapshot.session.message_count > u64(len(messages)),
         configs                      = configs[:],
+        active                       = active,
+        queued                       = queued,
     }
 
     // The finalized mark and the transcript advance in one transaction, so a page above

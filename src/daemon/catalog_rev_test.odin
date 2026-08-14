@@ -160,27 +160,27 @@ test_catalog_rev_boundary_between_adjacent_fields :: proc(t: ^testing.T) {
 
 @(test)
 test_catalog_models_view_flattens_in_order_and_feeds_rev :: proc(t: ^testing.T) {
-    effective: store.Effective_Catalog
-    effective.providers.allocator = context.allocator
+    snapshot: store.Catalog
+    snapshot.providers.allocator = context.allocator
     defer {
-        for &provider in effective.providers {
-            delete(provider.models)
+        for &item in snapshot.providers {
+            delete(item.models)
         }
-        delete(effective.providers)
+        delete(snapshot.providers)
     }
 
-    provider: catalog.Provider
-    provider.id = "openai"
-    provider.models.allocator = context.allocator
+    item: catalog.Provider
+    item.id = "openai"
+    item.models.allocator = context.allocator
     first: catalog.Model
     first.info = rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)
     second: catalog.Model
     second.info = rev_model("openai/o1", "openai", "O1", REV_LEVELS[:], "medium", 3)
-    append(&provider.models, first)
-    append(&provider.models, second)
-    append(&effective.providers, provider)
+    append(&item.models, first)
+    append(&item.models, second)
+    append(&snapshot.providers, item)
 
-    view, ok := catalog_models_view(effective)
+    view, ok := catalog_models_view(snapshot)
     defer delete(view)
     testing.expect(t, ok, "the view allocates")
     testing.expect_value(t, len(view), 2)

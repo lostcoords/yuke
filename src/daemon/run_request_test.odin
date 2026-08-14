@@ -12,7 +12,8 @@ import wire "src:wire"
 request_test_model :: proc(
     protocol: wire.Provider_Protocol,
     levels: []string,
-    format: catalog.Reasoning_Format,
+    format: provider.Openai_Thinking_Format = .None,
+    adaptive := false,
 ) -> catalog.Model {
     return catalog.Model {
         info = {
@@ -28,7 +29,8 @@ request_test_model :: proc(
         upstream_id = "MiniMax-M3",
         endpoint = {base_url = "https://api.minimax.io/anthropic/v1", protocol = protocol},
         supports_temperature = true,
-        reasoning_format = format,
+        thinking_format = format,
+        anthropic_adaptive = adaptive,
     }
 }
 
@@ -62,7 +64,7 @@ request_test_build :: proc(
 test_run_request_omits_thinking_for_a_model_without_levels :: proc(t: ^testing.T) {
     // MiniMax M2.x: models.dev reports no reasoning options, so we send no thinking field
     // and the endpoint keeps its own default.
-    model := request_test_model(.Anthropic_Messages, nil, .Native)
+    model := request_test_model(.Anthropic_Messages, nil)
     model.info.id = "minimax/MiniMax-M2.7"
     model.upstream_id = "MiniMax-M2.7"
 
@@ -77,9 +79,9 @@ test_run_request_omits_thinking_for_a_model_without_levels :: proc(t: ^testing.T
 @(test)
 test_run_request_encodes_the_adaptive_thinking_levels :: proc(t: ^testing.T) {
     // MiniMax M3: models.dev reports a toggle, which the decoder stores as
-    // Anthropic_Adaptive with off/high. Both shapes were verified against the live API.
+    // `anthropic_adaptive` with off/high. Both shapes were verified against the live API.
     levels := [?]string{"off", "high"}
-    model := request_test_model(.Anthropic_Messages, levels[:], .Anthropic_Adaptive)
+    model := request_test_model(.Anthropic_Messages, levels[:], adaptive = true)
 
     on := request_test_build(t, &model, "high")
     defer delete(on)
@@ -98,7 +100,7 @@ test_run_request_encodes_the_adaptive_thinking_levels :: proc(t: ^testing.T) {
 @(test)
 test_run_request_drops_temperature_when_thinking_is_on :: proc(t: ^testing.T) {
     levels := [?]string{"off", "high"}
-    model := request_test_model(.Anthropic_Messages, levels[:], .Anthropic_Adaptive)
+    model := request_test_model(.Anthropic_Messages, levels[:], adaptive = true)
 
     // Anthropic rejects a sampling control alongside thinking, so the body must omit it
     // even though the row reports temperature support.
@@ -114,7 +116,7 @@ test_run_request_drops_temperature_when_thinking_is_on :: proc(t: ^testing.T) {
 
 @(test)
 test_run_request_drops_temperature_for_a_model_that_rejects_it :: proc(t: ^testing.T) {
-    model := request_test_model(.Anthropic_Messages, nil, .Native)
+    model := request_test_model(.Anthropic_Messages, nil)
     model.supports_temperature = false
 
     body := request_test_build(t, &model, "", 0.5)
@@ -126,20 +128,20 @@ test_run_request_drops_temperature_for_a_model_that_rejects_it :: proc(t: ^testi
 @(test)
 test_run_request_maps_openai_chat_reasoning_formats :: proc(t: ^testing.T) {
     Case :: struct {
-        format:   catalog.Reasoning_Format,
+        format:   provider.Openai_Thinking_Format,
         level:    string,
         expected: string,
     }
 
     cases := [?]Case {
-        {.Native, "high", `"reasoning_effort":"high"`},
-        {.Openrouter_Effort, "low", `"reasoning":{"effort":"low"}`},
-        {.Openai_Effort_Toggle_Off, "medium", `"thinking":{"type":"enabled"},"reasoning_effort":"medium"`},
-        {.Openai_Effort_Toggle_Off, "off", `"thinking":{"type":"disabled"}`},
-        {.Zai_Toggle, "high", `"thinking":{"type":"enabled","clear_thinking":false}`},
-        {.Qwen_Thinking, "off", `"enable_thinking":false`},
+        {.Openai, "high", `"reasoning_effort":"high"`},
+        {.Openrouter, "low", `"reasoning":{"effort":"low"}`},
+        {.Deepseek, "medium", `"thinking":{"type":"enabled"},"reasoning_effort":"medium"`},
+        {.Deepseek, "off", `"thinking":{"type":"disabled"}`},
+        {.Zai, "high", `"thinking":{"type":"enabled","clear_thinking":false}`},
+        {.Qwen, "off", `"enable_thinking":false`},
         // gpt-5.6 added max; a row only offers it when the model advertises it.
-        {.Native, "max", `"reasoning_effort":"max"`},
+        {.Openai, "max", `"reasoning_effort":"max"`},
     }
 
     levels := [?]string{"off", "low", "medium", "high", "max"}
@@ -165,7 +167,7 @@ test_run_request_budgets_thinking_below_the_output_cap :: proc(t: ^testing.T) {
     // Shape of the real anthropic/claude-sonnet-4-5 row: budget_tokens with min=1024,
     // no max, and a 64000 output cap. The budget shares that cap with the answer.
     levels := [?]string{"off", "high", "max"}
-    model := request_test_model(.Anthropic_Messages, levels[:], .Native)
+    model := request_test_model(.Anthropic_Messages, levels[:])
     model.info.max_output_tokens = 64_000
     model.reasoning_budget_min = i64(1024)
 
@@ -185,7 +187,7 @@ test_run_request_budgets_thinking_below_the_output_cap :: proc(t: ^testing.T) {
     testing.expect(t, strings.contains(off, `"thinking":{"type":"disabled"}`), "off disables thinking")
 
     // A row with no bounds is not budget-shaped and takes the effort control instead.
-    effort_row := request_test_model(.Anthropic_Messages, levels[:], .Native)
+    effort_row := request_test_model(.Anthropic_Messages, levels[:])
     effort := request_test_build(t, &effort_row, "max")
     defer delete(effort)
     testing.expect(t, strings.contains(effort, `"output_config":{"effort":"max"}`), effort)
@@ -194,7 +196,7 @@ test_run_request_budgets_thinking_below_the_output_cap :: proc(t: ^testing.T) {
 @(test)
 test_run_request_uses_the_rows_max_tokens_field :: proc(t: ^testing.T) {
     levels := [?]string{"high"}
-    model := request_test_model(.Openai_Chat, levels[:], .Native)
+    model := request_test_model(.Openai_Chat, levels[:], .Openai)
 
     model.max_tokens_field = .Max_Tokens
     compatible := request_test_build(t, &model, "high")
@@ -214,7 +216,7 @@ test_run_request_uses_the_rows_max_tokens_field :: proc(t: ^testing.T) {
 @(test)
 test_run_request_responses_dialect_follows_the_credential :: proc(t: ^testing.T) {
     levels := [?]string{"low", "high"}
-    model := request_test_model(.Openai_Responses, levels[:], .Native)
+    model := request_test_model(.Openai_Responses, levels[:])
 
     arena: virtual.Arena
     testing.expect_value(t, virtual.arena_init_growing(&arena), nil)

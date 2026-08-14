@@ -31,8 +31,6 @@ Create_Session_Params :: struct {
     updated_at_ms:          u64,
     open_run_id:            Maybe(wire.Run_Id),
     open_run_kind:          Maybe(string),
-    open_run_reason:        Maybe(string),
-    open_run_config_rev:    Maybe(wire.Config_Rev),
     open_run_started_at_ms: Maybe(u64),
 }
 
@@ -60,8 +58,6 @@ Session_Row :: struct {
     updated_at_ms:          u64,
     open_run_id:            Maybe(wire.Run_Id),
     open_run_kind:          Maybe(string),
-    open_run_reason:        Maybe(string),
-    open_run_config_rev:    Maybe(wire.Config_Rev),
     open_run_started_at_ms: Maybe(u64),
 }
 
@@ -91,7 +87,7 @@ Insert_Config_Params :: struct {
     reasoning:  string,
 }
 
-Catalog_Source_Size_Row :: struct {
+Catalog_Size_Row :: struct {
     providers: u64,
     models:    u64,
 }
@@ -118,6 +114,13 @@ Session_History_Page_Row :: struct {
     message_id: wire.Message_Id,
     seq:        wire.Seq,
     payload:    string,
+}
+
+Open_Runs_Row :: struct {
+    session_id:             wire.Session_Id,
+    open_run_id:            wire.Run_Id,
+    open_run_kind:          string,
+    open_run_started_at_ms: u64,
 }
 
 Session_Page_Row :: struct {
@@ -156,30 +159,21 @@ Workspace_Page_Row :: struct {
 
 Delete_Catalog_Provider_Params :: struct {
     provider_id: string,
-    source:      string,
 }
 
-Delete_Catalog_Source_Params :: struct {
-    source: string,
-}
-
-Catalog_Source_Size_Params :: struct {
-    source: string,
-}
+Catalog_Size_Params :: struct {}
 
 Insert_Catalog_Provider_Params :: struct {
     provider_id:   string,
-    source:        string,
-    models_dev_id: Maybe(string),
-    name:          Maybe(string),
-    base_url:      Maybe(string),
-    protocol:      Maybe(string),
+    models_dev_id: string,
+    name:          string,
+    base_url:      string,
+    protocol:      string,
     etag:          Maybe(string),
 }
 
 Insert_Catalog_Provider_Env_Params :: struct {
     provider_id: string,
-    source:      string,
     ordinal:     int,
     name:        string,
 }
@@ -187,32 +181,29 @@ Insert_Catalog_Provider_Env_Params :: struct {
 Insert_Catalog_Model_Params :: struct {
     public_model_id:      string,
     provider_id:          string,
-    source:               string,
-    kind:                 string,
-    upstream_id:          Maybe(string),
-    name:                 Maybe(string),
-    context_window:       Maybe(u64),
-    max_output_tokens:    Maybe(u64),
-    base_url:             Maybe(string),
-    protocol:             Maybe(string),
-    supports_temperature: Maybe(bool),
-    reasoning_replay:     Maybe(string),
-    reasoning_format:     Maybe(string),
-    max_tokens_field:     Maybe(string),
+    upstream_id:          string,
+    name:                 string,
+    context_window:       u64,
+    max_output_tokens:    u64,
+    base_url:             string,
+    protocol:             string,
+    supports_temperature: bool,
+    reasoning_replay:     string,
+    thinking_format:      string,
+    anthropic_adaptive:   bool,
+    max_tokens_field:     string,
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
-    supports_vision:      Maybe(bool),
-    supports_tools:       Maybe(bool),
-    cost_input:           Maybe(f64),
-    cost_output:          Maybe(f64),
-    cost_cache_read:      Maybe(f64),
-    cost_cache_write:     Maybe(f64),
+    supports_vision:      bool,
+    supports_tools:       bool,
+    cost_input:           f64,
+    cost_output:          f64,
+    cost_cache_read:      f64,
+    cost_cache_write:     f64,
 }
 
 Insert_Catalog_Model_Level_Params :: struct {
     public_model_id: string,
-    source:          string,
-    kind:            string,
     ordinal:         int,
     level:           string,
 }
@@ -303,8 +294,6 @@ Session_History_Page_Params :: struct {
 Set_Open_Run_Params :: struct {
     open_run_id:            wire.Run_Id,
     open_run_kind:          string,
-    open_run_reason:        Maybe(string),
-    open_run_config_rev:    wire.Config_Rev,
     open_run_started_at_ms: u64,
     session_id:             wire.Session_Id,
 }
@@ -317,6 +306,8 @@ Clear_Open_Run_Params :: struct {
 Reset_Open_Run_Params :: struct {
     session_id: wire.Session_Id,
 }
+
+Open_Runs_Params :: struct {}
 
 Session_Exists_Params :: struct {
     session_id: wire.Session_Id,
@@ -356,8 +347,7 @@ Workspace_Page_Params :: struct {
 @(private)
 Query_Id :: enum {
     Delete_Catalog_Provider,
-    Delete_Catalog_Source,
-    Catalog_Source_Size,
+    Catalog_Size,
     Insert_Catalog_Provider,
     Insert_Catalog_Provider_Env,
     Insert_Catalog_Model,
@@ -380,6 +370,7 @@ Query_Id :: enum {
     Set_Open_Run,
     Clear_Open_Run,
     Reset_Open_Run,
+    Open_Runs,
     Session_Exists,
     Session_Snapshot,
     Session_Page,
@@ -390,42 +381,38 @@ Query_Id :: enum {
 
 @(private, rodata)
 QUERY_SQL := [Query_Id]string {
-    .Delete_Catalog_Provider     = `DELETE FROM catalog_providers
-    WHERE provider_id = :provider_id AND source = :source;`,
-    .Delete_Catalog_Source       = `DELETE FROM catalog_providers WHERE source = :source;`,
-    .Catalog_Source_Size         = `SELECT
-    (SELECT count(*) FROM catalog_providers WHERE source = :source) AS providers,
-    (SELECT count(*) FROM catalog_models WHERE source = :source) AS models;`,
+    .Delete_Catalog_Provider     = `DELETE FROM catalog_providers WHERE provider_id = :provider_id;`,
+    .Catalog_Size                = `SELECT
+    (SELECT count(*) FROM catalog_providers) AS providers,
+    (SELECT count(*) FROM catalog_models) AS models;`,
     .Insert_Catalog_Provider     = `INSERT INTO catalog_providers(
-    provider_id, source, models_dev_id, name, base_url, protocol, etag
+    provider_id, models_dev_id, name, base_url, protocol, etag
 )
 VALUES (
-    :provider_id, :source, :models_dev_id, :name, :base_url, :protocol, :etag
+    :provider_id, :models_dev_id, :name, :base_url, :protocol, :etag
 );`,
-    .Insert_Catalog_Provider_Env = `INSERT INTO catalog_provider_env(provider_id, source, ordinal, name)
-VALUES (:provider_id, :source, :ordinal, :name);`,
+    .Insert_Catalog_Provider_Env = `INSERT INTO catalog_provider_env(provider_id, ordinal, name)
+VALUES (:provider_id, :ordinal, :name);`,
     .Insert_Catalog_Model        = `INSERT INTO catalog_models(
-    public_model_id, provider_id, source, kind,
+    public_model_id, provider_id,
     upstream_id, name, context_window, max_output_tokens,
     base_url, protocol, supports_temperature,
-    reasoning_replay, reasoning_format, max_tokens_field,
+    reasoning_replay, thinking_format, anthropic_adaptive, max_tokens_field,
     reasoning_budget_min, reasoning_budget_max,
     supports_vision, supports_tools,
     cost_input, cost_output, cost_cache_read, cost_cache_write
 )
 VALUES (
-    :public_model_id, :provider_id, :source, :kind,
+    :public_model_id, :provider_id,
     :upstream_id, :name, :context_window, :max_output_tokens,
     :base_url, :protocol, :supports_temperature,
-    :reasoning_replay, :reasoning_format, :max_tokens_field,
+    :reasoning_replay, :thinking_format, :anthropic_adaptive, :max_tokens_field,
     :reasoning_budget_min, :reasoning_budget_max,
     :supports_vision, :supports_tools,
     :cost_input, :cost_output, :cost_cache_read, :cost_cache_write
 );`,
-    .Insert_Catalog_Model_Level  = `INSERT INTO catalog_model_reasoning_levels(
-    public_model_id, source, kind, ordinal, level
-)
-VALUES (:public_model_id, :source, :kind, :ordinal, :level);`,
+    .Insert_Catalog_Model_Level  = `INSERT INTO catalog_model_reasoning_levels(public_model_id, ordinal, level)
+VALUES (:public_model_id, :ordinal, :level);`,
     .Clear_Configs               = `DELETE FROM session_configs WHERE session_id = :session_id;`,
     .Set_Session_Config          = `UPDATE sessions
     SET config_rev = :config_rev, model = :model, reasoning = :reasoning
@@ -472,24 +459,22 @@ VALUES (
     .Set_Open_Run                = `UPDATE sessions SET
     open_run_id            = :open_run_id,
     open_run_kind          = :open_run_kind,
-    open_run_reason        = :open_run_reason,
-    open_run_config_rev    = :open_run_config_rev,
     open_run_started_at_ms = :open_run_started_at_ms
     WHERE id = :session_id;`,
     .Clear_Open_Run              = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
-    open_run_reason        = NULL,
-    open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id AND open_run_id = :open_run_id;`,
     .Reset_Open_Run              = `UPDATE sessions SET
     open_run_id            = NULL,
     open_run_kind          = NULL,
-    open_run_reason        = NULL,
-    open_run_config_rev    = NULL,
     open_run_started_at_ms = NULL
     WHERE id = :session_id;`,
+    .Open_Runs                   = `SELECT id AS session_id, open_run_id, open_run_kind, open_run_started_at_ms
+FROM sessions
+WHERE open_run_id IS NOT NULL
+ORDER BY open_run_started_at_ms ASC, id ASC;`,
     .Session_Exists              = `SELECT 1 FROM sessions WHERE id = :session_id;`,
     .Session_Snapshot            = `SELECT
     id, workspace_id,
@@ -497,7 +482,7 @@ VALUES (
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
     message_count, created_at_ms, updated_at_ms,
-    open_run_id, open_run_kind, open_run_reason, open_run_config_rev, open_run_started_at_ms
+    open_run_id, open_run_kind, open_run_started_at_ms
 FROM sessions
 WHERE id = :session_id;`,
     .Session_Page                = `SELECT
@@ -528,8 +513,7 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
 
 Queries :: struct {
     delete_catalog_provider:     sqlite.Bind_Mapping(Delete_Catalog_Provider_Params),
-    delete_catalog_source:       sqlite.Bind_Mapping(Delete_Catalog_Source_Params),
-    catalog_source_size:         sqlite.Reader(Catalog_Source_Size_Params, Catalog_Source_Size_Row),
+    catalog_size:                sqlite.Reader(Catalog_Size_Params, Catalog_Size_Row),
     insert_catalog_provider:     sqlite.Bind_Mapping(Insert_Catalog_Provider_Params),
     insert_catalog_provider_env: sqlite.Bind_Mapping(Insert_Catalog_Provider_Env_Params),
     insert_catalog_model:        sqlite.Bind_Mapping(Insert_Catalog_Model_Params),
@@ -552,6 +536,7 @@ Queries :: struct {
     set_open_run:                sqlite.Bind_Mapping(Set_Open_Run_Params),
     clear_open_run:              sqlite.Bind_Mapping(Clear_Open_Run_Params),
     reset_open_run:              sqlite.Bind_Mapping(Reset_Open_Run_Params),
+    open_runs:                   sqlite.Reader(Open_Runs_Params, Open_Runs_Row),
     session_exists:              sqlite.Bind_Mapping(Session_Exists_Params),
     session_snapshot:            sqlite.Reader(Session_Snapshot_Params, Session_Row),
     session_page:                sqlite.Reader(Session_Page_Params, Session_Page_Row),
@@ -568,26 +553,19 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     )
     assert(delete_catalog_provider_bind_err == .None, "generated statement matches its generated struct")
     queries.delete_catalog_provider = delete_catalog_provider_bind
-    delete_catalog_source_stmt := sqlite.prepare(db, QUERY_SQL[.Delete_Catalog_Source]) or_return
-    delete_catalog_source_bind, delete_catalog_source_bind_err := sqlite.bind_prepare(
-        delete_catalog_source_stmt,
-        Delete_Catalog_Source_Params,
-    )
-    assert(delete_catalog_source_bind_err == .None, "generated statement matches its generated struct")
-    queries.delete_catalog_source = delete_catalog_source_bind
-    catalog_source_size_stmt := sqlite.prepare(db, QUERY_SQL[.Catalog_Source_Size]) or_return
-    catalog_source_size_reader, catalog_source_size_reader_err := sqlite.reader_prepare(
-        catalog_source_size_stmt,
-        Catalog_Source_Size_Params,
-        Catalog_Source_Size_Row,
+    catalog_size_stmt := sqlite.prepare(db, QUERY_SQL[.Catalog_Size]) or_return
+    catalog_size_reader, catalog_size_reader_err := sqlite.reader_prepare(
+        catalog_size_stmt,
+        Catalog_Size_Params,
+        Catalog_Size_Row,
         allocator,
     )
-    if catalog_source_size_reader_err == .Out_Of_Memory {
-        sqlite.finalize(catalog_source_size_stmt)
-        return catalog_source_size_reader_err
+    if catalog_size_reader_err == .Out_Of_Memory {
+        sqlite.finalize(catalog_size_stmt)
+        return catalog_size_reader_err
     }
-    assert(catalog_source_size_reader_err == .None, "generated statement matches its generated struct")
-    queries.catalog_source_size = catalog_source_size_reader
+    assert(catalog_size_reader_err == .None, "generated statement matches its generated struct")
+    queries.catalog_size = catalog_size_reader
     insert_catalog_provider_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Provider]) or_return
     insert_catalog_provider_bind, insert_catalog_provider_bind_err := sqlite.bind_prepare(
         insert_catalog_provider_stmt,
@@ -733,6 +711,19 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     reset_open_run_bind, reset_open_run_bind_err := sqlite.bind_prepare(reset_open_run_stmt, Reset_Open_Run_Params)
     assert(reset_open_run_bind_err == .None, "generated statement matches its generated struct")
     queries.reset_open_run = reset_open_run_bind
+    open_runs_stmt := sqlite.prepare(db, QUERY_SQL[.Open_Runs]) or_return
+    open_runs_reader, open_runs_reader_err := sqlite.reader_prepare(
+        open_runs_stmt,
+        Open_Runs_Params,
+        Open_Runs_Row,
+        allocator,
+    )
+    if open_runs_reader_err == .Out_Of_Memory {
+        sqlite.finalize(open_runs_stmt)
+        return open_runs_reader_err
+    }
+    assert(open_runs_reader_err == .None, "generated statement matches its generated struct")
+    queries.open_runs = open_runs_reader
     session_exists_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Exists]) or_return
     session_exists_bind, session_exists_bind_err := sqlite.bind_prepare(session_exists_stmt, Session_Exists_Params)
     assert(session_exists_bind_err == .None, "generated statement matches its generated struct")
@@ -801,9 +792,8 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
 
 queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.delete_catalog_provider.statement)
-    sqlite.finalize(queries.delete_catalog_source.statement)
-    sqlite.finalize(queries.catalog_source_size.statement)
-    sqlite.reader_destroy(&queries.catalog_source_size, allocator)
+    sqlite.finalize(queries.catalog_size.statement)
+    sqlite.reader_destroy(&queries.catalog_size, allocator)
     sqlite.finalize(queries.insert_catalog_provider.statement)
     sqlite.finalize(queries.insert_catalog_provider_env.statement)
     sqlite.finalize(queries.insert_catalog_model.statement)
@@ -830,6 +820,8 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.set_open_run.statement)
     sqlite.finalize(queries.clear_open_run.statement)
     sqlite.finalize(queries.reset_open_run.statement)
+    sqlite.finalize(queries.open_runs.statement)
+    sqlite.reader_destroy(&queries.open_runs, allocator)
     sqlite.finalize(queries.session_exists.statement)
     sqlite.finalize(queries.session_snapshot.statement)
     sqlite.reader_destroy(&queries.session_snapshot, allocator)
@@ -847,21 +839,16 @@ delete_catalog_provider :: proc(q: ^Queries, params_in: Delete_Catalog_Provider_
     return sqlite.execute(&q.delete_catalog_provider, &params)
 }
 
-delete_catalog_source :: proc(q: ^Queries, params_in: Delete_Catalog_Source_Params) -> sqlite.Result {
-    params := params_in
-    return sqlite.execute(&q.delete_catalog_source, &params)
-}
-
-catalog_source_size :: proc(
+catalog_size :: proc(
     q: ^Queries,
-    params_in: Catalog_Source_Size_Params,
+    params_in: Catalog_Size_Params,
     allocator := context.allocator,
 ) -> (
-    Catalog_Source_Size_Row,
+    Catalog_Size_Row,
     sqlite.Error,
 ) {
     params := params_in
-    return sqlite.read_one(&q.catalog_source_size, &params, allocator)
+    return sqlite.read_one(&q.catalog_size, &params, allocator)
 }
 
 insert_catalog_provider :: proc(q: ^Queries, params_in: Insert_Catalog_Provider_Params) -> sqlite.Result {
@@ -989,6 +976,19 @@ clear_open_run :: proc(q: ^Queries, params_in: Clear_Open_Run_Params) -> sqlite.
 reset_open_run :: proc(q: ^Queries, params_in: Reset_Open_Run_Params) -> sqlite.Result {
     params := params_in
     return sqlite.execute(&q.reset_open_run, &params)
+}
+
+open_runs :: proc(
+    q: ^Queries,
+    params_in: Open_Runs_Params,
+    allocator := context.allocator,
+    cap_hint := 0,
+) -> (
+    []Open_Runs_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_all(&q.open_runs, &params, allocator, cap_hint)
 }
 
 session_snapshot :: proc(

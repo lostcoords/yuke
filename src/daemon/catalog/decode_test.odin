@@ -24,7 +24,9 @@ test_max_tokens_field_from_npm :: proc(t: ^testing.T) {
 
 @(test)
 test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {
-    for value in Reasoning_Replay {
+    // Every arm of the request builder's own enums is persistable, so a row can name any
+    // shape the builder can emit — including the three no models.dev row reaches today.
+    for value in provider.Openai_Reasoning_Replay {
         name := reasoning_replay_string[value]
         decoded, ok := reasoning_replay_from_string(name)
         testing.expect(t, ok, "every replay value has a name")
@@ -33,22 +35,47 @@ test_reasoning_names_are_closed_and_round_trip :: proc(t: ^testing.T) {
     _, replay_ok := reasoning_replay_from_string("future")
     testing.expect(t, !replay_ok, "unknown replay names remain closed")
 
-    for value in Reasoning_Format {
-        name := reasoning_format_string[value]
-        decoded, ok := reasoning_format_from_string(name)
-        testing.expect(t, ok, "every format value has a name")
+    for value in provider.Openai_Thinking_Format {
+        name := thinking_format_string[value]
+        decoded, ok := thinking_format_from_string(name)
+        testing.expect(t, ok, "every thinking format has a name")
         testing.expect_value(t, decoded, value)
     }
-    _, format_ok := reasoning_format_from_string("future")
+    _, format_ok := thinking_format_from_string("future")
     testing.expect(t, !format_ok, "unknown format names remain closed")
 
-    testing.expect(t, reasoning_format_compatible(.Anthropic_Messages, .Anthropic_Adaptive), "adaptive is Anthropic")
-    testing.expect(
-        t,
-        !reasoning_format_compatible(.Openai_Responses, .Anthropic_Adaptive),
-        "adaptive is not Responses",
-    )
-    testing.expect(t, reasoning_format_compatible(.Openai_Chat, .Qwen_Thinking), "Qwen is OpenAI-compatible")
+    // The zero value is "no reasoning control", so a row that names no shape asks for none.
+    zero: provider.Openai_Thinking_Format
+    testing.expect_value(t, zero, provider.Openai_Thinking_Format.None)
+}
+
+@(test)
+test_reasoning_shape_must_match_the_protocol :: proc(t: ^testing.T) {
+    chat := Model {
+        endpoint = {base_url = "https://example.test/v1", protocol = .Openai_Chat},
+        thinking_format = .Qwen,
+    }
+    testing.expect(t, reasoning_shape_compatible(chat), "an OpenAI-chat row carries a thinking format")
+
+    chat.anthropic_adaptive = true
+    testing.expect(t, !reasoning_shape_compatible(chat), "adaptive thinking is not an OpenAI-chat shape")
+
+    adaptive := Model {
+        endpoint = {base_url = "https://example.test/v1", protocol = .Anthropic_Messages},
+        anthropic_adaptive = true,
+    }
+    testing.expect(t, reasoning_shape_compatible(adaptive), "adaptive thinking is Anthropic's")
+
+    adaptive.thinking_format = .Openai
+    testing.expect(t, !reasoning_shape_compatible(adaptive), "an Anthropic row carries no chat thinking format")
+
+    responses := Model {
+        endpoint = {base_url = "https://example.test/v1", protocol = .Openai_Responses},
+    }
+    testing.expect(t, reasoning_shape_compatible(responses), "a Responses row names no body shape of its own")
+
+    responses.reasoning_replay = .Reasoning_Details
+    testing.expect(t, !reasoning_shape_compatible(responses), "replay is an OpenAI-chat field")
 }
 
 @(test)
@@ -99,8 +126,10 @@ test_decode_materializes_only_selected_provider :: proc(t: ^testing.T) {
     testing.expect_value(t, model.info.provider, "openai")
     testing.expect_value(t, model.upstream_id, "gpt-test")
     testing.expect_value(t, model.endpoint.protocol, wire.Provider_Protocol.Openai_Responses)
-    testing.expect_value(t, model.reasoning_format, Reasoning_Format.Native)
-    testing.expect_value(t, model.reasoning_replay, Reasoning_Replay.Reasoning_Content)
+    testing.expect_value(t, model.thinking_format, provider.Openai_Thinking_Format.None)
+    // `interleaved` shaped the level set, but replay is an OpenAI-chat field and this
+    // row is Responses, so nothing is recorded for a builder that cannot use it.
+    testing.expect_value(t, model.reasoning_replay, provider.Openai_Reasoning_Replay.None)
     test_expect_levels(t, model.info.reasoning_levels, {"off", "high", "medium"})
     testing.expect_value(t, model.info.default_reasoning, "medium")
     testing.expect(t, model.info.supports_vision, "image input should project to vision")
@@ -120,7 +149,9 @@ test_reasoning_normalization_by_protocol :: proc(t: ^testing.T) {
                 "a-effort":{"id":"a-effort","name":"Effort","tool_call":true,"reasoning_options":[{"type":"effort","values":["low","default","max",null]}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}},
                 "a-empty":{"id":"a-empty","name":"Empty","tool_call":false,"reasoning_options":[],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}},
                 "a-none":{"id":"a-none","name":"None","tool_call":false,"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}},
-                "a-toggle":{"id":"a-toggle","name":"Toggle","tool_call":true,"reasoning_options":[{"type":"toggle"}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}}
+                "a-toggle":{"id":"a-toggle","name":"Toggle","tool_call":true,"reasoning_options":[{"type":"toggle"}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}},
+                "a-both":{"id":"a-both","name":"Toggle And Effort","tool_call":true,"reasoning_options":[{"type":"toggle"},{"type":"effort","values":["low","high","max"]}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}},
+                "a-effort-budget":{"id":"a-effort-budget","name":"Effort And Budget","tool_call":true,"reasoning_options":[{"type":"effort","values":["low","high"]},{"type":"budget_tokens","min":1024}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":200000,"output":8192}}
             }
         },
         "chat":{
@@ -158,7 +189,7 @@ test_reasoning_normalization_by_protocol :: proc(t: ^testing.T) {
     budget := test_model(anthropic, "anthropic/a-budget")
     test_expect_levels(t, budget.info.reasoning_levels, {"off", "high", "max"})
     testing.expect_value(t, budget.info.default_reasoning, "high")
-    testing.expect_value(t, budget.reasoning_format, Reasoning_Format.Native)
+    testing.expect(t, !budget.anthropic_adaptive, "a budget row is not adaptive")
     budget_min, has_min := budget.reasoning_budget_min.?
     budget_max, has_max := budget.reasoning_budget_max.?
     testing.expect(t, has_min && has_max, "budget bounds should be retained")
@@ -168,47 +199,61 @@ test_reasoning_normalization_by_protocol :: proc(t: ^testing.T) {
     effort := test_model(anthropic, "anthropic/a-effort")
     test_expect_levels(t, effort.info.reasoning_levels, {"off", "low", "high", "max"})
     testing.expect_value(t, effort.info.default_reasoning, "high")
-    testing.expect_value(t, effort.reasoning_format, Reasoning_Format.Native)
+    testing.expect(t, !effort.anthropic_adaptive, "an effort row is not adaptive")
 
     empty := test_model(anthropic, "anthropic/a-empty")
     test_expect_levels(t, empty.info.reasoning_levels, {})
     testing.expect_value(t, empty.info.default_reasoning, "")
-    testing.expect_value(t, empty.reasoning_format, Reasoning_Format.Native)
+    testing.expect(t, !empty.anthropic_adaptive, "a row with no options is not adaptive")
 
     none := test_model(anthropic, "anthropic/a-none")
     test_expect_levels(t, none.info.reasoning_levels, {})
-    testing.expect_value(t, none.reasoning_format, Reasoning_Format.Native)
+    testing.expect(t, !none.anthropic_adaptive, "a row with no reasoning is not adaptive")
 
     toggle := test_model(anthropic, "anthropic/a-toggle")
     test_expect_levels(t, toggle.info.reasoning_levels, {"off", "high"})
     testing.expect_value(t, toggle.info.default_reasoning, "high")
-    testing.expect_value(t, toggle.reasoning_format, Reasoning_Format.Anthropic_Adaptive)
+    testing.expect(t, toggle.anthropic_adaptive, "an Anthropic toggle row takes adaptive thinking")
+
+    // Every current Anthropic model lists several options; effort wins, so the row keeps
+    // the full ladder instead of the toggle's off/high. `claude-sonnet-5` is this shape.
+    both := test_model(anthropic, "anthropic/a-both")
+    test_expect_levels(t, both.info.reasoning_levels, {"off", "low", "high", "max"})
+    testing.expect(t, !both.anthropic_adaptive, "effort wins, so the row is not driven as a toggle")
+
+    // `claude-opus-4-6` is this shape: the effort ladder is used and the deprecated budget
+    // bounds are left unset, so nothing sends `budget_tokens` to a model that refuses it.
+    effort_budget := test_model(anthropic, "anthropic/a-effort-budget")
+    test_expect_levels(t, effort_budget.info.reasoning_levels, {"off", "low", "high"})
+    _, both_has_min := effort_budget.reasoning_budget_min.?
+    _, both_has_max := effort_budget.reasoning_budget_max.?
+    testing.expect(t, !both_has_min && !both_has_max, "an effort row carries no budget bounds")
 
     chat := &result.providers[1]
     chat_effort := test_model(chat, "chat/c-effort")
     test_expect_levels(t, chat_effort.info.reasoning_levels, {"off", "low", "medium"})
     testing.expect_value(t, chat_effort.info.default_reasoning, "medium")
-    testing.expect_value(t, chat_effort.reasoning_format, Reasoning_Format.Openai_Effort_Toggle_Off)
-    testing.expect_value(t, chat_effort.reasoning_replay, Reasoning_Replay.None)
+    testing.expect_value(t, chat_effort.thinking_format, provider.Openai_Thinking_Format.Deepseek)
+    testing.expect_value(t, chat_effort.reasoning_replay, provider.Openai_Reasoning_Replay.None)
 
     chat_toggle := test_model(chat, "chat/c-toggle")
     test_expect_levels(t, chat_toggle.info.reasoning_levels, {"off", "high"})
-    testing.expect_value(t, chat_toggle.reasoning_format, Reasoning_Format.Zai_Toggle)
+    testing.expect_value(t, chat_toggle.thinking_format, provider.Openai_Thinking_Format.Zai)
 
     chat_qwen := test_model(chat, "chat/c-qwen")
     test_expect_levels(t, chat_qwen.info.reasoning_levels, {"off", "high"})
-    testing.expect_value(t, chat_qwen.reasoning_format, Reasoning_Format.Qwen_Thinking)
+    testing.expect_value(t, chat_qwen.thinking_format, provider.Openai_Thinking_Format.Qwen)
 
     chat_replay := test_model(chat, "chat/c-replay")
     test_expect_levels(t, chat_replay.info.reasoning_levels, {})
-    testing.expect_value(t, chat_replay.reasoning_replay, Reasoning_Replay.Reasoning_Content)
+    testing.expect_value(t, chat_replay.reasoning_replay, provider.Openai_Reasoning_Replay.Reasoning_Content)
 
     openrouter := &result.providers[2]
     routed := test_model(openrouter, "openrouter/or-model")
     test_expect_levels(t, routed.info.reasoning_levels, {"off", "low", "high"})
     testing.expect_value(t, routed.info.default_reasoning, "low")
-    testing.expect_value(t, routed.reasoning_format, Reasoning_Format.Openrouter_Effort)
-    testing.expect_value(t, routed.reasoning_replay, Reasoning_Replay.None)
+    testing.expect_value(t, routed.thinking_format, provider.Openai_Thinking_Format.Openrouter)
+    testing.expect_value(t, routed.reasoning_replay, provider.Openai_Reasoning_Replay.None)
 }
 
 @(test)
@@ -313,7 +358,7 @@ test_xai_defaults_to_responses :: proc(t: ^testing.T) {
     model := &result.providers[0].models[0]
     testing.expect_value(t, model.endpoint.base_url, "https://api.x.ai/v1")
     testing.expect_value(t, model.endpoint.protocol, wire.Provider_Protocol.Openai_Responses)
-    testing.expect_value(t, model.reasoning_format, Reasoning_Format.Native)
+    testing.expect_value(t, model.thinking_format, provider.Openai_Thinking_Format.None)
     test_expect_levels(t, model.info.reasoning_levels, {"low", "medium", "high"})
     testing.expect_value(t, model.info.default_reasoning, "medium")
 }

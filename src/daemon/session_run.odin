@@ -35,16 +35,23 @@ Run_Start_Error :: enum {
 
     // The transport refused the turn, or its announcement could not be encoded.
     Start_Failed,
+
+    // Announced and then failed, so its own terminal already ran — drain included. The send
+    // succeeded: the failure belongs to the transcript.
+    Terminated,
 }
 
 // One open assistant block and the part it folds into. Text arrives as deltas — a closed
 // block carries only its terminal metadata — so the run accumulates it here.
-@(private = "file")
+@(private)
 Run_Block :: struct {
     block_id:  provider.Stream_Block_Id,
     kind:      provider.Stream_Block_Kind,
     text:      strings.Builder,
     signature: string,
+
+    // Set by this block's terminal. A closed reasoning block is no longer the live phase.
+    closed:    bool,
 }
 
 // A session's live engine state: the turn in flight and the inputs waiting behind it.
@@ -68,7 +75,10 @@ Run :: struct {
     // The provider turn this run is streaming, or nil once it has completed.
     op:            ^Run_Op,
     run_id:        wire.Run_Id,
-    config_rev:    wire.Config_Rev,
+
+    // The revision this run announced, with the model and level it names. Cloned into the
+    // run's arena: the snapshot they came from dies with the request that started the turn.
+    config:        wire.Run_Config,
     message_id:    wire.Message_Id,
     started_at_ms: u64,
 
@@ -98,18 +108,12 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
         return 0, .No_Model
     }
 
-    effective, model, resolve_err := run_model_load(d, session.model, sa)
-    switch resolve_err {
-    case .None:
-
-    case .Unknown_Model:
+    // The catalog changes only on a refresh, which cannot run while this does; the borrow
+    // never outlives this proc.
+    model := catalog_model_find(d, session.model)
+    if model == nil {
         return 0, .Unknown_Model
-
-    case .Store_Failed:
-        return 0, .Store_Failed
     }
-
-    defer store.effective_catalog_destroy(&effective)
 
     connection, bind_err := run_connection_build(d, model)
     if bind_err != .None {
@@ -164,13 +168,8 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
     // `config_rev` 0 means the session has announced none, and a revision no event
     // announced is one a resync cannot resolve.
     if session.config_rev == 0 {
-        config := wire.Run_Config {
-            config_rev = run.config_rev,
-            model      = session.model,
-            reasoning  = session.reasoning,
-        }
-
-        if perr := broadcast(d, wire.Config_Changed_Data{session_id = session.id, config = config}); perr != .None {
+        if perr := broadcast(d, wire.Config_Changed_Data{session_id = session.id, config = run.config});
+           perr != .None {
             log.errorf("daemon: session %v could not announce its config: %v", session.id, perr)
             run_free(run)
 
@@ -182,7 +181,7 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
         session_id    = session.id,
         run_id        = run.run_id,
         kind          = .Turn,
-        config_rev    = run.config_rev,
+        config_rev    = run.config.config_rev,
         started_at_ms = run.started_at_ms,
     }
 
@@ -210,11 +209,14 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
         session_id    = run.session,
         message_id    = run.message_id,
         run_id        = run.run_id,
-        config_rev    = run.config_rev,
+        config_rev    = run.config.config_rev,
         agent         = RUN_AGENT,
         created_at_ms = run.started_at_ms,
     }
     _ = broadcast(d, started_draft)
+
+    // `run.started` says a run exists, not what it is doing.
+    session_activity_announce(d, session.id)
 
     sink := Run_Sink {
         on_event = run_on_stream,
@@ -224,9 +226,11 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
 
     run.op = run_begin(&d.runs, connection, body, sink)
     if run.op == nil {
+        // `run_fail` runs the terminal and releases the run, so the id is read first.
+        run_id := run.run_id
         run_fail(run, .Provider, "the provider turn did not start")
 
-        return 0, .Start_Failed
+        return run_id, .Terminated
     }
 
     return run.run_id, .None
@@ -261,11 +265,18 @@ run_new :: proc(
     run.session = session.id
     run.run_id = hw.run_id + 1
     run.message_id = hw.message_id + 1
-    run.config_rev = session.config_rev if session.config_rev != 0 else hw.config_rev + 1
     run.started_at_ms = now_ms()
     run.allocator = virtual.arena_allocator(&run.arena)
     run.blocks = make([dynamic]Run_Block, run.allocator)
     run.finish = .Unknown
+
+    // A session with no announced revision mints one; every other run reuses what
+    // `config.changed` already published for the model and level the session names.
+    run.config = wire.Run_Config {
+        config_rev = session.config_rev if session.config_rev != 0 else hw.config_rev + 1,
+        model      = strings.clone(session.model, run.allocator),
+        reasoning  = strings.clone(session.reasoning, run.allocator),
+    }
 
     // Provenance records what actually answered, which is the only correct source for
     // "which model produced this"; the config revision only records what was requested.
@@ -276,7 +287,7 @@ run_new :: proc(
 
     assert(run.run_id > 0, "a started run has a minted id")
     assert(run.message_id > 0, "a drafted message has a minted id")
-    assert(run.config_rev > 0, "a run names an announced config revision")
+    assert(run.config.config_rev > 0, "a run names an announced config revision")
 
     return run, .None
 }
@@ -336,6 +347,10 @@ run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
         part       = run_part_build(&run.blocks[index], index),
     }
     _ = broadcast(run.daemon, added)
+
+    // A block boundary is the only point inside a turn where the phase moves; deltas never
+    // change it and never announce.
+    session_activity_announce(run.daemon, run.session)
 }
 
 // Append `text` to its block and mirror the same bytes as a delta. `offset` is what the
@@ -368,6 +383,14 @@ run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
         return
     }
 
+    was_open := !block.closed
+    block.closed = true
+
+    // Only the newest reasoning block names a phase, so closing anything else is invisible.
+    if was_open && block.kind == .Reasoning && block == &run.blocks[len(run.blocks) - 1] {
+        session_activity_announce(run.daemon, run.session)
+    }
+
     #partial switch result in stopped.result {
     case provider.Stream_Reasoning_Block:
         block.signature = strings.clone(result.signature, run.allocator)
@@ -392,7 +415,7 @@ run_block_find :: proc(run: ^Run, block_id: provider.Stream_Block_Id) -> (^Run_B
 }
 
 // The wire part one block currently represents, borrowing the block's own buffer.
-@(private = "file")
+@(private)
 run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
     text := strings.to_string(block.text)
     id := wire.Part_Id(index)
@@ -436,7 +459,7 @@ run_on_result :: proc(user: rawptr, result: provider.Turn_Result) {
     message := wire.Assistant_Message {
         id = run.message_id,
         run_id = run.run_id,
-        config_rev = run.config_rev,
+        config_rev = run.config.config_rev,
         agent = RUN_AGENT,
         content = content,
         finish = run.finish,
@@ -529,6 +552,8 @@ run_close :: proc(run: ^Run) {
     live.run = nil
     run_free(run)
 
+    // The queue settles before anything is announced, so no subscriber sees an idle state
+    // that a promotion replaces in the same tick.
     session_promote_next(d, session)
 }
 
@@ -540,6 +565,56 @@ run_free :: proc(run: ^Run) {
     allocator := run.daemon.allocator
     virtual.arena_destroy(&run.arena)
     free(run, allocator)
+}
+
+// Close every run the log left unterminated, once at start. Shutdown announces nothing, so
+// a clean stop leaves the same trace a kill does, and only this start can write what it owed.
+runs_recover :: proc(d: ^Daemon) {
+    assert(d != nil, "run recovery needs daemon state")
+    assert(d.store != nil, "run recovery needs an open store")
+    assert(len(d.sessions) == 0, "run recovery runs before the engine tracks anything")
+
+    scratch: virtual.Arena
+    if virtual.arena_init_growing(&scratch) != nil {
+        log.error("daemon: could not read the runs left open by the previous start")
+
+        return
+    }
+
+    defer virtual.arena_destroy(&scratch)
+
+    open, read_err := store.open_runs(d.store, virtual.arena_allocator(&scratch))
+    if read_err != nil {
+        log.errorf("daemon: could not read the runs left open by the previous start: %v", read_err)
+
+        return
+    }
+
+    now := now_ms()
+
+    for row in open {
+        done := wire.Run_Done_Data {
+            session_id = row.session,
+            run_id = row.run.run_id,
+            kind = row.run.kind,
+            timing = wire.Run_Canceled_Timing{started_at_ms = row.run.started_at_ms, ended_at_ms = now},
+            outcome = wire.Run_Outcome_Failed{code = .Internal, message = "the daemon stopped during this run"},
+        }
+
+        // The append clears the marker, so a failure leaves the row for the next start.
+        if perr := broadcast(d, done); perr != .None {
+            log.errorf(
+                "daemon: session %v could not close run %d after a restart: %v",
+                row.session,
+                row.run.run_id,
+                perr,
+            )
+
+            continue
+        }
+
+        log.infof("daemon: session %v closed run %d left open by the previous start", row.session, row.run.run_id)
+    }
 }
 
 // Cancel every live turn and release the engine state the daemon owns. `turn_cancel` fires
@@ -627,7 +702,7 @@ session_live_run :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Run {
 
 // The session's live state, created empty if it has none. Nil only under allocation
 // failure, which the caller reports rather than announcing a turn it cannot track.
-@(private = "file")
+@(private)
 session_live_ensure :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Session_Live {
     if existing := session_live(d, session); existing != nil {
         return existing
@@ -701,6 +776,8 @@ session_queue_push :: proc(
         return false
     }
 
+    session_activity_announce(d, session)
+
     return true
 }
 
@@ -739,6 +816,7 @@ session_queue_remove :: proc(d: ^Daemon, session: wire.Session_Id, input_id: wir
     for queued, index in live.queue {
         if queued.input_id == input_id {
             ordered_remove(&live.queue, index)
+            session_activity_announce(d, session)
 
             return true
         }
@@ -761,19 +839,22 @@ session_queue_clear :: proc(d: ^Daemon, session: wire.Session_Id, sa: mem.Alloca
     }
 
     clear(&live.queue)
+    session_activity_announce(d, session)
 
     return cleared
 }
 
-// Start the input waiting at the head of the session's queue: commit it as a user message,
-// then run it. Called when a turn ends, so the queue drains one turn at a time.
+// Start the input at the head of the queue. Every failing path removes its entry and drains
+// on, so the recursion is bounded and nothing is stranded behind a session with no turn.
 @(private = "file")
 session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     live := session_live(d, session)
     assert(live == nil || live.run == nil, "a session promotes an input only between turns")
 
+    // Settled: the engine holds nothing more, and this is the one place that says so.
     if live == nil || len(live.queue) == 0 {
         session_live_release(d, session)
+        session_activity_announce(d, session)
 
         return
     }
@@ -784,6 +865,8 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     scratch: virtual.Arena
     if virtual.arena_init_growing(&scratch) != nil {
         log.errorf("daemon: session %v could not promote its queued input", session)
+        session_input_drop(d, session, next.input_id)
+        session_promote_next(d, session)
 
         return
     }
@@ -795,6 +878,7 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     if serr != nil || !found {
         log.errorf("daemon: session %v could not read the session behind its queue: %v", session, serr)
         session_input_drop(d, session, next.input_id)
+        session_promote_next(d, session)
 
         return
     }
@@ -803,6 +887,7 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     if hw_err != nil {
         log.errorf("daemon: session %v could not read its marks to promote an input: %v", session, hw_err)
         session_input_drop(d, session, next.input_id)
+        session_promote_next(d, session)
 
         return
     }
@@ -820,22 +905,26 @@ session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     if perr := broadcast(d, wire.Message_Committed_Data{session_id = session, message = committed}); perr != .None {
         log.errorf("daemon: session %v could not commit its queued input: %v", session, perr)
         session_input_drop(d, session, next.input_id)
+        session_promote_next(d, session)
 
         return
     }
 
     session_summary_announce(d, session, sa)
 
-    if _, start_err := run_turn_start(d, snapshot.session); start_err != .None {
+    // A refused turn keeps its committed message and drains on. `Terminated` already
+    // drained, and draining again would promote behind a live turn.
+    _, start_err := run_turn_start(d, snapshot.session)
+
+    if start_err != .None && start_err != .Terminated {
         log.errorf("daemon: session %v could not run its queued input: %v", session, start_err)
-        session_live_release(d, session)
+        session_promote_next(d, session)
     }
 }
 
-// Retract an input that was promoted out of the queue but could not be run, so no
-// subscriber is left holding one that will never commit.
+// Retract an input promoted out of the queue but never committed, so no subscriber holds
+// one that will never arrive. The caller drains on.
 @(private = "file")
 session_input_drop :: proc(d: ^Daemon, session: wire.Session_Id, input_id: wire.Input_Id) {
     _ = broadcast(d, wire.Input_Canceled_Data{session_id = session, input_id = input_id})
-    session_live_release(d, session)
 }

@@ -2,6 +2,7 @@ package daemon
 
 import "core:log"
 import "core:mem"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -40,8 +41,8 @@ session_revision_next :: proc(d: ^Daemon) -> wire.Session_Revision {
 }
 
 // `session.list` over the registry: page, continuation, and total read straight from
-// SQLite, at the daemon's current index revision. Every session reads back idle
-// (no session engine exists).
+// SQLite, at the daemon's current index revision. Each row's activity comes from the
+// engine, so a listed session and a resync of that session report the same state.
 method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.list needs connection state")
     assert(conn.state == .Ready, "session.list ran outside Ready")
@@ -58,10 +59,10 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 
     assert(d.store != nil, "a serving daemon always owns an event store")
 
-    // `active` selects sessions with a live run; without an engine there are none, so an
-    // empty page is correct — `recent` and `active_recent` coincide for the same reason.
+    // `active` selects what the engine tracks, which lives in memory rather than the
+    // registry. `active_recent` still orders like `recent`.
     if params.view == .Active {
-        send_result(conn, req.id, wire.Session_List_Result{}, sa)
+        session_list_active(conn, req, filter, sa)
         return
     }
 
@@ -122,8 +123,8 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 
     for session, i in sessions {
         items[i] = wire.Session_List_Item {
-            session = session,
-            activity = {state = wire.Activity_State_Idle{}},
+            session  = session,
+            activity = session_activity(d, session.id),
         }
     }
 
@@ -141,6 +142,175 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     // Every remaining field is daemon-built and the store already refused any row the protocol
     // would reject, so `send_result`'s validation assertion covers the rest.
     send_result(conn, req.id, result, sa)
+}
+
+// `session.list` at `view = active`: paged over the engine's map instead of SQL, on the
+// same keyset and cursor grammar, so a client pages both views identically.
+@(private = "file")
+session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Session_Filter, sa: mem.Allocator) {
+    d := conn.daemon
+    params := req.params.(wire.Session_List_Params)
+
+    resume: Maybe(store.Session_Cursor)
+    if token, paging := params.cursor.?; paging {
+        position, valid := session_cursor_decode(token, filter)
+
+        if !valid {
+            send_error(conn, req.id, .Bad_Request, "malformed session.list cursor", sa)
+
+            return
+        }
+
+        resume = position
+    }
+
+    limit := wire.LIMITS.default_session_list_page_size
+    if requested, ok := params.limit.?; ok {
+        limit = int(requested)
+    }
+
+    assert(limit > 0, "a validated page size is positive")
+
+    items, items_err := make([dynamic]wire.Session_List_Item, 0, len(d.sessions), sa)
+    if items_err != nil {
+        send_error(conn, req.id, .Internal, "session index unavailable", sa)
+
+        return
+    }
+
+    for id in d.sessions {
+        snapshot, found, serr := store.session_snapshot(d.store, id, sa)
+
+        if serr != nil {
+            log.errorf("daemon: session.list could not read active session %v: %v", id, serr)
+            send_error(conn, req.id, .Internal, "session index unavailable", sa)
+
+            return
+        }
+
+        // A tracked id with no row lost a race with `session.removed`, not an invariant.
+        if !found || !session_filter_matches(filter, snapshot.session) {
+            continue
+        }
+
+        if _, err := append(
+            &items,
+            wire.Session_List_Item{session = snapshot.session, activity = session_activity(d, id)},
+        ); err != nil {
+            send_error(conn, req.id, .Internal, "session index unavailable", sa)
+
+            return
+        }
+    }
+
+    // Map iteration is unordered, so this is what makes the answer reproducible at all.
+    slice.sort_by(items[:], proc(a, b: wire.Session_List_Item) -> bool {
+        if a.session.updated_at_ms != b.session.updated_at_ms {
+            return a.session.updated_at_ms > b.session.updated_at_ms
+        }
+
+        return session_id_greater(a.session.id, b.session.id)
+    })
+
+    // `total` describes the whole selection on every page, as it does for the registry.
+    page := items[:]
+    total := u64(len(page))
+
+    // Resume strictly below the cursor. The position is exclusive on both terms, so no row
+    // repeats across pages and none between them is skipped.
+    if position, paging := resume.?; paging {
+        for item, index in page {
+            below :=
+                item.session.updated_at_ms < position.updated_at_ms ||
+                (item.session.updated_at_ms == position.updated_at_ms &&
+                        session_id_greater(position.id, item.session.id))
+
+            if below {
+                page = page[index:]
+                break
+            }
+
+            if index == len(page) - 1 {
+                page = nil
+            }
+        }
+    }
+
+    result := wire.Session_List_Result {
+        revision = d.session_revision,
+        items    = page,
+        total    = total,
+    }
+
+    // Minted only when a row remains, so a null continuation really does end the view.
+    if len(page) > limit {
+        result.items = page[:limit]
+        last := result.items[limit - 1].session
+        result.next_cursor = session_cursor_encode(filter, {updated_at_ms = last.updated_at_ms, id = last.id}, sa)
+    }
+
+    send_result(conn, req.id, result, sa)
+}
+
+// Whether a session belongs to the selection a filter names. `Session_Page` applies this
+// same predicate in SQL; this is its in-memory twin, and the two must agree.
+@(private = "file")
+session_filter_matches :: proc(filter: store.Session_Filter, session: wire.Session) -> bool {
+    assert(filter.scope != nil, "a session filter carries its scope")
+    assert(filter.population != nil, "a session filter carries its population")
+
+    switch scope in filter.scope {
+    case wire.Session_Scope_All:
+
+    case wire.Session_Scope_Workspace:
+        if session.workspace_id != scope.workspace_id {
+            return false
+        }
+    }
+
+    switch population in filter.population {
+    case wire.Session_Population_All:
+
+    case wire.Session_Population_Top_Level:
+        // `origin IN ('root', 'fork')`, the same pair the statement admits.
+        switch _ in session.origin {
+        case wire.Session_Origin_Root, wire.Session_Origin_Fork:
+
+        case wire.Session_Origin_Child, wire.Session_Origin_Cron:
+            return false
+        }
+
+    case wire.Session_Population_Children:
+        child, is_child := session.origin.(wire.Session_Origin_Child)
+
+        if !is_child || child.parent_id != population.parent_id {
+            return false
+        }
+
+    case wire.Session_Population_Job_Runs:
+        cron, is_cron := session.origin.(wire.Session_Origin_Cron)
+
+        if !is_cron || cron.job_id != population.job_id {
+            return false
+        }
+    }
+
+    return true
+}
+
+// The registry's `id DESC` tiebreak. Ids are opaque blobs, so the compare is bytewise.
+@(private = "file")
+session_id_greater :: proc(a, b: wire.Session_Id) -> bool {
+    left := ([16]u8)(a)
+    right := ([16]u8)(b)
+
+    for byte, index in left {
+        if byte != right[index] {
+            return byte > right[index]
+        }
+    }
+
+    return false
 }
 
 // Write the selection a cursor belongs to. Every arm contributes a distinct leading byte, and

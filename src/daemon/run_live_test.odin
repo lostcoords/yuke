@@ -36,7 +36,7 @@ Live_Turn :: struct {
 // The MiniMax rows exactly as the catalog resolves them, so a live turn exercises the
 // same request assembly a real run would. Verified against `yuke catalog list`.
 @(private = "file")
-live_model :: proc(upstream: string, levels: []string, format: catalog.Reasoning_Format) -> catalog.Model {
+live_model :: proc(upstream: string, levels: []string, adaptive: bool) -> catalog.Model {
     return catalog.Model {
         info = {
             id = wire.Model_Id(strings.concatenate({"minimax/", upstream}, context.temp_allocator)),
@@ -51,7 +51,7 @@ live_model :: proc(upstream: string, levels: []string, format: catalog.Reasoning
         upstream_id = upstream,
         endpoint = {base_url = "https://api.minimax.io/anthropic/v1", protocol = .Anthropic_Messages},
         supports_temperature = true,
-        reasoning_format = format,
+        anthropic_adaptive = adaptive,
     }
 }
 
@@ -154,7 +154,7 @@ test_live_minimax_text_turn :: proc(t: ^testing.T) {
 
     // M2.7 advertises no reasoning options, so no thinking control is sent. It thinks
     // anyway — the endpoint cannot disable it — which exercises the reasoning decode.
-    model := live_model("MiniMax-M2.7", nil, .Native)
+    model := live_model("MiniMax-M2.7", nil, false)
     turn := live_turn_run(t, &model, "", "Reply with exactly: ok")
     defer strings.builder_destroy(&turn.text)
     defer strings.builder_destroy(&turn.reasoning)
@@ -176,7 +176,7 @@ test_live_minimax_reasoning_turn :: proc(t: ^testing.T) {
     // M3 maps a models.dev toggle onto Anthropic_Adaptive, so `high` sends
     // thinking:{"type":"adaptive"} and `off` sends thinking:{"type":"disabled"}.
     levels := [?]string{"off", "high"}
-    model := live_model("MiniMax-M3", levels[:], .Anthropic_Adaptive)
+    model := live_model("MiniMax-M3", levels[:], true)
 
     thinking := live_turn_run(t, &model, "high", "What is 17 * 23? Answer with the number only.")
     defer strings.builder_destroy(&thinking.text)

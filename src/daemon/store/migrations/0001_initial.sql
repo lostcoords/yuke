@@ -34,38 +34,27 @@ CREATE TABLE provider_credentials (
     )
 ) WITHOUT ROWID;
 
--- Imported snapshots and startup JavaScript definitions deliberately coexist.
--- Source remains in the key so removing an overlay reveals, rather than destroys,
--- the imported provider beneath it. An imported provider is complete; a JavaScript
--- provider may inherit its endpoint from models.dev.
+-- One row per imported models.dev provider. `etag` is the feed's own validator, written
+-- onto every row so it survives a restart.
 CREATE TABLE catalog_providers (
     provider_id TEXT NOT NULL,
-    source      TEXT NOT NULL CHECK (source IN ('models_dev', 'javascript')),
 
-    models_dev_id TEXT CHECK (models_dev_id IS NULL OR (
+    models_dev_id TEXT NOT NULL CHECK (
         typeof(models_dev_id) = 'text' AND
         length(CAST(models_dev_id AS BLOB)) BETWEEN 1 AND 64 AND
         models_dev_id NOT GLOB '*[^a-z0-9._-]*'
-    )),
-    name     TEXT CHECK (name     IS NULL OR (typeof(name)     = 'text' AND length(CAST(name     AS BLOB)) BETWEEN 1 AND 128)),
-    base_url TEXT CHECK (base_url IS NULL OR (typeof(base_url) = 'text' AND length(CAST(base_url AS BLOB)) BETWEEN 1 AND 4096)),
-    protocol TEXT CHECK (protocol IS NULL OR protocol IN ('anthropic-messages', 'openai-completions', 'openai-responses')),
-    etag     TEXT CHECK (etag     IS NULL OR (typeof(etag)     = 'text' AND length(CAST(etag     AS BLOB)) BETWEEN 1 AND 4096)),
+    ),
+    name     TEXT NOT NULL CHECK (typeof(name)     = 'text' AND length(CAST(name     AS BLOB)) BETWEEN 1 AND 128),
+    base_url TEXT NOT NULL CHECK (typeof(base_url) = 'text' AND length(CAST(base_url AS BLOB)) BETWEEN 1 AND 4096),
+    protocol TEXT NOT NULL CHECK (protocol IN ('anthropic-messages', 'openai-completions', 'openai-responses')),
+    etag     TEXT CHECK (etag IS NULL OR (typeof(etag) = 'text' AND length(CAST(etag AS BLOB)) BETWEEN 1 AND 4096)),
 
-    PRIMARY KEY (provider_id, source),
+    PRIMARY KEY (provider_id),
 
     CHECK (
         typeof(provider_id) = 'text' AND
         length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 64 AND
         provider_id NOT GLOB '*[^a-z0-9._-]*'
-    ),
-    CHECK ((base_url IS NULL) = (protocol IS NULL)),
-    CHECK (
-        (source = 'models_dev' AND
-            models_dev_id IS NOT NULL AND name IS NOT NULL AND
-            base_url IS NOT NULL) OR
-        (source = 'javascript' AND etag IS NULL AND
-            (models_dev_id IS NOT NULL OR base_url IS NOT NULL))
     )
 ) WITHOUT ROWID;
 
@@ -73,122 +62,95 @@ CREATE TABLE catalog_providers (
 -- configuration names, never credential values.
 CREATE TABLE catalog_provider_env (
     provider_id TEXT NOT NULL,
-    source      TEXT NOT NULL,
     ordinal     INTEGER NOT NULL CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 31),
     name        TEXT NOT NULL CHECK (
         typeof(name) = 'text' AND
         length(CAST(name AS BLOB)) BETWEEN 1 AND 128
     ),
 
-    PRIMARY KEY (provider_id, source, ordinal),
-    UNIQUE (provider_id, source, name),
-    FOREIGN KEY (provider_id, source)
-        REFERENCES catalog_providers(provider_id, source) ON DELETE CASCADE
+    PRIMARY KEY (provider_id, ordinal),
+    UNIQUE (provider_id, name),
+    FOREIGN KEY (provider_id)
+        REFERENCES catalog_providers(provider_id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
--- A model row is either a complete imported/custom inference record or a partial
--- JavaScript override. `source` and `kind` remain in the key so collisions survive
--- persistence for deliberate overlay validation instead of becoming last-write-wins.
+-- One complete imported inference record per public model id. models.dev is the only
+-- source, so the id alone is the key and every inference field is required.
 CREATE TABLE catalog_models (
     public_model_id TEXT NOT NULL,
     provider_id     TEXT NOT NULL,
-    source          TEXT NOT NULL CHECK (source IN ('models_dev', 'javascript')),
-    kind            TEXT NOT NULL CHECK (kind IN ('model', 'override')),
 
-    upstream_id       TEXT,
-    name              TEXT,
-    context_window    INTEGER, -- u64
-    max_output_tokens INTEGER, -- u64
-    base_url           TEXT,
-    protocol           TEXT,
-    supports_temperature INTEGER,
-    reasoning_replay     TEXT,
-    reasoning_format     TEXT,
-    max_tokens_field     TEXT,
+    upstream_id       TEXT    NOT NULL,
+    name              TEXT    NOT NULL,
+    context_window    INTEGER NOT NULL, -- u64
+    max_output_tokens INTEGER NOT NULL, -- u64
+    base_url           TEXT NOT NULL,
+    protocol           TEXT NOT NULL,
+    supports_temperature INTEGER NOT NULL,
+    reasoning_replay     TEXT NOT NULL,
+    thinking_format      TEXT NOT NULL,
+    anthropic_adaptive   INTEGER NOT NULL,
+    max_tokens_field     TEXT NOT NULL,
     reasoning_budget_min INTEGER, -- i64
     reasoning_budget_max INTEGER, -- u64
-    supports_vision INTEGER,
-    supports_tools  INTEGER,
-    cost_input       REAL,
-    cost_output      REAL,
-    cost_cache_read  REAL,
-    cost_cache_write REAL,
+    supports_vision INTEGER NOT NULL,
+    supports_tools  INTEGER NOT NULL,
+    cost_input       REAL NOT NULL,
+    cost_output      REAL NOT NULL,
+    cost_cache_read  REAL NOT NULL,
+    cost_cache_write REAL NOT NULL,
 
-    PRIMARY KEY (public_model_id, source, kind),
-    FOREIGN KEY (provider_id, source)
-        REFERENCES catalog_providers(provider_id, source) ON DELETE CASCADE,
+    PRIMARY KEY (public_model_id),
+    FOREIGN KEY (provider_id)
+        REFERENCES catalog_providers(provider_id) ON DELETE CASCADE,
 
     CHECK (typeof(public_model_id) = 'text' AND length(CAST(public_model_id AS BLOB)) BETWEEN 1 AND 128),
     CHECK (typeof(provider_id) = 'text' AND length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 64),
-    CHECK (upstream_id IS NULL OR (typeof(upstream_id) = 'text' AND length(CAST(upstream_id AS BLOB)) BETWEEN 1 AND 128)),
-    CHECK (name IS NULL OR (typeof(name) = 'text' AND length(CAST(name AS BLOB)) BETWEEN 1 AND 128)),
-    CHECK (context_window IS NULL OR (typeof(context_window) = 'integer' AND context_window BETWEEN 1 AND 9007199254740991)),
-    CHECK (max_output_tokens IS NULL OR (typeof(max_output_tokens) = 'integer' AND max_output_tokens BETWEEN 1 AND 9007199254740991)),
-    CHECK (base_url IS NULL OR (typeof(base_url) = 'text' AND length(CAST(base_url AS BLOB)) BETWEEN 1 AND 4096)),
-    CHECK (protocol IS NULL OR protocol IN ('anthropic-messages', 'openai-completions', 'openai-responses')),
-    CHECK (supports_temperature IS NULL OR (typeof(supports_temperature) = 'integer' AND supports_temperature IN (0, 1))),
-    CHECK (reasoning_replay IS NULL OR reasoning_replay IN ('none', 'reasoning-content', 'reasoning-details')),
-    CHECK (reasoning_format IS NULL OR reasoning_format IN (
-        'native', 'openai-effort-toggle-off', 'openrouter-effort',
-        'zai-toggle', 'qwen-thinking', 'anthropic-adaptive'
+    CHECK (typeof(upstream_id) = 'text' AND length(CAST(upstream_id AS BLOB)) BETWEEN 1 AND 128),
+    CHECK (typeof(name) = 'text' AND length(CAST(name AS BLOB)) BETWEEN 1 AND 128),
+    CHECK (typeof(context_window) = 'integer' AND context_window BETWEEN 1 AND 9007199254740991),
+    CHECK (typeof(max_output_tokens) = 'integer' AND max_output_tokens BETWEEN 1 AND 9007199254740991),
+    CHECK (typeof(base_url) = 'text' AND length(CAST(base_url AS BLOB)) BETWEEN 1 AND 4096),
+    CHECK (protocol IN ('anthropic-messages', 'openai-completions', 'openai-responses')),
+    CHECK (typeof(supports_temperature) = 'integer' AND supports_temperature IN (0, 1)),
+    CHECK (reasoning_replay IN ('none', 'reasoning', 'reasoning-content', 'reasoning-details')),
+    CHECK (thinking_format IN (
+        'none', 'openai', 'openrouter', 'deepseek', 'zai',
+        'qwen', 'together', 'string-thinking', 'ant-ling'
     )),
-    CHECK (max_tokens_field IS NULL OR max_tokens_field IN ('max-completion-tokens', 'max-tokens')),
+    CHECK (typeof(anthropic_adaptive) = 'integer' AND anthropic_adaptive IN (0, 1)),
+    CHECK (max_tokens_field IN ('max-completion-tokens', 'max-tokens')),
     CHECK (reasoning_budget_min IS NULL OR (typeof(reasoning_budget_min) = 'integer' AND reasoning_budget_min BETWEEN -1 AND 9007199254740991)),
     CHECK (reasoning_budget_max IS NULL OR (typeof(reasoning_budget_max) = 'integer' AND reasoning_budget_max BETWEEN 0 AND 9007199254740991)),
     CHECK (reasoning_budget_min IS NULL OR reasoning_budget_max IS NULL OR reasoning_budget_min <= reasoning_budget_max),
-    CHECK (supports_vision IS NULL OR (typeof(supports_vision) = 'integer' AND supports_vision IN (0, 1))),
-    CHECK (supports_tools  IS NULL OR (typeof(supports_tools)  = 'integer' AND supports_tools  IN (0, 1))),
-    CHECK (cost_input       IS NULL OR (typeof(cost_input)       = 'real' AND cost_input       >= 0)),
-    CHECK (cost_output      IS NULL OR (typeof(cost_output)      = 'real' AND cost_output      >= 0)),
-    CHECK (cost_cache_read  IS NULL OR (typeof(cost_cache_read)  = 'real' AND cost_cache_read  >= 0)),
-    CHECK (cost_cache_write IS NULL OR (typeof(cost_cache_write) = 'real' AND cost_cache_write >= 0)),
-    CHECK (
-        (kind = 'model' AND
-            upstream_id IS NOT NULL AND name IS NOT NULL AND
-            context_window IS NOT NULL AND max_output_tokens IS NOT NULL AND
-            base_url IS NOT NULL AND protocol IS NOT NULL AND
-            supports_temperature IS NOT NULL AND
-            reasoning_replay IS NOT NULL AND reasoning_format IS NOT NULL AND
-            max_tokens_field IS NOT NULL AND
-            supports_vision IS NOT NULL AND supports_tools IS NOT NULL AND
-            cost_input IS NOT NULL AND cost_output IS NOT NULL AND
-            cost_cache_read IS NOT NULL AND cost_cache_write IS NOT NULL) OR
-        (kind = 'override' AND source = 'javascript' AND
-            upstream_id IS NULL AND name IS NULL AND
-            context_window IS NULL AND max_output_tokens IS NULL AND
-            base_url IS NULL AND protocol IS NULL AND
-            supports_temperature IS NULL AND
-            reasoning_replay IS NULL AND reasoning_format IS NULL AND
-            max_tokens_field IS NULL AND
-            reasoning_budget_min IS NULL AND reasoning_budget_max IS NULL AND
-            supports_vision IS NULL AND supports_tools IS NULL AND
-            cost_input IS NULL AND cost_output IS NULL AND
-            cost_cache_read IS NULL AND cost_cache_write IS NULL)
-    )
+    CHECK (typeof(supports_vision) = 'integer' AND supports_vision IN (0, 1)),
+    CHECK (typeof(supports_tools)  = 'integer' AND supports_tools  IN (0, 1)),
+    CHECK (typeof(cost_input)       = 'real' AND cost_input       >= 0),
+    CHECK (typeof(cost_output)      = 'real' AND cost_output      >= 0),
+    CHECK (typeof(cost_cache_read)  = 'real' AND cost_cache_read  >= 0),
+    CHECK (typeof(cost_cache_write) = 'real' AND cost_cache_write >= 0)
 ) WITHOUT ROWID;
 
--- Ordered user-facing reasoning controls for either a complete model or an
--- override. The deterministic default is derived on load and is not duplicated.
+-- Ordered user-facing reasoning controls for a model. The deterministic default is
+-- derived on load and is not duplicated.
 CREATE TABLE catalog_model_reasoning_levels (
     public_model_id TEXT NOT NULL,
-    source          TEXT NOT NULL,
-    kind            TEXT NOT NULL,
     ordinal         INTEGER NOT NULL CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 31),
     level           TEXT NOT NULL CHECK (
         typeof(level) = 'text' AND
         length(CAST(level AS BLOB)) BETWEEN 1 AND 32
     ),
 
-    PRIMARY KEY (public_model_id, source, kind, ordinal),
-    UNIQUE (public_model_id, source, kind, level),
-    FOREIGN KEY (public_model_id, source, kind)
-        REFERENCES catalog_models(public_model_id, source, kind) ON DELETE CASCADE
+    PRIMARY KEY (public_model_id, ordinal),
+    UNIQUE (public_model_id, level),
+    FOREIGN KEY (public_model_id)
+        REFERENCES catalog_models(public_model_id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
--- Required for per-provider snapshot replacement and source cleanup; the model
--- primary key already serves exact lookup and stable public-id listing.
+-- Required for per-provider snapshot replacement; the model primary key already serves
+-- exact lookup and stable public-id listing.
 CREATE INDEX catalog_models_by_provider
-    ON catalog_models(provider_id, source, public_model_id, kind);
+    ON catalog_models(provider_id, public_model_id);
 
 -- Every root a session runs in. `id` is derived from `root`, so a row is written once
 -- and never updated: the same directory always hashes to the same id and title. Kept
@@ -245,13 +207,10 @@ CREATE TABLE sessions (
     input_id_high   INTEGER NOT NULL DEFAULT 0 CHECK (input_id_high   BETWEEN 0 AND 9007199254740991),
     config_rev_high INTEGER NOT NULL DEFAULT 0 CHECK (config_rev_high BETWEEN 0 AND 9007199254740991),
 
-    -- Open-run projection: the run left unclosed at the cut — `run.started` with no
-    -- matching `run.done`. All null when idle; `runs_apply` maintains them, rebuildable
-    -- by replay. `DEFAULT NULL` keeps them out of the full-row insert, like the marks.
+    -- Recovery marker, not activity: `runs_recover` closes these at the next start.
+    -- Exactly the three fields a terminal needs, null when nothing is owed.
     open_run_id            INTEGER DEFAULT NULL CHECK (open_run_id            IS NULL OR open_run_id            BETWEEN 1 AND 9007199254740991), -- wire.Run_Id
     open_run_kind          TEXT    DEFAULT NULL CHECK (open_run_kind          IS NULL OR open_run_kind          IN ('turn', 'compaction')),
-    open_run_reason        TEXT    DEFAULT NULL CHECK (open_run_reason        IS NULL OR open_run_reason        IN ('auto', 'manual')),
-    open_run_config_rev    INTEGER DEFAULT NULL CHECK (open_run_config_rev    IS NULL OR open_run_config_rev    BETWEEN 0 AND 9007199254740991), -- wire.Config_Rev
     open_run_started_at_ms INTEGER DEFAULT NULL CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms >= 0), -- u64
 
     -- Table constraints follow every column definition; SQLite rejects them interleaved.
@@ -261,12 +220,10 @@ CREATE TABLE sessions (
     CHECK ((created_by_name IS NULL) = (created_by_version IS NULL)),
     CHECK (updated_at_ms >= created_at_ms),
 
-    -- Open-run columns move as a unit: all set for an open run, all null when idle,
-    -- and `reason` is present exactly for a compaction run.
+    -- Open-run columns move as a unit: all set while a terminal is owed, all null once
+    -- one has been written.
     CHECK ((open_run_id IS NULL) = (open_run_kind IS NULL)),
-    CHECK ((open_run_id IS NULL) = (open_run_config_rev IS NULL)),
-    CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
-    CHECK ((open_run_reason IS NOT NULL) = (COALESCE(open_run_kind, '') = 'compaction'))
+    CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL))
 ) WITHOUT ROWID;
 
 -- Every ORDER BY term is DESC including the trailing id tiebreak; a trailing ASC

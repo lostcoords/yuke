@@ -246,16 +246,15 @@ Daemon :: struct {
     js:               js.Host,
 
     // @private
+    // Owned clone of `Options.js_root`; empty when no script tier is configured.
+    js_root:          string,
+
+    // @private
     // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
     // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
     // before serving, leaving both zero.
     config_json:      string,
     config_seen:      bool,
-
-    // @private
-    // JavaScript provider/model registry. Startup finalization replaces serialized captures
-    // with typed owned records and wipes the capture buffers.
-    providers:        Provider_Registry,
 
     // Log level resolved from the manifest (`info` when unset). The caller owns
     // the logger, so it reads this after `start` and installs the matching one.
@@ -370,14 +369,6 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     if js_err != .None {
         return js_err
-    }
-
-    if definitions_err := provider_definitions_finalize(d); definitions_err != .None {
-        if definitions_err == .Invalid_Options {
-            log.error("daemon: yuked.js provider definitions are invalid")
-        }
-
-        return definitions_err
     }
 
     // Backs the config decode; proc-scoped because `host`/`db_path` are read later in `start`.
@@ -579,6 +570,11 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     if virtual.arena_init_growing(&d.frame_scratch) != nil {
         return .Out_Of_Memory
     }
+
+    // After the pump owns its scratch and its connection table, and before the front door
+    // accepts anyone: a run the previous daemon left open owes a terminal that only this
+    // start can write, and writing it goes through the pump like any other broadcast.
+    runs_recover(d)
 
     router_init(d)
 
@@ -824,7 +820,6 @@ free_config :: proc(d: ^Daemon) {
         delete(o, d.allocator)
     }
     delete(d.allowed_origins, d.allocator)
-    provider_definitions_destroy(d)
     d.daemon_version = ""
     d.device_id = ""
     d.blob_dir = ""
@@ -1128,15 +1123,9 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    // Re-derive the visible model list into request scratch; the daemon holds only rev and
-    // health. The persisted catalog is stable between refreshes, so this matches `d.catalog.rev`.
-    effective, resolve_err := catalog_resolve_current(d, sa)
-    if resolve_err != nil {
-        send_error(conn, req.id, .Internal, "catalog unavailable", sa)
-        return
-    }
-
-    models, ok := catalog_models_view(effective, sa)
+    // A view over the held snapshot, built into request scratch. The snapshot is what
+    // `d.catalog.rev` was computed from, so the two cannot disagree.
+    models, ok := catalog_models_view(d.catalog.snapshot, sa)
     if !ok {
         send_error(conn, req.id, .Internal, "catalog unavailable", sa)
         return

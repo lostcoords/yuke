@@ -472,7 +472,7 @@ test_daemon_resync_drops_truncated_messages :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
+test_daemon_a_logged_run_no_engine_tracks_reads_back_idle :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     resync_with_daemon(
@@ -485,26 +485,30 @@ test_daemon_resync_reports_the_open_run :: proc(t: ^testing.T) {
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, pump_run_started(session)), Pump_Error.None)
 
-            running, rerr := resync_build(d, {session_id = session}, context.temp_allocator)
+            // The log says a run began and never ended. No engine state backs it, so it is
+            // a run whose daemon is gone — the state a restart used to report as `running`
+            // forever. Activity comes from the engine, so the cut reports idle.
+            cut, rerr := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, rerr, Resync_Error.None)
+            _, is_idle := cut.item.activity.state.(wire.Activity_State_Idle)
+            testing.expect(t, is_idle, "a run the engine does not track is not activity")
+            testing.expect(t, cut.item.activity.config == nil, "an idle activity hoists no config")
+            testing.expect(t, cut.active == nil, "an untracked run has no draft to report")
 
-            state, is_running := running.item.activity.state.(wire.Activity_State_Running)
-            testing.expect(t, is_running, "a run with no terminal is still open at the cut")
-            testing.expect_value(t, state.run_id, wire.Run_Id(1))
+            // The projection still records it, because the recovery sweep is its only reader.
+            snapshot, found, serr := store.session_snapshot(d.store, session, context.temp_allocator)
+            testing.expect_value(t, serr, nil)
+            testing.expect(t, found, "the session has a registry row")
 
-            // A running activity hoists the run's config, which must be one the log named.
-            cfg, hoisted := running.item.activity.config.?
-            testing.expect(t, hoisted, "a running activity carries its config")
-            testing.expect_value(t, cfg.config_rev, wire.Config_Rev(1))
-            testing.expect_value(t, len(running.configs), 1)
+            open, running := snapshot.open_run.?
+            testing.expect(t, running, "a run with no terminal stays open in the projection")
+            testing.expect_value(t, open.run_id, wire.Run_Id(1))
 
             testing.expect_value(t, broadcast(d, resync_run_done(session, 1)), Pump_Error.None)
 
-            idle, ierr := resync_build(d, {session_id = session}, context.temp_allocator)
-            testing.expect_value(t, ierr, Resync_Error.None)
-            _, is_idle := idle.item.activity.state.(wire.Activity_State_Idle)
-            testing.expect(t, is_idle, "the run's terminal closes it")
-            testing.expect(t, idle.item.activity.config == nil, "an idle activity hoists no config")
+            closed, _, cerr := store.session_snapshot(d.store, session, context.temp_allocator)
+            testing.expect_value(t, cerr, nil)
+            testing.expect(t, closed.open_run == nil, "the run's terminal closes the projection")
         },
     )
 }
@@ -520,9 +524,9 @@ test_daemon_resync_of_an_undeclared_config_is_refused :: proc(t: ^testing.T) {
             session := pump_test_session('4')
             daemon_test_session_create(t, d, session)
 
-            // A run under a revision no `config.changed` announced cannot be resolved,
-            // and an unresolvable cut is our own log's fault, not a peer's.
-            resync_append_corrupt_fixture(t, d, pump_run_started(session))
+            // A committed message under a revision no `config.changed` announced cannot be
+            // resolved, and an unresolvable cut is our own log's fault, not a peer's.
+            resync_append_corrupt_fixture(t, d, resync_assistant(session, 1, 7))
 
             _, err := resync_build_quiet(t, d, {session_id = session})
             testing.expect_value(t, err, Resync_Error.Corrupt_Log)
@@ -593,7 +597,7 @@ test_daemon_resync_of_a_lagging_message_mark_is_refused :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_daemon_resync_keeps_a_run_open_past_a_mismatched_terminal :: proc(t: ^testing.T) {
+test_daemon_open_run_survives_a_mismatched_terminal :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     resync_with_daemon(
@@ -607,21 +611,23 @@ test_daemon_resync_keeps_a_run_open_past_a_mismatched_terminal :: proc(t: ^testi
             testing.expect_value(t, broadcast(d, resync_run_started(session, 1, 10)), Pump_Error.None)
 
             // A run canceled while queued terminates without ever having started, so its
-            // terminal must not close the run that is actually open.
+            // terminal must not close the run that is actually open — the recovery sweep
+            // reads this projection, and closing the wrong run would strand a live one.
             testing.expect_value(t, broadcast(d, resync_run_done(session, 2)), Pump_Error.None)
 
-            cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
-            testing.expect_value(t, err, Resync_Error.None)
+            snapshot, _, serr := store.session_snapshot(d.store, session, context.temp_allocator)
+            testing.expect_value(t, serr, nil)
 
-            state, running := cut.item.activity.state.(wire.Activity_State_Running)
+            open, running := snapshot.open_run.?
             testing.expect(t, running, "another run's terminal leaves this one open")
-            testing.expect_value(t, state.run_id, wire.Run_Id(1))
+            testing.expect_value(t, open.run_id, wire.Run_Id(1))
+            testing.expect_value(t, open.started_at_ms, u64(10))
         },
     )
 }
 
 @(test)
-test_daemon_resync_reports_an_open_compaction_run :: proc(t: ^testing.T) {
+test_daemon_open_run_records_a_compaction_kind :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     resync_with_daemon(
@@ -634,18 +640,22 @@ test_daemon_resync_reports_an_open_compaction_run :: proc(t: ^testing.T) {
             testing.expect_value(t, broadcast(d, resync_config(session, 1, "m1")), Pump_Error.None)
             testing.expect_value(t, broadcast(d, resync_compaction_started(session, 1, .Auto, 10)), Pump_Error.None)
 
+            // The kind rides the projection because a recovery terminal must name the same
+            // kind the start announced; a `run.done` that renamed it would not pair.
+            snapshot, _, serr := store.session_snapshot(d.store, session, context.temp_allocator)
+            testing.expect_value(t, serr, nil)
+
+            open, running := snapshot.open_run.?
+            testing.expect(t, running, "an open compaction run is recorded")
+            testing.expect_value(t, open.run_id, wire.Run_Id(1))
+            testing.expect_value(t, open.kind, wire.Run_Kind.Compaction)
+            testing.expect_value(t, open.started_at_ms, u64(10))
+
+            // Nothing the engine tracks, so the cut is idle and carries no config page.
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
-
-            state, is_compacting := cut.item.activity.state.(wire.Activity_State_Compacting)
-            testing.expect(t, is_compacting, "an open compaction run reports compacting")
-            testing.expect_value(t, state.run_id, wire.Run_Id(1))
-            testing.expect_value(t, state.reason, wire.Compaction_Reason.Auto)
-            testing.expect_value(t, state.started_at_ms, u64(10))
-
-            // `Activity_State_Compacting` carries no config, so the run's revision is
-            // neither hoisted nor added to the configs page.
-            testing.expect(t, cut.item.activity.config == nil, "a compacting activity hoists no config")
+            _, is_idle := cut.item.activity.state.(wire.Activity_State_Idle)
+            testing.expect(t, is_idle, "a logged compaction run is not live activity")
             testing.expect_value(t, len(cut.configs), 0)
             testing.expect_value(t, wire.session_resync_result_validate(cut), wire.Validation_Error.None)
         },
@@ -673,62 +683,9 @@ test_daemon_resync_closes_a_compaction_run_before_the_cut :: proc(t: ^testing.T)
     })
 }
 
-@(test)
-test_daemon_resync_of_a_compaction_run_missing_its_reason_is_rejected_at_write :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    resync_with_daemon(
-        t,
-        "daemon-resync-compaction-no-reason",
-        proc(t: ^testing.T, d: ^Daemon) {
-            session := pump_test_session('c')
-            daemon_test_session_create(t, d, session)
-
-            // A compaction run must carry its reason; the open-run projection's CHECK
-            // refuses the row at append rather than a read-time fold catching it later.
-            resync_expect_write_rejected(
-                t,
-                d,
-                wire.Run_Started_Data {
-                    session_id = session,
-                    run_id = 1,
-                    kind = .Compaction,
-                    config_rev = 1,
-                    started_at_ms = 1,
-                },
-            )
-        },
-    )
-}
-
-@(test)
-test_daemon_resync_of_a_turn_run_carrying_a_reason_is_rejected_at_write :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    resync_with_daemon(
-        t,
-        "daemon-resync-turn-with-reason",
-        proc(t: ^testing.T, d: ^Daemon) {
-            session := pump_test_session('d')
-            daemon_test_session_create(t, d, session)
-
-            // A turn run carries no reason; the same CHECK refuses the row the other way,
-            // at append, never a peer's fault.
-            resync_expect_write_rejected(
-                t,
-                d,
-                wire.Run_Started_Data {
-                    session_id = session,
-                    run_id = 1,
-                    kind = .Turn,
-                    reason = wire.Compaction_Reason.Auto,
-                    config_rev = 1,
-                    started_at_ms = 1,
-                },
-            )
-        },
-    )
-}
+// A run's `reason` is present exactly for a compaction run. The recovery marker no longer
+// stores it, so the store keeps no second copy to guard: `run_started_data_validate` owns
+// the invariant, and `broadcast` asserts on it. `wire` covers both directions.
 
 @(test)
 test_daemon_resync_ignores_a_terminal_with_no_open_run :: proc(t: ^testing.T) {

@@ -31,7 +31,8 @@ Reasoning_Option_Kind :: enum {
 Reasoning_Spec :: struct {
     levels:      [wire.LIMITS.max_reasoning_levels]string,
     level_count: int,
-    format:      Reasoning_Format,
+    format:      provider.Openai_Thinking_Format,
+    adaptive:    bool,
     budget_min:  Maybe(i64),
     budget_max:  Maybe(u64),
 }
@@ -487,8 +488,14 @@ model_normalize :: proc(
         protocol = endpoint.protocol,
     }
     out.supports_temperature = temperature
-    out.reasoning_replay = replay
-    out.reasoning_format = reasoning.format
+
+    // Replay names an assistant-message field in the OpenAI-chat body, so it is recorded
+    // only where a builder can act on it. `interleaved` still shapes the level set above.
+    if endpoint.protocol == .Openai_Chat {
+        out.reasoning_replay = replay
+    }
+    out.thinking_format = reasoning.format
+    out.anthropic_adaptive = reasoning.adaptive
     out.reasoning_budget_min = reasoning.budget_min
     out.reasoning_budget_max = reasoning.budget_max
     out.max_tokens_field = max_tokens_field_resolve(npm, endpoint.protocol)
@@ -717,7 +724,7 @@ reasoning_replay_normalize :: proc(
     object: json.Object,
     npm: string,
 ) -> (
-    replay: Reasoning_Replay,
+    replay: provider.Openai_Reasoning_Replay,
     present: bool,
     err: Normalize_Error,
 ) {
@@ -816,7 +823,7 @@ reasoning_normalize :: proc(
             spec.budget_min, spec.budget_max = reasoning_budget(primary) or_return
 
         case .Toggle:
-            spec.format = .Anthropic_Adaptive
+            spec.adaptive = true
             reasoning_level_add(&spec, "off")
             reasoning_level_add(&spec, "high")
 
@@ -842,12 +849,11 @@ reasoning_normalize :: proc(
             }
             effort_levels_add(&spec, primary) or_return
 
-            spec.format =
-                .Openrouter_Effort if npm == "@openrouter/ai-sdk-provider" else .Openai_Effort_Toggle_Off if has_toggle else .Native
+            spec.format = .Openrouter if npm == "@openrouter/ai-sdk-provider" else .Deepseek if has_toggle else .Openai
         } else if primary_kind == .Toggle {
             reasoning_level_add(&spec, "off")
             reasoning_level_add(&spec, "high")
-            spec.format = .Qwen_Thinking if strings.has_prefix(family, "qwen") else .Zai_Toggle
+            spec.format = .Qwen if strings.has_prefix(family, "qwen") else .Zai
         }
     }
 

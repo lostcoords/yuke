@@ -5,46 +5,12 @@ import "core:testing"
 import store "src:daemon/store"
 import provider "src:provider"
 
+// Persist one provider and hold the resulting snapshot, the way a started daemon does.
 @(private)
-run_test_effective :: proc(t: ^testing.T, d: ^Daemon, s: ^store.Store) -> store.Effective_Catalog {
-    imported := state_provider(
-        .Models_Dev,
-        "openai",
-        "openai",
-        "OpenAI",
-        "https://api.openai.com/v1",
-        true,
-        STATE_ENV[:],
-    )
-    model := state_model(.Models_Dev, "openai", "openai/gpt-5", "gpt-5", "https://api.openai.com/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, imported, []store.Catalog_Model{model}), nil)
-
-    effective, resolve_err := catalog_resolve_current(d, context.allocator)
-    testing.expect_value(t, resolve_err, nil)
-    return effective
-}
-
-@(test)
-test_run_model_resolve_finds_exact_and_misses :: proc(t: ^testing.T) {
-    d: Daemon
-    s := catalog_test_store(t, &d)
-    defer store.close(s)
-
-    effective := run_test_effective(t, &d, s)
-    defer store.effective_catalog_destroy(&effective)
-
-    hit, found := run_model_resolve(effective, "openai/gpt-5")
-    testing.expect(t, found, "the model resolves by its public id")
-    testing.expect_value(t, string(hit.info.id), "openai/gpt-5")
-    testing.expect_value(t, hit.upstream_id, "gpt-5")
-    testing.expect_value(t, hit.endpoint.base_url, "https://api.openai.com/v1")
-    testing.expect_value(t, hit.max_tokens_field, provider.Openai_Max_Tokens_Field.Max_Tokens)
-
-    _, unknown := run_model_resolve(effective, "openai/nope")
-    testing.expect(t, !unknown, "an unknown public id does not resolve")
-
-    _, empty := run_model_resolve({}, "openai/gpt-5")
-    testing.expect(t, !empty, "an empty catalog resolves nothing")
+run_test_catalog :: proc(t: ^testing.T, d: ^Daemon, s: ^store.Store) {
+    item := state_provider(t, "openai", "https://api.openai.com/v1", "openai/gpt-5")
+    testing.expect_value(t, store.catalog_imported_replace(s, item, ""), nil)
+    testing.expect_value(t, catalog_state_load(d), nil)
 }
 
 @(test)
@@ -53,10 +19,11 @@ test_run_connection_build_binds_the_provider_credential :: proc(t: ^testing.T) {
     s := catalog_test_store(t, &d)
     defer store.close(s)
 
-    effective := run_test_effective(t, &d, s)
-    defer store.effective_catalog_destroy(&effective)
-    row, found := run_model_resolve(effective, "openai/gpt-5")
-    testing.expect(t, found, "the model resolves")
+    defer catalog_state_destroy(&d)
+    run_test_catalog(t, &d, s)
+
+    row := catalog_model_find(&d, "openai/gpt-5")
+    testing.expect(t, row != nil, "the model resolves")
 
     d.provider_auth.api_keys = make(map[string]string, 2, context.allocator)
     defer delete(d.provider_auth.api_keys)
@@ -81,46 +48,40 @@ test_run_connection_build_binds_the_provider_credential :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_run_model_load_reads_only_the_owning_provider :: proc(t: ^testing.T) {
+test_catalog_model_find_matches_the_whole_public_id :: proc(t: ^testing.T) {
     d: Daemon
     s := catalog_test_store(t, &d)
     defer store.close(s)
+    defer catalog_state_destroy(&d)
 
-    // Two providers persisted; a run for one of them must not surface the other.
-    openai := state_provider(
-        .Models_Dev,
-        "openai",
-        "openai",
-        "OpenAI",
-        "https://api.openai.com/v1",
-        true,
-        STATE_ENV[:],
+    // Two providers held at once; resolving one must not surface the other's model.
+    testing.expect_value(
+        t,
+        store.catalog_imported_replace(
+            s,
+            state_provider(t, "openai", "https://api.openai.com/v1", "openai/gpt-5"),
+            "",
+        ),
+        nil,
     )
-    openai_model := state_model(.Models_Dev, "openai", "openai/gpt-5", "gpt-5", "https://api.openai.com/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, openai, []store.Catalog_Model{openai_model}), nil)
+    testing.expect_value(
+        t,
+        store.catalog_imported_replace(s, state_provider(t, "xai", "https://api.x.ai/v1", "xai/grok-4"), ""),
+        nil,
+    )
+    testing.expect_value(t, catalog_state_load(&d), nil)
 
-    xai := state_provider(.Models_Dev, "xai", "xai", "xAI", "https://api.x.ai/v1", true, STATE_ENV[:])
-    xai_model := state_model(.Models_Dev, "xai", "xai/grok-4", "grok-4", "https://api.x.ai/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, xai, []store.Catalog_Model{xai_model}), nil)
-
-    effective, row, err := run_model_load(&d, "openai/gpt-5", context.allocator)
-    testing.expect_value(t, err, Run_Resolve_Error.None)
-    defer store.effective_catalog_destroy(&effective)
-
-    testing.expect_value(t, string(row.info.id), "openai/gpt-5")
-    testing.expect_value(t, row.upstream_id, "gpt-5")
-    if testing.expect_value(t, len(effective.providers), 1) {
-        testing.expect_value(t, string(effective.providers[0].id), "openai")
+    row := catalog_model_find(&d, "openai/gpt-5")
+    if testing.expect(t, row != nil, "the model resolves by its public id") {
+        testing.expect_value(t, string(row.info.id), "openai/gpt-5")
+        testing.expect_value(t, row.upstream_id, "upstream")
+        testing.expect_value(t, row.endpoint.base_url, "https://api.openai.com/v1")
+        testing.expect_value(t, row.max_tokens_field, provider.Openai_Max_Tokens_Field.Max_Tokens)
     }
 
-    // A model that exists under a different provider prefix does not resolve.
-    _, _, cross_provider := run_model_load(&d, "openai/grok-4", context.allocator)
-    testing.expect_value(t, cross_provider, Run_Resolve_Error.Unknown_Model)
-
-    // An id that names no provider is rejected before any store read.
-    for id in ([?]string{"", "gpt-5", "/gpt-5", "openai/"}) {
-        _, _, malformed := run_model_load(&d, id, context.allocator)
-        testing.expect_value(t, malformed, Run_Resolve_Error.Unknown_Model)
+    // The id is a key, never a prefix or an index: only an exact match resolves.
+    for id in ([?]string{"openai/grok-4", "openai/nope", "", "gpt-5", "/gpt-5", "openai/", "openai"}) {
+        testing.expectf(t, catalog_model_find(&d, id) == nil, "%q should not resolve", id)
     }
 }
 
@@ -164,13 +125,14 @@ test_run_connection_build_allows_an_unauthenticated_local_endpoint :: proc(t: ^t
     s := catalog_test_store(t, &d)
     defer store.close(s)
 
-    local := state_provider(.Models_Dev, "ollama", "ollama", "Ollama", "http://127.0.0.1:11434/v1", true, STATE_ENV[:])
-    model := state_model(.Models_Dev, "ollama", "ollama/llama", "llama", "http://127.0.0.1:11434/v1")
-    testing.expect_value(t, store.catalog_imported_replace(s, local, []store.Catalog_Model{model}), nil)
+    defer catalog_state_destroy(&d)
 
-    effective, row, err := run_model_load(&d, "ollama/llama", context.allocator)
-    testing.expect_value(t, err, Run_Resolve_Error.None)
-    defer store.effective_catalog_destroy(&effective)
+    local := state_provider(t, "ollama", "http://127.0.0.1:11434/v1", "ollama/llama")
+    testing.expect_value(t, store.catalog_imported_replace(s, local, ""), nil)
+    testing.expect_value(t, catalog_state_load(&d), nil)
+
+    row := catalog_model_find(&d, "ollama/llama")
+    testing.expect(t, row != nil, "the local model resolves")
 
     d.provider_auth.api_keys = make(map[string]string, 2, context.allocator)
     defer delete(d.provider_auth.api_keys)

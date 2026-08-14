@@ -11,7 +11,7 @@ import js "src:js"
 SCRIPT_MODULE :: "yuke:daemon"
 
 @(rodata)
-SCRIPT_EXPORTS := []string{"defineConfig", "defineProvider"}
+SCRIPT_EXPORTS := []string{"defineConfig"}
 
 script_module :: proc() -> js.Module {
     return {name = SCRIPT_MODULE, init = script_module_init, exports = SCRIPT_EXPORTS}
@@ -21,13 +21,8 @@ script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     context = runtime.default_context()
 
     config_fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
-    provider_fn := qjs.new_function(ctx, define_provider, "defineProvider", 2)
 
     if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) {
-        return -1
-    }
-
-    if !qjs.set_module_export(ctx, m, "defineProvider", provider_fn) {
         return -1
     }
 

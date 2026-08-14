@@ -9,17 +9,17 @@ import wire "src:wire"
 @(private, rodata)
 REV_HEX_DIGITS := "0123456789abcdef"
 
-// Flatten the effective catalog's visible models into one list. Each `Model_Info` borrows
-// `effective`'s strings; the resolver order feeds both `catalog_rev` and `catalog.list`.
+// Flatten the catalog's visible models into one list. Each `Model_Info` borrows the
+// snapshot's strings; the stored order feeds both `catalog_rev` and `catalog.list`.
 catalog_models_view :: proc(
-    effective: store.Effective_Catalog,
+    snapshot: store.Catalog,
     allocator := context.allocator,
 ) -> (
     models: []wire.Model_Info,
     ok: bool,
 ) {
     total := 0
-    for provider in effective.providers {
+    for provider in snapshot.providers {
         total += len(provider.models)
     }
 
@@ -33,7 +33,7 @@ catalog_models_view :: proc(
     }
 
     index := 0
-    for provider in effective.providers {
+    for provider in snapshot.providers {
         for model in provider.models {
             view[index] = model.info
             index += 1
@@ -46,7 +46,7 @@ catalog_models_view :: proc(
 }
 
 // SHA-256 hex digest over the `catalog.list` content a client caches (visible models plus
-// health), so `since_rev == current` means the cache is accurate; caller supplies resolver order.
+// health), so `since_rev == current` means the cache is accurate; caller supplies stored order.
 catalog_rev :: proc(models: []wire.Model_Info, health: wire.Catalog_Health) -> wire.Catalog_Rev {
     assert(len(models) <= int(wire.LIMITS.max_catalog_models), "the rev covers a bounded catalog")
 

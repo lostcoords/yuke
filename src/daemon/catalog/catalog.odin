@@ -40,43 +40,32 @@ Provider_Error :: enum {
     Invalid,
 }
 
-// Assistant field used to replay reasoning across a tool-use round.
-Reasoning_Replay :: enum {
-    None,
-    Reasoning_Content,
-    Reasoning_Details,
-}
-
-// Exceptions to the ordinary request-body control implied by the protocol.
-Reasoning_Format :: enum {
-    Native,
-    Openai_Effort_Toggle_Off,
-    Openrouter_Effort,
-    Zai_Toggle,
-    Qwen_Thinking,
-    Anthropic_Adaptive,
-}
-
-#assert(len(Reasoning_Replay) == 3)
-#assert(len(Reasoning_Format) == 6)
+// A row stores the request builder's own value rather than a second vocabulary that has to
+// be translated on the way out, which is how `max_tokens_field` has always worked.
+#assert(len(provider.Openai_Thinking_Format) == 9)
+#assert(len(provider.Openai_Reasoning_Replay) == 4)
 #assert(len(provider.Openai_Max_Tokens_Field) == 2)
 
 // Persisted names for the closed enums the store keeps on a model row.
 @(rodata)
-reasoning_replay_string := [Reasoning_Replay]string {
+reasoning_replay_string := [provider.Openai_Reasoning_Replay]string {
     .None              = "none",
+    .Reasoning         = "reasoning",
     .Reasoning_Content = "reasoning-content",
     .Reasoning_Details = "reasoning-details",
 }
 
 @(rodata)
-reasoning_format_string := [Reasoning_Format]string {
-    .Native                   = "native",
-    .Openai_Effort_Toggle_Off = "openai-effort-toggle-off",
-    .Openrouter_Effort        = "openrouter-effort",
-    .Zai_Toggle               = "zai-toggle",
-    .Qwen_Thinking            = "qwen-thinking",
-    .Anthropic_Adaptive       = "anthropic-adaptive",
+thinking_format_string := [provider.Openai_Thinking_Format]string {
+    .None            = "none",
+    .Openai          = "openai",
+    .Openrouter      = "openrouter",
+    .Deepseek        = "deepseek",
+    .Zai             = "zai",
+    .Qwen            = "qwen",
+    .Together        = "together",
+    .String_Thinking = "string-thinking",
+    .Ant_Ling        = "ant-ling",
 }
 
 @(rodata)
@@ -85,7 +74,7 @@ max_tokens_field_string := [provider.Openai_Max_Tokens_Field]string {
     .Max_Tokens            = "max-tokens",
 }
 
-reasoning_replay_from_string :: proc(name: string) -> (Reasoning_Replay, bool) {
+reasoning_replay_from_string :: proc(name: string) -> (provider.Openai_Reasoning_Replay, bool) {
     for candidate, value in reasoning_replay_string {
         if candidate == name {
             return value, true
@@ -95,8 +84,8 @@ reasoning_replay_from_string :: proc(name: string) -> (Reasoning_Replay, bool) {
     return {}, false
 }
 
-reasoning_format_from_string :: proc(name: string) -> (Reasoning_Format, bool) {
-    for candidate, value in reasoning_format_string {
+thinking_format_from_string :: proc(name: string) -> (provider.Openai_Thinking_Format, bool) {
+    for candidate, value in thinking_format_string {
         if candidate == name {
             return value, true
         }
@@ -115,29 +104,25 @@ max_tokens_field_from_string :: proc(name: string) -> (provider.Openai_Max_Token
     return {}, false
 }
 
-// A custom model's request format must match its resolved provider protocol.
-reasoning_format_compatible :: proc(protocol: wire.Provider_Protocol, format: Reasoning_Format) -> bool {
-    switch protocol {
+// The thinking format and replay field are OpenAI-chat body shapes; adaptive thinking is
+// Anthropic's. A row may only carry what its protocol accepts.
+reasoning_shape_compatible :: proc(model: Model) -> bool {
+    switch model.endpoint.protocol {
     case .Anthropic_Messages:
-        return format == .Native || format == .Anthropic_Adaptive
+        return model.thinking_format == .None && model.reasoning_replay == .None
 
     case .Openai_Chat:
-        #partial switch format {
-        case .Native, .Openai_Effort_Toggle_Off, .Openrouter_Effort, .Zai_Toggle, .Qwen_Thinking:
-            return true
-        }
-
-        return false
+        return !model.anthropic_adaptive
 
     case .Openai_Responses:
-        return format == .Native
+        return model.thinking_format == .None && model.reasoning_replay == .None && !model.anthropic_adaptive
     }
 
     return false
 }
 
 // A provider credential environment-variable name: a non-empty ASCII identifier
-// within the shared bound. Shared by the decoder, the store, and JavaScript config.
+// within the shared bound. Shared by the decoder and the store.
 env_name_valid :: proc(name: string) -> bool {
     if len(name) == 0 || len(name) > ENV_NAME_MAX_BYTES {
         return false
@@ -165,8 +150,12 @@ Model :: struct {
     upstream_id:          string,
     endpoint:             provider.Endpoint,
     supports_temperature: bool,
-    reasoning_replay:     Reasoning_Replay,
-    reasoning_format:     Reasoning_Format,
+
+    // The body shapes this endpoint expects. The first two are OpenAI-chat; the third marks
+    // an Anthropic row that takes `thinking:{adaptive}` over a budget or an effort.
+    reasoning_replay:     provider.Openai_Reasoning_Replay,
+    thinking_format:      provider.Openai_Thinking_Format,
+    anthropic_adaptive:   bool,
     reasoning_budget_min: Maybe(i64),
     reasoning_budget_max: Maybe(u64),
     max_tokens_field:     provider.Openai_Max_Tokens_Field,
@@ -180,28 +169,6 @@ max_tokens_field_resolve :: proc(npm: string, protocol: wire.Provider_Protocol) 
     }
 
     return .Max_Tokens
-}
-
-// A reasoning-level overlay on a model that is defined elsewhere. It carries no
-// transport fields: the overlaid record keeps those. `provider_id` is borrowed from
-// the owning provider; `default_reasoning` is derived, never authored.
-Model_Override :: struct {
-    id:                wire.Model_Id,
-    provider_id:       wire.Provider_Id,
-    reasoning_levels:  []string,
-    default_reasoning: string,
-}
-
-model_override_destroy :: proc(override: ^Model_Override, allocator: mem.Allocator) {
-    assert(override != nil, "model override cleanup needs an override")
-
-    delete(override.id, allocator)
-    for level in override.reasoning_levels {
-        delete(level, allocator)
-    }
-    delete(override.reasoning_levels, allocator)
-    delete(override.default_reasoning, allocator)
-    override^ = {}
 }
 
 // One selected and normalized models.dev provider. Every string and slice is owned.

@@ -5,7 +5,7 @@
 SELECT 1 FROM sessions WHERE id = :session_id;
 
 -- name: Session_Snapshot :one
--- The client-facing summary and open-run projection for one id. Kept separate
+-- The client-facing summary and the open-run recovery marker for one id. Kept separate
 -- from `Session_Page` because lookup has no filter, cursor, ordering, or limit.
 -- session_id: wire.Session_Id!
 -- id: wire.Session_Id!
@@ -31,8 +31,6 @@ SELECT 1 FROM sessions WHERE id = :session_id;
 -- updated_at_ms: u64!
 -- open_run_id: wire.Run_Id
 -- open_run_kind: string
--- open_run_reason: string
--- open_run_config_rev: wire.Config_Rev
 -- open_run_started_at_ms: u64
 SELECT
     id, workspace_id,
@@ -40,7 +38,7 @@ SELECT
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
     message_count, created_at_ms, updated_at_ms,
-    open_run_id, open_run_kind, open_run_reason, open_run_config_rev, open_run_started_at_ms
+    open_run_id, open_run_kind, open_run_started_at_ms
 FROM sessions
 WHERE id = :session_id;
 

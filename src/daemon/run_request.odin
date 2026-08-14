@@ -98,7 +98,7 @@ run_anthropic_options :: proc(model: ^catalog.Model, level: string) -> provider.
         return {thinking = provider.Anthropic_Thinking_Disabled{}}
     }
 
-    if model.reasoning_format == .Anthropic_Adaptive {
+    if model.anthropic_adaptive {
         return {thinking = provider.Anthropic_Thinking_Adaptive{}}
     }
 
@@ -147,64 +147,23 @@ run_anthropic_budget :: proc(model: ^catalog.Model, level: string) -> (budget: u
     return budget, true
 }
 
+// The row already stores the builder's own vocabulary, so this only decides whether the
+// reasoning controls are asked for at all.
 @(private)
 run_openai_chat_options :: proc(model: ^catalog.Model, level: string) -> provider.Openai_Chat_Options {
     options := provider.Openai_Chat_Options {
         max_tokens_field = model.max_tokens_field,
-        reasoning_replay = run_openai_replay(model.reasoning_replay),
+        reasoning_replay = model.reasoning_replay,
         thinking_format  = .None,
     }
     if level == "" {
         return options
     }
 
-    options.thinking_format = run_openai_thinking_format(model.reasoning_format)
+    options.thinking_format = model.thinking_format
     options.effort = run_openai_effort(level)
 
     return options
-}
-
-// Catalog reasoning formats that reach an OpenAI-chat endpoint. `Anthropic_Adaptive` is
-// excluded by `reasoning_format_compatible` before a row is ever stored.
-@(private)
-run_openai_thinking_format :: proc(format: catalog.Reasoning_Format) -> provider.Openai_Thinking_Format {
-    switch format {
-    case .Native:
-        return .Openai
-
-    case .Openrouter_Effort:
-        return .Openrouter
-
-    case .Openai_Effort_Toggle_Off:
-        return .Deepseek
-
-    case .Zai_Toggle:
-        return .Zai
-
-    case .Qwen_Thinking:
-        return .Qwen
-
-    case .Anthropic_Adaptive:
-        return .None
-    }
-
-    return .None
-}
-
-@(private)
-run_openai_replay :: proc(replay: catalog.Reasoning_Replay) -> provider.Openai_Reasoning_Replay {
-    switch replay {
-    case .None:
-        return .None
-
-    case .Reasoning_Content:
-        return .Reasoning_Content
-
-    case .Reasoning_Details:
-        return .Reasoning_Details
-    }
-
-    return .None
 }
 
 // `off` is the effort literal `none`, which every format above turns into its own

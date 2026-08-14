@@ -24,6 +24,9 @@ Openai_Effort :: enum {
 // gateways disagree on the shape, so model/catalog resolution picks the format
 // and this builder writes it. `None` omits the control entirely.
 Openai_Thinking_Format :: enum {
+    // No reasoning control. The zero value, so a row that names no shape asks for none.
+    None,
+
     // Top-level `reasoning_effort` string (OpenAI, gpt-5.x).
     Openai,
 
@@ -47,9 +50,6 @@ Openai_Thinking_Format :: enum {
 
     // Nested `reasoning:{effort}` emitted only when reasoning is on (ant-ling).
     Ant_Ling,
-
-    // No reasoning control.
-    None,
 }
 
 // Which assistant field replays prior reasoning back to the provider so it stays

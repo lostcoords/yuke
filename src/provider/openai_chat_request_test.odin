@@ -94,8 +94,10 @@ test_openai_request_writes_openai_reasoning_effort :: proc(t: ^testing.T) {
 
     parts := [?]wire.Content_Part{wire.Content_Text{text = "think"}}
     messages := [?]wire.Message{test_openai_user_message(parts[:])}
+    // `None` is the zero value, so a caller that wants a reasoning control names its shape.
     options := Openai_Chat_Options {
-        effort = Openai_Effort.Medium,
+        thinking_format = .Openai,
+        effort          = Openai_Effort.Medium,
     }
 
     body := test_openai_build(t, test_openai_request(messages[:]), options)
