@@ -35,6 +35,12 @@ run_request_build :: proc(
         turn.temperature = nil
     }
 
+    // Same for tools: a row that cannot call them fails the turn on the definitions rather
+    // than ignoring them, so the registry stops here instead of at the provider.
+    if !model.info.supports_tools {
+        turn.tools = nil
+    }
+
     level := run_reasoning_level(model, reasoning)
 
     switch model.endpoint.protocol {

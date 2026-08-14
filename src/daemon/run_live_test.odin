@@ -28,6 +28,9 @@ Live_Turn :: struct {
     text:      strings.Builder,
     reasoning: strings.Builder,
     blocks:    int,
+    // Cloned: the block's strings die with the frame that carried them.
+    tool_name: string,
+    tool_args: string,
     result:    provider.Turn_Result,
     reason:    provider.Stop_Reason,
     done:      bool,
@@ -69,6 +72,12 @@ live_on_event :: proc(user: rawptr, event: provider.Stream_Event) {
     case provider.Stream_Reasoning_Delta:
         strings.write_string(&turn.reasoning, value.text)
 
+    case provider.Stream_Block_Stopped:
+        if tool, is_tool := value.result.(provider.Stream_Tool_Block); is_tool {
+            turn.tool_name = strings.clone(tool.call.name, context.allocator)
+            turn.tool_args = strings.clone(tool.call.arguments, context.allocator)
+        }
+
     case provider.Stream_Done:
         turn.reason = value.reason
     }
@@ -83,7 +92,13 @@ live_on_done :: proc(user: rawptr, result: provider.Turn_Result) {
 
 // Drive one real turn to completion and report what came back.
 @(private = "file")
-live_turn_run :: proc(t: ^testing.T, model: ^catalog.Model, reasoning: string, prompt: string) -> Live_Turn {
+live_turn_run :: proc(
+    t: ^testing.T,
+    model: ^catalog.Model,
+    reasoning: string,
+    prompt: string,
+    tools: []provider.Tool_Definition = nil,
+) -> Live_Turn {
     key, has_key := os.lookup_env(LIVE_KEY_ENV, context.allocator)
     testing.expectf(t, has_key, "%s must be set for a live turn", LIVE_KEY_ENV)
     if !has_key {
@@ -112,7 +127,14 @@ live_turn_run :: proc(t: ^testing.T, model: ^catalog.Model, reasoning: string, p
         auth = provider.Api_Key{key = key},
     }
 
-    body, build_err := run_request_build(model, connection.auth, reasoning, {messages = messages[:]}, scratch, scratch)
+    body, build_err := run_request_build(
+        model,
+        connection.auth,
+        reasoning,
+        {messages = messages[:], tools = tools},
+        scratch,
+        scratch,
+    )
     testing.expect_value(t, build_err, provider.Transport_Error.None)
     if build_err != .None {
         return {}
@@ -162,6 +184,8 @@ test_live_minimax_text_turn :: proc(t: ^testing.T) {
     text := strings.to_string(turn.text)
     fmt.eprintfln("[live] reason=%v text=%q reasoning=%q", turn.reason, text, strings.to_string(turn.reasoning))
 
+    fmt.eprintfln("[live] reason=%v tool=%q args=%s", turn.reason, turn.tool_name, turn.tool_args)
+
     testing.expect_value(t, turn.result.err, provider.Transport_Error.None)
     testing.expect(t, turn.blocks > 0, "the turn produced at least one block")
     testing.expect(t, len(text) > 0, "the turn produced assistant text")
@@ -202,4 +226,35 @@ test_live_minimax_reasoning_turn :: proc(t: ^testing.T) {
     testing.expect_value(t, off.result.err, provider.Transport_Error.None)
     testing.expect(t, len(strings.to_string(off.reasoning)) == 0, "disabled thinking returns no reasoning text")
     testing.expect(t, len(strings.to_string(off.text)) > 0, "disabled thinking still answers")
+}
+
+// The registry reaches a real provider: the model is offered one tool and asks for it. This
+// is the checkpoint for step 8b — nothing executes the call yet.
+@(test)
+test_live_minimax_tool_call :: proc(t: ^testing.T) {
+    when !LIVE {
+        return
+    }
+
+    tools := [?]provider.Tool_Definition {
+        {
+            name = "get_weather",
+            description = "Report the current weather for a city",
+            input_schema = `{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}`,
+        },
+    }
+
+    model := live_model("MiniMax-M2.7", nil, false)
+    turn := live_turn_run(t, &model, "", "What is the weather in Tokyo? Use the tool.", tools[:])
+    defer strings.builder_destroy(&turn.text)
+    defer strings.builder_destroy(&turn.reasoning)
+    defer delete(turn.tool_name)
+    defer delete(turn.tool_args)
+
+    fmt.eprintfln("[live] reason=%v tool=%q args=%s", turn.reason, turn.tool_name, turn.tool_args)
+
+    testing.expect_value(t, turn.result.err, provider.Transport_Error.None)
+    testing.expect_value(t, turn.reason, provider.Stop_Reason.Tool_Calls)
+    testing.expect_value(t, turn.tool_name, "get_weather")
+    testing.expectf(t, strings.contains(turn.tool_args, "Tokyo"), "arguments should name the city: %s", turn.tool_args)
 }

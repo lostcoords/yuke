@@ -138,8 +138,11 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
         return 0, .Store_Failed
     }
 
+    // Borrowed from the registry, which outlives the turn. `run_request_build` drops them
+    // for a model that cannot call tools.
     request := provider.Request {
         messages = messages,
+        tools    = tools_definitions(d, sa),
     }
 
     if has_prompt {

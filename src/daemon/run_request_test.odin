@@ -40,6 +40,7 @@ request_test_build :: proc(
     model: ^catalog.Model,
     reasoning: string,
     temperature: Maybe(f64) = nil,
+    tools: []provider.Tool_Definition = nil,
 ) -> string {
     arena: virtual.Arena
     testing.expect_value(t, virtual.arena_init_growing(&arena), nil)
@@ -51,6 +52,7 @@ request_test_build :: proc(
     request := provider.Request {
         messages    = messages[:],
         temperature = temperature,
+        tools       = tools,
     }
 
     body, err := run_request_build(model, nil, reasoning, request, context.allocator, scratch)
@@ -255,4 +257,34 @@ test_run_request_responses_dialect_follows_the_credential :: proc(t: ^testing.T)
     testing.expect_value(t, codex_err, provider.Transport_Error.None)
     defer delete(codex)
     testing.expect(t, !strings.contains(codex, `"max_output_tokens"`), "the codex dialect omits the ceiling")
+}
+
+// The registry reaches the wire, and a row that cannot call tools never receives them: the
+// provider fails a turn on unexpected definitions rather than ignoring them.
+@(test)
+test_run_request_sends_tools_only_to_a_model_that_supports_them :: proc(t: ^testing.T) {
+    tools := [?]provider.Tool_Definition {
+        {
+            name = "read",
+            description = "Read a file",
+            input_schema = `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`,
+        },
+    }
+
+    for protocol in ([?]wire.Provider_Protocol{.Anthropic_Messages, .Openai_Chat, .Openai_Responses}) {
+        model := request_test_model(protocol, nil)
+
+        body := request_test_build(t, &model, "", nil, tools[:])
+        defer delete(body)
+
+        testing.expectf(t, strings.contains(body, `"read"`), "%v should carry the tool name: %s", protocol, body)
+        testing.expectf(t, strings.contains(body, `"path"`), "%v should carry the schema: %s", protocol, body)
+
+        model.info.supports_tools = false
+
+        without := request_test_build(t, &model, "", nil, tools[:])
+        defer delete(without)
+
+        testing.expectf(t, !strings.contains(without, `"read"`), "%v should drop the tools: %s", protocol, without)
+    }
 }
