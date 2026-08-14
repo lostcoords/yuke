@@ -44,6 +44,9 @@ Input_Obs :: struct {
     queued:         [dynamic]wire.Queued_Input,
     committed:      [dynamic]wire.User_Message,
     assistants:     [dynamic]wire.Assistant_Message,
+    turns:          [dynamic]wire.Run_Outcome_Turn,
+    failures:       [dynamic]wire.Run_Error_Code,
+    canceled_runs:  int,
     summaries:      [dynamic]wire.Session,
 
     // A `run.done` arrived, so the turn this driver started has finished.
@@ -80,6 +83,8 @@ input_obs_init :: proc(o: ^Input_Obs, session: wire.Session_Id, inputs: []wire.I
     o.queued = make([dynamic]wire.Queued_Input, context.temp_allocator)
     o.committed = make([dynamic]wire.User_Message, context.temp_allocator)
     o.assistants = make([dynamic]wire.Assistant_Message, context.temp_allocator)
+    o.turns = make([dynamic]wire.Run_Outcome_Turn, context.temp_allocator)
+    o.failures = make([dynamic]wire.Run_Error_Code, context.temp_allocator)
     o.summaries = make([dynamic]wire.Session, context.temp_allocator)
     client.replica_init(&o.replica, context.allocator, session)
 }
@@ -239,6 +244,20 @@ input_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
 
     case wire.Run_Done_Data:
         o.turn_done = true
+
+        switch outcome in v.outcome {
+        case wire.Run_Outcome_Turn:
+            turn := outcome
+            append(&o.turns, turn)
+
+        case wire.Run_Outcome_Failed:
+            append(&o.failures, outcome.code)
+
+        case wire.Run_Outcome_Canceled:
+            o.canceled_runs += 1
+
+        case wire.Run_Outcome_Compacted, wire.Run_Outcome_Skipped:
+        }
 
     case wire.Session_Summary_Changed_Data:
         append(&o.summaries, wire.session_clone(v.session, context.temp_allocator))

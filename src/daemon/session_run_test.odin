@@ -5,6 +5,7 @@ import "core:nbio"
 import "core:net"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "core:time"
 
@@ -117,6 +118,17 @@ data: {"type":"message_stop"}
 
 `
 
+@(private = "file")
+RUN_FAKE_TOOL_ENTRY :: `
+    import { defineTool } from "yuke:daemon"
+
+    defineTool("get_weather", {
+        description: "Report the weather",
+        params: { city: "string" },
+        handler: async ({ city }) => ({ weather: "sunny", city }),
+    })
+`
+
 // Two calls in one round. Their handlers use a barrier in the join test, so neither can
 // settle unless both start before the daemon drains their promises.
 @(private = "file")
@@ -145,32 +157,107 @@ data: {"type":"message_stop"}
 // makes an offline end-to-end turn possible at all.
 @(private = "file")
 Run_Fake :: struct {
-    front:  http_server.Server,
+    front:          http_server.Server,
 
     // Response pieces written in order, `gap` apart, so the daemon decodes a stream that
     // arrives over time. A whole-response fake is the one-piece case.
-    pieces: []string,
-    single: [1]string,
-    gap:    time.Duration,
-    next:   int,
+    pieces:         []string,
+    single:         [1]string,
+    gap:            time.Duration,
+    next:           int,
+
+    // Optional whole bodies selected per request. The ordinary fixture leaves this empty
+    // and serves `pieces`; a multi-round turn consumes one body for each provider request.
+    responses:      []string,
+    response_next:  int,
+    status:         string,
+    content_type:   string,
+    requests:       int,
+    request_bodies: [dynamic]string,
 
     // Accept the request and answer nothing, so the turn stays live until it is canceled.
-    hold:   bool,
-    gap_op: ^nbio.Operation,
+    hold:           bool,
+    hold_after:     int,
+    held:           bool,
+    gap_op:         ^nbio.Operation,
 
     // One socket per request served. A promoted queue entry starts a second turn, so the
     // fixture answers each request in turn and closes every socket at teardown.
-    socket: net.TCP_Socket,
-    served: [dynamic]net.TCP_Socket,
-    loop:   ^nbio.Event_Loop,
-    taken:  bool,
-    closed: bool,
+    socket:         net.TCP_Socket,
+    served:         [dynamic]net.TCP_Socket,
+    loop:           ^nbio.Event_Loop,
+    taken:          bool,
+    closed:         bool,
+}
+
+// Body capture is only needed by the sequenced multi-round fixture. Its requests are
+// serial, so the ordinary fake's single send state remains sufficient after each body ends.
+@(private = "file")
+Run_Fake_Body :: struct {
+    fake:  ^Run_Fake,
+    bytes: []byte,
+    got:   int,
 }
 
 @(private = "file")
-run_fake_on_request :: proc(c: ^http_server.Conn, _: http_server.Request) {
+run_fake_on_request :: proc(c: ^http_server.Conn, request: http_server.Request) {
     fake := (^Run_Fake)(c.server.user_data)
     assert(fake != nil, "the run fixture needs its fake")
+
+    if len(fake.responses) > 0 {
+        assert(request.content_length > 0, "a provider request carries its JSON body")
+
+        capture := new(Run_Fake_Body, context.temp_allocator)
+        capture.fake = fake
+        capture.bytes = make([]byte, int(request.content_length), context.temp_allocator)
+        http_server.receive_body(c, capture, run_fake_on_body, run_fake_on_body_end)
+
+        return
+    }
+
+    run_fake_answer(c, fake)
+}
+
+@(private = "file")
+run_fake_on_body :: proc(_: ^http_server.Conn, user: rawptr, chunk: []byte) -> bool {
+    capture := (^Run_Fake_Body)(user)
+    assert(capture != nil && capture.fake != nil, "a fake request body needs its owner")
+    assert(capture.got + len(chunk) <= len(capture.bytes), "a fake request stays inside its declared body")
+
+    capture.got += copy(capture.bytes[capture.got:], chunk)
+
+    return true
+}
+
+@(private = "file")
+run_fake_on_body_end :: proc(c: ^http_server.Conn, user: rawptr, ok: bool) {
+    capture := (^Run_Fake_Body)(user)
+    assert(capture != nil && capture.fake != nil, "a fake request body completion needs its owner")
+    assert(ok && capture.got == len(capture.bytes), "the fake receives the complete provider request")
+
+    append(&capture.fake.request_bodies, string(capture.bytes))
+    run_fake_answer(c, capture.fake)
+}
+
+@(private = "file")
+run_fake_answer :: proc(c: ^http_server.Conn, fake: ^Run_Fake) {
+    assert(fake != nil, "answering a run request needs its fake")
+
+    if len(fake.responses) > 0 {
+        assert(fake.response_next < len(fake.responses), "the fake has a response for every provider round")
+        body := fake.responses[fake.response_next]
+        fake.response_next += 1
+        fake.single[0] = fmt.tprintf(
+            "HTTP/1.1 %s\r\ncontent-length: %d\r\ncontent-type: %s\r\n\r\n%s",
+            fake.status,
+            len(body),
+            fake.content_type,
+            body,
+        )
+        fake.pieces = fake.single[:]
+    }
+
+    fake.requests += 1
 
     fake.socket, fake.loop, _ = http_server.hijack(c)
     fake.taken = true
@@ -180,7 +267,8 @@ run_fake_on_request :: proc(c: ^http_server.Conn, _: http_server.Request) {
     // canceled. Only these outlive their request, so only these are closed at teardown; a
     // served socket closes itself at EOF, and closing it twice would take out whichever
     // connection the descriptor was recycled for.
-    if fake.hold {
+    if fake.hold || fake.hold_after > 0 && fake.requests >= fake.hold_after {
+        fake.held = true
         append(&fake.served, fake.socket)
 
         return
@@ -269,6 +357,9 @@ run_fake_start :: proc(
     body := RUN_FAKE_STREAM,
 ) -> string {
     fake.served = make([dynamic]net.TCP_Socket, context.temp_allocator)
+    fake.request_bodies = make([dynamic]string, context.temp_allocator)
+    fake.status = status
+    fake.content_type = content_type
     fake.single[0] = fmt.tprintf(
         "HTTP/1.1 %s\r\ncontent-length: %d\r\ncontent-type: %s\r\n\r\n%s",
         status,
@@ -340,10 +431,11 @@ run_fake_catalog :: proc(t: ^testing.T, d: ^Daemon, base_url: string) {
 // Register a session that names the fake's model, since the shared fixture names one no
 // catalog resolves.
 @(private = "file")
-run_fake_session :: proc(t: ^testing.T, d: ^Daemon, id: wire.Session_Id) {
+run_fake_session :: proc(t: ^testing.T, d: ^Daemon, id: wire.Session_Id, max_rounds: Maybe(u64) = nil) {
     session := daemon_test_session(id)
     session.model = "fake/model"
     session.reasoning = ""
+    session.max_rounds = max_rounds
 
     _, err := store.session_create(d.store, daemon_test_workspace(), session, nil)
     testing.expect_value(t, err, nil)
@@ -376,13 +468,18 @@ run_env_start :: proc(
     content_type := "text/event-stream",
     body := RUN_FAKE_STREAM,
     entry := "",
+    max_rounds: Maybe(u64) = nil,
+    responses: []string = nil,
+    hold_after := 0,
 ) {
     env.path = testsupport.sqlite_db_path(t, name)
     env.session = pump_test_session('a')
 
     loop := nbio.current_thread_event_loop()
     env.fake.hold = hold
+    env.fake.hold_after = hold_after
     base_url := run_fake_start(t, &env.fake, loop, status, content_type, body)
+    env.fake.responses = responses
 
     js_root := ""
     if entry != "" {
@@ -400,7 +497,7 @@ run_env_start :: proc(
         Error.None,
     )
     run_fake_catalog(t, &env.d, base_url)
-    run_fake_session(t, &env.d, env.session)
+    run_fake_session(t, &env.d, env.session, max_rounds)
 
     input_obs_init(&env.obs, env.session, inputs)
 }
@@ -1122,6 +1219,7 @@ test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
         "session-run-tool",
         run_env_input("weather in Tokyo?", &parts, &inputs),
         body = RUN_FAKE_TOOL_STREAM,
+        max_rounds = 1,
     )
     defer run_env_stop(t, &env)
 
@@ -1204,6 +1302,7 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
         run_env_input("weather in Tokyo?", &parts, &inputs),
         body = RUN_FAKE_TOOL_STREAM,
         entry = entry,
+        max_rounds = 1,
     )
     defer run_env_stop(t, &env)
 
@@ -1251,6 +1350,339 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
     }
 
     testing.expect(t, saw_running_tool, "the session reported running_tool while the handler ran")
+
+    testing.expect_value(t, env.fake.requests, 1)
+    if testing.expect_value(t, len(obs.turns), 1) {
+        testing.expect_value(t, obs.turns[0].rounds, u64(1))
+        testing.expect_value(t, obs.turns[0].finish, wire.Stop_Reason.Tool_Calls)
+    }
+}
+
+// A zero cap is unlimited. The completed tool message lands in canonical history, the next
+// request starts under the same run, and its natural stop closes the two-round turn.
+@(test)
+test_session_run_continues_with_tool_results :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    responses := [?]string{RUN_FAKE_TOOL_STREAM, RUN_FAKE_STREAM}
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-results",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        entry = RUN_FAKE_TOOL_ENTRY,
+        max_rounds = 0,
+        responses = responses[:],
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    testing.expect_value(t, env.fake.requests, 2)
+    if testing.expect_value(t, len(env.fake.request_bodies), 2) {
+        second := env.fake.request_bodies[1]
+        testing.expect(
+            t,
+            strings.contains(second, `"type":"tool_result","tool_use_id":"toolu_1"`),
+            "the next request carries the completed tool result",
+        )
+        testing.expect(
+            t,
+            strings.contains(second, `"content":"{\"weather\":\"sunny\",\"city\":\"Tokyo\"}"`),
+            "the next request carries the handler output",
+        )
+        testing.expect(t, !strings.contains(second, `"system":`), "an absent prompt remains absent between rounds")
+    }
+
+    if !testing.expect_value(t, len(obs.assistants), 2) {
+        return
+    }
+
+    tool_message := obs.assistants[0]
+    testing.expect_value(t, tool_message.id, wire.Message_Id(2))
+    testing.expect_value(t, tool_message.run_id, wire.Run_Id(1))
+    testing.expect_value(t, tool_message.finish, wire.Stop_Reason.Tool_Calls)
+
+    if testing.expect_value(t, len(tool_message.content), 1) {
+        tool, is_tool := tool_message.content[0].(wire.Tool_Part)
+        if testing.expect(t, is_tool, "the first round commits its tool call") {
+            completed, is_completed := tool.state.(wire.Tool_State_Completed)
+            if testing.expect(t, is_completed, "the next round receives a completed result") {
+                testing.expect_value(t, completed.output, `{"weather":"sunny","city":"Tokyo"}`)
+            }
+        }
+    }
+
+    answer := obs.assistants[1]
+    testing.expect_value(t, answer.id, wire.Message_Id(3))
+    testing.expect_value(t, answer.run_id, tool_message.run_id)
+    testing.expect_value(t, answer.finish, wire.Stop_Reason.Stop)
+
+    if testing.expect_value(t, len(answer.content), 1) {
+        text, is_text := answer.content[0].(wire.Text_Part)
+        if testing.expect(t, is_text, "the second round commits its natural answer") {
+            testing.expect_value(t, text.text, "hello")
+        }
+    }
+
+    if testing.expect_value(t, len(obs.turns), 1) {
+        testing.expect_value(t, obs.turns[0].rounds, u64(2))
+        testing.expect_value(t, obs.turns[0].finish, wire.Stop_Reason.Stop)
+    }
+
+    starts := 0
+    run_starts := 0
+    run_ends := 0
+    for name in obs.names {
+        #partial switch name {
+        case .Message_Started:
+            starts += 1
+
+        case .Run_Started:
+            run_starts += 1
+
+        case .Run_Done:
+            run_ends += 1
+
+        }
+    }
+
+    testing.expect_value(t, starts, 2)
+    testing.expect_value(t, run_starts, 1)
+    testing.expect_value(t, run_ends, 1)
+
+    hw, hw_err := store.high_water(env.d.store, env.session)
+    testing.expect_value(t, hw_err, nil)
+    testing.expect_value(t, hw.message_id, wire.Message_Id(3))
+    testing.expect_value(t, hw.run_id, wire.Run_Id(1))
+
+    testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
+    testing.expect_value(t, len(obs.replica.messages), 3)
+    testing.expect(t, obs.replica.active == nil, "the final round leaves no draft open")
+}
+
+// Failure in a later provider request retracts only that request's draft. The tool message
+// is already durable and remains available for retry or inspection after the run terminal.
+@(test)
+test_session_run_failure_preserves_committed_tool_results :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    saved_logger := context.logger
+    quiet_logger: testsupport.Assert_Only_Logger
+    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
+    defer context.logger = saved_logger
+
+    responses := [?]string{RUN_FAKE_TOOL_STREAM, "data: {\n\n"}
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-next-fails",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        entry = RUN_FAKE_TOOL_ENTRY,
+        max_rounds = 0,
+        responses = responses[:],
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+    testing.expect(t, pump_tick_until(&obs.turn_done), "the failed second round should reach run.done")
+    pump_settle()
+
+    testing.expect_value(t, env.fake.requests, 2)
+    testing.expect_value(t, len(obs.turns), 0)
+    if testing.expect_value(t, len(obs.failures), 1) {
+        testing.expect_value(t, obs.failures[0], wire.Run_Error_Code.Protocol)
+    }
+
+    if testing.expect_value(t, len(obs.assistants), 1) {
+        testing.expect_value(t, obs.assistants[0].id, wire.Message_Id(2))
+        testing.expect_value(t, obs.assistants[0].finish, wire.Stop_Reason.Tool_Calls)
+    }
+
+    discarded := 0
+    for name in obs.names {
+        if name == .Message_Discarded {
+            discarded += 1
+        }
+    }
+    testing.expect_value(t, discarded, 1)
+
+    hw, hw_err := store.high_water(env.d.store, env.session)
+    testing.expect_value(t, hw_err, nil)
+    testing.expect_value(t, hw.message_id, wire.Message_Id(2))
+    testing.expect_value(t, hw.run_id, wire.Run_Id(1))
+
+    testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
+    testing.expect_value(t, len(obs.replica.messages), 2)
+    testing.expect(t, obs.replica.active == nil, "the failed second-round draft is gone")
+}
+
+// Cancellation has the same ownership boundary as failure: the in-flight second draft is
+// discarded, while the completed tool-call message from the first round remains durable.
+@(test)
+test_session_cancel_run_preserves_committed_tool_results :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    responses := [?]string{RUN_FAKE_TOOL_STREAM, RUN_FAKE_STREAM}
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-cancel-tool-next-round",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        entry = RUN_FAKE_TOOL_ENTRY,
+        max_rounds = 0,
+        responses = responses[:],
+        hold_after = 2,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    held := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            return env.fake.held
+        }, "the second provider request starts")
+    if !testing.expect(t, held, "the second provider request should be held open") {
+        return
+    }
+
+    run := session_live_run(&env.d, env.session)
+    if testing.expect(t, run != nil, "the second round should still own the run") {
+        testing.expect_value(t, run.message_id, wire.Message_Id(3))
+        testing.expect(t, run.draft_open, "the second round announced its draft")
+    }
+
+    run_id, canceled := run_turn_cancel(&env.d, env.session)
+    testing.expect(t, canceled, "the second provider round is cancelable")
+    testing.expect_value(t, run_id, wire.Run_Id(1))
+    pump_settle()
+
+    testing.expect_value(t, env.fake.requests, 2)
+    testing.expect_value(t, obs.canceled_runs, 1)
+    testing.expect_value(t, len(obs.turns), 0)
+
+    if testing.expect_value(t, len(obs.assistants), 1) {
+        testing.expect_value(t, obs.assistants[0].id, wire.Message_Id(2))
+        testing.expect_value(t, obs.assistants[0].finish, wire.Stop_Reason.Tool_Calls)
+    }
+
+    discarded := 0
+    for name in obs.names {
+        if name == .Message_Discarded {
+            discarded += 1
+        }
+    }
+    testing.expect_value(t, discarded, 1)
+
+    hw, hw_err := store.high_water(env.d.store, env.session)
+    testing.expect_value(t, hw_err, nil)
+    testing.expect_value(t, hw.message_id, wire.Message_Id(2))
+    testing.expect_value(t, hw.run_id, wire.Run_Id(1))
+
+    testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
+    testing.expect_value(t, len(obs.replica.messages), 2)
+    testing.expect(t, obs.replica.active == nil, "the canceled second-round draft is gone")
+    testing.expect(t, session_live_run(&env.d, env.session) == nil, "the canceled run releases session ownership")
+}
+
+// An intermediate tool commit does not make the session idle. Queued input remains behind
+// the same run until its active next round reaches a terminal, then promotion may reuse the
+// discarded draft id as the queued input's durable message id.
+@(test)
+test_session_run_keeps_queued_input_between_rounds :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    first := [?]wire.Content_Part{wire.Content_Text{text = "weather in Tokyo?"}}
+    second := [?]wire.Content_Part{wire.Content_Text{text = "and tomorrow?"}}
+    inputs := [?]wire.Input{wire.Input_Content{content = first[:]}, wire.Input_Content{content = second[:]}}
+    responses := [?]string{RUN_FAKE_TOOL_STREAM, RUN_FAKE_STREAM, RUN_FAKE_STREAM}
+
+    env: Run_Env
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-keeps-queue",
+        inputs[:],
+        entry = RUN_FAKE_TOOL_ENTRY,
+        max_rounds = 0,
+        responses = responses[:],
+        hold_after = 2,
+    )
+    defer run_env_stop(t, &env)
+
+    obs := &env.obs
+    run_env_drive(t, &env)
+
+    continued := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            return env.fake.requests >= 2
+        }, "the first run starts its second round")
+    if !testing.expect(t, continued, "the first run should reach its held second round") {
+        return
+    }
+
+    testing.expect_value(t, session_queue_depth(&env.d, env.session), 1)
+    testing.expect_value(t, len(obs.committed), 1)
+    testing.expect_value(t, len(obs.assistants), 1)
+    testing.expect_value(t, obs.canceled_runs, 0)
+
+    first_run := session_live_run(&env.d, env.session)
+    if testing.expect(t, first_run != nil, "the intermediate commit keeps its run live") {
+        testing.expect_value(t, first_run.run_id, wire.Run_Id(1))
+        testing.expect_value(t, first_run.message_id, wire.Message_Id(3))
+    }
+
+    run_id, canceled := run_turn_cancel(&env.d, env.session)
+    testing.expect(t, canceled, "the held continuation is cancelable")
+    testing.expect_value(t, run_id, wire.Run_Id(1))
+
+    promoted := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
+            return env.fake.requests >= 3
+        }, "the queued input is promoted after the terminal")
+    if !testing.expect(t, promoted, "the queued input should start after cancellation") {
+        return
+    }
+
+    testing.expect_value(t, session_queue_depth(&env.d, env.session), 0)
+    testing.expect_value(t, obs.canceled_runs, 1)
+    if testing.expect_value(t, len(obs.committed), 2) {
+        testing.expect_value(t, obs.committed[1].input_id, wire.Input_Id(2))
+        testing.expect_value(t, obs.committed[1].id, wire.Message_Id(3))
+    }
+
+    next_run := session_live_run(&env.d, env.session)
+    if testing.expect(t, next_run != nil, "the promoted input owns the session") {
+        testing.expect_value(t, next_run.run_id, wire.Run_Id(2))
+        testing.expect_value(t, next_run.message_id, wire.Message_Id(4))
+    }
+
+    testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
+    testing.expect_value(t, len(obs.replica.queued), 0)
 }
 
 // Calls in one provider round start together and commit in provider block order only after
@@ -1300,6 +1732,7 @@ test_session_run_joins_concurrent_tool_calls :: proc(t: ^testing.T) {
         run_env_input("run both", &parts, &inputs),
         body = RUN_FAKE_TOOL_JOIN_STREAM,
         entry = entry,
+        max_rounds = 1,
     )
     defer run_env_stop(t, &env)
 
@@ -1361,6 +1794,7 @@ test_session_run_reports_a_throwing_tool_as_an_error :: proc(t: ^testing.T) {
         run_env_input("weather in Tokyo?", &parts, &inputs),
         body = RUN_FAKE_TOOL_STREAM,
         entry = entry,
+        max_rounds = 1,
     )
     defer run_env_stop(t, &env)
 

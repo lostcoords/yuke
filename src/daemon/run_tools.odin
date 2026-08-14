@@ -336,7 +336,7 @@ run_tool_clone :: proc(run: ^Run, value: qjs.Value) -> string {
 
     defer qjs.free_string(ctx, text)
 
-    cloned, err := strings.clone(text, run.allocator)
+    cloned, err := strings.clone(text, run.round_allocator)
 
     return cloned if err == nil else ""
 }

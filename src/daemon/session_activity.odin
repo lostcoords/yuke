@@ -120,7 +120,7 @@ session_draft :: proc(
             config_rev = run.config.config_rev,
             agent = RUN_AGENT,
             content = content,
-            time = wire.Message_Time{created_at_ms = run.started_at_ms},
+            time = wire.Message_Time{created_at_ms = run.round_started_at_ms},
         },
     }
 
