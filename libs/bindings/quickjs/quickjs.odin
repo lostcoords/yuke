@@ -501,6 +501,14 @@ eval_function :: proc(ctx: ^Context, fun_obj: Value) -> Value {
     return c_eval_function(ctx, fun_obj)
 }
 
+// Whether `v` is callable. Needs a context because a function is an object whose class the
+// runtime resolves; the tag-based predicates in `value.odin` cannot tell.
+is_function :: proc(ctx: ^Context, v: Value) -> bool {
+    assert(ctx != nil, "is_function needs a context")
+
+    return c_is_function(ctx, v)
+}
+
 // Serialize `v` to a compact JSON string value (the `JSON.stringify` builtin: runs
 // getters/`toJSON`, drops function- and `undefined`-valued members). Satisfies
 // `is_exception` on a cyclic value or a throwing `toJSON`; yields the JS `undefined`

@@ -258,6 +258,11 @@ Daemon :: struct {
     js_root:          string,
 
     // @private
+    // Tools `yuked.js` registered, in registration order. Each owns a live JS handler, so
+    // this is released before the context that made them.
+    tools:            [dynamic]Daemon_Tool,
+
+    // @private
     // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
     // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
     // before serving, leaving both zero.
@@ -657,6 +662,7 @@ start_rollback :: proc(d: ^Daemon) {
     provider_auth_destroy(d)
     catalog_refresh_destroy(d)
     run_service_destroy(&d.runs)
+    tools_destroy(d)
     js.destroy(&d.js)
     store_close(d)
 
@@ -762,6 +768,7 @@ destroy :: proc(d: ^Daemon) {
     provider_auth_destroy(d)
     catalog_refresh_destroy(d)
     run_service_destroy(&d.runs)
+    tools_destroy(d)
     js.destroy(&d.js)
     ws.server_destroy(&d.ws_server)
     relay_destroy(d)

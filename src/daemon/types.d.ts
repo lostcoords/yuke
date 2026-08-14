@@ -17,4 +17,27 @@ declare module "yuke:daemon" {
   // Register the daemon configuration, returning it so `export default defineConfig({...})` reads
   // naturally. Call at most once, at module top level.
   export function defineConfig(config: DaemonConfig): DaemonConfig;
+
+  /**
+   * A parameter's type, with a trailing `?` marking it optional. Compiled to JSON Schema by
+   * the host; this sugar is the only accepted form.
+   */
+  export type ToolParam =
+    | "string" | "integer" | "number" | "boolean"
+    | "string?" | "integer?" | "number?" | "boolean?";
+
+  export interface ToolDefinition<A = Record<string, unknown>> {
+    /** Shown to the model. Required, and it is what decides whether the tool gets used well. */
+    description: string;
+    /** Omit for a tool that takes no arguments. */
+    params?: Record<string, ToolParam>;
+    handler: (args: A) => unknown | Promise<unknown>;
+  }
+
+  // Register a tool the model may call. The name is 1 to 64 characters of [A-Za-z0-9_-], and
+  // registering one twice replaces the first. A bad definition fails the daemon's start.
+  export function defineTool<A = Record<string, unknown>>(
+    name: string,
+    definition: ToolDefinition<A>,
+  ): ToolDefinition<A>;
 }

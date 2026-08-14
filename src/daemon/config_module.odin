@@ -7,11 +7,11 @@ import "core:strings"
 import qjs "libs:bindings/quickjs"
 import js "src:js"
 
-// Daemon-only script registrations installed beside `yuke:fs` when a root exists.
+// Daemon-only script registrations installed beside the shared host modules when a root exists.
 SCRIPT_MODULE :: "yuke:daemon"
 
 @(rodata)
-SCRIPT_EXPORTS := []string{"defineConfig"}
+SCRIPT_EXPORTS := []string{"defineConfig", "defineTool"}
 
 script_module :: proc() -> js.Module {
     return {name = SCRIPT_MODULE, init = script_module_init, exports = SCRIPT_EXPORTS}
@@ -23,6 +23,12 @@ script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     config_fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
 
     if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) {
+        return -1
+    }
+
+    tool_fn := qjs.new_function(ctx, define_tool, "defineTool", 2)
+
+    if !qjs.set_module_export(ctx, m, "defineTool", tool_fn) {
         return -1
     }
 
