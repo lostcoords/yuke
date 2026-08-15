@@ -132,7 +132,7 @@ stop :: proc(d: ^daemon.Daemon) -> bool {
     first := signals_seen()
 
     for !daemon.shutdown_complete(d) {
-        if time.now()._nsec >= deadline._nsec {
+        if time.since(deadline) >= 0 {
             return false
         }
 

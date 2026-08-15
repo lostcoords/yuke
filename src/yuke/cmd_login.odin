@@ -118,12 +118,7 @@ login_run :: proc() {
             os.exit(2)
         }
         if have_device && have_session {
-            fmt.printfln(
-                "already enrolled as daemon %s and session %s; pass --force to re-enroll",
-                existing_device_id,
-                existing_session_id,
-            )
-            os.exit(0)
+            login_already_enrolled_both(existing_device_id, existing_session_id)
         }
         opts.role = login_prompt_role(have_device, have_session)
     }
@@ -133,12 +128,7 @@ login_run :: proc() {
 
     if !opts.force {
         if want_device && have_device && want_session && have_session {
-            fmt.printfln(
-                "already enrolled as daemon %s and session %s; pass --force to re-enroll",
-                existing_device_id,
-                existing_session_id,
-            )
-            os.exit(0)
+            login_already_enrolled_both(existing_device_id, existing_session_id)
         }
         if want_device && have_device {
             fmt.printfln("already enrolled as daemon %s; pass --force to re-enroll", existing_device_id)
@@ -270,7 +260,7 @@ login_run :: proc() {
     for {
         time.sleep(interval)
 
-        if time.now()._nsec >= deadline._nsec {
+        if time.since(deadline) >= 0 {
             fmt.eprintln("yuke login: enrollment expired before approval; run `yuke login` again")
             os.exit(1)
         }
@@ -363,74 +353,31 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     for i < len(args) {
         arg := args[i]
 
-        switch {
-        case arg == "--force":
+        if arg == "--force" {
             opts.force = true
-
-        case arg == "--role":
             i += 1
-            if i >= len(args) {
-                fmt.eprintln("yuke login: --role needs daemon, client, or both")
-                return {}, false
-            }
-            opts.role = args[i]
+            continue
+        }
 
-        case strings.has_prefix(arg, "--role="):
-            opts.role = arg[len("--role="):]
-
-        case arg == "--kind":
-            i += 1
-            if i >= len(args) {
-                fmt.eprintln("yuke login: --kind needs cli or token")
-                return {}, false
-            }
-            opts.kind = args[i]
+        v, matched, valid := login_flag_value(args, &i, "--role", "needs daemon, client, or both")
+        if matched {
+            opts.role = v
+        } else if v, matched, valid = login_flag_value(args, &i, "--kind", "needs cli or token"); matched {
+            opts.kind = v
             opts.kind_set = true
-
-        case strings.has_prefix(arg, "--kind="):
-            opts.kind = arg[len("--kind="):]
-            opts.kind_set = true
-
-        case arg == "--device-ids":
-            i += 1
-            if i >= len(args) {
-                fmt.eprintln("yuke login: --device-ids needs a comma-separated list")
-                return {}, false
-            }
-            opts.device_ids = login_parse_ids(args[i])
-
-        case strings.has_prefix(arg, "--device-ids="):
-            opts.device_ids = login_parse_ids(arg[len("--device-ids="):])
-
-        case arg == "--name":
-            i += 1
-            if i >= len(args) {
-                fmt.eprintln("yuke login: --name needs a value")
-
-                return {}, false
-            }
-
-            opts.name = args[i]
-
-        case arg == "--cloud":
-            i += 1
-            if i >= len(args) {
-                fmt.eprintln("yuke login: --cloud needs a value")
-
-                return {}, false
-            }
-
-            opts.cloud = args[i]
-
-        case strings.has_prefix(arg, "--name="):
-            opts.name = arg[len("--name="):]
-
-        case strings.has_prefix(arg, "--cloud="):
-            opts.cloud = arg[len("--cloud="):]
-
-        case:
+        } else if v, matched, valid = login_flag_value(args, &i, "--device-ids", "needs a comma-separated list");
+           matched {
+            opts.device_ids = login_parse_ids(v)
+        } else if v, matched, valid = login_flag_value(args, &i, "--name", "needs a value"); matched {
+            opts.name = v
+        } else if v, matched, valid = login_flag_value(args, &i, "--cloud", "needs a value"); matched {
+            opts.cloud = v
+        } else {
             fmt.eprintfln("yuke login: unknown option %q", arg)
+            return {}, false
+        }
 
+        if !valid {
             return {}, false
         }
 
@@ -453,6 +400,14 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     }
 
     return opts, true
+}
+
+// Report that both principals are already present and exit cleanly. Nothing to enroll is not an
+// error, so this is exit 0.
+@(private = "file")
+login_already_enrolled_both :: proc(device_id: string, session_id: string) -> ! {
+    fmt.printfln("already enrolled as daemon %s and session %s; pass --force to re-enroll", device_id, session_id)
+    os.exit(0)
 }
 
 @(private = "file")
@@ -487,6 +442,40 @@ login_prompt_role :: proc(have_device: bool, have_session: bool) -> string {
     }
     fmt.eprintfln("yuke login: unknown choice %q", line)
     os.exit(1)
+}
+
+// Match one value-bearing flag at `args[i^]`, accepting both `--flag value` (consuming the
+// following argument) and `--flag=value`. `matched` is false when this is a different argument;
+// when it is this flag in the space form with no value, prints `yuke login: <name> <need>` and
+// returns `ok=false`. The `--flag=` form permits an empty value.
+@(private = "file")
+login_flag_value :: proc(
+    args: []string,
+    i: ^int,
+    name: string,
+    need: string,
+) -> (
+    value: string,
+    matched: bool,
+    ok: bool,
+) {
+    arg := args[i^]
+
+    if arg == name {
+        if i^ + 1 >= len(args) {
+            fmt.eprintfln("yuke login: %s %s", name, need)
+            return "", true, false
+        }
+
+        i^ += 1
+        return args[i^], true, true
+    }
+
+    if strings.has_prefix(arg, name) && len(arg) > len(name) && arg[len(name)] == '=' {
+        return arg[len(name) + 1:], true, true
+    }
+
+    return "", false, true
 }
 
 @(private = "file")
