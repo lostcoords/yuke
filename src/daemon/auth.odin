@@ -139,9 +139,8 @@ bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
     return token, .Ok
 }
 
-// Whether a configured token is directly safe in both a bearer field and an
-// origin-form query without percent-encoding or normalization. Empty is the distinct
-// "auth disabled" state, not a credential, so it is exempt from the length floor.
+// Whether a configured token is safe in both a bearer field and a query without escaping. Empty is
+// the distinct "auth disabled" state, not a credential, so it is exempt from the length floor.
 auth_token_valid :: proc(token: string) -> bool {
     if token == "" {
         return true

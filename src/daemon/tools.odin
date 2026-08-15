@@ -24,9 +24,8 @@ Daemon_Tool :: struct {
     handler:      qjs.Value,
 }
 
-// `defineTool(name, definition)` — register a tool the model may call, and return the
-// definition so `export default defineTool(...)` reads naturally. A name registered twice
-// replaces the first: that is what makes a tool overridable.
+// `defineTool(name, definition)` — register a tool the model may call, returning the definition so
+// `export default defineTool(...)` reads naturally. A repeat name replaces the first.
 define_tool :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
 
@@ -153,12 +152,8 @@ tool_schema_read :: proc(ctx: ^qjs.Context, d: ^Daemon, params: qjs.Value, out: 
 @(private = "file")
 TOOL_SCHEMA_EMPTY :: `{"type":"object","properties":{},"additionalProperties":false}`
 
-// Compile the params sugar to JSON Schema: `{path: "string", start: "integer?"}` becomes an
-// object schema whose `required` names every field without a trailing `?`.
-//
-// Fields are emitted in sorted order rather than declaration order, because the JSON object
-// this reads has no order to preserve. Names are restricted to identifier characters, so the
-// schema is written without escaping.
+// Compile the params sugar to JSON Schema: `required` names every field without a trailing `?`.
+// Fields are emitted sorted, and names are identifier-only, so the schema needs no escaping.
 tool_schema_compile :: proc(params_json: string, allocator: mem.Allocator) -> (string, bool) {
     parse_arena: mem.Dynamic_Arena
     mem.dynamic_arena_init(&parse_arena, runtime.heap_allocator(), runtime.heap_allocator())

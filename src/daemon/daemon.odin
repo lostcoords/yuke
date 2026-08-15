@@ -23,7 +23,7 @@ import wire "src:wire"
 // nbio offload workers, for blocking filesystem calls off the reactor.
 WORKER_COUNT :: 4
 
-// `yuke:host` commands run on their own workers: one command holds a worker for its whole
+// `yuke:exec` commands run on their own workers: one command holds a worker for its whole
 // timeout, and `WORKER_COUNT` is what every filesystem call already waits on.
 EXEC_WORKER_COUNT :: 4
 
@@ -75,10 +75,8 @@ RELAY_CLOUD_URL_DEFAULT :: "https://platform.yuke.sh"
 // Owner-only mode for the data directory the store and blobs live under, matching the blobs.
 DATA_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 
-// Listen and identity options. Zero-valued fields default in `start`. When `yuked.js` in the
-// script root calls `defineConfig`, its values supersede `host`, `port`, the data directory
-// (`db_path`/`blob_dir`), `auth_token`, and `relay_cloud_url` here; `daemon_version` and
-// `js_root` are always the caller's.
+// Listen and identity options; zero-valued fields default in `start`. `defineConfig` in
+// `yuked.js` supersedes every field but `daemon_version` and `js_root`.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:            string,
@@ -117,9 +115,8 @@ Options :: struct {
     allowed_origins: []string,
 }
 
-// A listening yuke daemon on a caller-supplied nbio loop. Owns the HTTP front door, the
-// WebSocket server it upgrades into, and its own string clones. Start/stop/reclaim with
-// `start`/`shutdown`/`destroy`.
+// A listening daemon on a caller-supplied nbio loop, owning the front door, the WebSocket
+// server, and its own clones. Start/stop/reclaim with `start`/`shutdown`/`destroy`.
 Daemon :: struct {
     // Front door: binds the port; `user_data` is `&router`.
     front_door:       http_server.Server,
@@ -198,9 +195,8 @@ Daemon :: struct {
     runs:             Run_Service,
 
     // @private
-    // Live engine state per session: the turn in flight and the inputs waiting behind it.
-    // An entry exists exactly while a session has one or the other, so an idle daemon holds
-    // nothing. Owned here because a canceled turn fires no completion of its own.
+    // The turn in flight and the inputs behind it, per session. An entry exists only while a
+    // session has one, and is owned here because a canceled turn fires no completion.
     sessions:         map[wire.Session_Id]^Session_Live,
 
     // @private
@@ -209,9 +205,8 @@ Daemon :: struct {
     seq_high:         map[wire.Session_Id]wire.Seq,
 
     // @private
-    // Compact session-index revision, raised by every change to the index. Daemon-lifetime
-    // and deliberately not recovered: a restart resets it to 0, which is exactly the
-    // "nothing announced yet" a reconnecting client must refetch against.
+    // Session-index revision, raised by every change. Deliberately not recovered: a restart
+    // resets it to 0, the "nothing announced yet" a reconnecting client refetches against.
     session_revision: wire.Session_Revision,
 
     // @private
@@ -224,9 +219,8 @@ Daemon :: struct {
     frame_scratch:    virtual.Arena,
 
     // @private
-    // Scratch for assembling one turn: the transcript page, its decoded messages, and the
-    // provider body. Separate from `frame_scratch` because that one is wiped byte by byte
-    // on release for the secrets a frame can carry, and a transcript has none.
+    // Scratch for assembling one turn: transcript page, decoded messages, provider body.
+    // Separate from `frame_scratch`, which pays a byte-wipe a transcript does not need.
     turn_scratch:     virtual.Arena,
 
     // @private
@@ -263,9 +257,8 @@ Daemon :: struct {
     tools:            [dynamic]Daemon_Tool,
 
     // @private
-    // Manifest config captured by `yuke:daemon` `defineConfig` during entry eval, and the flag
-    // recording that it was called. Startup-transient: `start` decodes and frees `config_json`
-    // before serving, leaving both zero.
+    // Manifest config from `defineConfig`, and whether it was called. Startup-transient:
+    // `start` decodes and frees it before serving, leaving both zero.
     config_json:      string,
     config_seen:      bool,
 
@@ -274,9 +267,8 @@ Daemon :: struct {
     log_level:        log.Level,
 }
 
-// Connection identity that outlives the `Conn`, so async work can resolve it later
-// instead of holding a dangling pointer. Never reused, so a stale ticket resolves to
-// `nil` rather than a later connection.
+// Connection identity that outlives its `Conn`, so async work resolves it instead of holding
+// a pointer. Never reused: a stale ticket resolves to nil, not to a later connection.
 Conn_Ticket :: distinct u64
 
 // A relay client's slot on the shared link: the `Relay` plus the one-byte `channel` the relay
@@ -286,17 +278,15 @@ Relay_Client :: struct {
     channel: u8,
 }
 
-// The transport a `Conn` rides. A local client rides the WebSocket server; a relay client rides
-// one channel of the daemon's shared relay link. Exactly one variant is set. The session, store,
-// and pump below the transport are identical for both — only the send/close/liveness ops differ.
+// The transport a `Conn` rides: the WebSocket server, or one channel of the relay link.
+// Exactly one variant is set; only send/close/liveness differ below it.
 Conn_Transport :: union {
     ^ws.Server_Conn,
     Relay_Client,
 }
 
-// One accepted connection, local or relay. A local connection is created in `ws_on_open`
-// and freed from its transport terminal callback; a relay connection is created by the
-// bridge once the client's handshake completes and freed when the peer leaves.
+// One accepted connection. A local one is created in `ws_on_open` and freed from its terminal
+// callback; a relay one by the bridge, freed when the peer leaves.
 Conn :: struct {
     // The transport this connection rides. Exactly one variant is set for its whole life.
     tx:                 Conn_Transport,
@@ -321,17 +311,15 @@ Conn :: struct {
     // Retained client version from `initialize`; owned like `client_name`.
     client_version:     string,
 
-    // Sessions this connection subscribes to, replaced wholesale by
-    // `subscription.set`. Inline and bounded by the protocol's own cap, so gating
-    // never allocates on the fan-out path.
+    // Sessions this connection subscribes to, replaced wholesale by `subscription.set`.
+    // Inline and protocol-bounded, so gating never allocates on the fan-out path.
     subscriptions:      [wire.LIMITS.max_subscriptions]wire.Session_Id,
 
     // Live prefix length of `subscriptions`.
     subscription_count: int,
 
-    // Live deltas shed to this connection since the last `session.deltas_shed` it
-    // accepted, positionally parallel to `subscriptions`. Inline for the same reason:
-    // the fan-out's backpressure path allocates no per-connection state.
+    // Deltas shed since the last `session.deltas_shed` this connection accepted, positionally
+    // parallel to `subscriptions`. Inline for the same reason: backpressure allocates nothing.
     shed_counts:        [wire.LIMITS.max_subscriptions]u64,
 }
 
@@ -375,9 +363,8 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return .Invalid_Options
     }
 
-    // The manifest runs before anything consumes config: `yuked.js`'s `defineConfig` is the
-    // source of host/port/db/blob/auth_token/log_level, superseding `options` when it is called.
-    // A script tier that won't come up is a start failure, not a surprise the first request finds.
+    // The manifest runs before anything consumes config and supersedes `options` when it calls
+    // `defineConfig`. A script tier that won't come up is a start failure.
     js_err := js_init(d, options.js_root, allocator)
     evaluated := false
     if js_err == .None {
@@ -588,9 +575,8 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return .Out_Of_Memory
     }
 
-    // After the pump owns its scratch and its connection table, and before the front door
-    // accepts anyone: a run the previous daemon left open owes a terminal that only this
-    // start can write, and writing it goes through the pump like any other broadcast.
+    // After the pump owns its scratch and table, before the front door accepts anyone: a run
+    // the previous start left open owes a terminal only this start can write.
     runs_recover(d)
 
     router_init(d)
@@ -661,8 +647,7 @@ start_rollback :: proc(d: ^Daemon) {
 }
 
 // Release everything `start` built, in the order ownership requires. Shared by `destroy` and
-// the rollback path, which arrive from different states: every step tolerates a resource
-// `start` never reached, and the preconditions each path owes are asserted by its caller.
+// rollback: every step tolerates a resource `start` never reached.
 @(private = "file")
 teardown_release :: proc(d: ^Daemon) {
     assert(d != nil, "daemon teardown needs daemon state")
@@ -848,9 +833,8 @@ free_config :: proc(d: ^Daemon) {
     d.allowed_origins = nil
 }
 
-// Allocate and register a `Conn` for a transport, entering Awaiting_Initialize. Shared by
-// the WebSocket accept path and the relay bridge. Returns nil on an allocation failure — the
-// caller refuses the connection. The caller wires the transport's back-reference.
+// Register a `Conn` in Awaiting_Initialize, for both the accept path and the relay bridge.
+// Nil means the caller refuses the connection; the caller wires the back-reference.
 conn_register :: proc(d: ^Daemon, tx: Conn_Transport) -> ^Conn {
     assert(d != nil, "connection registration needs daemon state")
     assert(tx != nil, "connection registration needs a transport")
@@ -911,9 +895,8 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     log.debug("daemon: websocket connection open, awaiting initialize")
 }
 
-// One complete transport message. Only text frames carry protocol data; a binary
-// frame is a v1 protocol error. Ping/Pong/Close are handled inside the transport
-// and never reach here.
+// One complete transport message. Only text carries protocol data; binary is a v1 protocol
+// error. Ping/Pong/Close are handled in the transport and never reach here.
 ws_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []byte) {
     assert(wsc != nil, "message callback needs a transport connection")
     assert(wsc.server != nil, "message callback needs an owning server")
@@ -1185,9 +1168,8 @@ method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator
     }
 }
 
-// `workspace.describe` on a real path: the path walk is offloaded, and the completion
-// reports the derived id, basename title, git branch, and directory mtime. A missing
-// path or non-directory is `Bad_Request`. `last_used_model` is not reported yet.
+// `workspace.describe`: the path walk is offloaded, and its completion reports the derived
+// id, title, branch and mtime. A missing path or non-directory is `Bad_Request`.
 method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "workspace.describe needs connection state")
     assert(conn.state == .Ready, "workspace.describe ran outside Ready")
@@ -1197,9 +1179,8 @@ method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     fs_job_submit(conn, req.id, .Describe, params.path)
 }
 
-// `workspace.browse`: immediate subdirectories only, sorted case-insensitively,
-// paginated by an opaque last-name cursor. Missing path defaults to the daemon
-// user's home; cursor and page window are decided here, the listing itself is offloaded.
+// `workspace.browse`: immediate subdirectories, sorted case-insensitively, paged by an opaque
+// name cursor. The window is decided here and defaults to home; the listing is offloaded.
 method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "workspace.browse needs connection state")
     assert(conn.state == .Ready, "workspace.browse ran outside Ready")
@@ -1221,9 +1202,8 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
     fs_job_submit(conn, req.id, .Browse, fs_target_path(params.path, sa), cursor, page_size)
 }
 
-// Validate and emit a successful response. The result is built from already-trusted
-// daemon state, so an invalid outgoing frame is our bug, not the peer's — assert
-// rather than ship it.
+// Validate and emit a successful response. The result comes from trusted daemon state, so an
+// invalid frame is our bug: assert rather than ship it.
 send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "result send needs connection state")
     assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
@@ -1250,9 +1230,8 @@ send_error :: proc(
     send_response(conn, wire.response_error_build(id, eo), allocator)
 }
 
-// Serialize a response and hand it to the transport; `server_send_text` copies the
-// payload, so the emitter buffer may be released on return. `allocator` is the arena of
-// the lifetime that asked for the response, never a longer-lived one.
+// Serialize and hand to the transport, which copies, so the emitter may be released on return.
+// `allocator` is the arena of the lifetime that asked, never a longer-lived one.
 send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "response send needs connection state")
     assert(conn.tx != nil, "response send needs transport state")
@@ -1286,9 +1265,8 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     return true
 }
 
-// Answer `initialize` with the daemon snapshot: the workspace registry page, the session
-// and catalog revisions, and catalog health. Profiles and agents are not modeled yet;
-// capabilities advertise only what this config offers.
+// Answer `initialize`: workspace page, session and catalog revisions, catalog health, and the
+// capabilities this config offers. Profiles and agents are not modeled yet.
 send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "initialize send needs connection state")
     assert(conn.daemon != nil, "initialize send needs daemon state")
@@ -1329,10 +1307,8 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
     return send_response(conn, wire.response_ok_build(id, result), allocator)
 }
 
-// Name the fault and the frame that carried it, separating a bad correlation id from a bad
-// payload: `send_result` already validated the payload, so a fault surviving to here is
-// usually the id. The id's bytes are never logged — a stale one points into reused frame
-// memory, which may hold another request's content.
+// Name the fault and its frame; one surviving `send_result`'s validation is usually the id.
+// Never log the id's bytes: a stale one points into reused frame memory.
 @(private = "file")
 response_invalid_report :: proc(resp: wire.Response, err: wire.Validation_Error) {
     id: wire.Request_Id
@@ -1358,9 +1334,8 @@ conn_protocol_close :: proc(conn: ^Conn) {
     conn_close(conn, ws.Close_Code(wire.CLOSE.protocol_error))
 }
 
-// Begin a transport close with `code` and latch the local Closed state so any
-// further buffered frames on this connection are ignored. The `Conn` is freed later,
-// from the transport terminal callback. Idempotent.
+// Begin a transport close and latch Closed, so further buffered frames are ignored. The
+// `Conn` is freed later, from the terminal callback. Idempotent.
 conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
     assert(conn != nil, "connection close needs connection state")
     assert(conn.tx != nil, "connection close needs transport state")
@@ -1405,10 +1380,8 @@ conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     }
 }
 
-// Queue one text frame to the connection's transport — the single write choke point. A
-// local connection writes to the WebSocket server; a relay connection seals the frame and
-// writes it to the link. Both report a `ws.Server_Error`, the outcome the daemon's send
-// policy speaks; the relay link's client-side result is mapped onto it.
+// The single write choke point: a local connection writes to the WebSocket server, a relay
+// connection seals to the link. Both report `ws.Server_Error`, what the send policy speaks.
 conn_send_text :: proc(conn: ^Conn, bytes: []byte) -> ws.Server_Error {
     assert(conn != nil, "send needs connection state")
     assert(conn.tx != nil, "send needs transport state")
@@ -1458,16 +1431,13 @@ conn_resolve :: proc(d: ^Daemon, ticket: Conn_Ticket) -> ^Conn {
     assert(conn.ticket == ticket, "connection table returned a mismatched ticket")
     assert(conn.tx != nil, "a registered connection has transport state")
 
-    // A connection stays registered until its terminal callback runs, so both halves have
-    // to agree it can still be answered: a peer close latches the transport out of Open
-    // well before the `Conn` is freed, and a send there fails as `Not_Open`.
+    // Both halves must agree: a connection stays registered until its terminal callback, but a
+    // peer close latches the transport out of Open well before that.
     return conn.state != .Closed && conn_tx_open(conn) ? conn : nil
 }
 
-// Free the connection's owned state and the `Conn` itself. For a local connection this is
-// called once from the transport terminal callback, after which the transport frees `wsc`;
-// for a relay connection the bridge calls it when the peer leaves. It severs the transport's
-// back-reference so nothing resolves this `Conn` after it is gone.
+// Free the connection's owned state and the `Conn`, severing the transport back-reference so
+// nothing resolves it afterwards. Called once, from whichever terminal owns it.
 conn_free :: proc(conn: ^Conn) {
     assert(conn != nil, "connection cleanup needs connection state")
     assert(conn.tx != nil, "connection cleanup needs transport state")

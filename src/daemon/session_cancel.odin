@@ -6,9 +6,8 @@ import "core:mem"
 import store "src:daemon/store"
 import wire "src:wire"
 
-// `session.cancel_run`: stop the session's live turn, and drop what waits behind it when
-// asked. Cancelling nothing is a success with a null run, not an error — a client that
-// races the turn's own ending must not have to tell the two apart.
+// `session.cancel_run`: stop the live turn, and drop what waits behind it when asked. Cancelling
+// nothing is a success with a null run, so a client racing the turn's end need not tell them apart.
 method_session_cancel_run :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.cancel_run needs connection state")
     assert(conn.state == .Ready, "session.cancel_run ran outside Ready")

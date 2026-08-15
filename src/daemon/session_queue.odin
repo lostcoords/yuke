@@ -13,9 +13,8 @@ Queued_Input_Owned :: struct {
     input: wire.Queued_Input,
 }
 
-// A session's live engine state: the turn in flight and the inputs waiting behind it.
-// One turn at a time per session, because two turns writing one transcript would
-// interleave its sequence; different sessions run concurrently on the shared transport.
+// A session's live engine state. One turn at a time, because two turns writing one transcript
+// would interleave its sequence; different sessions run concurrently.
 Session_Live :: struct {
     run:   ^Run,
 
@@ -189,9 +188,8 @@ Promote_Outcome :: enum {
     Failed,
 }
 
-// Drain the queue, one input at a time. A loop rather than a recursion so a run of failing
-// inputs releases each one's arena before taking the next, and nothing is stranded behind a
-// session with no turn.
+// Drain the queue, one input at a time. A loop rather than a recursion, so a run of failing
+// inputs releases each arena before taking the next.
 @(private)
 session_promote_next :: proc(d: ^Daemon, session: wire.Session_Id) {
     for {
@@ -252,9 +250,8 @@ session_promote_one :: proc(d: ^Daemon, session: wire.Session_Id, input: wire.Qu
         return .Failed
     }
 
-    // The queued input's user message commits now, not when it was accepted: the client
-    // dequeues it on this commit, so committing earlier would empty the queue while the
-    // input still waited.
+    // The user message commits on promotion, not on acceptance: the client dequeues on this commit,
+    // so committing earlier would empty the queue while the input still waited.
     committed := wire.User_Message {
         id = hw.message_id + 1,
         content = input.content,

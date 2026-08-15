@@ -9,22 +9,17 @@ import "core:strings"
 import "libs:offload"
 import js "src:js"
 
-// Daemon-global manifest evaluated from the script root at startup, when a root is configured.
-// This is the shared-runtime tier; per-session tool contexts attach here once a session engine
-// owns their lifetime.
+// File name of the daemon script entry, evaluated from the script root at startup.
 JS_ENTRY_FILE :: "yuked.js"
 
-// Bring up the script tier. The daemon takes every limit `src/js` defaults to and installs
-// the shared host modules plus its own `yuke:daemon`, all only when a root gives an entry
-// script to evaluate. No base: a daemon serves many workspaces, so a relative path has no
-// single meaning here and `yuke:fs` requires an absolute one.
+// Bring up the script tier: a configured root directory installs the shared host modules plus
+// `yuke:daemon`. No base — a daemon serves many workspaces, so every script path is absolute.
 js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     assert(d != nil, "js_init needs daemon state")
     assert(offload.pool_is_running(&d.workers), "the script tier offloads onto a running pool")
     assert(offload.pool_is_running(&d.exec_workers), "`yuke:exec` commands offload onto a running pool")
 
-    // Only when a root gives it something to contain paths against — an unrooted import
-    // fails rather than throwing on first call. `init` copies the list, so a local is fine.
+    // `init` copies the list, so a stack array is fine.
     modules: [4]js.Module
     count := 0
 
@@ -78,10 +73,8 @@ js_report :: proc(user: rawptr, source: string, text: string) {
     log.errorf("daemon: js %s: %s", source, text)
 }
 
-// Evaluate `<root>/yuked.js` when configured and present. A root with no entry script is
-// normal; one that won't evaluate is a start failure, like an unusable `blob_dir`. `evaluated`
-// distinguishes "ran an entry" from "no entry to run", so `start` can tell a script that forgot
-// `defineConfig` from a daemon with no script at all.
+// Evaluate `<root>/yuked.js` when present; a root with no entry is normal, one that raises is a
+// start failure. `evaluated` tells a script that forgot `defineConfig` from having no script.
 js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, err: Error) {
     assert(d != nil, "js entry needs daemon state")
 

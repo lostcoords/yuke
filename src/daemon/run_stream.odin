@@ -218,9 +218,8 @@ run_tool_adopt :: proc(run: ^Run, block: ^Run_Block, index: int, call: provider.
     _ = broadcast(run.daemon, added)
 }
 
-// Drop a tool block whose part was never announced. Nothing about it reached a subscriber,
-// and keeping an incomplete part would make a concurrent draft resync invalid. Neutral
-// streams serialize block lifecycles, so the failed block is normally the tail.
+// Drop a tool block whose part was never announced: keeping an incomplete part would make a
+// concurrent draft resync invalid. Neutral streams serialize blocks, so it is normally the tail.
 @(private = "file")
 run_block_drop_unannounced :: proc(run: ^Run, index: int) {
     assert(run != nil, "dropping an unannounced block needs its run")
@@ -281,9 +280,8 @@ utf8_floor :: proc(text: string, limit: int) -> int {
     return end
 }
 
-// The open block `block_id` names and its part ordinal, or nil. Blocks are few and
-// ordered, so a scan is the lookup; a provider naming a block we never opened is peer
-// data, not an invariant.
+// The open block `block_id` names and its part ordinal, or nil. Blocks are few and ordered, so a
+// scan is the lookup; a provider naming an unopened block is peer data, not an invariant.
 @(private = "file")
 run_block_find :: proc(run: ^Run, block_id: provider.Stream_Block_Id) -> (^Run_Block, int) {
     for &block, index in run.blocks {
@@ -329,9 +327,8 @@ run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
     unreachable()
 }
 
-// Provider stop reasons and wire stop reasons are separate closed sets; a matched stop
-// sequence is a natural stop on the wire, which has no arm of its own for it. Indexed by
-// the enum, so a new provider reason fails the build rather than defaulting silently.
+// Provider and wire stop reasons are separate closed sets. Indexed by the enum, so a new provider
+// reason fails the build rather than defaulting silently.
 @(private = "file", rodata)
 RUN_STOP_REASON := [provider.Stop_Reason]wire.Stop_Reason {
     .End_Turn       = .Stop,

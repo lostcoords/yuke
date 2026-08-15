@@ -6,12 +6,8 @@ import "core:mem"
 import catalog "src:daemon/catalog"
 import provider "src:provider"
 
-// Build the provider request body for one turn. `request` carries the conversation half —
-// system prompt, messages, tools — and the resolved row supplies the model half: upstream
-// id, output ceiling, temperature gating, and every reasoning control.
-//
-// `reasoning` is a level from the row's own `reasoning_levels`; an empty level, or a row
-// with no levels, leaves the provider's default in place.
+// Build the provider request body: `request` carries the conversation half, the resolved row the
+// model half. `reasoning` is a level the row advertises; an empty one keeps the provider default.
 run_request_build :: proc(
     model: ^catalog.Model,
     auth: provider.Auth,
@@ -93,9 +89,8 @@ run_reasoning_level :: proc(model: ^catalog.Model, reasoning: string) -> string 
     return model.info.default_reasoning
 }
 
-// Anthropic splits the reasoning knob in two: `thinking` carries the request shape and
-// `output_config.effort` the whole-request effort. Only one of them applies to a row —
-// a budget row has budget bounds, an effort row does not.
+// Anthropic splits the reasoning knob in two: `thinking` carries the request shape, `effort` the
+// whole-request effort. Only one applies to a row — a budget row has bounds, an effort row not.
 @(private)
 run_anthropic_options :: proc(model: ^catalog.Model, level: string) -> provider.Anthropic_Options {
     if level == "" {
@@ -126,9 +121,8 @@ run_anthropic_thinking_on :: proc(thinking: provider.Anthropic_Thinking) -> bool
     return false
 }
 
-// Token budget for a level on a budget-shaped row, which is the only kind the decoder
-// gives bounds to. The budget shares one ceiling with the answer, so even `max` leaves
-// the response a quarter of it. A budget the row or the builder rejects yields `false`.
+// Token budget for a level on a budget-shaped row, the only kind the decoder bounds. It shares
+// one ceiling with the answer, so even `max` leaves a quarter; a rejected budget yields false.
 @(private)
 run_anthropic_budget :: proc(model: ^catalog.Model, level: string) -> (budget: u64, budgeted: bool) {
     minimum, has_minimum := model.reasoning_budget_min.?

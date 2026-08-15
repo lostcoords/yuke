@@ -7,9 +7,8 @@ import "src:wire"
 
 import "libs:bindings/sqlite"
 
-// Fold one durable event into the config projection, inside the append transaction.
-// Truncation isn't a case: it leaves announced revisions intact. A revision is minted once,
-// so a repeat insert here is drift, not an update.
+// Fold one durable event into the config projection, inside the append transaction. Truncation
+// leaves announced revisions intact, and a revision is minted once, so a repeat insert is drift.
 @(private)
 configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_Data) -> Error {
     assert(s != nil, "configs_apply needs a store")

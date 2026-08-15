@@ -35,10 +35,8 @@ script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     return 0
 }
 
-// `defineConfig(config)` — capture the config object for `start` to decode, and return it so
-// `export default defineConfig({...})` reads naturally. Pure registration: a second call or a
-// non-object argument throws, and a value JSON cannot represent (cyclic, a throwing `toJSON`)
-// surfaces its own exception. The capture is decoded once, after the entry finishes evaluating.
+// `defineConfig(config)` — capture the config for `start` to decode, returning it so
+// `export default defineConfig({...})` reads naturally. A second call or a non-object throws.
 @(private = "file")
 define_config :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()

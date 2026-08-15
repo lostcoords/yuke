@@ -66,10 +66,8 @@ session_filter_values :: proc(filter: Session_Filter) -> Session_Filter_Values {
     return values
 }
 
-// Write the registry row; events and projected messages carry a foreign key into it. The
-// system prompt and the owning workspace land in the same transaction, so a half-created
-// session refuses its own retry and never announces a workspace it did not keep.
-// `workspace_created` reports that this session was the first in its workspace.
+// Write the registry row every event and message keys into. Prompt and workspace land in the same
+// transaction, so a half-created session never announces a workspace it did not keep.
 session_create :: proc(
     s: ^Store,
     workspace: wire.Workspace,
@@ -124,10 +122,8 @@ session_create :: proc(
 
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
-    // A failed ROLLBACK leaves the transaction open, which outlives this call, so it
-    // replaces the original error rather than being dropped. The workspace row goes back
-    // with everything else, so the flag has to unwind too: `or_return` returns whatever
-    // the named results already hold.
+    // A failed ROLLBACK leaves the transaction open, which outlives this call, so it replaces the
+    // original error. The workspace flag unwinds with it: `or_return` returns the named results.
     defer if err != nil {
         workspace_created = false
 

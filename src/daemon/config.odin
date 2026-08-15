@@ -9,10 +9,8 @@ import "core:mem"
 // for a local daemon. Applied by the launcher, not `start` (which keeps 0 meaning OS-assigned).
 DEFAULT_PORT :: 9853
 
-// The config object `yuked.js` hands to `defineConfig`, camelCase to match the JS surface.
-// A partial: every absent member defaults in `start`, so `defineConfig({})` is a valid
-// no-op. Superseded field-for-field over the caller's `Options` only when a manifest calls
-// `defineConfig`; a script that never calls it leaves `Options` untouched.
+// The config object `yuked.js` hands to `defineConfig`, camelCase to match the JS surface. Every
+// absent member defaults in `start`, and a script that never calls it leaves `Options` untouched.
 Script_Config :: struct {
     // Dotted IPv4 bind address. Empty binds the front door's `127.0.0.1`.
     host:            string `json:"host"`,
@@ -39,7 +37,7 @@ Script_Config :: struct {
 }
 
 // Decode the JSON captured from `defineConfig`. A malformed value or an unknown member fails
-// the start rather than taking half of it — the same strictness the file loader enforced.
+// the start rather than taking half of it.
 config_decode :: proc(text: string, allocator := context.allocator) -> (config: Script_Config, ok: bool) {
     parse_arena: mem.Dynamic_Arena
     mem.dynamic_arena_init(&parse_arena, runtime.heap_allocator(), runtime.heap_allocator())

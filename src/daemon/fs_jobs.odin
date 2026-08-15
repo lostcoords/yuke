@@ -37,9 +37,8 @@ Fs_Outcome :: enum {
     Unreadable,
 }
 
-// Per-request filesystem state, owned across the offloaded pass and freed by the
-// completion. Every field a worker touches is owned here, not borrowed, so the pass
-// outlives both the frame arena it was decoded from and its connection.
+// Per-request filesystem state, owned across the offloaded pass and freed by the completion.
+// Every field a worker touches is owned here, so the pass outlives frame arena and connection.
 Fs_Job :: struct {
     // Walks the filesystem off the reactor; carried here so submitting never allocates.
     task:        offload.Task(Fs_Job),
@@ -63,9 +62,8 @@ Fs_Job :: struct {
     cursor:      string,
     page_size:   int,
 
-    // Owned clone of the `session.create` params; meaningful only for that kind. Held
-    // across the pass because the frame arena they were decoded from is long gone by
-    // the time the resolved root is known.
+    // Owned clone of the `session.create` params, meaningful only for that kind. Held across the
+    // pass: the frame arena is long gone by the time the resolved root is known.
     create:      wire.Create_Session,
 
     // What the pass decided. Nil until the worker finishes.
@@ -82,16 +80,14 @@ Fs_Job :: struct {
     entries:     []wire.Dir_Entry,
     has_more:    bool,
 
-    // Backs every owned allocation above and the response the completion encodes. Blocks
-    // come from the process heap, not the daemon's allocator, since the worker is its
-    // only writer.
+    // Backs every owned allocation above and the response the completion encodes. Process heap,
+    // not the daemon's allocator, since the worker is its only writer.
     arena:       mem.Dynamic_Arena,
     allocator:   mem.Allocator,
 }
 
-// An omitted path is the daemon user's home. Reading the environment touches no
-// filesystem, so it is resolved on the reactor and the worker only ever sees a concrete
-// path.
+// An omitted path is the daemon user's home. Reading the environment touches no filesystem,
+// so it resolves on the reactor and the worker only sees a concrete path.
 fs_target_path :: proc(path: Maybe(string), sa: mem.Allocator) -> string {
     if p, ok := path.?; ok {
         return p
@@ -104,9 +100,8 @@ fs_target_path :: proc(path: Maybe(string), sa: mem.Allocator) -> string {
     return "/"
 }
 
-// Clone everything the pass reads out of the frame arena and hand it to a worker:
-// `get_absolute_path`/`stat`/`readdir` have no nbio operation, so a bad path (a hung
-// mount, a FIFO with no writer) would stall every connection run on the reactor.
+// Clone everything the pass reads and hand it to a worker: `get_absolute_path`/`stat`/`readdir`
+// have no nbio operation, so a hung path would stall every connection on the reactor.
 fs_job_submit :: proc(
     conn: ^Conn,
     id: wire.Request_Id,
@@ -162,9 +157,8 @@ fs_job_submit :: proc(
     offload.submit(&d.workers, job, fs_job_run, fs_job_done)
 }
 
-// Worker thread. Records an outcome rather than answering or logging — there may be no
-// connection left to answer, and the logger belongs to the loop thread. A filesystem
-// failure is an operating outcome, never an assertion.
+// Worker thread: records an outcome rather than answering or logging, since the connection may
+// be gone and the logger is the loop's. A filesystem failure is an outcome, not an assertion.
 fs_job_run :: proc(job: ^Fs_Job) {
     assert(job.daemon != nil, "filesystem pass lost its daemon")
     assert(job.outcome == nil, "filesystem pass ran on a finished job")

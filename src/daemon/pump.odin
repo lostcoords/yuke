@@ -244,9 +244,8 @@ pump_stamp_seq :: proc(data: wire.Broadcast_Data, seq: wire.Seq) -> wire.Broadca
     unreachable()
 }
 
-// Ids a durable payload proves were handed out, raised in the append's transaction. The
-// store keeps the larger mark: naming an existing id is free, missing one lets a restart
-// mint it twice.
+// Ids a durable payload proves were handed out, raised in the append's transaction. The store
+// keeps the larger mark: naming an existing id is free, missing one lets a restart mint twice.
 @(private)
 pump_id_marks :: proc(data: wire.Broadcast_Data) -> store.Id_Marks {
     assert(data != nil, "id marks are derived from a payload")
@@ -339,8 +338,7 @@ pump_send :: proc(
 }
 
 // Deliver an encoded broadcast to every connection its class admits. A relay conn tears down
-// synchronously (unlike the local transport's deferred terminal), so failed sends are collected and
-// aborted after the walk — the connection table must stay stable while we range over it.
+// synchronously, so failed sends are aborted after the walk: the table must stay stable.
 @(private)
 pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.Session_Id), frame: []byte) {
     assert(d != nil, "fan-out needs daemon state")
@@ -404,9 +402,8 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
     }
 }
 
-// Tell one lagging connection how many of its live deltas were dropped; no other
-// connection shares its backpressure. The count is cumulative since the last accepted
-// marker, so a send failure just carries forward into the next shed.
+// Tell one lagging connection how many live deltas were dropped; no other connection shares its
+// backpressure. The count is cumulative, so a failed send carries into the next shed.
 @(private)
 pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
     assert(d != nil, "a shed marker needs daemon state")
@@ -465,9 +462,8 @@ conn_subscribed :: proc(conn: ^Conn, session: wire.Session_Id) -> bool {
     return subscribed
 }
 
-// Where `session` sits in the connection's subscription set: a replace-semantics list
-// bounded by `LIMITS.max_subscriptions`, so a linear scan is the membership test, and the
-// position is what the parallel shed counts key on.
+// Where `session` sits in the connection's subscription set. Bounded by the protocol, so a scan
+// is the membership test, and the position is what the parallel shed counts key on.
 @(private)
 conn_subscription_index :: proc(conn: ^Conn, session: wire.Session_Id) -> (index: int, subscribed: bool) {
     assert(conn != nil, "subscription test needs connection state")

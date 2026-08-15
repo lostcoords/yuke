@@ -110,9 +110,8 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     op.request_id = wire.Request_Id(cloned_id)
     d.catalog_refresh.operation = op
 
-    // The feed's own validator, held with the catalog it validates; empty makes the request
-    // unconditional. `transfer_start` materializes its own header list before returning, so
-    // this stack storage only has to outlive the call.
+    // The feed's own validator; empty makes the request unconditional. `transfer_start` materializes
+    // its own header list, so this stack storage only has to outlive the call.
     headers: [1]curl.Header
     header_count := 0
     if etag := d.catalog.snapshot.feed_etag; etag != "" {

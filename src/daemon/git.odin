@@ -5,9 +5,8 @@ import "core:os"
 import "core:strings"
 import wire "src:wire"
 
-// Git status for a workspace root: null when it is not a repo (no `.git`), else the
-// branch parsed from `.git/HEAD`. Dirty detection needs the git binary, which this
-// step deliberately avoids, so `dirty` is always reported false.
+// Git status for a workspace root: null when it is not a repo, else the branch from `.git/HEAD`.
+// Dirty detection needs the git binary, which this deliberately avoids, so `dirty` is always false.
 git_info :: proc(root: string, allocator: mem.Allocator) -> Maybe(wire.Git_Info) {
     assert(len(root) > 0, "git info needs a canonical root")
 

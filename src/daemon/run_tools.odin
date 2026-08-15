@@ -6,15 +6,8 @@ import qjs "libs:bindings/quickjs"
 import js "src:js"
 import wire "src:wire"
 
-// One round's tool calls. Every handler starts together and the turn commits when the last
-// settles, because a transcript carrying a pending tool part is refused by every request
-// builder: committing one would make the session unusable from that message on.
-//
-// Handlers are polled through their promises rather than continued into. Nothing in JS ends
-// up holding a pointer to the run, so cancelling a turn frees it without a dangling callback.
-
-// Start every call the draft is still waiting on. True when one is outstanding, in which case
-// the join commits the turn instead of the caller.
+// Start every call the draft is still waiting on; true when one is outstanding, in which case
+// the join commits. Handlers are polled, never continued into, so cancelling can free the run.
 run_tools_begin :: proc(run: ^Run) -> bool {
     assert(run != nil, "starting tools needs a run")
     assert(run.daemon != nil, "starting tools needs daemon state")
@@ -284,9 +277,8 @@ run_tool_exception :: proc(run: ^Run) -> string {
     return run_tool_clone(run, thrown)
 }
 
-// A handler's value as the text the model reads. A string is its own output; anything else is
-// JSON, so an object result reaches the model as data rather than "[object Object]". False
-// means conversion threw or the value has no JSON representation.
+// A handler's value as the text the model reads: a string is its own output, anything else is JSON.
+// False means conversion threw or the value has no JSON representation.
 @(private = "file")
 run_tool_output :: proc(run: ^Run, value: qjs.Value) -> (string, bool) {
     assert(run != nil && run.daemon != nil, "reading tool output needs its run")

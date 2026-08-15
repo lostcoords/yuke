@@ -28,9 +28,8 @@ MAX_FILTER_KEY_BYTES :: 2 * (1 + size_of(wire.Session_Id))
 @(private = "file")
 MAX_CURSOR_BYTES :: MAX_FILTER_KEY_BYTES + 2 + MAX_CURSOR_TIMESTAMP_DIGITS + size_of(wire.Session_Id)
 
-// The compact index revision every announcement and snapshot carries. Daemon-lifetime,
-// so a client that reconnects sees it restart and refetches; minted from 1 because the
-// wire reserves 0 for "this daemon has changed nothing yet".
+// The index revision every announcement carries. Daemon-lifetime, so a reconnecting client sees
+// it restart and refetches; minted from 1, since the wire reserves 0 for "nothing yet".
 session_revision_next :: proc(d: ^Daemon) -> wire.Session_Revision {
     assert(d != nil, "a session index revision needs daemon state")
     assert(u64(d.session_revision) < wire.MAX_SESSION_REVISION, "the session index revision is exhausted")
@@ -40,9 +39,8 @@ session_revision_next :: proc(d: ^Daemon) -> wire.Session_Revision {
     return d.session_revision
 }
 
-// `session.list` over the registry: page, continuation, and total read straight from
-// SQLite, at the daemon's current index revision. Each row's activity comes from the
-// engine, so a listed session and a resync of that session report the same state.
+// `session.list` over the registry: page, continuation and total read from SQLite. Each row's
+// activity comes from the engine, so a listed session and its resync agree.
 method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn != nil, "session.list needs connection state")
     assert(conn.state == .Ready, "session.list ran outside Ready")
@@ -131,9 +129,8 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     send_result(conn, req.id, result, sa)
 }
 
-// The page both views open on: the resume position a cursor names and the page size. Both
-// grammars are identical, so a client pages the SQL view and the engine view the same way.
-// Answers `Bad_Request` itself; `false` means the request is already answered.
+// The page both views open on: the cursor's resume position and the page size. Answers
+// `Bad_Request` itself; `false` means the request is already answered.
 @(private = "file")
 session_list_window :: proc(
     conn: ^Conn,

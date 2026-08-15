@@ -12,11 +12,6 @@ import "core:strings"
 
 import "src:secret"
 
-// Provider-generic OAuth 2.0 machinery: PKCE browser flow, token/refresh grant
-// building and parsing, refresh timing, and the encoding/JSON helpers. Every proc
-// is driven by a `^Provider` descriptor or is a pure helper; per-provider files
-// carry only the descriptor and the account-id projection that genuinely differ.
-
 // OAuth credentials retained only by the daemon. Every string is owned by the
 // containing daemon state or a short-lived operation.
 OAuth_Credentials :: struct {

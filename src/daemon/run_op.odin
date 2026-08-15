@@ -6,11 +6,8 @@ import "core:nbio"
 
 import provider "src:provider"
 
-// The provider inference service: one shared transport client for every session's turns.
-// The transport multiplexes, so concurrency is bounded by the caller: a session may have at
-// most one live turn, because two turns writing one transcript would interleave its
-// sequence, and the daemon enforces that per session. Ops are owned by their caller, which
-// is what lets shutdown reach a turn whose cancellation fires no completion.
+// The provider inference service: one shared transport client for every session's turns. Ops are
+// owned by their caller, which is what lets shutdown reach a turn whose cancel fires no completion.
 Run_Service :: struct {
     client:    provider.Client,
     loop:      ^nbio.Event_Loop,
@@ -89,9 +86,8 @@ run_service_busy :: proc(s: ^Run_Service) -> bool {
     return s.live > 0
 }
 
-// Start one turn against `connection` with an already-built body. `nil` means nothing
-// started and no callback will fire; a returned op means exactly one `on_done` follows,
-// and the caller owns the op until then.
+// Start one turn against `connection` with an already-built body. Nil means nothing started; an op
+// means exactly one `on_done` follows, and the caller owns it until then.
 run_begin :: proc(s: ^Run_Service, connection: provider.Connection, body: string, sink: Run_Sink) -> ^Run_Op {
     assert(s != nil && s.ready, "a run needs an initialized service")
     assert(!s.stopping, "a run cannot start during shutdown")

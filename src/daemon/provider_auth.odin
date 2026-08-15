@@ -1184,9 +1184,8 @@ provider_state :: proc(d: ^Daemon, kind: oauth.Kind) -> wire.Auth_Provider {
     }
 }
 
-// Stored credential kinds and their wire kinds are separate closed sets that happen to
-// correspond. Indexed by the enum, so a new stored kind fails the build rather than
-// defaulting silently.
+// Stored and wire credential kinds are separate closed sets that correspond. Indexed by the enum,
+// so a new stored kind fails the build rather than defaulting silently.
 @(private = "file", rodata)
 CREDENTIAL_KIND_WIRE := [store.Credential_Kind]wire.Auth_Credential_Kind {
     .Api_Key = .Api_Key,

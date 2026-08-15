@@ -38,9 +38,8 @@ workspace_page :: proc(s: ^Store, limit: int, allocator: mem.Allocator) -> (work
     return page, nil
 }
 
-// Register `workspace` unless its root is already known. Runs inside the caller's
-// transaction: a workspace is only ever written as part of creating a session into it, so
-// a rolled-back session cannot leave behind a workspace the daemon never announced.
+// Register `workspace` unless its root is already known, inside the caller's transaction: a
+// rolled-back session cannot leave behind a workspace the daemon never announced.
 @(private)
 workspace_insert :: proc(s: ^Store, workspace: wire.Workspace) -> (created: bool, err: Error) {
     assert(s != nil, "workspace_insert needs a store")

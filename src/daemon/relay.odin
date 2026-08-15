@@ -1,15 +1,5 @@
-// The daemon's outbound relay link and the session bridge over it. The daemon dials the
-// relay's /link route and parks; when a client is spliced in it runs the Noise responder
-// handshake, then feeds each decrypted frame into the same `handle_text` machinery a local
-// WebSocket client uses, and seals the daemon's replies back onto the link. The relay
-// forwards only ciphertext, so the session is end-to-end encrypted across it.
-//
-// The link is kept up for the daemon's whole serving life: if it drops — relay restart,
-// network, or a client dropped on a protocol error — the daemon re-dials with capped
-// exponential backoff and re-parks. The relay is an addition to the front door, never a
-// replacement: a parse or dial failure leaves the local daemon serving. Several clients share
-// the one link, each its own Noise session keyed by the relay's one-byte channel (`peers`);
-// closing one client tears down just its channel, while the link dropping tears down all.
+// The daemon's outbound relay link and the session bridge over it: several clients share one
+// link as end-to-end Noise sessions, and their decrypted frames enter `handle_text` unchanged.
 package daemon
 
 import "core:crypto/ecdh"
@@ -185,9 +175,8 @@ Relay_State :: enum {
     Closed,
 }
 
-// One client's end-to-end session multiplexed onto the shared link, keyed by the relay's
-// one-byte channel. Zero value (`active = false`) is an idle channel slot; sessions and
-// reassemblers are init on attach and destroyed on teardown.
+// One client's session on the shared link, keyed by the relay's channel byte. The zero value is
+// an idle slot; session and reassembler are init on attach and destroyed on teardown.
 Relay_Peer :: struct {
     // Whether this channel currently holds an attached client.
     active:      bool,
@@ -251,11 +240,8 @@ Relay :: struct {
     reconnect_timer: ^nbio.Operation,
 }
 
-// Connect the daemon's relay: exchange the device `credential` for a fresh link ticket at
-// `cloud_url`, then dial the relay endpoint the ticket names and park, keeping the link up for the
-// daemon's serving life. `static_seed` is the device's 32-byte X25519 static private key — the
-// responder identity a client pins. Call once, after `start`. A fetch or dial failure retries with
-// backoff. `cloud_url`/`credential` are borrowed for this call and cloned.
+// Exchange the device credential for a link ticket, dial the relay it names, and park for the
+// daemon's serving life. `static_seed` is the responder identity a client pins; inputs are cloned.
 relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_seed: []u8) -> Error {
     assert(d != nil, "relay_connect needs daemon state")
     assert(d.relay == nil, "relay_connect called twice")
@@ -321,9 +307,8 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
     return .None
 }
 
-// Start the relay from the enrolled device identity, if there is one. Loads `identity.key` as the
-// responder static key and the credential the ticket fetch presents; with no identity the relay
-// stays off. Call once, after `start`, so a relay failure never blocks the local daemon.
+// Start the relay from the enrolled device identity; with no identity it stays off. Call once
+// after `start`, so a relay failure never blocks the local daemon.
 relay_autostart :: proc(d: ^Daemon) {
     assert(d != nil, "relay autostart needs daemon state")
 
@@ -367,9 +352,8 @@ relay_closed :: proc(d: ^Daemon) -> bool {
     return d.relay == nil || d.relay.state == .Closed
 }
 
-// Begin a graceful teardown of the relay link. Idempotent. From `.Waiting` there is only a
-// pending timer to cancel; from `.Parked` the link is closed and its terminal drives to
-// `.Closed`; from `.Dialing` the in-flight dial resolves into the stopping path.
+// Begin a graceful teardown of the link. Idempotent: `.Waiting` cancels its timer, `.Parked`
+// closes and drives to `.Closed`, and an in-flight dial resolves into the stopping path.
 relay_begin_close :: proc(d: ^Daemon) {
     if d.relay == nil {
         return
@@ -451,10 +435,8 @@ relay_destroy :: proc(d: ^Daemon) {
     d.relay = nil
 }
 
-// Seal one plaintext wire frame and queue it on `channel` of the link — the relay half of
-// `conn_send_text`. The bytes are copied into the link's send queue, so the scratch is reset
-// on return. The client-side result is mapped onto the `ws.Server_Error` the daemon's send
-// policy speaks.
+// Seal one wire frame onto `channel` — the relay half of `conn_send_text`. The link copies, so
+// the scratch resets on return; the client-side result maps onto `ws.Server_Error`.
 relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_Error {
     assert(r != nil, "relay send needs relay state")
     assert(int(channel) < RELAY_MAX_CHANNELS, "relay send needs an in-range channel")
@@ -467,9 +449,8 @@ relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_
     defer secret.arena_temp_destroy(temp)
     scratch := virtual.arena_allocator(&r.send_scratch)
 
-    // A frame larger than one Noise packet rides several SEALED frames, each a header byte then a
-    // slice of the plaintext. Each chunk is sealed before it is queued, so the Noise nonce advances
-    // per chunk; a send that fails after sealing cannot be shed (see below).
+    // A frame larger than one Noise packet rides several SEALED frames. Each is sealed before it
+    // is queued, so the nonce advances per chunk and a failed send cannot be shed.
     count := relay.transport_chunk_count(len(plaintext))
 
     for i in 0 ..< count {
@@ -493,12 +474,8 @@ relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_
             return .Not_Open
         }
 
-        // Any other failure — a full send queue included — is fatal here. The chunk is already
-        // sealed, so the Noise nonce advanced; unlike a stateless WebSocket frame, a sealed frame
-        // cannot be dropped without desyncing the cipher and breaking every later frame. Report a
-        // hard failure so the pump aborts and the link reconnects and resyncs, instead of shedding
-        // this frame (which the droppable class would otherwise do) and silently corrupting the
-        // session.
+        // Fatal, a full send queue included: the chunk is sealed, so the nonce advanced and dropping
+        // it would desync the cipher. Fail hard so the link reconnects and resyncs.
         return .Send_Failed
     }
 
@@ -539,9 +516,8 @@ relay_free_partial :: proc(r: ^Relay) {
     free(r, r.daemon.allocator)
 }
 
-// Fetch a fresh link ticket from the control plane, then dial. Async on the relay curl client: the
-// completion dials on a 2xx or schedules a reconnect on any failure. A fresh ticket is fetched for
-// every dial — the control plane issues short-lived, single-use link tickets.
+// Fetch a fresh link ticket, then dial; the completion dials on a 2xx or schedules a reconnect.
+// Every dial fetches its own: the control plane issues short-lived, single-use tickets.
 @(private = "file")
 relay_fetch_ticket :: proc(r: ^Relay) {
     assert(r.curl_ready, "relay ticket fetch needs a curl client")
@@ -610,9 +586,8 @@ relay_ticket_on_done :: proc(user: rawptr, result: curl.Result) {
     relay_dial(r)
 }
 
-// Decode a link-ticket response and adopt its ticket and relay endpoint, replacing the previous
-// pair. Validates the endpoint so `relay_dial` may assume it parses. Control-plane input, so a bad
-// body degrades to false rather than asserting.
+// Adopt a ticket response's ticket and endpoint, replacing the previous pair and validating what
+// `relay_dial` assumes. Control-plane input, so a bad body degrades rather than asserting.
 @(private = "file")
 relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
     parsed, cerr := relay.ticket_decode(transmute([]u8)body, context.temp_allocator)
@@ -795,9 +770,8 @@ relay_on_peer_attached :: proc(l: ^relay.Link) {
     r := relay_of(l)
     ch := relay.link_channel(l)
 
-    // The relay is an untrusted middlebox, so its channel assignment is peer input, not an
-    // invariant to assert: a channel out of range or already active is a protocol violation.
-    // Fail closed by dropping the link rather than crashing.
+    // The relay is an untrusted middlebox, so its channel assignment is peer input: one out of range
+    // or already active drops the link rather than crashing.
     if int(ch) >= RELAY_MAX_CHANNELS || r.peers[ch].active {
         log.warnf("daemon: relay peer_attached on a bad or busy channel %d; closing link", ch)
         _ = relay.link_close(l)
@@ -824,10 +798,8 @@ relay_on_peer_gone :: proc(l: ^relay.Link, reason: string) {
     }
 }
 
-// One SEALED payload from the peer on its channel. Before the handshake completes it is the
-// initiator's first message: respond, split, and bridge a `Conn`. After, it is a transport frame:
-// decrypt it and feed the plaintext to `handle_text` as if it arrived on a local socket. A stray
-// frame on an inactive or out-of-range channel is tolerated (dropped) — the link stays up.
+// One SEALED payload: before the handshake it is the initiator's first message, after it is a
+// transport frame fed to `handle_text`. A frame on an inactive channel is dropped, not fatal.
 @(private = "file")
 relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     r := relay_of(l)
@@ -943,9 +915,8 @@ relay_close_reason :: proc(code: ws.Close_Code) -> string {
     }
 }
 
-// Map a relay-link (WebSocket client) send result onto the server-side outcome the daemon's
-// send policy already speaks. The relevant arms — delivered, closing, backpressure — are
-// common to both; anything else is a generic send failure.
+// Map a relay-link send result onto the server-side outcome the send policy speaks. Delivered,
+// closing and backpressure are common to both; anything else is a generic send failure.
 @(private = "file")
 tx_error_client :: proc(e: ws.Client_Error) -> ws.Server_Error {
     if e == .None {

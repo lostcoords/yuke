@@ -44,18 +44,16 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     // behind the live turn is not in it yet; the session's own tail carries those.
     input_id := session_input_high(d, params.session_id, hw.input_id) + 1
 
-    // Queued behind the live turn: announced now, committed only when it is promoted. The
-    // client dequeues on that commit, so committing here would empty its queue while the
-    // input still waited.
+    // Queued behind the live turn: announced now, committed on promotion. The client dequeues on that
+    // commit, so committing here would empty its queue while the input still waited.
     if session_live_run(d, params.session_id) != nil {
         send_input_queue(conn, req, input_id, raw.content, sa)
 
         return
     }
 
-    // Minted and committed with no suspension point in between: the handler runs to
-    // completion on the reactor, so no other turn can hand out the same pair. The commit
-    // raises both marks in its own transaction.
+    // Minted and committed with no suspension point between: the handler runs to completion on the
+    // reactor, so no other turn can hand out the same pair.
     message_id := hw.message_id + 1
     now := now_ms()
 

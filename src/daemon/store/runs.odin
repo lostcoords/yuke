@@ -28,8 +28,7 @@ Session_Snapshot :: struct {
 }
 
 // Fold a run lifecycle event into the recovery marker, inside the append transaction.
-// `run.started` records that a terminal is owed; a matching `run.done` clears it; every
-// other event says nothing.
+// `run.started` records that a terminal is owed, `run.done` clears it, everything else is silent.
 @(private)
 runs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_Data) -> Error {
     assert(s != nil, "runs_apply needs a store")

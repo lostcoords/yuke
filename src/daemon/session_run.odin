@@ -107,9 +107,8 @@ Run :: struct {
     provenance:          wire.Turn_Provenance,
 }
 
-// Start one turn for `session`, whose summary the caller already read. Resolution and
-// assembly run to completion first: nothing is announced until the turn is certain to
-// start, so every error here is invisible to the transcript.
+// Start one turn for `session`. Resolution and assembly run first: nothing is announced until the
+// turn is certain to start, so every error here is invisible to the transcript.
 run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_Start_Error) {
     assert(d != nil, "starting a turn needs daemon state")
     assert(d.store != nil, "a serving daemon always owns an event store")
@@ -853,9 +852,8 @@ runs_recover :: proc(d: ^Daemon) {
     }
 }
 
-// Cancel every live turn and release the engine state the daemon owns. `turn_cancel` fires
-// no completion, so this is the only path that reclaims a run at shutdown, and it announces
-// nothing: the transport is already closing.
+// Cancel every live turn and release the engine state. `turn_cancel` fires no completion, so this
+// is the only path that reclaims a run at shutdown, and it announces nothing.
 runs_stop :: proc(d: ^Daemon) {
     assert(d != nil, "stopping runs needs daemon state")
 

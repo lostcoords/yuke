@@ -22,9 +22,8 @@ method_session_create :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator)
     fs_job_submit(conn, req.id, .Create_Session, fs_target_path(params.workspace_path, sa), create = params)
 }
 
-// Persist the session into its resolved workspace and answer. `workspace.created` is
-// announced first, so a client is never told about a session in a workspace it has never
-// heard of.
+// Persist the session into its resolved workspace and answer. `workspace.created` is announced
+// first, so a client never hears of a session in a workspace it does not know.
 session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
     assert(job.kind == .Create_Session, "a session was built from another job")
     assert(len(job.canonical) > 0, "a completed create has a canonical root")
@@ -61,9 +60,8 @@ session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
 
     _ = broadcast(d, wire.Session_Summary_Changed_Data{revision = session_revision_next(d), session = session})
 
-    // A failed fan-out aborts the connection it failed on, and a relay connection is freed
-    // synchronously by that abort — including the one that asked. The session is durable
-    // either way; only the answer is lost.
+    // A failed fan-out aborts the connection it failed on, and a relay one is freed synchronously by
+    // that abort — including the asker. The session is durable either way; only the answer is lost.
     answer := conn_resolve(d, job.ticket)
     if answer == nil {
         return
@@ -72,10 +70,8 @@ session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
     send_result(answer, job.id, wire.Session_Result{session = session}, job.allocator)
 }
 
-// Build the summary a create persists and announces. Every omitted override takes its
-// documented default; nothing is resolved against the catalog, which the run path does
-// with better information than creation has. The client identity is cloned into the job,
-// which outlives every connection the broadcasts can tear down.
+// Build the summary a create persists and announces; every omitted override takes its default,
+// and nothing resolves against the catalog. The client identity is cloned into the job.
 @(private = "file")
 session_from_create :: proc(job: ^Fs_Job, workspace: wire.Workspace_Id, conn: ^Conn) -> wire.Session {
     now := now_ms()

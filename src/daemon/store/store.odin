@@ -106,9 +106,8 @@ string_clone :: proc(value: string, allocator: mem.Allocator) -> (owned: string,
     return owned, nil
 }
 
-// The three full-row inserts: their SQL is built by `sqlite.insert_all_sql` from
-// their (schema-generated) parameter structs, not from `queries/`, so they are
-// bound directly rather than through the generated `Queries` registry.
+// The three full-row inserts: their SQL is built by `sqlite.insert_all_sql` from the generated
+// parameter structs, not from `queries/`, so they bind directly rather than through `Queries`.
 @(private)
 Insert_Binds :: struct {
     create_session: sqlite.Bind_Mapping(queries.Create_Session_Params),
@@ -116,9 +115,8 @@ Insert_Binds :: struct {
     insert_config:  sqlite.Bind_Mapping(queries.Insert_Config_Params),
 }
 
-// `inserts` is an out-parameter, not a named return: a caller's own `or_return` would
-// discard a named return on the error path, dropping whatever was already prepared —
-// the same reason `queries.queries_init` takes `^Queries`.
+// `inserts` is an out-parameter, not a named return: a caller's `or_return` would discard a named
+// return on the error path, dropping whatever was already prepared.
 @(private)
 inserts_prepare :: proc(db: ^sqlite.Conn, inserts: ^Insert_Binds, allocator: mem.Allocator) -> (err: Error) {
     assert(db != nil, "inserts_prepare needs a connection")
@@ -277,9 +275,8 @@ close :: proc(s: ^Store) {
     free(s, s.allocator)
 }
 
-// File stores require WAL plus `synchronous=NORMAL`. Memory stores retain their
-// only supported rollback journal. Foreign keys are per-connection, so every
-// requested setting is read back before the connection is admitted.
+// File stores require WAL plus `synchronous=NORMAL`; memory stores keep their only journal.
+// Foreign keys are per-connection, so every setting is read back before the connection is admitted.
 @(private)
 configure :: proc(db: ^sqlite.Conn, durable: bool) -> Error {
     assert(db != nil, "configure needs a connection")

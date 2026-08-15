@@ -40,9 +40,8 @@ catalog_selections_build :: proc(
     return selections, nil
 }
 
-// Apply one fetched models.dev feed: decode, transactionally replace each imported
-// snapshot with `feed_etag`, then reload the held catalog. Untrusted feed: a decode
-// failure preserves the old snapshot.
+// Apply one fetched models.dev feed: decode, transactionally replace each imported snapshot, then
+// reload the held catalog. Untrusted feed, so a decode failure preserves the old snapshot.
 catalog_refresh_apply :: proc(
     d: ^Daemon,
     feed: []byte,

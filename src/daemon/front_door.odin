@@ -244,9 +244,8 @@ identity_cors :: proc(ctx: ^Http_Context) {
     _ = http_server.conn_add_header(ctx.conn, "Vary", "Origin")
 }
 
-// Serve one content-addressed blob without reading it into the reactor's heap.
-// The HTTP driver stats and sends the same opened handle, so Content-Length and
-// the configured limit cannot race a path replacement after open.
+// Serve one content-addressed blob without reading it into the reactor's heap. The driver stats
+// and sends the same opened handle, so the limit cannot race a path replacement.
 route_blob_get :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     c := ctx.conn
@@ -288,9 +287,8 @@ route_blob_get :: proc(ctx: ^Http_Context) {
         return
     }
 
-    // Closes the lstat/open TOCTOU: `nbio.open_sync` has no O_NOFOLLOW, so a path swap
-    // could hand back a symlink target. Confirm the opened handle still refers to the file
-    // we validated before serving its bytes.
+    // Closes the lstat/open TOCTOU: `nbio.open_sync` has no O_NOFOLLOW, so confirm the opened handle
+    // is still the file we validated before serving its bytes.
     if !blob_handle_matches(file, info) {
         nbio.close(file, l = d.loop)
         blob_not_found(c)
@@ -318,9 +316,8 @@ blob_not_found :: proc(c: ^http_server.Conn) {
     http_server.respond_text(c, .Not_Found, "unknown blob")
 }
 
-// Stream a blob body to a temp file, verify its digest against the URL hash, and
-// atomically publish it. Bounded by `LIMITS.max_blob_bytes`; skips `reject_pipelined`,
-// which can't see past a streamed body.
+// Stream a blob body to a temp file, verify its digest against the URL hash, and publish it
+// atomically. Skips `reject_pipelined`, which cannot see past a streamed body.
 route_blob_put :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     c := ctx.conn
