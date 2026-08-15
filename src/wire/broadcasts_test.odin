@@ -277,7 +277,7 @@ test_run_done_canceled_null_start_roundtrip :: proc(t: ^testing.T) {
 test_session_summary_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
+    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
     v := decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &v)
@@ -305,14 +305,15 @@ test_session_summary_changed_roundtrip :: proc(t: ^testing.T) {
 test_session_activity_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"idle"},"queued":0,"context_tokens":5123,"pending_compaction":null}}`
+    input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"idle"},"queued":0,"context_usage":{"input":5123,"output":200,"reasoning":0,"cache_read":5000,"cache_write":0},"pending_compaction":null}}`
     v := decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Activity_Changed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
     ac, ok := data.(Session_Activity_Changed_Data)
     testing.expect(t, ok, "should be session.activity_changed")
-    testing.expect_value(t, ac.activity.context_tokens, u64(5123))
+    testing.expect_value(t, ac.activity.context_usage.input, u64(5123))
+    testing.expect_value(t, ac.activity.context_usage.cache_read, u64(5000))
     _, is_idle := ac.activity.state.(Activity_State_Idle)
     testing.expect(t, is_idle, "state should be idle")
 
@@ -338,7 +339,7 @@ test_session_activity_changed_config_clone_outlives_source :: proc(t: ^testing.T
     dst := mem.dynamic_arena_allocator(&dst_arena)
     defer mem.dynamic_arena_destroy(&dst_arena)
 
-    input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_tokens":0,"pending_compaction":null}}`
+    input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}}`
     d := decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Session_Activity_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -557,7 +558,7 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
     dst := mem.dynamic_arena_allocator(&dst_arena)
     defer mem.dynamic_arena_destroy(&dst_arena)
 
-    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
+    input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
     d := decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")

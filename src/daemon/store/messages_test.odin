@@ -279,6 +279,221 @@ test_non_transcript_events_project_nothing :: proc(t: ^testing.T) {
     testing.expect_value(t, session_message_count(s, session), i64(0))
 }
 
+@(private = "file")
+usage_total :: proc(s: ^Store, session: wire.Session_Id) -> wire.Token_Usage {
+    st, prep := sqlite.prepare(
+        s.writer,
+        `SELECT usage_input_total, usage_output_total, usage_reasoning_total,
+                usage_cache_read_total, usage_cache_write_total
+         FROM sessions WHERE id = ?1`,
+    )
+    if prep != .Ok {
+        return {}
+    }
+    defer sqlite.finalize(st)
+
+    sid := ([16]u8)(session)
+    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row {
+        return {}
+    }
+
+    return wire.Token_Usage {
+        input = u64(sqlite.column_i64(st, 0)),
+        output = u64(sqlite.column_i64(st, 1)),
+        reasoning = u64(sqlite.column_i64(st, 2)),
+        cache_read = u64(sqlite.column_i64(st, 3)),
+        cache_write = u64(sqlite.column_i64(st, 4)),
+    }
+}
+
+@(private = "file")
+commit_message :: proc(t: ^testing.T, s: ^Store, session: wire.Session_Id, seq: wire.Seq, m: wire.Message) {
+    data := wire.Message_Committed_Data {
+        session_id = session,
+        seq        = seq,
+        message    = m,
+    }
+    testing.expect_value(
+        t,
+        event_append(
+            s,
+            session,
+            seq,
+            data,
+            test_encode(data, context.temp_allocator),
+            {message_id = wire.message_id(m)},
+        ),
+        nil,
+    )
+}
+
+// The live gauge reads the usage of the newest assistant turn that reported it, past a
+// trailing user message and past an assistant that reported none. The session's lifetime
+// totals accumulate every reporting turn.
+@(test)
+test_last_usage_and_totals_track_assistant_turns :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "last-usage")
+    defer testsupport.sqlite_db_remove(path)
+
+    session := test_session(0x98)
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    defer close(s)
+    test_session_create(t, s, session)
+
+    // No turn has reported usage yet.
+    _, found0, err0 := messages_last_usage(s, session)
+    testing.expect_value(t, err0, nil)
+    testing.expect_value(t, found0, false)
+    testing.expect_value(t, usage_total(s, session), wire.Token_Usage{})
+
+    commit_message(
+        t,
+        s,
+        session,
+        1,
+        wire.Assistant_Message {
+            id = 1,
+            run_id = 1,
+            config_rev = 1,
+            agent = "main",
+            finish = wire.Stop_Reason.Stop,
+            tokens = wire.Token_Usage{input = 100, output = 20, reasoning = 5, cache_read = 40, cache_write = 10},
+            time = {created_at_ms = 10, completed_at_ms = u64(11)},
+        },
+    )
+
+    usage, found, err1 := messages_last_usage(s, session)
+    testing.expect_value(t, err1, nil)
+    testing.expect_value(t, found, true)
+    testing.expect_value(
+        t,
+        usage,
+        wire.Token_Usage{input = 100, output = 20, reasoning = 5, cache_read = 40, cache_write = 10},
+    )
+    testing.expect_value(
+        t,
+        usage_total(s, session),
+        wire.Token_Usage{input = 100, output = 20, reasoning = 5, cache_read = 40, cache_write = 10},
+    )
+
+    // A trailing user message carries no usage: it shadows neither the gauge nor the totals.
+    commit_message(t, s, session, 2, wire.User_Message{id = 2, input_id = 2, time = {created_at_ms = 20}})
+
+    usage2, found2, _ := messages_last_usage(s, session)
+    testing.expect_value(t, found2, true)
+    testing.expect_value(t, usage2.input, u64(100))
+    testing.expect_value(t, usage_total(s, session).input, u64(100))
+
+    // A newer assistant that reported usage becomes the gauge and folds into the totals.
+    commit_message(
+        t,
+        s,
+        session,
+        3,
+        wire.Assistant_Message {
+            id = 3,
+            run_id = 2,
+            config_rev = 1,
+            agent = "main",
+            finish = wire.Stop_Reason.Stop,
+            tokens = wire.Token_Usage{input = 250, output = 60, reasoning = 0, cache_read = 200, cache_write = 0},
+            time = {created_at_ms = 30, completed_at_ms = u64(31)},
+        },
+    )
+
+    usage3, found3, err3 := messages_last_usage(s, session)
+    testing.expect_value(t, err3, nil)
+    testing.expect_value(t, found3, true)
+    testing.expect_value(
+        t,
+        usage3,
+        wire.Token_Usage{input = 250, output = 60, reasoning = 0, cache_read = 200, cache_write = 0},
+    )
+    testing.expect_value(
+        t,
+        usage_total(s, session),
+        wire.Token_Usage{input = 350, output = 80, reasoning = 5, cache_read = 240, cache_write = 10},
+    )
+}
+
+// Lifetime totals are monotonic: a truncation removes the projected rows and the message
+// count, but never subtracts the usage already billed. A rebuild replays to the same totals.
+@(test)
+test_usage_totals_survive_truncation_and_rebuild :: proc(t: ^testing.T) {
+    path := testsupport.sqlite_db_path(t, "usage-monotonic")
+    defer testsupport.sqlite_db_remove(path)
+
+    session := test_session(0x99)
+    s, err := open(path)
+    testing.expect_value(t, err, nil)
+    defer close(s)
+    test_session_create(t, s, session)
+
+    commit_message(
+        t,
+        s,
+        session,
+        1,
+        wire.Assistant_Message {
+            id = 1,
+            run_id = 1,
+            config_rev = 1,
+            agent = "main",
+            finish = wire.Stop_Reason.Stop,
+            tokens = wire.Token_Usage{input = 100, output = 20, reasoning = 0, cache_read = 40, cache_write = 10},
+            time = {created_at_ms = 10, completed_at_ms = u64(11)},
+        },
+    )
+    commit_message(
+        t,
+        s,
+        session,
+        2,
+        wire.Assistant_Message {
+            id = 2,
+            run_id = 2,
+            config_rev = 1,
+            agent = "main",
+            finish = wire.Stop_Reason.Stop,
+            tokens = wire.Token_Usage{input = 250, output = 60, reasoning = 0, cache_read = 200, cache_write = 0},
+            time = {created_at_ms = 20, completed_at_ms = u64(21)},
+        },
+    )
+
+    full := wire.Token_Usage {
+        input       = 350,
+        output      = 80,
+        reasoning   = 0,
+        cache_read  = 240,
+        cache_write = 10,
+    }
+    testing.expect_value(t, usage_total(s, session), full)
+
+    // Truncate the second turn away. The gauge falls back to the first turn, the totals do not.
+    truncate := wire.Transcript_Truncated_Data {
+        session_id       = session,
+        seq              = 3,
+        first_removed_id = 2,
+    }
+    testing.expect_value(
+        t,
+        event_append(s, session, 3, truncate, test_encode(truncate, context.temp_allocator), {message_id = 2}),
+        nil,
+    )
+
+    testing.expect_value(t, message_row_count(s, session), i64(1))
+    testing.expect_value(t, usage_total(s, session), full)
+
+    gauge, found, _ := messages_last_usage(s, session)
+    testing.expect_value(t, found, true)
+    testing.expect_value(t, gauge.input, u64(100))
+
+    // A rebuild replays every committed turn, including the truncated one, to the same totals.
+    testing.expect_value(t, projection_rebuild(s, session), nil)
+    testing.expect_value(t, usage_total(s, session), full)
+}
+
 // The real encoding of a payload. Replay decodes the stored bytes, so a fixture
 // that wants to be replayable has to store what the pump would have stored.
 @(private)

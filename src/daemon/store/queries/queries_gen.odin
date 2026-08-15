@@ -9,56 +9,66 @@ import "src:wire"
 import "libs:bindings/sqlite"
 
 Create_Session_Params :: struct {
-    id:                     wire.Session_Id,
-    workspace_id:           wire.Workspace_Id,
-    origin:                 string,
-    parent_id:              Maybe(wire.Session_Id),
-    parent_message_id:      Maybe(wire.Message_Id),
-    parent_part_id:         Maybe(wire.Part_Id),
-    source_id:              Maybe(wire.Session_Id),
-    job_id:                 Maybe(wire.Job_Id),
-    profile:                string,
-    model:                  string,
-    reasoning:              string,
-    config_rev:             wire.Config_Rev,
-    permission:             string,
-    max_rounds:             Maybe(u64),
-    title:                  string,
-    agent:                  Maybe(string),
-    created_by_name:        Maybe(string),
-    created_by_version:     Maybe(string),
-    created_at_ms:          u64,
-    updated_at_ms:          u64,
-    open_run_id:            Maybe(wire.Run_Id),
-    open_run_kind:          Maybe(string),
-    open_run_started_at_ms: Maybe(u64),
+    id:                      wire.Session_Id,
+    workspace_id:            wire.Workspace_Id,
+    origin:                  string,
+    parent_id:               Maybe(wire.Session_Id),
+    parent_message_id:       Maybe(wire.Message_Id),
+    parent_part_id:          Maybe(wire.Part_Id),
+    source_id:               Maybe(wire.Session_Id),
+    job_id:                  Maybe(wire.Job_Id),
+    profile:                 string,
+    model:                   string,
+    reasoning:               string,
+    config_rev:              wire.Config_Rev,
+    permission:              string,
+    max_rounds:              Maybe(u64),
+    title:                   string,
+    agent:                   Maybe(string),
+    created_by_name:         Maybe(string),
+    created_by_version:      Maybe(string),
+    usage_input_total:       u64,
+    usage_output_total:      u64,
+    usage_reasoning_total:   u64,
+    usage_cache_read_total:  u64,
+    usage_cache_write_total: u64,
+    created_at_ms:           u64,
+    updated_at_ms:           u64,
+    open_run_id:             Maybe(wire.Run_Id),
+    open_run_kind:           Maybe(string),
+    open_run_started_at_ms:  Maybe(u64),
 }
 
 Session_Row :: struct {
-    id:                     wire.Session_Id,
-    workspace_id:           wire.Workspace_Id,
-    origin:                 string,
-    parent_id:              Maybe(wire.Session_Id),
-    parent_message_id:      Maybe(wire.Message_Id),
-    parent_part_id:         Maybe(wire.Part_Id),
-    source_id:              Maybe(wire.Session_Id),
-    job_id:                 Maybe(wire.Job_Id),
-    profile:                string,
-    model:                  string,
-    reasoning:              string,
-    config_rev:             wire.Config_Rev,
-    permission:             string,
-    max_rounds:             Maybe(u64),
-    title:                  string,
-    agent:                  Maybe(string),
-    created_by_name:        Maybe(string),
-    created_by_version:     Maybe(string),
-    message_count:          u64,
-    created_at_ms:          u64,
-    updated_at_ms:          u64,
-    open_run_id:            Maybe(wire.Run_Id),
-    open_run_kind:          Maybe(string),
-    open_run_started_at_ms: Maybe(u64),
+    id:                      wire.Session_Id,
+    workspace_id:            wire.Workspace_Id,
+    origin:                  string,
+    parent_id:               Maybe(wire.Session_Id),
+    parent_message_id:       Maybe(wire.Message_Id),
+    parent_part_id:          Maybe(wire.Part_Id),
+    source_id:               Maybe(wire.Session_Id),
+    job_id:                  Maybe(wire.Job_Id),
+    profile:                 string,
+    model:                   string,
+    reasoning:               string,
+    config_rev:              wire.Config_Rev,
+    permission:              string,
+    max_rounds:              Maybe(u64),
+    title:                   string,
+    agent:                   Maybe(string),
+    created_by_name:         Maybe(string),
+    created_by_version:      Maybe(string),
+    message_count:           u64,
+    usage_input_total:       u64,
+    usage_output_total:      u64,
+    usage_reasoning_total:   u64,
+    usage_cache_read_total:  u64,
+    usage_cache_write_total: u64,
+    created_at_ms:           u64,
+    updated_at_ms:           u64,
+    open_run_id:             Maybe(wire.Run_Id),
+    open_run_kind:           Maybe(string),
+    open_run_started_at_ms:  Maybe(u64),
 }
 
 Insert_Message_Params :: struct {
@@ -116,6 +126,14 @@ Session_History_Page_Row :: struct {
     payload:    string,
 }
 
+Last_Assistant_Usage_Row :: struct {
+    tokens_input:       Maybe(u64),
+    tokens_output:      Maybe(u64),
+    tokens_reasoning:   Maybe(u64),
+    tokens_cache_read:  Maybe(u64),
+    tokens_cache_write: Maybe(u64),
+}
+
 Open_Runs_Row :: struct {
     session_id:             wire.Session_Id,
     open_run_id:            wire.Run_Id,
@@ -124,27 +142,32 @@ Open_Runs_Row :: struct {
 }
 
 Session_Page_Row :: struct {
-    id:                 wire.Session_Id,
-    workspace_id:       wire.Workspace_Id,
-    origin:             string,
-    parent_id:          Maybe(wire.Session_Id),
-    parent_message_id:  Maybe(wire.Message_Id),
-    parent_part_id:     Maybe(wire.Part_Id),
-    source_id:          Maybe(wire.Session_Id),
-    job_id:             Maybe(wire.Job_Id),
-    profile:            string,
-    model:              string,
-    reasoning:          string,
-    config_rev:         wire.Config_Rev,
-    permission:         string,
-    max_rounds:         Maybe(u64),
-    title:              string,
-    agent:              Maybe(string),
-    created_by_name:    Maybe(string),
-    created_by_version: Maybe(string),
-    message_count:      u64,
-    created_at_ms:      u64,
-    updated_at_ms:      u64,
+    id:                      wire.Session_Id,
+    workspace_id:            wire.Workspace_Id,
+    origin:                  string,
+    parent_id:               Maybe(wire.Session_Id),
+    parent_message_id:       Maybe(wire.Message_Id),
+    parent_part_id:          Maybe(wire.Part_Id),
+    source_id:               Maybe(wire.Session_Id),
+    job_id:                  Maybe(wire.Job_Id),
+    profile:                 string,
+    model:                   string,
+    reasoning:               string,
+    config_rev:              wire.Config_Rev,
+    permission:              string,
+    max_rounds:              Maybe(u64),
+    title:                   string,
+    agent:                   Maybe(string),
+    created_by_name:         Maybe(string),
+    created_by_version:      Maybe(string),
+    message_count:           u64,
+    usage_input_total:       u64,
+    usage_output_total:      u64,
+    usage_reasoning_total:   u64,
+    usage_cache_read_total:  u64,
+    usage_cache_write_total: u64,
+    created_at_ms:           u64,
+    updated_at_ms:           u64,
 }
 
 Session_Count_Row :: struct {
@@ -297,6 +320,23 @@ Session_History_Page_Params :: struct {
     limit:             int,
 }
 
+Last_Assistant_Usage_Params :: struct {
+    session_id: wire.Session_Id,
+}
+
+Add_Session_Usage_Params :: struct {
+    input:       u64,
+    output:      u64,
+    reasoning:   u64,
+    cache_read:  u64,
+    cache_write: u64,
+    session_id:  wire.Session_Id,
+}
+
+Reset_Session_Usage_Params :: struct {
+    session_id: wire.Session_Id,
+}
+
 Set_Open_Run_Params :: struct {
     open_run_id:            wire.Run_Id,
     open_run_kind:          string,
@@ -378,6 +418,9 @@ Query_Id :: enum {
     Truncate_Messages,
     Count_Messages,
     Session_History_Page,
+    Last_Assistant_Usage,
+    Add_Session_Usage,
+    Reset_Session_Usage,
     Set_Open_Run,
     Clear_Open_Run,
     Reset_Open_Run,
@@ -469,6 +512,25 @@ VALUES (
       AND (:cursor_message_id IS NULL OR m.message_id < :cursor_message_id)
     ORDER BY m.message_id DESC
     LIMIT :limit;`,
+    .Last_Assistant_Usage        = `SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+    FROM messages
+    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
+    ORDER BY message_id DESC
+    LIMIT 1;`,
+    .Add_Session_Usage           = `UPDATE sessions SET
+    usage_input_total       = usage_input_total       + :input,
+    usage_output_total      = usage_output_total      + :output,
+    usage_reasoning_total   = usage_reasoning_total    + :reasoning,
+    usage_cache_read_total  = usage_cache_read_total   + :cache_read,
+    usage_cache_write_total = usage_cache_write_total  + :cache_write
+    WHERE id = :session_id;`,
+    .Reset_Session_Usage         = `UPDATE sessions SET
+    usage_input_total       = 0,
+    usage_output_total      = 0,
+    usage_reasoning_total   = 0,
+    usage_cache_read_total  = 0,
+    usage_cache_write_total = 0
+    WHERE id = :session_id;`,
     .Set_Open_Run                = `UPDATE sessions SET
     open_run_id            = :open_run_id,
     open_run_kind          = :open_run_kind,
@@ -494,7 +556,9 @@ ORDER BY open_run_started_at_ms ASC, id ASC;`,
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
-    message_count, created_at_ms, updated_at_ms,
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms,
     open_run_id, open_run_kind, open_run_started_at_ms
 FROM sessions
 WHERE id = :session_id;`,
@@ -503,7 +567,9 @@ WHERE id = :session_id;`,
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
-    message_count, created_at_ms, updated_at_ms
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms
 FROM sessions
 WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)
@@ -548,6 +614,9 @@ Queries :: struct {
     truncate_messages:           sqlite.Bind_Mapping(Truncate_Messages_Params),
     count_messages:              sqlite.Bind_Mapping(Count_Messages_Params),
     session_history_page:        sqlite.Reader(Session_History_Page_Params, Session_History_Page_Row),
+    last_assistant_usage:        sqlite.Reader(Last_Assistant_Usage_Params, Last_Assistant_Usage_Row),
+    add_session_usage:           sqlite.Bind_Mapping(Add_Session_Usage_Params),
+    reset_session_usage:         sqlite.Bind_Mapping(Reset_Session_Usage_Params),
     set_open_run:                sqlite.Bind_Mapping(Set_Open_Run_Params),
     clear_open_run:              sqlite.Bind_Mapping(Clear_Open_Run_Params),
     reset_open_run:              sqlite.Bind_Mapping(Reset_Open_Run_Params),
@@ -722,6 +791,33 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     }
     assert(session_history_page_reader_err == .None, "generated statement matches its generated struct")
     queries.session_history_page = session_history_page_reader
+    last_assistant_usage_stmt := sqlite.prepare(db, QUERY_SQL[.Last_Assistant_Usage]) or_return
+    last_assistant_usage_reader, last_assistant_usage_reader_err := sqlite.reader_prepare(
+        last_assistant_usage_stmt,
+        Last_Assistant_Usage_Params,
+        Last_Assistant_Usage_Row,
+        allocator,
+    )
+    if last_assistant_usage_reader_err == .Out_Of_Memory {
+        sqlite.finalize(last_assistant_usage_stmt)
+        return last_assistant_usage_reader_err
+    }
+    assert(last_assistant_usage_reader_err == .None, "generated statement matches its generated struct")
+    queries.last_assistant_usage = last_assistant_usage_reader
+    add_session_usage_stmt := sqlite.prepare(db, QUERY_SQL[.Add_Session_Usage]) or_return
+    add_session_usage_bind, add_session_usage_bind_err := sqlite.bind_prepare(
+        add_session_usage_stmt,
+        Add_Session_Usage_Params,
+    )
+    assert(add_session_usage_bind_err == .None, "generated statement matches its generated struct")
+    queries.add_session_usage = add_session_usage_bind
+    reset_session_usage_stmt := sqlite.prepare(db, QUERY_SQL[.Reset_Session_Usage]) or_return
+    reset_session_usage_bind, reset_session_usage_bind_err := sqlite.bind_prepare(
+        reset_session_usage_stmt,
+        Reset_Session_Usage_Params,
+    )
+    assert(reset_session_usage_bind_err == .None, "generated statement matches its generated struct")
+    queries.reset_session_usage = reset_session_usage_bind
     set_open_run_stmt := sqlite.prepare(db, QUERY_SQL[.Set_Open_Run]) or_return
     set_open_run_bind, set_open_run_bind_err := sqlite.bind_prepare(set_open_run_stmt, Set_Open_Run_Params)
     assert(set_open_run_bind_err == .None, "generated statement matches its generated struct")
@@ -854,6 +950,10 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.count_messages.statement)
     sqlite.finalize(queries.session_history_page.statement)
     sqlite.reader_destroy(&queries.session_history_page, allocator)
+    sqlite.finalize(queries.last_assistant_usage.statement)
+    sqlite.reader_destroy(&queries.last_assistant_usage, allocator)
+    sqlite.finalize(queries.add_session_usage.statement)
+    sqlite.finalize(queries.reset_session_usage.statement)
     sqlite.finalize(queries.set_open_run.statement)
     sqlite.finalize(queries.clear_open_run.statement)
     sqlite.finalize(queries.reset_open_run.statement)
@@ -1005,6 +1105,28 @@ session_history_page :: proc(
 ) {
     params := params_in
     return sqlite.read_all(&q.session_history_page, &params, allocator, cap_hint)
+}
+
+last_assistant_usage :: proc(
+    q: ^Queries,
+    params_in: Last_Assistant_Usage_Params,
+    allocator := context.allocator,
+) -> (
+    Last_Assistant_Usage_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_one(&q.last_assistant_usage, &params, allocator)
+}
+
+add_session_usage :: proc(q: ^Queries, params_in: Add_Session_Usage_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.add_session_usage, &params)
+}
+
+reset_session_usage :: proc(q: ^Queries, params_in: Reset_Session_Usage_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.reset_session_usage, &params)
 }
 
 set_open_run :: proc(q: ^Queries, params_in: Set_Open_Run_Params) -> sqlite.Result {

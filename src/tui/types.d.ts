@@ -411,6 +411,14 @@ declare module "yuke:client" {
     | { type: "fork"; source_id: string }
     | { type: "cron"; job_id: string };
 
+  export interface TokenUsage {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache_read: number;
+    cache_write: number;
+  }
+
   export interface Session {
     id: string;
     workspace_id: string;
@@ -422,6 +430,7 @@ declare module "yuke:client" {
     max_rounds: number | null;
     title: string;
     message_count: number;
+    usage_total: TokenUsage;
     created_at_ms: number;
     updated_at_ms: number;
     created_by: ClientIdentity | null;
@@ -491,7 +500,7 @@ declare module "yuke:client" {
     state: ActivityState;
     config?: RunConfig;
     queued: number;
-    context_tokens: number;
+    context_usage: TokenUsage;
     pending_compaction: number | null;
   }
 

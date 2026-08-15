@@ -76,6 +76,24 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
     assert(params.message_id > 0, "a committed message carries a minted id")
     sqlite.execute(&s.inserts.insert_message, &params) or_return
 
+    // The lifetime totals are monotonic, so only a committed assistant turn folds in; a
+    // truncation removing this row later never subtracts it.
+    if assistant, is_assistant := message.(wire.Assistant_Message); is_assistant {
+        if usage, ok := assistant.tokens.?; ok {
+            queries.add_session_usage(
+                &s.queries,
+                {
+                    session_id = session,
+                    input = usage.input,
+                    output = usage.output,
+                    reasoning = usage.reasoning,
+                    cache_read = usage.cache_read,
+                    cache_write = usage.cache_write,
+                },
+            ) or_return
+        }
+    }
+
     return messages_count_add(s, session, 1, params.created_at_ms)
 }
 
@@ -142,6 +160,7 @@ projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.te
     messages_truncate(s, session, 1) or_return
     queries.clear_configs(&s.queries, {session_id = session}) or_return
     queries.reset_open_run(&s.queries, {session_id = session}) or_return
+    queries.reset_session_usage(&s.queries, {session_id = session}) or_return
 
     rebuild := Messages_Rebuild {
         store   = s,
@@ -300,4 +319,37 @@ history_page :: proc(
     }
 
     return out, nil
+}
+
+// Token usage of the newest committed assistant turn that reported it; `found` is false when
+// none has yet. `input` already folds the cache read/write subsets.
+messages_last_usage :: proc(
+    s: ^Store,
+    session: wire.Session_Id,
+) -> (
+    usage: wire.Token_Usage,
+    found: bool,
+    err: Error,
+) {
+    assert(s != nil, "messages_last_usage needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+
+    row, sqlite_err := queries.last_assistant_usage(&s.queries, {session_id = session})
+    if sqlite_err != nil {
+        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
+            return {}, false, nil
+        }
+
+        return {}, false, read_err(sqlite_err)
+    }
+
+    usage = wire.Token_Usage {
+        input       = row.tokens_input.? or_else 0,
+        output      = row.tokens_output.? or_else 0,
+        reasoning   = row.tokens_reasoning.? or_else 0,
+        cache_read  = row.tokens_cache_read.? or_else 0,
+        cache_write = row.tokens_cache_write.? or_else 0,
+    }
+
+    return usage, true, nil
 }

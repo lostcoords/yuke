@@ -6992,6 +6992,9 @@
           "minimum": 0,
           "type": "integer"
         },
+        "usage_total": {
+          "$ref": "#/$defs/Token_Usage"
+        },
         "workspace_id": {
           "$ref": "#/$defs/Workspace_Id"
         }
@@ -7007,6 +7010,7 @@
         "max_rounds",
         "title",
         "message_count",
+        "usage_total",
         "created_at_ms",
         "updated_at_ms",
         "created_by",
@@ -7020,11 +7024,8 @@
         "config": {
           "$ref": "#/$defs/Run_Config"
         },
-        "context_tokens": {
-          "description": "Provider context token count.",
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
+        "context_usage": {
+          "$ref": "#/$defs/Token_Usage"
         },
         "pending_compaction": {
           "anyOf": [
@@ -7050,7 +7051,7 @@
       "required": [
         "state",
         "queued",
-        "context_tokens",
+        "context_usage",
         "pending_compaction"
       ],
       "type": "object"

@@ -264,20 +264,27 @@ session_row_to_wire :: proc(row: $Row) -> (session: wire.Session, ok: bool) {
     permission := wire.permission_mode_from_wire(row.permission) or_return
 
     session = wire.Session {
-        id            = row.id,
-        workspace_id  = row.workspace_id,
-        profile       = row.profile,
-        model         = row.model,
-        reasoning     = row.reasoning,
-        config_rev    = row.config_rev,
-        permission    = permission,
-        max_rounds    = row.max_rounds,
-        title         = row.title,
+        id = row.id,
+        workspace_id = row.workspace_id,
+        profile = row.profile,
+        model = row.model,
+        reasoning = row.reasoning,
+        config_rev = row.config_rev,
+        permission = permission,
+        max_rounds = row.max_rounds,
+        title = row.title,
         message_count = row.message_count,
+        usage_total = wire.Token_Usage {
+            input = row.usage_input_total,
+            output = row.usage_output_total,
+            reasoning = row.usage_reasoning_total,
+            cache_read = row.usage_cache_read_total,
+            cache_write = row.usage_cache_write_total,
+        },
         created_at_ms = row.created_at_ms,
         updated_at_ms = row.updated_at_ms,
-        origin        = origin,
-        agent         = row.agent,
+        origin = origin,
+        agent = row.agent,
     }
 
     // Both halves are written together or not at all, so one without the other is a row

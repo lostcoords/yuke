@@ -196,6 +196,15 @@ CREATE TABLE sessions (
     created_by_version TEXT CHECK (created_by_version IS NULL OR (typeof(created_by_version) = 'text' AND length(created_by_version) <= 32)),
 
     message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991), -- u64
+
+    -- Lifetime token usage, summed over every committed assistant turn. Monotonic: a
+    -- truncation never subtracts. `usage_input_total` folds in the cache subsets.
+    usage_input_total       INTEGER NOT NULL DEFAULT 0 CHECK (usage_input_total       BETWEEN 0 AND 9007199254740991), -- u64
+    usage_output_total      INTEGER NOT NULL DEFAULT 0 CHECK (usage_output_total      BETWEEN 0 AND 9007199254740991), -- u64
+    usage_reasoning_total   INTEGER NOT NULL DEFAULT 0 CHECK (usage_reasoning_total   BETWEEN 0 AND 9007199254740991), -- u64
+    usage_cache_read_total  INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_read_total  BETWEEN 0 AND 9007199254740991), -- u64
+    usage_cache_write_total INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_write_total BETWEEN 0 AND 9007199254740991), -- u64
+
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), -- u64
     updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0), -- u64
 

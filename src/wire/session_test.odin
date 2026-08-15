@@ -27,6 +27,7 @@ _sample_session_list_item :: proc() -> Session_List_Item {
             max_rounds = nil,
             title = "title",
             message_count = 0,
+            usage_total = {},
             created_at_ms = 1,
             updated_at_ms = 1,
             created_by = Client{name = "test", version = "0"},
@@ -35,7 +36,7 @@ _sample_session_list_item :: proc() -> Session_List_Item {
         activity = Session_Activity {
             state = Activity_State_Idle{},
             queued = 0,
-            context_tokens = 0,
+            context_usage = {},
             pending_compaction = nil,
         },
     }
@@ -213,7 +214,7 @@ test_session_accepts_null_attribution_for_child :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"created_at_ms":1,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":1,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     v := decoder_init(input, context.temp_allocator)
 
     session, derr := session_from_reader(&v)
@@ -434,7 +435,7 @@ test_session_activity_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"state":{"type":"idle"},"queued":0,"context_tokens":0,"pending_compaction":null}`
+    input := `{"state":{"type":"idle"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}`
     v := decoder_init(input, context.temp_allocator)
 
     activity, derr := session_activity_from_reader(&v)
@@ -537,7 +538,7 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    input := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_tokens":0,"pending_compaction":null}`
+    input := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}`
     v := decoder_init(input, context.temp_allocator)
 
     activity, derr := session_activity_from_reader(&v)
@@ -556,7 +557,7 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, to_string(&e), input)
 
     // `config` trails `pending_compaction`; emitter order is the reverse.
-    permuted := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"queued":0,"context_tokens":0,"pending_compaction":null,"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"}}`
+    permuted := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null,"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"}}`
     pv := decoder_init(permuted, context.temp_allocator)
 
     reordered, perr := session_activity_from_reader(&pv)
@@ -786,7 +787,7 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
 test_session_rejects_missing_created_by :: proc(t: ^testing.T) {
     // `created_by` is required-but-nullable: an explicit null is fine, an absent
     // key is not (it is always emitted).
-    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"created_at_ms":1,"updated_at_ms":1,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":1,"updated_at_ms":1,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     v := decoder_init(input, context.temp_allocator)
@@ -810,6 +811,7 @@ test_session_rejects_updated_before_created :: proc(t: ^testing.T) {
         max_rounds = nil,
         title = "title",
         message_count = 0,
+        usage_total = {},
         created_at_ms = 5,
         updated_at_ms = 4,
         created_by = Client{name = "test", version = "0"},
@@ -828,7 +830,7 @@ test_session_rejects_updated_before_created :: proc(t: ^testing.T) {
 @(test)
 test_session_rejects_missing_created_at :: proc(t: ^testing.T) {
     // `created_at_ms` is required and always emitted; an absent key is rejected.
-    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
+    input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     v := decoder_init(input, context.temp_allocator)

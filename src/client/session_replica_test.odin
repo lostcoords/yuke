@@ -1317,7 +1317,7 @@ _activity_bc :: proc(pending: Maybe(wire.Run_Id)) -> wire.Notification {
             activity = wire.Session_Activity {
                 state = wire.Activity_State_Idle{},
                 queued = 0,
-                context_tokens = 0,
+                context_usage = {},
                 pending_compaction = pending,
             },
         },

@@ -3835,6 +3835,12 @@
           "presence": "required"
         },
         {
+          "name": "usage_total",
+          "type": "Token_Usage",
+          "doc": "Lifetime token usage summed over every committed assistant turn. Monotonic: never reduced by compaction.",
+          "presence": "required"
+        },
+        {
           "name": "created_at_ms",
           "type": "u64",
           "doc": "Creation epoch ms. Never changes; `updated_at_ms` is never below it.",
@@ -3928,9 +3934,9 @@
           "presence": "required"
         },
         {
-          "name": "context_tokens",
-          "type": "u64",
-          "doc": "Provider context token count.",
+          "name": "context_usage",
+          "type": "Token_Usage",
+          "doc": "Token usage of the last committed assistant turn: the live context gauge, with `cache_read`/`cache_write` already inside `input`. All zero until a turn reports usage.",
           "presence": "required"
         },
         {

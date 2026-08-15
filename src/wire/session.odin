@@ -525,6 +525,10 @@ Session :: struct {
     // Committed transcript message count.
     message_count: u64,
 
+    // Lifetime token usage summed over every committed assistant turn. Monotonic: never
+    // reduced by compaction.
+    usage_total:   Token_Usage,
+
     // Creation epoch ms. Never changes; `updated_at_ms` is never below it.
     created_at_ms: u64,
 
@@ -558,6 +562,8 @@ session_emit :: proc(e: ^Emitter, self: Session) {
     field_required_null_u64(e, "max_rounds", self.max_rounds)
     field_string(e, "title", self.title)
     field_u64(e, "message_count", self.message_count)
+    key(e, "usage_total")
+    token_usage_emit(e, self.usage_total)
     field_u64(e, "created_at_ms", self.created_at_ms)
     field_u64(e, "updated_at_ms", self.updated_at_ms)
     key(e, "created_by")
@@ -638,6 +644,7 @@ session_clone :: proc(self: Session, allocator := context.allocator) -> Session 
         max_rounds = self.max_rounds,
         title = strings.clone(self.title, allocator),
         message_count = self.message_count,
+        usage_total = self.usage_total,
         created_at_ms = self.created_at_ms,
         updated_at_ms = self.updated_at_ms,
         created_by = created_by,
@@ -697,8 +704,9 @@ Session_Activity :: struct {
     // Accepted inputs waiting to run. At most LIMITS.max_queued_inputs.
     queued:             u64,
 
-    // Provider context token count.
-    context_tokens:     u64,
+    // Token usage of the last committed assistant turn: the live context gauge, with
+    // `cache_read`/`cache_write` already inside `input`. All zero until a turn reports usage.
+    context_usage:      Token_Usage,
 
     // @required-nullable
     // Pending manual compaction run id.
@@ -718,7 +726,8 @@ session_activity_emit :: proc(e: ^Emitter, self: Session_Activity) {
     }
 
     field_u64(e, "queued", self.queued)
-    field_u64(e, "context_tokens", self.context_tokens)
+    key(e, "context_usage")
+    token_usage_emit(e, self.context_usage)
     field_required_null_u64(e, "pending_compaction", self.pending_compaction)
     object_end(e)
 }
@@ -770,7 +779,7 @@ session_activity_clone :: proc(self: Session_Activity, allocator := context.allo
         state = activity_state_clone(self.state, allocator),
         config = config,
         queued = self.queued,
-        context_tokens = self.context_tokens,
+        context_usage = self.context_usage,
         pending_compaction = self.pending_compaction,
     }
 }
@@ -2286,6 +2295,7 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
         Max,
         Title,
         Count,
+        Usage,
         Created_At,
         Updated,
         Created,
@@ -2341,6 +2351,10 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
             out.message_count = dec_u64(d) or_return
             seen += {.Count}
 
+        case "usage_total":
+            out.usage_total = token_usage_from_reader(d) or_return
+            seen += {.Usage}
+
         case "created_at_ms":
             out.created_at_ms = dec_u64(d) or_return
             seen += {.Created_At}
@@ -2380,6 +2394,7 @@ session_from_reader :: proc(d: ^Decoder) -> (out: Session, err: Validation_Error
                .Max,
                .Title,
                .Count,
+               .Usage,
                .Created_At,
                .Updated,
                .Created,
@@ -2459,8 +2474,8 @@ session_activity_from_reader :: proc(d: ^Decoder) -> (out: Session_Activity, err
             out.queued = dec_u64(d) or_return
             seen += {.Queued}
 
-        case "context_tokens":
-            out.context_tokens = dec_u64(d) or_return
+        case "context_usage":
+            out.context_usage = token_usage_from_reader(d) or_return
             seen += {.Ctx}
 
         case "pending_compaction":

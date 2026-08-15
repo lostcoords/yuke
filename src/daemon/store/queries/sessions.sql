@@ -27,6 +27,11 @@ SELECT 1 FROM sessions WHERE id = :session_id;
 -- created_by_name: string
 -- created_by_version: string
 -- message_count: u64!
+-- usage_input_total: u64!
+-- usage_output_total: u64!
+-- usage_reasoning_total: u64!
+-- usage_cache_read_total: u64!
+-- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
 -- open_run_id: wire.Run_Id
@@ -37,7 +42,9 @@ SELECT
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
-    message_count, created_at_ms, updated_at_ms,
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms,
     open_run_id, open_run_kind, open_run_started_at_ms
 FROM sessions
 WHERE id = :session_id;
@@ -73,6 +80,11 @@ WHERE id = :session_id;
 -- created_by_name: string
 -- created_by_version: string
 -- message_count: u64!
+-- usage_input_total: u64!
+-- usage_output_total: u64!
+-- usage_reasoning_total: u64!
+-- usage_cache_read_total: u64!
+-- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
 SELECT
@@ -80,7 +92,9 @@ SELECT
     origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
-    message_count, created_at_ms, updated_at_ms
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms
 FROM sessions
 WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (:parent_id    IS NULL OR parent_id    = :parent_id)

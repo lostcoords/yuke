@@ -1,7 +1,9 @@
 package daemon
 
+import "core:log"
 import "core:mem"
 
+import store "src:daemon/store"
 import wire "src:wire"
 
 // What a session is doing now. A run never outlives its daemon, so the engine state is the
@@ -12,6 +14,9 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
     activity := wire.Session_Activity {
         state = wire.Activity_State_Idle{},
     }
+
+    // Durable, so it holds through an idle session, a resync, and a restart, unlike the run.
+    activity.context_usage = session_context_usage(d, session)
 
     live := session_live(d, session)
     if live == nil {
@@ -75,6 +80,27 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
     assert(wire.session_activity_validate(activity) == .None, "the engine built an invalid activity")
 
     return activity
+}
+
+// Usage of the last committed assistant turn for the live context gauge. A failed read
+// degrades to zero rather than failing the activity every surface depends on.
+@(private)
+session_context_usage :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Token_Usage {
+    assert(d != nil, "reading context usage needs daemon state")
+    assert(d.store != nil, "a serving daemon owns an event store")
+
+    usage, found, err := store.messages_last_usage(d.store, session)
+    if err != nil {
+        log.errorf("daemon: context-usage read failed for session %v: %v", session, err)
+
+        return {}
+    }
+
+    if !found {
+        return {}
+    }
+
+    return usage
 }
 
 // The open draft and the inputs behind it, for a resync cut: `message.started` and
