@@ -426,3 +426,28 @@ test_runtime_on_caller_owned_heap :: proc(t: ^testing.T) {
     // Eviction in the daemon is exactly this: drop the arena in one shot.
     testing.expect(t, h.live == 0, "every block should have been released before free")
 }
+
+@(test)
+test_parse_json_ignores_bytes_past_length :: proc(t: ^testing.T) {
+    rt, ctx := new_vm(t)
+    defer free_vm(rt, ctx)
+
+    // A tool block's argument JSON is a slice with the next block's bytes right after it, so
+    // `text[len]` is non-NUL. Slicing an object out of such a buffer reproduces the parse.
+    source := "{\"path\":\"x\"}GARBAGE"
+    object := source[:12]
+    testing.expect_value(t, object, "{\"path\":\"x\"}")
+    testing.expect(t, source[12] != 0, "the byte past the object must be non-NUL to reproduce")
+
+    v := parse_json(ctx, object, context.allocator)
+    defer free_value(ctx, v)
+    testing.expect(t, !is_exception(v), "valid JSON followed by unrelated bytes must still parse")
+    testing.expect(t, is_object(v), "parsed value should be an object")
+
+    path := get_property(ctx, v, "path")
+    defer free_value(ctx, path)
+    s, ok := to_string(ctx, path)
+    testing.expect(t, ok, "path should read back as a string")
+    defer free_string(ctx, s)
+    testing.expect_value(t, s, "x")
+}

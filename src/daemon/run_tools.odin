@@ -71,7 +71,7 @@ run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Too
         arguments = "{}"
     }
 
-    args := qjs.parse_json(ctx, arguments)
+    args := qjs.parse_json(ctx, arguments, run.round_allocator)
 
     if qjs.is_exception(args) {
         qjs.free_value(ctx, args)

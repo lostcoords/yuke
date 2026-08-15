@@ -1,6 +1,7 @@
 package quickjs
 
 import "core:c"
+import "core:mem"
 import "core:strings"
 
 // Source kind for `eval`. The remaining C eval-type bits are internal.
@@ -538,11 +539,15 @@ eval_function :: proc(ctx: ^Context, fun_obj: Value) -> Value {
 }
 
 // Parse `text` as JSON. Satisfies `is_exception` on malformed input, leaving the exception
-// pending. Caller owns the result.
-parse_json :: proc(ctx: ^Context, text: string, filename: cstring = "<json>") -> Value {
+// pending. Caller owns the result. `JS_ParseJSON` needs a NUL at `text[len]` to find the end,
+// which an Odin string lacks, so a terminated copy is made in `allocator` and freed here.
+parse_json :: proc(ctx: ^Context, text: string, allocator: mem.Allocator, filename: cstring = "<json>") -> Value {
     assert(ctx != nil, "parse_json needs a context")
 
-    return c_parse_json(ctx, cstring(raw_data(text)), c.size_t(len(text)), filename)
+    terminated := strings.clone_to_cstring(text, allocator)
+    defer delete(terminated, allocator)
+
+    return c_parse_json(ctx, terminated, c.size_t(len(text)), filename)
 }
 
 // Whether `v` is callable. Needs a context because a function is an object whose class the
