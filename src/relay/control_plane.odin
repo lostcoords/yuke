@@ -29,7 +29,10 @@ BEARER_PREFIX :: "Bearer "
 Enroll_Start_Body :: struct {
     name:              string `json:"name"`,
     platform:          string `json:"platform"`,
-    static_public_key: string `json:"static_public_key"`,
+    static_public_key: string `json:"static_public_key,omitempty"`,
+    intent:            string `json:"intent"`,
+    session_kind:      string `json:"session_kind,omitempty"`,
+    device_ids:        []string `json:"device_ids,omitempty"`,
 }
 
 // The 201 response to device_codes: what the human needs, plus how to poll.
@@ -59,9 +62,11 @@ Enroll_Poll :: enum {
 
 // The credential minted on approval. Strings owned by the decode allocator.
 Enroll_Credential :: struct {
-    device_id:  string `json:"device_id"`,
-    credential: string `json:"credential"`,
-    relay_url:  string `json:"relay_url"`,
+    device_id:          string `json:"device_id"`,
+    credential:         string `json:"credential"`,
+    relay_url:          string `json:"relay_url"`,
+    session_id:         string `json:"session_id"`,
+    session_credential: string `json:"session_credential"`,
 }
 
 // A relay ticket response (`link_tickets`/`connect_tickets`). Strings owned by the decode
@@ -102,18 +107,27 @@ enroll_start_encode :: proc(
     name: string,
     platform: string,
     static_public_key: []u8,
+    intent: string,
+    session_kind := "",
+    device_ids: []string = nil,
     allocator := context.allocator,
 ) -> (
     []u8,
     Control_Error,
 ) {
-    assert(len(static_public_key) == NOISE_STATIC_KEY_SIZE, "enroll needs a 32-byte public key")
+    encoded := ""
+    if len(static_public_key) > 0 {
+        assert(len(static_public_key) == NOISE_STATIC_KEY_SIZE, "enroll needs a 32-byte public key")
+        encoded = base64.encode(static_public_key, base64.ENC_TABLE, context.temp_allocator)
+    }
 
-    encoded := base64.encode(static_public_key, base64.ENC_TABLE, context.temp_allocator)
     body := Enroll_Start_Body {
         name              = name,
         platform          = platform,
         static_public_key = encoded,
+        intent            = intent if intent != "" else "daemon",
+        session_kind      = session_kind,
+        device_ids        = device_ids,
     }
 
     out, err := json.marshal(body, {}, allocator)
@@ -160,6 +174,7 @@ enroll_poll_decode :: proc(
     status: int,
     body: []u8,
     allocator := context.allocator,
+    intent := "daemon",
 ) -> (
     Enroll_Poll,
     Enroll_Credential,
@@ -172,8 +187,22 @@ enroll_poll_decode :: proc(
             return .Expired, {}, .Malformed
         }
 
-        if cred.device_id == "" || cred.credential == "" || cred.relay_url == "" {
+        if cred.relay_url == "" || cred.credential == "" {
             return .Expired, {}, .Malformed
+        }
+        switch intent {
+        case "client":
+            if cred.session_id == "" {
+                return .Expired, {}, .Malformed
+            }
+        case "both":
+            if cred.device_id == "" || cred.session_id == "" || cred.session_credential == "" {
+                return .Expired, {}, .Malformed
+            }
+        case:
+            if cred.device_id == "" {
+                return .Expired, {}, .Malformed
+            }
         }
 
         return .Approved, cred, .None

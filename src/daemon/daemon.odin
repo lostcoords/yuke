@@ -488,7 +488,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
         case .Absent:
 
-        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed, .Stale:
             log.warnf("daemon: device identity unusable (%v); /identity omits device_id", ierr)
         }
     }

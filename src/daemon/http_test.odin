@@ -142,7 +142,7 @@ test_make_identity_dir :: proc(name: string, device_id: string) -> string {
     dir := test_make_dir(name)
 
     cred := strings.concatenate(
-        {`{"device_id":"`, device_id, `","credential":"c","relay_url":"wss://relay.example"}`},
+        {`{"device_id":"`, device_id, `","credential":"yk_dev_c","relay_url":"wss://relay.example"}`},
         context.temp_allocator,
     )
     cred_path, _ := os.join_path({dir, relay.CREDENTIALS_FILE}, context.temp_allocator)

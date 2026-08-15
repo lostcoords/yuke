@@ -14,3 +14,7 @@ login_hostname :: proc() -> string {
 
     return ""
 }
+
+login_stdin_is_tty :: proc() -> bool {
+    return bool(posix.isatty(posix.STDIN_FILENO))
+}

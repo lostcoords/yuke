@@ -59,11 +59,14 @@ COMMANDS := []Command {
     {
         name = "login",
         args = "[flags]",
-        summary = "enroll this device with the control plane",
+        summary = "enroll a daemon and/or a client Session with the control plane",
         detail = {
-            "  --force          re-enroll even if an identity already exists",
-            "  --name <name>    device name (default: machine hostname)",
-            "  --cloud <url>    control-plane base URL (default $YUKE_CLOUD_URL)",
+            "  --role <role>        daemon, client, or both (required in scripts)",
+            "  --kind <kind>        cli or token; --role client only",
+            "  --device-ids <ids>   comma-separated daemon ids; --role client only",
+            "  --force              re-enroll even if that role already exists",
+            "  --name <name>        daemon or session name (default: hostname)",
+            "  --cloud <url>        control-plane base URL (default $YUKE_CLOUD_URL)",
         },
     },
     {

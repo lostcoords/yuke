@@ -2,6 +2,7 @@
 package main
 
 import "core:os"
+import win "core:sys/windows"
 
 // Windows computer name. `$COMPUTERNAME` is set by the OS (not a shell convenience).
 login_hostname :: proc() -> string {
@@ -10,4 +11,9 @@ login_hostname :: proc() -> string {
     }
 
     return ""
+}
+
+login_stdin_is_tty :: proc() -> bool {
+    handle := win.GetStdHandle(win.STD_INPUT_HANDLE)
+    return win.GetFileType(handle) == win.FILE_TYPE_CHAR
 }

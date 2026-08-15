@@ -24,7 +24,7 @@ import relay "src:relay"
 
 import curl "libs:bindings/curl"
 
-// Control-plane paths the client calls with its device credential.
+// Control-plane paths the client calls with its Session credential.
 REMOTE_ROSTER_PATH :: "/api/v1/devices"
 
 REMOTE_CONNECT_TICKETS_PATH :: "/api/v1/connect_tickets"
@@ -42,27 +42,28 @@ REMOTE_RESP_MAX :: 256 * 1024
 // static key.
 Remote_Connect :: struct {
     // Owning host and the connect promise to settle (nil once handed to the daemon connection).
-    host:        ^Host,
-    job:         ^Client_Promise,
+    host:            ^Host,
+    job:             ^Client_Promise,
 
-    // The target device name to resolve, the control-plane base, and the device credential
-    // (secret) presented as the bearer. All owned.
-    device:      string,
-    cloud_url:   string,
-    credential:  string,
+    // The target device name to resolve, the control-plane base, and the session
+    // credential presented as the bearer. All owned.
+    device:          string,
+    cloud_url:       string,
+    credential:      string,
+    local_device_id: string,
 
     // This device's own X25519 static private key, and the target daemon's pinned public key
     // once the roster resolves it.
-    static_seed: [relay.NOISE_STATIC_KEY_SIZE]u8,
-    pin:         [relay.NOISE_STATIC_KEY_SIZE]u8,
+    static_seed:     [relay.NOISE_STATIC_KEY_SIZE]u8,
+    pin:             [relay.NOISE_STATIC_KEY_SIZE]u8,
 
     // The resolved target device id and the connect-ticket request body, owned across the POST.
-    device_id:   string,
-    req_body:    []u8,
+    device_id:       string,
+    req_body:        []u8,
 
     // The in-flight transfer and the bounded response accumulator, reused across both fetches.
-    xfer:        curl.Transfer,
-    resp:        Remote_Rx,
+    xfer:            curl.Transfer,
+    resp:            Remote_Rx,
 }
 
 // A bounded accumulator for one control-plane response body.
@@ -85,12 +86,12 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
         return
     }
 
-    id, ierr := relay.identity_load(h.data_root, h.allocator)
+    id, ierr := relay.session_identity_load(h.data_root, h.allocator)
     switch ierr {
     case .None:
 
-    case .Absent:
-        client_promise_reject(job, "not_enrolled", true)
+    case .Absent, .Stale:
+        client_promise_reject(job, "not enrolled as a client; run yuke login --role client", true)
 
         return
 
@@ -100,7 +101,14 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
         return
     }
 
-    defer relay.identity_destroy(&id)
+    if !id.has_static_key {
+        relay.session_identity_destroy(&id)
+        client_promise_reject(job, "not enrolled as a client; run yuke login --role client --kind cli", true)
+
+        return
+    }
+
+    defer relay.session_identity_destroy(&id)
 
     rc, aerr := new(Remote_Connect, h.allocator)
     if aerr != nil {
@@ -121,6 +129,9 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
     }
     if clone_err == nil {
         rc.credential, clone_err = strings.clone(id.credential, h.allocator)
+    }
+    if clone_err == nil && id.local_device_id != "" {
+        rc.local_device_id, clone_err = strings.clone(id.local_device_id, h.allocator)
     }
     if clone_err != nil {
         remote_free(rc)
@@ -192,7 +203,7 @@ remote_fetch_roster :: proc(rc: ^Remote_Connect) {
     }
 }
 
-// The roster fetch finished. Resolve the named non-self device to its pinned key, then fetch a
+// The roster fetch finished. Resolve the named device to its pinned key, then fetch a
 // connect ticket. Control-plane input, so any bad status or body rejects rather than asserting.
 @(private = "file")
 remote_roster_done :: proc(user: rawptr, result: curl.Result) {
@@ -214,23 +225,32 @@ remote_roster_done :: proc(user: rawptr, result: curl.Result) {
         return
     }
 
-    // Resolve the target by name. Self is a valid target — forcing the relay to this device's
-    // own daemon is a supported centralized/testing setup. A missing or duplicated name is a
-    // selection error the caller must fix, not a transport failure.
+    // Resolve by name. If two rows share the name, prefer the local daemon
+    // written into session.json on `--role both`.
     found := false
     ambiguous := false
     target_id: string
     target_key: string
+    local_match := false
     for device in roster {
         if device.name != rc.device {
             continue
         }
-
+        if rc.local_device_id != "" && device.device_id == rc.local_device_id {
+            found = true
+            ambiguous = false
+            local_match = true
+            target_id = device.device_id
+            target_key = device.static_public_key
+            continue
+        }
+        if local_match {
+            continue
+        }
         if found {
             ambiguous = true
-            break
+            continue
         }
-
         found = true
         target_id = device.device_id
         target_key = device.static_public_key
@@ -409,6 +429,7 @@ remote_free :: proc(rc: ^Remote_Connect) {
     delete(rc.device, allocator)
     delete(rc.cloud_url, allocator)
     delete(rc.device_id, allocator)
+    delete(rc.local_device_id, allocator)
 
     if rc.credential != "" {
         mem.zero_slice(transmute([]u8)rc.credential)

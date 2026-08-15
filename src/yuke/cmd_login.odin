@@ -1,7 +1,7 @@
 /*
-yuke login (`yuke login`): device-code enrollment. Generates the device's X25519 static key,
-walks the control plane's device-code flow, and writes the credential and key into
-`~/.local/share/yuke` for the client and daemon to share.
+yuke login (`yuke login`): device-code enrollment. Writes a daemon identity
+(`credentials.json` / `identity.key`) and/or a client Session (`session.json` /
+`session.key`) into `~/.local/share/yuke`. The two files are different principals.
 
 The control-plane client (`src/relay`) is async on an nbio loop; login is a one-shot CLI, so
 `cloud_post` drives that loop synchronously — start one transfer, tick until it settles.
@@ -40,9 +40,13 @@ LOGIN_REQUEST_TIMEOUT :: 30 * time.Second
 // Parsed `yuke login` flags.
 @(private = "file")
 Login_Options :: struct {
-    force: bool,
-    name:  string,
-    cloud: string,
+    force:      bool,
+    name:       string,
+    cloud:      string,
+    role:       string, // daemon | client | both
+    kind:       string, // cli | token; client-only
+    kind_set:   bool,
+    device_ids: []string,
 }
 
 // The `login` subcommand: enroll this device and persist its identity.
@@ -63,23 +67,98 @@ login_run :: proc() {
         os.exit(1)
     }
 
+    have_device := false
+    have_session := false
+    existing_device_id := ""
+    existing_session_id := ""
     if !opts.force {
         existing, ierr := relay.identity_load(dir)
-        if ierr == .None {
-            fmt.printfln(
-                "already enrolled as %s (relay %s); pass --force to re-enroll",
-                existing.device_id,
-                existing.relay_url,
-            )
+        switch ierr {
+        case .None:
+            have_device = true
+            existing_device_id, _ = strings.clone(existing.device_id, context.temp_allocator)
             relay.identity_destroy(&existing)
-
-            return
-        }
-
-        if ierr != .Absent {
-            fmt.eprintfln("yuke login: existing identity is unreadable (%v); pass --force to overwrite", ierr)
+        case .Absent:
+        case .Stale:
+            fmt.eprintfln(
+                "yuke login: stale identity from before the device/session split; delete the files in %s or pass --force",
+                dir,
+            )
+            os.exit(1)
+        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+            fmt.eprintfln("yuke login: existing device identity is unreadable (%v); pass --force to overwrite", ierr)
             os.exit(1)
         }
+        sess, serr := relay.session_identity_load(dir)
+        switch serr {
+        case .None:
+            have_session = true
+            existing_session_id, _ = strings.clone(sess.session_id, context.temp_allocator)
+            relay.session_identity_destroy(&sess)
+        case .Absent, .Stale:
+        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+            fmt.eprintfln("yuke login: existing session identity is unreadable (%v); pass --force to overwrite", serr)
+            os.exit(1)
+        }
+    }
+
+    if opts.role == "" {
+        if !login_stdin_is_tty() {
+            fmt.eprintln("yuke login: scripts must pass --role daemon, client, or both")
+            os.exit(2)
+        }
+        if have_device && have_session {
+            fmt.printfln(
+                "already enrolled as daemon %s and session %s; pass --force to re-enroll",
+                existing_device_id,
+                existing_session_id,
+            )
+            os.exit(0)
+        }
+        opts.role = login_prompt_role(have_device, have_session)
+    }
+
+    want_device := opts.role == "daemon" || opts.role == "both"
+    want_session := opts.role == "client" || opts.role == "both"
+
+    if !opts.force {
+        if want_device && have_device && want_session && have_session {
+            fmt.printfln(
+                "already enrolled as daemon %s and session %s; pass --force to re-enroll",
+                existing_device_id,
+                existing_session_id,
+            )
+            os.exit(0)
+        }
+        if want_device && have_device {
+            fmt.printfln("already enrolled as daemon %s; pass --force to re-enroll", existing_device_id)
+            if !want_session {
+                os.exit(0)
+            }
+            want_device = false
+        }
+        if want_session && have_session {
+            fmt.printfln("already enrolled as session %s; pass --force to re-enroll", existing_session_id)
+            if !want_device {
+                os.exit(0)
+            }
+            want_session = false
+        }
+    }
+
+    intent := "daemon"
+    if want_device && want_session {
+        intent = "both"
+    } else if want_session {
+        intent = "client"
+    } else if want_device {
+        intent = "daemon"
+    } else {
+        os.exit(0)
+    }
+
+    if opts.role != "client" && (opts.kind_set || len(opts.device_ids) > 0) {
+        fmt.eprintln("yuke login: --kind and --device-ids apply only to --role client; ignoring")
     }
 
     if mkerr := os.make_directory_all(dir, LOGIN_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(dir) {
@@ -117,7 +196,25 @@ login_run :: proc() {
     defer curl.client_destroy(&client)
 
     // 1. Request a device code.
-    start_body, enc_err := relay.enroll_start_encode(opts.name, ODIN_OS_STRING, pub_bytes[:], context.temp_allocator)
+    pin: []u8
+    if want_device {
+        pin = pub_bytes[:]
+    }
+    session_kind := ""
+    device_ids: []string
+    if opts.role == "client" {
+        session_kind = opts.kind if opts.kind != "" else "cli"
+        device_ids = opts.device_ids
+    }
+    start_body, enc_err := relay.enroll_start_encode(
+        opts.name,
+        ODIN_OS_STRING,
+        pin,
+        intent,
+        session_kind,
+        device_ids,
+        context.temp_allocator,
+    )
     if enc_err != .None {
         fmt.eprintln("yuke login: could not build the enrollment request")
         os.exit(1)
@@ -174,7 +271,7 @@ login_run :: proc() {
             continue
         }
 
-        outcome, cred, _ := relay.enroll_poll_decode(pstatus, pbody, context.allocator)
+        outcome, cred, _ := relay.enroll_poll_decode(pstatus, pbody, context.allocator, intent)
         delete(pbody, context.allocator)
 
         switch outcome {
@@ -190,32 +287,62 @@ login_run :: proc() {
             os.exit(1)
 
         case .Approved:
-            id := relay.Identity {
-                device_id  = cred.device_id,
-                credential = cred.credential,
-                relay_url  = cred.relay_url,
-                static_key = static_key,
-                allocator  = context.allocator,
-            }
-
-            save_err := relay.identity_save(dir, &id, context.temp_allocator)
-            if save_err != .None {
+            if want_device {
+                id := relay.Identity {
+                    device_id  = cred.device_id,
+                    credential = cred.credential,
+                    relay_url  = cred.relay_url,
+                    static_key = static_key,
+                    allocator  = context.allocator,
+                }
+                save_err := relay.identity_save(dir, &id, context.temp_allocator)
+                if save_err != .None {
+                    relay.identity_destroy(&id)
+                    fmt.eprintfln("yuke login: could not write the device identity to %s: %v", dir, save_err)
+                    os.exit(1)
+                }
+                fmt.printfln("Enrolled daemon %s (relay %s).", cred.device_id, cred.relay_url)
                 relay.identity_destroy(&id)
-                fmt.eprintfln("yuke login: could not write the identity to %s: %v", dir, save_err)
-                os.exit(1)
             }
-
-            fmt.printfln("Enrolled as %s (relay %s).", cred.device_id, cred.relay_url)
-            relay.identity_destroy(&id)
+            if want_session {
+                sess_cred := cred.session_credential if cred.session_credential != "" else cred.credential
+                sess_id := cred.session_id
+                session_key: ecdh.Private_Key
+                sess_kind := "cli"
+                if opts.role == "client" && session_kind != "" {
+                    sess_kind = session_kind
+                }
+                has_key := sess_kind != "token"
+                if has_key && !ecdh.private_key_generate(&session_key, .X25519) {
+                    fmt.eprintln("yuke login: could not generate a session key")
+                    os.exit(1)
+                }
+                sid := relay.Session_Identity {
+                    session_id      = sess_id,
+                    credential      = sess_cred,
+                    relay_url       = cred.relay_url,
+                    local_device_id = cred.device_id if cred.device_id != "" else existing_device_id,
+                    kind            = sess_kind,
+                    static_key      = session_key,
+                    has_static_key  = has_key,
+                    allocator       = context.allocator,
+                }
+                save_err := relay.session_identity_save(dir, &sid, context.temp_allocator)
+                if save_err != .None {
+                    relay.session_identity_destroy(&sid)
+                    fmt.eprintfln("yuke login: could not write the session identity to %s: %v", dir, save_err)
+                    os.exit(1)
+                }
+                fmt.printfln("Enrolled session %s.", sess_id)
+                relay.session_identity_destroy(&sid)
+            }
 
             return
         }
     }
 }
 
-// Parse `yuke login` flags: `--force`, `--name <n>`/`--name=<n>`, `--cloud <url>`/`--cloud=<url>`.
-// `name` defaults to the machine hostname (then `"unknown device"`); `cloud` to `$YUKE_CLOUD_URL`
-// or the hosted default. Returns ok=false on an unknown flag or a missing value, having reported it.
+// Parse `yuke login` flags. Unknown flag or missing value → ok=false.
 @(private = "file")
 login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     opts.cloud = login_default_cloud()
@@ -228,6 +355,41 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
         switch {
         case arg == "--force":
             opts.force = true
+
+        case arg == "--role":
+            i += 1
+            if i >= len(args) {
+                fmt.eprintln("yuke login: --role needs daemon, client, or both")
+                return {}, false
+            }
+            opts.role = args[i]
+
+        case strings.has_prefix(arg, "--role="):
+            opts.role = arg[len("--role="):]
+
+        case arg == "--kind":
+            i += 1
+            if i >= len(args) {
+                fmt.eprintln("yuke login: --kind needs cli or token")
+                return {}, false
+            }
+            opts.kind = args[i]
+            opts.kind_set = true
+
+        case strings.has_prefix(arg, "--kind="):
+            opts.kind = arg[len("--kind="):]
+            opts.kind_set = true
+
+        case arg == "--device-ids":
+            i += 1
+            if i >= len(args) {
+                fmt.eprintln("yuke login: --device-ids needs a comma-separated list")
+                return {}, false
+            }
+            opts.device_ids = login_parse_ids(args[i])
+
+        case strings.has_prefix(arg, "--device-ids="):
+            opts.device_ids = login_parse_ids(arg[len("--device-ids="):])
 
         case arg == "--name":
             i += 1
@@ -267,8 +429,68 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
     if opts.name == "" {
         opts.name = "unknown device"
     }
+    if opts.kind == "" {
+        opts.kind = "cli"
+    }
+    if opts.role != "" && opts.role != "daemon" && opts.role != "client" && opts.role != "both" {
+        fmt.eprintfln("yuke login: --role must be daemon, client, or both")
+        return {}, false
+    }
+    if opts.kind != "cli" && opts.kind != "token" {
+        fmt.eprintfln("yuke login: --kind must be cli or token")
+        return {}, false
+    }
 
     return opts, true
+}
+
+@(private = "file")
+login_prompt_role :: proc(have_device: bool, have_session: bool) -> string {
+    default_choice := "1"
+    if have_device && !have_session {
+        default_choice = "3"
+    } else if have_session && !have_device {
+        default_choice = "2"
+    }
+
+    fmt.println("Enroll this machine as:")
+    fmt.println()
+    fmt.println("  [1] daemon + client   park yuked here and use yuke / the TUI")
+    fmt.println("  [2] daemon only       headless host / CI runner that parks an agent")
+    fmt.println("  [3] client only       no local daemon, or a token for CI")
+    fmt.println()
+    fmt.printf("Choice [%s]: ", default_choice)
+    buf: [32]u8
+    n, _ := os.read(os.stdin, buf[:])
+    line := strings.trim_space(string(buf[:max(n, 0)]))
+    if line == "" {
+        line = default_choice
+    }
+    switch line {
+    case "1":
+        return "both"
+    case "2":
+        return "daemon"
+    case "3":
+        return "client"
+    }
+    fmt.eprintfln("yuke login: unknown choice %q", line)
+    os.exit(1)
+}
+
+@(private = "file")
+login_parse_ids :: proc(raw: string) -> []string {
+    parts := strings.split(raw, ",", context.temp_allocator)
+    n := 0
+    for part in parts {
+        trimmed := strings.trim_space(part)
+        if trimmed == "" {
+            continue
+        }
+        parts[n] = trimmed
+        n += 1
+    }
+    return parts[:n]
 }
 
 // The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the hosted default.

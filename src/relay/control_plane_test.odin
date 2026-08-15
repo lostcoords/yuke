@@ -7,12 +7,8 @@ import "core:testing"
 
 @(test)
 test_enroll_start_encode :: proc(t: ^testing.T) {
-    key: [NOISE_STATIC_KEY_SIZE]u8
-    for i in 0 ..< NOISE_STATIC_KEY_SIZE {
-        key[i] = u8(i)
-    }
-
-    body, err := enroll_start_encode("my-laptop", "darwin", key[:], context.temp_allocator)
+    ids := []string{"pub_laptop", "pub_phone"}
+    body, err := enroll_start_encode("my-laptop", "darwin", nil, "client", "token", ids, context.temp_allocator)
     testing.expect_value(t, err, Control_Error.None)
 
     // The request round-trips to the documented shape.
@@ -20,12 +16,16 @@ test_enroll_start_encode :: proc(t: ^testing.T) {
         name:              string `json:"name"`,
         platform:          string `json:"platform"`,
         static_public_key: string `json:"static_public_key"`,
+        session_kind:      string `json:"session_kind"`,
+        device_ids:        []string `json:"device_ids"`,
     }
     parsed: Parsed
     testing.expect(t, json.unmarshal(body, &parsed, .JSON, context.temp_allocator) == nil, "request is valid JSON")
     testing.expect(t, parsed.name == "my-laptop", "name")
     testing.expect(t, parsed.platform == "darwin", "platform")
-    testing.expect(t, parsed.static_public_key != "", "static_public_key present and base64")
+    testing.expect(t, parsed.session_kind == "token", "session_kind")
+    testing.expect(t, len(parsed.device_ids) == 2, "device_ids")
+    testing.expect(t, parsed.static_public_key == "", "client grant has no pin")
 
     free_all(context.temp_allocator)
 }
@@ -94,6 +94,17 @@ test_enroll_poll_decode :: proc(t: ^testing.T) {
     // A 201 that is missing a field is malformed.
     _, _, mal := enroll_poll_decode(201, transmute([]u8)string(`{"device_id":"d"}`), context.temp_allocator)
     testing.expect_value(t, mal, Control_Error.Malformed)
+
+    client_body := `{"session_id":"sess_1","credential":"yk_sess_x","relay_url":"wss://relay.yuke.sh"}`
+    poll, cred, err = enroll_poll_decode(201, transmute([]u8)client_body, context.temp_allocator, "client")
+    testing.expect_value(t, err, Control_Error.None)
+    testing.expect_value(t, poll, Enroll_Poll.Approved)
+    testing.expect(t, cred.session_id == "sess_1", "client session_id")
+
+    both_body := `{"device_id":"dev-1","credential":"yk_dev_x","session_id":"sess_1","session_credential":"yk_sess_x","relay_url":"wss://relay.yuke.sh"}`
+    poll, cred, err = enroll_poll_decode(201, transmute([]u8)both_body, context.temp_allocator, "both")
+    testing.expect_value(t, err, Control_Error.None)
+    testing.expect(t, cred.session_credential == "yk_sess_x", "both session_credential")
 
     free_all(context.temp_allocator)
 }

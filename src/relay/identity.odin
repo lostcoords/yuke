@@ -1,8 +1,6 @@
-// The device identity both `yuke` and `yuked` share: the control-plane credential and the
-// X25519 static key, read from one config directory (`device-identity.md`: one machine, one
-// device, one login). `yuke login` writes it; the daemon loads the static key as its Noise
-// responder identity and the credential to fetch link tickets, the client the same credential
-// to fetch connect tickets. Credentials are a plain data file, never executable.
+// The daemon (Device) identity: control-plane credential (`yk_dev_…`) and X25519
+// responder static. Used only by `yuked` to park (`link_tickets`). Client
+// identity is `session.json` / `session.key`. Credentials are a plain data file.
 package relay
 
 import "core:crypto/ecdh"
@@ -65,6 +63,9 @@ Identity_Error :: enum {
 
     // A file could not be written.
     Write_Failed,
+
+    // Pre-split files: credential is not `yk_dev_…`. Delete them or pass --force.
+    Stale,
 }
 
 // The JSON shape of `credentials.json`. The X25519 private key is stored separately as raw
@@ -101,6 +102,9 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
 
     if cf.device_id == "" || cf.credential == "" || cf.relay_url == "" {
         return {}, .Malformed
+    }
+    if !strings.has_prefix(cf.credential, "yk_dev_") {
+        return {}, .Stale
     }
 
     key_bytes, key_err := os.read_entire_file(key_path, context.temp_allocator)
@@ -182,7 +186,6 @@ identity_destroy :: proc(id: ^Identity) {
 }
 
 // Write `data` to `path` privately: a fresh temp beside it (0600), fsync, then atomic rename.
-@(private = "file")
 write_private_file :: proc(path: string, data: []byte, allocator: mem.Allocator) -> Identity_Error {
     temp_path, path_aerr := strings.concatenate({path, ".tmp"}, allocator)
     if path_aerr != nil {

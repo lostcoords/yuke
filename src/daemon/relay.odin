@@ -330,7 +330,7 @@ relay_autostart :: proc(d: ^Daemon) {
 
         return
 
-    case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+    case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed, .Stale:
         log.errorf("daemon: device identity unusable (%v); relay disabled", ierr)
 
         return

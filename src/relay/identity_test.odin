@@ -35,7 +35,7 @@ test_identity_roundtrip :: proc(t: ^testing.T) {
 
     id: Identity
     id.device_id = "dev-123"
-    id.credential = "cred-secret"
+    id.credential = "yk_dev_cred-secret"
     id.relay_url = "wss://relay.yuke.sh"
     testing.expect(t, ecdh.private_key_generate(&id.static_key, .X25519), "keygen")
     defer ecdh.private_key_clear(&id.static_key)
@@ -47,7 +47,7 @@ test_identity_roundtrip :: proc(t: ^testing.T) {
     defer identity_destroy(&loaded)
 
     testing.expect(t, loaded.device_id == "dev-123", "device_id roundtrip")
-    testing.expect(t, loaded.credential == "cred-secret", "credential roundtrip")
+    testing.expect(t, loaded.credential == "yk_dev_cred-secret", "credential roundtrip")
     testing.expect(t, loaded.relay_url == "wss://relay.yuke.sh", "relay_url roundtrip")
     testing.expect(t, ecdh.private_key_equal(&loaded.static_key, &id.static_key), "static key roundtrip")
 }
@@ -84,7 +84,7 @@ test_identity_rejects_malformed :: proc(t: ^testing.T) {
         t,
         os.write_entire_file(
             cred_path,
-            transmute([]u8)string(`{"device_id":"d","credential":"c","relay_url":"ws://x"}`),
+            transmute([]u8)string(`{"device_id":"d","credential":"yk_dev_c","relay_url":"ws://x"}`),
         ) ==
         nil,
         "write cred",
