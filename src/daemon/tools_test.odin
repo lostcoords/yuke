@@ -19,7 +19,7 @@ tools_start :: proc(t: ^testing.T, d: ^Daemon, name: string, entry: string, expe
     testing.expect_value(t, os.write_entire_file(path, transmute([]byte)entry), nil)
 
     loop := nbio.current_thread_event_loop()
-    testing.expect_value(t, start(d, loop, {host = "127.0.0.1", port = 0, js_root = root}), expected)
+    testing.expect_value(t, start(d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), expected)
 
     return root
 }

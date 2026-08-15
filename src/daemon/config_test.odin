@@ -40,7 +40,7 @@ entry_start :: proc(t: ^testing.T, name: string, source: string) -> Error {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    err := start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root})
+    err := start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root})
     if err == .None {
         test_teardown(&d)
     }
@@ -77,7 +77,7 @@ test_define_config_supersedes_options :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect(t, d.config_seen, "defineConfig was recorded")
@@ -122,7 +122,7 @@ test_define_config_reads_a_secret_with_top_level_await :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect_value(t, d.auth_token, TEST_TOKEN)
@@ -149,7 +149,7 @@ test_entry_without_define_config_runs_on_defaults :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect(t, !d.config_seen, "no defineConfig call was recorded")
@@ -255,7 +255,7 @@ test_define_config_reads_allowed_origins :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     if testing.expect_value(t, len(d.allowed_origins), 2) {
@@ -309,7 +309,7 @@ test_define_config_keeps_the_launcher_port :: proc(t: ^testing.T) {
     // coincidental default.
     PORT :: 43219
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = PORT, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = PORT, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect_value(t, bound_port(&d), PORT)

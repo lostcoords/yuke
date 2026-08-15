@@ -9,11 +9,11 @@ import "core:strings"
 import "libs:offload"
 import js "src:js"
 
-// File name of the daemon script entry, evaluated from the script root at startup.
+// File name of the daemon script entry, evaluated from the config directory at startup.
 JS_ENTRY_FILE :: "yuked.js"
 
-// Bring up the script tier: a configured root directory installs the shared host modules plus
-// `yuke:daemon`. No base — a daemon serves many workspaces, so every script path is absolute.
+// Bring up the script tier: a config directory that exists installs the shared host modules
+// plus `yuke:daemon`. No base — a daemon serves many workspaces, so every script path is absolute.
 js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     assert(d != nil, "js_init needs daemon state")
     assert(offload.pool_is_running(&d.workers), "the script tier offloads onto a running pool")
@@ -23,19 +23,13 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     modules: [4]js.Module
     count := 0
 
-    if root != "" {
-        if !os.is_dir(root) {
-            log.errorf("daemon: js root unusable: %s", root)
-
-            return .Invalid_Options
-        }
-
+    if root != "" && os.is_dir(root) {
         cloned, clone_err := strings.clone(root, allocator)
         if clone_err != nil {
             return .Out_Of_Memory
         }
 
-        d.js_root = cloned
+        d.config_dir = cloned
         modules[count] = js.fs_module()
         count += 1
         modules[count] = js.exec_module()
@@ -44,6 +38,10 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
         count += 1
         modules[count] = script_module()
         count += 1
+    } else if root != "" && os.exists(root) {
+        log.errorf("daemon: config dir unusable: %s", root)
+
+        return .Invalid_Options
     }
 
     options := js.Options {
@@ -81,11 +79,11 @@ js_report :: proc(user: rawptr, source: string, text: string) {
 js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, err: Error) {
     assert(d != nil, "js entry needs daemon state")
 
-    if d.js_root == "" {
+    if d.config_dir == "" {
         return false, .None
     }
 
-    path, join_err := filepath.join({d.js_root, JS_ENTRY_FILE}, allocator)
+    path, join_err := filepath.join({d.config_dir, JS_ENTRY_FILE}, allocator)
     if join_err != nil {
         return false, .Out_Of_Memory
     }

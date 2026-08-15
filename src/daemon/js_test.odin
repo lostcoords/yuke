@@ -69,7 +69,7 @@ js_run :: proc(t: ^testing.T, name: string, source: string, files: []Js_Fixture)
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     // Prepended rather than interpolated: `fmt` reads a `{` in the source as a verb.
@@ -133,7 +133,7 @@ test_js_entry_top_level_await_fs :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect_value(t, js_result(t, &d), "entry-tla")
@@ -159,7 +159,7 @@ test_js_unknown_module_is_refused :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     evaluated := js.eval_module(&d.js, "test.js", `import "yuke:nope"`, context.temp_allocator)
@@ -183,7 +183,7 @@ test_js_entry_script_runs_at_startup :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect_value(t, js_result(t, &d), "booted")
@@ -211,12 +211,12 @@ test_js_entry_script_failure_refuses_the_start :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.Script_Failed)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.Script_Failed)
 }
 
 // A root with no entry script is the ordinary case and starts clean.
 @(test)
-test_js_root_without_an_entry_script_starts :: proc(t: ^testing.T) {
+test_config_dir_without_an_entry_script_starts :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     root := test_make_dir("js-no-entry")
@@ -227,7 +227,7 @@ test_js_root_without_an_entry_script_starts :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
     defer test_teardown(&d)
 
     testing.expect(t, d.js.ctx != nil, "a configured root brings up the runtime")
@@ -252,11 +252,11 @@ test_js_unreadable_entry_refuses_the_start :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.Script_Failed)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.Script_Failed)
 }
 
-// Without a root there is nothing to contain paths against, so the module refuses to load
-// rather than reaching an unbounded filesystem. The runtime itself still comes up.
+// An empty config dir (the test-build default) installs no host modules. The runtime still
+// comes up.
 @(test)
 test_js_fs_is_unavailable_without_a_root :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -281,10 +281,9 @@ test_js_fs_is_unavailable_without_a_root :: proc(t: ^testing.T) {
     testing.expect(t, !evaluated, "the host modules should be unavailable without a root")
 }
 
-// A configured root that is not a directory is refused at startup rather than making every
-// later containment check fail as if it were a permission error.
+// A config path that exists and is not a directory is refused at startup.
 @(test)
-test_js_root_must_be_a_directory :: proc(t: ^testing.T) {
+test_config_dir_must_be_a_directory :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     // Drives an error path on purpose; the runner fails on any error-level log, and this
     // test asserts the outcome instead. nbio callbacks inherit this context.
@@ -306,7 +305,7 @@ test_js_root_must_be_a_directory :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = path}), Error.Invalid_Options)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = path}), Error.Invalid_Options)
 }
 
 // The teardown order `destroy` depends on: a host op still in flight is drained before its
@@ -325,7 +324,7 @@ test_js_fs_job_in_flight_survives_shutdown :: proc(t: ^testing.T) {
     loop := nbio.current_thread_event_loop()
 
     d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, js_root = root}), Error.None)
+    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
 
     note, join_err := filepath.join({root, "note.txt"}, context.temp_allocator)
     testing.expect(t, join_err == nil, "the fixture path joins")

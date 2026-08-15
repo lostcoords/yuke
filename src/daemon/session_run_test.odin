@@ -461,13 +461,13 @@ run_fake_session :: proc(t: ^testing.T, d: ^Daemon, id: wire.Session_Id, max_rou
 // session. The caller drives the loop; `run_env_stop` unwinds the whole stack.
 @(private = "file")
 Run_Env :: struct {
-    d:       Daemon,
-    c:       client.Client,
-    obs:     Input_Obs,
-    fake:    Run_Fake,
-    path:    string,
-    js_root: string,
-    session: wire.Session_Id,
+    d:          Daemon,
+    c:          client.Client,
+    obs:        Input_Obs,
+    fake:       Run_Fake,
+    path:       string,
+    config_dir: string,
+    session:    wire.Session_Id,
 }
 
 // `hold` leaves every request unanswered, so a started turn stays live until it is
@@ -496,19 +496,19 @@ run_env_start :: proc(
     base_url := run_fake_start(t, &env.fake, loop, status, content_type, body)
     env.fake.responses = responses
 
-    js_root := ""
+    config_dir := ""
     if entry != "" {
-        js_root = test_make_dir(name)
-        env.js_root = js_root
+        config_dir = test_make_dir(name)
+        env.config_dir = config_dir
 
-        script, join_err := filepath.join({js_root, JS_ENTRY_FILE}, context.temp_allocator)
+        script, join_err := filepath.join({config_dir, JS_ENTRY_FILE}, context.temp_allocator)
         testing.expect(t, join_err == nil, "the entry path joins")
         testing.expect_value(t, os.write_entire_file(script, transmute([]byte)entry), nil)
     }
 
     testing.expect_value(
         t,
-        start(&env.d, loop, {host = "127.0.0.1", port = 0, db_path = env.path, js_root = js_root}),
+        start(&env.d, loop, {host = "127.0.0.1", port = 0, db_path = env.path, config_dir = config_dir}),
         Error.None,
     )
     run_fake_catalog(t, &env.d, base_url)
@@ -529,8 +529,8 @@ run_env_stop :: proc(t: ^testing.T, env: ^Run_Env) {
     run_fake_stop(t, &env.fake)
     testsupport.sqlite_db_remove(env.path)
 
-    if env.js_root != "" {
-        os.remove_all(env.js_root)
+    if env.config_dir != "" {
+        os.remove_all(env.config_dir)
     }
 }
 

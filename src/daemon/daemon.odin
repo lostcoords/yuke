@@ -76,7 +76,7 @@ RELAY_CLOUD_URL_DEFAULT :: "https://platform.yuke.sh"
 DATA_DIR_PERMISSIONS :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 
 // Listen and identity options; zero-valued fields default in `start`. `defineConfig` in
-// `yuked.js` supersedes every field but `daemon_version` and `js_root`.
+// `yuked.js` supersedes every field but `daemon_version` and `config_dir`.
 Options :: struct {
     // Dotted IPv4 bind address (no scheme). Defaults to the front door's `127.0.0.1`.
     host:            string,
@@ -103,9 +103,9 @@ Options :: struct {
     // id. Empty omits it. Same source the relay reads; the manifest never relocates it.
     data_dir:        string,
 
-    // Directory `yuked.js` is read from at startup. Empty runs no script and installs no
-    // host modules. It does not bound the paths a script reaches; see `src/js/path.odin`.
-    js_root:         string,
+    // Directory holding `yuked.js`. Empty uses `paths.config_dir` (the TUI's folder). A
+    // test build treats empty as "no script" so the developer's config is not loaded.
+    config_dir:      string,
 
     // Control-plane base URL the relay fetches link tickets from. Empty defaults to
     // `RELAY_CLOUD_URL_DEFAULT` in `start`.
@@ -248,8 +248,8 @@ Daemon :: struct {
     js:               js.Host,
 
     // @private
-    // Owned clone of `Options.js_root`; empty when no script tier is configured.
-    js_root:          string,
+    // Owned clone of the script directory when it exists; empty when no host modules.
+    config_dir:       string,
 
     // @private
     // Tools `yuked.js` registered, in registration order. Each owns a live JS handler, so
@@ -323,6 +323,23 @@ Conn :: struct {
     shed_counts:        [wire.LIMITS.max_subscriptions]u64,
 }
 
+// Directory `yuked.js` is loaded from. A set `Options.config_dir` wins; otherwise the
+// process config directory, except in tests where empty means no script.
+@(private = "file")
+script_dir_from_options :: proc(options: Options, allocator: mem.Allocator) -> (dir: string, owned: bool) {
+    if options.config_dir != "" {
+        return options.config_dir, false
+    }
+
+    when !ODIN_TEST {
+        resolved := paths.config_dir(allocator)
+
+        return resolved, resolved != ""
+    }
+
+    return "", false
+}
+
 // Begin listening. A synchronous failure returns directly and rolls back the clones
 // and the WebSocket server; past the bind, everything runs on the loop.
 start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator := context.allocator) -> (err: Error) {
@@ -365,7 +382,12 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     // The manifest runs before anything consumes config and supersedes `options` when it calls
     // `defineConfig`. A script tier that won't come up is a start failure.
-    js_err := js_init(d, options.js_root, allocator)
+    dir, dir_owned := script_dir_from_options(options, allocator)
+    defer if dir_owned {
+        delete(dir, allocator)
+    }
+
+    js_err := js_init(d, dir, allocator)
     evaluated := false
     if js_err == .None {
         evaluated, js_err = js_run_entry(d, allocator)
@@ -820,7 +842,7 @@ free_config :: proc(d: ^Daemon) {
     secret.string_destroy(&d.auth_token, d.allocator)
     secret.string_destroy(&d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
-    delete(d.js_root, d.allocator)
+    delete(d.config_dir, d.allocator)
     for o in d.allowed_origins {
         delete(o, d.allocator)
     }
@@ -829,7 +851,7 @@ free_config :: proc(d: ^Daemon) {
     d.device_id = ""
     d.blob_dir = ""
     d.relay_cloud_url = ""
-    d.js_root = ""
+    d.config_dir = ""
     d.allowed_origins = nil
 }
 
