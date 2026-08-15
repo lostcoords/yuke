@@ -371,9 +371,7 @@ token_response_parse :: proc(
         return
     }
 
-    // Codex's identity is in the (mandatory) id_token; xAI's is in the access token
-    // and its id_token may be absent. Pick the token the account is projected from.
-    account_token := access
+    // Only Codex carries an account id, in its mandatory id_token; xAI needs no JWT.
     if provider.kind == .Codex {
         if !id_token_ok || id_token == "" {
             err = .Invalid_Response
@@ -381,22 +379,14 @@ token_response_parse :: proc(
             return
         }
 
-        account_token = id_token
+        account_id, account_err := codex_account_id(id_token, allocator)
+        if account_err != .None {
+            err = account_err
+
+            return
+        }
+        credentials.account_id = account_id
     }
-
-    if account_token == "" {
-        err = .Invalid_Response
-
-        return
-    }
-
-    account_id, account_err := account_id_from_token(provider.kind, account_token, allocator)
-    if account_err != .None {
-        err = account_err
-
-        return
-    }
-    credentials.account_id = account_id
 
     if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
         credentials.expires_at_ms = jwt_expires_at
@@ -532,15 +522,9 @@ refresh_response_parse :: proc(
         return
     }
 
-    // Re-project the account id when the token carrying it was rotated: Codex's
-    // account lives in the id_token, xAI's in the access token.
-    account_token, account_present := access, access_present
-    if provider.kind == .Codex {
-        account_token, account_present = id_token, id_present
-    }
-
-    if account_present {
-        account_id, account_err := account_id_from_token(provider.kind, account_token, allocator)
+    // Re-project the Codex account id when its id_token rotates; xAI has none.
+    if provider.kind == .Codex && id_present {
+        account_id, account_err := codex_account_id(id_token, allocator)
         if account_err != .None {
             err = account_err
 

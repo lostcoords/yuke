@@ -1,7 +1,5 @@
 package oauth
 
-import "core:strings"
-
 // xAI Grok OAuth: standard OAuth 2.0 + RFC 8628, PKCE S256, public client.
 // Endpoints from OIDC discovery at auth.x.ai; client-identity param is `referrer`.
 XAI_PROVIDER_ID :: "xai-grok"
@@ -46,30 +44,4 @@ xai_descriptor := Provider {
     refresh_lead_ms            = XAI_REFRESH_LEAD_MS,
     refresh_fallback_ms        = XAI_REFRESH_FALLBACK_MS,
     refresh_permanent_codes    = XAI_REFRESH_PERMANENT_CODES[:],
-}
-
-// Project the xAI account id from the access token: `principal_id` (fallback
-// `sub`). Reads an already-transport-authenticated JWT; does not verify the sig.
-xai_account_id :: proc(token: string, allocator := context.allocator) -> (account_id: string, err: OAuth_Error) {
-    value, object, parse_err := jwt_payload_object(token, allocator)
-    if parse_err != .None {
-        return "", parse_err
-    }
-    defer secret_json_destroy(value, allocator)
-
-    subject, subject_ok := json_string_member(object, "principal_id")
-    if !subject_ok || subject == "" {
-        subject, subject_ok = json_string_member(object, "sub")
-    }
-    if !subject_ok || subject == "" || len(subject) > 256 {
-        return "", .Invalid_Response
-    }
-
-    cloned, aerr := strings.clone(subject, allocator)
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
-    account_id = cloned
-
-    return account_id, .None
 }

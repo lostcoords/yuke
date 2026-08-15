@@ -1,7 +1,5 @@
 package oauth
 
-import "core:mem"
-
 // Authentication-capable providers. This one discriminator selects the
 // descriptor and every provider-specific OAuth behavior.
 Kind :: enum {
@@ -84,18 +82,4 @@ kind_from_id :: proc(id: string) -> (Kind, bool) {
     }
 
     return {}, false
-}
-
-// Project the durable account id from the token selected by `kind`.
-@(private)
-account_id_from_token :: proc(kind: Kind, token: string, allocator: mem.Allocator) -> (string, OAuth_Error) {
-    switch kind {
-    case .Codex:
-        return codex_account_id(token, allocator)
-
-    case .Xai:
-        return xai_account_id(token, allocator)
-    }
-
-    unreachable()
 }
