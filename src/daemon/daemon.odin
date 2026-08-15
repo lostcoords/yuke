@@ -397,6 +397,11 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return js_err
     }
 
+    // Startup is over: later host ops must carry a run signal so a cancel stops them.
+    if evaluated {
+        js.cancel_enforce(&d.js)
+    }
+
     // Backs the config decode; proc-scoped because `host`/`db_path` are read later in `start`.
     config_scratch: [16 * mem.Kilobyte]byte
 

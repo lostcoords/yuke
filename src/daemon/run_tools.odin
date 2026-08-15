@@ -83,7 +83,6 @@ run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Too
     }
 
     argv := [2]qjs.Value{args, run.cancel_signal}
-    js.cancel_enforce(&run.daemon.js)
     result := js.call_value(&run.daemon.js, tool.handler, qjs.undefined(), argv[:])
     qjs.free_value(ctx, args)
 

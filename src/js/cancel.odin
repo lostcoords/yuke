@@ -15,9 +15,8 @@ Cancel_Scope :: struct {
     aborted:   bool,
 }
 
-// Once tool execution begins, every later host operation in this daemon runtime carries a
-// run signal. The latch outlives abandoned promises, so a canceled continuation cannot
-// omit its signal to escape cancellation. Startup entry modules run before it is enabled.
+// After `yuked.js` finishes, every later host op must carry a run signal. Startup
+// top-level await may omit it; a canceled continuation cannot.
 cancel_enforce :: proc(h: ^Host) {
     assert(h != nil && h.ctx != nil, "enforcing cancellation needs a live host")
 
