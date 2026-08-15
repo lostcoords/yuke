@@ -11,8 +11,8 @@ import "src:paths"
 ROOT_ENV :: "YUKED_ROOT"
 
 // The script root: `YUKED_ROOT` when set, else the shared config directory when it exists on
-// disk. Empty leaves the script tier off — `js.init` rejects a root that is not a directory, so
-// an absent config directory reads as "no manifest", not a start failure. Caller owns the result.
+// disk. Empty means no `yuked.js` and no host modules; an absent config directory is not a
+// start failure. Caller owns the result.
 script_root :: proc(allocator := context.allocator) -> string {
     if override, set := os.lookup_env(ROOT_ENV, allocator); set {
         expanded := paths.expand_home(override, allocator)

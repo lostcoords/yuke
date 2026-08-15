@@ -24,8 +24,8 @@ Daemon_Tool :: struct {
     handler:      qjs.Value,
 }
 
-// `defineTool(name, definition)` — register a tool the model may call, returning the definition so
-// `export default defineTool(...)` reads naturally. A repeat name replaces the first.
+// `defineTool(name, definition)` — register a tool the model may call. A name registered twice
+// replaces the first.
 define_tool :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
 
