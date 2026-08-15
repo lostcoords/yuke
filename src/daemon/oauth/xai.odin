@@ -28,6 +28,7 @@ XAI_REFRESH_PERMANENT_CODES := [?]string{"invalid_grant"}
 xai_descriptor := Provider {
     kind                       = .Xai,
     id                         = XAI_PROVIDER_ID,
+    catalog_source_id          = "xai",
     client_id                  = XAI_CLIENT_ID,
     scope                      = XAI_SCOPE,
     authorize_url              = XAI_AUTHORIZE_URL,

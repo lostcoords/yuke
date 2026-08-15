@@ -16,6 +16,9 @@ Provider :: struct {
     // Stable id used by durable credentials and on the wire.
     id:                         string,
 
+    // models.dev source key for this identity's catalog; empty if not feed-sourced.
+    catalog_source_id:          string,
+
     // Public OAuth client id. These are desktop clients with no secret.
     client_id:                  string,
 

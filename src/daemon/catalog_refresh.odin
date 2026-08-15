@@ -4,6 +4,7 @@ import "core:mem"
 import "core:mem/virtual"
 
 import catalog "src:daemon/catalog"
+import "src:daemon/oauth"
 import store "src:daemon/store"
 import wire "src:wire"
 
@@ -21,13 +22,21 @@ catalog_selections_build :: proc(
 
     selections.allocator = allocator
 
-    // A credential's provider id is also its models.dev source id, and the statuses are
-    // already unique per provider, so the list needs no deduplication of its own.
+    // The source key defaults to the provider id; an OAuth identity overrides it, and an
+    // empty override drops the provider from the feed. Statuses are already unique.
     statuses := store.credential_statuses_load(d.store, allocator) or_return
     for status in statuses {
+        source_id := status.provider_id
+        if kind, is_oauth := oauth.kind_from_id(status.provider_id); is_oauth {
+            source_id = oauth.provider(kind).catalog_source_id
+            if source_id == "" {
+                continue
+            }
+        }
+
         if _, append_err := append(
             &selections,
-            catalog.Selection{provider_id = wire.Provider_Id(status.provider_id), source_id = status.provider_id},
+            catalog.Selection{provider_id = wire.Provider_Id(status.provider_id), source_id = source_id},
         ); append_err != nil {
             return selections, .Alloc_Failed
         }

@@ -61,10 +61,17 @@ test_catalog_selections_build_from_credentials :: proc(t: ^testing.T) {
     s := catalog_test_store(t, &d)
     defer store.close(s)
 
-    // A saved credential is the whole selection rule: a provider is imported because this
-    // daemon can authenticate to it, and each one names itself as its models.dev source.
     testing.expect_value(t, store.credential_api_key_upsert(s, "openai", "sk-test"), nil)
     testing.expect_value(t, store.credential_api_key_upsert(s, "anthropic", "sk-test-2"), nil)
+
+    // xai-grok overrides its source to "xai"; openai-codex declares none and drops out.
+    oauth_cred := store.OAuth_Credential {
+        access_token  = "a-token",
+        refresh_token = "r-token",
+        expires_at_ms = 1,
+    }
+    testing.expect_value(t, store.credential_oauth_upsert(s, "xai-grok", oauth_cred), nil)
+    testing.expect_value(t, store.credential_oauth_upsert(s, "openai-codex", oauth_cred), nil)
 
     arena: virtual.Arena
     testing.expect_value(t, virtual.arena_init_growing(&arena), nil)
@@ -72,10 +79,11 @@ test_catalog_selections_build_from_credentials :: proc(t: ^testing.T) {
 
     selections, err := catalog_selections_build(&d, virtual.arena_allocator(&arena))
     testing.expect_value(t, err, nil)
-    testing.expect_value(t, len(selections), 2)
+    testing.expect_value(t, len(selections), 3)
 
     found_anthropic := false
     found_openai := false
+    found_xai := false
     for selection in selections {
         switch string(selection.provider_id) {
         case "anthropic":
@@ -85,9 +93,17 @@ test_catalog_selections_build_from_credentials :: proc(t: ^testing.T) {
         case "openai":
             found_openai = true
             testing.expect_value(t, selection.source_id, "openai")
+
+        case "xai-grok":
+            found_xai = true
+            testing.expect_value(t, selection.source_id, "xai")
+
+        case "openai-codex":
+            testing.expect(t, false, "Codex declares no models.dev source and must not be selected")
         }
     }
 
     testing.expect(t, found_anthropic, "a provider with a saved credential is selected")
     testing.expect(t, found_openai, "a provider with a saved credential is selected")
+    testing.expect(t, found_xai, "an OAuth provider is selected under its declared source")
 }

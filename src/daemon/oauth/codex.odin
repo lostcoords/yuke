@@ -30,6 +30,7 @@ CODEX_REFRESH_PERMANENT_CODES := [?]string {
 codex_descriptor := Provider {
     kind                       = .Codex,
     id                         = CODEX_PROVIDER_ID,
+    catalog_source_id          = "",
     client_id                  = CODEX_CLIENT_ID,
     scope                      = CODEX_SCOPE,
     authorize_url              = CODEX_AUTHORIZE_URL,
