@@ -69,14 +69,24 @@ login_run :: proc() {
 
     have_device := false
     have_session := false
+
+    // Owned on the heap, not the temp arena: `existing_device_id` is borrowed into the session
+    // save-view far below, past the poll loop, and a persisted field must not alias reusable
+    // temp memory. Freed at proc exit for the normal return; os.exit paths leave it to the OS.
     existing_device_id := ""
     existing_session_id := ""
+    defer if len(existing_device_id) > 0 {
+        delete(existing_device_id, context.allocator)
+    }
+    defer if len(existing_session_id) > 0 {
+        delete(existing_session_id, context.allocator)
+    }
     if !opts.force {
         existing, ierr := relay.identity_load(dir)
         switch ierr {
         case .None:
             have_device = true
-            existing_device_id, _ = strings.clone(existing.device_id, context.temp_allocator)
+            existing_device_id, _ = strings.clone(existing.device_id, context.allocator)
             relay.identity_destroy(&existing)
         case .Absent:
         case .Stale:
@@ -93,7 +103,7 @@ login_run :: proc() {
         switch serr {
         case .None:
             have_session = true
-            existing_session_id, _ = strings.clone(sess.session_id, context.temp_allocator)
+            existing_session_id, _ = strings.clone(sess.session_id, context.allocator)
             relay.session_identity_destroy(&sess)
         case .Absent, .Stale:
         case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
