@@ -1,7 +1,6 @@
 package store
 
 import "core:mem"
-import "core:strings"
 
 import "src:daemon/store/queries"
 import "src:secret"
@@ -100,7 +99,7 @@ credential_statuses_load :: proc(
             return nil, .Invalid_Row
         }
 
-        provider_id := credential_clone(row.provider_id, allocator) or_return
+        provider_id := string_clone(row.provider_id, allocator) or_return
         if _, append_err := append(&list, Credential_Status{provider_id = provider_id, kind = kind});
            append_err != nil {
             delete(provider_id, allocator)
@@ -240,7 +239,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
         return {}, .Invalid_Row
     }
 
-    credential.provider_id = credential_clone(row.provider_id, allocator) or_return
+    credential.provider_id = string_clone(row.provider_id, allocator) or_return
     credential.kind = kind
 
     switch kind {
@@ -260,7 +259,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
             return credential, .Invalid_Row
         }
 
-        credential.api_key = credential_clone(api_key, allocator) or_return
+        credential.api_key = string_clone(api_key, allocator) or_return
 
     case .OAuth:
         _, has_api_key := row.api_key.?
@@ -284,26 +283,15 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
             return credential, .Invalid_Row
         }
 
-        credential.access_token = credential_clone(access_token, allocator) or_return
-        credential.refresh_token = credential_clone(refresh_token, allocator) or_return
+        credential.access_token = string_clone(access_token, allocator) or_return
+        credential.refresh_token = string_clone(refresh_token, allocator) or_return
         credential.expires_at_ms = expires_at_ms
         if has_account {
-            credential.account_id = credential_clone(account_id, allocator) or_return
+            credential.account_id = string_clone(account_id, allocator) or_return
         }
     }
 
     return credential, nil
-}
-
-@(private)
-credential_clone :: proc(value: string, allocator: mem.Allocator) -> (owned: string, err: Error) {
-    alloc_err: mem.Allocator_Error
-    owned, alloc_err = strings.clone(value, allocator)
-    if alloc_err != nil {
-        return "", .Alloc_Failed
-    }
-
-    return owned, nil
 }
 
 @(private)

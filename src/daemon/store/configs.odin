@@ -61,18 +61,6 @@ session_config :: proc(
     assert(allocator.procedure != nil, "a config read needs an allocator")
 
     row, sqlite_err := queries.session_config(&s.queries, {session_id = session, requested_rev = revision}, allocator)
-    return config_read_result(row, sqlite_err)
-}
-
-@(private)
-config_read_result :: proc(
-    row: queries.Session_Config_Row,
-    sqlite_err: sqlite.Error,
-) -> (
-    config: wire.Run_Config,
-    found: bool,
-    err: Error,
-) {
     if sqlite_err != nil {
         if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
             return {}, false, nil

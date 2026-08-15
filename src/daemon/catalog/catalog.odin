@@ -264,6 +264,7 @@ model_clone :: proc(
 }
 
 // Clone a bounded slice of owned strings. An empty input yields nil, not an allocation.
+@(private)
 string_slice_clone :: proc(
     values: []string,
     allocator: mem.Allocator,

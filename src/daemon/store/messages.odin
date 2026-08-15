@@ -213,13 +213,9 @@ projection_rebuild_visit :: proc(user: rawptr, event: Event) -> Event_Visit {
 
     rebuild.last = event.seq
 
-    // Every durable name projects something — transcript, config, or open run — so all
-    // five decode.
-    #partial switch event.name {
-    case .Message_Committed, .Transcript_Truncated, .Config_Changed, .Run_Started, .Run_Done:
-    case:
-        return .Continue
-    }
+    // Every durable name projects something — transcript, config, or open run — and the walk
+    // already refused every row that is not durable, so all five decode.
+    assert(wire.broadcast_name_class(event.name) == .Durable_Gated, "a replay visits only durable events")
 
     data, decode_err := durable_decode(event.name, event.payload, rebuild.scratch)
     if decode_err != nil {

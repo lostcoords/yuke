@@ -657,20 +657,35 @@ start_rollback :: proc(d: ^Daemon) {
         nbio.run_until(&d.provider_auth.callback.shutdown_complete)
     }
 
-    // Drain first: a completion in flight settles a promise in the context js.destroy frees.
+    teardown_release(d)
+}
+
+// Release everything `start` built, in the order ownership requires. Shared by `destroy` and
+// the rollback path, which arrive from different states: every step tolerates a resource
+// `start` never reached, and the preconditions each path owes are asserted by its caller.
+@(private = "file")
+teardown_release :: proc(d: ^Daemon) {
+    assert(d != nil, "daemon teardown needs daemon state")
+
+    // Drain first: draining runs every outstanding completion on this loop, and a `yuke:fs`
+    // completion settles a promise in the context released just below.
     workers_stop(d)
     provider_auth_destroy(d)
     catalog_refresh_destroy(d)
     run_service_destroy(&d.runs)
     tools_destroy(d)
     js.destroy(&d.js)
-    store_close(d)
 
     // Unset loop means the transport never came up.
     if d.ws_server.loop != nil {
         ws.server_destroy(&d.ws_server)
     }
 
+    relay_destroy(d)
+    http_server.destroy(&d.front_door)
+    assert(len(d.conns) == 0, "connections outlived the transport that owned them")
+
+    store_close(d)
     virtual.arena_check_temp(&d.pump_scratch)
     virtual.arena_destroy(&d.pump_scratch)
     virtual.arena_check_temp(&d.frame_scratch)
@@ -762,31 +777,7 @@ destroy :: proc(d: ^Daemon) {
     assert(js.ops_idle(&d.js), "destroy before JavaScript host operations drained")
     assert(d.fs_jobs == 0, "destroy with filesystem jobs in flight")
 
-    // Order matters: draining runs every outstanding completion on this loop, and a
-    // `yuke:fs` completion settles a promise in the context released just below.
-    workers_stop(d)
-    provider_auth_destroy(d)
-    catalog_refresh_destroy(d)
-    run_service_destroy(&d.runs)
-    tools_destroy(d)
-    js.destroy(&d.js)
-    ws.server_destroy(&d.ws_server)
-    relay_destroy(d)
-    http_server.destroy(&d.front_door)
-    assert(len(d.conns) == 0, "connections outlived the transport that owned them")
-
-    store_close(d)
-    virtual.arena_check_temp(&d.pump_scratch)
-    virtual.arena_destroy(&d.pump_scratch)
-    virtual.arena_check_temp(&d.frame_scratch)
-    virtual.arena_destroy(&d.frame_scratch)
-    virtual.arena_check_temp(&d.turn_scratch)
-    virtual.arena_destroy(&d.turn_scratch)
-    delete(d.conns)
-    d.conns = nil
-    delete(d.sessions)
-    d.sessions = nil
-    free_config(d)
+    teardown_release(d)
 }
 
 // Close the event store and drop the pump's tracked marks. Idempotent, so every
@@ -1196,7 +1187,7 @@ method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator
 
 // `workspace.describe` on a real path: the path walk is offloaded, and the completion
 // reports the derived id, basename title, git branch, and directory mtime. A missing
-// path or non-directory is `Bad_Request`; no session engine yet, so no `last_used_model`.
+// path or non-directory is `Bad_Request`. `last_used_model` is not reported yet.
 method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
     assert(conn != nil, "workspace.describe needs connection state")
     assert(conn.state == .Ready, "workspace.describe ran outside Ready")
@@ -1295,8 +1286,9 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     return true
 }
 
-// Answer `initialize` with the daemon snapshot. No session engine or catalog exists yet,
-// so the snapshot is empty; capabilities advertise only what this config offers.
+// Answer `initialize` with the daemon snapshot: the workspace registry page, the session
+// and catalog revisions, and catalog health. Profiles and agents are not modeled yet;
+// capabilities advertise only what this config offers.
 send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "initialize send needs connection state")
     assert(conn.daemon != nil, "initialize send needs daemon state")

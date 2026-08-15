@@ -150,7 +150,9 @@ run_tools_poll :: proc(run: ^Run) {
                 run_tool_raise(run, &block, index, "tool output was not JSON-serializable")
             }
         } else {
-            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = run_tool_message(run, value)})
+            // `String(e)` rather than JSON: an Error serializes to an empty object, and its
+            // message is the whole point.
+            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = run_tool_clone(run, value)})
         }
 
         qjs.free_value(ctx, value)
@@ -207,13 +209,26 @@ run_tool_settle :: proc(
         return
     }
 
+    elapsed: u64
+
+    if duration, supplied := duration_ms.?; supplied {
+        elapsed = duration
+    } else {
+        assert(block.tool_started > 0, "a settled tool has a start time")
+        elapsed = now_ms() - block.tool_started
+    }
+
+    final := state
     bytes := 0
-    switch value in state {
+
+    switch &value in final {
     case wire.Tool_State_Completed:
         bytes = len(value.output)
+        value.duration_ms = elapsed
 
     case wire.Tool_State_Error:
         bytes = len(value.error)
+        value.duration_ms = elapsed
 
     case wire.Tool_State_Pending,
          wire.Tool_State_Waiting_Permission,
@@ -225,32 +240,6 @@ run_tool_settle :: proc(
 
     if !run_string_add(run, bytes) {
         return
-    }
-
-    elapsed: u64
-
-    if duration, supplied := duration_ms.?; supplied {
-        elapsed = duration
-    } else {
-        assert(block.tool_started > 0, "a settled tool has a start time")
-        elapsed = now_ms() - block.tool_started
-    }
-
-    final := state
-
-    switch &value in final {
-    case wire.Tool_State_Completed:
-        value.duration_ms = elapsed
-
-    case wire.Tool_State_Error:
-        value.duration_ms = elapsed
-
-    case wire.Tool_State_Pending,
-         wire.Tool_State_Waiting_Permission,
-         wire.Tool_State_Running,
-         wire.Tool_State_Denied,
-         wire.Tool_State_Canceled:
-        assert(false, "settling a tool needs a terminal execution state")
     }
 
     run_tool_state_set(run, block, index, final)
@@ -292,7 +281,7 @@ run_tool_exception :: proc(run: ^Run) -> string {
 
     defer qjs.free_value(ctx, thrown)
 
-    return run_tool_message(run, thrown)
+    return run_tool_clone(run, thrown)
 }
 
 // A handler's value as the text the model reads. A string is its own output; anything else is
@@ -332,15 +321,6 @@ run_tool_output :: proc(run: ^Run, value: qjs.Value) -> (string, bool) {
     defer qjs.free_value(ctx, encoded)
 
     return run_tool_clone(run, encoded), true
-}
-
-// A failure as the text the model reads. `String(e)` rather than JSON: an Error serializes to
-// an empty object, and its message is the whole point.
-@(private = "file")
-run_tool_message :: proc(run: ^Run, value: qjs.Value) -> string {
-    assert(run != nil, "reading a tool failure needs its run")
-
-    return run_tool_clone(run, value)
 }
 
 @(private = "file")

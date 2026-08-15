@@ -66,22 +66,9 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    cursor: Maybe(store.Session_Cursor)
-    if token, paging := params.cursor.?; paging {
-        position, valid := session_cursor_decode(token, filter)
-
-        if !valid {
-            send_error(conn, req.id, .Bad_Request, "malformed session.list cursor", sa)
-            return
-        }
-
-        cursor = position
-    }
-
-    // Already validated to be within bounds; default when omitted.
-    limit := wire.LIMITS.default_session_list_page_size
-    if requested, ok := params.limit.?; ok {
-        limit = int(requested)
+    cursor, limit, window_ok := session_list_window(conn, req, filter, sa)
+    if !window_ok {
+        return
     }
 
     // One row past the page, so a continuation is minted only when a further row exists
@@ -144,32 +131,55 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     send_result(conn, req.id, result, sa)
 }
 
-// `session.list` at `view = active`: paged over the engine's map instead of SQL, on the
-// same keyset and cursor grammar, so a client pages both views identically.
+// The page both views open on: the resume position a cursor names and the page size. Both
+// grammars are identical, so a client pages the SQL view and the engine view the same way.
+// Answers `Bad_Request` itself; `false` means the request is already answered.
 @(private = "file")
-session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Session_Filter, sa: mem.Allocator) {
-    d := conn.daemon
+session_list_window :: proc(
+    conn: ^Conn,
+    req: wire.Request,
+    filter: store.Session_Filter,
+    sa: mem.Allocator,
+) -> (
+    cursor: Maybe(store.Session_Cursor),
+    limit: int,
+    ok: bool,
+) {
     params := req.params.(wire.Session_List_Params)
 
-    resume: Maybe(store.Session_Cursor)
     if token, paging := params.cursor.?; paging {
         position, valid := session_cursor_decode(token, filter)
 
         if !valid {
             send_error(conn, req.id, .Bad_Request, "malformed session.list cursor", sa)
 
-            return
+            return nil, 0, false
         }
 
-        resume = position
+        cursor = position
     }
 
-    limit := wire.LIMITS.default_session_list_page_size
-    if requested, ok := params.limit.?; ok {
+    // Already validated to be within bounds; default when omitted.
+    limit = wire.LIMITS.default_session_list_page_size
+    if requested, requested_ok := params.limit.?; requested_ok {
         limit = int(requested)
     }
 
     assert(limit > 0, "a validated page size is positive")
+
+    return cursor, limit, true
+}
+
+// `session.list` at `view = active`: paged over the engine's map instead of SQL, on the
+// same keyset and cursor grammar, so a client pages both views identically.
+@(private = "file")
+session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Session_Filter, sa: mem.Allocator) {
+    d := conn.daemon
+
+    resume, limit, window_ok := session_list_window(conn, req, filter, sa)
+    if !window_ok {
+        return
+    }
 
     items, items_err := make([dynamic]wire.Session_List_Item, 0, len(d.sessions), sa)
     if items_err != nil {

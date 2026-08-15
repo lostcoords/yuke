@@ -93,6 +93,19 @@ read_err :: proc(err: sqlite.Error) -> Error {
     return nil
 }
 
+// Take ownership of a borrowed column value, reporting an allocation failure in this
+// package's own error union. Every reader that clones out of SQLite memory goes through here.
+@(private)
+string_clone :: proc(value: string, allocator: mem.Allocator) -> (owned: string, err: Error) {
+    alloc_err: mem.Allocator_Error
+    owned, alloc_err = strings.clone(value, allocator)
+    if alloc_err != nil {
+        return "", .Alloc_Failed
+    }
+
+    return owned, nil
+}
+
 // The three full-row inserts: their SQL is built by `sqlite.insert_all_sql` from
 // their (schema-generated) parameter structs, not from `queries/`, so they are
 // bound directly rather than through the generated `Queries` registry.

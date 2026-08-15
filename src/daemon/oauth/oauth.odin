@@ -54,6 +54,7 @@ credentials_destroy :: proc(credentials: ^OAuth_Credentials, allocator := contex
     credentials^ = {}
 }
 
+@(private)
 credentials_clone :: proc(
     source: OAuth_Credentials,
     allocator := context.allocator,

@@ -251,8 +251,8 @@ fs_job_done :: proc(job: ^Fs_Job) {
     }
 }
 
-// Emit the `workspace.describe` result from what the pass found. With no session engine
-// yet, there is no `last_used_model`.
+// Emit the `workspace.describe` result from what the pass found. `last_used_model` is not
+// reported yet.
 workspace_send_describe :: proc(conn: ^Conn, job: ^Fs_Job) {
     assert(job.kind == .Describe, "describe result built from another job")
     assert(len(job.canonical) > 0, "a completed describe has a canonical root")

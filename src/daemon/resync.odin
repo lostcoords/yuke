@@ -183,7 +183,7 @@ resync_config_add :: proc(
     assert(out != nil, "collecting configs needs its accumulator")
     assert(s != nil, "collecting configs needs a store")
 
-    if _, collected := resync_config_find(out[:], rev); collected {
+    if resync_config_collected(out[:], rev) {
         return .None
     }
 
@@ -201,14 +201,14 @@ resync_config_add :: proc(
     return .None
 }
 
-// Find a revision already collected for this cut.
+// Whether this cut already collected `rev`.
 @(private)
-resync_config_find :: proc(configs: []wire.Run_Config, rev: wire.Config_Rev) -> (cfg: wire.Run_Config, ok: bool) {
+resync_config_collected :: proc(configs: []wire.Run_Config, rev: wire.Config_Rev) -> bool {
     for candidate in configs {
         if candidate.config_rev == rev {
-            return candidate, true
+            return true
         }
     }
 
-    return {}, false
+    return false
 }

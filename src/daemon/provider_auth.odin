@@ -1184,16 +1184,13 @@ provider_state :: proc(d: ^Daemon, kind: oauth.Kind) -> wire.Auth_Provider {
     }
 }
 
-provider_credential_kind :: proc(kind: store.Credential_Kind) -> wire.Auth_Credential_Kind {
-    switch kind {
-    case .Api_Key:
-        return .Api_Key
-
-    case .OAuth:
-        return .OAuth
-    }
-
-    unreachable()
+// Stored credential kinds and their wire kinds are separate closed sets that happen to
+// correspond. Indexed by the enum, so a new stored kind fails the build rather than
+// defaulting silently.
+@(private = "file", rodata)
+CREDENTIAL_KIND_WIRE := [store.Credential_Kind]wire.Auth_Credential_Kind {
+    .Api_Key = .Api_Key,
+    .OAuth   = .OAuth,
 }
 
 provider_credential_status :: proc(
@@ -1281,7 +1278,7 @@ method_auth_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
             continue
         }
 
-        append(&providers, provider_stored_state(d, status.provider_id, provider_credential_kind(status.kind)))
+        append(&providers, provider_stored_state(d, status.provider_id, CREDENTIAL_KIND_WIRE[status.kind]))
     }
     for kind in oauth.Kind {
         provider := oauth.provider(kind)
