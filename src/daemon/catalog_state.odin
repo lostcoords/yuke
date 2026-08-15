@@ -1,5 +1,6 @@
 package daemon
 
+import "core:log"
 import "core:mem/virtual"
 
 import catalog "src:daemon/catalog"
@@ -43,6 +44,22 @@ catalog_state_load :: proc(d: ^Daemon) -> store.Error {
     d.catalog.rev = catalog_rev(models, d.catalog.health)
 
     return nil
+}
+
+// A credential-set change makes the held feed validator stale: the next refresh must refetch
+// and re-decode with the new selection. The model set is unchanged, so the revision holds.
+catalog_feed_invalidate :: proc(d: ^Daemon) {
+    assert(d != nil && d.store != nil, "catalog invalidation needs an open store")
+
+    if clear_err := store.catalog_feed_etag_clear(d.store); clear_err != nil {
+        log.errorf("daemon: catalog etag invalidation failed: %v", clear_err)
+
+        return
+    }
+
+    if load_err := catalog_state_load(d); load_err != nil {
+        log.errorf("daemon: catalog reload after invalidation failed: %v", load_err)
+    }
 }
 
 catalog_state_destroy :: proc(d: ^Daemon) {

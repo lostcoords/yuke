@@ -172,6 +172,14 @@ catalog_imported_replace :: proc(s: ^Store, item: model_catalog.Provider, feed_e
     return nil
 }
 
+// Drop every provider's feed validator (etag -> NULL) so the next refresh refetches unconditionally.
+catalog_feed_etag_clear :: proc(s: ^Store) -> Error {
+    assert(s != nil, "catalog_feed_etag_clear needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+
+    return queries.clear_catalog_etag(&s.queries, {})
+}
+
 @(private)
 catalog_provider_insert :: proc(s: ^Store, item: model_catalog.Provider, feed_etag: string) -> Error {
     assert(s != nil, "catalog provider insert needs a store")

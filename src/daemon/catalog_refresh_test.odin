@@ -56,6 +56,26 @@ test_catalog_refresh_apply_preserves_snapshot_on_decode_error :: proc(t: ^testin
 }
 
 @(test)
+test_catalog_feed_invalidate_clears_the_held_etag :: proc(t: ^testing.T) {
+    d: Daemon
+    s := refresh_op_daemon(t, &d)
+    defer store.close(s)
+    defer catalog_state_destroy(&d)
+
+    selections := []catalog.Selection{{provider_id = "openai", source_id = "openai"}}
+    _, err := catalog_refresh_apply(&d, transmute([]byte)REFRESH_FEED, `"feed-1"`, selections)
+    testing.expect_value(t, err, nil)
+    testing.expect_value(t, d.catalog.snapshot.feed_etag, `"feed-1"`)
+
+    rev_before := d.catalog.rev
+    catalog_feed_invalidate(&d)
+
+    // etag drops; revision unchanged.
+    testing.expect_value(t, d.catalog.snapshot.feed_etag, "")
+    testing.expect_value(t, d.catalog.rev, rev_before)
+}
+
+@(test)
 test_catalog_selections_build_from_credentials :: proc(t: ^testing.T) {
     d: Daemon
     s := catalog_test_store(t, &d)

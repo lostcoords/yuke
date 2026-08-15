@@ -71,6 +71,28 @@ test_catalog_round_trips_a_provider_and_its_models :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_catalog_feed_etag_clear_nulls_the_validator :: proc(t: ^testing.T) {
+    s, err := open_memory()
+    testing.expect_value(t, err, nil)
+    defer close(s)
+
+    testing.expect_value(
+        t,
+        catalog_imported_replace(s, test_catalog_provider(t, "openai", "gpt-5"), TEST_CATALOG_ETAG),
+        nil,
+    )
+    testing.expect_value(t, catalog_feed_etag_clear(s), nil)
+
+    catalog, load_err := catalog_load(s)
+    testing.expect_value(t, load_err, nil)
+    defer catalog_destroy(&catalog)
+
+    // etag nulled; providers survive.
+    testing.expect_value(t, catalog.feed_etag, "")
+    testing.expect_value(t, len(catalog.providers), 1)
+}
+
+@(test)
 test_catalog_replace_touches_one_provider :: proc(t: ^testing.T) {
     s, err := open_memory()
     testing.expect_value(t, err, nil)

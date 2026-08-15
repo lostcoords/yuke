@@ -603,6 +603,7 @@ provider_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
             } else {
                 removed := provider_credentials_remove(d, provider.kind)
                 assert(removed, "an active refresh has live credentials")
+                catalog_feed_invalidate(d)
                 auth_changed_broadcast(d, provider.kind)
             }
             provider_refresh_schedule(d)
@@ -982,6 +983,7 @@ provider_persist_login_response :: proc(d: ^Daemon) {
     }
 
     provider_credentials_install(d, login.kind, &credentials)
+    catalog_feed_invalidate(d)
     provider_login_finish(d, wire.Auth_Login_Outcome_Succeeded{})
 }
 
@@ -1380,6 +1382,7 @@ method_auth_set_api_key :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         return
     }
 
+    catalog_feed_invalidate(d)
     send_result(conn, req.id, wire.Auth_Set_Api_Key_Result{restart_required = true}, sa)
     _ = broadcast(
         d,
@@ -1554,6 +1557,7 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
             provider_api_key_unstage(d, provider_id)
         }
 
+        catalog_feed_invalidate(d)
         send_result(conn, req.id, wire.Empty{}, sa)
         _ = broadcast(d, wire.Auth_Changed_Data{provider = provider_stored_state(d, provider_id, nil)})
         return
@@ -1580,6 +1584,7 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     provider_refresh_timer_cancel(d)
     removed := provider_credentials_remove(d, kind)
     assert(removed, "signed-in provider has live credentials")
+    catalog_feed_invalidate(d)
     send_result(conn, req.id, wire.Empty{}, sa)
     auth_changed_broadcast(d, kind)
     provider_refresh_schedule(d)

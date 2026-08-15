@@ -161,6 +161,8 @@ Delete_Catalog_Provider_Params :: struct {
     provider_id: string,
 }
 
+Clear_Catalog_Etag_Params :: struct {}
+
 Catalog_Size_Params :: struct {}
 
 Insert_Catalog_Provider_Params :: struct {
@@ -347,6 +349,7 @@ Workspace_Page_Params :: struct {
 @(private)
 Query_Id :: enum {
     Delete_Catalog_Provider,
+    Clear_Catalog_Etag,
     Catalog_Size,
     Insert_Catalog_Provider,
     Insert_Catalog_Provider_Env,
@@ -382,6 +385,7 @@ Query_Id :: enum {
 @(private, rodata)
 QUERY_SQL := [Query_Id]string {
     .Delete_Catalog_Provider     = `DELETE FROM catalog_providers WHERE provider_id = :provider_id;`,
+    .Clear_Catalog_Etag          = `UPDATE catalog_providers SET etag = NULL;`,
     .Catalog_Size                = `SELECT
     (SELECT count(*) FROM catalog_providers) AS providers,
     (SELECT count(*) FROM catalog_models) AS models;`,
@@ -513,6 +517,7 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
 
 Queries :: struct {
     delete_catalog_provider:     sqlite.Bind_Mapping(Delete_Catalog_Provider_Params),
+    clear_catalog_etag:          sqlite.Bind_Mapping(Clear_Catalog_Etag_Params),
     catalog_size:                sqlite.Reader(Catalog_Size_Params, Catalog_Size_Row),
     insert_catalog_provider:     sqlite.Bind_Mapping(Insert_Catalog_Provider_Params),
     insert_catalog_provider_env: sqlite.Bind_Mapping(Insert_Catalog_Provider_Env_Params),
@@ -553,6 +558,13 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     )
     assert(delete_catalog_provider_bind_err == .None, "generated statement matches its generated struct")
     queries.delete_catalog_provider = delete_catalog_provider_bind
+    clear_catalog_etag_stmt := sqlite.prepare(db, QUERY_SQL[.Clear_Catalog_Etag]) or_return
+    clear_catalog_etag_bind, clear_catalog_etag_bind_err := sqlite.bind_prepare(
+        clear_catalog_etag_stmt,
+        Clear_Catalog_Etag_Params,
+    )
+    assert(clear_catalog_etag_bind_err == .None, "generated statement matches its generated struct")
+    queries.clear_catalog_etag = clear_catalog_etag_bind
     catalog_size_stmt := sqlite.prepare(db, QUERY_SQL[.Catalog_Size]) or_return
     catalog_size_reader, catalog_size_reader_err := sqlite.reader_prepare(
         catalog_size_stmt,
@@ -792,6 +804,7 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
 
 queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.delete_catalog_provider.statement)
+    sqlite.finalize(queries.clear_catalog_etag.statement)
     sqlite.finalize(queries.catalog_size.statement)
     sqlite.reader_destroy(&queries.catalog_size, allocator)
     sqlite.finalize(queries.insert_catalog_provider.statement)
@@ -837,6 +850,11 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
 delete_catalog_provider :: proc(q: ^Queries, params_in: Delete_Catalog_Provider_Params) -> sqlite.Result {
     params := params_in
     return sqlite.execute(&q.delete_catalog_provider, &params)
+}
+
+clear_catalog_etag :: proc(q: ^Queries, params_in: Clear_Catalog_Etag_Params) -> sqlite.Result {
+    params := params_in
+    return sqlite.execute(&q.clear_catalog_etag, &params)
 }
 
 catalog_size :: proc(

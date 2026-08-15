@@ -2,6 +2,9 @@
 -- provider_id: string!
 DELETE FROM catalog_providers WHERE provider_id = :provider_id;
 
+-- name: Clear_Catalog_Etag :exec
+UPDATE catalog_providers SET etag = NULL;
+
 -- name: Catalog_Size :one
 -- providers: u64!
 -- models: u64!
