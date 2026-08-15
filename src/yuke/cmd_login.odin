@@ -288,12 +288,12 @@ login_run :: proc() {
 
         case .Approved:
             if want_device {
+                // Borrowed save-view: strings alias `cred`, so no allocator to free.
                 id := relay.Identity {
                     device_id  = cred.device_id,
                     credential = cred.credential,
                     relay_url  = cred.relay_url,
                     static_key = static_key,
-                    allocator  = context.allocator,
                 }
                 save_err := relay.identity_save(dir, &id, context.temp_allocator)
                 if save_err != .None {
@@ -317,6 +317,8 @@ login_run :: proc() {
                     fmt.eprintln("yuke login: could not generate a session key")
                     os.exit(1)
                 }
+                // Borrowed save-view: strings alias `cred` and `kind` is a literal, so no
+                // allocator — destroy must not `delete` them.
                 sid := relay.Session_Identity {
                     session_id      = sess_id,
                     credential      = sess_cred,
@@ -325,7 +327,6 @@ login_run :: proc() {
                     kind            = sess_kind,
                     static_key      = session_key,
                     has_static_key  = has_key,
-                    allocator       = context.allocator,
                 }
                 save_err := relay.session_identity_save(dir, &sid, context.temp_allocator)
                 if save_err != .None {
