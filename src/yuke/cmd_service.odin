@@ -185,7 +185,7 @@ service_require_installed :: proc(path: string) {
 }
 
 // XML-escape a value interpolated into a plist (macOS) or a scheduled-task definition (Windows).
-// Filesystem paths rarely contain these, but a home directory or script root that does must not
+// Filesystem paths rarely contain these, but a home directory or log path that does must not
 // produce a malformed unit. Caller owns the result.
 service_xml_escape :: proc(s: string, allocator := context.allocator) -> string {
     // replace_all aliases its input when the pattern is absent; free only real allocations and

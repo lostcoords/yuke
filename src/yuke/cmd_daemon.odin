@@ -19,6 +19,7 @@ import "core:os"
 import "core:time"
 
 import daemon "src:daemon"
+import "src:paths"
 
 // Reported in every `initialize` result. Identifies the build, so it is compiled in rather
 // than configured.
@@ -56,6 +57,11 @@ daemon_run :: proc() {
     logger := log.create_console_logger(.Info)
     defer log.destroy_console_logger(logger)
     context.logger = logger
+
+    if msg := paths.app_name_error(); msg != "" {
+        log.errorf("yuke: %s", msg)
+        os.exit(1)
+    }
 
     // Bootstrap only: `yuked.js` supplies host, port, dataDir, auth_token, and the log level.
     // `start` reads the manifest and fills them in before it binds anything.
