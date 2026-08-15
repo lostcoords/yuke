@@ -75,8 +75,8 @@ unit_render :: proc(allocator := context.allocator) -> string {
     log := service_log_path(context.allocator)
     defer delete(log, context.allocator)
 
-    root, has_root := service_yuked_root(context.allocator)
-    defer delete(root, context.allocator)
+    name, has_name := service_app_name(context.allocator)
+    defer delete(name, context.allocator)
 
     b := strings.builder_make(allocator)
 
@@ -89,8 +89,8 @@ unit_render :: proc(allocator := context.allocator) -> string {
     strings.write_string(&b, "Restart=on-failure\n")
     strings.write_string(&b, "RestartSec=2\n")
 
-    if has_root && root != "" {
-        fmt.sbprintf(&b, "Environment=\"%s=%s\"\n", ROOT_ENV, root)
+    if has_name && name != "" {
+        fmt.sbprintf(&b, "Environment=\"%s=%s\"\n", paths.APP_NAME_ENV, name)
     }
 
     if log != "" {

@@ -32,7 +32,8 @@ COMMANDS := []Command {
         summary = "run the session daemon in the foreground",
         detail = {
             "Runs the front door, event store, and script tier attached to this terminal.",
-            "Configuration comes from yuked.js and $YUKED_ROOT.",
+            "Configuration comes from yuked.js under the process config directory",
+            "(`$YUKE_APPNAME` when set, else `yuke`).",
             "",
             "To run it unattended instead, install it as a background service: see",
             "`yuke help service`.",
@@ -46,7 +47,7 @@ COMMANDS := []Command {
             "Install the daemon under this platform's native supervisor so it starts at",
             "login and restarts on crash — launchd on macOS, systemd (user) on Linux, Task",
             "Scheduler on Windows. The service runs `yuke daemon` from this binary and keeps",
-            "$YUKED_ROOT when it is set.",
+            "$YUKE_APPNAME when it is set.",
             "",
             "  yuke service install [--force]   register the service (--force overwrites)",
             "  yuke service uninstall           remove it",

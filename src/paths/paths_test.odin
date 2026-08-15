@@ -31,6 +31,10 @@ test_config_dir_honors_xdg_on_unix :: proc(t: ^testing.T) {
     defer sync.mutex_unlock(&env_lock)
 
     when ODIN_OS != .Windows {
+        app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+        defer env_restore(APP_NAME_ENV, app_prior, app_had)
+        os.unset_env(APP_NAME_ENV)
+
         prior, had := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
         defer env_restore("XDG_CONFIG_HOME", prior, had)
 
@@ -49,6 +53,10 @@ test_config_dir_falls_back_to_home_dot_config :: proc(t: ^testing.T) {
     defer sync.mutex_unlock(&env_lock)
 
     when ODIN_OS != .Windows {
+        app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+        defer env_restore(APP_NAME_ENV, app_prior, app_had)
+        os.unset_env(APP_NAME_ENV)
+
         xdg_prior, xdg_had := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
         home_prior, home_had := os.lookup_env(HOME_ENV, context.temp_allocator)
         defer env_restore("XDG_CONFIG_HOME", xdg_prior, xdg_had)
@@ -69,6 +77,10 @@ test_config_dir_names_the_app_directory :: proc(t: ^testing.T) {
     sync.mutex_lock(&env_lock)
     defer sync.mutex_unlock(&env_lock)
 
+    app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+    defer env_restore(APP_NAME_ENV, app_prior, app_had)
+    os.unset_env(APP_NAME_ENV)
+
     testing.expect_value(t, APP_DIR, "yuke")
 
     dir := config_dir(context.temp_allocator)
@@ -86,6 +98,10 @@ test_data_dir_honors_xdg_on_unix :: proc(t: ^testing.T) {
     defer sync.mutex_unlock(&env_lock)
 
     when ODIN_OS != .Windows {
+        app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+        defer env_restore(APP_NAME_ENV, app_prior, app_had)
+        os.unset_env(APP_NAME_ENV)
+
         prior, had := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
         defer env_restore("XDG_DATA_HOME", prior, had)
 
@@ -104,6 +120,10 @@ test_data_dir_falls_back_to_home_local_share :: proc(t: ^testing.T) {
     defer sync.mutex_unlock(&env_lock)
 
     when ODIN_OS != .Windows {
+        app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+        defer env_restore(APP_NAME_ENV, app_prior, app_had)
+        os.unset_env(APP_NAME_ENV)
+
         xdg_prior, xdg_had := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
         home_prior, home_had := os.lookup_env(HOME_ENV, context.temp_allocator)
         defer env_restore("XDG_DATA_HOME", xdg_prior, xdg_had)
@@ -129,4 +149,65 @@ test_db_and_blob_paths_derive_from_the_data_directory :: proc(t: ^testing.T) {
 
     testing.expect_value(t, db_path_in("/data/yuke", context.temp_allocator), want_db)
     testing.expect_value(t, blob_dir_in("/data/yuke", context.temp_allocator), want_blobs)
+}
+
+@(test)
+test_app_name_defaults_to_yuke :: proc(t: ^testing.T) {
+    sync.mutex_lock(&env_lock)
+    defer sync.mutex_unlock(&env_lock)
+
+    prior, had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+    defer env_restore(APP_NAME_ENV, prior, had)
+    os.unset_env(APP_NAME_ENV)
+
+    name, owned, ok := app_name(context.temp_allocator)
+    testing.expect(t, ok, "unset YUKE_APPNAME is valid")
+    testing.expect(t, !owned, "the default leaf is not allocated")
+    testing.expect_value(t, name, APP_DIR)
+    testing.expect_value(t, app_name_error(), "")
+}
+
+@(test)
+test_config_and_data_dir_honor_app_name :: proc(t: ^testing.T) {
+    sync.mutex_lock(&env_lock)
+    defer sync.mutex_unlock(&env_lock)
+
+    when ODIN_OS != .Windows {
+        app_prior, app_had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+        defer env_restore(APP_NAME_ENV, app_prior, app_had)
+        cfg_prior, cfg_had := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
+        defer env_restore("XDG_CONFIG_HOME", cfg_prior, cfg_had)
+        data_prior, data_had := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
+        defer env_restore("XDG_DATA_HOME", data_prior, data_had)
+
+        testing.expect(t, os.set_env(APP_NAME_ENV, "yuke-dev") == nil, "set app name")
+        testing.expect(t, os.set_env("XDG_CONFIG_HOME", "/tmp/xdg") == nil, "set xdg")
+        testing.expect(t, os.set_env("XDG_DATA_HOME", "/tmp/xdgdata") == nil, "set xdg data")
+
+        want_cfg, _ := filepath.join({"/tmp/xdg", "yuke-dev"}, context.temp_allocator)
+        want_data, _ := filepath.join({"/tmp/xdgdata", "yuke-dev"}, context.temp_allocator)
+        testing.expect_value(t, config_dir(context.temp_allocator), want_cfg)
+        testing.expect_value(t, data_dir(context.temp_allocator), want_data)
+    }
+}
+
+@(test)
+test_app_name_rejects_a_path :: proc(t: ^testing.T) {
+    sync.mutex_lock(&env_lock)
+    defer sync.mutex_unlock(&env_lock)
+
+    prior, had := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+    defer env_restore(APP_NAME_ENV, prior, had)
+
+    testing.expect(t, os.set_env(APP_NAME_ENV, "foo/bar") == nil, "set bad name")
+    testing.expect(t, !app_name_valid("foo/bar"))
+    testing.expect(t, !app_name_valid("foo\\bar"))
+    testing.expect(t, !app_name_valid("."))
+    testing.expect(t, !app_name_valid(".."))
+    testing.expect(t, !app_name_valid(""))
+    testing.expect(t, app_name_error() != "")
+
+    _, _, ok := app_name(context.temp_allocator)
+    testing.expect(t, !ok, "a path is not a profile")
+    testing.expect_value(t, config_dir(context.temp_allocator), "")
 }

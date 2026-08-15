@@ -4,9 +4,11 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-// Shared application directory for the TUI, daemon, and plugins. Both binaries
-// resolve the same leaf so the client writes `yuke.js` where the daemon looks for it.
+// Default directory leaf under the XDG / Windows roots. `YUKE_APPNAME` replaces it when set.
 APP_DIR :: "yuke"
+
+// Process-wide profile name, like Neovim's `NVIM_APPNAME`. Remaps config and data together.
+APP_NAME_ENV :: "YUKE_APPNAME"
 
 // The daemon's SQLite event log, `yuked.db` in the data directory.
 DB_FILE :: "yuked.db"
@@ -29,9 +31,59 @@ home_dir :: proc(allocator := context.allocator) -> string {
     return home
 }
 
-// The shared configuration directory, following each platform's convention: `%APPDATA%\yuke`
-// on Windows, `$XDG_CONFIG_HOME/yuke` when set, else `~/.config/yuke`. Empty when no base can
-// be resolved. This holds `yuke.js`, `yuked.js`, and `plugins/`.
+// A single directory name: no slashes, not `.` or `..`. Empty is not a profile.
+app_name_valid :: proc(name: string) -> bool {
+    if name == "" || name == "." || name == ".." {
+        return false
+    }
+
+    for r in name {
+        if r == '/' || r == '\\' || r == 0 {
+            return false
+        }
+    }
+
+    return true
+}
+
+// Reason `YUKE_APPNAME` cannot be used, or empty when the default or a valid name applies.
+app_name_error :: proc() -> string {
+    value, set := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
+    if !set || value == "" {
+        return ""
+    }
+
+    if !app_name_valid(value) {
+        return "YUKE_APPNAME must be a single directory name"
+    }
+
+    return ""
+}
+
+// Directory leaf under the platform roots. Unset or empty `YUKE_APPNAME` is `APP_DIR`.
+// `ok` is false when the env is set to an invalid name; `owned` is true when `name` was cloned.
+app_name :: proc(allocator := context.allocator) -> (name: string, owned: bool, ok: bool) {
+    value, set := os.lookup_env(APP_NAME_ENV, allocator)
+    if !set || value == "" {
+        if set {
+            delete(value, allocator)
+        }
+
+        return APP_DIR, false, true
+    }
+
+    if !app_name_valid(value) {
+        delete(value, allocator)
+
+        return "", false, false
+    }
+
+    return value, true, true
+}
+
+// The shared configuration directory: `%APPDATA%\<leaf>` on Windows, `$XDG_CONFIG_HOME/<leaf>`
+// when set, else `~/.config/<leaf>`. The leaf is `yuke` or `$YUKE_APPNAME`. Empty when no base
+// can be resolved or the profile name is invalid. Holds `yuke.js`, `yuked.js`, and plugins.
 config_dir :: proc(allocator := context.allocator) -> string {
     when ODIN_OS == .Windows {
         base, found := os.lookup_env("APPDATA", allocator)
@@ -58,15 +110,13 @@ config_dir :: proc(allocator := context.allocator) -> string {
 
         defer delete(home, allocator)
 
-        joined, err := filepath.join({home, ".config", APP_DIR}, allocator)
-
-        return joined if err == nil else ""
+        return join_under(home, {".config"}, allocator)
     }
 }
 
-// The platform data directory, holding the event-log database and blob store: `%LOCALAPPDATA%\yuke`
-// on Windows (machine-local, not the roaming profile a live database must not sync into),
-// `$XDG_DATA_HOME/yuke` when set, else `~/.local/share/yuke`. Empty when no base can be resolved.
+// The platform data directory: `%LOCALAPPDATA%\<leaf>` on Windows, `$XDG_DATA_HOME/<leaf>`
+// when set, else `~/.local/share/<leaf>`. Empty when no base can be resolved or the profile
+// name is invalid. Holds the event-log database, blob store, and device identity.
 data_dir :: proc(allocator := context.allocator) -> string {
     when ODIN_OS == .Windows {
         base, found := os.lookup_env("LOCALAPPDATA", allocator)
@@ -93,9 +143,7 @@ data_dir :: proc(allocator := context.allocator) -> string {
 
         defer delete(home, allocator)
 
-        joined, err := filepath.join({home, ".local", "share", APP_DIR}, allocator)
-
-        return joined if err == nil else ""
+        return join_under(home, {".local", "share"}, allocator)
     }
 }
 
@@ -147,11 +195,34 @@ expand_home :: proc(path: string, allocator := context.allocator) -> string {
     return joined
 }
 
-// Join `base` with `APP_DIR`, returning empty on failure so a caller sees "unresolved" rather
-// than a half-formed path.
+// Join `base` with the profile leaf. Empty on a bad `YUKE_APPNAME` or a join failure.
 @(private = "file")
 join_or_empty :: proc(base: string, allocator := context.allocator) -> string {
-    joined, err := filepath.join({base, APP_DIR}, allocator)
+    return join_under(base, {}, allocator)
+}
+
+// Join `base`, optional middle segments, and the profile leaf.
+@(private = "file")
+join_under :: proc(base: string, mid: []string, allocator := context.allocator) -> string {
+    assert(len(mid) <= 2, "profile join has at most two middle segments")
+
+    name, owned, ok := app_name(allocator)
+    if !ok {
+        return ""
+    }
+
+    defer if owned {
+        delete(name, allocator)
+    }
+
+    parts: [4]string
+    parts[0] = base
+    for p, i in mid {
+        parts[1 + i] = p
+    }
+    parts[1 + len(mid)] = name
+
+    joined, err := filepath.join(parts[:2 + len(mid)], allocator)
 
     return joined if err == nil else ""
 }

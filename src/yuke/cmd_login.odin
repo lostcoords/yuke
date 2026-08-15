@@ -52,6 +52,11 @@ login_run :: proc() {
         os.exit(2)
     }
 
+    if msg := paths.app_name_error(); msg != "" {
+        fmt.eprintfln("yuke login: %s", msg)
+        os.exit(1)
+    }
+
     dir := paths.data_dir()
     if dir == "" {
         fmt.eprintln("yuke login: no data directory could be resolved")

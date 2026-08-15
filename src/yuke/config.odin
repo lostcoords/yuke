@@ -1,53 +1,14 @@
 package main
 
-import "core:os"
-
 import daemon "src:daemon"
 import "src:paths"
 
-// Environment override for the script root — the directory holding `yuked.js`. Lets a second
-// daemon run against its own config without disturbing the first; unset uses the shared config
-// directory.
-ROOT_ENV :: "YUKED_ROOT"
-
-// The script root: `YUKED_ROOT` when set, else the shared config directory when it exists on
-// disk. Empty means no `yuked.js` and no host modules; an absent config directory is not a
-// start failure. Caller owns the result.
-script_root :: proc(allocator := context.allocator) -> string {
-    if override, set := os.lookup_env(ROOT_ENV, allocator); set {
-        expanded := paths.expand_home(override, allocator)
-
-        // `expand_home` returns a fresh string only when it substituted a leading `~`; the
-        // original `os.lookup_env` clone is orphaned then, so release it.
-        if raw_data(expanded) != raw_data(override) {
-            delete(override, allocator)
-        }
-
-        return expanded
-    }
-
-    dir := paths.config_dir(allocator)
-    if dir == "" {
-        return ""
-    }
-
-    if !os.is_dir(dir) {
-        delete(dir, allocator)
-
-        return ""
-    }
-
-    return dir
-}
-
-// The bootstrap options `start` needs before the manifest runs: the build version, the config
-// directory, the default port, and the platform data-directory paths.
-// Every other operator-facing value (host, dataDir, auth_token, log_level) comes from `yuked.js`'s
-// `defineConfig`; the port defaults here and the manifest supersedes it only with a non-zero value.
+// The bootstrap options `start` needs before the manifest runs: the build version, the default
+// port, and the platform data-directory paths. Config and data follow `YUKE_APPNAME` through
+// `paths`. Every other operator-facing value comes from `yuked.js`.
 boot_options :: proc(version: string, allocator := context.allocator) -> daemon.Options {
     options := daemon.Options {
         daemon_version = version,
-        config_dir     = script_root(allocator),
         // The manifest supersedes this only when it sets a non-zero port.
         port           = daemon.DEFAULT_PORT,
     }

@@ -147,6 +147,11 @@ host_init :: proc(
     h.width = size.width
     h.height = size.height
 
+    if msg := paths.app_name_error(); msg != "" {
+        host_set_last_err(h, msg)
+        return false
+    }
+
     buf, berr := ui.buffer_init(allocator, size.width, size.height)
     if berr != .None {
         host_set_last_err(h, fmt.tprintf("buffer_init: %v", berr))

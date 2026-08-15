@@ -1,28 +1,14 @@
 package main
 
-import "core:os"
 import "core:testing"
 
-// Restore an environment variable to a captured prior state: set it back when it was present,
-// unset it when it was not. Paired with a capture at the top of each test so path resolution
-// tests never leak a mutated environment into one another.
-@(private = "file")
-env_restore :: proc(key, prior: string, had: bool) {
-    if had {
-        os.set_env(key, prior)
-    } else {
-        os.unset_env(key)
-    }
-}
+import daemon "src:daemon"
 
 @(test)
-test_script_root_prefers_the_override :: proc(t: ^testing.T) {
-    prior, had := os.lookup_env(ROOT_ENV, context.temp_allocator)
-    defer env_restore(ROOT_ENV, prior, had)
+test_boot_options_leaves_config_dir_to_start :: proc(t: ^testing.T) {
+    options := boot_options("0.0.0", context.temp_allocator)
 
-    testing.expect(t, os.set_env(ROOT_ENV, "/tmp/custom/yuke") == nil, "set override")
-
-    root := script_root(context.temp_allocator)
-
-    testing.expect_value(t, root, "/tmp/custom/yuke")
+    testing.expect_value(t, options.config_dir, "")
+    testing.expect_value(t, options.daemon_version, "0.0.0")
+    testing.expect_value(t, options.port, daemon.DEFAULT_PORT)
 }

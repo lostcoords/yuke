@@ -8,9 +8,9 @@ Everything platform-specific — where the unit is written, which tool loads it,
 and "running" are probed — lives in the per-OS `service_<os>.odin` files, one of which compiles
 per target. This file owns the verb parsing and the helpers they share.
 
-The generated unit is deliberately thin: it carries $YUKED_ROOT forward when set (so a service
-installed from a custom script root keeps it) and otherwise leaves every operator-facing value to
-yuked.js, exactly as the foreground daemon does.
+The generated unit is deliberately thin: it carries $YUKE_APPNAME forward when set (so a
+service installed from a named profile keeps it) and otherwise leaves every operator-facing
+value to yuked.js, exactly as the foreground daemon does.
 */
 package main
 
@@ -33,6 +33,11 @@ SERVICE_LOG_FILE :: "yuked.log"
 // The `service` subcommand: parse the `--force` flag and the verb, then hand off to the
 // per-platform implementation. `--force` is only meaningful for `install`; the others ignore it.
 service_run :: proc() {
+    if msg := paths.app_name_error(); msg != "" {
+        fmt.eprintfln("yuke service: %s", msg)
+        os.exit(1)
+    }
+
     args := os.args[2:]
     if len(args) == 0 {
         help_command("service")
@@ -120,10 +125,10 @@ service_exe_path :: proc(allocator := context.allocator) -> string {
     return path
 }
 
-// The value of $YUKED_ROOT, or ("", false) when unset. Baked into the unit so a service installed
-// from a custom script root keeps it; unset means "let the daemon resolve the default root".
-service_yuked_root :: proc(allocator := context.allocator) -> (string, bool) {
-    return os.lookup_env(ROOT_ENV, allocator)
+// The value of $YUKE_APPNAME, or ("", false) when unset. Baked into the unit so a service
+// installed under a named profile keeps it; unset means the default `yuke` leaf.
+service_app_name :: proc(allocator := context.allocator) -> (string, bool) {
+    return os.lookup_env(paths.APP_NAME_ENV, allocator)
 }
 
 // The log path the generated unit redirects to, or "" when no data directory resolves.

@@ -62,8 +62,8 @@ plist_render :: proc(allocator := context.allocator) -> string {
     log := service_log_path(context.allocator)
     defer delete(log, context.allocator)
 
-    root, has_root := service_yuked_root(context.allocator)
-    defer delete(root, context.allocator)
+    name, has_name := service_app_name(context.allocator)
+    defer delete(name, context.allocator)
 
     b := strings.builder_make(allocator)
 
@@ -83,12 +83,12 @@ plist_render :: proc(allocator := context.allocator) -> string {
     strings.write_string(&b, "    <key>RunAtLoad</key>\n    <true/>\n")
     strings.write_string(&b, "    <key>KeepAlive</key>\n    <true/>\n")
 
-    if has_root && root != "" {
-        esc := service_xml_escape(root, context.allocator)
+    if has_name && name != "" {
+        esc := service_xml_escape(name, context.allocator)
         defer delete(esc, context.allocator)
 
         strings.write_string(&b, "    <key>EnvironmentVariables</key>\n    <dict>\n")
-        fmt.sbprintf(&b, "        <key>%s</key>\n        <string>%s</string>\n", ROOT_ENV, esc)
+        fmt.sbprintf(&b, "        <key>%s</key>\n        <string>%s</string>\n", paths.APP_NAME_ENV, esc)
         strings.write_string(&b, "    </dict>\n")
     }
 

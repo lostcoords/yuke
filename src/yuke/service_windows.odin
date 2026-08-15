@@ -4,7 +4,7 @@ systemd; a scheduled task with a logon trigger is the equivalent — it starts a
 `<RestartOnFailure>`, relaunches on a crash.
 
 Task Scheduler's `<Exec>` cannot set environment variables or redirect output, so when there is a
-$YUKED_ROOT to carry or a log to capture the task runs a generated `.cmd` wrapper instead of the
+$YUKE_APPNAME to carry or a log to capture the task runs a generated `.cmd` wrapper instead of the
 binary directly. The task is registered from an XML definition (`schtasks /Create /XML`), which
 must be UTF-16, so `unit_write_utf16` encodes it explicitly.
 */
@@ -57,17 +57,17 @@ base_path :: proc(name: string, allocator := context.allocator) -> string {
     return path
 }
 
-// Render the `.cmd` wrapper that sets $YUKED_ROOT, runs the daemon, and appends its output to the
-// log. Used only when there is an environment value or a log path; otherwise the task runs the
-// binary directly. `exe` and `log` are absolute paths; `root` is the (present) script root.
+// Render the `.cmd` wrapper that sets $YUKE_APPNAME, runs the daemon, and appends its output to
+// the log. Used only when there is an environment value or a log path; otherwise the task runs
+// the binary directly. `exe` and `log` are absolute paths; `name` is the (present) profile.
 @(private = "file")
-wrapper_render :: proc(exe, root, log: string, has_root: bool, allocator := context.allocator) -> string {
+wrapper_render :: proc(exe, name, log: string, has_name: bool, allocator := context.allocator) -> string {
     b := strings.builder_make(allocator)
 
     strings.write_string(&b, "@echo off\n")
 
-    if has_root && root != "" {
-        fmt.sbprintf(&b, "set \"%s=%s\"\n", ROOT_ENV, root)
+    if has_name && name != "" {
+        fmt.sbprintf(&b, "set \"%s=%s\"\n", paths.APP_NAME_ENV, name)
     }
 
     fmt.sbprintf(&b, "\"%s\" daemon", exe)
@@ -173,12 +173,12 @@ task_prepare :: proc() -> string {
     log := service_log_path(context.allocator)
     defer delete(log, context.allocator)
 
-    root, has_root := service_yuked_root(context.allocator)
-    defer delete(root, context.allocator)
+    name, has_name := service_app_name(context.allocator)
+    defer delete(name, context.allocator)
 
     xml_path := base_path(TASK_XML_FILE)
 
-    use_wrapper := (has_root && root != "") || log != ""
+    use_wrapper := (has_name && name != "") || log != ""
 
     command: string
     arguments: string
@@ -189,7 +189,7 @@ task_prepare :: proc() -> string {
         wrapper := base_path(WRAPPER_FILE)
         defer delete(wrapper)
 
-        contents := wrapper_render(exe, root, log, has_root)
+        contents := wrapper_render(exe, name, log, has_name)
         defer delete(contents)
 
         service_write(wrapper, contents)

@@ -347,6 +347,12 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return .Invalid_Options
     }
 
+    if msg := paths.app_name_error(); msg != "" {
+        log.errorf("daemon: %s", msg)
+
+        return .Invalid_Options
+    }
+
     options := options
 
     d^ = {}
