@@ -203,6 +203,19 @@ anthropic_decoder_finish :: proc(
     return .Stream_Truncated
 }
 
+// Prompt-side counts with the cache subsets folded into `input`. Read from both stream events,
+// since compat servers fill only the cumulative `message_delta`.
+@(private)
+anthropic_prompt_usage :: proc(usage: json.Object) -> (input: u64, cache_read: u64, cache_write: u64) {
+    cache_read = decode_usage_u64(usage, "cache_read_input_tokens")
+    cache_write = decode_usage_u64(usage, "cache_creation_input_tokens")
+    input = decode_usage_u64(usage, "input_tokens")
+    input = intrinsics.saturating_add(input, cache_read)
+    input = intrinsics.saturating_add(input, cache_write)
+
+    return
+}
+
 // Establish the one message lifecycle and read prompt-side usage. Event is always nil.
 @(private)
 anthropic_decode_message_start :: proc(
@@ -237,11 +250,7 @@ anthropic_decode_message_start :: proc(
         return nil, .Parse_Error
     }
 
-    cache_read := decode_usage_u64(usage, "cache_read_input_tokens")
-    cache_write := decode_usage_u64(usage, "cache_creation_input_tokens")
-    input := decode_usage_u64(usage, "input_tokens")
-    input = intrinsics.saturating_add(input, cache_read)
-    input = intrinsics.saturating_add(input, cache_write)
+    input, cache_read, cache_write := anthropic_prompt_usage(usage)
 
     decoder.pending_usage.input = input
     decoder.pending_usage.cache_read = cache_read
@@ -709,6 +718,14 @@ anthropic_decode_message_delta :: proc(
 
     decoder.pending_reason = anthropic_stop_reason(reason)
     decoder.pending_usage.output = decode_usage_u64(usage, "output_tokens")
+
+    // Max-fold: compat servers report prompt usage only here, real Anthropic repeats what it
+    // already gave. Max recovers the real count without double-counting.
+    input, cache_read, cache_write := anthropic_prompt_usage(usage)
+    decoder.pending_usage.input = max(decoder.pending_usage.input, input)
+    decoder.pending_usage.cache_read = max(decoder.pending_usage.cache_read, cache_read)
+    decoder.pending_usage.cache_write = max(decoder.pending_usage.cache_write, cache_write)
+
     decoder.metadata_done = true
 
     return nil, .None

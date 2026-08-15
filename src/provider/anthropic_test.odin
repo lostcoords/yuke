@@ -190,6 +190,51 @@ test_anthropic_text_lifecycle_and_usage_survive_scratch_arena :: proc(t: ^testin
     testing.expect_value(t, done.usage.total, u64(19))
 }
 
+// Compat servers send `input_tokens: 0` in `message_start` and the real count in
+// `message_delta`; the fold must recover it.
+@(test)
+test_anthropic_folds_compat_message_delta_prompt_usage :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    decoder := test_anthropic_decoder(t)
+    test_anthropic_expect_none(t, &decoder, `{"type":"message_start","message":{"usage":{"input_tokens":0}}}`)
+    test_anthropic_expect_none(
+        t,
+        &decoder,
+        `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1500,"output_tokens":42}}`,
+    )
+
+    done := test_anthropic_done(t, &decoder)
+    testing.expect_value(t, done.usage.input, u64(1500))
+    testing.expect_value(t, done.usage.output, u64(42))
+    testing.expect_value(t, done.usage.total, u64(1542))
+}
+
+// Real Anthropic repeats the same cumulative usage in `message_delta`; the max fold must not
+// double it.
+@(test)
+test_anthropic_message_delta_prompt_usage_does_not_double_count :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    decoder := test_anthropic_decoder(t)
+    test_anthropic_expect_none(
+        t,
+        &decoder,
+        `{"type":"message_start","message":{"usage":{"input_tokens":1500,"cache_read_input_tokens":100}}}`,
+    )
+    test_anthropic_expect_none(
+        t,
+        &decoder,
+        `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1500,"cache_read_input_tokens":100,"output_tokens":42}}`,
+    )
+
+    done := test_anthropic_done(t, &decoder)
+    testing.expect_value(t, done.usage.input, u64(1600))
+    testing.expect_value(t, done.usage.cache_read, u64(100))
+    testing.expect_value(t, done.usage.output, u64(42))
+    testing.expect_value(t, done.usage.total, u64(1642))
+}
+
 @(test)
 test_anthropic_reasoning_and_redacted_blocks_preserve_terminal_metadata :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
