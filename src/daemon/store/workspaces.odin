@@ -7,6 +7,33 @@ import "src:wire"
 
 import "libs:bindings/sqlite"
 
+// Resolve one workspace's canonical root by id. `found` is false when no such workspace is
+// registered; the root clones into `allocator`. Used to seed a run's working directory.
+workspace_root :: proc(
+    s: ^Store,
+    id: wire.Workspace_Id,
+    allocator: mem.Allocator,
+) -> (
+    root: string,
+    found: bool,
+    err: Error,
+) {
+    assert(s != nil, "workspace_root needs a store")
+    assert(s.writer != nil, "an open store always holds its writer")
+    assert(allocator.procedure != nil, "a workspace read needs an allocator")
+
+    row, sqlite_err := queries.workspace_root(&s.queries, {id = id}, allocator)
+    if sqlite_err != nil {
+        if read_error, is_read := sqlite_err.(sqlite.Read_Error); is_read && read_error == .Row_Count {
+            return "", false, nil
+        }
+
+        return "", false, read_err(sqlite_err)
+    }
+
+    return row.root, true, nil
+}
+
 // Read the whole registry, bounded by `limit`, ordered by root. Every string clones into
 // `allocator` and nothing is freed — built for an arena the owner reclaims in bulk.
 workspace_page :: proc(s: ^Store, limit: int, allocator: mem.Allocator) -> (workspaces: []wire.Workspace, err: Error) {

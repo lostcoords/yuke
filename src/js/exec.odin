@@ -46,7 +46,7 @@ exec_module :: proc() -> Module {
 Exec_Job :: struct {
     task:      offload.Task(Exec_Job),
     host:      ^Host,
-    cancel:    ^Cancel_Scope,
+    cancel:    ^Run_Scope,
     command:   string,
     cwd:       string,
     timeout:   time.Duration,
@@ -181,6 +181,13 @@ exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qj
         }
 
         job.cwd = resolved
+    } else if job.cancel != nil && job.cancel.default_cwd != "" {
+        cwd, clone_err := strings.clone(job.cancel.default_cwd, job.allocator)
+        if clone_err != nil {
+            return qjs.throw_type_error(ctx, "out of memory"), false
+        }
+
+        job.cwd = cwd
     }
 
     timeout := qjs.get_property(ctx, argv[1], "timeoutMs")

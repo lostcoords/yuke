@@ -1509,6 +1509,70 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
     }
 }
 
+// A tool's `yuke:exec` with no cwd runs in the session's workspace root, so `pwd` reports
+// that directory rather than the daemon's launch directory.
+@(test)
+test_session_run_exec_defaults_cwd_to_the_workspace :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+
+    entry := `
+        import { defineTool } from "yuke:daemon"
+        import { exec } from "yuke:exec"
+
+        defineTool("get_weather", {
+            description: "Report the weather",
+            params: { city: "string" },
+            handler: async ({ city }, signal) => {
+                const r = await exec("pwd", { signal })
+
+                return { cwd: r.stdout.trim() }
+            },
+        })
+    `
+
+    env: Run_Env
+    parts: [1]wire.Content_Part
+    inputs: [1]wire.Input
+    run_env_start(
+        t,
+        &env,
+        "session-run-tool-cwd",
+        run_env_input("weather in Tokyo?", &parts, &inputs),
+        body = RUN_FAKE_TOOL_STREAM,
+        entry = entry,
+        max_rounds = 1,
+    )
+    defer run_env_stop(t, &env)
+
+    run_env_drive(t, &env)
+
+    obs := &env.obs
+    if !testing.expect_value(t, len(obs.assistants), 1) {
+        return
+    }
+
+    content := obs.assistants[0].content
+    if !testing.expect_value(t, len(content), 1) {
+        return
+    }
+
+    tool, is_tool := content[0].(wire.Tool_Part)
+    if !testing.expect(t, is_tool, "the call commits as a tool part") {
+        return
+    }
+
+    completed, is_completed := tool.state.(wire.Tool_State_Completed)
+    if !testing.expect(t, is_completed, "the handler completed the call") {
+        return
+    }
+
+    want := fmt.tprintf(`{{"cwd":%q}}`, daemon_test_workspace().root)
+    testing.expect_value(t, completed.output, want)
+}
+
 // A zero cap is unlimited. The completed tool message lands in canonical history, the next
 // request starts under the same run, and its natural stop closes the two-round turn.
 @(test)

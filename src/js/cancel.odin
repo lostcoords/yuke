@@ -3,16 +3,19 @@ package js
 import "base:runtime"
 import "core:c"
 import "core:mem"
+import "core:strings"
 import "core:sync"
 
 import qjs "libs:bindings/quickjs"
 
-// One run-scoped cancellation latch. The JS signal object and every submitted job each
-// own one reference; workers only read `aborted`.
-Cancel_Scope :: struct {
-    allocator: mem.Allocator,
-    refs:      int,
-    aborted:   bool,
+// Per-run ambient context for host ops. The signal object and every job own one reference;
+// workers read `aborted`. `default_cwd` is the run's working dir, owned and applied by
+// `yuke:exec` when a call names none.
+Run_Scope :: struct {
+    allocator:   mem.Allocator,
+    refs:        int,
+    aborted:     bool,
+    default_cwd: string,
 }
 
 // After `yuked.js` finishes, every later host op must carry a run signal. Startup
@@ -24,11 +27,12 @@ cancel_enforce :: proc(h: ^Host) {
 }
 
 // Create the signal passed to one tool handler. Caller owns the returned JS value.
-cancel_signal_new :: proc(h: ^Host) -> (qjs.Value, ^Cancel_Scope, bool) {
+// `default_cwd` is cloned into the scope; pass "" for no run working directory.
+cancel_signal_new :: proc(h: ^Host, default_cwd: string) -> (qjs.Value, ^Run_Scope, bool) {
     assert(h != nil && h.ctx != nil, "creating a cancellation signal needs a live host")
     assert(h.cancel_class != qjs.INVALID_CLASS_ID, "a live host registered its cancellation class")
 
-    scope, alloc_err := new(Cancel_Scope, h.allocator)
+    scope, alloc_err := new(Run_Scope, h.allocator)
     if alloc_err != nil {
         return qjs.undefined(), nil, false
     }
@@ -37,17 +41,28 @@ cancel_signal_new :: proc(h: ^Host) -> (qjs.Value, ^Cancel_Scope, bool) {
         refs      = 1,
     }
 
+    if default_cwd != "" {
+        cwd, cwd_err := strings.clone(default_cwd, h.allocator)
+        if cwd_err != nil {
+            free(scope, h.allocator)
+
+            return qjs.undefined(), nil, false
+        }
+
+        scope.default_cwd = cwd
+    }
+
     signal := qjs.new_object_class(h.ctx, h.cancel_class)
     if qjs.is_exception(signal) {
         exception := qjs.get_exception(h.ctx)
         qjs.free_value(h.ctx, exception)
-        free(scope, h.allocator)
+        run_scope_free(scope)
 
         return qjs.undefined(), nil, false
     }
     if !qjs.set_opaque(signal, scope) {
         qjs.free_value(h.ctx, signal)
-        free(scope, h.allocator)
+        run_scope_free(scope)
 
         return qjs.undefined(), nil, false
     }
@@ -64,7 +79,7 @@ cancel_signal_new :: proc(h: ^Host) -> (qjs.Value, ^Cancel_Scope, bool) {
 }
 
 // Latch one run and update its script-visible signal. Idempotent.
-cancel_trigger :: proc(h: ^Host, scope: ^Cancel_Scope, signal: qjs.Value) {
+cancel_trigger :: proc(h: ^Host, scope: ^Run_Scope, signal: qjs.Value) {
     assert(h != nil && h.ctx != nil, "triggering cancellation needs a live host")
     assert(scope != nil, "triggering cancellation needs a scope")
 
@@ -75,12 +90,12 @@ cancel_trigger :: proc(h: ^Host, scope: ^Cancel_Scope, signal: qjs.Value) {
     }
 }
 
-cancelled_scope :: proc(scope: ^Cancel_Scope) -> bool {
+cancelled_scope :: proc(scope: ^Run_Scope) -> bool {
     return scope != nil && sync.atomic_load(&scope.aborted)
 }
 
 @(private = "package")
-cancel_retain :: proc(scope: ^Cancel_Scope) {
+cancel_retain :: proc(scope: ^Run_Scope) {
     if scope != nil {
         assert(scope.refs > 0, "a live cancellation scope has an owner")
         scope.refs += 1
@@ -88,7 +103,7 @@ cancel_retain :: proc(scope: ^Cancel_Scope) {
 }
 
 @(private = "package")
-cancel_release :: proc(scope: ^Cancel_Scope) {
+cancel_release :: proc(scope: ^Run_Scope) {
     if scope == nil {
         return
     }
@@ -96,8 +111,19 @@ cancel_release :: proc(scope: ^Cancel_Scope) {
     assert(scope.refs > 0, "a cancellation release has an owner")
     scope.refs -= 1
     if scope.refs == 0 {
-        free(scope, scope.allocator)
+        run_scope_free(scope)
     }
+}
+
+@(private = "file")
+run_scope_free :: proc(scope: ^Run_Scope) {
+    assert(scope != nil, "freeing a run scope needs one")
+
+    if scope.default_cwd != "" {
+        delete(scope.default_cwd, scope.allocator)
+    }
+
+    free(scope, scope.allocator)
 }
 
 // Read an optional signal argument. Once the daemon enables scoped operations, omission is
@@ -109,7 +135,7 @@ cancel_arg :: proc(
     argv: [^]qjs.Value,
     index: c.int,
 ) -> (
-    scope: ^Cancel_Scope,
+    scope: ^Run_Scope,
     thrown: qjs.Value,
     ok: bool,
 ) {
@@ -128,11 +154,11 @@ cancel_arg :: proc(
 }
 
 @(private = "package")
-cancel_value :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (^Cancel_Scope, qjs.Value, bool) {
+cancel_value :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (^Run_Scope, qjs.Value, bool) {
     h := host_of(ctx)
     assert(h != nil, "a cancellation signal has a host")
 
-    scope := (^Cancel_Scope)(qjs.get_opaque(value, h.cancel_class))
+    scope := (^Run_Scope)(qjs.get_opaque(value, h.cancel_class))
     if scope == nil {
         return nil, qjs.throw_type_error(ctx, "invalid run cancellation signal"), false
     }
@@ -149,6 +175,6 @@ cancel_signal_finalize :: proc "c" (rt: ^qjs.Runtime, value: qjs.Value) {
     context = runtime.default_context()
 
     class_id := qjs.get_class_id(value)
-    scope := (^Cancel_Scope)(qjs.get_opaque(value, class_id))
+    scope := (^Run_Scope)(qjs.get_opaque(value, class_id))
     cancel_release(scope)
 }

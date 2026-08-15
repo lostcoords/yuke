@@ -62,7 +62,7 @@ Fs_Error :: enum {
 Fs_Job :: struct {
     task:        offload.Task(Fs_Job),
     host:        ^Host,
-    cancel:      ^Cancel_Scope,
+    cancel:      ^Run_Scope,
     op:          Fs_Op,
     path:        string,
     text:        string,

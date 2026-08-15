@@ -77,7 +77,7 @@ Run :: struct {
     system_prompt:       Maybe(string),
     max_rounds:          Maybe(u64),
     rounds:              u64,
-    cancel:              ^js.Cancel_Scope,
+    cancel:              ^js.Run_Scope,
     cancel_signal:       qjs.Value,
     pending_done:        Maybe(wire.Run_Done_Data),
     done_retry:          ^nbio.Operation,
@@ -281,7 +281,16 @@ run_new :: proc(
     run.finish = .Unknown
     run.max_rounds = session.max_rounds
 
-    signal, cancel, cancel_ok := js.cancel_signal_new(&d.js)
+    // A tool's `yuke:exec` defaults to the session's workspace root. A read failure or a
+    // missing row degrades to no default (the daemon's cwd) rather than failing the run.
+    ws_root, ws_found, ws_err := store.workspace_root(d.store, session.workspace_id, run.allocator)
+    if ws_err != nil {
+        log.errorf("daemon: session %v cannot resolve workspace root: %v", session.id, ws_err)
+    } else {
+        assert(ws_found, "a live session's workspace row exists (enforced FK)")
+    }
+
+    signal, cancel, cancel_ok := js.cancel_signal_new(&d.js, ws_root)
     if !cancel_ok {
         virtual.arena_destroy(&run.round_arena)
         virtual.arena_destroy(&run.arena)

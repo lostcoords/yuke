@@ -18,3 +18,10 @@ INSERT INTO workspaces(id, root, title) VALUES (:id, :root, :title)
 -- root: string!
 -- title: string!
 SELECT id, root, title FROM workspaces ORDER BY root LIMIT :limit;
+
+-- name: Workspace_Root :one
+-- The canonical root for one id, resolved when a run needs its session's working
+-- directory. No filter, ordering, or bound: id is the primary key.
+-- id: wire.Workspace_Id!
+-- root: string!
+SELECT root FROM workspaces WHERE id = :id;

@@ -157,6 +157,10 @@ Workspace_Page_Row :: struct {
     title: string,
 }
 
+Workspace_Root_Row :: struct {
+    root: string,
+}
+
 Delete_Catalog_Provider_Params :: struct {
     provider_id: string,
 }
@@ -346,6 +350,10 @@ Workspace_Page_Params :: struct {
     limit: int,
 }
 
+Workspace_Root_Params :: struct {
+    id: wire.Workspace_Id,
+}
+
 @(private)
 Query_Id :: enum {
     Delete_Catalog_Provider,
@@ -380,6 +388,7 @@ Query_Id :: enum {
     Session_Count,
     Insert_Workspace,
     Workspace_Page,
+    Workspace_Root,
 }
 
 @(private, rodata)
@@ -513,6 +522,7 @@ WHERE (:workspace_id IS NULL OR workspace_id = :workspace_id)
     .Insert_Workspace            = `INSERT INTO workspaces(id, root, title) VALUES (:id, :root, :title)
     ON CONFLICT(id) DO NOTHING;`,
     .Workspace_Page              = `SELECT id, root, title FROM workspaces ORDER BY root LIMIT :limit;`,
+    .Workspace_Root              = `SELECT root FROM workspaces WHERE id = :id;`,
 }
 
 Queries :: struct {
@@ -548,6 +558,7 @@ Queries :: struct {
     session_count:               sqlite.Reader(Session_Count_Params, Session_Count_Row),
     insert_workspace:            sqlite.Bind_Mapping(Insert_Workspace_Params),
     workspace_page:              sqlite.Reader(Workspace_Page_Params, Workspace_Page_Row),
+    workspace_root:              sqlite.Reader(Workspace_Root_Params, Workspace_Root_Row),
 }
 
 queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.allocator) -> sqlite.Error {
@@ -799,6 +810,19 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
     }
     assert(workspace_page_reader_err == .None, "generated statement matches its generated struct")
     queries.workspace_page = workspace_page_reader
+    workspace_root_stmt := sqlite.prepare(db, QUERY_SQL[.Workspace_Root]) or_return
+    workspace_root_reader, workspace_root_reader_err := sqlite.reader_prepare(
+        workspace_root_stmt,
+        Workspace_Root_Params,
+        Workspace_Root_Row,
+        allocator,
+    )
+    if workspace_root_reader_err == .Out_Of_Memory {
+        sqlite.finalize(workspace_root_stmt)
+        return workspace_root_reader_err
+    }
+    assert(workspace_root_reader_err == .None, "generated statement matches its generated struct")
+    queries.workspace_root = workspace_root_reader
     return nil
 }
 
@@ -845,6 +869,8 @@ queries_destroy :: proc(queries: ^Queries, allocator := context.allocator) {
     sqlite.finalize(queries.insert_workspace.statement)
     sqlite.finalize(queries.workspace_page.statement)
     sqlite.reader_destroy(&queries.workspace_page, allocator)
+    sqlite.finalize(queries.workspace_root.statement)
+    sqlite.reader_destroy(&queries.workspace_root, allocator)
 }
 
 delete_catalog_provider :: proc(q: ^Queries, params_in: Delete_Catalog_Provider_Params) -> sqlite.Result {
@@ -1062,4 +1088,16 @@ workspace_page :: proc(
 ) {
     params := params_in
     return sqlite.read_all(&q.workspace_page, &params, allocator, cap_hint)
+}
+
+workspace_root :: proc(
+    q: ^Queries,
+    params_in: Workspace_Root_Params,
+    allocator := context.allocator,
+) -> (
+    Workspace_Root_Row,
+    sqlite.Error,
+) {
+    params := params_in
+    return sqlite.read_one(&q.workspace_root, &params, allocator)
 }

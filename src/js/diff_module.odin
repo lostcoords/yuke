@@ -25,7 +25,7 @@ diff_module :: proc() -> Module {
 Diff_Job :: struct {
     task:      offload.Task(Diff_Job),
     host:      ^Host,
-    cancel:    ^Cancel_Scope,
+    cancel:    ^Run_Scope,
     path:      string,
     before:    string,
     after:     string,

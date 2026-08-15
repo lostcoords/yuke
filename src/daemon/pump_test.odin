@@ -1147,9 +1147,10 @@ daemon_test_session :: proc(id: wire.Session_Id) -> wire.Session {
 }
 
 // The workspace every synthetic session is created into; `sessions.workspace_id`
-// references it, so it is written with the first session and matched by the rest.
+// references it, so it is written with the first session and matched by the rest. The root
+// is a real directory so a run's default `yuke:exec` cwd can `cd` into it.
 daemon_test_workspace :: proc() -> wire.Workspace {
-    return wire.Workspace{id = wire.Workspace_Id(pump_test_session('f')), root = "/test", title = "test"}
+    return wire.Workspace{id = wire.Workspace_Id(pump_test_session('f')), root = "/tmp", title = "test"}
 }
 
 // Every event carries a foreign key into `sessions`, so a synthetic id needs its
