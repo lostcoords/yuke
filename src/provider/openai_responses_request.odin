@@ -138,6 +138,13 @@ openai_responses_request_body :: proc(
             json_write(writer, `,"temperature":`) or_return
             json_write_f64(writer, temperature) or_return
         }
+
+        // Prefix-cache routing hint. The Codex backend does not take it, so it stays
+        // inside the Standard-dialect block with the other API-only controls.
+        if len(request.cache_key) > 0 {
+            json_write(writer, `,"prompt_cache_key":`) or_return
+            json_write_string(writer, request.cache_key) or_return
+        }
     }
 
     if effort, present := options.effort.?; present {
@@ -199,6 +206,10 @@ openai_responses_request_validate :: proc(
     }
 
     if system, present := request.system_prompt.?; present && !utf8.valid_string(system) {
+        return .Invalid_Request
+    }
+
+    if len(request.cache_key) > 0 && !utf8.valid_string(request.cache_key) {
         return .Invalid_Request
     }
 

@@ -90,6 +90,26 @@ test_responses_request_codex_dialect_omits_api_only_limits :: proc(t: ^testing.T
 }
 
 @(test)
+test_responses_request_writes_prompt_cache_key_on_standard_only :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    parts := [?]wire.Content_Part{wire.Content_Text{text = "hi"}}
+    messages := [?]wire.Message{test_responses_user_message(parts[:])}
+    request := test_responses_request(messages[:])
+    request.cache_key = "sess-1234"
+
+    body := test_responses_build(t, request)
+    testing.expect_value(
+        t,
+        body,
+        `{"model":"gpt-test","instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"store":false,"stream":true,"max_output_tokens":4096,"prompt_cache_key":"sess-1234"}`,
+    )
+
+    codex := test_responses_build(t, request, {dialect = .Codex})
+    testing.expect(t, !strings.contains(codex, `"prompt_cache_key"`), codex)
+}
+
+@(test)
 test_responses_request_folds_system_prompt_and_temperature :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 

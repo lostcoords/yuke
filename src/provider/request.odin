@@ -44,6 +44,10 @@ Request :: struct {
     // Optional sampling temperature. Model resolution is responsible for
     // omitting it on models that reject sampling controls.
     temperature:       Maybe(f64),
+
+    // Stable per-conversation key for provider prefix caching (OpenAI Responses
+    // `prompt_cache_key`). Borrowed; empty omits the field.
+    cache_key:         string,
 }
 
 @(private = "package")

@@ -155,9 +155,11 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
 
     // Borrowed from the registry, which outlives the turn. `run_request_build` drops them
     // for a model that cannot call tools.
+    session_key := ([16]u8)(session.id)
     request := provider.Request {
-        messages = messages,
-        tools    = tools_definitions(d, sa),
+        messages  = messages,
+        tools     = tools_definitions(d, sa),
+        cache_key = string(session_key[:]),
     }
 
     run_prompt: Maybe(string)
@@ -529,9 +531,11 @@ run_round_start_next :: proc(run: ^Run) {
         return
     }
 
+    run_key := ([16]u8)(run.session)
     request := provider.Request {
-        messages = messages,
-        tools    = tools_definitions(d, sa),
+        messages  = messages,
+        tools     = tools_definitions(d, sa),
+        cache_key = string(run_key[:]),
     }
     if prompt, has_prompt := run.system_prompt.?; has_prompt {
         request.system_prompt = prompt
