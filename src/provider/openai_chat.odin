@@ -162,9 +162,15 @@ openai_fold_usage :: proc(decoder: ^Openai_Chat_Decoder, usage: json.Object) {
         cache_read = decode_usage_u64(details, "cached_tokens")
     }
 
+    reasoning: u64
+    if details, present, err := decode_optional_object(usage, "completion_tokens_details"); err == .None && present {
+        reasoning = decode_usage_u64(details, "reasoning_tokens")
+    }
+
     decoder.pending_usage = Usage {
         input      = input,
         output     = output,
+        reasoning  = reasoning,
         cache_read = cache_read,
         total      = max(provider_total, intrinsics.saturating_add(input, output)),
     }

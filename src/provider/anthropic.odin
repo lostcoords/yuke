@@ -719,6 +719,11 @@ anthropic_decode_message_delta :: proc(
     decoder.pending_reason = anthropic_stop_reason(reason)
     decoder.pending_usage.output = decode_usage_u64(usage, "output_tokens")
 
+    // Thinking tokens are a subset of output, reported only on the final message_delta.
+    if details, present, terr := decode_optional_object(usage, "output_tokens_details"); terr == .None && present {
+        decoder.pending_usage.reasoning = decode_usage_u64(details, "thinking_tokens")
+    }
+
     // Max-fold: compat servers report prompt usage only here, real Anthropic repeats what it
     // already gave. Max recovers the real count without double-counting.
     input, cache_read, cache_write := anthropic_prompt_usage(usage)

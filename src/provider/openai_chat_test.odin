@@ -231,6 +231,22 @@ test_openai_stream_reads_cached_and_provider_total_usage :: proc(t: ^testing.T) 
     testing.expect_value(t, total_done.usage.total, u64(200))
 }
 
+// `completion_tokens_details.reasoning_tokens` reports the reasoning subset of output.
+@(test)
+test_openai_stream_reads_reasoning_tokens :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    payloads := [?]string {
+        `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":42,"completion_tokens_details":{"reasoning_tokens":30}}}`,
+        `[DONE]`,
+    }
+    events, err := test_openai_drive(t, payloads[:])
+    testing.expect_value(t, err, Transport_Error.None)
+    done := test_openai_last_done(t, events)
+    testing.expect_value(t, done.usage.output, u64(42))
+    testing.expect_value(t, done.usage.reasoning, u64(30))
+}
+
 @(test)
 test_openai_stream_assembles_tool_call_split_across_chunks :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)

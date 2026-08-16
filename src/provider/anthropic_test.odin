@@ -235,6 +235,25 @@ test_anthropic_message_delta_prompt_usage_does_not_double_count :: proc(t: ^test
     testing.expect_value(t, done.usage.total, u64(1642))
 }
 
+// `output_tokens_details.thinking_tokens` reports the reasoning subset of output on the final
+// `message_delta`. Absence leaves it zero (compat servers may omit it).
+@(test)
+test_anthropic_message_delta_reads_thinking_tokens :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    decoder := test_anthropic_decoder(t)
+    test_anthropic_expect_none(t, &decoder, `{"type":"message_start","message":{"usage":{"input_tokens":10}}}`)
+    test_anthropic_expect_none(
+        t,
+        &decoder,
+        `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42,"output_tokens_details":{"thinking_tokens":30}}}`,
+    )
+
+    done := test_anthropic_done(t, &decoder)
+    testing.expect_value(t, done.usage.output, u64(42))
+    testing.expect_value(t, done.usage.reasoning, u64(30))
+}
+
 @(test)
 test_anthropic_reasoning_and_redacted_blocks_preserve_terminal_metadata :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
