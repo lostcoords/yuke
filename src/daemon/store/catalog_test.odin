@@ -279,60 +279,6 @@ test_catalog_replace_preserves_bounds :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_catalog_load_allocation_failures_leak_nothing :: proc(t: ^testing.T) {
-    s, err := open_memory()
-    testing.expect_value(t, err, nil)
-    defer close(s)
-
-    testing.expect_value(
-        t,
-        catalog_imported_replace(s, test_catalog_provider(t, "openai", "gpt-5"), TEST_CATALOG_ETAG),
-        nil,
-    )
-
-    completed := false
-    for fail_at in 0 ..< 128 {
-        track: mem.Tracking_Allocator
-        mem.tracking_allocator_init(&track, context.allocator)
-        tracked := mem.tracking_allocator(&track)
-
-        failing: testsupport.Failing_Allocator
-        testsupport.failing_allocator_init(&failing, tracked, fail_at)
-        catalog, load_err := catalog_load(s, testsupport.failing_allocator(&failing))
-
-        if load_err == nil {
-            completed = true
-            catalog_destroy(&catalog)
-        } else {
-            testing.expect_value(t, load_err, Store_Error.Alloc_Failed)
-            testing.expect(t, catalog.providers == nil, "a failed load returns no partial records")
-        }
-
-        testing.expectf(
-            t,
-            len(track.allocation_map) == 0,
-            "fail_at %d leaked %d allocations",
-            fail_at,
-            len(track.allocation_map),
-        )
-        testing.expectf(
-            t,
-            len(track.bad_free_array) == 0,
-            "fail_at %d made %d bad frees",
-            fail_at,
-            len(track.bad_free_array),
-        )
-        mem.tracking_allocator_destroy(&track)
-
-        if completed {
-            break
-        }
-    }
-
-    testing.expect(t, completed, "the allocation sweep eventually reaches a successful catalog load")
-}
-
-@(test)
 test_catalog_load_rejects_corrupt_rows_without_leaking_prefix :: proc(t: ^testing.T) {
     s, err := open_memory()
     testing.expect_value(t, err, nil)

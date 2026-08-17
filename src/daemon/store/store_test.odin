@@ -291,39 +291,6 @@ test_open_releases_a_partial_statement_set :: proc(t: ^testing.T) {
     testing.expect(t, again == nil, "a refused open returns no store")
 }
 
-// `queries.queries_init`'s first `Reader`-based query is `Read_High`: its statement is
-// prepared, then `reader_prepare` resolves the scan side, and only stores the
-// pointer in `queries` once that succeeds. Its lone heap allocation (after the
-// one `open` makes cloning `path`) is `scan_prepare`'s column table, so a
-// `Failing_Allocator` with `fail_at = 1` fails exactly there and nowhere earlier.
-// The statement itself must still be finalized on that path, or it is unreachable
-// from every cleanup path in `queries` — this would silently pass if it weren't,
-// since `open`'s own internal assert ("failed open leaves no SQLite child alive")
-// is what actually catches a statement left open on the doomed connection.
-@(test)
-test_open_finalizes_the_statement_a_reader_oom_orphans :: proc(t: ^testing.T) {
-    path := testsupport.sqlite_db_path(t, "reader-oom")
-    defer testsupport.sqlite_db_remove(path)
-
-    failing: testsupport.Failing_Allocator
-    testsupport.failing_allocator_init(&failing, context.allocator, 1)
-
-    s, err := open(path, testsupport.failing_allocator(&failing))
-    testing.expect_value(t, err, sqlite.Scan_Error.Out_Of_Memory)
-    testing.expect(t, s == nil, "a refused open returns no store")
-
-    // A statement orphaned by the failed open would still hold the file's only
-    // connection busy; a normal reopen only succeeds if that connection was
-    // actually closed, which only happens if every one of its statements was.
-    again, reopen_err := open(path)
-    testing.expect_value(t, reopen_err, nil)
-    testing.expect(t, again != nil, "a clean reopen succeeds after a failed one")
-
-    if again != nil {
-        close(again)
-    }
-}
-
 // The registry row and the system prompt are one creation. A failure on the second
 // must leave no session behind, or the retry would collide with a row that never
 // carried its prompt.

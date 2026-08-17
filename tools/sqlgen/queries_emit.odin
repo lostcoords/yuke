@@ -274,10 +274,6 @@ emit_queries_init :: proc(b: ^strings.Builder, resolved: []Resolved_Query, alias
                 params_type,
                 row_type,
             )
-            fmt.sbprintfln(b, "    if %s_reader_err == .Out_Of_Memory {{", field)
-            fmt.sbprintfln(b, "        sqlite.finalize(%s_stmt)", field)
-            fmt.sbprintfln(b, "        return %s_reader_err", field)
-            fmt.sbprintln(b, "    }")
             fmt.sbprintfln(
                 b,
                 "    assert(%s_reader_err == .None, \"generated statement matches its generated struct\")",

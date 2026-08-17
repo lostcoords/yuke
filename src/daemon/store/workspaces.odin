@@ -47,10 +47,7 @@ workspace_page :: proc(s: ^Store, limit: int, allocator: mem.Allocator) -> (work
         return nil, read_err(sqlite_err)
     }
 
-    page, page_err := make([]wire.Workspace, len(read), allocator)
-    if page_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    page := make([]wire.Workspace, len(read), allocator)
 
     for row, i in read {
         page[i] = wire.Workspace {

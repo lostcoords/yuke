@@ -98,12 +98,6 @@ events_after_prepare :: proc(
     assert(bind_err == .None, "the tail read's SQL matches Events_After_Params")
 
     scan, scan_err := sqlite.scan_prepare(st, Event_Row, allocator)
-    if scan_err == .Out_Of_Memory {
-        sqlite.finalize(st)
-
-        return {}, scan_err
-    }
-
     assert(scan_err == .None, "the tail read matches Event_Row")
 
     return Events_After_Reader{statement = st, bind = bind, scan = scan}, nil

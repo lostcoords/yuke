@@ -309,14 +309,11 @@ catalog_providers_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
             model_catalog.provider_destroy(&item, catalog.allocator)
             return .Invalid_Row
         }
-        if _, append_err := append(&catalog.providers, item); append_err != nil {
-            model_catalog.provider_destroy(&item, catalog.allocator)
-            return .Alloc_Failed
-        }
+        append(&catalog.providers, item)
 
         // Every row carries the same validator, so the first one answers for all.
         if etag, has_etag := row.etag.?; has_etag && catalog.feed_etag == "" {
-            catalog.feed_etag = string_clone(etag, catalog.allocator) or_return
+            catalog.feed_etag = string_clone(etag, catalog.allocator)
         }
     }
 
@@ -356,10 +353,10 @@ catalog_provider_from_row :: proc(
 
     item.models.allocator = allocator
     item.endpoint.protocol = protocol
-    item.id = wire.Provider_Id(string_clone(row.provider_id, allocator) or_return)
-    item.source_id = string_clone(row.models_dev_id, allocator) or_return
-    item.name = string_clone(row.name, allocator) or_return
-    item.endpoint.base_url = string_clone(row.base_url, allocator) or_return
+    item.id = wire.Provider_Id(string_clone(row.provider_id, allocator))
+    item.source_id = string_clone(row.models_dev_id, allocator)
+    item.name = string_clone(row.name, allocator)
+    item.endpoint.base_url = string_clone(row.base_url, allocator)
 
     return item, nil
 }
@@ -431,10 +428,7 @@ catalog_models_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
             model_catalog.model_destroy(&model, catalog.allocator)
             return .Invalid_Row
         }
-        if _, append_err := append(&item.models, model); append_err != nil {
-            model_catalog.model_destroy(&model, catalog.allocator)
-            return .Alloc_Failed
-        }
+        append(&item.models, model)
     }
 
     return nil
@@ -535,7 +529,7 @@ catalog_loaded_model_finalize :: proc(model: ^model_catalog.Model, allocator: me
     assert(model.info.default_reasoning == "", "a loaded model derives its default once")
 
     derived := model_catalog.default_reasoning_level(model.info.reasoning_levels)
-    model.info.default_reasoning = string_clone(derived, allocator) or_return
+    model.info.default_reasoning = string_clone(derived, allocator)
 
     return nil
 }
@@ -724,11 +718,7 @@ catalog_ordinal_fill :: proc(
             return .Invalid_Row
         }
 
-        allocation_err: mem.Allocator_Error
-        slot^, allocation_err = make([]string, int(total), allocator)
-        if allocation_err != nil {
-            return .Alloc_Failed
-        }
+        slot^ = make([]string, int(total), allocator)
     } else if len(slot^) != int(total) {
         return .Invalid_Row
     }
@@ -736,7 +726,7 @@ catalog_ordinal_fill :: proc(
     if slot^[ordinal] != "" {
         return .Invalid_Row
     }
-    slot^[ordinal] = string_clone(value, allocator) or_return
+    slot^[ordinal] = string_clone(value, allocator)
 
     return nil
 }

@@ -652,10 +652,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Catalog_Size_Row,
         allocator,
     )
-    if catalog_size_reader_err == .Out_Of_Memory {
-        sqlite.finalize(catalog_size_stmt)
-        return catalog_size_reader_err
-    }
     assert(catalog_size_reader_err == .None, "generated statement matches its generated struct")
     queries.catalog_size = catalog_size_reader
     insert_catalog_provider_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Catalog_Provider]) or_return
@@ -708,10 +704,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_Prompt_Row,
         allocator,
     )
-    if session_prompt_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_prompt_stmt)
-        return session_prompt_reader_err
-    }
     assert(session_prompt_reader_err == .None, "generated statement matches its generated struct")
     queries.session_prompt = session_prompt_reader
     session_config_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Config]) or_return
@@ -721,10 +713,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_Config_Row,
         allocator,
     )
-    if session_config_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_config_stmt)
-        return session_config_reader_err
-    }
     assert(session_config_reader_err == .None, "generated statement matches its generated struct")
     queries.session_config = session_config_reader
     upsert_api_key_stmt := sqlite.prepare(db, QUERY_SQL[.Upsert_Api_Key]) or_return
@@ -761,10 +749,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Read_High_Row,
         allocator,
     )
-    if read_high_reader_err == .Out_Of_Memory {
-        sqlite.finalize(read_high_stmt)
-        return read_high_reader_err
-    }
     assert(read_high_reader_err == .None, "generated statement matches its generated struct")
     queries.read_high = read_high_reader
     truncate_messages_stmt := sqlite.prepare(db, QUERY_SQL[.Truncate_Messages]) or_return
@@ -785,10 +769,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_History_Page_Row,
         allocator,
     )
-    if session_history_page_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_history_page_stmt)
-        return session_history_page_reader_err
-    }
     assert(session_history_page_reader_err == .None, "generated statement matches its generated struct")
     queries.session_history_page = session_history_page_reader
     last_assistant_usage_stmt := sqlite.prepare(db, QUERY_SQL[.Last_Assistant_Usage]) or_return
@@ -798,10 +778,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Last_Assistant_Usage_Row,
         allocator,
     )
-    if last_assistant_usage_reader_err == .Out_Of_Memory {
-        sqlite.finalize(last_assistant_usage_stmt)
-        return last_assistant_usage_reader_err
-    }
     assert(last_assistant_usage_reader_err == .None, "generated statement matches its generated struct")
     queries.last_assistant_usage = last_assistant_usage_reader
     add_session_usage_stmt := sqlite.prepare(db, QUERY_SQL[.Add_Session_Usage]) or_return
@@ -837,10 +813,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Open_Runs_Row,
         allocator,
     )
-    if open_runs_reader_err == .Out_Of_Memory {
-        sqlite.finalize(open_runs_stmt)
-        return open_runs_reader_err
-    }
     assert(open_runs_reader_err == .None, "generated statement matches its generated struct")
     queries.open_runs = open_runs_reader
     session_exists_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Exists]) or_return
@@ -854,10 +826,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_Row,
         allocator,
     )
-    if session_snapshot_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_snapshot_stmt)
-        return session_snapshot_reader_err
-    }
     assert(session_snapshot_reader_err == .None, "generated statement matches its generated struct")
     queries.session_snapshot = session_snapshot_reader
     session_page_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Page]) or_return
@@ -867,10 +835,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_Page_Row,
         allocator,
     )
-    if session_page_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_page_stmt)
-        return session_page_reader_err
-    }
     assert(session_page_reader_err == .None, "generated statement matches its generated struct")
     queries.session_page = session_page_reader
     session_count_stmt := sqlite.prepare(db, QUERY_SQL[.Session_Count]) or_return
@@ -880,10 +844,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Session_Count_Row,
         allocator,
     )
-    if session_count_reader_err == .Out_Of_Memory {
-        sqlite.finalize(session_count_stmt)
-        return session_count_reader_err
-    }
     assert(session_count_reader_err == .None, "generated statement matches its generated struct")
     queries.session_count = session_count_reader
     insert_workspace_stmt := sqlite.prepare(db, QUERY_SQL[.Insert_Workspace]) or_return
@@ -900,10 +860,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Workspace_Page_Row,
         allocator,
     )
-    if workspace_page_reader_err == .Out_Of_Memory {
-        sqlite.finalize(workspace_page_stmt)
-        return workspace_page_reader_err
-    }
     assert(workspace_page_reader_err == .None, "generated statement matches its generated struct")
     queries.workspace_page = workspace_page_reader
     workspace_root_stmt := sqlite.prepare(db, QUERY_SQL[.Workspace_Root]) or_return
@@ -913,10 +869,6 @@ queries_init :: proc(db: ^sqlite.Conn, queries: ^Queries, allocator := context.a
         Workspace_Root_Row,
         allocator,
     )
-    if workspace_root_reader_err == .Out_Of_Memory {
-        sqlite.finalize(workspace_root_stmt)
-        return workspace_root_reader_err
-    }
     assert(workspace_root_reader_err == .None, "generated statement matches its generated struct")
     queries.workspace_root = workspace_root_reader
     return nil

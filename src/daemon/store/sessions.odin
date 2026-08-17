@@ -209,10 +209,7 @@ session_page :: proc(
         return nil, read_err(sqlite_err)
     }
 
-    page, page_err := make([dynamic]wire.Session, 0, len(read), allocator)
-    if page_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    page := make([dynamic]wire.Session, 0, len(read), allocator)
 
     for row in read {
         // The CHECK constraints hold every origin arm and the created_by pair to their
@@ -223,9 +220,7 @@ session_page :: proc(
             return nil, Store_Error.Invalid_Row
         }
 
-        if _, append_err := append(&page, session); append_err != nil {
-            return nil, Store_Error.Alloc_Failed
-        }
+        append(&page, session)
     }
 
     assert(len(page) <= limit, "a page holds no more rows than the statement's LIMIT")

@@ -291,10 +291,7 @@ history_page :: proc(
         return nil, read_err(sqlite_err)
     }
 
-    out, alloc_err := make([]wire.Message, len(read), allocator)
-    if alloc_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    out := make([]wire.Message, len(read), allocator)
 
     // The rows arrive newest first off the keyset; the page ships oldest first.
     n := len(read)

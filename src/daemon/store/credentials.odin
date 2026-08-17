@@ -98,12 +98,8 @@ credential_statuses_load :: proc(
             return nil, .Invalid_Row
         }
 
-        provider_id := string_clone(row.provider_id, allocator) or_return
-        if _, append_err := append(&list, Credential_Status{provider_id = provider_id, kind = kind});
-           append_err != nil {
-            delete(provider_id, allocator)
-            return nil, .Alloc_Failed
-        }
+        provider_id := string_clone(row.provider_id, allocator)
+        append(&list, Credential_Status{provider_id = provider_id, kind = kind})
     }
 
     return list, nil
@@ -140,10 +136,7 @@ credentials_load :: proc(s: ^Store, allocator := context.allocator) -> (credenti
         }
 
         credential := credential_read(st, allocator) or_return
-        if _, append_err := append(&list, credential); append_err != nil {
-            credential_destroy(&credential, allocator)
-            return nil, .Alloc_Failed
-        }
+        append(&list, credential)
     }
 
     return list, nil
@@ -238,7 +231,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
         return {}, .Invalid_Row
     }
 
-    credential.provider_id = string_clone(row.provider_id, allocator) or_return
+    credential.provider_id = string_clone(row.provider_id, allocator)
     credential.kind = kind
 
     switch kind {
@@ -258,7 +251,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
             return credential, .Invalid_Row
         }
 
-        credential.api_key = string_clone(api_key, allocator) or_return
+        credential.api_key = string_clone(api_key, allocator)
 
     case .OAuth:
         _, has_api_key := row.api_key.?
@@ -282,11 +275,11 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
             return credential, .Invalid_Row
         }
 
-        credential.access_token = string_clone(access_token, allocator) or_return
-        credential.refresh_token = string_clone(refresh_token, allocator) or_return
+        credential.access_token = string_clone(access_token, allocator)
+        credential.refresh_token = string_clone(refresh_token, allocator)
         credential.expires_at_ms = expires_at_ms
         if has_account {
-            credential.account_id = string_clone(account_id, allocator) or_return
+            credential.account_id = string_clone(account_id, allocator)
         }
     }
 

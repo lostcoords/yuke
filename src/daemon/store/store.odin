@@ -63,8 +63,8 @@ Store_Error :: enum {
     // wrote this database.
     Version_Unsupported,
 
-    // One of our own allocations failed; SQLite's arrive as `.No_Mem` and a row
-    // scan's as `Scan_Error.Out_Of_Memory`.
+    // An allocation failed. No longer produced by this package (allocations are
+    // treated as infallible); retained because the daemon still returns it.
     Alloc_Failed,
 }
 
@@ -96,14 +96,8 @@ read_err :: proc(err: sqlite.Error) -> Error {
 // Take ownership of a borrowed column value, reporting an allocation failure in this
 // package's own error union. Every reader that clones out of SQLite memory goes through here.
 @(private)
-string_clone :: proc(value: string, allocator: mem.Allocator) -> (owned: string, err: Error) {
-    alloc_err: mem.Allocator_Error
-    owned, alloc_err = strings.clone(value, allocator)
-    if alloc_err != nil {
-        return "", .Alloc_Failed
-    }
-
-    return owned, nil
+string_clone :: proc(value: string, allocator: mem.Allocator) -> string {
+    return strings.clone(value, allocator)
 }
 
 // The three full-row inserts: their SQL is built by `sqlite.insert_all_sql` from the generated
@@ -181,10 +175,7 @@ Store :: struct {
 open :: proc(path: string, allocator := context.allocator) -> (^Store, Error) {
     assert(len(path) > 0, "open needs a path")
 
-    cpath, clone_err := strings.clone_to_cstring(path, allocator)
-    if clone_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    cpath := strings.clone_to_cstring(path, allocator)
     defer delete(cpath, allocator)
 
     db, rc := sqlite.open(cpath, {.Readwrite, .Create, .Nomutex})
@@ -243,10 +234,7 @@ open_conn :: proc(db: ^sqlite.Conn, durable: bool, allocator: mem.Allocator) -> 
     inserts_prepare(db, &inserts, allocator) or_return
     events_after = events_after_prepare(db, allocator) or_return
 
-    opened, aerr := new(Store, allocator)
-    if aerr != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    opened := new(Store, allocator)
 
     opened^ = Store {
         writer       = db,

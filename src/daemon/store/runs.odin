@@ -91,10 +91,7 @@ open_runs :: proc(s: ^Store, allocator: mem.Allocator) -> (runs: []Open_Run_Row,
         return nil, read_err(sqlite_err)
     }
 
-    out, alloc_err := make([]Open_Run_Row, len(rows), allocator)
-    if alloc_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    out := make([]Open_Run_Row, len(rows), allocator)
 
     for row, index in rows {
         kind, kind_ok := wire.run_kind_from_wire(row.open_run_kind)
