@@ -10,7 +10,6 @@
 // a malformed one degrades to a `Transport_Error` the caller closes the link on, never a crash.
 package relay
 
-import "base:runtime"
 import "core:crypto"
 import "core:crypto/noise"
 
@@ -43,9 +42,6 @@ Transport_Error :: enum {
 
     // The reassembled frame would exceed `TRANSPORT_FRAME_MAX`.
     Frame_Too_Large,
-
-    // The reassembly buffer could not grow.
-    Out_Of_Memory,
 }
 
 // Reassembles a fragmented wire frame from its chunks. One per session receive direction; reset
@@ -173,11 +169,11 @@ reassembler_destroy :: proc(r: ^Reassembler) {
     r^ = {}
 }
 
-reassembler_append :: proc(r: ^Reassembler, body: []u8) -> runtime.Allocator_Error {
+reassembler_append :: proc(r: ^Reassembler, body: []u8) {
     assert(r != nil, "reassembler append needs a reassembler")
     assert(len(r.buf) + len(body) <= TRANSPORT_FRAME_MAX, "reassembler append exceeds its bound")
     if len(body) == 0 {
-        return nil
+        return
     }
 
     old_len := len(r.buf)
@@ -185,10 +181,7 @@ reassembler_append :: proc(r: ^Reassembler, body: []u8) -> runtime.Allocator_Err
     if needed > cap(r.buf) {
         allocator := r.buf.allocator
         new_capacity := min(TRANSPORT_FRAME_MAX, max(needed, max(64, cap(r.buf) * 2)))
-        replacement, aerr := make([dynamic]u8, old_len, new_capacity, allocator)
-        if aerr != nil {
-            return aerr
-        }
+        replacement := make([dynamic]u8, old_len, new_capacity, allocator)
         copy(replacement[:], r.buf[:])
         reassembler_destroy(r)
         r.buf = replacement
@@ -197,8 +190,6 @@ reassembler_append :: proc(r: ^Reassembler, body: []u8) -> runtime.Allocator_Err
     resize(&r.buf, needed)
     copied := copy(r.buf[old_len:], body)
     assert(copied == len(body), "reassembler append was short")
-
-    return nil
 }
 
 // Feed one opened chunk (a header byte then its body) into the reassembler. When the chunk was
@@ -240,9 +231,7 @@ reassembler_push :: proc(r: ^Reassembler, chunk: []u8) -> (frame: []u8, done: bo
         return nil, false, .Frame_Too_Large
     }
 
-    if aerr := reassembler_append(r, body); aerr != nil {
-        return nil, false, .Out_Of_Memory
-    }
+    reassembler_append(r, body)
 
     if is_last {
         return r.buf[:], true, .None

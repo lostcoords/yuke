@@ -57,9 +57,6 @@ Identity_Error :: enum {
     // The key file is not a valid 32-byte X25519 private key.
     Key_Invalid,
 
-    // Storage could not be allocated.
-    Out_Of_Memory,
-
     // A file could not be written.
     Write_Failed,
 
@@ -122,18 +119,9 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
         return {}, .Key_Invalid
     }
 
-    cloned: mem.Allocator_Error
-    out.device_id, cloned = strings.clone(cf.device_id, allocator)
-    if cloned == nil {
-        out.credential, cloned = strings.clone(cf.credential, allocator)
-    }
-    if cloned == nil {
-        out.relay_url, cloned = strings.clone(cf.relay_url, allocator)
-    }
-    if cloned != nil {
-        identity_destroy(&out)
-        return {}, .Out_Of_Memory
-    }
+    out.device_id = strings.clone(cf.device_id, allocator)
+    out.credential = strings.clone(cf.credential, allocator)
+    out.relay_url = strings.clone(cf.relay_url, allocator)
 
     return out, .None
 }
@@ -150,11 +138,7 @@ identity_save :: proc(dir: string, id: ^Identity, allocator := context.allocator
         credential = id.credential,
         relay_url  = id.relay_url,
     }
-    encoded, marshal_err := json.marshal(cf, {pretty = true}, allocator)
-    if marshal_err != nil {
-        return .Out_Of_Memory
-    }
-
+    encoded, _ := json.marshal(cf, {pretty = true}, allocator)
     defer delete(encoded, allocator)
 
     key_bytes: [NOISE_STATIC_KEY_SIZE]u8
@@ -186,11 +170,7 @@ identity_destroy :: proc(id: ^Identity) {
 
 // Write `data` to `path` privately: a fresh temp beside it (0600), fsync, then atomic rename.
 write_private_file :: proc(path: string, data: []byte, allocator: mem.Allocator) -> Identity_Error {
-    temp_path, path_aerr := strings.concatenate({path, ".tmp"}, allocator)
-    if path_aerr != nil {
-        return .Out_Of_Memory
-    }
-
+    temp_path := strings.concatenate({path, ".tmp"}, allocator)
     defer delete(temp_path, allocator)
 
     handle, open_err := os.open(temp_path, {.Write, .Create, .Excl}, IDENTITY_FILE_PERMISSIONS)

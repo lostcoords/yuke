@@ -66,25 +66,13 @@ session_identity_load :: proc(
 
     out: Session_Identity
     out.allocator = allocator
-    cloned: mem.Allocator_Error
-    out.session_id, cloned = strings.clone(sf.session_id, allocator)
-    if cloned == nil {
-        out.credential, cloned = strings.clone(sf.credential, allocator)
+    out.session_id = strings.clone(sf.session_id, allocator)
+    out.credential = strings.clone(sf.credential, allocator)
+    out.relay_url = strings.clone(sf.relay_url, allocator)
+    if sf.local_device_id != "" {
+        out.local_device_id = strings.clone(sf.local_device_id, allocator)
     }
-    if cloned == nil {
-        out.relay_url, cloned = strings.clone(sf.relay_url, allocator)
-    }
-    if cloned == nil && sf.local_device_id != "" {
-        out.local_device_id, cloned = strings.clone(sf.local_device_id, allocator)
-    }
-    if cloned == nil {
-        kind := sf.kind if sf.kind != "" else "cli"
-        out.kind, cloned = strings.clone(kind, allocator)
-    }
-    if cloned != nil {
-        session_identity_destroy(&out)
-        return {}, .Out_Of_Memory
-    }
+    out.kind = strings.clone(sf.kind if sf.kind != "" else "cli", allocator)
 
     if out.kind == "cli" {
         key_path, _ := filepath.join({dir, SESSION_KEY_FILE}, context.temp_allocator)
@@ -123,10 +111,7 @@ session_identity_save :: proc(dir: string, id: ^Session_Identity, allocator := c
         local_device_id = id.local_device_id,
         kind            = id.kind if id.kind != "" else "cli",
     }
-    encoded, marshal_err := json.marshal(sf, {pretty = true}, allocator)
-    if marshal_err != nil {
-        return .Out_Of_Memory
-    }
+    encoded, _ := json.marshal(sf, {pretty = true}, allocator)
     defer delete(encoded, allocator)
 
     path, _ := filepath.join({dir, SESSION_FILE}, context.temp_allocator)

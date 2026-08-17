@@ -95,7 +95,7 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
 
         return
 
-    case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+    case .Unreadable, .Malformed, .Key_Invalid, .Write_Failed:
         client_promise_reject(job, "identity_unreadable", true)
 
         return

@@ -38,9 +38,6 @@ Noise_Error :: enum {
 
     // A plaintext frame exceeds the Noise packet limit; the caller must bound frame size.
     Frame_Too_Large,
-
-    // A buffer could not be allocated.
-    Out_Of_Memory,
 }
 
 // One end of a relay session: the IK handshake, then the transport ciphers it splits into.
@@ -115,10 +112,6 @@ session_initiate :: proc(sess: ^Session, allocator := context.allocator) -> (msg
         return out, .None
     }
 
-    if status == .Out_Of_Memory {
-        return nil, .Out_Of_Memory
-    }
-
     // Writing our own msg1 with validated keys has no other outcome.
     unreachable()
 }
@@ -180,10 +173,6 @@ session_seal :: proc(
 
     if status == .Max_Packet_Size {
         return nil, .Frame_Too_Large
-    }
-
-    if status == .Out_Of_Memory {
-        return nil, .Out_Of_Memory
     }
 
     // Sealing our own frame past a split has no other failure on valid input.

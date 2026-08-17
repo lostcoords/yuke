@@ -272,9 +272,7 @@ link_dial :: proc(
     l.route = route
     l.user_data = user_data
 
-    if virtual.arena_init_growing(&l.scratch) != nil {
-        return .Out_Of_Memory
-    }
+    _ = virtual.arena_init_growing(&l.scratch)
 
     // client_connect clones the path, so building it in temp storage is safe.
     base := "/link" if route == .Link else "/connect"

@@ -95,7 +95,7 @@ login_run :: proc() {
                 dir,
             )
             os.exit(1)
-        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+        case .Unreadable, .Malformed, .Key_Invalid, .Write_Failed:
             fmt.eprintfln("yuke login: existing device identity is unreadable (%v); pass --force to overwrite", ierr)
             os.exit(1)
         }
@@ -106,7 +106,7 @@ login_run :: proc() {
             existing_session_id, _ = strings.clone(sess.session_id, context.allocator)
             relay.session_identity_destroy(&sess)
         case .Absent, .Stale:
-        case .Unreadable, .Malformed, .Key_Invalid, .Out_Of_Memory, .Write_Failed:
+        case .Unreadable, .Malformed, .Key_Invalid, .Write_Failed:
             fmt.eprintfln("yuke login: existing session identity is unreadable (%v); pass --force to overwrite", serr)
             os.exit(1)
         }

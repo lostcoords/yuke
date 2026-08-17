@@ -15,9 +15,6 @@ Control_Error :: enum {
 
     // The response JSON is not the shape this contract defines.
     Malformed,
-
-    // A body could not be allocated.
-    Out_Of_Memory,
 }
 
 // The bearer scheme presented on every device-authed control-plane call.
@@ -130,10 +127,7 @@ enroll_start_encode :: proc(
         device_ids        = device_ids,
     }
 
-    out, err := json.marshal(body, {}, allocator)
-    if err != nil {
-        return nil, .Out_Of_Memory
-    }
+    out, _ := json.marshal(body, {}, allocator)
 
     return out, .None
 }
@@ -160,10 +154,7 @@ Poll_Body :: struct {
 
 // Encode a device_codes/token poll request for `device_code`.
 enroll_poll_encode :: proc(device_code: string, allocator := context.allocator) -> ([]u8, Control_Error) {
-    out, err := json.marshal(Poll_Body{device_code = device_code}, {}, allocator)
-    if err != nil {
-        return nil, .Out_Of_Memory
-    }
+    out, _ := json.marshal(Poll_Body{device_code = device_code}, {}, allocator)
 
     return out, .None
 }
@@ -219,10 +210,7 @@ enroll_poll_decode :: proc(
 
 // Encode a connect_tickets request body for `device_id`.
 connect_ticket_encode :: proc(device_id: string, allocator := context.allocator) -> ([]u8, Control_Error) {
-    out, err := json.marshal(Connect_Body{device_id = device_id}, {}, allocator)
-    if err != nil {
-        return nil, .Out_Of_Memory
-    }
+    out, _ := json.marshal(Connect_Body{device_id = device_id}, {}, allocator)
 
     return out, .None
 }

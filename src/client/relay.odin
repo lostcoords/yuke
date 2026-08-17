@@ -372,9 +372,6 @@ relay_seal_error :: proc(err: relay.Noise_Error) -> ws.Client_Error {
     #partial switch err {
     case .Frame_Too_Large:
         return .Message_Too_Large
-
-    case .Out_Of_Memory:
-        return .Out_Of_Memory
     }
 
     return .Send_Failed
