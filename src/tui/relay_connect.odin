@@ -19,10 +19,10 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-import client "src:client"
-import relay "src:relay"
+import "src:client"
+import "src:relay"
 
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 
 // Control-plane paths the client calls with its Session credential.
 REMOTE_ROSTER_PATH :: "/api/v1/devices"

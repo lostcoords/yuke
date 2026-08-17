@@ -3,13 +3,277 @@ package daemon
 import "base:runtime"
 import "core:c"
 import "core:encoding/json"
+import "core:log"
 import "core:mem"
+import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
 import qjs "libs:bindings/quickjs"
-import js "src:js"
-import provider "src:provider"
+import "libs:offload"
+import "src:js"
+import "src:provider"
+
+// File name of the daemon script entry, evaluated from the config directory at startup.
+JS_ENTRY_FILE :: "yuked.js"
+
+// Bring up the script tier: a config directory that exists installs the shared host modules
+// plus `yuke:daemon`. No base — a daemon serves many workspaces, so every script path is absolute.
+js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
+    assert(d != nil, "js_init needs daemon state")
+    assert(offload.pool_is_running(&d.workers), "the script tier offloads onto a running pool")
+    assert(offload.pool_is_running(&d.exec_workers), "`yuke:exec` commands offload onto a running pool")
+
+    // `init` copies the list, so a stack array is fine.
+    modules: [4]js.Module
+    count := 0
+
+    if root != "" && os.is_dir(root) {
+        cloned, clone_err := strings.clone(root, allocator)
+        if clone_err != nil {
+            return .Out_Of_Memory
+        }
+
+        d.config_dir = cloned
+        modules[count] = js.fs_module()
+        count += 1
+        modules[count] = js.exec_module()
+        count += 1
+        modules[count] = js.diff_module()
+        count += 1
+        modules[count] = script_module()
+        count += 1
+    } else if root != "" && os.exists(root) {
+        log.errorf("daemon: config dir unusable: %s", root)
+
+        return .Invalid_Options
+    }
+
+    options := js.Options {
+        modules   = modules[:count],
+        pool      = &d.workers,
+        exec_pool = &d.exec_workers,
+        user      = d,
+        report    = js_report,
+        on_drain  = js_on_drain,
+        allocator = allocator,
+    }
+
+    switch js.init(&d.js, options) {
+    case .None:
+        return .None
+
+    case .Out_Of_Memory:
+        return .Out_Of_Memory
+
+    case .Invalid_Root:
+        return .Invalid_Options
+    }
+
+    return .None
+}
+
+// A script fault is an operating outcome here: it is logged and the daemon keeps serving.
+// The one exception is the entry script, which `js_run_entry` turns into a start failure.
+js_report :: proc(user: rawptr, source: string, text: string) {
+    log.errorf("daemon: js %s: %s", source, text)
+}
+
+// Evaluate `<root>/yuked.js` when present; a root with no entry is normal, one that raises is a
+// start failure. `evaluated` tells a script that forgot `defineConfig` from having no script.
+js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, err: Error) {
+    assert(d != nil, "js entry needs daemon state")
+
+    if d.config_dir == "" {
+        return false, .None
+    }
+
+    path, join_err := filepath.join({d.config_dir, JS_ENTRY_FILE}, allocator)
+    if join_err != nil {
+        return false, .Out_Of_Memory
+    }
+
+    defer delete(path, allocator)
+
+    source, read_err := os.read_entire_file(path, allocator)
+    defer delete(source, allocator)
+    if read_err != nil {
+        if read_err == .Not_Exist {
+            return false, .None
+        }
+
+        log.errorf("daemon: cannot read script entry %s: %v", path, read_err)
+        return false, .Script_Failed
+    }
+
+    evaluated_ok := js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator)
+
+    if !evaluated_ok {
+        return false, .Script_Failed
+    }
+
+    log.infof("daemon: evaluated %s", path)
+
+    return true, .None
+}
+
+// Well-known port a launcher binds when the operator configures none, so the web client can probe
+// for a local daemon. Applied by the launcher, not `start` (which keeps 0 meaning OS-assigned).
+DEFAULT_PORT :: 9853
+
+// The config object `yuked.js` hands to `defineConfig`, camelCase to match the JS surface. Every
+// absent member defaults in `start`, and a script that never calls it leaves `Options` untouched.
+Script_Config :: struct {
+    // Dotted IPv4 bind address. Empty binds the front door's `127.0.0.1`.
+    host:            string `json:"host"`,
+
+    // TCP port for `/ws` and `/blob`. Zero binds an OS-assigned port.
+    port:            int `json:"port"`,
+
+    // Base directory for the event-log database (`yuked.db`) and blob store (`blobs/`). Empty
+    // uses the platform data directory.
+    data_dir:        string `json:"dataDir"`,
+
+    // Bearer token; at least 32 bytes when set. Empty disables authorization.
+    auth_token:      string `json:"authToken"`,
+
+    // One of `debug`, `info`, `warn`, `error`. Empty means `info`.
+    log_level:       string `json:"logLevel"`,
+
+    // Control-plane base URL the relay exchanges the device credential for link tickets at.
+    // Empty means the hosted default (`start` fills it in).
+    relay_cloud_url: string `json:"relayCloudUrl"`,
+
+    // Browser origins the front door admits, each a full `scheme://host[:port]`. Empty admits none.
+    allowed_origins: []string `json:"allowedOrigins"`,
+}
+
+// Decode the JSON captured from `defineConfig`. A malformed value or an unknown member fails
+// the start rather than taking half of it.
+config_decode :: proc(text: string, allocator := context.allocator) -> (config: Script_Config, ok: bool) {
+    parse_arena: mem.Dynamic_Arena
+    mem.dynamic_arena_init(&parse_arena, runtime.heap_allocator(), runtime.heap_allocator())
+    defer mem.dynamic_arena_destroy(&parse_arena)
+
+    value, parse_err := json.parse(text, .JSON, true, mem.dynamic_arena_allocator(&parse_arena))
+    if parse_err != nil {
+        return {}, false
+    }
+
+    object, is_object := value.(json.Object)
+    if !is_object {
+        return {}, false
+    }
+
+    for name in object {
+        switch name {
+        case "host", "port", "dataDir", "authToken", "logLevel", "relayCloudUrl", "allowedOrigins":
+        case:
+            return {}, false
+        }
+    }
+
+    if json.unmarshal(transmute([]byte)text, &config, .JSON, allocator) != nil {
+        return {}, false
+    }
+
+    return config, true
+}
+
+// Map the configured level name to the console logger's, defaulting an empty or unrecognized
+// one to `info` — a bad level should not stop a daemon, so an unknown one is warned and falls back.
+config_log_level :: proc(name: string) -> log.Level {
+    switch name {
+    case "", "info":
+        return .Info
+
+    case "debug":
+        return .Debug
+
+    case "warn":
+        return .Warning
+
+    case "error":
+        return .Error
+    }
+
+    log.warnf("daemon: unknown logLevel %q in yuked.js, using info", name)
+
+    return .Info
+}
+
+// Daemon-only script registrations installed beside the shared host modules when a root exists.
+SCRIPT_MODULE :: "yuke:daemon"
+
+@(rodata)
+SCRIPT_EXPORTS := []string{"defineConfig", "defineTool"}
+
+script_module :: proc() -> js.Module {
+    return {name = SCRIPT_MODULE, init = script_module_init, exports = SCRIPT_EXPORTS}
+}
+
+script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
+    context = runtime.default_context()
+
+    config_fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
+
+    if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) {
+        return -1
+    }
+
+    tool_fn := qjs.new_function(ctx, define_tool, "defineTool", 2)
+
+    if !qjs.set_module_export(ctx, m, "defineTool", tool_fn) {
+        return -1
+    }
+
+    return 0
+}
+
+// `defineConfig(config)` — capture the config for `start` to decode, returning it so
+// `export default defineConfig({...})` reads naturally. A second call or a non-object throws.
+@(private = "file")
+define_config :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+
+    d := (^Daemon)(js.user_of(ctx))
+    if d == nil {
+        return qjs.throw_type_error(ctx, "defineConfig has no daemon")
+    }
+
+    if argc < 1 || !qjs.is_object(argv[0]) {
+        return qjs.throw_type_error(ctx, "defineConfig expects a config object")
+    }
+
+    if d.config_seen {
+        return qjs.throw_type_error(ctx, "defineConfig was called more than once")
+    }
+
+    encoded := qjs.json_stringify(ctx, argv[0])
+    if qjs.is_exception(encoded) {
+        return encoded
+    }
+
+    defer qjs.free_value(ctx, encoded)
+
+    text, readable := qjs.to_string(ctx, encoded)
+    if !readable {
+        return qjs.throw_type_error(ctx, "defineConfig could not serialize its config")
+    }
+
+    defer qjs.free_string(ctx, text)
+
+    cloned, clone_err := strings.clone(text, d.allocator)
+    if clone_err != nil {
+        return qjs.throw_type_error(ctx, "out of memory")
+    }
+
+    d.config_json = cloned
+    d.config_seen = true
+
+    return qjs.dup_value(ctx, argv[0])
+}
 
 // Longest tool name the providers accept.
 @(private = "file")

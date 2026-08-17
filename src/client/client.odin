@@ -4,7 +4,7 @@ import "core:log"
 import "core:mem"
 import "core:strings"
 import ws "libs:websocket"
-import wire "src:wire"
+import "src:wire"
 
 // Ceiling on concurrently outstanding requests. Bounds `pending` growth against a
 // peer that never answers; a send past the cap fails with `.Too_Many_Pending`.

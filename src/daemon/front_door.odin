@@ -7,10 +7,10 @@ import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:strings"
-import http "libs:http"
+import "libs:http"
 import http_server "libs:http/server"
 import ws "libs:websocket"
-import wire "src:wire"
+import "src:wire"
 
 // The front door's router types bound to this daemon, so the application type is
 // spelled once rather than at every table and callback.

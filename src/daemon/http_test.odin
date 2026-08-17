@@ -13,9 +13,9 @@ import "core:thread"
 import "core:time"
 import "libs:offload"
 import ws "libs:websocket"
-import client "src:client"
-import relay "src:relay"
-import wire "src:wire"
+import "src:client"
+import "src:relay"
+import "src:wire"
 
 // --- Front-door route tests ---------------------------------------------------
 //

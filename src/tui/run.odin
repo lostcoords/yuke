@@ -9,7 +9,7 @@ import "core:io"
 import "core:nbio"
 import "core:os"
 import "core:strings"
-import term "src:term"
+import "src:term"
 
 // Sized to hold a full repaint of a large terminal so a frame is one write.
 FRAME_BUF_BYTES :: 256 * 1024

@@ -10,7 +10,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import dt "core:time/datetime"
-import http "libs:http"
+import "libs:http"
 
 Status :: http.Status
 Header :: http.Header

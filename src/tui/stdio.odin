@@ -1,7 +1,7 @@
 package tui
 
 import "core:os"
-import term "src:term"
+import "src:term"
 
 // stdin drives raw mode and reads; stdout drives size queries and VT output. POSIX backs
 // both with the same tty (fds 0 and 1); Windows splits them into the console INPUT and

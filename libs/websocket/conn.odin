@@ -7,7 +7,7 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:time"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 
 // Connection lifecycle: Idle -> Dialing -> Upgrading -> Open -> Closing -> Closed.
 // `Idle` and `Dialing` are client-only; an adopted server connection starts at

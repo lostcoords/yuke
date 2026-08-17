@@ -18,7 +18,7 @@ import "core:nbio"
 import "core:os"
 import "core:time"
 
-import daemon "src:daemon"
+import "src:daemon"
 import "src:paths"
 
 // Reported in every `initialize` result. Identifies the build, so it is compiled in rather

@@ -31,15 +31,38 @@ bounded candidates, uses an opaque name cursor, and both per-connection and glob
 caps bound outstanding work.
 
 The daemon owns one QuickJS runtime. The runtime is intentionally shared so later
-session contexts can live beneath it; today startup evaluates `<script-root>/yuked.js`
-and installs only the shared `yuke:fs` module. Filesystem host operations are offloaded,
-path-contained after canonicalization, and counted until their promises settle.
+session contexts can live beneath it; today startup evaluates `<config-dir>/yuked.js`
+and installs the shared host modules plus `yuke:daemon`. Host filesystem and exec
+operations are offloaded. A caller with `yuke:exec` is not contained.
 
 Shutdown first stops admission and new JS operations, cancels reactor-owned auth/relay
 work, and drains the front door, callback listener, workers, and JS completions. Only
 then may `destroy` release stores, runtimes, credentials, arenas, and transport state.
 Bearer values, provider tokens, relay credentials/tickets, and private key buffers must
 never be logged and are explicitly wiped when their owner releases them.
+
+Files are owners, not one-proc slices. `auth` is wire `auth.*` (provider credentials);
+the HTTP token is bearer. `run` is one live turn; `session` is the registry and live
+queue. Call direction:
+
+    front door / bearer / blob     may not call session, run, catalog, or auth
+    catalog                        store, package catalog, broadcast
+                                   may not call run or session
+    workspace                      store workspace rows, offload
+                                   may not call run
+    session                        store, broadcast, run_turn_start / run_turn_cancel
+                                   may not call provider or curl
+    run                            catalog lookup, credential bind, tools, broadcast,
+                                   session_live
+                                   may not call the front door or handle_text
+    auth                           store credentials, oauth, catalog_feed_invalidate,
+                                   broadcast
+                                   may not call run or session
+    pump                           the only seq and fan-out; everyone else calls
+                                   broadcast
+    script                         the JS host; start and run_tools call in
+
+`method_*` lives in the unit that owns the state. `handle_text` is only the switch.
 */
 
 package daemon

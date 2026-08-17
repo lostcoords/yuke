@@ -4,7 +4,7 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import ts "libs:testsupport"
-import wire "src:wire"
+import "src:wire"
 
 @(private = "file")
 _session_id :: proc(s: string) -> wire.Session_Id {

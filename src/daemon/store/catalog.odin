@@ -6,8 +6,8 @@ import "core:unicode/utf8"
 
 import model_catalog "src:daemon/catalog"
 import "src:daemon/store/queries"
-import provider "src:provider"
-import wire "src:wire"
+import "src:provider"
+import "src:wire"
 
 import "libs:bindings/sqlite"
 

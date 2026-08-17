@@ -10,14 +10,14 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-import sqlite "libs:bindings/sqlite"
+import "libs:bindings/sqlite"
 import http_server "libs:http/server"
 import "libs:testsupport"
-import client "src:client"
-import catalog "src:daemon/catalog"
-import store "src:daemon/store"
-import provider "src:provider"
-import wire "src:wire"
+import "src:client"
+import "src:daemon/catalog"
+import "src:daemon/store"
+import "src:provider"
+import "src:wire"
 
 // A turn that committed no message: the draft is announced, retracted, and the terminal
 // follows. Failure and cancellation announce the same sequence. No block ever opened, so

@@ -16,9 +16,9 @@ import "core:strings"
 import "core:time"
 
 import "src:paths"
-import relay "src:relay"
+import "src:relay"
 
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 
 // Control-plane base URL when neither `--cloud` nor `YUKE_CLOUD_URL` is set. The device API is
 // served only under the `platform` subdomain (yuke-cloud `config/routes.rb`), so the base must

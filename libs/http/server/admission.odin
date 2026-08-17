@@ -2,7 +2,7 @@ package http_server
 
 import "core:net"
 import "core:strings"
-import http "libs:http"
+import "libs:http"
 
 // Refuse traffic a browser can be made to send. `Origin` marks a page-driven request,
 // which CORS does not block for the WebSocket handshake; a named `Host` is the

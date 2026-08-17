@@ -15,9 +15,9 @@ import "core:time"
 
 import qjs "libs:bindings/quickjs"
 import ws "libs:websocket"
-import client "src:client"
-import js "src:js"
-import wire "src:wire"
+import "src:client"
+import "src:js"
+import "src:wire"
 
 CLIENT_NATIVE_MODULE :: "yuke:client-native"
 

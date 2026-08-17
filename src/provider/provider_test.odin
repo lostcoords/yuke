@@ -3,7 +3,7 @@ package provider
 import "core:mem"
 import "core:strings"
 import "core:testing"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 import ts "libs:testsupport"
 import "src:wire"
 

@@ -4,8 +4,8 @@ import "base:runtime"
 import "core:mem"
 import "core:strings"
 
-import provider "src:provider"
-import wire "src:wire"
+import "src:provider"
+import "src:wire"
 
 FEED_MAX_BYTES :: 8 * mem.Megabyte
 SELECTIONS_MAX :: 256

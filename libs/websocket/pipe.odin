@@ -3,7 +3,7 @@ package websocket
 import "core:nbio"
 import "core:net"
 import "core:time"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 
 // How one pipe operation ended. A timeout is only ever asked for during a handshake;
 // the steady-state read and write carry none.

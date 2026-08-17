@@ -6,7 +6,7 @@ import "core:strings"
 import "core:testing"
 import "libs:testsupport"
 import ws "libs:websocket"
-import wire "src:wire"
+import "src:wire"
 
 // Driver tests exercise the pure routing/bookkeeping core with hand-written JSON and
 // a recording sink reached via `user_data`. No socket or event loop is created; the

@@ -13,9 +13,9 @@ import "core:time"
 import "libs:bindings/sqlite"
 import "libs:testsupport"
 import ws "libs:websocket"
-import client "src:client"
-import store "src:daemon/store"
-import wire "src:wire"
+import "src:client"
+import "src:daemon/store"
+import "src:wire"
 
 // --- Pump, fan-out, and subscription tests ------------------------------------
 //

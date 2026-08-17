@@ -2,7 +2,7 @@
 package term
 
 import "core:c"
-import darwin "core:sys/darwin"
+import "core:sys/darwin"
 
 // Query the terminal's size via TIOCGWINSZ. Darwin's libc `ioctl` is a C vararg and a
 // fixed 3-arg foreign binding mis-passes the third argument (EFAULT), so this uses the

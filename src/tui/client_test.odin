@@ -5,8 +5,8 @@ import "core:strings"
 import "core:testing"
 
 import qjs "libs:bindings/quickjs"
-import js "src:js"
-import term "src:term"
+import "src:js"
+import "src:term"
 
 @(private = "file")
 client_test_result :: proc(t: ^testing.T, h: ^Host) -> string {

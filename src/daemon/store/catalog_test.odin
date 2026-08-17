@@ -5,8 +5,8 @@ import "core:mem"
 import "core:testing"
 
 import model_catalog "src:daemon/catalog"
-import provider "src:provider"
-import wire "src:wire"
+import "src:provider"
+import "src:wire"
 
 import "libs:bindings/sqlite"
 import "libs:testsupport"

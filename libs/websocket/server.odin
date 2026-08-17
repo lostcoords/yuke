@@ -5,7 +5,7 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:time"
-import http "libs:http"
+import "libs:http"
 
 // Server lifecycle: Serving -> Closing -> Closed.
 Server_State :: enum {

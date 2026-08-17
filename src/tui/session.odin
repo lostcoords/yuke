@@ -12,8 +12,8 @@ import "core:mem"
 import "core:mem/virtual"
 
 import qjs "libs:bindings/quickjs"
-import client "src:client"
-import wire "src:wire"
+import "src:client"
+import "src:wire"
 
 // Where the open session sits relative to the resync cut. Broadcasts fold only when `Synced`;
 // otherwise they are dropped and the controller (JS) re-issues a resync.

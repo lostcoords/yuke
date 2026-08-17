@@ -15,10 +15,10 @@ import "core:time"
 import "src:paths"
 import "src:secret"
 
-import curl "libs:bindings/curl"
-import http "libs:http"
+import "libs:bindings/curl"
+import "libs:http"
 import ws "libs:websocket"
-import relay "src:relay"
+import "src:relay"
 
 // Reconnect backoff bounds. The delay doubles from the minimum after each failed dial or
 // dropped link, caps at the maximum, and resets to the minimum on a successful park.

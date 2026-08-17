@@ -5,8 +5,8 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-import client "src:client"
-import wire "src:wire"
+import "src:client"
+import "src:wire"
 
 // A refresh fetches models.dev over the network on the daemon, so allow more time than
 // the daemon's own transfer budget.

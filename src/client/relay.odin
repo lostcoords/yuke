@@ -20,7 +20,7 @@ import "core:strings"
 import "core:time"
 
 import ws "libs:websocket"
-import relay "src:relay"
+import "src:relay"
 import "src:secret"
 
 // Client-initiated keepalive on the /connect link, mirroring the daemon's /link keepalive. A

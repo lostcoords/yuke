@@ -7,10 +7,10 @@ import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
 
-import client "src:client"
+import "src:client"
 import "src:secret"
-import term "src:term"
-import wire "src:wire"
+import "src:term"
+import "src:wire"
 
 PROVIDER_REQUEST_TIMEOUT :: 10 * time.Second
 

@@ -8,9 +8,9 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-import catalog "src:daemon/catalog"
-import provider "src:provider"
-import wire "src:wire"
+import "src:daemon/catalog"
+import "src:provider"
+import "src:wire"
 
 // Live provider turns are opt-in: they need a real key and a network, so they never run
 // in the ordinary gates. Enable with `-define:YUKE_LIVE=true`.

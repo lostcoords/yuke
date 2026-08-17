@@ -1,6 +1,6 @@
 package main
 
-import daemon "src:daemon"
+import "src:daemon"
 import "src:paths"
 
 // The bootstrap options `start` needs before the manifest runs: the build version, the default

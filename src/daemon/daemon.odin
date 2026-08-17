@@ -13,12 +13,12 @@ import "core:mem/virtual"
 import http_server "libs:http/server"
 import "libs:offload"
 import ws "libs:websocket"
-import store "src:daemon/store"
-import js "src:js"
+import "src:daemon/store"
+import "src:js"
 import "src:paths"
-import relay "src:relay"
+import "src:relay"
 import "src:secret"
-import wire "src:wire"
+import "src:wire"
 
 // nbio offload workers, for blocking filesystem calls off the reactor.
 WORKER_COUNT :: 4
@@ -1137,96 +1137,6 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     if send_initialize_result(conn, req.id, sa) {
         conn.state = .Ready
     }
-}
-
-// `catalog.list`: `unchanged` when the client already holds the current revision, else a
-// `full` snapshot of the visible models re-derived from the store, plus the held rev and health.
-method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
-    assert(conn != nil, "catalog.list needs connection state")
-    assert(conn.state == .Ready, "catalog.list ran outside Ready")
-    assert(req.method == .Catalog_List, "catalog.list received another method")
-
-    d := conn.daemon
-    params := req.params.(wire.Catalog_List_Params)
-
-    if since, ok := params.since_rev.?; ok && since == d.catalog.rev {
-        send_result(conn, req.id, wire.Catalog_List_Result_Unchanged{catalog_rev = d.catalog.rev}, sa)
-        return
-    }
-
-    // A view over the held snapshot, built into request scratch. The snapshot is what
-    // `d.catalog.rev` was computed from, so the two cannot disagree.
-    models, ok := catalog_models_view(d.catalog.snapshot, sa)
-    if !ok {
-        send_error(conn, req.id, .Internal, "catalog unavailable", sa)
-        return
-    }
-
-    // `send_result` asserts the result validates; these models come from persisted rows, so
-    // store-write validation must stay at least as strict as wire validation (it is).
-    result := wire.Catalog_List_Result_Full {
-        catalog_rev = d.catalog.rev,
-        models      = models,
-        health      = d.catalog.health,
-    }
-    send_result(conn, req.id, result, sa)
-}
-
-// `catalog.refresh` starts an async models.dev fetch and answers when it lands with the
-// new revision and health, or an error. Single-flight; the reply is deferred to completion.
-method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
-    assert(conn != nil, "catalog.refresh needs connection state")
-    assert(conn.state == .Ready, "catalog.refresh ran outside Ready")
-    assert(req.method == .Catalog_Refresh, "catalog.refresh received another method")
-
-    d := conn.daemon
-    if !d.catalog_refresh.ready || d.catalog_refresh.stopping {
-        send_error(conn, req.id, .Internal, "catalog refresh is unavailable", sa)
-        return
-    }
-
-    if catalog_refresh_busy(d) {
-        send_error(conn, req.id, .Overloaded, "a catalog refresh is already in progress", sa)
-        return
-    }
-
-    if !catalog_refresh_begin(d, conn.ticket, req.id) {
-        send_error(conn, req.id, .Internal, "catalog refresh could not start", sa)
-    }
-}
-
-// `workspace.describe`: the path walk is offloaded, and its completion reports the derived
-// id, title, branch and mtime. A missing path or non-directory is `Bad_Request`.
-method_workspace_describe :: proc(conn: ^Conn, req: wire.Request) {
-    assert(conn != nil, "workspace.describe needs connection state")
-    assert(conn.state == .Ready, "workspace.describe ran outside Ready")
-    assert(req.method == .Workspace_Describe, "workspace.describe received another method")
-
-    params := req.params.(wire.Workspace_Describe_Params)
-    fs_job_submit(conn, req.id, .Describe, params.path)
-}
-
-// `workspace.browse`: immediate subdirectories, sorted case-insensitively, paged by an opaque
-// name cursor. The window is decided here and defaults to home; the listing is offloaded.
-method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
-    assert(conn != nil, "workspace.browse needs connection state")
-    assert(conn.state == .Ready, "workspace.browse ran outside Ready")
-    assert(req.method == .Workspace_Browse, "workspace.browse received another method")
-
-    params := req.params.(wire.Workspace_Browse_Params)
-
-    cursor := ""
-    if requested_cursor, ok := params.cursor.?; ok {
-        cursor = requested_cursor
-    }
-
-    // Page size is already validated to be within bounds; default when omitted.
-    page_size := wire.LIMITS.default_workspace_browse_page_size
-    if limit, ok := params.limit.?; ok {
-        page_size = int(limit)
-    }
-
-    fs_job_submit(conn, req.id, .Browse, fs_target_path(params.path, sa), cursor, page_size)
 }
 
 // Validate and emit a successful response. The result comes from trusted daemon state, so an

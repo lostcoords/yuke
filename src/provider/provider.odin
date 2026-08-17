@@ -3,7 +3,7 @@ package provider
 import "base:runtime"
 import "core:strconv"
 import "core:strings"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 import "src:wire"
 
 // Path appended to `Endpoint.base_url` for each protocol's streaming call.

@@ -2,7 +2,7 @@ package main
 
 import "core:testing"
 
-import daemon "src:daemon"
+import "src:daemon"
 
 @(test)
 test_boot_options_leaves_config_dir_to_start :: proc(t: ^testing.T) {

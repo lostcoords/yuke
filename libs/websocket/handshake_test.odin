@@ -2,7 +2,7 @@ package websocket
 
 import "core:strings"
 import "core:testing"
-import http "libs:http"
+import "libs:http"
 
 // RFC 6455 §1.3 worked example: the sample key derives the sample accept value.
 @(test)

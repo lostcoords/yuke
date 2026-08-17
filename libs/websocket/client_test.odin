@@ -10,7 +10,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 
 // Shared state between the loopback server thread and the client test.
 Loopback_Args :: struct {

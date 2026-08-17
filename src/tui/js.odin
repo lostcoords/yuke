@@ -15,9 +15,9 @@ import "core:path/filepath"
 import "core:time"
 
 import qjs "libs:bindings/quickjs"
-import js "src:js"
-import term "src:term"
-import ui "src:term/ui"
+import "src:js"
+import "src:term"
+import "src:term/ui"
 
 // A module's `exports` is borrowed for the host's life, so it outlives `host_init`.
 @(rodata)

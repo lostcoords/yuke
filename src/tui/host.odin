@@ -18,13 +18,13 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
-import curl "libs:bindings/curl"
+import "libs:bindings/curl"
 import qjs "libs:bindings/quickjs"
 import "libs:offload"
-import js "src:js"
-import paths "src:paths"
-import term "src:term"
-import ui "src:term/ui"
+import "src:js"
+import "src:paths"
+import "src:term"
+import "src:term/ui"
 
 // The baked default entry the host evaluates, plus the core and default-UI modules it imports.
 // Served to the loader by `host_resolve` so the client's own `import "yuke:core"` resolves in

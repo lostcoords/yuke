@@ -2,7 +2,7 @@
 package term
 
 import "core:c"
-import darwin "core:sys/darwin"
+import "core:sys/darwin"
 import "core:sys/posix"
 import "core:testing"
 

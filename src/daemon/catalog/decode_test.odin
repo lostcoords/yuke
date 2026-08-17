@@ -4,9 +4,9 @@ import "core:mem"
 import "core:slice"
 import "core:testing"
 
-import testsupport "libs:testsupport"
-import provider "src:provider"
-import wire "src:wire"
+import "libs:testsupport"
+import "src:provider"
+import "src:wire"
 
 @(test)
 test_max_tokens_field_from_npm :: proc(t: ^testing.T) {

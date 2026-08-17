@@ -2,12 +2,12 @@ package provider
 
 import "base:runtime"
 import "core:mem"
-import virtual "core:mem/virtual"
+import "core:mem/virtual"
 import "core:nbio"
 import "core:strings"
 import "core:time"
-import curl "libs:bindings/curl"
-import sse "libs:http/sse"
+import "libs:bindings/curl"
+import "libs:http/sse"
 
 // Error-body prefix retained for HTTP status classification. Successful bodies
 // remain streaming and are never accumulated.

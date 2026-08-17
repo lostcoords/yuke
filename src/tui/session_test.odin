@@ -4,9 +4,9 @@ import "core:strings"
 import "core:testing"
 
 import qjs "libs:bindings/quickjs"
-import client "src:client"
-import js "src:js"
-import wire "src:wire"
+import "src:client"
+import "src:js"
+import "src:wire"
 
 // The 16 hex-char session id every open-session test shares.
 @(private = "file")

@@ -2,7 +2,7 @@ package client
 
 import "core:mem"
 import "core:strings"
-import wire "src:wire"
+import "src:wire"
 
 // Largest committed window retained live; older messages fall off.
 MAX_RETAINED_MESSAGES :: wire.LIMITS.max_page_size

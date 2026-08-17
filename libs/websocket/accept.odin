@@ -2,7 +2,7 @@ package websocket
 
 import "core:log"
 import "core:nbio"
-import http "libs:http"
+import "libs:http"
 import http_server "libs:http/server"
 
 // Bridging the `libs:http/server` front door to `server_adopt` is the one place this

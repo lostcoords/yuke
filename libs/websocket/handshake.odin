@@ -4,7 +4,7 @@ import "base:runtime"
 import "core:crypto/legacy/sha1"
 import "core:encoding/base64"
 import "core:strings"
-import http "libs:http"
+import "libs:http"
 
 // Raw Sec-WebSocket-Key length before base64 (RFC 6455 §4.1).
 SEC_WEBSOCKET_KEY_BYTES :: 16

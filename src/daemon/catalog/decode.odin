@@ -7,8 +7,8 @@ import "core:mem/virtual"
 import "core:slice"
 import "core:strings"
 
-import provider "src:provider"
-import wire "src:wire"
+import "src:provider"
+import "src:wire"
 
 OPENAI_BASE_URL :: "https://api.openai.com/v1"
 ANTHROPIC_BASE_URL :: "https://api.anthropic.com/v1"

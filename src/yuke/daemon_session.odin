@@ -4,9 +4,9 @@ import "core:fmt"
 import "core:nbio"
 import "core:time"
 
-import client "src:client"
-import daemon "src:daemon"
-import wire "src:wire"
+import "src:client"
+import "src:daemon"
+import "src:wire"
 
 // A one-shot request against the local daemon: connect over the loopback WebSocket, send
 // on ready, print, exit. Shared by the subcommands that need one answer and nothing else.

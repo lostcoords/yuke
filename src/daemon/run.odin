@@ -8,11 +8,159 @@ import "core:strings"
 import "core:time"
 
 import qjs "libs:bindings/quickjs"
-import catalog "src:daemon/catalog"
-import store "src:daemon/store"
-import js "src:js"
-import provider "src:provider"
-import wire "src:wire"
+
+import "src:daemon/catalog"
+import "src:daemon/store"
+import "src:js"
+import "src:provider"
+import "src:wire"
+
+// The provider inference service: one shared transport client for every session's turns. Ops are
+// owned by their caller, which is what lets shutdown reach a turn whose cancel fires no completion.
+Run_Service :: struct {
+    client:    provider.Client,
+    loop:      ^nbio.Event_Loop,
+    allocator: mem.Allocator,
+    ready:     bool,
+    stopping:  bool,
+
+    // Ops started and not yet completed or canceled; only teardown reads it.
+    live:      int,
+}
+
+// Where a caller receives one turn's output. Event strings borrow the turn arena and are
+// valid only until completion; anything retained must be cloned by the sink.
+Run_Sink :: struct {
+    on_event: proc(user: rawptr, event: provider.Stream_Event),
+    on_done:  proc(user: rawptr, result: provider.Turn_Result),
+    user:     rawptr,
+}
+
+// One in-flight turn. `turn` holds a curl transfer whose address libcurl retains, so a
+// live op must never move; the caller heap-owns it until completion or cancellation.
+Run_Op :: struct {
+    turn:    provider.Turn,
+    service: ^Run_Service,
+    sink:    Run_Sink,
+}
+
+run_service_init :: proc(s: ^Run_Service, loop: ^nbio.Event_Loop, allocator: mem.Allocator) -> Error {
+    assert(s != nil && loop != nil, "run service init needs a service and a loop")
+    assert(!s.ready, "run service initialized twice")
+
+    if err := provider.client_init(&s.client, loop, allocator); err != .None {
+        log.errorf("daemon: provider transport unavailable: %v", err)
+        return .Provider_Failed
+    }
+
+    s.loop = loop
+    s.allocator = allocator
+    s.ready = true
+
+    return .None
+}
+
+// Stop accepting turns. Live ops belong to their callers, so the daemon cancels those; the
+// service only refuses new ones from here on.
+run_service_shutdown :: proc(s: ^Run_Service) {
+    assert(s != nil, "run service shutdown needs a service")
+
+    s.stopping = true
+}
+
+// Cancel one live turn and release it. `turn_cancel` is synchronous and fires no
+// completion, so the caller owes whatever terminal the turn had promised.
+run_cancel :: proc(s: ^Run_Service, op: ^Run_Op) {
+    assert(s != nil && op != nil, "run cancel needs a service and an op")
+    assert(s.live > 0, "cancelling a turn the service does not count")
+
+    provider.turn_cancel(&op.turn)
+    s.live -= 1
+    free(op, s.allocator)
+}
+
+run_service_destroy :: proc(s: ^Run_Service) {
+    assert(s != nil, "run service teardown needs a service")
+    assert(s.live == 0, "run service destroyed with a live turn")
+
+    if s.ready {
+        provider.client_destroy(&s.client)
+        s.ready = false
+    }
+}
+
+run_service_busy :: proc(s: ^Run_Service) -> bool {
+    assert(s != nil, "run service busy check needs a service")
+
+    return s.live > 0
+}
+
+// Start one turn against `connection` with an already-built body. Nil means nothing started; an op
+// means exactly one `on_done` follows, and the caller owns it until then.
+run_begin :: proc(s: ^Run_Service, connection: provider.Connection, body: string, sink: Run_Sink) -> ^Run_Op {
+    assert(s != nil && s.ready, "a run needs an initialized service")
+    assert(!s.stopping, "a run cannot start during shutdown")
+    assert(sink.on_done != nil, "a run needs a completion sink")
+    assert(len(body) > 0, "a run needs a built request body")
+
+    op, alloc_err := new(Run_Op, s.allocator)
+    if alloc_err != nil {
+        return nil
+    }
+    op^ = {
+        service = s,
+        sink    = sink,
+    }
+    s.live += 1
+
+    // `turn_start` copies the body, so the caller may release it as soon as this returns.
+    err := provider.turn_start(
+        &op.turn,
+        &s.client,
+        {connection = connection, body = body},
+        {on_event = run_on_event, on_done = run_on_done},
+        op,
+    )
+    if err != .None {
+        log.errorf("daemon: provider turn did not start: %v", err)
+        s.live -= 1
+        free(op, s.allocator)
+
+        return nil
+    }
+
+    assert(op.turn.state == .Running, "a started run owns a running turn")
+
+    return op
+}
+
+@(private)
+run_on_event :: proc(user: rawptr, event: provider.Stream_Event) {
+    op := (^Run_Op)(user)
+    assert(op != nil && op.service != nil, "a run event lost its owner")
+
+    if op.sink.on_event != nil {
+        op.sink.on_event(op.sink.user, event)
+    }
+}
+
+// Terminal for one turn. The op is released before the sink runs, so the sink may start
+// the next turn — the queued input behind this one — from inside its own completion.
+@(private)
+run_on_done :: proc(user: rawptr, result: provider.Turn_Result) {
+    op := (^Run_Op)(user)
+    assert(op != nil && op.service != nil, "a run completion lost its owner")
+    assert(op.turn.state == .Done, "a run completion needs a terminal turn")
+
+    service := op.service
+    sink := op.sink
+
+    assert(service.live > 0, "a turn completed that the service does not count")
+    service.live -= 1
+    free(op, service.allocator)
+
+    sink.on_done(sink.user, result)
+}
 
 // Agent a root session's turns are attributed to.
 RUN_AGENT :: "main"
@@ -913,4 +1061,709 @@ run_fault :: proc(err: provider.Transport_Error) -> (wire.Run_Error_Code, string
     }
 
     return .Provider, "the provider failed this turn"
+}
+
+// One open assistant block and the part it folds into. Text arrives as deltas — a closed
+// block carries only its terminal metadata — so the run accumulates it here.
+@(private)
+Run_Block :: struct {
+    block_id:      provider.Stream_Block_Id,
+    kind:          provider.Stream_Block_Kind,
+
+    // The block's accumulated content: assistant text, reasoning, or a tool call's argument
+    // JSON. A tool block fills this once at its terminal rather than from deltas.
+    text:          strings.Builder,
+    signature:     string,
+
+    // Tool blocks only. The provider names the tool in the terminal, never at the start.
+    call_id:       string,
+    name:          string,
+
+    // Nil until the call starts, which `run_part_build` reads as pending.
+    tool_state:    wire.Tool_State,
+    tool_started:  u64,
+
+    // A handler's promise, owned while `tool_awaiting`. Polled rather than continued into,
+    // so cancelling a run never leaves JS holding a pointer to it.
+    tool_promise:  qjs.Value,
+    tool_awaiting: bool,
+
+    // Set by this block's terminal. A closed reasoning block is no longer the live phase.
+    closed:        bool,
+}
+
+// What `Tool_Part.name` admits. A provider that exceeds it is not trusted to have named a
+// tool we offered, but the part still has to be valid: `pump` asserts that.
+@(private = "file")
+TOOL_NAME_WIRE_MAX :: 128
+
+// Fold one provider event into the draft and mirror it live. Runs on the loop thread; the
+// event's strings borrow the turn arena and are copied into the run's own.
+@(private)
+run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
+    run := (^Run)(user)
+    assert(run != nil, "a stream event lost its run")
+    assert(run.daemon != nil, "a run lost its daemon")
+
+    if run.fault != .None {
+        return
+    }
+
+    switch v in event {
+    case provider.Stream_Block_Started:
+        run_block_open(run, v)
+
+    case provider.Stream_Text_Delta:
+        run_block_fold(run, v.block_id, v.text)
+
+    case provider.Stream_Reasoning_Delta:
+        run_block_fold(run, v.block_id, v.text)
+
+    case provider.Stream_Block_Stopped:
+        run_block_close(run, v)
+
+    case provider.Stream_Done:
+        run.finish = RUN_STOP_REASON[v.reason]
+        run.finish_seen = true
+        run.usage = wire.Token_Usage {
+            input       = v.usage.input,
+            output      = v.usage.output,
+            reasoning   = v.usage.reasoning,
+            cache_read  = v.usage.cache_read,
+            cache_write = v.usage.cache_write,
+        }
+    }
+}
+
+// Open one block as the next part ordinal.
+@(private)
+run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
+    if len(run.blocks) >= wire.LIMITS.max_message_parts {
+        run.fault = .Transcript_Limit
+
+        return
+    }
+
+    if _, err := append(
+        &run.blocks,
+        Run_Block{block_id = started.block_id, kind = started.kind, text = strings.builder_make(run.round_allocator)},
+    ); err != nil {
+        run.fault = .Resource
+
+        return
+    }
+
+    index := len(run.blocks) - 1
+
+    // A tool block announces at its terminal instead: the provider names the tool there, so
+    // until then there is no part a client could render.
+    if started.kind == .Tool {
+        return
+    }
+
+    added := wire.Message_Part_Added_Data {
+        session_id = run.session,
+        message_id = run.message_id,
+        part       = run_part_build(&run.blocks[index], index),
+    }
+    _ = broadcast(run.daemon, added)
+
+    // A block boundary is the only point inside a turn where the phase moves; deltas never
+    // change it and never announce.
+    session_activity_announce(run.daemon, run.session)
+}
+
+// Append `text` to its block and mirror the same bytes as a delta. `offset` is what the
+// receiver already holds, so a dropped delta shows as a gap rather than corruption.
+@(private = "file")
+run_block_fold :: proc(run: ^Run, block_id: provider.Stream_Block_Id, text: string) {
+    block, index := run_block_find(run, block_id)
+    if block == nil {
+        return
+    }
+
+    if !run_string_add(run, len(text)) {
+        return
+    }
+
+    offset := u64(len(strings.to_string(block.text)))
+    if strings.write_string(&block.text, text) != len(text) {
+        run.fault = .Resource
+
+        return
+    }
+
+    delta := wire.Part_Delta {
+        session_id = run.session,
+        message_id = run.message_id,
+        part_id    = wire.Part_Id(index),
+        delta      = text,
+        offset     = offset,
+    }
+    _ = broadcast(run.daemon, wire.Message_Part_Delta_Data(delta))
+}
+
+// Close one block, keeping the terminal metadata only the reasoning arms carry.
+@(private = "file")
+run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
+    block, index := run_block_find(run, stopped.block_id)
+    if block == nil {
+        return
+    }
+
+    was_open := !block.closed
+    block.closed = true
+
+    // Only the newest reasoning block names a phase, so closing anything else is invisible.
+    if was_open && block.kind == .Reasoning && block == &run.blocks[len(run.blocks) - 1] {
+        session_activity_announce(run.daemon, run.session)
+    }
+
+    #partial switch result in stopped.result {
+    case provider.Stream_Reasoning_Block:
+        run_block_signature_set(run, block, result.signature)
+
+    case provider.Stream_Redacted_Reasoning_Block:
+        run_block_signature_set(run, block, result.data)
+
+    case provider.Stream_Tool_Block:
+        run_tool_adopt(run, block, index, result.call)
+    }
+}
+
+// Adopt the completed call and announce its part. Nothing executes it yet: the part enters
+// the transcript pending, which is what a client renders while a decision is outstanding.
+@(private = "file")
+run_tool_adopt :: proc(run: ^Run, block: ^Run_Block, index: int, call: provider.Tool_Call) {
+    name := call.name
+
+    if len(name) > TOOL_NAME_WIRE_MAX {
+        log.warnf("daemon: session %v truncated a %d byte tool name", run.session, len(name))
+        name = name[:utf8_floor(name, TOOL_NAME_WIRE_MAX)]
+    }
+
+    if !run_string_add(run, len(name) + len(call.id) + len(call.arguments)) {
+        run_block_drop_unannounced(run, index)
+
+        return
+    }
+
+    owned_name, name_err := strings.clone(name, run.round_allocator)
+    owned_id, id_err := strings.clone(call.id, run.round_allocator)
+    if name_err != nil || id_err != nil {
+        run.fault = .Resource
+        run_block_drop_unannounced(run, index)
+
+        return
+    }
+    if strings.write_string(&block.text, call.arguments) != len(call.arguments) {
+        run.fault = .Resource
+        run_block_drop_unannounced(run, index)
+
+        return
+    }
+    block.name = owned_name
+    block.call_id = owned_id
+
+    added := wire.Message_Part_Added_Data {
+        session_id = run.session,
+        message_id = run.message_id,
+        part       = run_part_build(block, index),
+    }
+    _ = broadcast(run.daemon, added)
+}
+
+// Drop a tool block whose part was never announced: keeping an incomplete part would make a
+// concurrent draft resync invalid. Neutral streams serialize blocks, so it is normally the tail.
+@(private = "file")
+run_block_drop_unannounced :: proc(run: ^Run, index: int) {
+    assert(run != nil, "dropping an unannounced block needs its run")
+    assert(index >= 0 && index < len(run.blocks), "an unannounced block has a part ordinal")
+
+    if index == len(run.blocks) - 1 {
+        ordered_remove(&run.blocks, index)
+    }
+}
+
+@(private = "file")
+run_block_signature_set :: proc(run: ^Run, block: ^Run_Block, signature: string) {
+    if !run_string_add(run, len(signature)) {
+        return
+    }
+
+    owned, err := strings.clone(signature, run.round_allocator)
+    if err != nil {
+        run.fault = .Resource
+
+        return
+    }
+    block.signature = owned
+}
+
+// Reserve payload bytes before retaining provider or tool output. A fault latches for the
+// round; later stream events are ignored and the valid draft prefix is discarded.
+@(private)
+run_string_add :: proc(run: ^Run, bytes: int) -> bool {
+    assert(run != nil, "reserving draft bytes needs a run")
+    assert(run.string_bytes >= len(RUN_AGENT), "draft bytes include its agent")
+    assert(bytes >= 0, "draft byte growth is non-negative")
+
+    if run.fault != .None {
+        return false
+    }
+
+    if bytes > wire.LIMITS.max_message_string_bytes - run.string_bytes {
+        run.fault = .Transcript_Limit
+
+        return false
+    }
+
+    run.string_bytes += bytes
+
+    return true
+}
+
+// The largest length at or below `limit` that does not split a UTF-8 sequence.
+@(private = "file")
+utf8_floor :: proc(text: string, limit: int) -> int {
+    end := min(limit, len(text))
+
+    for end > 0 && end < len(text) && text[end] & 0xC0 == 0x80 {
+        end -= 1
+    }
+
+    return end
+}
+
+// The open block `block_id` names and its part ordinal, or nil. Blocks are few and ordered, so a
+// scan is the lookup; a provider naming an unopened block is peer data, not an invariant.
+@(private = "file")
+run_block_find :: proc(run: ^Run, block_id: provider.Stream_Block_Id) -> (^Run_Block, int) {
+    for &block, index in run.blocks {
+        if block.block_id == block_id {
+            return &block, index
+        }
+    }
+
+    return nil, 0
+}
+
+// The wire part one block currently represents, borrowing the block's own buffer.
+@(private)
+run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
+    text := strings.to_string(block.text)
+    id := wire.Part_Id(index)
+
+    switch block.kind {
+    case .Text:
+        return wire.Text_Part{id = id, text = text}
+
+    case .Reasoning:
+        return wire.Reasoning_Part{id = id, text = text, signature = block.signature}
+
+    case .Redacted_Reasoning:
+        return wire.Redacted_Reasoning_Part{id = id, data = block.signature}
+
+    case .Tool:
+        call_id: Maybe(string)
+
+        if block.call_id != "" {
+            call_id = block.call_id
+        }
+
+        state := block.tool_state
+        if state == nil {
+            state = wire.Tool_State_Pending{}
+        }
+
+        return wire.Tool_Part{id = id, call_id = call_id, name = block.name, arguments = text, state = state}
+    }
+
+    unreachable()
+}
+
+// Provider and wire stop reasons are separate closed sets. Indexed by the enum, so a new provider
+// reason fails the build rather than defaulting silently.
+@(private = "file", rodata)
+RUN_STOP_REASON := [provider.Stop_Reason]wire.Stop_Reason {
+    .End_Turn       = .Stop,
+    .Stop_Sequence  = .Stop,
+    .Tool_Calls     = .Tool_Calls,
+    .Max_Tokens     = .Length,
+    .Content_Filter = .Content_Filter,
+    .Unknown        = .Unknown,
+}
+
+// Start every call the draft is still waiting on; true when one is outstanding, in which case
+// the join commits. Handlers are polled, never continued into, so cancelling can free the run.
+run_tools_begin :: proc(run: ^Run) -> bool {
+    assert(run != nil, "starting tools needs a run")
+    assert(run.daemon != nil, "starting tools needs daemon state")
+    assert(run.op == nil, "tools start after the provider turn releases its op")
+    assert(run_tools_open(run) == 0, "a round starts with no tool outstanding")
+    assert(!run.tools_joining, "a round starts before its tool join")
+
+    d := run.daemon
+    now := now_ms()
+
+    for &block, index in run.blocks {
+        if run.fault != .None {
+            break
+        }
+
+        if block.kind != .Tool || block.tool_state != nil {
+            continue
+        }
+
+        tool := tools_find(d, block.name)
+
+        if tool == nil {
+            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = "unknown tool"}, 0)
+
+            continue
+        }
+
+        block.tool_started = now
+        run_tool_state_set(run, &block, index, wire.Tool_State_Running{started_at_ms = now})
+
+        run_tool_call(run, &block, index, tool^)
+    }
+
+    // A promise can already be settled without queuing a microtask.
+    run_tools_poll(run)
+    if run_tools_open(run) == 0 {
+        return false
+    }
+
+    // Mark the join before the drain. Its hook can settle the last promise and free `run`,
+    // so nothing after the drain can read through that pointer.
+    run.tools_joining = true
+    js.drain(&d.js)
+
+    return true
+}
+
+// Call one handler and retain its promise until the join observes a terminal state.
+@(private = "file")
+run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Tool) {
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "calling a tool needs a live context")
+    assert(block.kind == .Tool, "only a tool block calls a handler")
+    assert(!block.tool_awaiting, "a tool handler starts once")
+    assert(index >= 0 && index < len(run.blocks), "a tool call needs its part ordinal")
+    assert(qjs.is_function(ctx, tool.handler), "a registered tool retains its handler")
+
+    arguments := strings.to_string(block.text)
+
+    if arguments == "" {
+        arguments = "{}"
+    }
+
+    args := qjs.parse_json(ctx, arguments, run.round_allocator)
+
+    if qjs.is_exception(args) {
+        qjs.free_value(ctx, args)
+        exception := qjs.get_exception(ctx)
+        qjs.free_value(ctx, exception)
+        run_tool_raise(run, block, index, "arguments were not valid JSON")
+
+        return
+    }
+
+    argv := [2]qjs.Value{args, run.cancel_signal}
+    result := js.call_value(&run.daemon.js, tool.handler, qjs.undefined(), argv[:])
+    qjs.free_value(ctx, args)
+
+    if qjs.is_exception(result) {
+        qjs.free_value(ctx, result)
+        run_tool_raise(run, block, index, run_tool_exception(run))
+
+        return
+    }
+
+    if qjs.promise_state(ctx, result) == .Not_A_Promise {
+        output, ok := run_tool_output(run, result)
+
+        if ok {
+            run_tool_settle(run, block, index, wire.Tool_State_Completed{output = output})
+        } else {
+            run_tool_raise(run, block, index, "tool output was not JSON-serializable")
+        }
+
+        qjs.free_value(ctx, result)
+
+        return
+    }
+
+    block.tool_promise = result
+    block.tool_awaiting = true
+}
+
+// Settle whatever finished since the last drain.
+run_tools_poll :: proc(run: ^Run) {
+    assert(run != nil, "polling tools needs a run")
+    assert(run.daemon != nil, "polling tools needs daemon state")
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "polling tools needs a live context")
+
+    for &block, index in run.blocks {
+        if !block.tool_awaiting {
+            continue
+        }
+
+        state := qjs.promise_state(ctx, block.tool_promise)
+
+        if state == .Pending {
+            continue
+        }
+
+        assert(state == .Fulfilled || state == .Rejected, "an owned tool promise has a promise state")
+
+        value := qjs.promise_result(ctx, block.tool_promise)
+
+        if state == .Fulfilled {
+            output, ok := run_tool_output(run, value)
+
+            if ok {
+                run_tool_settle(run, &block, index, wire.Tool_State_Completed{output = output})
+            } else {
+                run_tool_raise(run, &block, index, "tool output was not JSON-serializable")
+            }
+        } else {
+            // `String(e)` rather than JSON: an Error serializes to an empty object, and its
+            // message is the whole point.
+            run_tool_settle(run, &block, index, wire.Tool_State_Error{error = run_tool_clone(run, value)})
+        }
+
+        qjs.free_value(ctx, value)
+        qjs.free_value(ctx, block.tool_promise)
+        block.tool_promise = {}
+        block.tool_awaiting = false
+    }
+}
+
+// Release any promise a canceled or failed run still owns.
+run_tools_release :: proc(run: ^Run) {
+    assert(run != nil, "releasing tools needs a run")
+    assert(run.daemon != nil, "releasing tools needs daemon state")
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "releasing tools needs a live context")
+
+    for &block in run.blocks {
+        if !block.tool_awaiting {
+            continue
+        }
+
+        qjs.free_value(ctx, block.tool_promise)
+        block.tool_promise = {}
+        block.tool_awaiting = false
+    }
+
+    run.tools_joining = false
+}
+
+run_tools_open :: proc(run: ^Run) -> int {
+    assert(run != nil, "counting open tools needs a run")
+
+    count := 0
+    for &block in run.blocks {
+        if block.tool_awaiting {
+            count += 1
+        }
+    }
+
+    return count
+}
+
+// Record a terminal state and announce it. The duration is filled here so every terminal
+// reports one, whichever path produced it.
+@(private = "file")
+run_tool_settle :: proc(
+    run: ^Run,
+    block: ^Run_Block,
+    index: int,
+    state: wire.Tool_State,
+    duration_ms: Maybe(u64) = nil,
+) {
+    if run.fault != .None {
+        return
+    }
+
+    elapsed: u64
+
+    if duration, supplied := duration_ms.?; supplied {
+        elapsed = duration
+    } else {
+        assert(block.tool_started > 0, "a settled tool has a start time")
+        elapsed = now_ms() - block.tool_started
+    }
+
+    final := state
+    bytes := 0
+
+    switch &value in final {
+    case wire.Tool_State_Completed:
+        bytes = len(value.output)
+        value.duration_ms = elapsed
+
+    case wire.Tool_State_Error:
+        bytes = len(value.error)
+        value.duration_ms = elapsed
+
+    case wire.Tool_State_Pending,
+         wire.Tool_State_Waiting_Permission,
+         wire.Tool_State_Running,
+         wire.Tool_State_Denied,
+         wire.Tool_State_Canceled:
+        assert(false, "settling a tool needs a terminal execution state")
+    }
+
+    if !run_string_add(run, bytes) {
+        return
+    }
+
+    run_tool_state_set(run, block, index, final)
+}
+
+@(private = "file")
+run_tool_state_set :: proc(run: ^Run, block: ^Run_Block, index: int, state: wire.Tool_State) {
+    assert(run != nil && run.daemon != nil, "changing a tool needs its run")
+    assert(block != nil && block.kind == .Tool, "only a tool block has tool state")
+    assert(index >= 0 && index < len(run.blocks), "a tool state needs its part ordinal")
+
+    block.tool_state = state
+
+    changed := wire.Tool_State_Changed_Data {
+        session_id = run.session,
+        message_id = run.message_id,
+        part_id    = wire.Part_Id(index),
+        state      = state,
+    }
+    _ = broadcast(run.daemon, changed)
+
+    session_activity_announce(run.daemon, run.session)
+}
+
+@(private = "file")
+run_tool_raise :: proc(run: ^Run, block: ^Run_Block, index: int, message: string) {
+    run_tool_settle(run, block, index, wire.Tool_State_Error{error = message})
+}
+
+// The pending exception as model-facing text. Clears it, so a later entry does not inherit it.
+@(private = "file")
+run_tool_exception :: proc(run: ^Run) -> string {
+    assert(run != nil && run.daemon != nil, "reading a tool exception needs its run")
+
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "reading a tool exception needs a live context")
+
+    thrown := qjs.get_exception(ctx)
+
+    defer qjs.free_value(ctx, thrown)
+
+    return run_tool_clone(run, thrown)
+}
+
+// A handler's value as the text the model reads: a string is its own output, anything else is JSON.
+// False means conversion threw or the value has no JSON representation.
+@(private = "file")
+run_tool_output :: proc(run: ^Run, value: qjs.Value) -> (string, bool) {
+    assert(run != nil && run.daemon != nil, "reading tool output needs its run")
+
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "reading tool output needs a live context")
+
+    if qjs.is_undefined(value) || qjs.is_null(value) {
+        return "", true
+    }
+
+    if qjs.is_string(value) {
+        return run_tool_clone(run, value), true
+    }
+
+    encoded := qjs.json_stringify(ctx, value)
+
+    if qjs.is_exception(encoded) {
+        qjs.free_value(ctx, encoded)
+        exception := qjs.get_exception(ctx)
+        qjs.free_value(ctx, exception)
+
+        return "", false
+    }
+
+    if qjs.is_undefined(encoded) {
+        qjs.free_value(ctx, encoded)
+
+        return "", false
+    }
+
+    defer qjs.free_value(ctx, encoded)
+
+    return run_tool_clone(run, encoded), true
+}
+
+@(private = "file")
+run_tool_clone :: proc(run: ^Run, value: qjs.Value) -> string {
+    assert(run != nil && run.daemon != nil, "cloning a tool value needs its run")
+
+    ctx := run.daemon.js.ctx
+    assert(ctx != nil, "cloning a tool value needs a live context")
+
+    text, readable := qjs.to_string(ctx, value)
+
+    if !readable {
+        exception := qjs.get_exception(ctx)
+        qjs.free_value(ctx, exception)
+
+        return ""
+    }
+
+    defer qjs.free_string(ctx, text)
+
+    cloned, err := strings.clone(text, run.round_allocator)
+    if err != nil {
+        run.fault = .Resource
+
+        return ""
+    }
+
+    return cloned
+}
+
+// Loop thread, after every drain: settle what finished and commit a round that is done. The
+// map is re-scanned per join because committing a turn can remove the session from it.
+js_on_drain :: proc(user: rawptr) {
+    d := (^Daemon)(user)
+    assert(d != nil, "the daemon drain hook needs daemon state")
+
+    for _, live in d.sessions {
+        run := live.run
+        if run != nil && run_tools_open(run) > 0 {
+            run_tools_poll(run)
+        }
+    }
+
+    for {
+        joined: ^Run
+
+        for _, live in d.sessions {
+            run := live.run
+            if run != nil && run.tools_joining && run_tools_open(run) == 0 {
+                joined = run
+
+                break
+            }
+        }
+
+        if joined == nil {
+            return
+        }
+
+        joined.tools_joining = false
+        if joined.fault != .None {
+            run_fail_fault(joined)
+        } else {
+            run_commit(joined)
+        }
+    }
 }

@@ -16,7 +16,7 @@ package main
 
 import "core:os"
 
-import tui "src:tui"
+import "src:tui"
 
 main :: proc() {
     sub := os.args[1] if len(os.args) > 1 else ""

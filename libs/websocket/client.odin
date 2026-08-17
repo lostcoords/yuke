@@ -10,8 +10,8 @@ import "core:net"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import curl "libs:bindings/curl"
-import http "libs:http"
+import "libs:bindings/curl"
+import "libs:http"
 
 // Ceiling on the buffered upgrade response; bounds `handshake_buf` against a
 // server that never sends `\r\n\r\n`.
