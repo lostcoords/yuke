@@ -98,10 +98,7 @@ device_auth_body :: proc(
 
     switch provider.kind {
     case .Codex:
-        value, aerr := strings.concatenate({`{"client_id":"`, provider.client_id, `"}`}, allocator)
-        if aerr != nil {
-            return "", "", .Out_Of_Memory
-        }
+        value := strings.concatenate({`{"client_id":"`, provider.client_id, `"}`}, allocator)
 
         return value, "application/json", .None
 
@@ -111,23 +108,17 @@ device_auth_body :: proc(
             return "", "", .Invalid_Input
         }
 
-        client_id, client_err := url_encode(provider.client_id, allocator)
-        scope, scope_err := url_encode(provider.scope, allocator)
-        referrer, referrer_err := url_encode(originator, allocator)
+        client_id := url_encode(provider.client_id, allocator)
+        scope := url_encode(provider.scope, allocator)
+        referrer := url_encode(originator, allocator)
         defer delete(client_id, allocator)
         defer delete(scope, allocator)
         defer delete(referrer, allocator)
-        if client_err != .None || scope_err != .None || referrer_err != .None {
-            return "", "", .Out_Of_Memory
-        }
 
-        value, aerr := strings.concatenate(
+        value := strings.concatenate(
             {"client_id=", client_id, "&scope=", scope, "&", provider.authorize_originator_param, "=", referrer},
             allocator,
         )
-        if aerr != nil {
-            return "", "", .Out_Of_Memory
-        }
 
         return value, "application/x-www-form-urlencoded", .None
     }
@@ -157,34 +148,25 @@ device_poll_body :: proc(
             device_auth_id: string `json:"device_auth_id"`,
             user_code:      string `json:"user_code"`,
         }
-        bytes, marshal_err := json.marshal(
+        bytes, _ := json.marshal(
             Payload{device_auth_id = session.handle, user_code = session.user_code},
             allocator = allocator,
         )
-        if marshal_err != nil {
-            return "", "", .Out_Of_Memory
-        }
 
         return transmute(string)bytes, "application/json", .None
 
     case .Xai:
-        grant_type, grant_err := url_encode(DEVICE_CODE_GRANT_TYPE, allocator)
-        client_id, client_err := url_encode(provider.client_id, allocator)
-        device_code, device_err := url_encode(session.handle, allocator)
+        grant_type := url_encode(DEVICE_CODE_GRANT_TYPE, allocator)
+        client_id := url_encode(provider.client_id, allocator)
+        device_code := url_encode(session.handle, allocator)
         defer delete(grant_type, allocator)
         defer delete(client_id, allocator)
         defer delete(device_code, allocator)
-        if grant_err != .None || client_err != .None || device_err != .None {
-            return "", "", .Out_Of_Memory
-        }
 
-        value, aerr := strings.concatenate(
+        value := strings.concatenate(
             {"grant_type=", grant_type, "&device_code=", device_code, "&client_id=", client_id},
             allocator,
         )
-        if aerr != nil {
-            return "", "", .Out_Of_Memory
-        }
 
         return value, "application/x-www-form-urlencoded", .None
     }
@@ -250,23 +232,9 @@ device_auth_parse :: proc(
         verification = uri
     }
 
-    cloned_handle, handle_aerr := strings.clone(handle, allocator)
-    if handle_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.handle = cloned_handle
-
-    cloned_code, code_aerr := strings.clone(user_code, allocator)
-    if code_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.user_code = cloned_code
-
-    cloned_uri, uri_aerr := strings.clone(verification, allocator)
-    if uri_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.verification_uri = cloned_uri
+    out.handle = strings.clone(handle, allocator)
+    out.user_code = strings.clone(user_code, allocator)
+    out.verification_uri = strings.clone(verification, allocator)
     out.interval_s = interval
     out.expires_in_s = expires_in_s
 
@@ -365,23 +333,9 @@ codex_device_grant_parse :: proc(data: string, allocator: mem.Allocator) -> (out
         return {}, .Invalid_Response
     }
 
-    code, code_aerr := strings.clone(authorization_code, allocator)
-    if code_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.authorization_code = code
-
-    challenge, challenge_aerr := strings.clone(code_challenge, allocator)
-    if challenge_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.code_challenge = challenge
-
-    verifier, verifier_aerr := strings.clone(code_verifier, allocator)
-    if verifier_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.code_verifier = verifier
+    out.authorization_code = strings.clone(authorization_code, allocator)
+    out.code_challenge = strings.clone(code_challenge, allocator)
+    out.code_verifier = strings.clone(code_verifier, allocator)
 
     return out, .None
 }

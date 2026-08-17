@@ -17,8 +17,7 @@ test_pkce_challenge_matches_rfc_7636_vector :: proc(t: ^testing.T) {
 
 @(test)
 test_url_encode_uses_rfc_3986_unreserved_set :: proc(t: ^testing.T) {
-    encoded, err := url_encode("azAZ09-_.~ +/%&=", context.allocator)
-    testing.expect_value(t, err, OAuth_Error.None)
+    encoded := url_encode("azAZ09-_.~ +/%&=", context.allocator)
     defer delete(encoded, context.allocator)
 
     testing.expect_value(t, encoded, "azAZ09-_.~%20%2B%2F%25%26%3D")
@@ -88,10 +87,7 @@ test_access_token :: proc(allocator := context.allocator) -> string {
 }
 
 test_access_token_expires :: proc(expires_at_s: u64, allocator := context.allocator) -> string {
-    header, header_err := base64url_encode(transmute([]byte)string(`{"alg":"none"}`), allocator)
-    if header_err != .None {
-        return ""
-    }
+    header := base64url_encode(transmute([]byte)string(`{"alg":"none"}`), allocator)
     defer delete(header, allocator)
 
     payload_json := `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-123"}}`
@@ -111,10 +107,7 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
         payload_owned = with_exp
         payload_json = payload_owned
     }
-    payload, payload_err := base64url_encode(transmute([]byte)payload_json, allocator)
-    if payload_err != .None {
-        return ""
-    }
+    payload := base64url_encode(transmute([]byte)payload_json, allocator)
     defer delete(payload, allocator)
 
     token, token_aerr := strings.concatenate({header, ".", payload, ".sig"}, allocator)

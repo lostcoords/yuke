@@ -24,7 +24,6 @@ OAuth_Credentials :: struct {
 // Peer input degrades to these, never asserts.
 OAuth_Error :: enum {
     None,
-    Out_Of_Memory,
     Invalid_Input,
     Invalid_Response,
 }
@@ -49,37 +48,13 @@ credentials_destroy :: proc(credentials: ^OAuth_Credentials, allocator := contex
 }
 
 @(private)
-credentials_clone :: proc(
-    source: OAuth_Credentials,
-    allocator := context.allocator,
-) -> (
-    out: OAuth_Credentials,
-    err: OAuth_Error,
-) {
-    defer if err != .None {
-        credentials_destroy(&out, allocator)
-    }
-
+credentials_clone :: proc(source: OAuth_Credentials, allocator := context.allocator) -> (out: OAuth_Credentials) {
     out.expires_at_ms = source.expires_at_ms
-    access, access_aerr := strings.clone(source.access_token, allocator)
-    if access_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.access_token = access
+    out.access_token = strings.clone(source.access_token, allocator)
+    out.refresh_token = strings.clone(source.refresh_token, allocator)
+    out.account_id = strings.clone(source.account_id, allocator)
 
-    refresh, refresh_aerr := strings.clone(source.refresh_token, allocator)
-    if refresh_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.refresh_token = refresh
-
-    account, account_aerr := strings.clone(source.account_id, allocator)
-    if account_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    out.account_id = account
-
-    return out, .None
+    return out
 }
 
 // Generic bound on an OAuth authorization code, shared across providers.
@@ -129,30 +104,20 @@ authorization_flow_create :: proc(
 
     verifier_bytes: [32]byte
     crypto.rand_bytes(verifier_bytes[:])
-    flow.verifier, err = base64url_encode(verifier_bytes[:], allocator)
-    if err != .None {
-        return {}, err
-    }
+    flow.verifier = base64url_encode(verifier_bytes[:], allocator)
     assert(len(flow.verifier) == 43, "32 random bytes yield a 43-byte PKCE verifier")
 
     state_bytes: [16]byte
     crypto.rand_bytes(state_bytes[:])
-    state, state_aerr := hex.encode(state_bytes[:], allocator)
-    if state_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    state, _ := hex.encode(state_bytes[:], allocator)
     flow.state = transmute(string)state
 
     port_buf: [20]byte
     port_string := strconv.write_int(port_buf[:], i64(port), 10)
-    redirect, redirect_aerr := strings.concatenate(
+    flow.redirect_uri = strings.concatenate(
         {"http://", provider.callback_host, ":", port_string, provider.callback_path},
         allocator,
     )
-    if redirect_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    flow.redirect_uri = redirect
 
     challenge, challenge_err := pkce_challenge(flow.verifier, allocator)
     if challenge_err != .None {
@@ -160,12 +125,12 @@ authorization_flow_create :: proc(
     }
     defer delete(challenge, allocator)
 
-    client_id, client_err := url_encode(provider.client_id, allocator)
-    redirect_uri, redirect_err := url_encode(flow.redirect_uri, allocator)
-    scope, scope_err := url_encode(provider.scope, allocator)
-    encoded_challenge, challenge_encode_err := url_encode(challenge, allocator)
-    state_param, state_err := url_encode(flow.state, allocator)
-    originator_param, originator_err := url_encode(originator, allocator)
+    client_id := url_encode(provider.client_id, allocator)
+    redirect_uri := url_encode(flow.redirect_uri, allocator)
+    scope := url_encode(provider.scope, allocator)
+    encoded_challenge := url_encode(challenge, allocator)
+    state_param := url_encode(flow.state, allocator)
+    originator_param := url_encode(originator, allocator)
     defer delete(client_id, allocator)
     defer delete(redirect_uri, allocator)
     defer delete(scope, allocator)
@@ -173,16 +138,7 @@ authorization_flow_create :: proc(
     defer delete(state_param, allocator)
     defer delete(originator_param, allocator)
 
-    if client_err != .None ||
-       redirect_err != .None ||
-       scope_err != .None ||
-       challenge_encode_err != .None ||
-       state_err != .None ||
-       originator_err != .None {
-        return {}, .Out_Of_Memory
-    }
-
-    auth_url, auth_url_aerr := strings.concatenate(
+    flow.auth_url = strings.concatenate(
         {
             provider.authorize_url,
             "?response_type=code&client_id=",
@@ -203,10 +159,6 @@ authorization_flow_create :: proc(
         },
         allocator,
     )
-    if auth_url_aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    flow.auth_url = auth_url
 
     return flow, .None
 }
@@ -227,17 +179,14 @@ authorization_code_body :: proc(
         return "", .Invalid_Input
     }
 
-    encoded_code, code_err := url_encode(code, allocator)
-    encoded_redirect, redirect_err := url_encode(flow.redirect_uri, allocator)
-    encoded_verifier, verifier_err := url_encode(flow.verifier, allocator)
+    encoded_code := url_encode(code, allocator)
+    encoded_redirect := url_encode(flow.redirect_uri, allocator)
+    encoded_verifier := url_encode(flow.verifier, allocator)
     defer delete(encoded_code, allocator)
     defer delete(encoded_redirect, allocator)
     defer delete(encoded_verifier, allocator)
-    if code_err != .None || redirect_err != .None || verifier_err != .None {
-        return "", .Out_Of_Memory
-    }
 
-    value, aerr := strings.concatenate(
+    value := strings.concatenate(
         {
             "grant_type=authorization_code&code=",
             encoded_code,
@@ -250,9 +199,6 @@ authorization_code_body :: proc(
         },
         allocator,
     )
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
 
     return value, .None
 }
@@ -286,10 +232,7 @@ query_value_decode :: proc(input: string, allocator := context.allocator) -> (ou
         index += 3
     }
 
-    decoded, aerr := make([]byte, decoded_len, allocator)
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
+    decoded := make([]byte, decoded_len, allocator)
     defer if err != .None {
         if len(decoded) > 0 {
             crypto.zero_explicit(raw_data(decoded), len(decoded))
@@ -401,21 +344,8 @@ token_response_parse :: proc(
         credentials.expires_at_ms = now_ms + min(max(u64) - now_ms, provider.refresh_fallback_ms)
     }
 
-    access_clone, access_aerr := strings.clone(access, allocator)
-    if access_aerr != nil {
-        err = .Out_Of_Memory
-
-        return
-    }
-    credentials.access_token = access_clone
-
-    refresh_clone, refresh_aerr := strings.clone(refresh, allocator)
-    if refresh_aerr != nil {
-        err = .Out_Of_Memory
-
-        return
-    }
-    credentials.refresh_token = refresh_clone
+    credentials.access_token = strings.clone(access, allocator)
+    credentials.refresh_token = strings.clone(refresh, allocator)
 
     return credentials, .None
 }
@@ -442,30 +372,21 @@ refresh_request_body :: proc(
             grant_type:    string `json:"grant_type"`,
             refresh_token: string `json:"refresh_token"`,
         }
-        bytes, marshal_err := json.marshal(
+        bytes, _ := json.marshal(
             Payload{client_id = provider.client_id, grant_type = "refresh_token", refresh_token = refresh_token},
             allocator = allocator,
         )
-        if marshal_err != nil {
-            return "", "", .Out_Of_Memory
-        }
 
         return transmute(string)bytes, "application/json", .None
     }
 
-    encoded_token, token_err := url_encode(refresh_token, allocator)
+    encoded_token := url_encode(refresh_token, allocator)
     defer delete(encoded_token, allocator)
-    if token_err != .None {
-        return "", "", .Out_Of_Memory
-    }
 
-    value, aerr := strings.concatenate(
+    value := strings.concatenate(
         {"grant_type=refresh_token&client_id=", provider.client_id, "&refresh_token=", encoded_token},
         allocator,
     )
-    if aerr != nil {
-        return "", "", .Out_Of_Memory
-    }
 
     return value, "application/x-www-form-urlencoded", .None
 }
@@ -488,11 +409,7 @@ refresh_response_parse :: proc(
         return {}, .Invalid_Input
     }
 
-    cloned, clone_err := credentials_clone(existing, allocator)
-    if clone_err != .None {
-        return {}, .Out_Of_Memory
-    }
-    credentials = cloned
+    credentials = credentials_clone(existing, allocator)
     defer if err != .None {
         credentials_destroy(&credentials, allocator)
     }
@@ -546,15 +463,8 @@ refresh_response_parse :: proc(
     }
 
     if access_present {
-        access_clone, access_aerr := strings.clone(access, allocator)
-        if access_aerr != nil {
-            err = .Out_Of_Memory
-
-            return
-        }
-
         delete(credentials.access_token, allocator)
-        credentials.access_token = access_clone
+        credentials.access_token = strings.clone(access, allocator)
 
         if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
             expires_at_ms = jwt_expires_at
@@ -565,15 +475,8 @@ refresh_response_parse :: proc(
     credentials.expires_at_ms = expires_at_ms
 
     if refresh_present {
-        refresh_clone, refresh_aerr := strings.clone(refresh, allocator)
-        if refresh_aerr != nil {
-            err = .Out_Of_Memory
-
-            return
-        }
-
         delete(credentials.refresh_token, allocator)
-        credentials.refresh_token = refresh_clone
+        credentials.refresh_token = strings.clone(refresh, allocator)
     }
 
     assert(credentials_valid_for(provider, credentials), "refresh merge preserves complete credentials")
@@ -694,15 +597,12 @@ pkce_challenge :: proc(verifier: string, allocator: mem.Allocator) -> (string, O
     sha2.update(&ctx, transmute([]byte)verifier)
     sha2.final(&ctx, hash[:])
 
-    return base64url_encode(hash[:], allocator)
+    return base64url_encode(hash[:], allocator), .None
 }
 
 @(private)
-base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> (string, OAuth_Error) {
-    padded, aerr := base64.encode(data, base64.ENC_URL_TABLE, allocator)
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
+base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> string {
+    padded, _ := base64.encode(data, base64.ENC_URL_TABLE, allocator)
     defer delete(padded, allocator)
 
     end := len(padded)
@@ -710,12 +610,7 @@ base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> (string, OAu
         end -= 1
     }
 
-    encoded, clone_aerr := strings.clone(padded[:end], allocator)
-    if clone_aerr != nil {
-        return "", .Out_Of_Memory
-    }
-
-    return encoded, .None
+    return strings.clone(padded[:end], allocator)
 }
 
 @(private)
@@ -725,10 +620,7 @@ base64url_decode :: proc(data: string, allocator: mem.Allocator) -> ([]byte, OAu
     }
 
     padded_len := (len(data) + 3) &~ 3
-    padded, aerr := make([]byte, padded_len, allocator)
-    if aerr != nil {
-        return nil, .Out_Of_Memory
-    }
+    padded := make([]byte, padded_len, allocator)
     defer {
         crypto.zero_explicit(raw_data(padded), len(padded))
         delete(padded, allocator)
@@ -748,16 +640,13 @@ base64url_decode :: proc(data: string, allocator: mem.Allocator) -> ([]byte, OAu
 }
 
 @(private)
-url_encode :: proc(input: string, allocator: mem.Allocator) -> (string, OAuth_Error) {
+url_encode :: proc(input: string, allocator: mem.Allocator) -> string {
     encoded_len := 0
     for c in transmute([]byte)input {
         encoded_len += 1 if url_unreserved(c) else 3
     }
 
-    bytes, aerr := make([]byte, encoded_len, allocator)
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
+    bytes := make([]byte, encoded_len, allocator)
 
     upper_hex := "0123456789ABCDEF"
     at := 0
@@ -774,7 +663,7 @@ url_encode :: proc(input: string, allocator: mem.Allocator) -> (string, OAuth_Er
     }
     assert(at == len(bytes), "percent encoder filled its exact allocation")
 
-    return transmute(string)bytes, .None
+    return transmute(string)bytes
 }
 
 @(private)
@@ -800,10 +689,6 @@ json_object :: proc(
     parse_error: json.Error
     value, parse_error = json.parse_value(&parser)
     if parse_error != nil {
-        if parse_error == .Out_Of_Memory {
-            return {}, nil, .Out_Of_Memory
-        }
-
         return {}, nil, .Invalid_Response
     }
 

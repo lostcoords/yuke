@@ -73,11 +73,7 @@ codex_account_id :: proc(id_token: string, allocator := context.allocator) -> (a
         return "", .Invalid_Response
     }
 
-    cloned, aerr := strings.clone(account, allocator)
-    if aerr != nil {
-        return "", .Out_Of_Memory
-    }
-    account_id = cloned
+    account_id = strings.clone(account, allocator)
 
     return account_id, .None
 }
