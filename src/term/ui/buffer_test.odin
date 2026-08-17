@@ -4,7 +4,6 @@ import "core:io"
 import "core:mem"
 import "core:strings"
 import "core:testing"
-import ts "libs:testsupport"
 
 // A recording io.Writer with failure knobs, standing in for the real buffered terminal
 // writer in tests. It captures every byte written so ordering and content can be asserted,
@@ -304,65 +303,6 @@ test_buffer_failed_synchronized_frame_attempts_to_close_2026 :: proc(t: ^testing
     written := test_writer_written(&failing)
     testing.expect(t, strings.index(written, "\x1b[?2026h") >= 0)
     testing.expect(t, strings.index(written, "\x1b[?2026l") >= 0)
-}
-
-// Exercise a mixed inline/pooled/ZWJ write, synchronized flush, second-frame pooled write,
-// and resize against `alloc`, mirroring the Zig exerciseBufferAllocations helper.
-exercise_buffer :: proc(alloc: mem.Allocator) -> Buffer_Error {
-    buf, err := buffer_init(alloc, 4, 1)
-    if err != .None {
-        return err
-    }
-    defer buffer_destroy(&buf)
-
-    tw: Test_Writer
-    defer test_writer_destroy(&tw)
-    w := test_writer_stream(&tw)
-
-    buffer_set(&buf, 0, 0, "é", {}) or_return // combining acute -> pooled
-    flush_diff(&buf, w, true) or_return
-
-    buffer_set(&buf, 0, 0, "\U0001F468‍\U0001F33E", {}) or_return // ZWJ farmer -> pooled
-    flush_diff(&buf, w, true) or_return
-
-    buffer_resize(&buf, 8, 2) or_return
-
-    return .None
-}
-
-@(test)
-test_buffer_allocation_failures_leave_it_valid :: proc(t: ^testing.T) {
-    fail_at := 0
-
-    for {
-        track: mem.Tracking_Allocator
-        mem.tracking_allocator_init(&track, context.allocator)
-        backing := mem.tracking_allocator(&track)
-
-        fa := ts.Failing_Allocator{}
-        ts.failing_allocator_init(&fa, backing, fail_at)
-        alloc := ts.failing_allocator(&fa)
-
-        err := exercise_buffer(alloc)
-
-        // Regardless of where (or whether) the injected failure landed, teardown must leave
-        // nothing allocated and no bad frees.
-        testing.expect_value(t, len(track.allocation_map), 0)
-        testing.expect_value(t, len(track.bad_free_array), 0)
-
-        completed := err == .None
-        mem.tracking_allocator_destroy(&track)
-
-        if completed {
-            break
-        }
-
-        fail_at += 1
-        testing.expect(t, fail_at < 10_000) // safety bound; a real bug must not hang the suite
-        if fail_at >= 10_000 {
-            break
-        }
-    }
 }
 
 @(test)

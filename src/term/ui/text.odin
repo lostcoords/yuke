@@ -86,13 +86,10 @@ slice_cells :: proc(text: string, start, width: int) -> string {
 // OWNERSHIP: returned rows are borrowed sub-slices of `text`; only the outer
 // []string is allocated, from `allocator`. The caller deletes it (`delete(rows,
 // allocator)`) — row contents are not separately owned and must not outlive `text`.
-wrap_text :: proc(text: string, width: int, allocator: mem.Allocator) -> ([]string, mem.Allocator_Error) {
+wrap_text :: proc(text: string, width: int, allocator: mem.Allocator) -> []string {
     w := max(width, 1)
 
-    rows, err := make([dynamic]string, 0, allocator)
-    if err != nil {
-        return nil, err
-    }
+    rows := make([dynamic]string, 0, allocator)
 
     row_start := 0
     row_end := 0
@@ -107,10 +104,7 @@ wrap_text :: proc(text: string, width: int, allocator: mem.Allocator) -> ([]stri
 
         gw := cluster_width(c, text)
         if gw > intrinsics.saturating_sub(w, row_w) && row_end > row_start {
-            if _, aerr := append(&rows, text[row_start:row_end]); aerr != nil {
-                delete(rows)
-                return nil, aerr
-            }
+            append(&rows, text[row_start:row_end])
 
             row_start = c.offset
             row_w = 0
@@ -120,10 +114,7 @@ wrap_text :: proc(text: string, width: int, allocator: mem.Allocator) -> ([]stri
         row_end = c.offset + c.len
     }
 
-    if _, aerr := append(&rows, text[row_start:row_end]); aerr != nil {
-        delete(rows)
-        return nil, aerr
-    }
+    append(&rows, text[row_start:row_end])
 
-    return rows[:], .None
+    return rows[:]
 }

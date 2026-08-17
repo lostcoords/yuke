@@ -1,6 +1,5 @@
 package ui
 
-import "core:mem"
 import "core:testing"
 
 @(test)
@@ -50,8 +49,7 @@ test_slice_cells_includes_zero_width_cluster_at_start :: proc(t: ^testing.T) {
 
 @(test)
 test_wrap_text_greedy_soft_wrap :: proc(t: ^testing.T) {
-    rows, err := wrap_text("abcdef", 3, context.allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    rows := wrap_text("abcdef", 3, context.allocator)
     defer delete(rows, context.allocator)
 
     testing.expect_value(t, len(rows), 2)
@@ -61,8 +59,7 @@ test_wrap_text_greedy_soft_wrap :: proc(t: ^testing.T) {
 
 @(test)
 test_wrap_text_respects_wide_glyphs :: proc(t: ^testing.T) {
-    rows, err := wrap_text("a漢b", 2, context.allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    rows := wrap_text("a漢b", 2, context.allocator)
     defer delete(rows, context.allocator)
 
     // a(1) then 漢(2) overflows width 2 -> new row; then b.
@@ -74,8 +71,7 @@ test_wrap_text_respects_wide_glyphs :: proc(t: ^testing.T) {
 
 @(test)
 test_wrap_text_width_floored_to_one :: proc(t: ^testing.T) {
-    rows, err := wrap_text("ab", 0, context.allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    rows := wrap_text("ab", 0, context.allocator)
     defer delete(rows, context.allocator)
 
     testing.expect_value(t, len(rows), 2)
@@ -86,8 +82,7 @@ test_wrap_text_width_floored_to_one :: proc(t: ^testing.T) {
 @(test)
 test_wrap_text_overlong_cluster_gets_its_own_row :: proc(t: ^testing.T) {
     // 漢 (2 cells) alone is wider than width 1, but must not be dropped or loop.
-    rows, err := wrap_text("漢", 1, context.allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    rows := wrap_text("漢", 1, context.allocator)
     defer delete(rows, context.allocator)
 
     testing.expect_value(t, len(rows), 1)
@@ -96,8 +91,7 @@ test_wrap_text_overlong_cluster_gets_its_own_row :: proc(t: ^testing.T) {
 
 @(test)
 test_wrap_text_empty_input_yields_one_empty_row :: proc(t: ^testing.T) {
-    rows, err := wrap_text("", 5, context.allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    rows := wrap_text("", 5, context.allocator)
     defer delete(rows, context.allocator)
 
     testing.expect_value(t, len(rows), 1)

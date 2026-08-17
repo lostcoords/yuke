@@ -26,8 +26,8 @@ SGR_FG_DEFAULT :: "\x1b[39m"
 SGR_BG_DEFAULT :: "\x1b[49m"
 
 // Failure modes for the buffer's public API. `None` is success. Pool and writer failures
-// are folded in: Grapheme_Too_Long covers oversized clusters, Out_Of_Memory covers pool
-// exhaustion and allocation failure, Write_Failed covers any io.Writer error.
+// are folded in: Grapheme_Too_Long covers oversized clusters, Pool_Full covers pool
+// generation exhaustion, Write_Failed covers any io.Writer error.
 Buffer_Error :: enum {
     None,
     Grid_Too_Large,
@@ -35,7 +35,7 @@ Buffer_Error :: enum {
     Invalid_Utf8,
     Expected_Single_Grapheme,
     Unsupported_Grapheme_Width,
-    Out_Of_Memory,
+    Pool_Full,
     Write_Failed,
 }
 
@@ -100,16 +100,8 @@ buffer_init :: proc(allocator: mem.Allocator, width, height: u16) -> (Buffer, Bu
         return {}, .Grid_Too_Large
     }
 
-    cells, cerr := make([]Cell, length, allocator)
-    if cerr != nil {
-        return {}, .Out_Of_Memory
-    }
-
-    prev, perr := make([]Cell, length, allocator)
-    if perr != nil {
-        delete(cells, allocator)
-        return {}, .Out_Of_Memory
-    }
+    cells := make([]Cell, length, allocator)
+    prev := make([]Cell, length, allocator)
 
     slice.fill(cells, EMPTY_CELL)
     slice.fill(prev, EMPTY_CELL)
@@ -147,16 +139,8 @@ buffer_resize :: proc(b: ^Buffer, width, height: u16) -> Buffer_Error {
         return .Grid_Too_Large
     }
 
-    cells, cerr := make([]Cell, length, b.allocator)
-    if cerr != nil {
-        return .Out_Of_Memory
-    }
-
-    prev, perr := make([]Cell, length, b.allocator)
-    if perr != nil {
-        delete(cells, b.allocator)
-        return .Out_Of_Memory
-    }
+    cells := make([]Cell, length, b.allocator)
+    prev := make([]Cell, length, b.allocator)
 
     slice.fill(cells, EMPTY_CELL)
     slice.fill(prev, EMPTY_CELL)
@@ -555,8 +539,8 @@ pool_error_to_buffer :: proc(e: Pool_Error) -> Buffer_Error {
         return .None
     case .Grapheme_Too_Long:
         return .Grapheme_Too_Long
-    case .Pool_Full, .Out_Of_Memory:
-        return .Out_Of_Memory
+    case .Pool_Full:
+        return .Pool_Full
     }
 
     return .None

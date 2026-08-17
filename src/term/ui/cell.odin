@@ -73,7 +73,6 @@ Pool_Error :: enum {
     None,
     Grapheme_Too_Long,
     Pool_Full,
-    Out_Of_Memory,
 }
 
 pool_init :: proc(pool: ^Grapheme_Pool, allocator: mem.Allocator) {
@@ -110,34 +109,11 @@ pool_intern :: proc(pool: ^Grapheme_Pool, cluster: string) -> (Glyph, Pool_Error
         return {}, .Pool_Full
     }
 
-    owned, derr := strings.clone(cluster, pool.allocator)
-    if derr != nil {
-        return {}, .Out_Of_Memory
-    }
-
-    // Rollback guard: undo the dupe, and the array append once it happens, on any early
-    // return before the map insert commits (mirrors Zig's errdefer chain).
-    committed := false
-    appended := false
-    defer if !committed {
-        if appended {
-            pop(&pool.strings)
-        }
-        delete(owned, pool.allocator)
-    }
+    owned := strings.clone(cluster, pool.allocator)
 
     index := u32(len(pool.strings))
-
-    if _, aerr := append(&pool.strings, owned); aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-    appended = true
-
-    if map_insert(&pool.by_str, owned, index) == nil {
-        return {}, .Out_Of_Memory
-    }
-
-    committed = true
+    append(&pool.strings, owned)
+    map_insert(&pool.by_str, owned, index)
     pool.bytes_len += len(owned)
 
     return glyph_pooled(index), .None
