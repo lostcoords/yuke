@@ -553,9 +553,6 @@ client_protocol_error_wire :: proc(err: client.Protocol_Error) -> string {
     case .Bad_Frame:
         return "bad_frame"
 
-    case .Out_Of_Memory:
-        return "out_of_memory"
-
     case .Request_Id_Exhausted:
         return "request_id_exhausted"
 

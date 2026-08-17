@@ -90,10 +90,7 @@ relay_create :: proc(
         return {}, .Invalid_Options
     }
 
-    backend, aerr := new(Relay_Backend, allocator)
-    if aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    backend := new(Relay_Backend, allocator)
 
     backend.loop = loop
     backend.allocator = allocator
@@ -103,25 +100,13 @@ relay_create :: proc(
     ok_remote := ecdh.public_key_set_bytes(&backend.remote_static, .X25519, remote_static)
     assert(ok_static && ok_remote, "relay_create keys failed on validated 32-byte inputs")
 
-    if virtual.arena_init_growing(&backend.recv_scratch) != nil ||
-       virtual.arena_init_growing(&backend.send_scratch) != nil {
-        relay_free(backend)
-
-        return {}, .Out_Of_Memory
-    }
+    _ = virtual.arena_init_growing(&backend.recv_scratch)
+    _ = virtual.arena_init_growing(&backend.send_scratch)
 
     relay.reassembler_init(&backend.reasm, allocator)
 
-    clone_err: mem.Allocator_Error
-    backend.relay_url, clone_err = strings.clone(relay_url, allocator)
-    if clone_err == nil {
-        backend.ticket, clone_err = strings.clone(ticket, allocator)
-    }
-    if clone_err != nil {
-        relay_free(backend)
-
-        return {}, .Out_Of_Memory
-    }
+    backend.relay_url = strings.clone(relay_url, allocator)
+    backend.ticket = strings.clone(ticket, allocator)
 
     return Transport {
             self = backend,

@@ -324,9 +324,6 @@ replica_error_wire :: proc(err: client.Replica_Error) -> string {
     case .None:
         unreachable()
 
-    case .Out_Of_Memory:
-        return "out_of_memory"
-
     case .Session_Mismatch:
         return "session_mismatch"
 

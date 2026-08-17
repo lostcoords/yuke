@@ -371,7 +371,7 @@ remote_ticket_done :: proc(user: rawptr, result: curl.Result) {
 
     open_err := client.client_open(&h.daemon.client, transport, "yuke", "0.1.0", callbacks, h, h.allocator)
     if open_err != .None {
-        remote_fail(rc, "out_of_memory" if open_err == .Out_Of_Memory else "transport_failed")
+        remote_fail(rc, "transport_failed")
 
         return
     }

@@ -61,10 +61,7 @@ ws_create :: proc(
 ) {
     assert(loop != nil, "ws_create needs an event loop")
 
-    backend, aerr := new(Ws_Backend, allocator)
-    if aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    backend := new(Ws_Backend, allocator)
 
     backend.loop = loop
     backend.options = options

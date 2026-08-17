@@ -10,7 +10,6 @@ MAX_RETAINED_MESSAGES :: wire.LIMITS.max_page_size
 // Failure modes surfaced by the fallible replica procedures. `None` is success.
 Replica_Error :: enum {
     None = 0,
-    Out_Of_Memory,
     Session_Mismatch,
     Malformed_Snapshot,
     Config_Revision_Conflict,
@@ -344,9 +343,7 @@ replica_on_part_added :: proc(
     arena_alloc := mem.dynamic_arena_allocator(&draft.arena)
     part := active_part_from_wire(data.part, arena_alloc) or_return
 
-    if _, aerr := append(&draft.parts, part); aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    append(&draft.parts, part)
 
     return {kind = .Changed}, .None
 }
@@ -395,10 +392,7 @@ replica_on_part_delta :: proc(
         return {kind = .Gap}, .None // missed a delta
     }
 
-    _, aerr := append(&part.text.bytes, data.delta)
-    if aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    append(&part.text.bytes, data.delta)
 
     return {kind = .Changed}, .None
 }
@@ -461,10 +455,7 @@ replica_on_tool_output_delta :: proc(
         return {kind = .Gap}, .None
     }
 
-    _, aerr := append(&part.tool.output, data.delta)
-    if aerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    append(&part.tool.output, data.delta)
 
     return {kind = .Changed}, .None
 }
@@ -556,21 +547,12 @@ draft_from_started :: proc(
     ^Draft_Replica,
     Replica_Error,
 ) {
-    d, err := new(Draft_Replica, self.allocator)
-    if err != nil {
-        return nil, .Out_Of_Memory
-    }
+    d := new(Draft_Replica, self.allocator)
 
     mem.dynamic_arena_init(&d.arena, self.allocator, self.allocator)
     arena_alloc := mem.dynamic_arena_allocator(&d.arena)
 
-    parts, perr := make([dynamic]Active_Part, 0, arena_alloc)
-    if perr != nil {
-        mem.dynamic_arena_destroy(&d.arena)
-        free(d, self.allocator)
-
-        return nil, .Out_Of_Memory
-    }
+    parts := make([dynamic]Active_Part, 0, arena_alloc)
 
     d.message_id = data.message_id
     d.run_id = data.run_id
@@ -582,20 +564,12 @@ draft_from_started :: proc(
     return d, .None
 }
 
-// Build a text/reasoning byte buffer in the draft arena, folding the initial bytes. A
-// mid-build allocation failure surfaces `.Out_Of_Memory` so a truncated buffer never
-// escapes as a folded part.
-text_buffer_build :: proc(id: wire.Part_Id, text: string, allocator: mem.Allocator) -> (Text_Buffer, Replica_Error) {
-    bytes, err := make([dynamic]u8, 0, allocator)
-    if err != nil {
-        return {}, .Out_Of_Memory
-    }
+// Build a text/reasoning byte buffer in the draft arena, folding the initial bytes.
+text_buffer_build :: proc(id: wire.Part_Id, text: string, allocator: mem.Allocator) -> Text_Buffer {
+    bytes := make([dynamic]u8, 0, allocator)
+    append(&bytes, text)
 
-    if _, aerr := append(&bytes, text); aerr != nil {
-        return {}, .Out_Of_Memory
-    }
-
-    return {id = id, bytes = bytes}, .None
+    return {id = id, bytes = bytes}
 }
 
 // Build one active-draft part from a wire assistant part, shared by live part-added folding
@@ -611,12 +585,12 @@ active_part_from_wire :: proc(
 ) {
     switch v in part {
     case wire.Text_Part:
-        buf := text_buffer_build(v.id, v.text, allocator) or_return
+        buf := text_buffer_build(v.id, v.text, allocator)
 
         return {kind = .Text, text = buf}, .None
 
     case wire.Reasoning_Part:
-        buf := text_buffer_build(v.id, v.text, allocator) or_return
+        buf := text_buffer_build(v.id, v.text, allocator)
 
         return {kind = .Reasoning, text = buf}, .None
 
@@ -966,11 +940,7 @@ replica_on_committed :: proc(
 
         // First larger id: insert here to keep oldest-first order.
         if existing_id > mid {
-            if _, ierr := inject_at(&self.messages, i, owned); ierr != nil {
-                owned_message_destroy(&owned)
-
-                return {}, .Out_Of_Memory
-            }
+            inject_at(&self.messages, i, owned)
 
             evict_oldest_if_full(self)
             inserted = true
@@ -981,11 +951,7 @@ replica_on_committed :: proc(
 
     // Newest: append at tail.
     if !inserted {
-        if _, aerr := append(&self.messages, owned); aerr != nil {
-            owned_message_destroy(&owned)
-
-            return {}, .Out_Of_Memory
-        }
+        append(&self.messages, owned)
 
         evict_oldest_if_full(self)
     }
@@ -1037,11 +1003,7 @@ replica_on_config_changed :: proc(
         }
     }
 
-    // Grow before cloning so an OOM on growth can't leak unreachable bytes into the
-    // shared configs_arena.
-    if rerr := reserve(&self.configs, len(self.configs) + 1); rerr != nil {
-        return {}, .Out_Of_Memory
-    }
+    reserve(&self.configs, len(self.configs) + 1)
 
     a := mem.dynamic_arena_allocator(&self.configs_arena)
     cloned := wire.run_config_clone(data.config, a)
@@ -1090,11 +1052,7 @@ replica_on_input_queued :: proc(
 
     owned := owned_queued_input_clone(data.input, self.allocator)
 
-    if _, aerr := append(&self.queued, owned); aerr != nil {
-        owned_queued_input_destroy(&owned)
-
-        return {}, .Out_Of_Memory
-    }
+    append(&self.queued, owned)
 
     return {kind = .Changed}, .None
 }
@@ -1326,10 +1284,7 @@ replica_domain_session_id :: proc(data: wire.Broadcast_Data) -> (wire.Session_Id
 draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (^Draft_Replica, Replica_Error) {
     msg := src.message
 
-    d, err := new(Draft_Replica, self.allocator)
-    if err != nil {
-        return nil, .Out_Of_Memory
-    }
+    d := new(Draft_Replica, self.allocator)
 
     mem.dynamic_arena_init(&d.arena, self.allocator, self.allocator)
     arena_alloc := mem.dynamic_arena_allocator(&d.arena)
@@ -1340,12 +1295,7 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
     d.created_at_ms = msg.time.created_at_ms
     d.agent = strings.clone(msg.agent, arena_alloc)
 
-    parts, perr := make([dynamic]Active_Part, 0, len(msg.content), arena_alloc)
-    if perr != nil {
-        draft_destroy(self.allocator, d)
-
-        return nil, .Out_Of_Memory
-    }
+    parts := make([dynamic]Active_Part, 0, len(msg.content), arena_alloc)
 
     d.parts = parts
 
@@ -1370,20 +1320,12 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
         if tool_part, is_tool := part.(wire.Tool_Part); is_tool {
             if running, is_running := tool_part.state.(wire.Tool_State_Running); is_running {
                 if out, has_out := running.output.?; has_out {
-                    if _, aerr := append(&active.tool.output, out); aerr != nil {
-                        draft_destroy(self.allocator, d)
-
-                        return nil, .Out_Of_Memory
-                    }
+                    append(&active.tool.output, out)
                 }
             }
         }
 
-        if _, aerr := append(&d.parts, active); aerr != nil {
-            draft_destroy(self.allocator, d)
-
-            return nil, .Out_Of_Memory
-        }
+        append(&d.parts, active)
     }
 
     return d, .None
@@ -1409,9 +1351,9 @@ replica_install_snapshot :: proc(self: ^Session_Replica, r: wire.Session_Resync_
     // --- Build candidates. Nothing below touches `self` until the commit. ---
     committed := false
 
-    cand_messages, e_m := make([dynamic]Owned_Message, 0, len(r.messages), self.allocator)
-    cand_queued, e_q := make([dynamic]Owned_Queued_Input, 0, len(r.queued), self.allocator)
-    cand_configs, e_c := make([dynamic]wire.Run_Config, 0, len(r.configs), self.allocator)
+    cand_messages := make([dynamic]Owned_Message, 0, len(r.messages), self.allocator)
+    cand_queued := make([dynamic]Owned_Queued_Input, 0, len(r.queued), self.allocator)
+    cand_configs := make([dynamic]wire.Run_Config, 0, len(r.configs), self.allocator)
     cand_cfg_arena: mem.Dynamic_Arena
     mem.dynamic_arena_init(&cand_cfg_arena, self.allocator, self.allocator)
     cand_active: ^Draft_Replica = nil
@@ -1434,10 +1376,6 @@ replica_install_snapshot :: proc(self: ^Session_Replica, r: wire.Session_Resync_
         if cand_active != nil {
             draft_destroy(self.allocator, cand_active)
         }
-    }
-
-    if e_m != nil || e_q != nil || e_c != nil {
-        return .Out_Of_Memory
     }
 
     // The wire validator established ordering, uniqueness, boundaries, and references.

@@ -3,7 +3,6 @@ package client
 import "core:mem"
 import "core:strings"
 import "core:testing"
-import ts "libs:testsupport"
 import "src:wire"
 
 @(private = "file")
@@ -2544,128 +2543,6 @@ test_zero_length_delta_at_offset_is_changed :: proc(t: ^testing.T) {
 
     text, _ := replica_part_text(&r, 0)
     testing.expect_value(t, text, "")
-}
-
-// --- allocation-failure harness ---
-
-// The fault-injecting allocator lives in `libs:testsupport` (`ts.Failing_Allocator`). It fails
-// every alloc/resize from the `fail_at`-th counted allocation onward and exempts arena-internal
-// allocations (which report `allocators.odin`) because `Dynamic_Arena` is not failure-safe. The
-// replica's OWN direct structural allocations — `new`, candidate spine `make`/`reserve`/`append`,
-// and `text_buffer_build` — DO propagate `.Out_Of_Memory` and drive the transactional
-// rollback these tests prove.
-
-// Sweep `fail_at` across every allocation of `op`, asserting each run either fully succeeds
-// or cleanly returns `.Out_Of_Memory` (never another error or a corrupt state), with no
-// leak — the runner's tracking allocator asserts the latter at test end. This is the Odin
-// analogue of Zig's `checkAllAllocationFailures`. The sweep does not stop at the first
-// success: because the wire deep-clones cannot signal OOM (they under-copy silently and
-// return success), a `.None` at one fail point does not imply budget exhaustion, so every
-// point in `0..=total` is exercised.
-@(private = "file")
-_sweep_alloc_failures :: proc(t: ^testing.T, op: proc(alloc: mem.Allocator) -> Replica_Error) {
-    // A run whose fail point is unreachable counts the total allocations.
-    probe := ts.Failing_Allocator {
-        backing = context.allocator,
-        fail_at = max(int),
-    }
-    testing.expect_value(t, op(ts.failing_allocator(&probe)), Replica_Error.None)
-
-    for fail_at in 0 ..= probe.count {
-        fa := ts.Failing_Allocator {
-            backing = context.allocator,
-            fail_at = fail_at,
-        }
-        err := op(ts.failing_allocator(&fa))
-        testing.expect(t, err == .None || err == .Out_Of_Memory, "op must succeed or cleanly OOM under alloc failure")
-    }
-}
-
-@(private = "file")
-_op_install_snapshot :: proc(alloc: mem.Allocator) -> Replica_Error {
-    r: Session_Replica
-    replica_init(&r, alloc, _sid())
-    defer replica_destroy(&r)
-
-    msgs := []wire.Message{_assistant_msg(1), _assistant_msg(2), _assistant_msg(3)}
-    return replica_install_snapshot(&r, _resync_msgs(10, msgs, 3))
-}
-
-@(private = "file")
-_op_replace_pending_permission :: proc(alloc: mem.Allocator) -> Replica_Error {
-    r: Session_Replica
-    replica_init(&r, alloc, _sid())
-    defer replica_destroy(&r)
-
-    if _, e := replica_on_started(&r, _started(3)); e != .None {
-        return e
-    }
-
-    tool := wire.Tool_Part {
-        id        = 0,
-        name      = "read",
-        arguments = "{}",
-        state     = wire.Tool_State_Pending{},
-    }
-    if _, e := replica_on_part_added(&r, _part_added(3, tool)); e != .None {
-        return e
-    }
-
-    options := []wire.Permission_Option{{id = "once", kind = .Allow_Once, label = "Allow"}}
-    _, e := replica_on_tool_state_changed(
-        &r,
-        wire.Tool_State_Changed_Data {
-            session_id = _sid(),
-            message_id = 3,
-            part_id = 0,
-            state = wire.Tool_State_Waiting_Permission{},
-            permission_state = wire.Permission_State{requested_at_ms = 1, options = options},
-        },
-    )
-    return e
-}
-
-@(private = "file")
-_op_append_config :: proc(alloc: mem.Allocator) -> Replica_Error {
-    r: Session_Replica
-    replica_init(&r, alloc, _sid())
-    defer replica_destroy(&r)
-
-    _, e := replica_on_config_changed(
-        &r,
-        wire.Config_Changed_Data{session_id = _sid(), seq = 1, config = _run_cfg(2, "model")},
-    )
-    return e
-}
-
-@(private = "file")
-_op_queue_input :: proc(alloc: mem.Allocator) -> Replica_Error {
-    r: Session_Replica
-    replica_init(&r, alloc, _sid())
-    defer replica_destroy(&r)
-
-    _, e := replica_on_input_queued(&r, _queued(1))
-    return e
-}
-
-@(test)
-test_alloc_failure_snapshot_install_is_safe :: proc(t: ^testing.T) {
-    _sweep_alloc_failures(t, _op_install_snapshot)
-}
-
-@(test)
-test_alloc_failure_replace_pending_permission_is_safe :: proc(t: ^testing.T) {
-    _sweep_alloc_failures(t, _op_replace_pending_permission)
-}
-
-@(test)
-test_alloc_failure_append_config_is_safe :: proc(t: ^testing.T) {
-    _sweep_alloc_failures(t, _op_append_config)
-}
-
-@(test)
-test_alloc_failure_queue_input_is_safe :: proc(t: ^testing.T) {
-    _sweep_alloc_failures(t, _op_queue_input)
 }
 
 // A tool in `waiting_permission` that already carries a resolved decision has no consistent

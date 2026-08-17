@@ -52,9 +52,6 @@ Protocol_Error :: enum {
     // A binary frame arrived; the v1 protocol carries only text frames.
     Bad_Frame,
 
-    // Driver-owned protocol state could not be allocated.
-    Out_Of_Memory,
-
     // The request id space (`wire.MAX_REQUEST_ID`) is exhausted.
     Request_Id_Exhausted,
 
@@ -241,12 +238,8 @@ client_open :: proc(
 
     c.next_request_id = INITIALIZE_REQUEST_ID + 1
 
-    e, ok := wire.request_encode(init, allocator)
+    e, _ := wire.request_encode(init, allocator)
     defer wire.emitter_destroy(&e)
-    if !ok {
-        client_destroy(c)
-        return .Out_Of_Memory
-    }
 
     payload := wire.to_string(&e)
     c.initialize_frame = make([]byte, len(payload), allocator)
@@ -296,11 +289,8 @@ client_send_request :: proc(
         return 0, .Bad_Frame
     }
 
-    e, encoded := wire.request_encode(req, c.allocator)
+    e, _ := wire.request_encode(req, c.allocator)
     defer wire.emitter_destroy(&e)
-    if !encoded {
-        return 0, .Out_Of_Memory
-    }
 
     serr := c.transport->send_text(transmute([]byte)wire.to_string(&e))
     if serr != .None {
@@ -485,12 +475,7 @@ client_on_initialize_complete :: proc(c: ^Client, outcome: Request_Outcome, user
     // Retain the scalar snapshot by value; clone the one borrowed string we keep, so
     // nothing survives the scratch `free_all` as a dangling frame borrow.
     assert(c.daemon_version == "", "daemon version retained twice")
-    daemon_version, aerr := strings.clone(hello.daemon.version, c.allocator)
-    if aerr != nil {
-        log.errorf("client: initialize clone of daemon version failed: %v", aerr)
-        c.initialize_error = .Out_Of_Memory
-        return
-    }
+    daemon_version := strings.clone(hello.daemon.version, c.allocator)
 
     c.protocol = hello.protocol
     c.session_revision = hello.session_revision
@@ -622,7 +607,7 @@ transport_on_text :: proc(c: ^Client, data: []byte) {
 
     // A per-frame diagnostic keeps the connection; a protocol error closes it.
     #partial switch err {
-    case .Decode_Failed, .Bad_Initialize, .Out_Of_Memory:
+    case .Decode_Failed, .Bad_Initialize:
         client_abort(c, err)
     }
 }
