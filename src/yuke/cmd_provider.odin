@@ -37,7 +37,6 @@ Provider_Prompt_Error :: enum {
     Empty,
     Too_Long,
     Invalid_Utf8,
-    Out_Of_Memory,
     Canceled,
 }
 
@@ -217,10 +216,7 @@ provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
                 return "", .Invalid_Utf8
             }
 
-            cloned, clone_err := strings.clone(text)
-            if clone_err != nil {
-                return "", .Out_Of_Memory
-            }
+            cloned := strings.clone(text)
 
             return cloned, .None
 
@@ -255,8 +251,6 @@ provider_prompt_error_print :: proc(err: Provider_Prompt_Error) {
         fmt.eprintln("yuke provider: API key is too long")
     case .Invalid_Utf8:
         fmt.eprintln("yuke provider: API key is not valid UTF-8")
-    case .Out_Of_Memory:
-        fmt.eprintln("yuke provider: out of memory while reading the API key")
     case .Canceled:
         fmt.eprintln("yuke provider: canceled")
     }
