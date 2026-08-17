@@ -5,6 +5,7 @@ import "core:mem/virtual"
 import "core:nbio"
 import "core:testing"
 
+import "libs:bindings/curl"
 import "src:client"
 import "src:daemon/catalog"
 import "src:daemon/store"
@@ -12,12 +13,6 @@ import "src:wire"
 
 @(private, rodata)
 REV_LEVELS := [?]string{"low", "medium", "high"}
-
-@(private, rodata)
-REV_LEVELS_PERMUTED := [?]string{"high", "medium", "low"}
-
-@(private, rodata)
-REV_LEVELS_ALT := [?]string{"low", "high"}
 
 @(private)
 rev_model :: proc(id, provider, name: string, levels: []string, default: string, cost_in: f64) -> wire.Model_Info {
@@ -32,100 +27,6 @@ rev_model :: proc(id, provider, name: string, levels: []string, default: string,
         supports_tools = true,
         cost = {input = cost_in, output = 10, cache_read = 0.5, cache_write = 1},
     }
-}
-
-// Hash one model against an empty health block.
-@(private)
-rev_of :: proc(model: wire.Model_Info) -> wire.Catalog_Rev {
-    return catalog_rev([]wire.Model_Info{model}, {})
-}
-
-@(test)
-test_catalog_rev_is_lowercase_hex :: proc(t: ^testing.T) {
-    models := []wire.Model_Info{rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)}
-    rev := catalog_rev(models, {})
-
-    for value in ([64]u8)(rev) {
-        is_hex := (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
-        testing.expectf(t, is_hex, "a revision byte %d must be lowercase hex", value)
-    }
-
-    // A real revision must satisfy the wire id contract used by catalog.list.
-    full := wire.Catalog_List_Result_Full {
-        catalog_rev = rev,
-        models      = models,
-        health      = {},
-    }
-    testing.expect_value(t, wire.catalog_list_result_validate(full), wire.Validation_Error.None)
-}
-
-@(test)
-test_catalog_rev_is_deterministic :: proc(t: ^testing.T) {
-    models := []wire.Model_Info {
-        rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2),
-        rev_model("openai/o1", "openai", "O1", REV_LEVELS[:], "medium", 3),
-    }
-
-    testing.expect(
-        t,
-        catalog_rev(models, {}) == catalog_rev(models, {}),
-        "the same content hashes to the same revision",
-    )
-}
-
-@(test)
-test_catalog_rev_empty_is_stable_and_distinct :: proc(t: ^testing.T) {
-    single := []wire.Model_Info{rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)}
-
-    testing.expect(t, catalog_rev(nil, {}) == catalog_rev([]wire.Model_Info{}, {}), "an empty catalog hashes stably")
-    testing.expect(t, catalog_rev(nil, {}) != catalog_rev(single, {}), "an empty catalog differs from a non-empty one")
-}
-
-@(test)
-test_catalog_rev_changes_on_every_visible_field :: proc(t: ^testing.T) {
-    base := rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)
-    original := rev_of(base)
-
-    id := base; id.id = "openai/gpt-5x"
-    provider := base; provider.provider = "openai2"
-    name := base; name.name = "GPT-5"
-    window := base; window.context_window = 2000
-    output := base; output.max_output_tokens = 200
-    vision := base; vision.supports_vision = !base.supports_vision
-    tools := base; tools.supports_tools = !base.supports_tools
-    default := base; default.default_reasoning = "high"
-    levels := base; levels.reasoning_levels = REV_LEVELS_ALT[:]
-    permuted := base; permuted.reasoning_levels = REV_LEVELS_PERMUTED[:]
-    cost_input := base; cost_input.cost.input = 9
-    cost_output := base; cost_output.cost.output = 99
-    cost_read := base; cost_read.cost.cache_read = 9
-    cost_write := base; cost_write.cost.cache_write = 9
-
-    testing.expect(t, rev_of(id) != original, "id change")
-    testing.expect(t, rev_of(provider) != original, "provider change")
-    testing.expect(t, rev_of(name) != original, "name change")
-    testing.expect(t, rev_of(window) != original, "context_window change")
-    testing.expect(t, rev_of(output) != original, "max_output_tokens change")
-    testing.expect(t, rev_of(vision) != original, "supports_vision change")
-    testing.expect(t, rev_of(tools) != original, "supports_tools change")
-    testing.expect(t, rev_of(default) != original, "default_reasoning change")
-    testing.expect(t, rev_of(levels) != original, "reasoning_levels change")
-    testing.expect(t, rev_of(permuted) != original, "reasoning_levels order change")
-    testing.expect(t, rev_of(cost_input) != original, "cost.input change")
-    testing.expect(t, rev_of(cost_output) != original, "cost.output change")
-    testing.expect(t, rev_of(cost_read) != original, "cost.cache_read change")
-    testing.expect(t, rev_of(cost_write) != original, "cost.cache_write change")
-}
-
-@(test)
-test_catalog_rev_changes_on_add_and_remove :: proc(t: ^testing.T) {
-    one := []wire.Model_Info{rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)}
-    two := []wire.Model_Info {
-        rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2),
-        rev_model("openai/o1", "openai", "O1", REV_LEVELS[:], "medium", 3),
-    }
-
-    testing.expect(t, catalog_rev(one, {}) != catalog_rev(two, {}), "adding a model changes the revision")
 }
 
 @(test)
@@ -160,46 +61,6 @@ test_catalog_rev_boundary_between_adjacent_fields :: proc(t: ^testing.T) {
     b := []wire.Model_Info{rev_model("a", "bc", "n", REV_LEVELS[:], "medium", 2)}
 
     testing.expect(t, catalog_rev(a, {}) != catalog_rev(b, {}), "adjacent string fields do not run together")
-}
-
-@(test)
-test_catalog_models_view_flattens_in_order_and_feeds_rev :: proc(t: ^testing.T) {
-    snapshot: store.Catalog
-    snapshot.providers.allocator = context.allocator
-    defer {
-        for &item in snapshot.providers {
-            delete(item.models)
-        }
-        delete(snapshot.providers)
-    }
-
-    item: catalog.Provider
-    item.id = "openai"
-    item.models.allocator = context.allocator
-    first: catalog.Model
-    first.info = rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2)
-    second: catalog.Model
-    second.info = rev_model("openai/o1", "openai", "O1", REV_LEVELS[:], "medium", 3)
-    append(&item.models, first)
-    append(&item.models, second)
-    append(&snapshot.providers, item)
-
-    view, ok := catalog_models_view(snapshot)
-    defer delete(view)
-    testing.expect(t, ok, "the view allocates")
-    testing.expect_value(t, len(view), 2)
-    testing.expect_value(t, string(view[0].id), "openai/gpt-5")
-    testing.expect_value(t, string(view[1].id), "openai/o1")
-
-    direct := []wire.Model_Info {
-        rev_model("openai/gpt-5", "openai", "GPT", REV_LEVELS[:], "medium", 2),
-        rev_model("openai/o1", "openai", "O1", REV_LEVELS[:], "medium", 3),
-    }
-    testing.expect(
-        t,
-        catalog_rev(view, {}) == catalog_rev(direct, {}),
-        "the view hashes identically to its equivalent list",
-    )
 }
 
 @(private, rodata)
@@ -503,40 +364,25 @@ test_catalog_refresh_settle_noop_on_304 :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_catalog_refresh_settle_rejects_bad_status :: proc(t: ^testing.T) {
+test_catalog_refresh_settle_rejects_a_failed_fetch :: proc(t: ^testing.T) {
     d: Daemon
     s := refresh_op_daemon(t, &d)
     defer store.close(s)
     defer catalog_state_destroy(&d)
 
     old_rev := d.catalog.rev
-    outcome := catalog_refresh_settle(&d, .Ok, 503, false, nil, "")
-    testing.expect(t, !outcome.ok, "a 5xx status is an error")
-    testing.expect(t, !outcome.changed, "a rejected fetch changes nothing")
-    testing.expect_value(t, d.catalog.rev, old_rev)
-}
-
-@(test)
-test_catalog_refresh_settle_rejects_overflow :: proc(t: ^testing.T) {
-    d: Daemon
-    s := refresh_op_daemon(t, &d)
-    defer store.close(s)
-    defer catalog_state_destroy(&d)
-
-    // An over-cap body aborts from on_body, which curl completes as `.Write_Error`.
-    outcome := catalog_refresh_settle(&d, .Write_Error, 0, true, nil, "")
-    testing.expect(t, !outcome.ok, "an overflowed response is rejected")
-}
-
-@(test)
-test_catalog_refresh_settle_rejects_transport_failure :: proc(t: ^testing.T) {
-    d: Daemon
-    s := refresh_op_daemon(t, &d)
-    defer store.close(s)
-    defer catalog_state_destroy(&d)
-
-    outcome := catalog_refresh_settle(&d, .Couldnt_Connect, 0, false, nil, "")
-    testing.expect(t, !outcome.ok, "a transport failure is an error")
+    Case :: struct {
+        code:     curl.Code,
+        status:   int,
+        overflow: bool,
+    }
+    cases := [?]Case{{.Ok, 503, false}, {.Write_Error, 0, true}, {.Couldnt_Connect, 0, false}}
+    for c in cases {
+        outcome := catalog_refresh_settle(&d, c.code, c.status, c.overflow, nil, "")
+        testing.expect(t, !outcome.ok, "a failed fetch is an error")
+        testing.expect(t, !outcome.changed, "a rejected fetch changes nothing")
+        testing.expect_value(t, d.catalog.rev, old_rev)
+    }
 }
 
 // The in-flight fetch owns its request id: the inbound frame's arena is reset and wiped

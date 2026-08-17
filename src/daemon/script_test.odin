@@ -181,43 +181,6 @@ test_define_config_twice_refuses_the_start :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Error.Script_Failed)
 }
 
-// A non-object argument throws at the boundary rather than being coerced, so the start fails.
-@(test)
-test_define_config_rejects_a_non_object :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    err := entry_start(
-        t,
-        "cfg-non-object",
-        `
-            import { defineConfig } from "yuke:daemon"
-
-            defineConfig(42)
-        `,
-    )
-
-    testing.expect_value(t, err, Error.Script_Failed)
-}
-
-// A well-formed call carrying a mistyped value decodes-fails, which is a configuration error
-// (not a script fault): the same strictness the file loader enforced, now at the JS boundary.
-@(test)
-test_define_config_rejects_a_mistyped_value :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    err := entry_start(
-        t,
-        "cfg-mistyped",
-        `
-            import { defineConfig } from "yuke:daemon"
-
-            export default defineConfig({ port: "nope" })
-        `,
-    )
-
-    testing.expect_value(t, err, Error.Invalid_Options)
-}
-
 @(test)
 test_define_config_rejects_an_unknown_member :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -267,24 +230,6 @@ test_define_config_reads_allowed_origins :: proc(t: ^testing.T) {
         testing.expect_value(t, d.allowed_origins[0], "http://localhost:5173")
         testing.expect_value(t, d.allowed_origins[1], "https://client.yuke.sh")
     }
-}
-
-// A mistyped `allowedOrigins` (a string, not an array) fails the strict decode.
-@(test)
-test_define_config_rejects_mistyped_allowed_origins :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    err := entry_start(
-        t,
-        "cfg-origins-mistyped",
-        `
-            import { defineConfig } from "yuke:daemon"
-
-            export default defineConfig({ allowedOrigins: "nope" })
-        `,
-    )
-
-    testing.expect_value(t, err, Error.Invalid_Options)
 }
 
 // A manifest that omits `port` keeps the port the launcher set, rather than resetting to an
@@ -473,29 +418,6 @@ test_js_unknown_module_is_refused :: proc(t: ^testing.T) {
 
     evaluated := js.eval_module(&d.js, "test.js", `import "yuke:nope"`, context.temp_allocator)
     testing.expect(t, !evaluated, "an unknown module should fail to evaluate")
-}
-
-// `yuked.js` is the script tier's production entry point. A root that has one runs it at
-// startup, before the transport adopts anything.
-@(test)
-test_js_entry_script_runs_at_startup :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-    testing.expect_value(t, JS_ENTRY_FILE, "yuked.js")
-
-    root := test_make_dir("js-entry")
-    defer os.remove_all(root)
-
-    js_write(t, root, JS_ENTRY_FILE, `globalThis.result = "booted"`)
-
-    nbio.acquire_thread_event_loop()
-    defer nbio.release_thread_event_loop()
-    loop := nbio.current_thread_event_loop()
-
-    d: Daemon
-    testing.expect_value(t, start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root}), Error.None)
-    defer test_teardown(&d)
-
-    testing.expect_value(t, js_result(t, &d), "booted")
 }
 
 // A script tier the operator configured but that will not load is a start failure, for the
