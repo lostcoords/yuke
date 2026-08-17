@@ -1,6 +1,5 @@
 package catalog
 
-import "base:runtime"
 import "core:encoding/json"
 import "core:mem"
 import "core:mem/virtual"
@@ -18,7 +17,6 @@ Normalize_Error :: enum {
     Filtered,
     Unsupported,
     Invalid,
-    Out_Of_Memory,
 }
 
 Reasoning_Option_Kind :: enum {
@@ -62,20 +60,12 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
     }
 
     scratch: virtual.Arena
-    if virtual.arena_init_growing(&scratch) != nil {
-        return result, .Out_Of_Memory
-    }
+    _ = virtual.arena_init_growing(&scratch)
     defer virtual.arena_destroy(&scratch)
     sa := virtual.arena_allocator(&scratch)
 
-    selected, selected_err := make([]json.Object, len(selections), sa)
-    if selected_err != nil {
-        return result, .Out_Of_Memory
-    }
-    found, found_err := make([]bool, len(selections), sa)
-    if found_err != nil {
-        return result, .Out_Of_Memory
-    }
+    selected := make([]json.Object, len(selections), sa)
+    found := make([]bool, len(selections), sa)
 
     parser := json.make_parser(data, .JSON, true, sa)
     if parser.curr_token.kind != .Open_Brace {
@@ -118,7 +108,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
 
         value, parse_err := json.parse_value(&parser)
         if parse_err != nil {
-            return result, .Out_Of_Memory if parse_err == .Out_Of_Memory else .Invalid_Json
+            return result, .Invalid_Json
         }
 
         object, object_ok := value.(json.Object)
@@ -146,12 +136,12 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
     model_count := 0
     for selection, i in selections {
         if !found[i] {
-            issue_append(&result, selection, .Missing) or_return
+            issue_append(&result, selection, .Missing)
             continue
         }
 
         if selected[i] == nil {
-            issue_append(&result, selection, .Invalid) or_return
+            issue_append(&result, selection, .Invalid)
             continue
         }
 
@@ -165,19 +155,13 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
             }
             model_count += len(item.models)
 
-            if _, append_err := append(&result.providers, item); append_err != nil {
-                provider_destroy(&item, allocator)
-                return result, .Out_Of_Memory
-            }
+            append(&result.providers, item)
 
         case .Unsupported:
-            issue_append(&result, selection, .Unsupported) or_return
+            issue_append(&result, selection, .Unsupported)
 
         case .Invalid, .Filtered:
-            issue_append(&result, selection, .Invalid) or_return
-
-        case .Out_Of_Memory:
-            return result, .Out_Of_Memory
+            issue_append(&result, selection, .Invalid)
         }
     }
 
@@ -218,7 +202,7 @@ decode_object_key :: proc(parser: ^json.Parser) -> (string, Error) {
 
     key, key_err := json.unquote_string(token, .JSON, parser.allocator)
     if key_err != nil {
-        return "", .Out_Of_Memory if key_err == .Out_Of_Memory else .Invalid_Json
+        return "", .Invalid_Json
     }
 
     return key, .None
@@ -259,33 +243,16 @@ skip_value :: proc(parser: ^json.Parser) -> Error {
 }
 
 @(private)
-issue_append :: proc(result: ^Result, selection: Selection, issue_error: Provider_Error) -> Error {
+issue_append :: proc(result: ^Result, selection: Selection, issue_error: Provider_Error) {
     assert(result != nil, "catalog issue append needs a result")
     assert(issue_error != .None, "a catalog issue carries a failure")
 
-    provider_id, provider_err := strings.clone(selection.provider_id, result.allocator)
-    if provider_err != nil {
-        return .Out_Of_Memory
-    }
-
-    source_id, source_err := strings.clone(selection.source_id, result.allocator)
-    if source_err != nil {
-        delete(provider_id, result.allocator)
-        return .Out_Of_Memory
-    }
-
     issue := Issue {
-        provider_id = wire.Provider_Id(provider_id),
-        source_id   = source_id,
+        provider_id = wire.Provider_Id(strings.clone(selection.provider_id, result.allocator)),
+        source_id   = strings.clone(selection.source_id, result.allocator),
         error       = issue_error,
     }
-    if _, append_err := append(&result.issues, issue); append_err != nil {
-        delete(provider_id, result.allocator)
-        delete(source_id, result.allocator)
-        return .Out_Of_Memory
-    }
-
-    return .None
+    append(&result.issues, issue)
 }
 
 @(private)
@@ -339,11 +306,11 @@ provider_normalize :: proc(
         return .Invalid
     }
 
-    out.id = wire.Provider_Id(clone_owned(selection.provider_id, allocator) or_return)
-    out.source_id = clone_owned(selection.source_id, allocator) or_return
-    out.name = clone_owned(name, allocator) or_return
+    out.id = wire.Provider_Id(strings.clone(selection.provider_id, allocator))
+    out.source_id = strings.clone(selection.source_id, allocator)
+    out.name = strings.clone(name, allocator)
     out.endpoint = provider.Endpoint {
-        base_url = clone_owned(endpoint.base_url, allocator) or_return,
+        base_url = strings.clone(endpoint.base_url, allocator),
         protocol = endpoint.protocol,
     }
 
@@ -369,19 +336,13 @@ provider_normalize :: proc(
                 return .Invalid
             }
 
-            if _, append_err := append(&out.models, model); append_err != nil {
-                model_destroy(&model, allocator)
-                return .Out_Of_Memory
-            }
+            append(&out.models, model)
 
         case .Filtered, .Unsupported:
             continue
 
         case .Invalid:
             return .Invalid
-
-        case .Out_Of_Memory:
-            return .Out_Of_Memory
         }
     }
 
@@ -464,27 +425,24 @@ model_normalize :: proc(
         return cost_err
     }
 
-    public_id, public_err := strings.concatenate({provider_id, "/", upstream_id}, allocator)
-    if public_err != nil {
-        return .Out_Of_Memory
-    }
+    public_id := strings.concatenate({provider_id, "/", upstream_id}, allocator)
     out.info.id = wire.Model_Id(public_id)
     if len(out.info.id) > 128 {
         return .Filtered
     }
 
-    out.info.name = clone_owned(name, allocator) or_return
+    out.info.name = strings.clone(name, allocator)
     out.info.provider = provider_id
     out.info.context_window = context_window
     out.info.max_output_tokens = max_output_tokens
-    out.info.reasoning_levels = reasoning_levels_clone(reasoning, allocator) or_return
-    out.info.default_reasoning = clone_owned(default_reasoning_level(out.info.reasoning_levels), allocator) or_return
+    out.info.reasoning_levels = reasoning_levels_clone(reasoning, allocator)
+    out.info.default_reasoning = strings.clone(default_reasoning_level(out.info.reasoning_levels), allocator)
     out.info.supports_vision = vision
     out.info.supports_tools = tools
     out.info.cost = cost
-    out.upstream_id = clone_owned(upstream_id, allocator) or_return
+    out.upstream_id = strings.clone(upstream_id, allocator)
     out.endpoint = provider.Endpoint {
-        base_url = clone_owned(endpoint.base_url, allocator) or_return,
+        base_url = strings.clone(endpoint.base_url, allocator),
         protocol = endpoint.protocol,
     }
     out.supports_temperature = temperature
@@ -646,11 +604,7 @@ credential_env_normalize :: proc(
         return nil, .Invalid
     }
 
-    allocation_err: runtime.Allocator_Error
-    names, allocation_err = make([]string, len(array), allocator)
-    if allocation_err != nil {
-        return nil, .Out_Of_Memory
-    }
+    names = make([]string, len(array), allocator)
     defer if err != .None {
         for name in names {
             delete(name, allocator)
@@ -672,7 +626,7 @@ credential_env_normalize :: proc(
             }
         }
 
-        names[i] = clone_owned(name, allocator) or_return
+        names[i] = strings.clone(name, allocator)
     }
 
     return names, .None
@@ -988,31 +942,14 @@ reasoning_budget :: proc(object: json.Object) -> (minimum: Maybe(i64), maximum: 
 }
 
 @(private)
-reasoning_levels_clone :: proc(
-    spec: Reasoning_Spec,
-    allocator: mem.Allocator,
-) -> (
-    levels: []string,
-    err: Normalize_Error,
-) {
-    allocation_err: runtime.Allocator_Error
-    levels, allocation_err = make([]string, spec.level_count, allocator)
-    if allocation_err != nil {
-        return nil, .Out_Of_Memory
-    }
-    defer if err != .None {
-        for level in levels {
-            delete(level, allocator)
-        }
-        delete(levels, allocator)
-        levels = nil
-    }
+reasoning_levels_clone :: proc(spec: Reasoning_Spec, allocator: mem.Allocator) -> (levels: []string) {
+    levels = make([]string, spec.level_count, allocator)
 
     for i in 0 ..< spec.level_count {
-        levels[i] = clone_owned(spec.levels[i], allocator) or_return
+        levels[i] = strings.clone(spec.levels[i], allocator)
     }
 
-    return levels, .None
+    return levels
 }
 
 // Prefer "medium", otherwise the middle level, and no default for an empty set. Imported
@@ -1052,14 +989,4 @@ cost_normalize :: proc(object: json.Object) -> (cost: wire.Model_Cost, err: Norm
     }
 
     return {input = input, output = output, cache_read = cache_read, cache_write = cache_write}, .None
-}
-
-@(private)
-clone_owned :: proc(value: string, allocator: mem.Allocator) -> (string, Normalize_Error) {
-    owned, allocation_err := strings.clone(value, allocator)
-    if allocation_err != nil {
-        return "", .Out_Of_Memory
-    }
-
-    return owned, .None
 }

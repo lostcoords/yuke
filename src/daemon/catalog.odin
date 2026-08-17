@@ -296,7 +296,7 @@ catalog_refresh_apply :: proc(
 
     result, decode_err := catalog.decode(feed, selections, sa)
     if decode_err != .None {
-        return false, catalog_decode_error(decode_err)
+        return false, .Invalid_Catalog
     }
 
     // The decoder already produces the shape the store persists, so each provider goes
@@ -319,16 +319,6 @@ catalog_refresh_apply :: proc(
     }
 
     return changed, load_err
-}
-
-@(private)
-catalog_decode_error :: proc(err: catalog.Error) -> store.Error {
-    #partial switch err {
-    case .Out_Of_Memory:
-        return .Alloc_Failed
-    }
-
-    return .Invalid_Catalog
 }
 
 MODELS_DEV_URL :: "https://models.dev/api.json"

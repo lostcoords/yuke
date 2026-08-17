@@ -1,6 +1,5 @@
 package catalog
 
-import "base:runtime"
 import "core:mem"
 import "core:strings"
 
@@ -29,7 +28,6 @@ Error :: enum {
     Response_Too_Large,
     Invalid_Json,
     Too_Many_Models,
-    Out_Of_Memory,
 }
 
 // Outcome for one selected provider. Other selections may still normalize.
@@ -233,63 +231,33 @@ provider_destroy :: proc(item: ^Provider, allocator: mem.Allocator) {
 
 // Deep-clone a model. `info.provider` borrows `provider_id` instead of cloning it,
 // because a provider owns the id its models point at.
-model_clone :: proc(
-    src: Model,
-    provider_id: wire.Provider_Id,
-    allocator: mem.Allocator,
-) -> (
-    model: Model,
-    err: runtime.Allocator_Error,
-) {
+model_clone :: proc(src: Model, provider_id: wire.Provider_Id, allocator: mem.Allocator) -> (model: Model) {
     model = src
     model.info.provider = string(provider_id)
-    model.info.id = ""
-    model.info.name = ""
-    model.info.reasoning_levels = nil
-    model.info.default_reasoning = ""
-    model.upstream_id = ""
-    model.endpoint.base_url = ""
-    defer if err != nil {
-        model_destroy(&model, allocator)
-    }
+    model.info.id = wire.Model_Id(strings.clone(string(src.info.id), allocator))
+    model.info.name = strings.clone(src.info.name, allocator)
+    model.info.reasoning_levels = string_slice_clone(src.info.reasoning_levels, allocator)
+    model.info.default_reasoning = strings.clone(src.info.default_reasoning, allocator)
+    model.upstream_id = strings.clone(src.upstream_id, allocator)
+    model.endpoint.base_url = strings.clone(src.endpoint.base_url, allocator)
 
-    model.info.id = wire.Model_Id(strings.clone(string(src.info.id), allocator) or_return)
-    model.info.name = strings.clone(src.info.name, allocator) or_return
-    model.info.reasoning_levels = string_slice_clone(src.info.reasoning_levels, allocator) or_return
-    model.info.default_reasoning = strings.clone(src.info.default_reasoning, allocator) or_return
-    model.upstream_id = strings.clone(src.upstream_id, allocator) or_return
-    model.endpoint.base_url = strings.clone(src.endpoint.base_url, allocator) or_return
-
-    return model, nil
+    return model
 }
 
 // Clone a bounded slice of owned strings. An empty input yields nil, not an allocation.
 @(private)
-string_slice_clone :: proc(
-    values: []string,
-    allocator: mem.Allocator,
-) -> (
-    owned: []string,
-    err: runtime.Allocator_Error,
-) {
+string_slice_clone :: proc(values: []string, allocator: mem.Allocator) -> (owned: []string) {
     if len(values) == 0 {
-        return nil, nil
+        return nil
     }
 
-    owned = make([]string, len(values), allocator) or_return
-    defer if err != nil {
-        for value in owned {
-            delete(value, allocator)
-        }
-        delete(owned, allocator)
-        owned = nil
-    }
+    owned = make([]string, len(values), allocator)
 
     for value, index in values {
-        owned[index] = strings.clone(value, allocator) or_return
+        owned[index] = strings.clone(value, allocator)
     }
 
-    return owned, nil
+    return owned
 }
 
 model_destroy :: proc(model: ^Model, allocator: mem.Allocator) {

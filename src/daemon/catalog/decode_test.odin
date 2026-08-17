@@ -1,10 +1,8 @@
 package catalog
 
-import "core:mem"
 import "core:slice"
 import "core:testing"
 
-import "libs:testsupport"
 import "src:provider"
 import "src:wire"
 
@@ -384,53 +382,6 @@ test_decode_rejects_global_boundaries_and_selected_duplicates :: proc(t: ^testin
     empty := `{}`
     _, selection_err := decode(transmute([]byte)empty, too_many)
     testing.expect_value(t, selection_err, Error.Invalid_Selection)
-}
-
-@(test)
-test_decode_releases_every_owned_allocation_on_oom :: proc(t: ^testing.T) {
-    feed := `{"openai":{"id":"openai","env":["OPENAI_API_KEY"],"npm":"@ai-sdk/openai","name":"OpenAI","models":{"gpt":{"id":"gpt","name":"GPT","tool_call":true,"reasoning_options":[{"type":"effort","values":["low","medium","high"]}],"modalities":{"input":["text"],"output":["text"]},"limit":{"context":1000,"output":100}}}}}`
-    selections := [?]Selection{{provider_id = "openai", source_id = "openai"}}
-
-    completed := false
-    for fail_at in 0 ..< 64 {
-        track: mem.Tracking_Allocator
-        mem.tracking_allocator_init(&track, context.allocator)
-        tracked := mem.tracking_allocator(&track)
-
-        failing: testsupport.Failing_Allocator
-        testsupport.failing_allocator_init(&failing, tracked, fail_at)
-        result, err := decode(transmute([]byte)feed, selections[:], testsupport.failing_allocator(&failing))
-        if err == .None {
-            completed = true
-            result_destroy(&result)
-        } else {
-            testing.expect_value(t, err, Error.Out_Of_Memory)
-            testing.expect_value(t, len(result.providers), 0)
-            testing.expect_value(t, len(result.issues), 0)
-        }
-
-        testing.expectf(
-            t,
-            len(track.allocation_map) == 0,
-            "fail_at %d leaked %d allocations",
-            fail_at,
-            len(track.allocation_map),
-        )
-        testing.expectf(
-            t,
-            len(track.bad_free_array) == 0,
-            "fail_at %d made %d bad frees",
-            fail_at,
-            len(track.bad_free_array),
-        )
-        mem.tracking_allocator_destroy(&track)
-
-        if completed {
-            break
-        }
-    }
-
-    testing.expect(t, completed, "fault sweep must eventually pass every catalog allocation")
 }
 
 @(private)

@@ -491,12 +491,7 @@ catalog_model_from_row :: proc(
         return {}, .Invalid_Row
     }
 
-    owned, clone_err := model_catalog.model_clone(borrowed, provider_id, allocator)
-    if clone_err != nil {
-        return {}, .Alloc_Failed
-    }
-
-    return owned, nil
+    return model_catalog.model_clone(borrowed, provider_id, allocator), nil
 }
 
 @(private)

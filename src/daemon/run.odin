@@ -458,13 +458,7 @@ run_new :: proc(
         return nil, .Start_Failed
     }
 
-    owned_model, model_err := catalog.model_clone(model^, wire.Provider_Id(provider_id), run.allocator)
-    if model_err != nil {
-        run_free(run)
-
-        return nil, .Start_Failed
-    }
-    run.model = owned_model
+    run.model = catalog.model_clone(model^, wire.Provider_Id(provider_id), run.allocator)
 
     if value, has_prompt := prompt.?; has_prompt {
         owned_prompt, prompt_err := strings.clone(value, run.allocator)
