@@ -922,32 +922,3 @@ test_provider_turn_request_headers :: proc(t: ^testing.T) {
     testing.expect_value(t, headers[2], curl.Header{name = "anthropic-version", value = "2023-06-01"})
     testing.expect_value(t, headers[3], curl.Header{name = "x-api-key", value = "secret"})
 }
-
-@(test)
-test_provider_turn_request_headers_surface_allocation_failure :: proc(t: ^testing.T) {
-    connection := Connection {
-        endpoint = Endpoint{base_url = "https://api.anthropic.com/v1", protocol = .Anthropic_Messages},
-        auth = Api_Key{key = "secret"},
-    }
-
-    reached_success := false
-    for fail_at in 0 ..< 8 {
-        arena: mem.Dynamic_Arena
-        mem.dynamic_arena_init(&arena, context.allocator, context.allocator)
-        defer mem.dynamic_arena_destroy(&arena)
-
-        failing: ts.Failing_Allocator
-        ts.failing_allocator_init(&failing, mem.dynamic_arena_allocator(&arena), fail_at)
-        out: [MAX_REQUEST_HEADERS]curl.Header
-        n, err := turn_request_headers(connection, out[:], ts.failing_allocator(&failing))
-        if err == .None {
-            reached_success = true
-            testing.expect_value(t, n, 4)
-            break
-        }
-
-        testing.expect_value(t, err, Transport_Error.Resource_Exhausted)
-    }
-
-    testing.expect(t, reached_success, "fault sweep must eventually pass every request-header allocation")
-}

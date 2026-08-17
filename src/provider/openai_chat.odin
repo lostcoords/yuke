@@ -282,19 +282,14 @@ openai_emit_delta :: proc(
         decoder.next_id += 1
         assert(decoder.next_id <= MAX_EXACT_JSON_INTEGER + 1, "the next block id stays exactly representable")
 
-        if _, aerr := append(events, Stream_Block_Started{block_id = id, kind = kind}); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, Stream_Block_Started{block_id = id, kind = kind})
 
         decoder.open_kind = kind
         decoder.open_id = id
         decoder.block_open = true
     }
 
-    owned, clone_err := strings.clone(text, decoder.allocator)
-    if clone_err != nil {
-        return .Resource_Exhausted
-    }
+    owned := strings.clone(text, decoder.allocator)
 
     event: Stream_Event
     switch kind {
@@ -314,9 +309,7 @@ openai_emit_delta :: proc(
         unreachable()
     }
 
-    if _, aerr := append(events, event); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, event)
 
     return .None
 }
@@ -338,9 +331,7 @@ openai_close_block :: proc(decoder: ^Openai_Chat_Decoder, events: ^[dynamic]Stre
         unreachable()
     }
 
-    if _, aerr := append(events, Stream_Block_Stopped{block_id = decoder.open_id, result = result}); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, Stream_Block_Stopped{block_id = decoder.open_id, result = result})
 
     decoder.block_open = false
 
@@ -391,9 +382,7 @@ openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.
         }
 
         if len(id) > 0 {
-            if _, aerr := append(&entry.id, id); aerr != nil {
-                return .Resource_Exhausted
-            }
+            append(&entry.id, id)
         }
 
         function, function_present, ferr := decode_optional_object(call, "function")
@@ -411,9 +400,7 @@ openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.
         }
 
         if len(name) > 0 {
-            if _, aerr := append(&entry.name, name); aerr != nil {
-                return .Resource_Exhausted
-            }
+            append(&entry.name, name)
         }
 
         arguments, _, args_err := decode_optional_string(function, "arguments")
@@ -428,9 +415,7 @@ openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.
                 return .Tool_Call_Too_Large
             }
 
-            if _, aerr := append(&entry.arguments, arguments); aerr != nil {
-                return .Resource_Exhausted
-            }
+            append(&entry.arguments, arguments)
 
             assert(len(entry.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments remain bounded")
         }
@@ -446,21 +431,16 @@ openai_ensure_tool_slot :: proc(decoder: ^Openai_Chat_Decoder, slot: int) -> Tra
     assert(slot >= 0 && slot < MAX_TOOL_CALLS, "a tool slot stays within its bound")
 
     for len(decoder.pending_tools) <= slot {
-        id, id_err := make([dynamic]byte, 0, decoder.allocator)
-        name, name_err := make([dynamic]byte, 0, decoder.allocator)
-        arguments, arguments_err := make([dynamic]byte, 0, decoder.allocator)
-        if id_err != nil || name_err != nil || arguments_err != nil {
-            return .Resource_Exhausted
-        }
+        id := make([dynamic]byte, 0, decoder.allocator)
+        name := make([dynamic]byte, 0, decoder.allocator)
+        arguments := make([dynamic]byte, 0, decoder.allocator)
 
         entry := Openai_Pending_Tool {
             id        = id,
             name      = name,
             arguments = arguments,
         }
-        if _, aerr := append(&decoder.pending_tools, entry); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(&decoder.pending_tools, entry)
     }
 
     return .None
@@ -511,9 +491,7 @@ openai_chat_terminal :: proc(
         id := Stream_Block_Id(decoder.next_id)
         decoder.next_id += 1
 
-        if _, aerr := append(events, Stream_Block_Started{block_id = id, kind = .Tool}); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, Stream_Block_Started{block_id = id, kind = .Tool})
 
         call := Tool_Call {
             id        = string(entry.id[:]),
@@ -524,9 +502,7 @@ openai_chat_terminal :: proc(
             block_id = id,
             result = Stream_Tool_Block{call = call},
         }
-        if _, aerr := append(events, stopped); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, stopped)
 
         tools += 1
     }
@@ -536,9 +512,7 @@ openai_chat_terminal :: proc(
         reason = .Tool_Calls
     }
 
-    if _, aerr := append(events, Stream_Done{reason = reason, usage = decoder.pending_usage}); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, Stream_Done{reason = reason, usage = decoder.pending_usage})
 
     return .None
 }

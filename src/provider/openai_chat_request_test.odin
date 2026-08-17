@@ -1,7 +1,6 @@
 package provider
 
 import "core:encoding/json"
-import "core:mem"
 import "core:strings"
 import "core:testing"
 import ts "libs:testsupport"
@@ -326,37 +325,4 @@ test_openai_request_surfaces_schema_scratch_exhaustion :: proc(t: ^testing.T) {
     body, err := openai_chat_request_body(request, {}, context.allocator, ts.failing_allocator(&failing))
     testing.expect_value(t, err, Transport_Error.Resource_Exhausted)
     testing.expect_value(t, body, "")
-}
-
-@(test)
-test_openai_request_surfaces_every_output_allocation_failure :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    long := strings.repeat("x", 16 * 1024, context.temp_allocator)
-    parts := [?]wire.Content_Part{wire.Content_Text{text = long}}
-    messages := [?]wire.Message{test_openai_user_message(parts[:])}
-    request := test_openai_request(messages[:])
-
-    reached_success := false
-    for fail_at in 0 ..< 24 {
-        arena: mem.Dynamic_Arena
-        mem.dynamic_arena_init(&arena, context.allocator, context.allocator)
-        arena_allocator := mem.dynamic_arena_allocator(&arena)
-
-        failing: ts.Failing_Allocator
-        ts.failing_allocator_init(&failing, arena_allocator, fail_at)
-        body, err := openai_chat_request_body(request, {}, ts.failing_allocator(&failing), context.temp_allocator)
-        if err == .None {
-            reached_success = true
-            testing.expect(t, len(body) > len(long), "successful body must contain the envelope")
-            mem.dynamic_arena_destroy(&arena)
-            break
-        }
-
-        testing.expect_value(t, err, Transport_Error.Resource_Exhausted)
-        testing.expect_value(t, body, "")
-        mem.dynamic_arena_destroy(&arena)
-    }
-
-    testing.expect(t, reached_success, "fault sweep must eventually pass every request-body allocation")
 }

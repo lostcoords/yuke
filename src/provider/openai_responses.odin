@@ -224,19 +224,14 @@ openai_responses_emit_delta :: proc(
         decoder.next_id += 1
         assert(decoder.next_id <= MAX_EXACT_JSON_INTEGER + 1, "the next block id stays exactly representable")
 
-        if _, aerr := append(events, Stream_Block_Started{block_id = id, kind = kind}); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, Stream_Block_Started{block_id = id, kind = kind})
 
         decoder.open_kind = kind
         decoder.open_id = id
         decoder.block_open = true
     }
 
-    owned, clone_err := strings.clone(text, decoder.allocator)
-    if clone_err != nil {
-        return .Resource_Exhausted
-    }
+    owned := strings.clone(text, decoder.allocator)
 
     event: Stream_Event
     switch kind {
@@ -256,9 +251,7 @@ openai_responses_emit_delta :: proc(
         unreachable()
     }
 
-    if _, aerr := append(events, event); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, event)
 
     return .None
 }
@@ -286,9 +279,7 @@ openai_responses_close_block :: proc(
         unreachable()
     }
 
-    if _, aerr := append(events, Stream_Block_Stopped{block_id = decoder.open_id, result = result}); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, Stream_Block_Stopped{block_id = decoder.open_id, result = result})
 
     decoder.block_open = false
     decoder.reasoning_signature = ""
@@ -327,20 +318,10 @@ openai_responses_item_added :: proc(decoder: ^Openai_Responses_Decoder, object: 
             return nerr
         }
 
-        owned_id, id_err := openai_responses_clone(decoder, call_id)
-        if id_err != .None {
-            return id_err
-        }
+        owned_id := openai_responses_clone(decoder, call_id)
+        owned_name := openai_responses_clone(decoder, name)
 
-        owned_name, name_err := openai_responses_clone(decoder, name)
-        if name_err != .None {
-            return name_err
-        }
-
-        arguments, arguments_err := make([dynamic]byte, 0, decoder.allocator)
-        if arguments_err != nil {
-            return .Resource_Exhausted
-        }
+        arguments := make([dynamic]byte, 0, decoder.allocator)
 
         decoder.open_tool = Openai_Responses_Pending_Tool {
             id        = owned_id,
@@ -379,9 +360,7 @@ openai_responses_args_delta :: proc(decoder: ^Openai_Responses_Decoder, object: 
         return .Tool_Call_Too_Large
     }
 
-    if _, aerr := append(&decoder.open_tool.arguments, delta); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(&decoder.open_tool.arguments, delta)
 
     assert(len(decoder.open_tool.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments remain bounded")
 
@@ -436,24 +415,14 @@ openai_responses_finalize_tool :: proc(
     if value, present, err := decode_optional_string(item, "call_id"); err != .None {
         return err
     } else if present && len(value) > 0 {
-        owned, cerr := openai_responses_clone(decoder, value)
-        if cerr != .None {
-            return cerr
-        }
-
-        call_id = owned
+        call_id = openai_responses_clone(decoder, value)
     }
 
     name := decoder.open_tool.name if decoder.tool_open else ""
     if value, present, err := decode_optional_string(item, "name"); err != .None {
         return err
     } else if present && len(value) > 0 {
-        owned, cerr := openai_responses_clone(decoder, value)
-        if cerr != .None {
-            return cerr
-        }
-
-        name = owned
+        name = openai_responses_clone(decoder, value)
     }
 
     arguments: []byte
@@ -464,10 +433,7 @@ openai_responses_finalize_tool :: proc(
             return .Tool_Call_Too_Large
         }
 
-        owned, cerr := strings.clone(value, decoder.allocator)
-        if cerr != nil {
-            return .Resource_Exhausted
-        }
+        owned := strings.clone(value, decoder.allocator)
 
         arguments = transmute([]byte)owned
     } else if decoder.tool_open {
@@ -501,9 +467,7 @@ openai_responses_finalize_tool :: proc(
         name      = name,
         arguments = validated,
     }
-    if _, aerr := append(&decoder.tools, call); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(&decoder.tools, call)
 
     return .None
 }
@@ -528,17 +492,13 @@ openai_responses_finalize_reasoning :: proc(
         decoder.next_id += 1
         assert(decoder.next_id <= MAX_EXACT_JSON_INTEGER + 1, "the next block id stays exactly representable")
 
-        if _, aerr := append(events, Stream_Block_Started{block_id = id, kind = .Reasoning}); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, Stream_Block_Started{block_id = id, kind = .Reasoning})
 
         stopped := Stream_Block_Stopped {
             block_id = id,
             result = Stream_Reasoning_Block{signature = decoder.reasoning_signature},
         }
-        if _, aerr := append(events, stopped); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, stopped)
 
         decoder.reasoning_signature = ""
     }
@@ -556,10 +516,7 @@ openai_responses_capture_signature :: proc(decoder: ^Openai_Responses_Decoder, i
     }
 
     if present && len(encrypted) > 0 {
-        owned, cerr := strings.clone(encrypted, decoder.allocator)
-        if cerr != nil {
-            return .Resource_Exhausted
-        }
+        owned := strings.clone(encrypted, decoder.allocator)
 
         decoder.reasoning_signature = owned
     }
@@ -605,17 +562,13 @@ openai_responses_terminal :: proc(
         id := Stream_Block_Id(decoder.next_id)
         decoder.next_id += 1
 
-        if _, aerr := append(events, Stream_Block_Started{block_id = id, kind = .Tool}); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, Stream_Block_Started{block_id = id, kind = .Tool})
 
         stopped := Stream_Block_Stopped {
             block_id = id,
             result = Stream_Tool_Block{call = call},
         }
-        if _, aerr := append(events, stopped); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, stopped)
     }
 
     final_reason := decoder.pending_reason
@@ -623,9 +576,7 @@ openai_responses_terminal :: proc(
         final_reason = .Tool_Calls
     }
 
-    if _, aerr := append(events, Stream_Done{reason = final_reason, usage = decoder.pending_usage}); aerr != nil {
-        return .Resource_Exhausted
-    }
+    append(events, Stream_Done{reason = final_reason, usage = decoder.pending_usage})
 
     return .None
 }
@@ -716,21 +667,10 @@ openai_responses_error_discriminator :: proc(object: json.Object) -> string {
 // Clone a possibly-empty borrowed string into the turn allocator; an empty
 // source stays the empty string without allocating.
 @(private)
-openai_responses_clone :: proc(
-    decoder: ^Openai_Responses_Decoder,
-    value: string,
-) -> (
-    owned: string,
-    err: Transport_Error,
-) {
+openai_responses_clone :: proc(decoder: ^Openai_Responses_Decoder, value: string) -> string {
     if len(value) == 0 {
-        return "", .None
+        return ""
     }
 
-    cloned, clone_err := strings.clone(value, decoder.allocator)
-    if clone_err != nil {
-        return "", .Resource_Exhausted
-    }
-
-    return cloned, .None
+    return strings.clone(value, decoder.allocator)
 }

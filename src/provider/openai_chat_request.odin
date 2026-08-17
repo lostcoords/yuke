@@ -155,10 +155,7 @@ openai_chat_request_body :: proc(
         return "", err
     }
 
-    builder, builder_err := strings.builder_make(0, 4096, allocator)
-    if builder_err != nil {
-        return "", .Resource_Exhausted
-    }
+    builder := strings.builder_make(0, 4096, allocator)
     defer if err != .None {
         strings.builder_destroy(&builder)
     }
@@ -590,10 +587,7 @@ openai_write_media_url :: proc(
         return json_write_string(writer, s.url)
 
     case wire.Media_Base64:
-        uri, concat_err := strings.concatenate({"data:", s.mime, ";base64,", s.data}, scratch_allocator)
-        if concat_err != nil {
-            return .Resource_Exhausted
-        }
+        uri := strings.concatenate({"data:", s.mime, ";base64,", s.data}, scratch_allocator)
 
         return json_write_string(writer, uri)
 
@@ -638,10 +632,7 @@ openai_write_assistant_message :: proc(
     openai_message_sep(out) or_return
     json_write(out.writer, `{"role":"assistant","content":`) or_return
 
-    content, content_err := openai_join_assistant_text(message.content, false, scratch_allocator)
-    if content_err != .None {
-        return content_err
-    }
+    content := openai_join_assistant_text(message.content, false, scratch_allocator)
 
     json_write_string(out.writer, content) or_return
 
@@ -649,10 +640,7 @@ openai_write_assistant_message :: proc(
         // @todo: OpenRouter's `reasoning_details` encrypted-on-toolcall array form
         // is not modeled; every replay mode emits the concatenated reasoning text.
         field := openai_reasoning_replay_field(options.reasoning_replay)
-        reasoning, reasoning_err := openai_join_assistant_text(message.content, true, scratch_allocator)
-        if reasoning_err != .None {
-            return reasoning_err
-        }
+        reasoning := openai_join_assistant_text(message.content, true, scratch_allocator)
 
         json_write(out.writer, `,`) or_return
         json_write_string(out.writer, field) or_return
@@ -755,10 +743,7 @@ openai_join_assistant_text :: proc(
     content: []wire.Assistant_Part,
     reasoning: bool,
     scratch_allocator: runtime.Allocator,
-) -> (
-    joined: string,
-    err: Transport_Error,
-) {
+) -> string {
     pieces: [dynamic]string
     pieces.allocator = scratch_allocator
 
@@ -781,18 +766,11 @@ openai_join_assistant_text :: proc(
         }
 
         if take {
-            if _, append_err := append(&pieces, piece); append_err != nil {
-                return "", .Resource_Exhausted
-            }
+            append(&pieces, piece)
         }
     }
 
-    result, concat_err := strings.concatenate(pieces[:], scratch_allocator)
-    if concat_err != nil {
-        return "", .Resource_Exhausted
-    }
-
-    return result, .None
+    return strings.concatenate(pieces[:], scratch_allocator)
 }
 
 // Write the leading comma between messages and count the one being opened.

@@ -9,33 +9,21 @@ import "core:strconv"
 // Write raw bytes verbatim, for pre-formed JSON fragments.
 @(private)
 json_write :: proc(writer: io.Writer, value: string) -> Transport_Error {
-    _, err := io.write_string(writer, value)
-    if err != .None {
-        return .Resource_Exhausted
-    }
-
+    io.write_string(writer, value)
     return .None
 }
 
 // Write one quoted, escaped JSON string.
 @(private)
 json_write_string :: proc(writer: io.Writer, value: string) -> Transport_Error {
-    _, err := io.write_quoted_string(writer, value, '"', nil, true)
-    if err != .None {
-        return .Resource_Exhausted
-    }
-
+    io.write_quoted_string(writer, value, '"', nil, true)
     return .None
 }
 
 // Write a non-negative integer.
 @(private)
 json_write_u64 :: proc(writer: io.Writer, value: u64) -> Transport_Error {
-    _, err := io.write_u64(writer, value)
-    if err != .None {
-        return .Resource_Exhausted
-    }
-
+    io.write_u64(writer, value)
     return .None
 }
 
@@ -49,10 +37,6 @@ json_write_f64 :: proc(writer: io.Writer, value: f64) -> Transport_Error {
         encoded = encoded[1:]
     }
 
-    _, err := io.write_string(writer, encoded)
-    if err != .None {
-        return .Resource_Exhausted
-    }
-
+    io.write_string(writer, encoded)
     return .None
 }

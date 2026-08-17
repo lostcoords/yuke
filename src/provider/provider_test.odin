@@ -1,10 +1,8 @@
 package provider
 
-import "core:mem"
 import "core:strings"
 import "core:testing"
 import "libs:bindings/curl"
-import ts "libs:testsupport"
 import "src:wire"
 
 @(private = "file")
@@ -31,16 +29,14 @@ test_endpoint_url_appends_protocol_path :: proc(t: ^testing.T) {
         base_url = "https://api.anthropic.com/v1",
         protocol = .Anthropic_Messages,
     }
-    url, err := endpoint_url(ep, context.temp_allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    url := endpoint_url(ep, context.temp_allocator)
     testing.expect_value(t, url, "https://api.anthropic.com/v1/messages")
 
     ep = Endpoint {
         base_url = "https://api.openai.com/v1",
         protocol = .Openai_Chat,
     }
-    url, err = endpoint_url(ep, context.temp_allocator)
-    testing.expect_value(t, err, mem.Allocator_Error.None)
+    url = endpoint_url(ep, context.temp_allocator)
     testing.expect_value(t, url, "https://api.openai.com/v1/chat/completions")
 }
 
@@ -339,47 +335,4 @@ test_auth_headers_credential_values_are_allocator_owned :: proc(t: ^testing.T) {
         )
         testing.expect(t, strings.has_suffix(got[1].value, "sk-secret"), "the credential value must survive intact")
     }
-}
-
-@(test)
-test_auth_headers_surface_allocation_failure :: proc(t: ^testing.T) {
-    connection := Connection {
-        endpoint = Endpoint{base_url = "https://api.z.ai/api/anthropic", protocol = .Anthropic_Messages},
-        auth = Api_Key{key = "zk-secret"},
-    }
-
-    reached_success := false
-    for fail_at in 0 ..< 8 {
-        arena: mem.Dynamic_Arena
-        mem.dynamic_arena_init(&arena, context.allocator, context.allocator)
-        defer mem.dynamic_arena_destroy(&arena)
-
-        failing: ts.Failing_Allocator
-        ts.failing_allocator_init(&failing, mem.dynamic_arena_allocator(&arena), fail_at)
-        out: [MAX_REQUEST_HEADERS]curl.Header
-        n, err := auth_headers(connection, out[:], ts.failing_allocator(&failing))
-        if err == .None {
-            reached_success = true
-            testing.expect_value(t, n, 2)
-            break
-        }
-
-        testing.expect_value(t, err, Transport_Error.Resource_Exhausted)
-    }
-
-    testing.expect(t, reached_success, "fault sweep must eventually pass every auth-header allocation")
-}
-
-@(test)
-test_endpoint_url_surfaces_allocation_failure :: proc(t: ^testing.T) {
-    ep := Endpoint {
-        base_url = "https://api.anthropic.com/v1",
-        protocol = .Anthropic_Messages,
-    }
-
-    failing: ts.Failing_Allocator
-    ts.failing_allocator_init(&failing, context.allocator, 0)
-    url, err := endpoint_url(ep, ts.failing_allocator(&failing))
-    testing.expect_value(t, err, mem.Allocator_Error.Out_Of_Memory)
-    testing.expect_value(t, url, "")
 }

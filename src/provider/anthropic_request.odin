@@ -104,10 +104,7 @@ anthropic_request_body :: proc(
         return "", err
     }
 
-    builder, builder_err := strings.builder_make(0, 4096, allocator)
-    if builder_err != nil {
-        return "", .Resource_Exhausted
-    }
+    builder := strings.builder_make(0, 4096, allocator)
     defer if err != .None {
         strings.builder_destroy(&builder)
     }

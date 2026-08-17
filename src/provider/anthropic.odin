@@ -175,9 +175,7 @@ anthropic_decoder_decode :: proc(
     assert(decoder.tool_count >= 0 && decoder.tool_count <= MAX_TOOL_CALLS, "successful decode preserves bounds")
 
     if stream_event, ok := event.?; ok {
-        if _, aerr := append(events, stream_event); aerr != nil {
-            return .Resource_Exhausted
-        }
+        append(events, stream_event)
     }
 
     return .None
@@ -338,10 +336,7 @@ anthropic_decode_content_block_start :: proc(
         }
 
         if signature_present && len(signature) > 0 {
-            owned, clone_err := strings.clone(signature, decoder.allocator)
-            if clone_err != nil {
-                return nil, .Resource_Exhausted
-            }
+            owned := strings.clone(signature, decoder.allocator)
 
             open_block.signature = owned
         }
@@ -358,10 +353,7 @@ anthropic_decode_content_block_start :: proc(
             return nil, .Parse_Error
         }
 
-        owned, clone_err := strings.clone(data, decoder.allocator)
-        if clone_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned := strings.clone(data, decoder.allocator)
 
         open_block.kind = .Redacted_Reasoning
         open_block.redacted_data = owned
@@ -396,20 +388,11 @@ anthropic_decode_content_block_start :: proc(
             }
         }
 
-        owned_id, id_clone_err := strings.clone(id, decoder.allocator)
-        if id_clone_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned_id := strings.clone(id, decoder.allocator)
 
-        owned_name, name_clone_err := strings.clone(name, decoder.allocator)
-        if name_clone_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned_name := strings.clone(name, decoder.allocator)
 
-        arguments, arguments_err := make([dynamic]byte, 0, decoder.allocator)
-        if arguments_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        arguments := make([dynamic]byte, 0, decoder.allocator)
 
         open_block.kind = .Tool
         open_block.tool = {
@@ -417,9 +400,7 @@ anthropic_decode_content_block_start :: proc(
             name      = owned_name,
             arguments = arguments,
         }
-        if _, append_err := append(&decoder.tool_ids, owned_id); append_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        append(&decoder.tool_ids, owned_id)
         decoder.tool_count += 1
 
     case:
@@ -500,10 +481,7 @@ anthropic_decode_content_block_delta :: proc(
             return nil, .None
         }
 
-        owned, aerr := strings.clone(text, decoder.allocator)
-        if aerr != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned := strings.clone(text, decoder.allocator)
 
         stream_event: Stream_Event = Stream_Text_Delta {
             block_id = Stream_Block_Id(index),
@@ -529,10 +507,7 @@ anthropic_decode_content_block_delta :: proc(
             return nil, .None
         }
 
-        owned, aerr := strings.clone(thinking, decoder.allocator)
-        if aerr != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned := strings.clone(thinking, decoder.allocator)
 
         stream_event: Stream_Event = Stream_Reasoning_Delta {
             block_id = Stream_Block_Id(index),
@@ -554,10 +529,7 @@ anthropic_decode_content_block_delta :: proc(
             return nil, .Parse_Error
         }
 
-        owned, aerr := strings.clone(signature, decoder.allocator)
-        if aerr != nil {
-            return nil, .Resource_Exhausted
-        }
+        owned := strings.clone(signature, decoder.allocator)
 
         decoder.open_block.signature = owned
 
@@ -583,9 +555,7 @@ anthropic_decode_content_block_delta :: proc(
             return nil, .Tool_Call_Too_Large
         }
 
-        if _, append_err := append(&decoder.open_block.tool.arguments, fragment); append_err != nil {
-            return nil, .Resource_Exhausted
-        }
+        append(&decoder.open_block.tool.arguments, fragment)
 
         assert(len(decoder.open_block.tool.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments remain bounded")
 

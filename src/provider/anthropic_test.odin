@@ -1,7 +1,6 @@
 package provider
 
 import "core:fmt"
-import "core:mem"
 import "core:strings"
 import "core:testing"
 import ts "libs:testsupport"
@@ -679,71 +678,6 @@ test_anthropic_error_and_eof_are_terminal :: proc(t: ^testing.T) {
     testing.expect_value(t, test_anthropic_finish(t, &completed), Transport_Error.None)
 }
 
-@(test)
-test_anthropic_surfaces_turn_allocation_failures :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    start := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call","name":"tool","input":{}}}`
-    reached_success := false
-    for fail_at in 0 ..< 8 {
-        arena: mem.Dynamic_Arena
-        mem.dynamic_arena_init(&arena, context.allocator, context.allocator)
-        defer mem.dynamic_arena_destroy(&arena)
-
-        failing: ts.Failing_Allocator
-        ts.failing_allocator_init(&failing, mem.dynamic_arena_allocator(&arena), fail_at)
-
-        decoder := test_anthropic_decoder(t, ts.failing_allocator(&failing))
-        test_anthropic_start_message(t, &decoder)
-
-        _, err := test_anthropic_decode(t, &decoder, start, context.temp_allocator)
-        if err == .None {
-            reached_success = true
-            break
-        }
-
-        testing.expect_value(t, err, Transport_Error.Resource_Exhausted)
-    }
-    testing.expect(t, reached_success, "fault sweep must eventually pass every tool-start allocation")
-
-    // Production tears a failed decode down with the turn arena, never field by
-    // field; these decoders do the same.
-    arena: mem.Dynamic_Arena
-    mem.dynamic_arena_init(&arena, context.allocator, context.allocator)
-    defer mem.dynamic_arena_destroy(&arena)
-
-    failing: ts.Failing_Allocator
-    ts.failing_allocator_init(&failing, mem.dynamic_arena_allocator(&arena), 0)
-    text_decoder := test_anthropic_decoder(t, ts.failing_allocator(&failing))
-    test_anthropic_start_message(t, &text_decoder)
-    test_anthropic_expect_started(
-        t,
-        &text_decoder,
-        `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-        0,
-        .Text,
-    )
-    _, text_err := test_anthropic_decode(
-        t,
-        &text_decoder,
-        `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}`,
-        context.temp_allocator,
-    )
-    testing.expect_value(t, text_err, Transport_Error.Resource_Exhausted)
-
-    ts.failing_allocator_init(&failing, mem.dynamic_arena_allocator(&arena), 100)
-    argument_decoder := test_anthropic_decoder(t, ts.failing_allocator(&failing))
-    test_anthropic_start_message(t, &argument_decoder)
-    test_anthropic_expect_started(t, &argument_decoder, start, 0, .Tool)
-    failing.fail_at = failing.count
-    _, argument_err := test_anthropic_decode(
-        t,
-        &argument_decoder,
-        `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
-        context.temp_allocator,
-    )
-    testing.expect_value(t, argument_err, Transport_Error.Resource_Exhausted)
-}
 
 @(test)
 test_anthropic_surfaces_scratch_arena_exhaustion :: proc(t: ^testing.T) {

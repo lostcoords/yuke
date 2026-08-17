@@ -248,13 +248,8 @@ turn_start :: proc(
         turn_abandon_prepared(turn)
     }
 
-    if virtual.arena_init_growing(&turn.retained) != nil {
-        return .Resource_Exhausted
-    }
-
-    if virtual.arena_init_growing(&turn.scratch, TURN_SCRATCH_RESERVE) != nil {
-        return .Resource_Exhausted
-    }
+    _ = virtual.arena_init_growing(&turn.retained)
+    _ = virtual.arena_init_growing(&turn.scratch, TURN_SCRATCH_RESERVE)
 
     allocator := virtual.arena_allocator(&turn.retained)
     turn.events.allocator = allocator
@@ -273,15 +268,9 @@ turn_start :: proc(
     defer virtual.arena_temp_end(setup)
     setup_alloc := virtual.arena_allocator(&turn.scratch)
 
-    url, url_err := endpoint_url(ep, setup_alloc)
-    if url_err != nil {
-        return .Resource_Exhausted
-    }
+    url := endpoint_url(ep, setup_alloc)
 
-    curl_url, curl_url_err := strings.clone_to_cstring(url, setup_alloc)
-    if curl_url_err != nil {
-        return .Resource_Exhausted
-    }
+    curl_url := strings.clone_to_cstring(url, setup_alloc)
 
     header_buf: [MAX_REQUEST_HEADERS]curl.Header
     header_n := turn_request_headers(request.connection, header_buf[:], setup_alloc) or_return
@@ -433,10 +422,7 @@ turn_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
         assert(remaining >= 0, "error-body prefix stays within its bound")
 
         keep := min(remaining, len(chunk))
-        if _, aerr := append(&turn.error_body, ..chunk[:keep]); aerr != nil {
-            turn.callback_error = .Resource_Exhausted
-            return false
-        }
+        append(&turn.error_body, ..chunk[:keep])
 
         assert(len(turn.error_body) <= MAX_ERROR_BODY_BYTES, "error-body prefix stays bounded")
         if keep < len(chunk) {

@@ -156,7 +156,7 @@ endpoint_validate :: proc(ep: Endpoint) -> Endpoint_Validation_Error {
 }
 
 // Full request URL for `ep`. Allocates into `allocator` and frees nothing.
-endpoint_url :: proc(ep: Endpoint, allocator := context.allocator) -> (string, runtime.Allocator_Error) {
+endpoint_url :: proc(ep: Endpoint, allocator := context.allocator) -> string {
     assert(endpoint_validate(ep) == .None, "endpoint_url needs a validated endpoint")
     return strings.concatenate({ep.base_url, protocol_path[ep.protocol]}, allocator)
 }
@@ -279,20 +279,14 @@ auth_headers :: proc(
 
         credential: curl.Header
         if ep.protocol == .Anthropic_Messages && url_is_anthropic(ep.base_url) {
-            value, clone_err := strings.clone(a.key, allocator)
-            if clone_err != nil {
-                return 0, .Resource_Exhausted
-            }
+            value := strings.clone(a.key, allocator)
 
             credential = {
                 name  = "x-api-key",
                 value = value,
             }
         } else {
-            value, concat_err := strings.concatenate({"Bearer ", a.key}, allocator)
-            if concat_err != nil {
-                return 0, .Resource_Exhausted
-            }
+            value := strings.concatenate({"Bearer ", a.key}, allocator)
 
             credential = {
                 name  = "Authorization",
@@ -312,16 +306,9 @@ auth_headers :: proc(
             return 0, .Invalid_Request
         }
 
-        authorization, authorization_err := strings.concatenate({"Bearer ", a.access_token}, allocator)
-        if authorization_err != nil {
-            return 0, .Resource_Exhausted
-        }
+        authorization := strings.concatenate({"Bearer ", a.access_token}, allocator)
 
-        account, account_err := strings.clone(a.account_id, allocator)
-        if account_err != nil {
-            delete(authorization, allocator)
-            return 0, .Resource_Exhausted
-        }
+        account := strings.clone(a.account_id, allocator)
 
         out[n] = {
             name  = "Authorization",
@@ -341,10 +328,7 @@ auth_headers :: proc(
             return 0, .Invalid_Request
         }
 
-        value, concat_err := strings.concatenate({"Bearer ", a.access_token}, allocator)
-        if concat_err != nil {
-            return 0, .Resource_Exhausted
-        }
+        value := strings.concatenate({"Bearer ", a.access_token}, allocator)
 
         out[n] = {
             name  = "Authorization",
