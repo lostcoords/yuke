@@ -179,8 +179,7 @@ test_preserve_non_probe_input :: proc(t: ^testing.T) {
     expect_reader_code(t, &input, .Up)
     expect_reader_char(t, &input, 'b')
 
-    ev, nerr := reader_next(&input)
-    testing.expect_value(t, nerr, Reader_Error.None)
+    ev := reader_next(&input)
     testing.expect(t, ev == nil, "expected no further events")
 }
 
@@ -363,8 +362,7 @@ test_restore_only_enabled_modes :: proc(t: ^testing.T) {
 
 // Assert the next reader event is a literal-char key with `char`.
 expect_reader_char :: proc(t: ^testing.T, r: ^Reader, char: rune, loc := #caller_location) {
-    ev, err := reader_next(r)
-    testing.expect_value(t, err, Reader_Error.None, loc = loc)
+    ev := reader_next(r)
     k, ok := ev.(Key)
     testing.expect(t, ok, "expected a key event", loc = loc)
     testing.expect_value(t, k.code, Key_Code.Char, loc = loc)
@@ -373,8 +371,7 @@ expect_reader_char :: proc(t: ^testing.T, r: ^Reader, char: rune, loc := #caller
 
 // Assert the next reader event is a named key with `code`.
 expect_reader_code :: proc(t: ^testing.T, r: ^Reader, code: Key_Code, loc := #caller_location) {
-    ev, err := reader_next(r)
-    testing.expect_value(t, err, Reader_Error.None, loc = loc)
+    ev := reader_next(r)
     k, ok := ev.(Key)
     testing.expect(t, ok, "expected a key event", loc = loc)
     testing.expect_value(t, k.code, code, loc = loc)

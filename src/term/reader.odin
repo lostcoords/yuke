@@ -53,11 +53,10 @@ Input_Closed :: struct {
     reason: Input_Closed_Reason,
 }
 
-// Failure modes of `reader_push`/`reader_next`. `None` is success.
+// Failure modes of `reader_push`. `None` is success.
 Reader_Error :: enum {
     None,
     Input_Too_Large,
-    Out_Of_Memory,
 }
 
 // Stateful input assembler — see the module doc for the contract.
@@ -119,39 +118,33 @@ reader_push :: proc(r: ^Reader, bytes: []u8) -> Reader_Error {
         r.tail_start = 0
     }
 
-    if _, aerr := append(&r.tail, ..bytes); aerr != nil {
-        return .Out_Of_Memory
-    }
+    append(&r.tail, ..bytes)
 
     return .None
 }
 
 // Next assembled event, or a `nil` event when more bytes are needed. On a returned
 // `Paste`, the borrowed slice stays valid until the next paste starts.
-reader_next :: proc(r: ^Reader) -> (Event, Reader_Error) {
+reader_next :: proc(r: ^Reader) -> Event {
     for {
         if r.in_paste {
             pending := reader_pending(r)
             if i := strings.index(string(pending), PASTE_END); i >= 0 {
-                if err := append_paste(r, pending[:i]); err != .None {
-                    return nil, err
-                }
+                append_paste(r, pending[:i])
 
                 reader_consume(r, i + len(PASTE_END))
                 r.in_paste = false
 
                 // Borrows `paste`; valid only until the next paste begins.
-                return Paste{text = string(r.paste[:]), truncated = r.paste_truncated}, .None
+                return Paste{text = string(r.paste[:]), truncated = r.paste_truncated}
             }
 
             // No terminator yet. Move all but a possible split marker (the last
             // len(PASTE_END)-1 bytes) into the paste buffer; keep the rest.
             keep := min(len(pending), len(PASTE_END) - 1)
-            if err := move_to_paste(r, len(pending) - keep); err != .None {
-                return nil, err
-            }
+            move_to_paste(r, len(pending) - keep)
 
-            return nil, .None
+            return nil
         }
 
         event, consumed, incomplete := parse(reader_pending(r))
@@ -161,17 +154,17 @@ reader_next :: proc(r: ^Reader) -> (Event, Reader_Error) {
                 reader_clear_tail(r)
             }
 
-            return nil, .None
+            return nil
         }
 
         reader_consume(r, consumed)
         switch e in event {
         case Key:
-            return e, .None
+            return e
         case Mouse:
-            return e, .None
+            return e
         case Resize:
-            return e, .None
+            return e
         case Paste_Start:
             paste_reset(r)
             r.in_paste = true
@@ -230,14 +223,14 @@ paste_reset :: proc(r: ^Reader) {
 }
 
 // Append `bytes` to the paste buffer, dropping and recording anything past MAX_PASTE_BYTES.
-append_paste :: proc(r: ^Reader, bytes: []u8) -> Reader_Error {
+append_paste :: proc(r: ^Reader, bytes: []u8) {
     room := MAX_PASTE_BYTES - len(r.paste)
     if room <= 0 {
         if len(bytes) > 0 {
             r.paste_truncated = true
         }
 
-        return .None
+        return
     }
 
     n := min(room, len(bytes))
@@ -253,27 +246,16 @@ append_paste :: proc(r: ^Reader, bytes: []u8) -> Reader_Error {
         target := min(MAX_PASTE_BYTES, max(needed, grown))
         assert(target >= needed && target <= MAX_PASTE_BYTES, "paste reserve escaped its bounds")
 
-        if aerr := non_zero_reserve(&r.paste, target); aerr != nil {
-            return .Out_Of_Memory
-        }
+        non_zero_reserve(&r.paste, target)
     }
 
-    if _, aerr := non_zero_append(&r.paste, ..bytes[:n]); aerr != nil {
-        return .Out_Of_Memory
-    }
-
-    return .None
+    non_zero_append(&r.paste, ..bytes[:n])
 }
 
-// Move `n` tail bytes into `paste` (honoring the cap). On OOM the bytes stay in
-// `tail` — append happens before consume — so the reader never silently spins.
-move_to_paste :: proc(r: ^Reader, n: int) -> Reader_Error {
-    if err := append_paste(r, reader_pending(r)[:n]); err != .None {
-        return err
-    }
-
+// Move `n` tail bytes into `paste` (honoring the cap).
+move_to_paste :: proc(r: ^Reader, n: int) {
+    append_paste(r, reader_pending(r)[:n])
     reader_consume(r, n)
-    return .None
 }
 
 // Drop the first `n` unconsumed bytes of `tail`.

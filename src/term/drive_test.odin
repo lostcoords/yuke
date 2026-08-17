@@ -293,43 +293,6 @@ test_drive_source_eof_marks_input_closed :: proc(t: ^testing.T) {
     testing.expect_value(t, drive_input_closed_reason(&d), Input_Closed_Reason.Peer_EOF)
 }
 
-@(test)
-test_drive_reader_failure_reports_and_stops :: proc(t: ^testing.T) {
-    err := nbio.acquire_thread_event_loop()
-    testing.expect_value(t, err, nbio.General_Error.None)
-    defer nbio.release_thread_event_loop()
-    loop := nbio.current_thread_event_loop()
-
-    src_r, src_w, ok := inject_open()
-    testing.expect(t, ok, "pipe")
-    defer {
-        inject_close(src_r)
-        inject_close(src_w)
-    }
-
-    failing: ts.Failing_Allocator
-    ts.failing_allocator_init(&failing, context.allocator, 0)
-
-    h: Harness
-    d: Drive
-    derr := drive_start(
-        &d,
-        loop,
-        {enter_session = false, source = src_r},
-        harness_on_event,
-        &h,
-        ts.failing_allocator(&failing),
-    )
-    testing.expect_value(t, derr, Drive_Error.None)
-    defer drive_stop(&d)
-
-    testing.expect(t, inject_write(src_w, "a"), "inject allocation failure")
-    ts.nbio_run_until(t, &h.input_closed, "reader allocation failure")
-    testing.expect_value(t, h.closed_reason, Input_Closed_Reason.Reader_Failed)
-    testing.expect_value(t, drive_input_closed_reason(&d), Input_Closed_Reason.Reader_Failed)
-    testing.expect(t, !d.live, "reader failure must restore and stop the drive")
-}
-
 // Stop must not hang when the reader is parked waiting for input that never comes.
 // On Windows that park is a blocking ReadFile, which only an explicit cancel releases.
 @(test)

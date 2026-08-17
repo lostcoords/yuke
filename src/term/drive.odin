@@ -275,12 +275,7 @@ drive_drain_reader :: proc(d: ^Drive) -> bool {
     assert(d != nil, "drive_drain_reader needs a drive")
 
     for {
-        ev, err := reader_next(&d.reader)
-        if err != .None {
-            drive_reader_failed(d)
-            return false
-        }
-
+        ev := reader_next(&d.reader)
         if ev == nil {
             break
         }

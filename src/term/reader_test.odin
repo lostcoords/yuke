@@ -1,7 +1,6 @@
 package term
 
 import "core:testing"
-import ts "libs:testsupport"
 
 // Push a string as bytes (test convenience over `reader_push`).
 push :: proc(r: ^Reader, s: string) -> Reader_Error {
@@ -16,25 +15,24 @@ test_reader_key_extraction_drains_one_event_per_byte :: proc(t: ^testing.T) {
 
     // Single byte: push yields one key, then nothing until more bytes arrive.
     testing.expect_value(t, push(&r, "a"), Reader_Error.None)
-    ev, err := reader_next(&r)
-    testing.expect_value(t, err, Reader_Error.None)
+    ev := reader_next(&r)
     k, ok := ev.(Key)
     testing.expect(t, ok)
     testing.expect_value(t, k.code, Key_Code.Char)
     testing.expect_value(t, k.char, 'a')
 
-    none, _ := reader_next(&r)
+    none := reader_next(&r)
     testing.expect(t, none == nil)
 
     // Multiple keys in one push: each next advances tail_start without shifting.
     testing.expect_value(t, push(&r, "bc"), Reader_Error.None)
-    b, _ := reader_next(&r)
+    b := reader_next(&r)
     testing.expect_value(t, b.(Key).char, 'b')
     testing.expect_value(t, r.tail_start, 1)
-    c, _ := reader_next(&r)
+    c := reader_next(&r)
     testing.expect_value(t, c.(Key).char, 'c')
     testing.expect_value(t, r.tail_start, 0)
-    tail, _ := reader_next(&r)
+    tail := reader_next(&r)
     testing.expect(t, tail == nil)
 }
 
@@ -45,11 +43,11 @@ test_reader_escape_sequence_split_across_pushes :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b["), Reader_Error.None)
-    part, _ := reader_next(&r)
+    part := reader_next(&r)
     testing.expect(t, part == nil)
 
     testing.expect_value(t, push(&r, "A"), Reader_Error.None)
-    ev, _ := reader_next(&r)
+    ev := reader_next(&r)
     testing.expect_value(t, ev.(Key).code, Key_Code.Up)
 }
 
@@ -60,14 +58,13 @@ test_reader_bracketed_paste_assembles_raw_content :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b[200~a\nb\x1b[201~"), Reader_Error.None)
-    ev, err := reader_next(&r)
-    testing.expect_value(t, err, Reader_Error.None)
+    ev := reader_next(&r)
     p, ok := ev.(Paste)
     testing.expect(t, ok)
     testing.expect_value(t, p.text, "a\nb")
     testing.expect(t, !p.truncated)
 
-    none, _ := reader_next(&r)
+    none := reader_next(&r)
     testing.expect(t, none == nil)
 }
 
@@ -89,15 +86,13 @@ test_reader_paste_over_cap_reports_truncation :: proc(t: ^testing.T) {
     sent := 0
     for sent <= MAX_PASTE_BYTES {
         testing.expect_value(t, reader_push(&r, chunk), Reader_Error.None)
-        ev, err := reader_next(&r)
-        testing.expect_value(t, err, Reader_Error.None)
+        ev := reader_next(&r)
         testing.expect(t, ev == nil)
         sent += len(chunk)
     }
 
     testing.expect_value(t, push(&r, "\x1b[201~"), Reader_Error.None)
-    ev, err := reader_next(&r)
-    testing.expect_value(t, err, Reader_Error.None)
+    ev := reader_next(&r)
 
     p, ok := ev.(Paste)
     testing.expect(t, ok)
@@ -122,19 +117,16 @@ test_reader_oversized_paste_releases_capacity :: proc(t: ^testing.T) {
     testing.expect_value(t, push(&r, "\x1b[200~"), Reader_Error.None)
     for _ in 0 ..< (PASTE_KEEP_BYTES / MAX_PUSH_BYTES) + 1 {
         testing.expect_value(t, reader_push(&r, chunk), Reader_Error.None)
-        _, err := reader_next(&r)
-        testing.expect_value(t, err, Reader_Error.None)
+        reader_next(&r)
     }
 
     testing.expect_value(t, push(&r, "\x1b[201~"), Reader_Error.None)
-    _, err := reader_next(&r)
-    testing.expect_value(t, err, Reader_Error.None)
+    reader_next(&r)
     testing.expect(t, cap(r.paste) > PASTE_KEEP_BYTES)
 
     // The next paste expires the previous borrow and restores the reusable high-water mark.
     testing.expect_value(t, push(&r, "\x1b[200~ok\x1b[201~"), Reader_Error.None)
-    ev, nerr := reader_next(&r)
-    testing.expect_value(t, nerr, Reader_Error.None)
+    ev := reader_next(&r)
     testing.expect_value(t, ev.(Paste).text, "ok")
     testing.expect_value(t, cap(r.paste), PASTE_KEEP_BYTES)
 }
@@ -146,11 +138,11 @@ test_reader_paste_content_split_across_pushes :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b[200~hel"), Reader_Error.None)
-    part, _ := reader_next(&r)
+    part := reader_next(&r)
     testing.expect(t, part == nil)
 
     testing.expect_value(t, push(&r, "lo\x1b[201~"), Reader_Error.None)
-    ev, _ := reader_next(&r)
+    ev := reader_next(&r)
     testing.expect_value(t, ev.(Paste).text, "hello")
 }
 
@@ -161,11 +153,11 @@ test_reader_paste_terminator_split_across_pushes :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b[200~hello\x1b[20"), Reader_Error.None)
-    part, _ := reader_next(&r)
+    part := reader_next(&r)
     testing.expect(t, part == nil)
 
     testing.expect_value(t, push(&r, "1~"), Reader_Error.None)
-    ev, _ := reader_next(&r)
+    ev := reader_next(&r)
     testing.expect_value(t, ev.(Paste).text, "hello")
 }
 
@@ -176,11 +168,11 @@ test_reader_in_band_resize_report :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b[48;24;80;600;800t"), Reader_Error.None)
-    ev, _ := reader_next(&r)
+    ev := reader_next(&r)
     _, ok := ev.(Resize)
     testing.expect(t, ok)
 
-    none, _ := reader_next(&r)
+    none := reader_next(&r)
     testing.expect(t, none == nil)
 }
 
@@ -191,7 +183,7 @@ test_reader_lone_esc_resolves_via_flush :: proc(t: ^testing.T) {
     defer reader_destroy(&r)
 
     testing.expect_value(t, push(&r, "\x1b"), Reader_Error.None)
-    part, _ := reader_next(&r)
+    part := reader_next(&r)
     testing.expect(t, part == nil)
 
     ev := reader_flush(&r)
@@ -215,7 +207,7 @@ test_reader_oversized_unresolved_sequence_is_dropped :: proc(t: ^testing.T) {
     }
 
     testing.expect_value(t, reader_push(&r, big), Reader_Error.None)
-    ev, _ := reader_next(&r)
+    ev := reader_next(&r)
     testing.expect(t, ev == nil)
     testing.expect_value(t, len(r.tail), 0)
 }
@@ -253,22 +245,4 @@ test_reader_bounds_pending_bytes_when_caller_does_not_drain :: proc(t: ^testing.
     testing.expect_value(t, reader_push(&r, remainder), Reader_Error.None)
 
     testing.expect_value(t, push(&r, "b"), Reader_Error.Input_Too_Large)
-}
-
-@(test)
-test_reader_oom_during_paste_assembly_propagates :: proc(t: ^testing.T) {
-    // alloc 0 is the tail append in push; alloc 1 is the paste-content append in next,
-    // which the failing allocator rejects. next must surface the error and not spin.
-    fa := ts.Failing_Allocator{}
-    ts.failing_allocator_init(&fa, context.allocator, 1)
-    alloc := ts.failing_allocator(&fa)
-
-    r: Reader
-    reader_init(&r, alloc)
-    defer reader_destroy(&r)
-
-    testing.expect_value(t, push(&r, "\x1b[200~hello world"), Reader_Error.None)
-    ev, err := reader_next(&r)
-    testing.expect(t, ev == nil)
-    testing.expect_value(t, err, Reader_Error.Out_Of_Memory)
 }
