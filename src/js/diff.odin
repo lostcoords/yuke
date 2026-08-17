@@ -77,12 +77,7 @@ diff_text :: proc(
         return {}, false
     }
 
-    owned, clone_err := strings.clone(path, allocator)
-    if clone_err != nil {
-        return {}, false
-    }
-
-    return Diff_File{path = owned, hunks = hunks}, true
+    return Diff_File{path = strings.clone(path, allocator), hunks = hunks}, true
 }
 
 // Lines without their terminators. A trailing newline ends the last line rather than
@@ -94,12 +89,7 @@ diff_split :: proc(text: string, allocator: mem.Allocator) -> []string {
     }
 
     body := text[:len(text) - 1] if text[len(text) - 1] == '\n' else text
-    lines, err := strings.split(body, "\n", allocator)
-    if err != nil {
-        return nil
-    }
-
-    return lines
+    return strings.split(body, "\n", allocator)
 }
 
 // Myers' greedy algorithm with its trace, walked back into an edit script. Refuses past
@@ -118,10 +108,7 @@ diff_script :: proc(
 
     // A pure insert or delete needs no search, and it is the shape `write` always takes.
     if n == 0 || m == 0 {
-        script, err := make([dynamic]Diff_Edit, 0, n + m, allocator)
-        if err != nil {
-            return nil, false
-        }
+        script := make([dynamic]Diff_Edit, 0, n + m, allocator)
 
         for index in 0 ..< n {
             append(&script, Diff_Edit{op = .Delete, old = index, new = -1})
@@ -138,24 +125,15 @@ diff_script :: proc(
     offset := max_d
     width := 2 * max_d + 1
 
-    v, verr := make([]int, width, allocator)
-    if verr != nil {
-        return nil, false
-    }
+    v := make([]int, width, allocator)
 
-    trace, terr := make([dynamic][]int, 0, max_d + 1, allocator)
-    if terr != nil {
-        return nil, false
-    }
+    trace := make([dynamic][]int, 0, max_d + 1, allocator)
 
     v[offset + 1] = 0
     reached := -1
 
     search: for d in 0 ..= max_d {
-        snapshot, serr := slice.clone(v, allocator)
-        if serr != nil {
-            return nil, false
-        }
+        snapshot := slice.clone(v, allocator)
 
         append(&trace, snapshot)
 
@@ -188,25 +166,13 @@ diff_script :: proc(
         return nil, false
     }
 
-    return diff_backtrack(trace[:], offset, n, m, allocator)
+    return diff_backtrack(trace[:], offset, n, m, allocator), true
 }
 
 // Walk the trace from the end, emitting the script in reverse and then flipping it.
 @(private = "file")
-diff_backtrack :: proc(
-    trace: [][]int,
-    offset: int,
-    n: int,
-    m: int,
-    allocator: mem.Allocator,
-) -> (
-    edits: []Diff_Edit,
-    ok: bool,
-) {
-    script, err := make([dynamic]Diff_Edit, 0, n + m, allocator)
-    if err != nil {
-        return nil, false
-    }
+diff_backtrack :: proc(trace: [][]int, offset: int, n: int, m: int, allocator: mem.Allocator) -> (edits: []Diff_Edit) {
+    script := make([dynamic]Diff_Edit, 0, n + m, allocator)
 
     x := n
     y := m
@@ -244,7 +210,7 @@ diff_backtrack :: proc(
     assert(x == 0 && y == 0, "a walked-back script consumes both texts")
     slice.reverse(script[:])
 
-    return script[:], true
+    return script[:]
 }
 
 // Group the script into hunks: every run of changes, padded with context and merged with
@@ -259,10 +225,7 @@ diff_hunks :: proc(
     hunks: []Diff_Hunk,
     ok: bool,
 ) {
-    out, err := make([dynamic]Diff_Hunk, 0, 8, allocator)
-    if err != nil {
-        return nil, false
-    }
+    out := make([dynamic]Diff_Hunk, 0, 8, allocator)
 
     index := 0
     for index < len(edits) {
@@ -331,10 +294,7 @@ diff_hunk_build :: proc(
         return {}, false
     }
 
-    body, err := make([]string, len(edits), allocator)
-    if err != nil {
-        return {}, false
-    }
+    body := make([]string, len(edits), allocator)
 
     old_start := -1
     new_start := -1
@@ -359,12 +319,7 @@ diff_hunk_build :: proc(
             text = new_lines[edit.new]
         }
 
-        line, cerr := strings.concatenate({prefix, text}, allocator)
-        if cerr != nil {
-            return {}, false
-        }
-
-        body[index] = line
+        body[index] = strings.concatenate({prefix, text}, allocator)
 
         if edit.old >= 0 {
             old_start = edit.old if old_start < 0 else old_start

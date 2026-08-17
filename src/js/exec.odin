@@ -89,10 +89,7 @@ exec_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
         return qjs.throw_type_error(ctx, "yuke:exec is closed")
     }
 
-    job, aerr := new(Exec_Job, h.allocator)
-    if aerr != nil {
-        return qjs.throw_type_error(ctx, "out of memory")
-    }
+    job := new(Exec_Job, h.allocator)
 
     job^ = {}
     job.host = h
@@ -182,12 +179,7 @@ exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qj
 
         job.cwd = resolved
     } else if job.cancel != nil && job.cancel.default_cwd != "" {
-        cwd, clone_err := strings.clone(job.cancel.default_cwd, job.allocator)
-        if clone_err != nil {
-            return qjs.throw_type_error(ctx, "out of memory"), false
-        }
-
-        job.cwd = cwd
+        job.cwd = strings.clone(job.cancel.default_cwd, job.allocator)
     }
 
     timeout := qjs.get_property(ctx, argv[1], "timeoutMs")

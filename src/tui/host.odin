@@ -213,10 +213,6 @@ host_init :: proc(
     case .Invalid_Root:
         host_set_last_err(h, "working directory is not a usable base")
         return false
-
-    case .Out_Of_Memory:
-        host_set_last_err(h, "javascript runtime unavailable")
-        return false
     }
 
     // Reused size object for term.size().

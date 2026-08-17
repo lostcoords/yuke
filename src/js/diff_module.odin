@@ -64,10 +64,7 @@ diff_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
         return qjs.throw_type_error(ctx, "yuke:diff is closed")
     }
 
-    job, aerr := new(Diff_Job, h.allocator)
-    if aerr != nil {
-        return qjs.throw_type_error(ctx, "out of memory")
-    }
+    job := new(Diff_Job, h.allocator)
 
     job^ = {}
     job.host = h

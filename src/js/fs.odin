@@ -237,10 +237,7 @@ fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) 
         return nil, qjs.throw_type_error(ctx, "yuke:fs is closed"), false
     }
 
-    job, aerr := new(Fs_Job, h.allocator)
-    if aerr != nil {
-        return nil, qjs.throw_type_error(ctx, "out of memory"), false
-    }
+    job := new(Fs_Job, h.allocator)
 
     job^ = {}
     job.host = h
@@ -489,10 +486,7 @@ fs_hash_contents :: proc(job: ^Fs_Job) -> Fs_Error {
     digest: [sha2.DIGEST_SIZE_256]byte
     sha2.final(&hasher, digest[:])
 
-    hex, hex_err := make([]u8, 2 * len(digest), job.allocator)
-    if hex_err != nil {
-        return .Unreadable
-    }
+    hex := make([]u8, 2 * len(digest), job.allocator)
 
     for value, index in digest {
         hex[index * 2] = FS_HEX_DIGITS[value >> 4]

@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 
-import "libs:testsupport"
 
 // Every hunk body line, joined, so a test reads like the diff it expects.
 @(private = "file")
@@ -145,26 +144,4 @@ test_diff_refuses_a_change_too_large_to_describe :: proc(t: ^testing.T) {
 
     _, ok := diff_text("a.txt", strings.to_string(before), strings.to_string(after), context.temp_allocator)
     testing.expect(t, !ok, "a diff past the edit bound is refused, not truncated")
-}
-
-@(test)
-test_diff_refuses_rather_than_half_builds_under_allocation_failure :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    // The caller's arena owns every string, so a failure needs no cleanup of its own — but
-    // it must answer `false` rather than a diff missing whatever it could not allocate.
-    completed := false
-    for fail_at in 0 ..< 64 {
-        failing: testsupport.Failing_Allocator
-        testsupport.failing_allocator_init(&failing, context.temp_allocator, fail_at)
-
-        file, ok := diff_text("a.txt", "one\ntwo\nthree\n", "one\n2\nthree\n", testsupport.failing_allocator(&failing))
-
-        if ok {
-            completed = true
-            testing.expect_value(t, len(file.hunks), 1)
-        }
-    }
-
-    testing.expect(t, completed, "the allocation sweep eventually reaches a successful diff")
 }

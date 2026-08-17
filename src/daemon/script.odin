@@ -64,9 +64,6 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     case .None:
         return .None
 
-    case .Out_Of_Memory:
-        return .Out_Of_Memory
-
     case .Invalid_Root:
         return .Invalid_Options
     }

@@ -27,7 +27,6 @@ MODULE_AWAIT_TICK :: 10 * time.Millisecond
 
 Error :: enum {
     None,
-    Out_Of_Memory,
     Invalid_Root,
 }
 
@@ -136,31 +135,14 @@ init :: proc(h: ^Host, options: Options) -> Error {
             return .Invalid_Root
         }
 
-        cloned, clone_err := strings.clone(canonical, options.allocator)
-        if clone_err != nil {
-            return .Out_Of_Memory
-        }
-
-        h.base = cloned
+        h.base = strings.clone(canonical, options.allocator)
     }
 
     if len(options.modules) > 0 {
-        installed, modules_err := slice.clone(options.modules, options.allocator)
-        if modules_err != nil {
-            destroy(h)
-
-            return .Out_Of_Memory
-        }
-
-        h.modules = installed
+        h.modules = slice.clone(options.modules, options.allocator)
     }
 
     h.rt = qjs.runtime_new()
-    if h.rt == nil {
-        destroy(h)
-
-        return .Out_Of_Memory
-    }
 
     qjs.set_runtime_opaque(h.rt, h)
     qjs.set_memory_limit(h.rt, options.memory_limit if options.memory_limit > 0 else DEFAULT_MEMORY_LIMIT)
@@ -168,23 +150,13 @@ init :: proc(h: ^Host, options: Options) -> Error {
     qjs.set_interrupt_handler(h.rt, interrupt, h)
     qjs.set_module_loader(h.rt, nil, module_loader, h)
 
-    cancel_class, cancel_ok := qjs.class_register(
+    cancel_class, _ := qjs.class_register(
         h.rt,
         qjs.Class_Def{class_name = "YukeCancelSignal", finalizer = cancel_signal_finalize},
     )
-    if !cancel_ok {
-        destroy(h)
-
-        return .Out_Of_Memory
-    }
     h.cancel_class = cancel_class
 
     h.ctx = qjs.context_new(h.rt)
-    if h.ctx == nil {
-        destroy(h)
-
-        return .Out_Of_Memory
-    }
 
     qjs.set_context_opaque(h.ctx, h)
 
