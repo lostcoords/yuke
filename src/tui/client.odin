@@ -124,13 +124,7 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
 
     headers := ""
     if options.token != "" {
-        header_err: runtime.Allocator_Error
-        headers, header_err = strings.concatenate({"Authorization: Bearer ", options.token, "\r\n"}, h.allocator)
-        if header_err != nil {
-            client_promise_reject(job, "out_of_memory", false)
-            return promise
-        }
-
+        headers = strings.concatenate({"Authorization: Bearer ", options.token, "\r\n"}, h.allocator)
         defer delete(headers, h.allocator)
     }
 
@@ -352,11 +346,7 @@ client_request_params :: proc(
 client_promise_new :: proc(h: ^Host) -> (job: ^Client_Promise, promise: qjs.Value) {
     assert(h != nil && h.js.ctx != nil, "a client promise needs a live host")
 
-    allocation_err: runtime.Allocator_Error
-    job, allocation_err = new(Client_Promise, h.allocator)
-    if allocation_err != nil {
-        return nil, qjs.undefined()
-    }
+    job = new(Client_Promise, h.allocator)
 
     resolve, reject: qjs.Value
     promise, resolve, reject = qjs.new_promise(h.js.ctx)

@@ -110,34 +110,18 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
 
     defer relay.session_identity_destroy(&id)
 
-    rc, aerr := new(Remote_Connect, h.allocator)
-    if aerr != nil {
-        client_promise_reject(job, "out_of_memory", true)
-
-        return
-    }
+    rc := new(Remote_Connect, h.allocator)
 
     rc.host = h
     rc.job = job
     rc.resp.body.allocator = h.allocator
     ecdh.private_key_bytes(&id.static_key, rc.static_seed[:])
 
-    clone_err: mem.Allocator_Error
-    rc.device, clone_err = strings.clone(device, h.allocator)
-    if clone_err == nil {
-        rc.cloud_url, clone_err = remote_cloud_url(h.allocator)
-    }
-    if clone_err == nil {
-        rc.credential, clone_err = strings.clone(id.credential, h.allocator)
-    }
-    if clone_err == nil && id.local_device_id != "" {
-        rc.local_device_id, clone_err = strings.clone(id.local_device_id, h.allocator)
-    }
-    if clone_err != nil {
-        remote_free(rc)
-        client_promise_reject(job, "out_of_memory", true)
-
-        return
+    rc.device = strings.clone(device, h.allocator)
+    rc.cloud_url = remote_cloud_url(h.allocator)
+    rc.credential = strings.clone(id.credential, h.allocator)
+    if id.local_device_id != "" {
+        rc.local_device_id = strings.clone(id.local_device_id, h.allocator)
     }
 
     if !h.cloud_curl_ready {
@@ -274,14 +258,7 @@ remote_roster_done :: proc(user: rawptr, result: curl.Result) {
         return
     }
 
-    did, cerr := strings.clone(target_id, rc.host.allocator)
-    if cerr != nil {
-        remote_fail(rc, "out_of_memory")
-
-        return
-    }
-
-    rc.device_id = did
+    rc.device_id = strings.clone(target_id, rc.host.allocator)
     remote_fetch_ticket(rc)
 }
 
@@ -456,10 +433,10 @@ CLOUD_URL_ENV :: "YUKE_CLOUD_URL"
 // The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the hosted
 // default. Mirrors `yuke login`, so the client and enrollment resolve the same control plane.
 @(private = "file")
-remote_cloud_url :: proc(allocator: mem.Allocator) -> (string, mem.Allocator_Error) {
+remote_cloud_url :: proc(allocator: mem.Allocator) -> string {
     if v, set := os.lookup_env(CLOUD_URL_ENV, allocator); set {
         if v != "" {
-            return v, nil
+            return v
         }
 
         delete(v, allocator)
