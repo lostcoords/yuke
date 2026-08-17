@@ -17,7 +17,6 @@ import "src:daemon/store"
 import "src:js"
 import "src:paths"
 import "src:relay"
-import "src:secret"
 import "src:wire"
 
 // nbio offload workers, for blocking filesystem calls off the reactor.
@@ -417,7 +416,8 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
             return .Invalid_Options
         }
 
-        secret.string_destroy(&d.config_json, allocator)
+        delete(d.config_json, allocator)
+        d.config_json = ""
 
         options.host = config.host
         // A zero from the manifest (omitted, or an explicit 0) does not clobber the port the
@@ -844,8 +844,8 @@ free_config :: proc(d: ^Daemon) {
     delete(d.daemon_version, d.allocator)
     delete(d.device_id, d.allocator)
     delete(d.blob_dir, d.allocator)
-    secret.string_destroy(&d.auth_token, d.allocator)
-    secret.string_destroy(&d.config_json, d.allocator)
+    delete(d.auth_token, d.allocator)
+    delete(d.config_json, d.allocator)
     delete(d.relay_cloud_url, d.allocator)
     delete(d.config_dir, d.allocator)
     for o in d.allowed_origins {
@@ -990,7 +990,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
 
     d := conn.daemon
     temp := virtual.arena_temp_begin(&d.frame_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     sa := virtual.arena_allocator(&d.frame_scratch)
 
     decoder := wire.decoder_init(string(data), sa)

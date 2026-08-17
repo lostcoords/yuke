@@ -4,14 +4,13 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 
-import "src:secret"
 
 @(test)
 test_pkce_challenge_matches_rfc_7636_vector :: proc(t: ^testing.T) {
     verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
     challenge, err := pkce_challenge(verifier, context.allocator)
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&challenge, context.allocator)
+    defer delete(challenge, context.allocator)
 
     testing.expect_value(t, challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
 }
@@ -20,7 +19,7 @@ test_pkce_challenge_matches_rfc_7636_vector :: proc(t: ^testing.T) {
 test_url_encode_uses_rfc_3986_unreserved_set :: proc(t: ^testing.T) {
     encoded, err := url_encode("azAZ09-_.~ +/%&=", context.allocator)
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&encoded, context.allocator)
+    defer delete(encoded, context.allocator)
 
     testing.expect_value(t, encoded, "azAZ09-_.~%20%2B%2F%25%26%3D")
 }
@@ -60,7 +59,7 @@ test_authorization_code_body_uses_dynamic_callback_and_pkce :: proc(t: ^testing.
     }
     body, err := authorization_code_body(provider(.Codex), flow, "code +/%")
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
 
     testing.expect(
         t,
@@ -75,7 +74,7 @@ test_authorization_code_body_uses_dynamic_callback_and_pkce :: proc(t: ^testing.
 test_query_value_decode_is_strict :: proc(t: ^testing.T) {
     decoded, err := query_value_decode("code%20with%2Bplus+space")
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&decoded, context.allocator)
+    defer delete(decoded, context.allocator)
     testing.expect_value(t, decoded, "code with+plus space")
 
     _, short_err := query_value_decode("code%2")
@@ -93,11 +92,11 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
     if header_err != .None {
         return ""
     }
-    defer secret.string_destroy(&header, allocator)
+    defer delete(header, allocator)
 
     payload_json := `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-123"}}`
     payload_owned: string
-    defer secret.string_destroy(&payload_owned, allocator)
+    defer delete(payload_owned, allocator)
 
     if expires_at_s > 0 {
         exp_buf: [20]byte
@@ -116,7 +115,7 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
     if payload_err != .None {
         return ""
     }
-    defer secret.string_destroy(&payload, allocator)
+    defer delete(payload, allocator)
 
     token, token_aerr := strings.concatenate({header, ".", payload, ".sig"}, allocator)
     if token_aerr != nil {
@@ -130,12 +129,12 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
 test_account_id_and_token_response_parse :: proc(t: ^testing.T) {
     token := test_access_token()
     testing.expect(t, token != "", "test JWT")
-    defer secret.string_destroy(&token, context.allocator)
+    defer delete(token, context.allocator)
 
     account, account_err := codex_account_id(token)
     testing.expect_value(t, account_err, OAuth_Error.None)
     testing.expect_value(t, account, "acct-123")
-    secret.string_destroy(&account, context.allocator)
+    delete(account, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {
@@ -147,7 +146,7 @@ test_account_id_and_token_response_parse :: proc(t: ^testing.T) {
         },
     )
     testing.expect(t, response_aerr == nil, "token response allocation")
-    defer secret.string_destroy(&response, context.allocator)
+    defer delete(response, context.allocator)
 
     credentials, parse_err := token_response_parse(provider(.Codex), response, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
@@ -162,13 +161,13 @@ test_account_id_and_token_response_parse :: proc(t: ^testing.T) {
 @(test)
 test_login_token_response_requires_a_refresh_token :: proc(t: ^testing.T) {
     token := test_access_token()
-    defer secret.string_destroy(&token, context.allocator)
+    defer delete(token, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {`{"access_token":"`, token, `","id_token":"`, token, `","expires_in":300}`},
     )
     testing.expect(t, response_aerr == nil, "token response allocation")
-    defer secret.string_destroy(&response, context.allocator)
+    defer delete(response, context.allocator)
 
     _, missing_err := token_response_parse(provider(.Codex), response, 10_000)
     testing.expect_value(t, missing_err, OAuth_Error.Invalid_Response)
@@ -177,7 +176,7 @@ test_login_token_response_requires_a_refresh_token :: proc(t: ^testing.T) {
 @(test)
 test_login_token_response_overflow_releases_the_derived_account :: proc(t: ^testing.T) {
     token := test_access_token()
-    defer secret.string_destroy(&token, context.allocator)
+    defer delete(token, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {
@@ -189,7 +188,7 @@ test_login_token_response_overflow_releases_the_derived_account :: proc(t: ^test
         },
     )
     testing.expect(t, response_aerr == nil, "token response allocation")
-    defer secret.string_destroy(&response, context.allocator)
+    defer delete(response, context.allocator)
 
     _, parse_err := token_response_parse(provider(.Codex), response, max(u64))
     testing.expect_value(t, parse_err, OAuth_Error.Invalid_Response)
@@ -199,7 +198,7 @@ test_login_token_response_overflow_releases_the_derived_account :: proc(t: ^test
 test_refresh_request_is_json_and_escapes_the_rotating_token :: proc(t: ^testing.T) {
     body, content_type, err := refresh_request_body(provider(.Codex), `refresh-"\\token`)
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
     testing.expect_value(t, content_type, "application/json")
 
     testing.expect_value(
@@ -219,13 +218,13 @@ test_refresh_response_merges_optional_tokens_and_retains_account :: proc(t: ^tes
     }
     access := test_access_token_expires(1_800_000_000)
     testing.expect(t, access != "", "expiring test JWT")
-    defer secret.string_destroy(&access, context.allocator)
+    defer delete(access, context.allocator)
 
     response, response_aerr := strings.concatenate(
         {`{"id_token":null,"access_token":"`, access, `","refresh_token":"refresh-new"}`},
     )
     testing.expect(t, response_aerr == nil, "refresh response allocation")
-    defer secret.string_destroy(&response, context.allocator)
+    defer delete(response, context.allocator)
 
     credentials, parse_err := refresh_response_parse(provider(.Codex), response, existing, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)
@@ -246,11 +245,11 @@ test_refresh_response_updates_account_only_from_returned_id_token :: proc(t: ^te
         account_id    = "acct-old",
     }
     id_token := test_access_token()
-    defer secret.string_destroy(&id_token, context.allocator)
+    defer delete(id_token, context.allocator)
 
     response, response_aerr := strings.concatenate({`{"id_token":"`, id_token, `"}`})
     testing.expect(t, response_aerr == nil, "refresh response allocation")
-    defer secret.string_destroy(&response, context.allocator)
+    defer delete(response, context.allocator)
 
     credentials, parse_err := refresh_response_parse(provider(.Codex), response, existing, 1_700_000_000_000)
     testing.expect_value(t, parse_err, OAuth_Error.None)

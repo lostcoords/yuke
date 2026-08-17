@@ -10,7 +10,6 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 
-import "src:secret"
 
 // OAuth credentials retained only by the daemon. Every string is owned by the
 // containing daemon state or a short-lived operation.
@@ -43,9 +42,9 @@ credentials_valid_for :: proc(provider: ^Provider, credentials: OAuth_Credential
 
 credentials_destroy :: proc(credentials: ^OAuth_Credentials, allocator := context.allocator) {
     assert(credentials != nil, "credential cleanup needs a value")
-    secret.string_destroy(&credentials.access_token, allocator)
-    secret.string_destroy(&credentials.refresh_token, allocator)
-    secret.string_destroy(&credentials.account_id, allocator)
+    delete(credentials.access_token, allocator)
+    delete(credentials.refresh_token, allocator)
+    delete(credentials.account_id, allocator)
     credentials^ = {}
 }
 
@@ -96,10 +95,10 @@ Authorization_Flow :: struct {
 
 authorization_flow_destroy :: proc(flow: ^Authorization_Flow, allocator := context.allocator) {
     assert(flow != nil, "authorization flow cleanup needs a value")
-    secret.string_destroy(&flow.verifier, allocator)
-    secret.string_destroy(&flow.state, allocator)
-    secret.string_destroy(&flow.redirect_uri, allocator)
-    secret.string_destroy(&flow.auth_url, allocator)
+    delete(flow.verifier, allocator)
+    delete(flow.state, allocator)
+    delete(flow.redirect_uri, allocator)
+    delete(flow.auth_url, allocator)
     flow^ = {}
 }
 
@@ -159,7 +158,7 @@ authorization_flow_create :: proc(
     if challenge_err != .None {
         return {}, challenge_err
     }
-    defer secret.string_destroy(&challenge, allocator)
+    defer delete(challenge, allocator)
 
     client_id, client_err := url_encode(provider.client_id, allocator)
     redirect_uri, redirect_err := url_encode(flow.redirect_uri, allocator)
@@ -167,12 +166,12 @@ authorization_flow_create :: proc(
     encoded_challenge, challenge_encode_err := url_encode(challenge, allocator)
     state_param, state_err := url_encode(flow.state, allocator)
     originator_param, originator_err := url_encode(originator, allocator)
-    defer secret.string_destroy(&client_id, allocator)
-    defer secret.string_destroy(&redirect_uri, allocator)
-    defer secret.string_destroy(&scope, allocator)
-    defer secret.string_destroy(&encoded_challenge, allocator)
-    defer secret.string_destroy(&state_param, allocator)
-    defer secret.string_destroy(&originator_param, allocator)
+    defer delete(client_id, allocator)
+    defer delete(redirect_uri, allocator)
+    defer delete(scope, allocator)
+    defer delete(encoded_challenge, allocator)
+    defer delete(state_param, allocator)
+    defer delete(originator_param, allocator)
 
     if client_err != .None ||
        redirect_err != .None ||
@@ -231,9 +230,9 @@ authorization_code_body :: proc(
     encoded_code, code_err := url_encode(code, allocator)
     encoded_redirect, redirect_err := url_encode(flow.redirect_uri, allocator)
     encoded_verifier, verifier_err := url_encode(flow.verifier, allocator)
-    defer secret.string_destroy(&encoded_code, allocator)
-    defer secret.string_destroy(&encoded_redirect, allocator)
-    defer secret.string_destroy(&encoded_verifier, allocator)
+    defer delete(encoded_code, allocator)
+    defer delete(encoded_redirect, allocator)
+    defer delete(encoded_verifier, allocator)
     if code_err != .None || redirect_err != .None || verifier_err != .None {
         return "", .Out_Of_Memory
     }
@@ -455,7 +454,7 @@ refresh_request_body :: proc(
     }
 
     encoded_token, token_err := url_encode(refresh_token, allocator)
-    defer secret.string_destroy(&encoded_token, allocator)
+    defer delete(encoded_token, allocator)
     if token_err != .None {
         return "", "", .Out_Of_Memory
     }
@@ -531,7 +530,7 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret.string_destroy(&credentials.account_id, allocator)
+        delete(credentials.account_id, allocator)
         credentials.account_id = account_id
     }
 
@@ -554,7 +553,7 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret.string_destroy(&credentials.access_token, allocator)
+        delete(credentials.access_token, allocator)
         credentials.access_token = access_clone
 
         if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
@@ -573,7 +572,7 @@ refresh_response_parse :: proc(
             return
         }
 
-        secret.string_destroy(&credentials.refresh_token, allocator)
+        delete(credentials.refresh_token, allocator)
         credentials.refresh_token = refresh_clone
     }
 
@@ -704,7 +703,7 @@ base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> (string, OAu
     if aerr != nil {
         return "", .Out_Of_Memory
     }
-    defer secret.string_destroy(&padded, allocator)
+    defer delete(padded, allocator)
 
     end := len(padded)
     for end > 0 && padded[end - 1] == '=' {

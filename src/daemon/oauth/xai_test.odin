@@ -3,7 +3,6 @@ package oauth
 import "core:strings"
 import "core:testing"
 
-import "src:secret"
 
 // An opaque, non-JWT access token parses; account id stays empty, expiry from expires_in.
 @(test)
@@ -24,7 +23,7 @@ test_xai_token_response_parse_opaque_access_token :: proc(t: ^testing.T) {
 test_xai_refresh_body_is_form_encoded :: proc(t: ^testing.T) {
     body, content_type, err := refresh_request_body(provider(.Xai), "r-token")
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
     testing.expect_value(t, content_type, "application/x-www-form-urlencoded")
 
     testing.expect_value(

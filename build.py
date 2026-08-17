@@ -62,7 +62,6 @@ class Package:
 
 PACKAGES = (
     Package("oauth", "src/daemon/oauth", "provider OAuth adapters"),
-    Package("secret", "src/secret", "explicit cleanup for owned secret buffers"),
     Package("wire", "src/wire", "protocol types, JSON codec, registries, validation"),
     Package("paths", "src/paths", "shared platform config-directory resolution"),
     Package("client", "src/client", "session replica"),

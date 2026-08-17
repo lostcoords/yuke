@@ -9,7 +9,6 @@ import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-import "src:secret"
 
 SESSION_FILE :: "session.json"
 SESSION_KEY_FILE :: "session.key"
@@ -52,7 +51,7 @@ session_identity_load :: proc(
     if read_err != nil {
         return {}, .Unreadable
     }
-    defer secret.bytes_destroy(&bytes, context.temp_allocator)
+    defer delete(bytes, context.temp_allocator)
 
     sf: Session_File
     if json.unmarshal(bytes, &sf, .JSON, context.temp_allocator) != nil {
@@ -98,7 +97,7 @@ session_identity_load :: proc(
             session_identity_destroy(&out)
             return {}, .Unreadable
         }
-        defer secret.bytes_destroy(&key_bytes, context.temp_allocator)
+        defer delete(key_bytes, context.temp_allocator)
         if len(key_bytes) != NOISE_STATIC_KEY_SIZE ||
            !ecdh.private_key_set_bytes(&out.static_key, .X25519, key_bytes) {
             session_identity_destroy(&out)
@@ -128,7 +127,7 @@ session_identity_save :: proc(dir: string, id: ^Session_Identity, allocator := c
     if marshal_err != nil {
         return .Out_Of_Memory
     }
-    defer secret.bytes_destroy(&encoded, allocator)
+    defer delete(encoded, allocator)
 
     path, _ := filepath.join({dir, SESSION_FILE}, context.temp_allocator)
     write_private_file(path, encoded, allocator) or_return
@@ -147,7 +146,7 @@ session_identity_destroy :: proc(id: ^Session_Identity) {
     assert(id != nil, "session_identity_destroy needs an identity")
     if id.allocator.procedure != nil {
         delete(id.session_id, id.allocator)
-        secret.string_destroy(&id.credential, id.allocator)
+        delete(id.credential, id.allocator)
         delete(id.relay_url, id.allocator)
         delete(id.local_device_id, id.allocator)
         delete(id.kind, id.allocator)

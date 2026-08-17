@@ -6,7 +6,6 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 
-import "src:secret"
 
 // Generic device-flow bounds and the RFC 8628 device grant type.
 DEVICE_HANDLE_MAX_BYTES :: 4096
@@ -70,17 +69,17 @@ Device_Poll_Result :: union {
 
 device_session_destroy :: proc(value: ^Device_Session, allocator := context.allocator) {
     assert(value != nil, "device session cleanup needs a value")
-    secret.string_destroy(&value.handle, allocator)
-    secret.string_destroy(&value.user_code, allocator)
-    secret.string_destroy(&value.verification_uri, allocator)
+    delete(value.handle, allocator)
+    delete(value.user_code, allocator)
+    delete(value.verification_uri, allocator)
     value^ = {}
 }
 
 device_grant_destroy :: proc(value: ^Device_Grant, allocator := context.allocator) {
     assert(value != nil, "device grant cleanup needs a value")
-    secret.string_destroy(&value.authorization_code, allocator)
-    secret.string_destroy(&value.code_challenge, allocator)
-    secret.string_destroy(&value.code_verifier, allocator)
+    delete(value.authorization_code, allocator)
+    delete(value.code_challenge, allocator)
+    delete(value.code_verifier, allocator)
     value^ = {}
 }
 
@@ -115,9 +114,9 @@ device_auth_body :: proc(
         client_id, client_err := url_encode(provider.client_id, allocator)
         scope, scope_err := url_encode(provider.scope, allocator)
         referrer, referrer_err := url_encode(originator, allocator)
-        defer secret.string_destroy(&client_id, allocator)
-        defer secret.string_destroy(&scope, allocator)
-        defer secret.string_destroy(&referrer, allocator)
+        defer delete(client_id, allocator)
+        defer delete(scope, allocator)
+        defer delete(referrer, allocator)
         if client_err != .None || scope_err != .None || referrer_err != .None {
             return "", "", .Out_Of_Memory
         }
@@ -172,9 +171,9 @@ device_poll_body :: proc(
         grant_type, grant_err := url_encode(DEVICE_CODE_GRANT_TYPE, allocator)
         client_id, client_err := url_encode(provider.client_id, allocator)
         device_code, device_err := url_encode(session.handle, allocator)
-        defer secret.string_destroy(&grant_type, allocator)
-        defer secret.string_destroy(&client_id, allocator)
-        defer secret.string_destroy(&device_code, allocator)
+        defer delete(grant_type, allocator)
+        defer delete(client_id, allocator)
+        defer delete(device_code, allocator)
         if grant_err != .None || client_err != .None || device_err != .None {
             return "", "", .Out_Of_Memory
         }

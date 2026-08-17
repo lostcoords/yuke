@@ -15,7 +15,6 @@ import "core:strings"
 import "core:time"
 
 import ws "libs:websocket"
-import "src:secret"
 
 // Which relay route a link dials. The daemon parks on `/link`; the remote client
 // dials `/connect`. Both redeem their ticket and are spliced onto the same session.
@@ -280,9 +279,9 @@ link_dial :: proc(
     // client_connect clones the path, so building it in temp storage is safe.
     base := "/link" if route == .Link else "/connect"
     encoded := net.percent_encode(ticket, context.temp_allocator)
-    defer secret.string_destroy(&encoded, context.temp_allocator)
+    defer delete(encoded, context.temp_allocator)
     path := strings.concatenate({base, "?ticket=", encoded}, context.temp_allocator)
-    defer secret.string_destroy(&path, context.temp_allocator)
+    defer delete(path, context.temp_allocator)
 
     options := ws.Options {
         scheme                  = endpoint.scheme,

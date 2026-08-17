@@ -15,7 +15,6 @@ import http_server "libs:http/server"
 import ws "libs:websocket"
 import "src:daemon/oauth"
 import "src:daemon/store"
-import "src:secret"
 import "src:wire"
 
 #assert(store.CREDENTIAL_SECRET_MAX_BYTES == wire.LIMITS.max_api_key_bytes)
@@ -254,7 +253,7 @@ provider_credentials_destroy :: proc(d: ^Daemon) {
 
     for provider_id, api_key in d.provider_auth.api_keys {
         key := api_key
-        secret.string_destroy(&key, d.allocator)
+        delete(key, d.allocator)
         delete(provider_id, d.allocator)
     }
     delete(d.provider_auth.api_keys)
@@ -543,7 +542,7 @@ provider_refresh_start :: proc(d: ^Daemon) -> bool {
         provider_refresh_free(d, refresh)
         return false
     }
-    defer secret.string_destroy(&body, d.allocator)
+    defer delete(body, d.allocator)
 
     d.provider_auth.operation = refresh
     transfer_err := auth_transfer_start(
@@ -727,7 +726,7 @@ route_auth_callback :: proc(ctx: ^Http_Context) {
         http_server.respond_text(ctx.conn, .Bad_Request, "invalid authorization code")
         return
     }
-    defer secret.string_destroy(&code, d.allocator)
+    defer delete(code, d.allocator)
 
     if !provider_token_exchange_start(d, code) {
         http_server.respond_text(ctx.conn, .Service_Unavailable, "cannot start token exchange")
@@ -751,7 +750,7 @@ provider_token_exchange_start :: proc(d: ^Daemon, code: string) -> bool {
     if body_err != .None {
         return false
     }
-    defer secret.string_destroy(&body, d.allocator)
+    defer delete(body, d.allocator)
 
     return provider_token_request_start(d, body)
 }
@@ -829,7 +828,7 @@ provider_device_user_code_start :: proc(d: ^Daemon) -> bool {
     if body_err != .None {
         return false
     }
-    defer secret.string_destroy(&body, d.allocator)
+    defer delete(body, d.allocator)
 
     return provider_device_request_start(
         d,
@@ -853,7 +852,7 @@ provider_device_poll_start :: proc(d: ^Daemon) -> bool {
     if body_err != .None {
         return false
     }
-    defer secret.string_destroy(&body, d.allocator)
+    defer delete(body, d.allocator)
 
     return provider_device_request_start(
         d,
@@ -1091,7 +1090,7 @@ provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
             provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
             return
         }
-        defer secret.string_destroy(&body, d.allocator)
+        defer delete(body, d.allocator)
 
         if !provider_token_request_start(d, body) {
             provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
@@ -1365,7 +1364,7 @@ method_auth_set_api_key :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         conn_abort(conn, .Out_Of_Memory)
         return
     }
-    defer secret.string_destroy(&api_key, d.allocator)
+    defer delete(api_key, d.allocator)
 
     staged, stage_ok := provider_api_key_stage(d, provider_id)
     if !stage_ok {

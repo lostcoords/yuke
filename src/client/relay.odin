@@ -21,7 +21,6 @@ import "core:time"
 
 import ws "libs:websocket"
 import "src:relay"
-import "src:secret"
 
 // Client-initiated keepalive on the /connect link, mirroring the daemon's /link keepalive. A
 // half-open socket left by suspend/resume surfaces as a transport error instead of a hung
@@ -199,7 +198,7 @@ relay_send_text :: proc(t: Transport, data: []byte) -> ws.Client_Error {
     assert(len(data) > 0, "relay send needs a non-empty frame")
 
     temp := virtual.arena_temp_begin(&backend.send_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&backend.send_scratch)
 
     count := relay.transport_chunk_count(len(data))
@@ -295,7 +294,7 @@ relay_on_parked :: proc(l: ^relay.Link) {
     backend := relay_of(l)
 
     temp := virtual.arena_temp_begin(&backend.send_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&backend.send_scratch)
 
     msg1, err := relay.session_initiate(&backend.session, scratch)
@@ -321,7 +320,7 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     backend := relay_of(l)
 
     temp := virtual.arena_temp_begin(&backend.recv_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&backend.recv_scratch)
 
     if !backend.established {

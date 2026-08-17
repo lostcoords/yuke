@@ -8,7 +8,6 @@ import "core:time"
 import "core:unicode/utf8"
 
 import "src:client"
-import "src:secret"
 import "src:term"
 import "src:wire"
 
@@ -59,7 +58,7 @@ provider_run :: proc() -> int {
         action      = options.action,
         provider_id = options.provider_id,
     }
-    defer secret.string_destroy(&state.api_key)
+    defer delete(state.api_key)
 
     if options.action == .Set_Key {
         prompt_err: Provider_Prompt_Error
@@ -101,7 +100,7 @@ provider_on_ready :: proc(s: ^Daemon_Session) {
             wire.Auth_Set_Api_Key_Params{provider_id = wire.Provider_Id(state.provider_id), api_key = state.api_key},
             provider_on_response,
         )
-        secret.string_destroy(&state.api_key)
+        delete(state.api_key)
     }
 }
 
@@ -192,7 +191,7 @@ provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
     defer crypto.zero_explicit(raw_data(bytes[:]), len(bytes))
     defer {
         if term.disable_raw_mode(raw) != .None && err == .None {
-            secret.string_destroy(&key)
+            delete(key)
             err = .Terminal
         }
         fmt.fprintln(os.stderr)

@@ -13,7 +13,6 @@ import "core:strings"
 import "core:time"
 
 import "src:paths"
-import "src:secret"
 
 import "libs:bindings/curl"
 import "libs:http"
@@ -428,9 +427,9 @@ relay_destroy :: proc(d: ^Daemon) {
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
     delete(r.cloud_url, d.allocator)
-    secret.string_destroy(&r.credential, d.allocator)
+    delete(r.credential, d.allocator)
     delete(r.relay_url, d.allocator)
-    secret.string_destroy(&r.ticket, d.allocator)
+    delete(r.ticket, d.allocator)
     free(r, d.allocator)
     d.relay = nil
 }
@@ -446,7 +445,7 @@ relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_
     peer := &r.peers[channel]
 
     temp := virtual.arena_temp_begin(&r.send_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&r.send_scratch)
 
     // A frame larger than one Noise packet rides several SEALED frames. Each is sealed before it
@@ -509,7 +508,7 @@ relay_free_partial :: proc(r: ^Relay) {
     }
 
     delete(r.cloud_url, r.daemon.allocator)
-    secret.string_destroy(&r.credential, r.daemon.allocator)
+    delete(r.credential, r.daemon.allocator)
     virtual.arena_destroy(&r.recv_scratch)
     virtual.arena_destroy(&r.send_scratch)
     ecdh.private_key_clear(&r.static_key)
@@ -527,7 +526,7 @@ relay_fetch_ticket :: proc(r: ^Relay) {
 
     url := strings.concatenate({r.cloud_url, RELAY_LINK_TICKETS_PATH}, context.temp_allocator)
     bearer := strings.concatenate({"Bearer ", r.credential}, context.temp_allocator)
-    defer secret.string_destroy(&bearer, context.temp_allocator)
+    defer delete(bearer, context.temp_allocator)
 
     headers := [?]curl.Header{{name = "authorization", value = bearer}, {name = "accept", value = "application/json"}}
     request := curl.Request {
@@ -594,7 +593,7 @@ relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
     if cerr != .None {
         return false
     }
-    defer secret.string_destroy(&parsed.ticket, context.temp_allocator)
+    defer delete(parsed.ticket, context.temp_allocator)
 
     if _, ok := relay.endpoint_parse(parsed.relay_url); !ok {
         return false
@@ -607,12 +606,12 @@ relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
 
     url, u_aerr := strings.clone(parsed.relay_url, r.daemon.allocator)
     if u_aerr != nil {
-        secret.string_destroy(&ticket, r.daemon.allocator)
+        delete(ticket, r.daemon.allocator)
 
         return false
     }
 
-    secret.string_destroy(&r.ticket, r.daemon.allocator)
+    delete(r.ticket, r.daemon.allocator)
     delete(r.relay_url, r.daemon.allocator)
     r.ticket = ticket
     r.relay_url = url
@@ -814,7 +813,7 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
     peer := &r.peers[ch]
 
     temp := virtual.arena_temp_begin(&r.recv_scratch)
-    defer secret.arena_temp_destroy(temp)
+    defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&r.recv_scratch)
 
     if !peer.established {

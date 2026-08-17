@@ -3,7 +3,6 @@ package oauth
 import "core:strings"
 import "core:testing"
 
-import "src:secret"
 
 // --- Codex device flow (non-standard: 403/404 pending, two-step exchange) ---
 
@@ -24,7 +23,7 @@ test_codex_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
 
     body, content_type, body_err := device_poll_body(provider(.Codex), session)
     testing.expect_value(t, body_err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
     testing.expect_value(t, content_type, "application/json")
     testing.expect_value(t, body, `{"device_auth_id":"machine-secret","user_code":"CODE-12345"}`)
 }
@@ -75,7 +74,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
         {`{"authorization_code":"poll-code","code_challenge":"challenge","code_verifier":"`, verifier, `"}`},
     )
     testing.expect(t, approved_aerr == nil, "grant fixture allocation")
-    defer secret.string_destroy(&approved, context.allocator)
+    defer delete(approved, context.allocator)
 
     outcome, outcome_err := device_poll_classify(provider(.Codex), 200, approved, context.allocator)
     testing.expect_value(t, outcome_err, OAuth_Error.None)
@@ -89,7 +88,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
 
     body, body_err := device_grant_body(provider(.Codex), grant)
     testing.expect_value(t, body_err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
     testing.expect(t, strings.contains(body, "code=poll-code"), "authorization code is exchanged")
     testing.expect(
         t,
@@ -104,7 +103,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
 test_rfc8628_device_auth_body_is_form_with_referrer :: proc(t: ^testing.T) {
     body, content_type, err := device_auth_body(provider(.Xai), "yuke-odin")
     testing.expect_value(t, err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
 
     testing.expect_value(t, content_type, "application/x-www-form-urlencoded")
     testing.expect(t, strings.contains(body, "client_id=b1a00492-073a-47ea-816f-4c329264a828"), "client id")
@@ -129,7 +128,7 @@ test_rfc8628_device_auth_parse_and_poll_body :: proc(t: ^testing.T) {
 
     body, content_type, body_err := device_poll_body(provider(.Xai), session)
     testing.expect_value(t, body_err, OAuth_Error.None)
-    defer secret.string_destroy(&body, context.allocator)
+    defer delete(body, context.allocator)
     testing.expect_value(t, content_type, "application/x-www-form-urlencoded")
     testing.expect(
         t,

@@ -3,7 +3,6 @@ package store
 import "core:mem"
 
 import "src:daemon/store/queries"
-import "src:secret"
 
 import "libs:bindings/sqlite"
 
@@ -206,10 +205,10 @@ credential_destroy :: proc(credentials: ^Credential, allocator := context.alloca
     assert(credentials != nil, "credential_destroy needs a value")
 
     delete(credentials.provider_id, allocator)
-    secret.string_destroy(&credentials.api_key, allocator)
-    secret.string_destroy(&credentials.access_token, allocator)
-    secret.string_destroy(&credentials.refresh_token, allocator)
-    secret.string_destroy(&credentials.account_id, allocator)
+    delete(credentials.api_key, allocator)
+    delete(credentials.access_token, allocator)
+    delete(credentials.refresh_token, allocator)
+    delete(credentials.account_id, allocator)
     credentials^ = {}
 }
 
