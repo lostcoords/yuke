@@ -138,9 +138,8 @@ test_catalog_state_holds_the_snapshot_it_revised :: proc(t: ^testing.T) {
     testing.expect(t, d.catalog.rev != empty_rev, "adding a model changes the revision")
     testing.expect_value(t, d.catalog.snapshot.feed_etag, `"e"`)
 
-    view, ok := catalog_models_view(d.catalog.snapshot, context.allocator)
+    view := catalog_models_view(d.catalog.snapshot, context.allocator)
     defer delete(view)
-    testing.expect(t, ok, "the view allocates")
     if testing.expect_value(t, len(view), 1) {
         testing.expect_value(t, string(view[0].id), "openai/gpt-5")
     }
@@ -213,9 +212,8 @@ test_catalog_refresh_apply_imports_and_moves_rev :: proc(t: ^testing.T) {
     testing.expect(t, changed, "importing a provider moves the revision")
     testing.expect(t, d.catalog.rev != empty_rev, "the held revision moved")
 
-    view, ok := catalog_models_view(d.catalog.snapshot, context.allocator)
+    view := catalog_models_view(d.catalog.snapshot, context.allocator)
     defer delete(view)
-    testing.expect(t, ok, "the view allocates")
     testing.expect_value(t, len(view), 1)
     testing.expect_value(t, view[0].provider, "openai")
 

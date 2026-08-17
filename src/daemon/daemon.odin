@@ -47,9 +47,6 @@ Error :: enum {
     // Binding/listening on the endpoint failed.
     Listen_Failed,
 
-    // Configuration or server storage could not be allocated.
-    Out_Of_Memory,
-
     // The configured database could not be opened, is damaged, or was written by a
     // newer daemon.
     Store_Failed,
@@ -363,11 +360,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     }
 
     // The version does not come from the manifest.
-    cloned_version, version_aerr := strings.clone(version, allocator)
-    d.daemon_version = cloned_version
-    if version_aerr != nil {
-        return .Out_Of_Memory
-    }
+    d.daemon_version = strings.clone(version, allocator)
 
     // Started before the script tier: `yuke:fs` offloads onto it, and `workspace.describe`
     // walks paths on it whether or not a blob directory is configured.
@@ -465,16 +458,10 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     }
 
     // Clone the owned config strings whose source may be the manifest, now that it has run.
-    cloned_blob_dir, blob_aerr := strings.clone(options.blob_dir, allocator)
-    cloned_token, token_aerr := strings.clone(options.auth_token, allocator)
-    cloned_origins, origins_ok := clone_string_slice(options.allowed_origins, allocator)
-    d.blob_dir = cloned_blob_dir
-    d.auth_token = cloned_token
+    d.blob_dir = strings.clone(options.blob_dir, allocator)
+    d.auth_token = strings.clone(options.auth_token, allocator)
     d.relay_cloud_url = normalized_cloud
-    d.allowed_origins = cloned_origins
-    if blob_aerr != nil || token_aerr != nil || !origins_ok {
-        return .Out_Of_Memory
-    }
+    d.allowed_origins = clone_string_slice(options.allowed_origins, allocator)
 
     // The enrolled device id for /identity, from the same device identity the relay reads. Only the
     // id is kept: it is moved out, then `identity_destroy` frees and wipes the credential and key.
@@ -525,14 +512,8 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         return .Store_Failed
     }
 
-    marks, merr := make(map[wire.Session_Id]wire.Seq, 16, allocator)
-    if merr != nil {
-        store.close(opened)
-        return .Out_Of_Memory
-    }
-
     d.store = opened
-    d.seq_high = marks
+    d.seq_high = make(map[wire.Session_Id]wire.Seq, 16, allocator)
 
     if catalog_err := catalog_state_load(d); catalog_err != nil {
         return .Store_Failed
@@ -563,14 +544,11 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         max_message_bytes = wire.LIMITS.max_frame_bytes,
     }
     ws_err := ws.server_init(&d.ws_server, loop, server_options, callbacks, d, allocator)
-    switch ws_err {
+    #partial switch ws_err {
     case .None:
 
     case .Invalid_Options:
         return .Invalid_Options
-
-    case .Out_Of_Memory:
-        return .Out_Of_Memory
 
     case .Too_Many_Connections,
          .Message_Too_Large,
@@ -583,24 +561,11 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         assert(false, "server_init returned a connection-only error")
     }
 
-    conns, conns_aerr := make(map[Conn_Ticket]^Conn, d.ws_server.max_connections, allocator)
-    if conns_aerr != nil {
-        return .Out_Of_Memory
-    }
+    d.conns = make(map[Conn_Ticket]^Conn, d.ws_server.max_connections, allocator)
 
-    d.conns = conns
-
-    if virtual.arena_init_growing(&d.pump_scratch) != nil {
-        return .Out_Of_Memory
-    }
-
-    if virtual.arena_init_growing(&d.turn_scratch) != nil {
-        return .Out_Of_Memory
-    }
-
-    if virtual.arena_init_growing(&d.frame_scratch) != nil {
-        return .Out_Of_Memory
-    }
+    _ = virtual.arena_init_growing(&d.pump_scratch)
+    _ = virtual.arena_init_growing(&d.turn_scratch)
+    _ = virtual.arena_init_growing(&d.frame_scratch)
 
     // After the pump owns its scratch and table, before the front door accepts anyone: a run
     // the previous start left open owes a terminal only this start can write.
@@ -615,7 +580,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         &d.router,
         allocator,
     )
-    switch herr {
+    #partial switch herr {
     case .None:
 
     case .Invalid_Options:
@@ -623,9 +588,6 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     case .Listen_Failed:
         return .Listen_Failed
-
-    case .Out_Of_Memory:
-        return .Out_Of_Memory
     }
 
     assert(d.loop == loop, "daemon lost its event loop during startup")
@@ -811,29 +773,17 @@ store_close :: proc(d: ^Daemon) {
 
 // Deep-clone a string slice into `allocator`, outliving the decode arena. Returns nil/false on an
 // allocation failure, freeing the partial clone.
-clone_string_slice :: proc(src: []string, allocator: mem.Allocator) -> (out: []string, ok: bool) {
+clone_string_slice :: proc(src: []string, allocator: mem.Allocator) -> (out: []string) {
     if len(src) == 0 {
-        return nil, true
+        return nil
     }
 
-    dst, aerr := make([]string, len(src), allocator)
-    if aerr != nil {
-        return nil, false
-    }
-
+    dst := make([]string, len(src), allocator)
     for s, i in src {
-        clone, cerr := strings.clone(s, allocator)
-        if cerr != nil {
-            for j in 0 ..< i {
-                delete(dst[j], allocator)
-            }
-            delete(dst, allocator)
-            return nil, false
-        }
-        dst[i] = clone
+        dst[i] = strings.clone(s, allocator)
     }
 
-    return dst, true
+    return dst
 }
 
 // Release the owned config and provider definitions, resetting them to empty. Every teardown
@@ -866,10 +816,7 @@ conn_register :: proc(d: ^Daemon, tx: Conn_Transport) -> ^Conn {
     assert(d != nil, "connection registration needs daemon state")
     assert(tx != nil, "connection registration needs a transport")
 
-    conn, err := new(Conn, d.allocator)
-    if err != nil {
-        return nil
-    }
+    conn := new(Conn, d.allocator)
 
     conn^ = {}
     conn.tx = tx
@@ -879,10 +826,7 @@ conn_register :: proc(d: ^Daemon, tx: Conn_Transport) -> ^Conn {
 
     d.next_ticket += 1
     conn.ticket = d.next_ticket
-    if map_insert(&d.conns, conn.ticket, conn) == nil {
-        free(conn, d.allocator)
-        return nil
-    }
+    map_insert(&d.conns, conn.ticket, conn)
 
     return conn
 }
@@ -909,14 +853,6 @@ ws_on_open :: proc(wsc: ^ws.Server_Conn) {
     assert(&d.ws_server == wsc.server, "open callback crossed daemon ownership")
 
     conn := conn_register(d, wsc)
-    if conn == nil {
-        // Out of memory admitting the connection: refuse it cleanly. It opened, so a
-        // terminal fires — with no `Conn` attached, the terminal callbacks no-op.
-        log.error("daemon: out of memory admitting websocket connection")
-        ws.server_abort(wsc, .Out_Of_Memory)
-        return
-    }
-
     wsc.user_data = conn
     assert(conn_ws(conn) == wsc, "connection state was not attached to its transport")
     log.debug("daemon: websocket connection open, awaiting initialize")
@@ -1118,18 +1054,9 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     assert(conn.client_name == "", "client name retained twice")
     assert(conn.client_version == "", "client version retained twice")
 
-    client_name, aerr := strings.clone(params.client.name, conn.allocator)
-    if aerr != nil {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    client_name := strings.clone(params.client.name, conn.allocator)
 
-    client_version, version_aerr := strings.clone(params.client.version, conn.allocator)
-    if version_aerr != nil {
-        delete(client_name, conn.allocator)
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    client_version := strings.clone(params.client.version, conn.allocator)
 
     conn.client_name = client_name
     conn.client_version = client_version
@@ -1183,16 +1110,8 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
 
     assert(verr == .None, "daemon built an invalid response frame")
 
-    e, ok := wire.response_encode(resp, allocator)
+    e, _ := wire.response_encode(resp, allocator)
     defer wire.emitter_destroy(&e)
-
-    // A truncated response is damaged protocol, not a smaller one: the peer would read a
-    // partial JSON value and lose framing, so the connection dies instead.
-    if !ok {
-        log.error("daemon: a response could not be encoded")
-        conn_abort(conn, .Out_Of_Memory)
-        return false
-    }
 
     if send_err := conn_send_text(conn, transmute([]byte)wire.to_string(&e)); send_err != .None {
         conn_abort(conn, send_err)

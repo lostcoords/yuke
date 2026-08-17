@@ -12,7 +12,6 @@ import "core:thread"
 import "core:time"
 
 import http_server "libs:http/server"
-import "libs:testsupport"
 import ws "libs:websocket"
 import "src:client"
 import "src:daemon/store"
@@ -644,55 +643,6 @@ test_daemon_second_initialize_after_ready_closes :: proc(t: ^testing.T) {
     testing.expect(t, p.got_close, "a second initialize after Ready should close the connection")
     testing.expect_value(t, p.close_code, wire.CLOSE.protocol_error)
 
-    test_teardown(&d)
-}
-
-// A response the emitter could not finish is protocol damage, not a smaller response:
-// the peer would read a partial JSON value and lose framing for good. `send_response`
-// aborts the connection rather than shipping the prefix.
-@(test)
-test_daemon_truncated_response_aborts_the_connection :: proc(t: ^testing.T) {
-    defer free_all(context.temp_allocator)
-
-    nbio.acquire_thread_event_loop()
-    defer nbio.release_thread_event_loop()
-    loop := nbio.current_thread_event_loop()
-
-    d: Daemon
-    derr := start(&d, loop, {host = "127.0.0.1", port = 0})
-    testing.expect_value(t, derr, Error.None)
-
-    obs: Pump_Obs
-    pump_obs_init(&obs, nil)
-    c: client.Client
-    pump_client_arm(t, &c, loop, bound_port(&d), &obs)
-
-    conn: ^Conn
-    for _, live in d.conns {
-        conn = live
-    }
-
-    testing.expect(t, conn != nil, "the armed client has a daemon-side connection")
-
-    // The refused encode is logged as an error, which the runner would otherwise count
-    // as a test failure; the assertions below are the check.
-    saved_logger := context.logger
-    quiet_logger: testsupport.Assert_Only_Logger
-    context.logger = testsupport.assert_only_logger(&quiet_logger, saved_logger)
-    defer context.logger = saved_logger
-
-    // Smaller than the shortest response text, so the encode latches its truncation.
-    backing: [16]byte
-    arena: mem.Arena
-    mem.arena_init(&arena, backing[:])
-
-    send_result(conn, wire.Request_Id("1"), wire.Empty{}, mem.arena_allocator(&arena))
-
-    testing.expect_value(t, conn.state, Protocol_State.Closed)
-    testing.expect(t, pump_tick_until(&obs.done), "the aborted connection should terminate the client")
-    testing.expect_value(t, len(obs.names), 0)
-
-    client.client_destroy(&c)
     test_teardown(&d)
 }
 

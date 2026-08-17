@@ -32,20 +32,10 @@ catalog_state_load :: proc(d: ^Daemon) -> store.Error {
     loaded := store.catalog_load(d.store, d.allocator) or_return
 
     scratch: virtual.Arena
-    if virtual.arena_init_growing(&scratch) != nil {
-        store.catalog_destroy(&loaded)
-
-        return .Alloc_Failed
-    }
-
+    _ = virtual.arena_init_growing(&scratch)
     defer virtual.arena_destroy(&scratch)
 
-    models, ok := catalog_models_view(loaded, virtual.arena_allocator(&scratch))
-    if !ok {
-        store.catalog_destroy(&loaded)
-
-        return .Alloc_Failed
-    }
+    models := catalog_models_view(loaded, virtual.arena_allocator(&scratch))
 
     catalog_state_destroy(d)
     d.catalog.snapshot = loaded
@@ -101,27 +91,17 @@ REV_HEX_DIGITS := "0123456789abcdef"
 
 // Flatten the catalog's visible models into one list. Each `Model_Info` borrows the
 // snapshot's strings; the stored order feeds both `catalog_rev` and `catalog.list`.
-catalog_models_view :: proc(
-    snapshot: store.Catalog,
-    allocator := context.allocator,
-) -> (
-    models: []wire.Model_Info,
-    ok: bool,
-) {
+catalog_models_view :: proc(snapshot: store.Catalog, allocator := context.allocator) -> (models: []wire.Model_Info) {
     total := 0
     for provider in snapshot.providers {
         total += len(provider.models)
     }
 
     if total == 0 {
-        return nil, true
+        return nil
     }
 
-    view, err := make([]wire.Model_Info, total, allocator)
-    if err != nil {
-        return nil, false
-    }
-
+    view := make([]wire.Model_Info, total, allocator)
     index := 0
     for provider in snapshot.providers {
         for model in provider.models {
@@ -132,7 +112,7 @@ catalog_models_view :: proc(
 
     assert(index == total, "the view holds every visible model")
 
-    return view, true
+    return view
 }
 
 // SHA-256 hex digest over the `catalog.list` content a client caches (visible models plus
@@ -256,12 +236,10 @@ catalog_selections_build :: proc(
             }
         }
 
-        if _, append_err := append(
+        append(
             &selections,
             catalog.Selection{provider_id = wire.Provider_Id(status.provider_id), source_id = source_id},
-        ); append_err != nil {
-            return selections, .Alloc_Failed
-        }
+        )
     }
 
     if len(selections) > catalog.SELECTIONS_MAX {
@@ -288,9 +266,7 @@ catalog_refresh_apply :: proc(
     old_rev := d.catalog.rev
 
     scratch: virtual.Arena
-    if virtual.arena_init_growing(&scratch) != nil {
-        return false, .Alloc_Failed
-    }
+    _ = virtual.arena_init_growing(&scratch)
     defer virtual.arena_destroy(&scratch)
     sa := virtual.arena_allocator(&scratch)
 
@@ -636,11 +612,7 @@ method_catalog_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 
     // A view over the held snapshot, built into request scratch. The snapshot is what
     // `d.catalog.rev` was computed from, so the two cannot disagree.
-    models, ok := catalog_models_view(d.catalog.snapshot, sa)
-    if !ok {
-        send_error(conn, req.id, .Internal, "catalog unavailable", sa)
-        return
-    }
+    models := catalog_models_view(d.catalog.snapshot, sa)
 
     // `send_result` asserts the result validates; these models come from persisted rows, so
     // store-write validation must stay at least as strict as wire validation (it is).

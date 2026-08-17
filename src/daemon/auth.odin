@@ -211,9 +211,7 @@ provider_credentials_load :: proc(d: ^Daemon) -> store.Error {
                 return .Invalid_Row
             }
 
-            if map_insert(&d.provider_auth.api_keys, row.provider_id, row.api_key) == nil {
-                return .Alloc_Failed
-            }
+            map_insert(&d.provider_auth.api_keys, row.provider_id, row.api_key)
             row.provider_id = ""
             row.api_key = ""
             continue
@@ -277,15 +275,8 @@ provider_auth_init :: proc(d: ^Daemon) -> Error {
         "fresh provider auth has no work",
     )
 
-    api_keys, api_keys_err := make(map[string]string, 8, d.allocator)
-    staged, staged_err := make(map[string]bool, 8, d.allocator)
-    if api_keys_err != nil || staged_err != nil {
-        delete(api_keys)
-        delete(staged)
-        return .Out_Of_Memory
-    }
-    d.provider_auth.api_keys = api_keys
-    d.provider_auth.staged_api_keys = staged
+    d.provider_auth.api_keys = make(map[string]string, 8, d.allocator)
+    d.provider_auth.staged_api_keys = make(map[string]bool, 8, d.allocator)
 
     if load_err := provider_credentials_load(d); load_err != nil {
         log.errorf("daemon: OAuth credentials could not be loaded: %v", load_err)
@@ -348,10 +339,6 @@ auth_callback_open :: proc(d: ^Daemon, provider: ^oauth.Provider) -> Error {
             return .None
         }
 
-        if listen_err == .Out_Of_Memory {
-            return .Out_Of_Memory
-        }
-
         if listen_err == .Invalid_Options {
             assert(false, "static OAuth callback options are invalid")
         }
@@ -411,24 +398,17 @@ provider_auth_destroy :: proc(d: ^Daemon) {
 
 // Remember that API-key storage changed after this process started.
 // The owned map key survives the request arena. `added` lets a failed store write roll it back.
-provider_api_key_stage :: proc(d: ^Daemon, provider_id: string) -> (added, ok: bool) {
+provider_api_key_stage :: proc(d: ^Daemon, provider_id: string) -> (added: bool) {
     assert(d != nil, "API-key staging needs daemon state")
     assert(d.provider_auth.staged_api_keys != nil, "API-key staging needs initialized auth")
 
     if provider_id in d.provider_auth.staged_api_keys {
-        return false, true
+        return false
     }
 
-    owned, clone_err := strings.clone(provider_id, d.allocator)
-    if clone_err != nil {
-        return false, false
-    }
-    if map_insert(&d.provider_auth.staged_api_keys, owned, true) == nil {
-        delete(owned, d.allocator)
-        return false, false
-    }
+    map_insert(&d.provider_auth.staged_api_keys, strings.clone(provider_id, d.allocator), true)
 
-    return true, true
+    return true
 }
 
 // Roll back a marker this request added before a failed store mutation.
@@ -1265,11 +1245,7 @@ method_auth_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    providers, make_err := make([dynamic]wire.Auth_Provider, 0, count, sa)
-    if make_err != nil {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    providers := make([dynamic]wire.Auth_Provider, 0, count, sa)
 
     for status in statuses {
         if kind, known := oauth.kind_from_id(status.provider_id); known {
@@ -1359,18 +1335,10 @@ method_auth_set_api_key :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
         return
     }
 
-    api_key, clone_err := strings.clone(params.api_key, d.allocator)
-    if clone_err != nil {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    api_key := strings.clone(params.api_key, d.allocator)
     defer delete(api_key, d.allocator)
 
-    staged, stage_ok := provider_api_key_stage(d, provider_id)
-    if !stage_ok {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    staged := provider_api_key_stage(d, provider_id)
 
     if write_err := store.credential_api_key_upsert(d.store, provider_id, api_key); write_err != nil {
         if staged {
@@ -1417,11 +1385,7 @@ method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         return
     }
 
-    login, aerr := new(Provider_Login, d.allocator)
-    if aerr != nil {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    login := new(Provider_Login, d.allocator)
     login^ = {}
 
     login.kind = kind
@@ -1433,11 +1397,7 @@ method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         callback_err := auth_callback_open(d, provider)
         if callback_err != .None {
             free(login, d.allocator)
-            if callback_err == .Out_Of_Memory {
-                conn_abort(conn, .Out_Of_Memory)
-            } else {
-                send_error(conn, req.id, .Overloaded, "browser callback ports are unavailable", sa)
-            }
+            send_error(conn, req.id, .Overloaded, "browser callback ports are unavailable", sa)
             return
         }
 
@@ -1474,12 +1434,7 @@ method_auth_login :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
         auth_changed_broadcast(d, kind)
 
     case .Device_Code:
-        request_id, id_aerr := strings.clone(string(req.id), d.allocator)
-        if id_aerr != nil {
-            free(login, d.allocator)
-            conn_abort(conn, .Out_Of_Memory)
-            return
-        }
+        request_id := strings.clone(string(req.id), d.allocator)
         login.request_ticket = conn.ticket
         login.request_id = wire.Request_Id(request_id)
         d.provider_auth.operation = login
@@ -1535,11 +1490,7 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
             return
         }
 
-        staged, stage_ok := provider_api_key_stage(d, provider_id)
-        if !stage_ok {
-            conn_abort(conn, .Out_Of_Memory)
-            return
-        }
+        staged := provider_api_key_stage(d, provider_id)
 
         removed, remove_err := store.credential_remove(d.store, provider_id)
         if remove_err != nil {

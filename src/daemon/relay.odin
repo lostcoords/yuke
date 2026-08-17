@@ -144,12 +144,7 @@ relay_cloud_url_normalize :: proc(source: string, allocator := context.allocator
         }
     }
 
-    cloned, clone_err := strings.clone(source[:end], allocator)
-    if clone_err != nil {
-        return "", .Out_Of_Memory
-    }
-
-    return cloned, .None
+    return strings.clone(source[:end], allocator), .None
 }
 
 // The relay link's lifecycle. Exactly one state at a time; `shutdown_complete` waits for
@@ -253,10 +248,7 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
         return .None
     }
 
-    r, aerr := new(Relay, d.allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    r := new(Relay, d.allocator)
 
     r.daemon = d
     r.state = .Fetching
@@ -269,16 +261,16 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
         return .None
     }
 
-    if virtual.arena_init_growing(&r.recv_scratch) != nil || virtual.arena_init_growing(&r.send_scratch) != nil {
-        relay_free_partial(r)
+    _ = virtual.arena_init_growing(&r.recv_scratch)
+    _ = virtual.arena_init_growing(&r.send_scratch)
 
-        return .Out_Of_Memory
-    }
-
+    // curl init is a genuine libs failure, not our allocation: degrade to "relay disabled"
+    // rather than crash, matching the not-configured path above.
     if curl.client_init(&r.curl_client, d.loop, d.allocator) != .None {
+        log.error("daemon: relay curl client init failed; relay disabled")
         relay_free_partial(r)
 
-        return .Out_Of_Memory
+        return .None
     }
 
     r.curl_ready = true
@@ -291,13 +283,7 @@ relay_connect :: proc(d: ^Daemon, cloud_url: string, credential: string, static_
     }
     r.cloud_url = normalized_cloud
 
-    cloned_credential, clone_err := strings.clone(credential, d.allocator)
-    r.credential = cloned_credential
-    if clone_err != nil {
-        relay_free_partial(r)
-
-        return .Out_Of_Memory
-    }
+    r.credential = strings.clone(credential, d.allocator)
 
     d.relay = r
     log.infof("daemon: relay enabled via %s", cloud_url)

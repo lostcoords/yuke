@@ -403,11 +403,7 @@ fs_job_submit :: proc(
         return
     }
 
-    job, aerr := new(Fs_Job, d.allocator)
-    if aerr != nil {
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
+    job := new(Fs_Job, d.allocator)
 
     job^ = {}
     job.daemon = d
@@ -417,18 +413,9 @@ fs_job_submit :: proc(
     mem.dynamic_arena_init(&job.arena, runtime.heap_allocator(), runtime.heap_allocator())
     job.allocator = mem.dynamic_arena_allocator(&job.arena)
 
-    cloned_id, id_aerr := strings.clone(string(id), job.allocator)
-    cloned_path, path_aerr := strings.clone(path, job.allocator)
-    cloned_cursor, cursor_aerr := strings.clone(cursor, job.allocator)
-    if id_aerr != nil || path_aerr != nil || cursor_aerr != nil {
-        fs_job_free(job)
-        conn_abort(conn, .Out_Of_Memory)
-        return
-    }
-
-    job.id = wire.Request_Id(cloned_id)
-    job.path = cloned_path
-    job.cursor = cloned_cursor
+    job.id = wire.Request_Id(strings.clone(string(id), job.allocator))
+    job.path = strings.clone(path, job.allocator)
+    job.cursor = strings.clone(cursor, job.allocator)
     job.create = wire.create_session_clone(create, job.allocator)
 
     conn.fs_jobs += 1

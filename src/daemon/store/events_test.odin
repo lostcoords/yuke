@@ -594,13 +594,7 @@ events_collect :: proc(user: rawptr, event: Event) -> Event_Visit {
     assert(collect.rows != nil, "events_collect needs a destination")
     assert(collect.err == nil, "events_collect stops after its first error")
 
-    _, append_err := append(collect.rows, event)
-    if append_err != nil {
-        delete(event.payload, collect.rows^.allocator)
-        collect.err = Store_Error.Alloc_Failed
-
-        return .Stop
-    }
+    append(collect.rows, event)
 
     return .Continue
 }
@@ -618,10 +612,7 @@ events_after :: proc(
     events: [dynamic]Event,
     err: Error,
 ) {
-    rows, make_err := make([dynamic]Event, 0, min(limit, 16), allocator)
-    if make_err != nil {
-        return nil, Store_Error.Alloc_Failed
-    }
+    rows := make([dynamic]Event, 0, min(limit, 16), allocator)
     defer if err != nil {
         events_destroy(rows)
     }

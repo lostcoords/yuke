@@ -30,12 +30,7 @@ js_init :: proc(d: ^Daemon, root: string, allocator: mem.Allocator) -> Error {
     count := 0
 
     if root != "" && os.is_dir(root) {
-        cloned, clone_err := strings.clone(root, allocator)
-        if clone_err != nil {
-            return .Out_Of_Memory
-        }
-
-        d.config_dir = cloned
+        d.config_dir = strings.clone(root, allocator)
         modules[count] = js.fs_module()
         count += 1
         modules[count] = js.exec_module()
@@ -86,11 +81,7 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, 
         return false, .None
     }
 
-    path, join_err := filepath.join({d.config_dir, JS_ENTRY_FILE}, allocator)
-    if join_err != nil {
-        return false, .Out_Of_Memory
-    }
-
+    path, _ := filepath.join({d.config_dir, JS_ENTRY_FILE}, allocator)
     defer delete(path, allocator)
 
     source, read_err := os.read_entire_file(path, allocator)

@@ -62,10 +62,6 @@ Store_Error :: enum {
     // `user_version` names a schema this binary does not know; a newer daemon
     // wrote this database.
     Version_Unsupported,
-
-    // An allocation failed. No longer produced by this package (allocations are
-    // treated as infallible); retained because the daemon still returns it.
-    Alloc_Failed,
 }
 
 // What a store call can fail with. The two lower layers keep their own vocabulary

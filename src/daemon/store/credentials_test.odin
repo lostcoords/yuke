@@ -5,7 +5,6 @@ import "core:strings"
 import "core:testing"
 
 import "libs:bindings/sqlite"
-import "libs:testsupport"
 
 @(test)
 test_credentials_round_trip_both_arms :: proc(t: ^testing.T) {
@@ -198,72 +197,6 @@ test_credential_table_rejects_mixed_empty_and_incomplete_rows :: proc(t: ^testin
     rows, rows_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM provider_credentials")
     testing.expect_value(t, rows_err, sqlite.Result.Ok)
     testing.expect_value(t, rows, i64(0))
-}
-
-// Every allocation in a multi-row load is failed in turn. Already cloned keys and
-// tokens must be released on every path; the store returns no partial credential list.
-@(test)
-test_credential_load_allocation_failures_leak_nothing :: proc(t: ^testing.T) {
-    s, err := open_memory()
-    testing.expect_value(t, err, nil)
-    defer close(s)
-
-    testing.expect_value(t, credential_api_key_upsert(s, "anthropic", "api-secret"), nil)
-    testing.expect_value(
-        t,
-        credential_oauth_upsert(
-            s,
-            "codex",
-            {
-                access_token = "access-secret",
-                refresh_token = "refresh-secret",
-                expires_at_ms = 100,
-                account_id = "account-secret",
-            },
-        ),
-        nil,
-    )
-
-    completed := false
-    for fail_at in 0 ..< 16 {
-        track: mem.Tracking_Allocator
-        mem.tracking_allocator_init(&track, context.allocator)
-        tracked := mem.tracking_allocator(&track)
-
-        failing: testsupport.Failing_Allocator
-        testsupport.failing_allocator_init(&failing, tracked, fail_at)
-        credentials, load_err := credentials_load(s, testsupport.failing_allocator(&failing))
-
-        if load_err == nil {
-            completed = true
-            credentials_destroy(credentials)
-        } else {
-            testing.expect_value(t, load_err, Store_Error.Alloc_Failed)
-            testing.expect(t, credentials == nil, "a failed load returns no partial credentials")
-        }
-
-        testing.expectf(
-            t,
-            len(track.allocation_map) == 0,
-            "fail_at %d leaked %d allocations",
-            fail_at,
-            len(track.allocation_map),
-        )
-        testing.expectf(
-            t,
-            len(track.bad_free_array) == 0,
-            "fail_at %d made %d bad frees",
-            fail_at,
-            len(track.bad_free_array),
-        )
-        mem.tracking_allocator_destroy(&track)
-
-        if completed {
-            break
-        }
-    }
-
-    testing.expect(t, completed, "the allocation sweep eventually reaches a successful load")
 }
 
 // A persisted row is operating input, even when local corruption bypasses CHECK.
