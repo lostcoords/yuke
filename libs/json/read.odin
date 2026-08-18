@@ -3,11 +3,6 @@ package json
 import "core:math"
 import "core:unicode/utf8"
 
-// Typed readers for one member of an already-parsed JSON object. Missing and null both
-// read as absent `(zero, present=false, valid=true)`; a present member of the wrong
-// type or out of bounds is invalid `(zero, present=true, valid=false)`. The caller
-// decides whether absence is acceptable.
-
 // `max_bytes <= 0` means uncapped. A present non-string, over-cap, empty (unless
 // `allow_empty`), or non-UTF-8 value is invalid.
 read_string :: proc(

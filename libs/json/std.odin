@@ -2,12 +2,6 @@ package json
 
 import stdjson "core:encoding/json"
 
-// Re-export the core:encoding/json surface the codebase uses, so every caller imports
-// only `libs:json` and this package is the single JSON source of truth. The aliases are
-// compile-time, so they cost nothing at runtime. Add a symbol here the first time a
-// caller needs it; swap an alias for our own implementation to fix or extend it in one
-// place for every caller.
-
 Value :: stdjson.Value
 Object :: stdjson.Object
 Array :: stdjson.Array
