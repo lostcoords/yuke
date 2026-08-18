@@ -136,7 +136,7 @@ Turn :: struct {
     error_body_capped:            bool,
 
     // Engine callbacks.
-    callbacks:                    Turn_Callbacks,
+    cbs:                          Turn_Callbacks,
 
     // Opaque engine owner passed to callbacks.
     user:                         rawptr,
@@ -217,7 +217,7 @@ turn_start :: proc(
     turn: ^Turn,
     client: ^Client,
     request: Turn_Request,
-    callbacks: Turn_Callbacks,
+    cbs: Turn_Callbacks,
     user: rawptr,
 ) -> (
     err: Transport_Error,
@@ -231,10 +231,10 @@ turn_start :: proc(
     // Reset before validating so every synchronous-start failure — fresh turn or
     // reused terminal turn — leaves the same `Created` postcondition.
     turn^ = {
-        client    = client,
-        callbacks = callbacks,
-        user      = user,
-        state     = .Created,
+        client = client,
+        cbs    = cbs,
+        user   = user,
+        state  = .Created,
     }
 
     ep := request.connection.endpoint
@@ -481,7 +481,7 @@ turn_commit :: proc(turn: ^Turn, before: int, err: Transport_Error) -> Transport
         return err
     }
 
-    if turn.callbacks.on_event == nil {
+    if turn.cbs.on_event == nil {
         resize(&turn.events, before)
         return .None
     }
@@ -568,8 +568,8 @@ turn_on_dispatch :: proc(op: ^nbio.Operation, turn: ^Turn) {
     turn.dispatching = true
 
     for event in turn.events {
-        assert(turn.callbacks.on_event != nil, "queued events require an event callback")
-        turn.callbacks.on_event(turn.user, event)
+        assert(turn.cbs.on_event != nil, "queued events require an event callback")
+        turn.cbs.on_event(turn.user, event)
 
         if turn.state == .Canceled do break
     }
@@ -600,11 +600,11 @@ turn_finalize :: proc(turn: ^Turn) {
     }
     if result.err == .Rate_Limited do result.retry_after = turn.retry_after
 
-    callbacks := turn.callbacks
+    cbs := turn.cbs
     user := turn.user
     turn_cleanup(turn, .Done)
 
-    if callbacks.on_done != nil do callbacks.on_done(user, result)
+    if cbs.on_done != nil do cbs.on_done(user, result)
 }
 
 // Tear down all turn-owned allocations while preserving only terminal state.
