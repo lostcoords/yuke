@@ -200,7 +200,9 @@ openai_responses_delta_event :: proc(
         return .None
     }
 
-    return openai_responses_emit_delta(decoder, events, kind, delta)
+    openai_responses_emit_delta(decoder, events, kind, delta)
+
+    return .None
 }
 
 // Append a text or reasoning delta, opening a fresh block or closing the open
@@ -211,12 +213,12 @@ openai_responses_emit_delta :: proc(
     events: ^[dynamic]Stream_Event,
     kind: Stream_Block_Kind,
     text: string,
-) -> Transport_Error {
+) {
     assert(kind == .Text || kind == .Reasoning, "OpenAI responses only streams text and reasoning deltas")
     assert(len(text) > 0, "a neutral delta is never empty")
 
     if decoder.block_open && decoder.open_kind != kind {
-        openai_responses_close_block(decoder, events) or_return
+        openai_responses_close_block(decoder, events)
     }
 
     if !decoder.block_open {
@@ -252,17 +254,12 @@ openai_responses_emit_delta :: proc(
     }
 
     append(events, event)
-
-    return .None
 }
 
 // Close the open text or reasoning block with its terminal metadata. A reasoning
 // block carries the captured encrypted signature, which is consumed here.
 @(private)
-openai_responses_close_block :: proc(
-    decoder: ^Openai_Responses_Decoder,
-    events: ^[dynamic]Stream_Event,
-) -> Transport_Error {
+openai_responses_close_block :: proc(decoder: ^Openai_Responses_Decoder, events: ^[dynamic]Stream_Event) {
     assert(decoder.block_open, "closing a block requires an open block")
 
     result: Stream_Block_Result
@@ -283,8 +280,6 @@ openai_responses_close_block :: proc(
 
     decoder.block_open = false
     decoder.reasoning_signature = ""
-
-    return .None
 }
 
 // Handle `response.output_item.added`: start accumulating a function call, or
@@ -484,7 +479,8 @@ openai_responses_finalize_reasoning :: proc(
     openai_responses_capture_signature(decoder, item) or_return
 
     if decoder.block_open && decoder.open_kind == .Reasoning {
-        return openai_responses_close_block(decoder, events)
+        openai_responses_close_block(decoder, events)
+        return .None
     }
 
     if !decoder.block_open && len(decoder.reasoning_signature) > 0 {
@@ -555,7 +551,7 @@ openai_responses_terminal :: proc(
     decoder.pending_reason = reason
 
     if decoder.block_open {
-        openai_responses_close_block(decoder, events) or_return
+        openai_responses_close_block(decoder, events)
     }
 
     for call in decoder.tools {

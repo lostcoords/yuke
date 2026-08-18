@@ -251,11 +251,11 @@ openai_decode_choices :: proc(
     }
 
     if len(reasoning) > 0 {
-        openai_emit_delta(decoder, events, .Reasoning, reasoning) or_return
+        openai_emit_delta(decoder, events, .Reasoning, reasoning)
     }
 
     if len(content) > 0 {
-        openai_emit_delta(decoder, events, .Text, content) or_return
+        openai_emit_delta(decoder, events, .Text, content)
     }
 
     return .None
@@ -269,12 +269,12 @@ openai_emit_delta :: proc(
     events: ^[dynamic]Stream_Event,
     kind: Stream_Block_Kind,
     text: string,
-) -> Transport_Error {
+) {
     assert(kind == .Text || kind == .Reasoning, "OpenAI chat only streams text and reasoning deltas")
     assert(len(text) > 0, "a neutral delta is never empty")
 
     if decoder.block_open && decoder.open_kind != kind {
-        openai_close_block(decoder, events) or_return
+        openai_close_block(decoder, events)
     }
 
     if !decoder.block_open {
@@ -310,13 +310,11 @@ openai_emit_delta :: proc(
     }
 
     append(events, event)
-
-    return .None
 }
 
 // Close the open text or reasoning block with its terminal metadata.
 @(private)
-openai_close_block :: proc(decoder: ^Openai_Chat_Decoder, events: ^[dynamic]Stream_Event) -> Transport_Error {
+openai_close_block :: proc(decoder: ^Openai_Chat_Decoder, events: ^[dynamic]Stream_Event) {
     assert(decoder.block_open, "closing a block requires an open block")
 
     result: Stream_Block_Result
@@ -334,8 +332,6 @@ openai_close_block :: proc(decoder: ^Openai_Chat_Decoder, events: ^[dynamic]Stre
     append(events, Stream_Block_Stopped{block_id = decoder.open_id, result = result})
 
     decoder.block_open = false
-
-    return .None
 }
 
 // Accumulate one `delta.tool_calls` array into the indexed pending entries. A
@@ -373,7 +369,7 @@ openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.
             return .Too_Many_Tool_Calls
         }
 
-        openai_ensure_tool_slot(decoder, int(slot)) or_return
+        openai_ensure_tool_slot(decoder, int(slot))
         entry := &decoder.pending_tools[slot]
 
         id, _, id_err := decode_optional_string(call, "id")
@@ -427,7 +423,7 @@ openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.
 // Grow the pending-tool table so `slot` is addressable, allocating each new
 // entry's fragment buffers in the turn allocator.
 @(private)
-openai_ensure_tool_slot :: proc(decoder: ^Openai_Chat_Decoder, slot: int) -> Transport_Error {
+openai_ensure_tool_slot :: proc(decoder: ^Openai_Chat_Decoder, slot: int) {
     assert(slot >= 0 && slot < MAX_TOOL_CALLS, "a tool slot stays within its bound")
 
     for len(decoder.pending_tools) <= slot {
@@ -442,8 +438,6 @@ openai_ensure_tool_slot :: proc(decoder: ^Openai_Chat_Decoder, slot: int) -> Tra
         }
         append(&decoder.pending_tools, entry)
     }
-
-    return .None
 }
 
 // Close any open block, then emit each named tool call as a start/stop pair with
@@ -458,7 +452,7 @@ openai_chat_terminal :: proc(
     assert(scratch_allocator.procedure != nil, "the terminal event needs a valid scratch allocator")
 
     if decoder.block_open {
-        openai_close_block(decoder, events) or_return
+        openai_close_block(decoder, events)
     }
 
     for entry, index in decoder.pending_tools {
