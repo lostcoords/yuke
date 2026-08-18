@@ -4,11 +4,11 @@ import "core:crypto"
 import "core:crypto/sha2"
 import "core:encoding/base64"
 import "core:encoding/hex"
-import "core:encoding/json"
 import "core:math"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
+import "libs:json"
 
 
 // OAuth credentials retained only by the daemon. Every string is owned by the

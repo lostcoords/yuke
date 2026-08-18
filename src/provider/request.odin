@@ -1,8 +1,8 @@
 package provider
 
 import "base:runtime"
-import "core:encoding/json"
 import "core:unicode/utf8"
+import "libs:json"
 import "src:wire"
 
 // One callable tool exposed to a provider. `input_schema` is exactly one JSON

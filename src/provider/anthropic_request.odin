@@ -1,7 +1,6 @@
 package provider
 
 import "base:runtime"
-import stdjson "core:encoding/json"
 import "core:io"
 import "core:strings"
 import "core:unicode/utf8"
@@ -263,7 +262,7 @@ anthropic_tool_arguments_validate :: proc(
             return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
         }
 
-        stdjson.destroy_value(value, scratch_allocator)
+        json.destroy_value(value, scratch_allocator)
     }
 
     return .None

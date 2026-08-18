@@ -1,8 +1,8 @@
 package provider
 
-import "core:encoding/json"
 import "core:strings"
 import "core:testing"
+import "libs:json"
 import "src:wire"
 
 @(private = "file")

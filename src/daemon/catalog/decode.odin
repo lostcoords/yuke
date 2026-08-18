@@ -1,6 +1,5 @@
 package catalog
 
-import stdjson "core:encoding/json"
 import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
@@ -55,8 +54,8 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
         return result, .Response_Too_Large
     }
 
-    syntax := stdjson.make_parser(data, .JSON, true, mem.nil_allocator())
-    if !stdjson.validate_value(&syntax) || syntax.curr_token.kind != .EOF {
+    syntax := json.make_parser(data, .JSON, true, mem.nil_allocator())
+    if !json.validate_value(&syntax) || syntax.curr_token.kind != .EOF {
         return result, .Invalid_Json
     }
 
@@ -65,14 +64,14 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
     defer virtual.arena_destroy(&scratch)
     sa := virtual.arena_allocator(&scratch)
 
-    selected := make([]stdjson.Object, len(selections), sa)
+    selected := make([]json.Object, len(selections), sa)
     found := make([]bool, len(selections), sa)
 
-    parser := stdjson.make_parser(data, .JSON, true, sa)
+    parser := json.make_parser(data, .JSON, true, sa)
     if parser.curr_token.kind != .Open_Brace {
         return result, .Invalid_Json
     }
-    stdjson.advance_token(&parser)
+    json.advance_token(&parser)
 
     first := true
     for parser.curr_token.kind != .Close_Brace {
@@ -80,7 +79,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
             if parser.curr_token.kind != .Comma {
                 return result, .Invalid_Json
             }
-            stdjson.advance_token(&parser)
+            json.advance_token(&parser)
         }
         first = false
 
@@ -88,7 +87,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
         if parser.curr_token.kind != .Colon {
             return result, .Invalid_Json
         }
-        stdjson.advance_token(&parser)
+        json.advance_token(&parser)
 
         wanted := false
         for selection, i in selections {
@@ -107,12 +106,12 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
             continue
         }
 
-        value, parse_err := stdjson.parse_value(&parser)
+        value, parse_err := json.parse_value(&parser)
         if parse_err != nil {
             return result, .Invalid_Json
         }
 
-        object, object_ok := value.(stdjson.Object)
+        object, object_ok := value.(json.Object)
         if !object_ok {
             for selection, i in selections {
                 if selection.source_id == key {
@@ -129,7 +128,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
             }
         }
     }
-    stdjson.advance_token(&parser)
+    json.advance_token(&parser)
     if parser.curr_token.kind != .EOF {
         return result, .Invalid_Json
     }
@@ -192,16 +191,16 @@ selections_valid :: proc(selections: []Selection) -> bool {
 }
 
 @(private)
-decode_object_key :: proc(parser: ^stdjson.Parser) -> (string, Error) {
+decode_object_key :: proc(parser: ^json.Parser) -> (string, Error) {
     assert(parser != nil, "catalog object key decode needs a parser")
 
     token := parser.curr_token
     if token.kind != .String {
         return "", .Invalid_Json
     }
-    stdjson.advance_token(parser)
+    json.advance_token(parser)
 
-    key, key_err := stdjson.unquote_string(token, .JSON, parser.allocator)
+    key, key_err := json.unquote_string(token, .JSON, parser.allocator)
     if key_err != nil {
         return "", .Invalid_Json
     }
@@ -210,7 +209,7 @@ decode_object_key :: proc(parser: ^stdjson.Parser) -> (string, Error) {
 }
 
 @(private)
-skip_value :: proc(parser: ^stdjson.Parser) -> Error {
+skip_value :: proc(parser: ^json.Parser) -> Error {
     assert(parser != nil, "catalog skip needs a parser")
 
     #partial switch parser.curr_token.kind {
@@ -227,7 +226,7 @@ skip_value :: proc(parser: ^stdjson.Parser) -> Error {
             case .EOF:
                 return .Invalid_Json
             }
-            stdjson.advance_token(parser)
+            json.advance_token(parser)
 
             if depth == 0 {
                 return .None
@@ -238,7 +237,7 @@ skip_value :: proc(parser: ^stdjson.Parser) -> Error {
         return .Invalid_Json
 
     case:
-        stdjson.advance_token(parser)
+        json.advance_token(parser)
         return .None
     }
 }
@@ -260,7 +259,7 @@ issue_append :: proc(result: ^Result, selection: Selection, issue_error: Provide
 provider_normalize :: proc(
     out: ^Provider,
     selection: Selection,
-    object: stdjson.Object,
+    object: json.Object,
     allocator: mem.Allocator,
 ) -> (
     err: Normalize_Error,
@@ -302,7 +301,7 @@ provider_normalize :: proc(
     out.credential_env = env
 
     models_value, models_present := object["models"]
-    models, models_ok := models_value.(stdjson.Object)
+    models, models_ok := models_value.(json.Object)
     if !models_present || !models_ok {
         return .Invalid
     }
@@ -316,7 +315,7 @@ provider_normalize :: proc(
     }
 
     for model_key, value in models {
-        model_object, model_ok := value.(stdjson.Object)
+        model_object, model_ok := value.(json.Object)
         if !model_ok {
             return .Invalid
         }
@@ -357,7 +356,7 @@ model_normalize :: proc(
     out: ^Model,
     provider_id: wire.Provider_Id,
     source_key: string,
-    object: stdjson.Object,
+    object: json.Object,
     provider_endpoint: provider.Endpoint,
     provider_package: string,
     allocator: mem.Allocator,
@@ -547,7 +546,7 @@ protocol_resolve :: proc(npm: string, shape: string) -> (wire.Provider_Protocol,
 
 @(private)
 model_route :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     provider_endpoint: provider.Endpoint,
     provider_package: string,
 ) -> (
@@ -560,7 +559,7 @@ model_route :: proc(
         return provider_endpoint, provider_package, .None
     }
 
-    route, route_ok := value.(stdjson.Object)
+    route, route_ok := value.(json.Object)
     if !route_ok {
         return {}, "", .Invalid
     }
@@ -593,14 +592,14 @@ model_route :: proc(
 
 @(private)
 credential_env_normalize :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     allocator: mem.Allocator,
 ) -> (
     names: []string,
     err: Normalize_Error,
 ) {
     value, present := object["env"]
-    array, array_ok := value.(stdjson.Array)
+    array, array_ok := value.(json.Array)
     if !present || !array_ok || len(array) > 32 {
         return nil, .Invalid
     }
@@ -615,13 +614,13 @@ credential_env_normalize :: proc(
     }
 
     for item, i in array {
-        name, name_ok := item.(stdjson.String)
+        name, name_ok := item.(json.String)
         if !name_ok || !env_name_valid(name) {
             return names, .Invalid
         }
 
         for previous in array[:i] {
-            previous_name, previous_ok := previous.(stdjson.String)
+            previous_name, previous_ok := previous.(json.String)
             if !previous_ok || previous_name == name {
                 return names, .Invalid
             }
@@ -634,27 +633,27 @@ credential_env_normalize :: proc(
 }
 
 @(private)
-model_modalities :: proc(object: stdjson.Object) -> (input, output, vision, valid: bool) {
+model_modalities :: proc(object: json.Object) -> (input, output, vision, valid: bool) {
     value, present := object["modalities"]
     if !present {
         return false, false, false, true
     }
 
-    modalities, object_ok := value.(stdjson.Object)
+    modalities, object_ok := value.(json.Object)
     if !object_ok {
         return false, false, false, false
     }
 
     input_value, input_present := modalities["input"]
-    inputs, input_ok := input_value.(stdjson.Array)
+    inputs, input_ok := input_value.(json.Array)
     output_value, output_present := modalities["output"]
-    outputs, output_ok := output_value.(stdjson.Array)
+    outputs, output_ok := output_value.(json.Array)
     if !input_present || !input_ok || !output_present || !output_ok {
         return false, false, false, false
     }
 
     for item in inputs {
-        modality, modality_ok := item.(stdjson.String)
+        modality, modality_ok := item.(json.String)
         if !modality_ok {
             return false, false, false, false
         }
@@ -663,7 +662,7 @@ model_modalities :: proc(object: stdjson.Object) -> (input, output, vision, vali
         vision = vision || modality == "image"
     }
     for item in outputs {
-        modality, modality_ok := item.(stdjson.String)
+        modality, modality_ok := item.(json.String)
         if !modality_ok {
             return false, false, false, false
         }
@@ -676,7 +675,7 @@ model_modalities :: proc(object: stdjson.Object) -> (input, output, vision, vali
 
 @(private)
 reasoning_replay_normalize :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     npm: string,
 ) -> (
     replay: provider.Openai_Reasoning_Replay,
@@ -693,10 +692,10 @@ reasoning_replay_normalize :: proc(
     }
 
     #partial switch item in value {
-    case stdjson.Boolean:
+    case json.Boolean:
         return .Reasoning_Content if bool(item) else .None, true, .None
 
-    case stdjson.Object:
+    case json.Object:
         field, field_present, field_valid := json.read_string(item, "field", 32, false)
         if !field_present || !field_valid {
             return .None, true, .Invalid
@@ -716,7 +715,7 @@ reasoning_replay_normalize :: proc(
 
 @(private)
 reasoning_normalize :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     protocol: wire.Provider_Protocol,
     npm: string,
     family: string,
@@ -730,7 +729,7 @@ reasoning_normalize :: proc(
         return spec, .None
     }
 
-    options, options_ok := value.(stdjson.Array)
+    options, options_ok := value.(json.Array)
     if !options_ok {
         return spec, .Invalid
     }
@@ -738,11 +737,11 @@ reasoning_normalize :: proc(
         return spec, .None
     }
 
-    primary: stdjson.Object
+    primary: json.Object
     primary_kind := Reasoning_Option_Kind.None
     has_toggle := false
     for item, i in options {
-        option, option_ok := item.(stdjson.Object)
+        option, option_ok := item.(json.Object)
         if !option_ok {
             return spec, .Invalid
         }
@@ -793,7 +792,7 @@ reasoning_normalize :: proc(
     case .Openai_Chat:
         if primary_kind == .Effort {
             values, values_present := primary["values"]
-            effort_values, values_ok := values.(stdjson.Array)
+            effort_values, values_ok := values.(json.Array)
             if !values_present || !values_ok {
                 return spec, .Invalid
             }
@@ -816,7 +815,7 @@ reasoning_normalize :: proc(
 }
 
 @(private)
-reasoning_option_kind :: proc(object: stdjson.Object) -> (Reasoning_Option_Kind, Normalize_Error) {
+reasoning_option_kind :: proc(object: json.Object) -> (Reasoning_Option_Kind, Normalize_Error) {
     kind, present, valid := json.read_string(object, "type", 32, false)
     if !present || !valid {
         return .None, .Invalid
@@ -837,11 +836,11 @@ reasoning_option_kind :: proc(object: stdjson.Object) -> (Reasoning_Option_Kind,
 }
 
 @(private)
-effort_levels_add :: proc(spec: ^Reasoning_Spec, option: stdjson.Object) -> Normalize_Error {
+effort_levels_add :: proc(spec: ^Reasoning_Spec, option: json.Object) -> Normalize_Error {
     assert(spec != nil, "effort normalization needs a reasoning spec")
 
     value, present := option["values"]
-    values, values_ok := value.(stdjson.Array)
+    values, values_ok := value.(json.Array)
     if !present || !values_ok {
         return .Invalid
     }
@@ -860,7 +859,7 @@ effort_levels_add :: proc(spec: ^Reasoning_Spec, option: stdjson.Object) -> Norm
 }
 
 @(private)
-effort_values_contain_off :: proc(values: stdjson.Array) -> (bool, Normalize_Error) {
+effort_values_contain_off :: proc(values: json.Array) -> (bool, Normalize_Error) {
     for value in values {
         level, known, valid := reasoning_level(value)
         if !valid {
@@ -875,12 +874,12 @@ effort_values_contain_off :: proc(values: stdjson.Array) -> (bool, Normalize_Err
 }
 
 @(private)
-reasoning_level :: proc(value: stdjson.Value) -> (level: string, known, valid: bool) {
-    if _, null_ok := value.(stdjson.Null); null_ok {
+reasoning_level :: proc(value: json.Value) -> (level: string, known, valid: bool) {
+    if _, null_ok := value.(json.Null); null_ok {
         return "off", true, true
     }
 
-    token, string_ok := value.(stdjson.String)
+    token, string_ok := value.(json.String)
     if !string_ok {
         return "", false, false
     }
@@ -916,7 +915,7 @@ reasoning_level_add :: proc(spec: ^Reasoning_Spec, level: string) {
 }
 
 @(private)
-reasoning_budget :: proc(object: stdjson.Object) -> (minimum: Maybe(i64), maximum: Maybe(u64), err: Normalize_Error) {
+reasoning_budget :: proc(object: json.Object) -> (minimum: Maybe(i64), maximum: Maybe(u64), err: Normalize_Error) {
     if value, present := object["min"]; present {
         parsed, valid := json.integer_i64(value)
         if !valid || parsed < -1 {
@@ -970,13 +969,13 @@ default_reasoning_level :: proc(levels: []string) -> string {
 }
 
 @(private)
-cost_normalize :: proc(object: stdjson.Object) -> (cost: wire.Model_Cost, err: Normalize_Error) {
+cost_normalize :: proc(object: json.Object) -> (cost: wire.Model_Cost, err: Normalize_Error) {
     value, present := object["cost"]
     if !present {
         return {}, .None
     }
 
-    cost_object, object_ok := value.(stdjson.Object)
+    cost_object, object_ok := value.(json.Object)
     if !object_ok {
         return {}, .Invalid
     }

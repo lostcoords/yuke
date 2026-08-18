@@ -1,6 +1,5 @@
 package json
 
-import stdjson "core:encoding/json"
 import "core:math"
 import "core:unicode/utf8"
 
@@ -12,7 +11,7 @@ import "core:unicode/utf8"
 // `max_bytes <= 0` means uncapped. A present non-string, over-cap, empty (unless
 // `allow_empty`), or non-UTF-8 value is invalid.
 read_string :: proc(
-    o: stdjson.Object,
+    o: Object,
     name: string,
     max_bytes: int,
     allow_empty: bool,
@@ -23,9 +22,9 @@ read_string :: proc(
     member, found := o[name]
     if !found do return "", false, true
 
-    if _, is_null := member.(stdjson.Null); is_null do return "", false, true
+    if _, is_null := member.(Null); is_null do return "", false, true
 
-    text, ok := member.(stdjson.String)
+    text, ok := member.(String)
     if !ok ||
        (!allow_empty && len(text) == 0) ||
        (max_bytes > 0 && len(text) > max_bytes) ||
@@ -36,13 +35,13 @@ read_string :: proc(
     return text, true, true
 }
 
-read_bool :: proc(o: stdjson.Object, name: string) -> (value: bool, present, valid: bool) {
+read_bool :: proc(o: Object, name: string) -> (value: bool, present, valid: bool) {
     member, found := o[name]
     if !found do return false, false, true
 
-    if _, is_null := member.(stdjson.Null); is_null do return false, false, true
+    if _, is_null := member.(Null); is_null do return false, false, true
 
-    boolean, ok := member.(stdjson.Boolean)
+    boolean, ok := member.(Boolean)
     if !ok do return false, true, false
 
     return bool(boolean), true, true
@@ -50,11 +49,11 @@ read_bool :: proc(o: stdjson.Object, name: string) -> (value: bool, present, val
 
 // A non-negative integer in `[lo, hi]`. A fractionless float (`1.0`) counts; a
 // fraction, nan/inf, or out-of-range value is invalid.
-read_u64 :: proc(o: stdjson.Object, name: string, lo, hi: u64) -> (value: u64, present, valid: bool) {
+read_u64 :: proc(o: Object, name: string, lo, hi: u64) -> (value: u64, present, valid: bool) {
     member, found := o[name]
     if !found do return 0, false, true
 
-    if _, is_null := member.(stdjson.Null); is_null do return 0, false, true
+    if _, is_null := member.(Null); is_null do return 0, false, true
 
     n, ok := integer_i64(member)
     if !ok || n < 0 || u64(n) < lo || u64(n) > hi do return 0, true, false
@@ -62,17 +61,17 @@ read_u64 :: proc(o: stdjson.Object, name: string, lo, hi: u64) -> (value: u64, p
     return u64(n), true, true
 }
 
-read_f64_nonneg :: proc(o: stdjson.Object, name: string) -> (value: f64, present, valid: bool) {
+read_f64_nonneg :: proc(o: Object, name: string) -> (value: f64, present, valid: bool) {
     member, found := o[name]
     if !found do return 0, false, true
 
-    if _, is_null := member.(stdjson.Null); is_null do return 0, false, true
+    if _, is_null := member.(Null); is_null do return 0, false, true
 
     #partial switch number in member {
-    case stdjson.Integer:
+    case Integer:
         value = f64(number)
 
-    case stdjson.Float:
+    case Float:
         value = f64(number)
 
     case:
@@ -84,13 +83,13 @@ read_f64_nonneg :: proc(o: stdjson.Object, name: string) -> (value: f64, present
     return value, true, true
 }
 
-read_object :: proc(o: stdjson.Object, name: string) -> (value: stdjson.Object, present, valid: bool) {
+read_object :: proc(o: Object, name: string) -> (value: Object, present, valid: bool) {
     member, found := o[name]
     if !found do return nil, false, true
 
-    if _, is_null := member.(stdjson.Null); is_null do return nil, false, true
+    if _, is_null := member.(Null); is_null do return nil, false, true
 
-    object, ok := member.(stdjson.Object)
+    object, ok := member.(Object)
     if !ok do return nil, true, false
 
     return object, true, true
@@ -98,12 +97,12 @@ read_object :: proc(o: stdjson.Object, name: string) -> (value: stdjson.Object, 
 
 // A JSON number that is exactly an integer fitting i64. A fractionless float is
 // accepted; nan/inf/fraction/out-of-range is not.
-integer_i64 :: proc(v: stdjson.Value) -> (i64, bool) {
+integer_i64 :: proc(v: Value) -> (i64, bool) {
     #partial switch number in v {
-    case stdjson.Integer:
+    case Integer:
         return i64(number), true
 
-    case stdjson.Float:
+    case Float:
         if f64_is_integral(f64(number)) && f64(number) >= f64(min(i64)) && f64(number) <= f64(max(i64)) {
             return i64(number), true
         }

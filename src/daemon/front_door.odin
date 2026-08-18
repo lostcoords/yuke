@@ -2,13 +2,13 @@ package daemon
 
 import "core:crypto/sha2"
 import "core:encoding/hex"
-import "core:encoding/json"
 import "core:log"
 import "core:nbio"
 import "core:os"
 import "core:strings"
 import "libs:http"
 import http_server "libs:http/server"
+import "libs:json"
 import ws "libs:websocket"
 import "src:wire"
 

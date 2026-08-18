@@ -1,10 +1,10 @@
 package oauth
 
-import "core:encoding/json"
 import "core:math"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
+import "libs:json"
 
 
 // Generic device-flow bounds and the RFC 8628 device grant type.

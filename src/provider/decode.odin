@@ -1,7 +1,6 @@
 package provider
 
 import "base:runtime"
-import stdjson "core:encoding/json"
 
 import "libs:json"
 import "src:wire"
@@ -19,13 +18,13 @@ decode_json_object :: proc(
     data: string,
     allocator: runtime.Allocator,
 ) -> (
-    value: stdjson.Value,
-    object: stdjson.Object,
+    value: json.Value,
+    object: json.Object,
     err: Transport_Error,
 ) {
-    parser := stdjson.make_parser_from_string(data, .JSON, false, allocator)
-    parse_err: stdjson.Error
-    value, parse_err = stdjson.parse_value(&parser)
+    parser := json.make_parser_from_string(data, .JSON, false, allocator)
+    parse_err: json.Error
+    value, parse_err = json.parse_value(&parser)
     if parse_err != nil {
         assert(parse_err != .Invalid_Allocator, "provider JSON needs a valid allocator")
 
@@ -37,9 +36,9 @@ decode_json_object :: proc(
     }
 
     object_ok: bool
-    object, object_ok = value.(stdjson.Object)
+    object, object_ok = value.(json.Object)
     if !object_ok || parser.curr_token.kind != .EOF {
-        stdjson.destroy_value(value, allocator)
+        json.destroy_value(value, allocator)
         return {}, nil, .Parse_Error
     }
 
@@ -49,10 +48,10 @@ decode_json_object :: proc(
 // Optional object member. Missing and null are both absent; a present value of
 // another type is a provider parse error.
 decode_optional_object :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     name: string,
 ) -> (
-    value: stdjson.Object,
+    value: json.Object,
     present: bool,
     err: Transport_Error,
 ) {
@@ -67,7 +66,7 @@ decode_optional_object :: proc(
 // Optional string member. Missing and null are both absent; a present value of
 // another type is a provider parse error.
 decode_optional_string :: proc(
-    object: stdjson.Object,
+    object: json.Object,
     name: string,
 ) -> (
     value: string,
@@ -84,14 +83,7 @@ decode_optional_string :: proc(
 
 // Optional exact non-negative integer member. Missing and null are absent; a
 // fraction, negative value, unsafe integer, or another JSON type is malformed.
-decode_optional_u64 :: proc(
-    object: stdjson.Object,
-    name: string,
-) -> (
-    value: u64,
-    present: bool,
-    err: Transport_Error,
-) {
+decode_optional_u64 :: proc(object: json.Object, name: string) -> (value: u64, present: bool, err: Transport_Error) {
     v, p, valid := json.read_u64(object, name, 0, MAX_EXACT_JSON_INTEGER)
     if !valid {
         return 0, false, .Parse_Error
@@ -103,7 +95,7 @@ decode_optional_u64 :: proc(
 // Read a provider usage counter permissively. Missing, null, non-number,
 // negative, fractional, and unsafe values become zero; usage metadata must
 // never crash or invalidate an otherwise usable answer.
-decode_usage_u64 :: proc(object: stdjson.Object, name: string) -> u64 {
+decode_usage_u64 :: proc(object: json.Object, name: string) -> u64 {
     v, present, valid := json.read_u64(object, name, 0, MAX_EXACT_JSON_INTEGER)
 
     return present && valid ? v : 0
@@ -128,7 +120,7 @@ tool_arguments :: proc(
         return "", parse_err
     }
 
-    stdjson.destroy_value(value, scratch_allocator)
+    json.destroy_value(value, scratch_allocator)
 
     return raw, .None
 }

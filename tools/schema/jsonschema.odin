@@ -1,8 +1,8 @@
 package schema
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
+import "libs:json"
 
 // JSON Schema 2020-12 over the same model `wire.json` is built from, for validators, docs
 // renderers, and fuzzers. It describes the bytes on the wire, where `wire.json` describes the

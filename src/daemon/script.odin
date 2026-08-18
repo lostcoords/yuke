@@ -2,13 +2,13 @@ package daemon
 
 import "base:runtime"
 import "core:c"
-import "core:encoding/json"
 import "core:log"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "libs:json"
 
 import qjs "libs:bindings/quickjs"
 import "libs:offload"

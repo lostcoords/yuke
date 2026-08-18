@@ -1,8 +1,8 @@
 package wire
 
-import "core:encoding/json"
 import "core:strconv"
 import "core:strings"
+import "libs:json"
 
 // Streaming decode front end. A frame is decoded token-by-token straight into typed
 // structs; no intermediate `json.Value` tree is built. A multi-MB result, or an

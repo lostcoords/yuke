@@ -4,11 +4,11 @@
 package relay
 
 import "core:crypto/ecdh"
-import "core:encoding/json"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "libs:json"
 
 // The credential file inside the config directory: the device's control-plane identity.
 CREDENTIALS_FILE :: "credentials.json"

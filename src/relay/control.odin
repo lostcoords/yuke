@@ -1,6 +1,6 @@
 package relay
 
-import "core:encoding/json"
+import "libs:json"
 
 // The CONTROL messages the relay sends an endpoint, carried as the JSON payload of
 // a CONTROL frame. relay -> endpoint only; never forwarded to the peer.

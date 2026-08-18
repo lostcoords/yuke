@@ -1,9 +1,9 @@
 package schema
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "libs:json"
 
 import "tools:gen"
 

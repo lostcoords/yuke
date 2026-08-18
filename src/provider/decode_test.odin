@@ -1,8 +1,8 @@
 package provider
 
-import "core:encoding/json"
 import "core:mem"
 import "core:testing"
+import "libs:json"
 import ts "libs:testsupport"
 
 @(test)

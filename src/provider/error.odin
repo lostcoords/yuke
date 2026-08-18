@@ -1,8 +1,8 @@
 package provider
 
 import "base:runtime"
-import "core:encoding/json"
 import "libs:bindings/curl"
+import "libs:json"
 
 // Why a turn failed. Plain enum, `wire.Validation_Error` house style: the
 // retry-after hint that accompanies `.Rate_Limited` is a field on the turn, not

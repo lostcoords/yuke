@@ -1,9 +1,9 @@
 package relay
 
 import "core:encoding/base64"
-import "core:encoding/json"
 import "core:strings"
 import "core:testing"
+import "libs:json"
 
 @(test)
 test_enroll_start_encode :: proc(t: ^testing.T) {

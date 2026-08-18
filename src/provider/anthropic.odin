@@ -2,8 +2,8 @@ package provider
 
 import "base:intrinsics"
 import "base:runtime"
-import "core:encoding/json"
 import "core:strings"
+import "libs:json"
 
 // Tool state retained only while its content block is open. Strings and
 // argument bytes live in the turn allocator.

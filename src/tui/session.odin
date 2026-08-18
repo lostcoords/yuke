@@ -7,9 +7,9 @@ Open-session controller: folds live broadcasts for the UI's one open session int
 
 import "base:runtime"
 import "core:c"
-import "core:encoding/json"
 import "core:mem"
 import "core:mem/virtual"
+import "libs:json"
 
 import qjs "libs:bindings/quickjs"
 import "src:client"

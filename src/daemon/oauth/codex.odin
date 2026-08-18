@@ -1,7 +1,7 @@
 package oauth
 
-import "core:encoding/json"
 import "core:strings"
+import "libs:json"
 
 CODEX_PROVIDER_ID :: "openai-codex"
 CODEX_CLIENT_ID :: "app_EMoamEEZ73f0CkXaXp7hrann"

@@ -1,8 +1,8 @@
 package schema
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
+import "libs:json"
 
 // The published shape of `wire.json`, kept separate from `Model` on purpose: the model is
 // this tool's internal working form and may be refactored freely, while these types are a

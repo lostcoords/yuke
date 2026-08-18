@@ -4,11 +4,11 @@
 package relay
 
 import "core:crypto/ecdh"
-import "core:encoding/json"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "libs:json"
 
 SESSION_FILE :: "session.json"
 SESSION_KEY_FILE :: "session.key"

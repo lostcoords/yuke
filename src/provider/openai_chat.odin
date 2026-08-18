@@ -2,8 +2,8 @@ package provider
 
 import "base:intrinsics"
 import "base:runtime"
-import "core:encoding/json"
 import "core:strings"
+import "libs:json"
 
 // One tool call assembled across streamed deltas, keyed by its provider slot
 // index. Every buffer lives in the decoder's turn allocator.

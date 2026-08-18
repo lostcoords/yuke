@@ -6,7 +6,7 @@
 package relay
 
 import "core:encoding/base64"
-import "core:encoding/json"
+import "libs:json"
 
 // Why a control-plane message could not be built or parsed.
 Control_Error :: enum {

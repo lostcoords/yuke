@@ -8,10 +8,10 @@ user scripts.
 
 import "base:runtime"
 import "core:c"
-import "core:encoding/json"
 import "core:nbio"
 import "core:strings"
 import "core:time"
+import "libs:json"
 
 import qjs "libs:bindings/quickjs"
 import ws "libs:websocket"
