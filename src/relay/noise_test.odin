@@ -43,8 +43,7 @@ test_noise_handshake_and_exchange :: proc(t: ^testing.T) {
     defer session_destroy(&client)
     defer session_destroy(&server)
 
-    msg1, e1 := session_initiate(&client, context.temp_allocator)
-    testing.expect_value(t, e1, Noise_Error.None)
+    msg1 := session_initiate(&client, context.temp_allocator)
 
     msg2, e2 := session_respond(&server, msg1, context.temp_allocator)
     testing.expect_value(t, e2, Noise_Error.None)
@@ -108,8 +107,7 @@ test_noise_wrong_pin_fails :: proc(t: ^testing.T) {
     defer session_destroy(&client)
     defer session_destroy(&server)
 
-    msg1, e1 := session_initiate(&client, context.temp_allocator)
-    testing.expect_value(t, e1, Noise_Error.None)
+    msg1 := session_initiate(&client, context.temp_allocator)
 
     _, e2 := session_respond(&server, msg1, context.temp_allocator)
     testing.expect_value(t, e2, Noise_Error.Handshake_Failed)
@@ -133,7 +131,7 @@ test_noise_prologue_mismatch_fails :: proc(t: ^testing.T) {
     defer session_destroy(&client)
     defer session_destroy(&server)
 
-    msg1, _ := session_initiate(&client, context.temp_allocator)
+    msg1 := session_initiate(&client, context.temp_allocator)
     _, e := session_respond(&server, msg1, context.temp_allocator)
     testing.expect_value(t, e, Noise_Error.Handshake_Failed)
 
@@ -157,7 +155,7 @@ test_noise_tampered_frame_fails :: proc(t: ^testing.T) {
     defer session_destroy(&client)
     defer session_destroy(&server)
 
-    msg1, _ := session_initiate(&client, context.temp_allocator)
+    msg1 := session_initiate(&client, context.temp_allocator)
     msg2, _ := session_respond(&server, msg1, context.temp_allocator)
     _ = session_complete(&client, msg2, context.temp_allocator)
 

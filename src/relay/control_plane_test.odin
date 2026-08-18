@@ -8,8 +8,7 @@ import "core:testing"
 @(test)
 test_enroll_start_encode :: proc(t: ^testing.T) {
     ids := []string{"pub_laptop", "pub_phone"}
-    body, err := enroll_start_encode("my-laptop", "darwin", nil, "client", "token", ids, context.temp_allocator)
-    testing.expect_value(t, err, Control_Error.None)
+    body := enroll_start_encode("my-laptop", "darwin", nil, "client", "token", ids, context.temp_allocator)
 
     // The request round-trips to the documented shape.
     Parsed :: struct {
@@ -32,8 +31,7 @@ test_enroll_start_encode :: proc(t: ^testing.T) {
 
 @(test)
 test_enroll_poll_encode :: proc(t: ^testing.T) {
-    body, err := enroll_poll_encode("dc-abc", context.temp_allocator)
-    testing.expect_value(t, err, Control_Error.None)
+    body := enroll_poll_encode("dc-abc", context.temp_allocator)
 
     Parsed :: struct {
         device_code: string `json:"device_code"`,
@@ -122,8 +120,7 @@ test_ticket_codec :: proc(t: ^testing.T) {
     testing.expect_value(t, bad, Control_Error.Malformed)
 
     // connect_tickets request body.
-    req, cerr := connect_ticket_encode("target-dev", context.temp_allocator)
-    testing.expect_value(t, cerr, Control_Error.None)
+    req := connect_ticket_encode("target-dev", context.temp_allocator)
     Parsed :: struct {
         device_id: string `json:"device_id"`,
     }

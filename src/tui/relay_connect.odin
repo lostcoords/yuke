@@ -267,13 +267,7 @@ remote_roster_done :: proc(user: rawptr, result: curl.Result) {
 remote_fetch_ticket :: proc(rc: ^Remote_Connect) {
     remote_rx_reset(&rc.resp)
 
-    body, berr := relay.connect_ticket_encode(rc.device_id, rc.host.allocator)
-    if berr != .None {
-        remote_fail(rc, "out_of_memory")
-
-        return
-    }
-
+    body := relay.connect_ticket_encode(rc.device_id, rc.host.allocator)
     rc.req_body = body
 
     url := strings.concatenate({rc.cloud_url, REMOTE_CONNECT_TICKETS_PATH}, context.temp_allocator)

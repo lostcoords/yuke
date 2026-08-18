@@ -152,8 +152,7 @@ test_transport_roundtrip_large_frame :: proc(t: ^testing.T) {
     defer session_destroy(&client)
     defer session_destroy(&server)
 
-    msg1, e1 := session_initiate(&client, context.temp_allocator)
-    testing.expect_value(t, e1, Noise_Error.None)
+    msg1 := session_initiate(&client, context.temp_allocator)
     msg2, e2 := session_respond(&server, msg1, context.temp_allocator)
     testing.expect_value(t, e2, Noise_Error.None)
     testing.expect_value(t, session_complete(&client, msg2, context.temp_allocator), Noise_Error.None)

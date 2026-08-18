@@ -282,13 +282,7 @@ relay_on_parked :: proc(l: ^relay.Link) {
     defer virtual.arena_temp_end(temp)
     scratch := virtual.arena_allocator(&backend.send_scratch)
 
-    msg1, err := relay.session_initiate(&backend.session, scratch)
-    if err != .None {
-        log.errorf("client: relay handshake could not start: %v", err)
-        _ = relay.link_close(l, .Protocol_Error)
-
-        return
-    }
+    msg1 := relay.session_initiate(&backend.session, scratch)
 
     frame := relay.frame_encode(relay.Frame{type = .Sealed, payload = msg1}, scratch)
     if send_err := relay.link_send_binary(l, frame); send_err != .None {

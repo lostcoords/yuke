@@ -159,12 +159,11 @@ test_daemon_hello_handshake_reaches_ready :: proc(t: ^testing.T) {
 
     obs: Cli_Obs
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
@@ -199,12 +198,11 @@ test_daemon_request_after_ready_gets_error :: proc(t: ^testing.T) {
         send_request_on_ready = true,
     }
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
@@ -349,12 +347,11 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: .
     }
 
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", handler_callbacks(), obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
@@ -675,8 +672,7 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
     for i in 0 ..< ITERATIONS {
         obs: Cli_Obs
         c: client.Client
-        transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
-        testing.expect_value(t, terr, ws.Client_Error.None)
+        transport := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
 
         cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, tracked)
         testing.expect_value(t, cerr, client.Protocol_Error.None)

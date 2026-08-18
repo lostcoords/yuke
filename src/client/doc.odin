@@ -4,7 +4,7 @@ each request with its typed response.
 
 The driver runs over anything that can carry text frames: `client_open` takes a
 `Transport` the caller chose, and no backend type appears in the driver's API. The
-bundled factory is fallible `ws_create` (`ws://` or `wss://`; dials on `open`).
+bundled factory is `ws_create` (`ws://` or `wss://`; dials on `open`).
 It sends an `initialize` request, waits for its result, then routes each server frame by
 shape: a response (`result` or `error`) reaches the `Completion_Proc` its request registered
 with `client_send_request`, while notifications and connection-wide events (readiness,

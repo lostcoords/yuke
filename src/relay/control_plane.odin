@@ -108,10 +108,7 @@ enroll_start_encode :: proc(
     session_kind := "",
     device_ids: []string = nil,
     allocator := context.allocator,
-) -> (
-    []u8,
-    Control_Error,
-) {
+) -> []u8 {
     encoded := ""
     if len(static_public_key) > 0 {
         assert(len(static_public_key) == NOISE_STATIC_KEY_SIZE, "enroll needs a 32-byte public key")
@@ -129,7 +126,7 @@ enroll_start_encode :: proc(
 
     out, _ := json.marshal(body, {}, allocator)
 
-    return out, .None
+    return out
 }
 
 // Decode the 201 device_codes response.
@@ -153,10 +150,10 @@ Poll_Body :: struct {
 }
 
 // Encode a device_codes/token poll request for `device_code`.
-enroll_poll_encode :: proc(device_code: string, allocator := context.allocator) -> ([]u8, Control_Error) {
+enroll_poll_encode :: proc(device_code: string, allocator := context.allocator) -> []u8 {
     out, _ := json.marshal(Poll_Body{device_code = device_code}, {}, allocator)
 
-    return out, .None
+    return out
 }
 
 // Decode a device_codes/token poll by its HTTP status: 201 approved (with the credential),
@@ -209,10 +206,10 @@ enroll_poll_decode :: proc(
 }
 
 // Encode a connect_tickets request body for `device_id`.
-connect_ticket_encode :: proc(device_id: string, allocator := context.allocator) -> ([]u8, Control_Error) {
+connect_ticket_encode :: proc(device_id: string, allocator := context.allocator) -> []u8 {
     out, _ := json.marshal(Connect_Body{device_id = device_id}, {}, allocator)
 
-    return out, .None
+    return out
 }
 
 // Decode a relay ticket response (`link_tickets`/`connect_tickets`).

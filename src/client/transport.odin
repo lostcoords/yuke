@@ -51,14 +51,7 @@ Ws_Backend :: struct {
 
 // Allocates a WS backend; dials only on `open`. On error there is no handle to destroy.
 // `options` pointer fields are borrowed until `Transport.open` returns.
-ws_create :: proc(
-    loop: ^nbio.Event_Loop,
-    options: ws.Options,
-    allocator := context.allocator,
-) -> (
-    Transport,
-    ws.Client_Error,
-) {
+ws_create :: proc(loop: ^nbio.Event_Loop, options: ws.Options, allocator := context.allocator) -> Transport {
     assert(loop != nil, "ws_create needs an event loop")
 
     backend := new(Ws_Backend, allocator)
@@ -68,15 +61,14 @@ ws_create :: proc(
     backend.allocator = allocator
 
     return Transport {
-            self = backend,
-            open = ws_open,
-            send_text = ws_send_text,
-            close = ws_close,
-            cancel = ws_cancel,
-            abort = ws_abort,
-            destroy = ws_destroy,
-        },
-        .None
+        self = backend,
+        open = ws_open,
+        send_text = ws_send_text,
+        close = ws_close,
+        cancel = ws_cancel,
+        abort = ws_abort,
+        destroy = ws_destroy,
+    }
 }
 
 @(private = "file")

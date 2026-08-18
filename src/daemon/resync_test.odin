@@ -5,7 +5,6 @@ import "core:testing"
 
 import "libs:bindings/sqlite"
 import "libs:testsupport"
-import ws "libs:websocket"
 import "src:client"
 import "src:daemon/store"
 import "src:wire"
@@ -874,12 +873,11 @@ test_daemon_resync_snapshot_installs_in_the_replica :: proc(t: ^testing.T) {
         session = session,
     }
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(
         &c,
@@ -1024,12 +1022,11 @@ test_daemon_resync_of_a_corrupt_row_answers_internal :: proc(t: ^testing.T) {
         session = session,
     }
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(
         &c,

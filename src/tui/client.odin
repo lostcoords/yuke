@@ -133,15 +133,11 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         scheme = .Wss
     }
 
-    transport, transport_err := client.ws_create(
+    transport := client.ws_create(
         h.drive.loop,
         {scheme = scheme, host = options.host, port = options.port, path = "/ws", extra_headers = headers},
         h.allocator,
     )
-    if transport_err != .None {
-        client_promise_reject(job, client_transport_error_wire(transport_err), false)
-        return promise
-    }
 
     callbacks := client.Client_Callbacks {
         on_ready     = client_on_ready,
@@ -557,16 +553,4 @@ client_protocol_error_wire :: proc(err: client.Protocol_Error) -> string {
     }
 
     unreachable()
-}
-
-@(private = "file")
-client_transport_error_wire :: proc(err: ws.Client_Error) -> string {
-    assert(err != .None, "transport error string needs an error")
-
-    #partial switch err {
-    case .Out_Of_Memory:
-        return "out_of_memory"
-    }
-
-    return "transport_failed"
 }

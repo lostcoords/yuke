@@ -4,7 +4,6 @@ import "core:nbio"
 import "core:testing"
 
 import "libs:testsupport"
-import ws "libs:websocket"
 import "src:client"
 import "src:daemon/store"
 import "src:wire"
@@ -198,12 +197,11 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     defer client.replica_destroy(&obs.replica)
 
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&second), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(
         &c,

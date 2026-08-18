@@ -104,12 +104,12 @@ session_init_responder :: proc(sess: ^Session, static_key: ^ecdh.Private_Key, pr
 
 // Initiator: produce the first handshake message. It carries an empty payload and must be
 // sent as the first SEALED frame. Returns the message allocated from `allocator`.
-session_initiate :: proc(sess: ^Session, allocator := context.allocator) -> (msg1: []u8, err: Noise_Error) {
+session_initiate :: proc(sess: ^Session, allocator := context.allocator) -> (msg1: []u8) {
     assert(sess != nil && sess.initiator && !sess.split, "session_initiate needs a fresh initiator")
 
     out, _, status := noise.handshake_initiator_step(&sess.hs, nil, nil, nil, allocator)
     if status == .Handshake_Pending {
-        return out, .None
+        return out
     }
 
     // Writing our own msg1 with validated keys has no other outcome.

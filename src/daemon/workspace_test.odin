@@ -10,7 +10,6 @@ import "core:time"
 import "core:unicode/utf8"
 
 import "libs:offload"
-import ws "libs:websocket"
 import "src:client"
 import "src:wire"
 
@@ -677,12 +676,11 @@ test_daemon_workspace_browse_two_in_flight :: proc(t: ^testing.T) {
     obs.counts = make(map[string]int, 4, context.temp_allocator)
 
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         {host = "127.0.0.1", port = bound_port(&d), path = "/ws"},
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(
         &c,
@@ -781,8 +779,7 @@ test_daemon_workspace_browse_close_during_pass_no_leak :: proc(t: ^testing.T) {
         }
 
         c: client.Client
-        transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
-        testing.expect_value(t, terr, ws.Client_Error.None)
+        transport := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, tracked)
 
         cerr := client.client_open(
             &c,

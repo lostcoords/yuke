@@ -38,7 +38,7 @@ daemon_session_run :: proc(
     defer nbio.release_thread_event_loop()
 
     loop := nbio.current_thread_event_loop()
-    transport, transport_err := client.ws_create(
+    transport := client.ws_create(
         loop,
         {
             host = "127.0.0.1",
@@ -48,10 +48,6 @@ daemon_session_run :: proc(
             max_message_bytes = wire.LIMITS.max_frame_bytes,
         },
     )
-    if transport_err != .None {
-        fmt.eprintfln("%s: could not prepare the daemon connection: %v", label, transport_err)
-        return 1
-    }
 
     session := Daemon_Session {
         label    = label,

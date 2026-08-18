@@ -898,7 +898,7 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
 
     obs: Cli_Obs
     c: client.Client
-    transport, terr := client.ws_create(
+    transport := client.ws_create(
         loop,
         ws.Options {
             host = "127.0.0.1",
@@ -908,7 +908,6 @@ test_daemon_bearer_token_reaches_ready :: proc(t: ^testing.T) {
         },
         context.temp_allocator,
     )
-    testing.expect_value(t, terr, ws.Client_Error.None)
 
     cerr := client.client_open(&c, transport, "yuke-test", "0.1.0", cli_callbacks(), &obs, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)

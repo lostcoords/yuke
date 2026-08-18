@@ -206,7 +206,7 @@ login_run :: proc() {
         session_kind = opts.kind if opts.kind != "" else "cli"
         device_ids = opts.device_ids
     }
-    start_body, enc_err := relay.enroll_start_encode(
+    start_body := relay.enroll_start_encode(
         opts.name,
         ODIN_OS_STRING,
         pin,
@@ -215,10 +215,6 @@ login_run :: proc() {
         device_ids,
         context.temp_allocator,
     )
-    if enc_err != .None {
-        fmt.eprintln("yuke login: could not build the enrollment request")
-        os.exit(1)
-    }
 
     start_url := strings.concatenate({opts.cloud, "/api/v1/device_codes"}, context.temp_allocator)
     status, body, req_ok := cloud_post(&client, start_url, start_body, context.temp_allocator)
@@ -243,12 +239,7 @@ login_run :: proc() {
     fmt.printfln("and confirm the code %s. Waiting for approval...", start.user_code)
 
     // 3. Poll until approved, denied, or expired.
-    poll_body, poll_enc := relay.enroll_poll_encode(start.device_code, context.allocator)
-    if poll_enc != .None {
-        fmt.eprintln("yuke login: could not build the poll request")
-        os.exit(1)
-    }
-
+    poll_body := relay.enroll_poll_encode(start.device_code, context.allocator)
     defer delete(poll_body, context.allocator)
 
     poll_url := strings.concatenate({opts.cloud, "/api/v1/device_codes/token"}, context.allocator)

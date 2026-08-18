@@ -6,7 +6,6 @@ import "core:strings"
 import "core:testing"
 
 import "libs:testsupport"
-import ws "libs:websocket"
 
 import "src:client"
 import "src:daemon/store"
@@ -146,8 +145,7 @@ create_client_run :: proc(
     name := "yuke-test",
     version := "0.1.0",
 ) {
-    transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator)
-    testing.expect_value(t, terr, ws.Client_Error.None)
+    transport := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator)
 
     cerr := client.client_open(c, transport, name, version, create_callbacks(), o, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
@@ -1003,8 +1001,7 @@ input_callbacks :: proc() -> client.Client_Callbacks {
 
 // Open one driver against `port` and run the loop until every input is answered.
 input_client_run :: proc(t: ^testing.T, c: ^client.Client, loop: ^nbio.Event_Loop, port: int, o: ^Input_Obs) {
-    transport, terr := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator)
-    testing.expect_value(t, terr, ws.Client_Error.None)
+    transport := client.ws_create(loop, {host = "127.0.0.1", port = port, path = "/ws"}, context.temp_allocator)
 
     cerr := client.client_open(c, transport, "yuke-test", "0.1.0", input_callbacks(), o, context.temp_allocator)
     testing.expect_value(t, cerr, client.Protocol_Error.None)
