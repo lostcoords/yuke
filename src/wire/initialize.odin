@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -56,11 +57,11 @@ client_from_reader :: proc(d: ^Decoder) -> (out: Client, err: Validation_Error) 
 }
 
 // Write the client identity object.
-client_emit :: proc(e: ^Emitter, self: Client) {
-    object_begin(e)
-    field_string(e, "name", self.name)
-    field_string(e, "version", self.version)
-    object_end(e)
+client_emit :: proc(e: ^json.Emitter, self: Client) {
+    json.object_begin(e)
+    json.field_string(e, "name", self.name)
+    json.field_string(e, "version", self.version)
+    json.object_end(e)
 }
 
 // Deep-copy into `allocator`.
@@ -128,12 +129,12 @@ initialize_params_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Params, e
 }
 
 // Write `protocol`, then the client object.
-initialize_params_emit :: proc(e: ^Emitter, self: Initialize_Params) {
-    object_begin(e)
-    field_u64(e, "protocol", u64(self.protocol))
-    key(e, "client")
+initialize_params_emit :: proc(e: ^json.Emitter, self: Initialize_Params) {
+    json.object_begin(e)
+    json.field_u64(e, "protocol", u64(self.protocol))
+    json.key(e, "client")
     client_emit(e, self.client)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Daemon identity and clock. Non-owning.
@@ -147,11 +148,11 @@ Daemon_Info :: struct {
 }
 
 // Write a Daemon_Info object.
-daemon_info_emit :: proc(e: ^Emitter, self: Daemon_Info) {
-    object_begin(e)
-    field_string(e, "version", self.version)
-    field_u64(e, "server_now_ms", self.server_now_ms)
-    object_end(e)
+daemon_info_emit :: proc(e: ^json.Emitter, self: Daemon_Info) {
+    json.object_begin(e)
+    json.field_string(e, "version", self.version)
+    json.field_u64(e, "server_now_ms", self.server_now_ms)
+    json.object_end(e)
 }
 
 // Optional daemon surface a client may probe for. This is the ONE enum decoded
@@ -208,51 +209,51 @@ Initialize_Result :: struct {
 }
 
 // Write the initialize result.
-initialize_result_emit :: proc(e: ^Emitter, self: Initialize_Result) {
-    object_begin(e)
-    field_u64(e, "protocol", u64(self.protocol))
-    key(e, "daemon")
+initialize_result_emit :: proc(e: ^json.Emitter, self: Initialize_Result) {
+    json.object_begin(e)
+    json.field_u64(e, "protocol", u64(self.protocol))
+    json.key(e, "daemon")
     daemon_info_emit(e, self.daemon)
-    key(e, "workspaces")
-    array_begin(e)
+    json.key(e, "workspaces")
+    json.array_begin(e)
     for ws in self.workspaces {
-        elem(e)
+        json.elem(e)
         workspace_emit(e, ws)
     }
 
-    array_end(e)
-    key(e, "profiles")
-    array_begin(e)
+    json.array_end(e)
+    json.key(e, "profiles")
+    json.array_begin(e)
     for profile in self.profiles {
-        elem(e)
-        val_string(e, profile)
+        json.elem(e)
+        json.val_string(e, profile)
     }
 
-    array_end(e)
-    key(e, "agents")
-    array_begin(e)
+    json.array_end(e)
+    json.key(e, "agents")
+    json.array_begin(e)
     for agent in self.agents {
-        elem(e)
-        val_string(e, agent)
+        json.elem(e)
+        json.val_string(e, agent)
     }
 
-    array_end(e)
-    field_u64(e, "session_revision", u64(self.session_revision))
-    field_u64(e, "cron_revision", u64(self.cron_revision))
-    field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
-    key(e, "catalog_health")
+    json.array_end(e)
+    json.field_u64(e, "session_revision", u64(self.session_revision))
+    json.field_u64(e, "cron_revision", u64(self.cron_revision))
+    json.field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
+    json.key(e, "catalog_health")
     catalog_health_emit(e, self.catalog_health)
-    key(e, "capabilities")
-    array_begin(e)
+    json.key(e, "capabilities")
+    json.array_begin(e)
     for cap in Capability {
         if cap in self.capabilities {
-            elem(e)
-            val_string(e, capability_wire[cap])
+            json.elem(e)
+            json.val_string(e, capability_wire[cap])
         }
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify protocol and annotated field bounds.

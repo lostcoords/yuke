@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -169,27 +170,27 @@ media_source_from_reader :: proc(d: ^Decoder) -> (src: Media_Source, err: Valida
 }
 
 // Write internally-tagged JSON with `type` first.
-media_source_emit :: proc(e: ^Emitter, self: Media_Source) {
-    object_begin(e)
+media_source_emit :: proc(e: ^json.Emitter, self: Media_Source) {
+    json.object_begin(e)
 
     switch v in self {
     case Media_Url:
-        field_string(e, "type", "url")
-        field_string(e, "url", v.url)
+        json.field_string(e, "type", "url")
+        json.field_string(e, "url", v.url)
 
     case Media_Base64:
-        field_string(e, "type", "base64")
-        field_string(e, "mime", v.mime)
-        field_string(e, "data", v.data)
+        json.field_string(e, "type", "base64")
+        json.field_string(e, "mime", v.mime)
+        json.field_string(e, "data", v.data)
 
     case Media_Blob:
-        field_string(e, "type", "blob")
-        field_id(e, "hash", v.hash)
-        field_string(e, "mime", v.mime)
-        field_u64(e, "bytes", v.bytes)
+        json.field_string(e, "type", "blob")
+        json.field_id(e, "hash", v.hash)
+        json.field_string(e, "mime", v.mime)
+        json.field_u64(e, "bytes", v.bytes)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -475,34 +476,34 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
 }
 
 // Write internally-tagged JSON with `type` first.
-content_part_emit :: proc(e: ^Emitter, self: Content_Part) {
-    object_begin(e)
+content_part_emit :: proc(e: ^json.Emitter, self: Content_Part) {
+    json.object_begin(e)
 
     switch v in self {
     case Content_Text:
-        field_string(e, "type", "text")
-        field_string(e, "text", v.text)
+        json.field_string(e, "type", "text")
+        json.field_string(e, "text", v.text)
 
     case Content_Image:
-        field_string(e, "type", "image")
-        key(e, "source")
+        json.field_string(e, "type", "image")
+        json.key(e, "source")
         media_source_emit(e, v.source)
-        field_string_opt(e, "detail", v.detail)
+        json.field_string_opt(e, "detail", v.detail)
 
     case Content_Audio:
-        field_string(e, "type", "audio")
-        key(e, "source")
+        json.field_string(e, "type", "audio")
+        json.key(e, "source")
         media_source_emit(e, v.source)
-        field_string(e, "format", v.format)
+        json.field_string(e, "format", v.format)
 
     case Content_File:
-        field_string(e, "type", "file")
-        key(e, "source")
+        json.field_string(e, "type", "file")
+        json.key(e, "source")
         media_source_emit(e, v.source)
-        field_string_opt(e, "filename", v.filename)
+        json.field_string_opt(e, "filename", v.filename)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -73,21 +74,21 @@ diff_hunk_from_reader :: proc(d: ^Decoder) -> (hunk: Diff_Hunk, err: Validation_
 }
 
 // Write a diff hunk as a JSON object.
-diff_hunk_emit :: proc(e: ^Emitter, self: Diff_Hunk) {
-    object_begin(e)
-    field_u64(e, "old_start", self.old_start)
-    field_u64(e, "old_lines", self.old_lines)
-    field_u64(e, "new_start", self.new_start)
-    field_u64(e, "new_lines", self.new_lines)
-    key(e, "lines")
-    array_begin(e)
+diff_hunk_emit :: proc(e: ^json.Emitter, self: Diff_Hunk) {
+    json.object_begin(e)
+    json.field_u64(e, "old_start", self.old_start)
+    json.field_u64(e, "old_lines", self.old_lines)
+    json.field_u64(e, "new_start", self.new_start)
+    json.field_u64(e, "new_lines", self.new_lines)
+    json.key(e, "lines")
+    json.array_begin(e)
     for line in self.lines {
-        elem(e)
-        val_string(e, line)
+        json.elem(e)
+        json.val_string(e, line)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Deep-copy into `allocator`.
@@ -160,19 +161,19 @@ diff_file_from_reader :: proc(d: ^Decoder) -> (file: Diff_File, err: Validation_
 }
 
 // Write a diff file as a JSON object.
-diff_file_emit :: proc(e: ^Emitter, self: Diff_File) {
-    object_begin(e)
-    field_string(e, "path", self.path)
-    field_string_opt(e, "old_path", self.old_path)
-    key(e, "hunks")
-    array_begin(e)
+diff_file_emit :: proc(e: ^json.Emitter, self: Diff_File) {
+    json.object_begin(e)
+    json.field_string(e, "path", self.path)
+    json.field_string_opt(e, "old_path", self.old_path)
+    json.key(e, "hunks")
+    json.array_begin(e)
     for hunk in self.hunks {
-        elem(e)
+        json.elem(e)
         diff_hunk_emit(e, hunk)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Deep-copy into `allocator`.
@@ -389,42 +390,42 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
 }
 
 // Write internally-tagged JSON with `type` first.
-view_emit :: proc(e: ^Emitter, self: View) {
-    object_begin(e)
+view_emit :: proc(e: ^json.Emitter, self: View) {
+    json.object_begin(e)
 
     switch v in self {
     case View_Text:
-        field_string(e, "type", "text")
-        field_string(e, "text", v.text)
-        field_string_opt(e, "language", v.language)
+        json.field_string(e, "type", "text")
+        json.field_string(e, "text", v.text)
+        json.field_string_opt(e, "language", v.language)
 
     case View_Markdown:
-        field_string(e, "type", "markdown")
-        field_string(e, "text", v.text)
+        json.field_string(e, "type", "markdown")
+        json.field_string(e, "text", v.text)
 
     case View_Json:
-        field_string(e, "type", "json")
-        field_string(e, "text", v.text)
+        json.field_string(e, "type", "json")
+        json.field_string(e, "text", v.text)
 
     case View_Diff:
-        field_string(e, "type", "diff")
-        key(e, "files")
-        array_begin(e)
+        json.field_string(e, "type", "diff")
+        json.key(e, "files")
+        json.array_begin(e)
         for file in v.files {
-            elem(e)
+            json.elem(e)
             diff_file_emit(e, file)
         }
 
-        array_end(e)
+        json.array_end(e)
 
     case View_Image:
-        field_string(e, "type", "image")
-        key(e, "source")
+        json.field_string(e, "type", "image")
+        json.key(e, "source")
         media_source_emit(e, v.source)
-        field_string_opt(e, "alt", v.alt)
+        json.field_string_opt(e, "alt", v.alt)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify nested collection counts and the aggregate display payload bound.

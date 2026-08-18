@@ -1,4 +1,5 @@
 package daemon
+import "libs:json"
 
 import "core:nbio"
 import "core:testing"
@@ -112,12 +113,12 @@ resync_append_corrupt_fixture :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broa
     seq := hw.seq + 1
     stamped := pump_stamp_seq(data, seq)
 
-    e: wire.Emitter
-    wire.emitter_init(&e, d.allocator)
-    defer wire.emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, d.allocator)
+    defer json.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, stamped)
 
-    testing.expect_value(t, store.event_append(d.store, session, seq, stamped, wire.to_string(&e), {}), nil)
+    testing.expect_value(t, store.event_append(d.store, session, seq, stamped, json.to_string(&e), {}), nil)
 }
 
 // Overwrite one stored payload without touching seq, marks, or the projection. This models
@@ -132,9 +133,9 @@ resync_damage_payload :: proc(
     assert(d != nil, "damaging a row needs daemon state")
     assert(d.store != nil, "damaging a row needs an open store")
 
-    e: wire.Emitter
-    wire.emitter_init(&e, d.allocator)
-    defer wire.emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, d.allocator)
+    defer json.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, pump_stamp_seq(data, seq))
 
     st, prep := sqlite.prepare(d.store.writer, "UPDATE events SET payload = ?1 WHERE session_id = ?2 AND seq = ?3")
@@ -142,7 +143,7 @@ resync_damage_payload :: proc(
     defer sqlite.finalize(st)
 
     sid := ([16]u8)(session)
-    testing.expect_value(t, sqlite.bind_text(st, 1, wire.to_string(&e)), sqlite.Result.Ok)
+    testing.expect_value(t, sqlite.bind_text(st, 1, json.to_string(&e)), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.bind_blob(st, 2, sid[:]), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.bind_i64(st, 3, i64(seq)), sqlite.Result.Ok)
     testing.expect_value(t, sqlite.execute(st), sqlite.Result.Ok)
@@ -179,12 +180,12 @@ resync_expect_write_rejected :: proc(t: ^testing.T, d: ^Daemon, data: wire.Broad
     seq := hw.seq + 1
     stamped := pump_stamp_seq(data, seq)
 
-    e: wire.Emitter
-    wire.emitter_init(&e, d.allocator)
-    defer wire.emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, d.allocator)
+    defer json.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, stamped)
 
-    rejected := store.event_append(d.store, session, seq, stamped, wire.to_string(&e), {}) != nil
+    rejected := store.event_append(d.store, session, seq, stamped, json.to_string(&e), {}) != nil
     testing.expect(t, rejected, "the store rejects the corrupt write")
 }
 

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -191,11 +192,11 @@ Auth_Changed_Data :: struct {
 }
 
 // Write a public login summary.
-auth_login_summary_emit :: proc(e: ^Emitter, self: Auth_Login_Summary) {
-    object_begin(e)
-    field_id(e, "login_id", ([32]u8)(self.login_id))
-    field_string(e, "flow", auth_flow_to_wire(self.flow))
-    object_end(e)
+auth_login_summary_emit :: proc(e: ^json.Emitter, self: Auth_Login_Summary) {
+    json.object_begin(e)
+    json.field_id(e, "login_id", ([32]u8)(self.login_id))
+    json.field_string(e, "flow", auth_flow_to_wire(self.flow))
+    json.object_end(e)
 }
 
 // Verify a public login summary.
@@ -204,35 +205,35 @@ auth_login_summary_validate :: proc(self: Auth_Login_Summary) -> Validation_Erro
 }
 
 // Write public provider auth state.
-auth_provider_emit :: proc(e: ^Emitter, self: Auth_Provider) {
-    object_begin(e)
-    field_string(e, "provider_id", self.provider_id)
-    key(e, "credential_kind")
+auth_provider_emit :: proc(e: ^json.Emitter, self: Auth_Provider) {
+    json.object_begin(e)
+    json.field_string(e, "provider_id", self.provider_id)
+    json.key(e, "credential_kind")
 
     if kind, ok := self.credential_kind.?; ok {
-        val_string(e, auth_credential_kind_to_wire(kind))
+        json.val_string(e, auth_credential_kind_to_wire(kind))
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    field_bool(e, "restart_required", self.restart_required)
-    key(e, "login_flows")
-    array_begin(e)
+    json.field_bool(e, "restart_required", self.restart_required)
+    json.key(e, "login_flows")
+    json.array_begin(e)
     for flow in self.login_flows {
-        elem(e)
-        val_string(e, auth_flow_to_wire(flow))
+        json.elem(e)
+        json.val_string(e, auth_flow_to_wire(flow))
     }
 
-    array_end(e)
-    key(e, "pending_login")
+    json.array_end(e)
+    json.key(e, "pending_login")
 
     if login, ok := self.pending_login.?; ok {
         auth_login_summary_emit(e, login)
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify public provider auth state and its closed capability list.
@@ -277,11 +278,11 @@ auth_provider_clone :: proc(self: Auth_Provider, allocator := context.allocator)
 }
 
 // Write auth.login params.
-auth_login_params_emit :: proc(e: ^Emitter, self: Auth_Login_Params) {
-    object_begin(e)
-    field_string(e, "provider_id", self.provider_id)
-    field_string(e, "flow", auth_flow_to_wire(self.flow))
-    object_end(e)
+auth_login_params_emit :: proc(e: ^json.Emitter, self: Auth_Login_Params) {
+    json.object_begin(e)
+    json.field_string(e, "provider_id", self.provider_id)
+    json.field_string(e, "flow", auth_flow_to_wire(self.flow))
+    json.object_end(e)
 }
 
 // Verify auth.login params.
@@ -290,23 +291,23 @@ auth_login_params_validate :: proc(self: Auth_Login_Params) -> Validation_Error 
 }
 
 // Write an internally-tagged auth.login result.
-auth_login_result_emit :: proc(e: ^Emitter, self: Auth_Login_Result) {
-    object_begin(e)
+auth_login_result_emit :: proc(e: ^json.Emitter, self: Auth_Login_Result) {
+    json.object_begin(e)
 
     switch result in self {
     case Auth_Login_Result_Browser:
-        field_string(e, "type", "browser")
-        field_id(e, "login_id", ([32]u8)(result.login_id))
-        field_string(e, "auth_url", result.auth_url)
+        json.field_string(e, "type", "browser")
+        json.field_id(e, "login_id", ([32]u8)(result.login_id))
+        json.field_string(e, "auth_url", result.auth_url)
 
     case Auth_Login_Result_Device_Code:
-        field_string(e, "type", "device_code")
-        field_id(e, "login_id", ([32]u8)(result.login_id))
-        field_string(e, "verification_url", result.verification_url)
-        field_string(e, "user_code", result.user_code)
+        json.field_string(e, "type", "device_code")
+        json.field_id(e, "login_id", ([32]u8)(result.login_id))
+        json.field_string(e, "verification_url", result.verification_url)
+        json.field_string(e, "user_code", result.user_code)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify auth.login result bounds.
@@ -337,10 +338,10 @@ auth_login_result_validate :: proc(self: Auth_Login_Result) -> Validation_Error 
 }
 
 // Write auth.cancel_login params.
-auth_cancel_login_params_emit :: proc(e: ^Emitter, self: Auth_Cancel_Login_Params) {
-    object_begin(e)
-    field_id(e, "login_id", ([32]u8)(self.login_id))
-    object_end(e)
+auth_cancel_login_params_emit :: proc(e: ^json.Emitter, self: Auth_Cancel_Login_Params) {
+    json.object_begin(e)
+    json.field_id(e, "login_id", ([32]u8)(self.login_id))
+    json.object_end(e)
 }
 
 // Verify auth.cancel_login params.
@@ -349,10 +350,10 @@ auth_cancel_login_params_validate :: proc(self: Auth_Cancel_Login_Params) -> Val
 }
 
 // Write auth.logout params.
-auth_logout_params_emit :: proc(e: ^Emitter, self: Auth_Logout_Params) {
-    object_begin(e)
-    field_string(e, "provider_id", self.provider_id)
-    object_end(e)
+auth_logout_params_emit :: proc(e: ^json.Emitter, self: Auth_Logout_Params) {
+    json.object_begin(e)
+    json.field_string(e, "provider_id", self.provider_id)
+    json.object_end(e)
 }
 
 // Verify auth.logout params.
@@ -361,13 +362,13 @@ auth_logout_params_validate :: proc(self: Auth_Logout_Params) -> Validation_Erro
 }
 
 // Write auth.set_api_key params. This is the only request emitter that accepts a provider secret.
-auth_set_api_key_params_emit :: proc(e: ^Emitter, self: Auth_Set_Api_Key_Params) {
+auth_set_api_key_params_emit :: proc(e: ^json.Emitter, self: Auth_Set_Api_Key_Params) {
     assert(e.secret, "auth.set_api_key needs a secret emitter")
 
-    object_begin(e)
-    field_string(e, "provider_id", self.provider_id)
-    field_string(e, "api_key", self.api_key)
-    object_end(e)
+    json.object_begin(e)
+    json.field_string(e, "provider_id", self.provider_id)
+    json.field_string(e, "api_key", self.api_key)
+    json.object_end(e)
 }
 
 // Verify auth.set_api_key params before any durable mutation.
@@ -382,10 +383,10 @@ auth_set_api_key_params_validate :: proc(self: Auth_Set_Api_Key_Params) -> Valid
 }
 
 // Write the secret-free auth.set_api_key result.
-auth_set_api_key_result_emit :: proc(e: ^Emitter, self: Auth_Set_Api_Key_Result) {
-    object_begin(e)
-    field_bool(e, "restart_required", self.restart_required)
-    object_end(e)
+auth_set_api_key_result_emit :: proc(e: ^json.Emitter, self: Auth_Set_Api_Key_Result) {
+    json.object_begin(e)
+    json.field_bool(e, "restart_required", self.restart_required)
+    json.object_end(e)
 }
 
 // A running daemon always requires restart after accepting a key.
@@ -398,17 +399,17 @@ auth_set_api_key_result_validate :: proc(self: Auth_Set_Api_Key_Result) -> Valid
 }
 
 // Write auth.list result.
-auth_list_result_emit :: proc(e: ^Emitter, self: Auth_List_Result) {
-    object_begin(e)
-    key(e, "providers")
-    array_begin(e)
+auth_list_result_emit :: proc(e: ^json.Emitter, self: Auth_List_Result) {
+    json.object_begin(e)
+    json.key(e, "providers")
+    json.array_begin(e)
     for provider in self.providers {
-        elem(e)
+        json.elem(e)
         auth_provider_emit(e, provider)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify auth.list result.
@@ -425,22 +426,22 @@ auth_list_result_validate :: proc(self: Auth_List_Result) -> Validation_Error {
 }
 
 // Write a terminal login outcome.
-auth_login_outcome_emit :: proc(e: ^Emitter, self: Auth_Login_Outcome) {
-    object_begin(e)
+auth_login_outcome_emit :: proc(e: ^json.Emitter, self: Auth_Login_Outcome) {
+    json.object_begin(e)
 
     switch outcome in self {
     case Auth_Login_Outcome_Succeeded:
-        field_string(e, "type", "succeeded")
+        json.field_string(e, "type", "succeeded")
 
     case Auth_Login_Outcome_Canceled:
-        field_string(e, "type", "canceled")
+        json.field_string(e, "type", "canceled")
 
     case Auth_Login_Outcome_Failed:
-        field_string(e, "type", "failed")
-        field_string(e, "message", outcome.message)
+        json.field_string(e, "type", "failed")
+        json.field_string(e, "message", outcome.message)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify a terminal login outcome.
@@ -458,13 +459,13 @@ auth_login_outcome_validate :: proc(self: Auth_Login_Outcome) -> Validation_Erro
 }
 
 // Write auth.login_finished payload.
-auth_login_finished_data_emit :: proc(e: ^Emitter, self: Auth_Login_Finished_Data) {
-    object_begin(e)
-    field_id(e, "login_id", ([32]u8)(self.login_id))
-    field_string(e, "provider_id", self.provider_id)
-    key(e, "outcome")
+auth_login_finished_data_emit :: proc(e: ^json.Emitter, self: Auth_Login_Finished_Data) {
+    json.object_begin(e)
+    json.field_id(e, "login_id", ([32]u8)(self.login_id))
+    json.field_string(e, "provider_id", self.provider_id)
+    json.key(e, "outcome")
     auth_login_outcome_emit(e, self.outcome)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify auth.login_finished payload.
@@ -499,11 +500,11 @@ auth_login_finished_data_clone :: proc(
 }
 
 // Write auth.changed payload.
-auth_changed_data_emit :: proc(e: ^Emitter, self: Auth_Changed_Data) {
-    object_begin(e)
-    key(e, "provider")
+auth_changed_data_emit :: proc(e: ^json.Emitter, self: Auth_Changed_Data) {
+    json.object_begin(e)
+    json.key(e, "provider")
     auth_provider_emit(e, self.provider)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify auth.changed payload.

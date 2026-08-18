@@ -1,4 +1,5 @@
 package client
+import "libs:json"
 
 import "core:log"
 import "core:mem"
@@ -239,9 +240,9 @@ client_open :: proc(
     c.next_request_id = INITIALIZE_REQUEST_ID + 1
 
     e, _ := wire.request_encode(init, allocator)
-    defer wire.emitter_destroy(&e)
+    defer json.emitter_destroy(&e)
 
-    payload := wire.to_string(&e)
+    payload := json.to_string(&e)
     c.initialize_frame = make([]byte, len(payload), allocator)
     copy(c.initialize_frame, payload)
 
@@ -290,9 +291,9 @@ client_send_request :: proc(
     }
 
     e, _ := wire.request_encode(req, c.allocator)
-    defer wire.emitter_destroy(&e)
+    defer json.emitter_destroy(&e)
 
-    serr := c.transport->send_text(transmute([]byte)wire.to_string(&e))
+    serr := c.transport->send_text(transmute([]byte)json.to_string(&e))
     if serr != .None {
         c.transport_error = serr
         return 0, .Transport_Failed

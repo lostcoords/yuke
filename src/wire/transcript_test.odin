@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -59,20 +60,20 @@ test_tool_state_running_output_present_and_absent :: proc(t: ^testing.T) {
         testing.expect(t, has_out, "output should be present")
         testing.expect_value(t, out, "compiling")
 
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         tool_state_emit(&e, state)
-        testing.expect_value(t, to_string(&e), `{"type":"running","started_at_ms":5,"output":"compiling"}`)
+        testing.expect_value(t, json.to_string(&e), `{"type":"running","started_at_ms":5,"output":"compiling"}`)
     }
 
     // Absent in a live transition: none is emitted.
     {
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         tool_state_emit(&e, Tool_State_Running{started_at_ms = 5})
-        testing.expect_value(t, to_string(&e), `{"type":"running","started_at_ms":5}`)
+        testing.expect_value(t, json.to_string(&e), `{"type":"running","started_at_ms":5}`)
     }
 }
 
@@ -87,11 +88,11 @@ test_user_message_time_has_no_completed_at_ms :: proc(t: ^testing.T) {
     msg, derr := message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -126,11 +127,11 @@ test_message_assistant_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, assistant.id, Message_Id(2))
     testing.expect_value(t, len(assistant.content), 1)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -171,11 +172,11 @@ test_message_parses_compaction :: proc(t: ^testing.T) {
     testing.expect(t, has_fk, "first_kept_id should be present")
     testing.expect_value(t, fk, Message_Id(10))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -193,11 +194,11 @@ test_compaction_first_kept_id_null :: proc(t: ^testing.T) {
     _, has_fk := compaction.first_kept_id.?
     testing.expect(t, !has_fk, "first_kept_id should be absent")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -217,11 +218,11 @@ test_assistant_part_tool_roundtrip :: proc(t: ^testing.T) {
     _, is_pending := tool.state.(Tool_State_Pending)
     testing.expect(t, is_pending, "state should be pending")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -238,11 +239,11 @@ test_tool_error_state_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "state should be error")
     testing.expect_value(t, failed.error, "boom")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     tool_state_emit(&e, state)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 
     stale := decoder_init(`{"type":"error","message":"boom","duration_ms":7}`)
     _, stale_err := tool_state_from_reader(&stale)
@@ -390,11 +391,11 @@ test_tool_part_waiting_permission_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has_perm, "permission state should be present")
     testing.expect_value(t, perm.requested_at_ms, u64(1))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), emitted)
+    testing.expect_value(t, json.to_string(&e), emitted)
 }
 
 // `permission` is a part-level member; a tool state object must reject it.
@@ -444,11 +445,11 @@ test_user_message_clone_preserves_absent_skill :: proc(t: ^testing.T) {
 test_reasoning_signature_emitted :: proc(t: ^testing.T) {
     part := Assistant_Part(Reasoning_Part{id = 0, text = "hm", signature = "ErUBCkYIB"})
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":0,"text":"hm","signature":"ErUBCkYIB"}`)
+    testing.expect_value(t, json.to_string(&e), `{"type":"reasoning","id":0,"text":"hm","signature":"ErUBCkYIB"}`)
 }
 
 // An unsigned reasoning part still writes `signature`, as the empty string. The field is
@@ -456,11 +457,11 @@ test_reasoning_signature_emitted :: proc(t: ^testing.T) {
 // provider issued none" is a value here, not an absent member.
 @(test)
 test_reasoning_signature_written_when_empty :: proc(t: ^testing.T) {
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, Reasoning_Part{id = 1, text = "hm"})
-    testing.expect_value(t, to_string(&e), `{"type":"reasoning","id":1,"text":"hm","signature":""}`)
+    testing.expect_value(t, json.to_string(&e), `{"type":"reasoning","id":1,"text":"hm","signature":""}`)
 }
 
 // Rows written before the field existed decode unchanged, with no signature.
@@ -491,11 +492,11 @@ test_reasoning_signature_persisted_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be a reasoning part")
     testing.expect_value(t, reasoning.signature, "ErUBCkYIB")
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // `signature` belongs to the reasoning arm alone; the text arm rejects it.
@@ -547,11 +548,11 @@ test_redacted_reasoning_part_roundtrip :: proc(t: ^testing.T) {
         testing.expect_value(t, redacted.data, "opaque-data")
     }
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // `data` is required and belongs only to the redacted-reasoning arm. Known
@@ -641,15 +642,15 @@ test_turn_provenance_emitted :: proc(t: ^testing.T) {
     tail := `,"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2}`
     head := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[]`
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_message_emit(&e, msg)
     expected := strings.concatenate(
         {head, tail, `,"provenance":{"protocol":"anthropic-messages","model":"claude-sonnet-4-5"}}`},
         context.temp_allocator,
     )
-    testing.expect_value(t, to_string(&e), expected)
+    testing.expect_value(t, json.to_string(&e), expected)
 }
 
 // Assistant messages logged before the field existed decode with no provenance.
@@ -666,11 +667,11 @@ test_assistant_message_without_provenance_decodes :: proc(t: ^testing.T) {
     _, has_prov := msg.provenance.?
     testing.expect(t, !has_prov, "provenance must stay absent")
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // A logged provenance round-trips byte-for-byte.
@@ -689,11 +690,11 @@ test_turn_provenance_persisted_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, prov.protocol, Provider_Protocol.Openai_Chat)
     testing.expect_value(t, prov.model, "gpt-5")
 
-    e: Emitter
-    emitter_init(&e, context.temp_allocator)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, context.temp_allocator)
+    defer json.emitter_destroy(&e)
     assistant_message_emit(&e, msg)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The protocol set is closed; an unknown name is not silently kept.

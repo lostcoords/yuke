@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -18,12 +19,12 @@ Workspace :: struct {
 }
 
 // Write a Workspace object.
-workspace_emit :: proc(e: ^Emitter, self: Workspace) {
-    object_begin(e)
-    field_id(e, "id", ([16]u8)(self.id))
-    field_string(e, "root", self.root)
-    field_string(e, "title", self.title)
-    object_end(e)
+workspace_emit :: proc(e: ^json.Emitter, self: Workspace) {
+    json.object_begin(e)
+    json.field_id(e, "id", ([16]u8)(self.id))
+    json.field_string(e, "root", self.root)
+    json.field_string(e, "title", self.title)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -53,11 +54,11 @@ Git_Info :: struct {
 }
 
 // Write a Git_Info object.
-git_info_emit :: proc(e: ^Emitter, self: Git_Info) {
-    object_begin(e)
-    field_string(e, "branch", self.branch)
-    field_bool(e, "dirty", self.dirty)
-    object_end(e)
+git_info_emit :: proc(e: ^json.Emitter, self: Git_Info) {
+    json.object_begin(e)
+    json.field_string(e, "branch", self.branch)
+    json.field_bool(e, "dirty", self.dirty)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -73,10 +74,10 @@ Workspace_Describe_Params :: struct {
 }
 
 // Write workspace.describe params.
-workspace_describe_params_emit :: proc(e: ^Emitter, self: Workspace_Describe_Params) {
-    object_begin(e)
-    field_string(e, "path", self.path)
-    object_end(e)
+workspace_describe_params_emit :: proc(e: ^json.Emitter, self: Workspace_Describe_Params) {
+    json.object_begin(e)
+    json.field_string(e, "path", self.path)
+    json.object_end(e)
 }
 
 // workspace.describe result. Non-owning.
@@ -99,21 +100,21 @@ Workspace_Describe_Result :: struct {
 
 // Write a workspace.describe result. `git` and `last_used_model` are always
 // emitted, null when absent.
-workspace_describe_result_emit :: proc(e: ^Emitter, self: Workspace_Describe_Result) {
-    object_begin(e)
-    key(e, "workspace")
+workspace_describe_result_emit :: proc(e: ^json.Emitter, self: Workspace_Describe_Result) {
+    json.object_begin(e)
+    json.key(e, "workspace")
     workspace_emit(e, self.workspace)
-    key(e, "git")
+    json.key(e, "git")
 
     if git, ok := self.git.?; ok {
         git_info_emit(e, git)
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    field_u64(e, "last_modified_ms", self.last_modified_ms)
-    field_required_null_string(e, "last_used_model", self.last_used_model)
-    object_end(e)
+    json.field_u64(e, "last_modified_ms", self.last_modified_ms)
+    json.field_required_null_string(e, "last_used_model", self.last_used_model)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -142,16 +143,16 @@ Workspace_Browse_Params :: struct {
 }
 
 // Write workspace.browse params, omitting absent fields.
-workspace_browse_params_emit :: proc(e: ^Emitter, self: Workspace_Browse_Params) {
-    object_begin(e)
-    field_string_opt(e, "path", self.path)
+workspace_browse_params_emit :: proc(e: ^json.Emitter, self: Workspace_Browse_Params) {
+    json.object_begin(e)
+    json.field_string_opt(e, "path", self.path)
 
     if limit, ok := self.limit.?; ok {
-        field_u64(e, "limit", limit)
+        json.field_u64(e, "limit", limit)
     }
 
-    field_string_opt(e, "cursor", self.cursor)
-    object_end(e)
+    json.field_string_opt(e, "cursor", self.cursor)
+    json.object_end(e)
 }
 
 // Verify the page and cursor bounds.
@@ -184,12 +185,12 @@ Dir_Entry :: struct {
 }
 
 // Write a Dir_Entry object.
-dir_entry_emit :: proc(e: ^Emitter, self: Dir_Entry) {
-    object_begin(e)
-    field_string(e, "name", self.name)
-    field_string(e, "path", self.path)
-    field_bool(e, "is_git_repo", self.is_git_repo)
-    object_end(e)
+dir_entry_emit :: proc(e: ^json.Emitter, self: Dir_Entry) {
+    json.object_begin(e)
+    json.field_string(e, "name", self.name)
+    json.field_string(e, "path", self.path)
+    json.field_bool(e, "is_git_repo", self.is_git_repo)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -220,20 +221,20 @@ Workspace_Browse_Result :: struct {
 
 // Write a workspace.browse result. `parent` and `next_cursor` are always
 // emitted, null when absent.
-workspace_browse_result_emit :: proc(e: ^Emitter, self: Workspace_Browse_Result) {
-    object_begin(e)
-    field_string(e, "path", self.path)
-    field_required_null_string(e, "parent", self.parent)
-    key(e, "entries")
-    array_begin(e)
+workspace_browse_result_emit :: proc(e: ^json.Emitter, self: Workspace_Browse_Result) {
+    json.object_begin(e)
+    json.field_string(e, "path", self.path)
+    json.field_required_null_string(e, "parent", self.parent)
+    json.key(e, "entries")
+    json.array_begin(e)
     for entry in self.entries {
-        elem(e)
+        json.elem(e)
         dir_entry_emit(e, entry)
     }
 
-    array_end(e)
-    field_required_null_string(e, "next_cursor", self.next_cursor)
-    object_end(e)
+    json.array_end(e)
+    json.field_required_null_string(e, "next_cursor", self.next_cursor)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -263,10 +264,10 @@ Workspace_Ref :: struct {
 }
 
 // Write a workspace reference.
-workspace_ref_emit :: proc(e: ^Emitter, self: Workspace_Ref) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    object_end(e)
+workspace_ref_emit :: proc(e: ^json.Emitter, self: Workspace_Ref) {
+    json.object_begin(e)
+    json.field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
+    json.object_end(e)
 }
 
 // Verify the target id.
@@ -282,17 +283,17 @@ Workspace_Remove_Result :: struct {
 }
 
 // Write a workspace.remove result.
-workspace_remove_result_emit :: proc(e: ^Emitter, self: Workspace_Remove_Result) {
-    object_begin(e)
-    key(e, "related_job_ids")
-    array_begin(e)
+workspace_remove_result_emit :: proc(e: ^json.Emitter, self: Workspace_Remove_Result) {
+    json.object_begin(e)
+    json.key(e, "related_job_ids")
+    json.array_begin(e)
     for jid in self.related_job_ids {
-        elem(e)
-        val_id(e, ([16]u8)(jid))
+        json.elem(e)
+        json.val_id(e, ([16]u8)(jid))
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -350,13 +351,13 @@ Skill_Info :: struct {
 }
 
 // Write a Skill_Info object.
-skill_info_emit :: proc(e: ^Emitter, self: Skill_Info) {
-    object_begin(e)
-    field_string(e, "name", self.name)
-    field_string(e, "description", self.description)
-    field_string(e, "scope", skill_scope_to_wire(self.scope))
-    field_string(e, "argument_hint", self.argument_hint)
-    object_end(e)
+skill_info_emit :: proc(e: ^json.Emitter, self: Skill_Info) {
+    json.object_begin(e)
+    json.field_string(e, "name", self.name)
+    json.field_string(e, "description", self.description)
+    json.field_string(e, "scope", skill_scope_to_wire(self.scope))
+    json.field_string(e, "argument_hint", self.argument_hint)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -375,17 +376,17 @@ Workspace_Skills_Result :: struct {
 }
 
 // Write a workspace.skills.list result.
-workspace_skills_result_emit :: proc(e: ^Emitter, self: Workspace_Skills_Result) {
-    object_begin(e)
-    key(e, "skills")
-    array_begin(e)
+workspace_skills_result_emit :: proc(e: ^json.Emitter, self: Workspace_Skills_Result) {
+    json.object_begin(e)
+    json.key(e, "skills")
+    json.array_begin(e)
     for skill in self.skills {
-        elem(e)
+        json.elem(e)
         skill_info_emit(e, skill)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

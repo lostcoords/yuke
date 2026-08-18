@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 // Client request frame with typed method params.
 Request :: struct {
@@ -18,32 +19,32 @@ request_build :: proc(id: Request_Id, method: Method_Name, params: Request_Param
 }
 
 // Write a request; `params` is omitted when the method's params are all default.
-request_emit :: proc(e: ^Emitter, self: Request) {
-    object_begin(e)
-    field_string(e, "jsonrpc", JSONRPC_VERSION)
+request_emit :: proc(e: ^json.Emitter, self: Request) {
+    json.object_begin(e)
+    json.field_string(e, "jsonrpc", JSONRPC_VERSION)
     field_request_id(e, "id", self.id)
-    field_string(e, "method", method_name_to_wire(self.method))
+    json.field_string(e, "method", method_name_to_wire(self.method))
 
     if !params_are_default(self.params) {
-        key(e, "params")
+        json.key(e, "params")
         request_params_emit(e, self.params)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Encode a request; the caller owns the returned emitter (`to_string` then destroy).
 // `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
-request_encode :: proc(self: Request, allocator := context.allocator) -> (e: Emitter, ok: bool) {
+request_encode :: proc(self: Request, allocator := context.allocator) -> (e: json.Emitter, ok: bool) {
     if self.method == .Auth_Set_Api_Key {
         // JSON control-byte escaping can expand each secret byte to six bytes.
-        emitter_secret_init(&e, 6 * LIMITS.max_api_key_bytes + 1024, allocator)
+        json.emitter_secret_init(&e, 6 * LIMITS.max_api_key_bytes + 1024, allocator)
     } else {
-        emitter_init(&e, allocator)
+        json.emitter_init(&e, allocator)
     }
     request_emit(&e, self)
 
-    return e, !emitter_failed(&e)
+    return e, !json.emitter_failed(&e)
 }
 
 // Verify the id shape and params bounds.
@@ -94,33 +95,33 @@ response_error_build :: proc(id: Request_Id, error: Error_Object) -> Response {
 }
 
 // Write a response: `jsonrpc`, `id`, then `result` or `error`, never both.
-response_emit :: proc(e: ^Emitter, self: Response) {
+response_emit :: proc(e: ^json.Emitter, self: Response) {
     assert(self != nil, "a response frame carries either a result or an error")
-    object_begin(e)
-    field_string(e, "jsonrpc", JSONRPC_VERSION)
+    json.object_begin(e)
+    json.field_string(e, "jsonrpc", JSONRPC_VERSION)
 
     switch v in self {
     case Response_Ok:
         field_request_id(e, "id", v.id)
-        key(e, "result")
+        json.key(e, "result")
         response_result_emit(e, v.result)
 
     case Response_Error:
         field_request_id(e, "id", v.id)
-        key(e, "error")
+        json.key(e, "error")
         error_object_emit(e, v.error)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Encode a response; the caller owns the returned emitter (`to_string` then destroy).
 // `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
-response_encode :: proc(self: Response, allocator := context.allocator) -> (e: Emitter, ok: bool) {
-    emitter_init(&e, allocator)
+response_encode :: proc(self: Response, allocator := context.allocator) -> (e: json.Emitter, ok: bool) {
+    json.emitter_init(&e, allocator)
     response_emit(&e, self)
 
-    return e, !emitter_failed(&e)
+    return e, !json.emitter_failed(&e)
 }
 
 // Verify the id shape and result/error bounds.
@@ -157,34 +158,34 @@ notification_build :: proc(method: Broadcast_Name, params: Broadcast_Data) -> No
 }
 
 // Write a notification: `jsonrpc`, `method`, `params`. No `id`.
-notification_emit :: proc(e: ^Emitter, self: Notification) {
-    object_begin(e)
-    field_string(e, "jsonrpc", JSONRPC_VERSION)
-    field_string(e, "method", broadcast_name_to_wire(self.method))
-    key(e, "params")
+notification_emit :: proc(e: ^json.Emitter, self: Notification) {
+    json.object_begin(e)
+    json.field_string(e, "jsonrpc", JSONRPC_VERSION)
+    json.field_string(e, "method", broadcast_name_to_wire(self.method))
+    json.key(e, "params")
     broadcast_data_emit(e, self.params)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Encode a notification; the caller owns the returned emitter (`to_string` then destroy).
 // `ok` is false when a write was truncated, leaving incomplete JSON that must not be sent.
-notification_encode :: proc(self: Notification, allocator := context.allocator) -> (e: Emitter, ok: bool) {
-    emitter_init(&e, allocator)
+notification_encode :: proc(self: Notification, allocator := context.allocator) -> (e: json.Emitter, ok: bool) {
+    json.emitter_init(&e, allocator)
     notification_emit(&e, self)
 
-    return e, !emitter_failed(&e)
+    return e, !json.emitter_failed(&e)
 }
 
 // Write a notification whose `params` are already encoded. The durable path logs the
 // payload and ships it nested in one frame, so both come from a single emit and cannot
 // disagree; `params` must be what `broadcast_data_emit` wrote for `method`.
-notification_emit_raw :: proc(e: ^Emitter, method: Broadcast_Name, params: string) {
-    object_begin(e)
-    field_string(e, "jsonrpc", JSONRPC_VERSION)
-    field_string(e, "method", broadcast_name_to_wire(method))
-    key(e, "params")
-    val_raw(e, params)
-    object_end(e)
+notification_emit_raw :: proc(e: ^json.Emitter, method: Broadcast_Name, params: string) {
+    json.object_begin(e)
+    json.field_string(e, "jsonrpc", JSONRPC_VERSION)
+    json.field_string(e, "method", broadcast_name_to_wire(method))
+    json.key(e, "params")
+    json.val_raw(e, params)
+    json.object_end(e)
 }
 
 // Verify the notification payload bounds.

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -14,11 +15,11 @@ test_content_part_text_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be a text part")
     testing.expect_value(t, txt.text, "hello")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     content_part_emit(&e, part)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -34,11 +35,11 @@ test_media_source_blob_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, blob.bytes, u64(1024))
     testing.expect_value(t, blob.mime, "image/png")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     media_source_emit(&e, src)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

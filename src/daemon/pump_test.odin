@@ -1,4 +1,5 @@
 package daemon
+import "libs:json"
 
 import "core:fmt"
 import "core:nbio"
@@ -1116,11 +1117,11 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
         data, cerr := wire.broadcast_data_from_reader(.Message_Committed, &dec)
         testing.expect_value(t, cerr, wire.Validation_Error.None)
 
-        e: wire.Emitter
-        wire.emitter_init(&e, context.temp_allocator)
-        defer wire.emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e, context.temp_allocator)
+        defer json.emitter_destroy(&e)
         wire.broadcast_data_emit(&e, data)
-        replayed := wire.to_string(&e)
+        replayed := json.to_string(&e)
         testing.expect_value(t, replayed, rows[0].payload)
     }
 

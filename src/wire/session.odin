@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -59,13 +60,13 @@ max_rounds_override_clone :: proc(self: Max_Rounds_Override, allocator := contex
 }
 
 // Write a system-prompt override as its resolved JSON value.
-system_prompt_override_emit :: proc(e: ^Emitter, self: System_Prompt_Override) {
+system_prompt_override_emit :: proc(e: ^json.Emitter, self: System_Prompt_Override) {
     switch v in self {
     case System_Prompt_None:
-        val_null(e)
+        json.val_null(e)
 
     case System_Prompt_Set:
-        val_string(e, v.value)
+        json.val_string(e, v.value)
 
     case System_Prompt_Default:
     // The default arm is never written; the caller skips it.
@@ -73,13 +74,13 @@ system_prompt_override_emit :: proc(e: ^Emitter, self: System_Prompt_Override) {
 }
 
 // Write a max-rounds override as its resolved JSON value.
-max_rounds_override_emit :: proc(e: ^Emitter, self: Max_Rounds_Override) {
+max_rounds_override_emit :: proc(e: ^json.Emitter, self: Max_Rounds_Override) {
     switch v in self {
     case Max_Rounds_Unlimited:
-        val_null(e)
+        json.val_null(e)
 
     case Max_Rounds_Set:
-        val_u64(e, v.value)
+        json.val_u64(e, v.value)
 
     case Max_Rounds_Default:
     // The default arm is never written; the caller skips it.
@@ -118,31 +119,31 @@ Create_Session :: struct {
 }
 
 // Write fields; omitted overrides are skipped.
-create_session_emit :: proc(e: ^Emitter, self: Create_Session) {
-    object_begin(e)
-    field_string_opt(e, "workspace_path", self.workspace_path)
-    field_string_opt(e, "profile", self.profile)
-    field_string_opt(e, "model", self.model)
-    field_string_opt(e, "reasoning", self.reasoning)
+create_session_emit :: proc(e: ^json.Emitter, self: Create_Session) {
+    json.object_begin(e)
+    json.field_string_opt(e, "workspace_path", self.workspace_path)
+    json.field_string_opt(e, "profile", self.profile)
+    json.field_string_opt(e, "model", self.model)
+    json.field_string_opt(e, "reasoning", self.reasoning)
     _, sp_default := self.system_prompt.(System_Prompt_Default)
 
     if self.system_prompt != nil && !sp_default {
-        key(e, "system_prompt")
+        json.key(e, "system_prompt")
         system_prompt_override_emit(e, self.system_prompt)
     }
 
     if mode, ok := self.permission.?; ok {
-        field_string(e, "permission", permission_mode_to_wire(mode))
+        json.field_string(e, "permission", permission_mode_to_wire(mode))
     }
 
     _, mr_default := self.max_rounds.(Max_Rounds_Default)
 
     if self.max_rounds != nil && !mr_default {
-        key(e, "max_rounds")
+        json.key(e, "max_rounds")
         max_rounds_override_emit(e, self.max_rounds)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds. Each override is held to the `Session` field it lands in,
@@ -210,23 +211,23 @@ Session_Patch :: struct {
 }
 
 // Write only fields present in the patch.
-session_patch_emit :: proc(e: ^Emitter, self: Session_Patch) {
-    object_begin(e)
-    field_string_opt(e, "model", self.model)
-    field_string_opt(e, "reasoning", self.reasoning)
+session_patch_emit :: proc(e: ^json.Emitter, self: Session_Patch) {
+    json.object_begin(e)
+    json.field_string_opt(e, "model", self.model)
+    json.field_string_opt(e, "reasoning", self.reasoning)
 
     if mode, ok := self.permission.?; ok {
-        field_string(e, "permission", permission_mode_to_wire(mode))
+        json.field_string(e, "permission", permission_mode_to_wire(mode))
     }
 
     _, mr_default := self.max_rounds.(Max_Rounds_Default)
 
     if self.max_rounds != nil && !mr_default {
-        key(e, "max_rounds")
+        json.key(e, "max_rounds")
         max_rounds_override_emit(e, self.max_rounds)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -252,15 +253,15 @@ Session_Fork_Params :: struct {
 }
 
 // Write session.fork params.
-session_fork_params_emit :: proc(e: ^Emitter, self: Session_Fork_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
+session_fork_params_emit :: proc(e: ^json.Emitter, self: Session_Fork_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
     if bid, ok := self.before_message_id.?; ok {
-        field_u64(e, "before_message_id", u64(bid))
+        json.field_u64(e, "before_message_id", u64(bid))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // session.compact input.
@@ -270,10 +271,10 @@ Session_Compact_Params :: struct {
 }
 
 // Write session.compact params.
-session_compact_params_emit :: proc(e: ^Emitter, self: Session_Compact_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    object_end(e)
+session_compact_params_emit :: proc(e: ^json.Emitter, self: Session_Compact_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.object_end(e)
 }
 
 // Whether compaction started immediately or was queued.
@@ -309,11 +310,11 @@ Session_Compact_Result :: struct {
 }
 
 // Write fields as JSON.
-session_compact_result_emit :: proc(e: ^Emitter, self: Session_Compact_Result) {
-    object_begin(e)
-    field_string(e, "status", compact_status_to_wire(self.status))
-    field_u64(e, "run_id", u64(self.run_id))
-    object_end(e)
+session_compact_result_emit :: proc(e: ^json.Emitter, self: Session_Compact_Result) {
+    json.object_begin(e)
+    json.field_string(e, "status", compact_status_to_wire(self.status))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.object_end(e)
 }
 
 // session.rewind input.
@@ -326,11 +327,11 @@ Session_Rewind_Params :: struct {
 }
 
 // Write session.rewind params.
-session_rewind_params_emit :: proc(e: ^Emitter, self: Session_Rewind_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "before_message_id", u64(self.before_message_id))
-    object_end(e)
+session_rewind_params_emit :: proc(e: ^json.Emitter, self: Session_Rewind_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "before_message_id", u64(self.before_message_id))
+    json.object_end(e)
 }
 
 // Permission policy for future tool calls.
@@ -440,26 +441,26 @@ session_origin_type_from_wire :: proc(s: string) -> (Session_Origin, bool) {
 }
 
 // Write internal-tagged JSON with `type` first.
-session_origin_emit :: proc(e: ^Emitter, self: Session_Origin) {
-    object_begin(e)
-    field_string(e, "type", session_origin_type_to_wire(self))
+session_origin_emit :: proc(e: ^json.Emitter, self: Session_Origin) {
+    json.object_begin(e)
+    json.field_string(e, "type", session_origin_type_to_wire(self))
 
     switch v in self {
     case Session_Origin_Root:
 
     case Session_Origin_Child:
-        field_id(e, "parent_id", ([16]u8)(v.parent_id))
-        field_u64(e, "parent_message_id", u64(v.parent_message_id))
-        field_u64(e, "parent_part_id", u64(v.parent_part_id))
+        json.field_id(e, "parent_id", ([16]u8)(v.parent_id))
+        json.field_u64(e, "parent_message_id", u64(v.parent_message_id))
+        json.field_u64(e, "parent_part_id", u64(v.parent_part_id))
 
     case Session_Origin_Fork:
-        field_id(e, "source_id", ([16]u8)(v.source_id))
+        json.field_id(e, "source_id", ([16]u8)(v.source_id))
 
     case Session_Origin_Cron:
-        field_id(e, "job_id", ([16]u8)(v.job_id))
+        json.field_id(e, "job_id", ([16]u8)(v.job_id))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -550,34 +551,34 @@ Session :: struct {
 
 // Write a Session object. `created_by` and `max_rounds` are always present, null when absent;
 // `agent` is omitted when absent.
-session_emit :: proc(e: ^Emitter, self: Session) {
-    object_begin(e)
-    field_id(e, "id", ([16]u8)(self.id))
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    field_string(e, "profile", self.profile)
-    field_string(e, "model", self.model)
-    field_string(e, "reasoning", self.reasoning)
-    field_u64(e, "config_rev", u64(self.config_rev))
-    field_string(e, "permission", permission_mode_to_wire(self.permission))
-    field_required_null_u64(e, "max_rounds", self.max_rounds)
-    field_string(e, "title", self.title)
-    field_u64(e, "message_count", self.message_count)
-    key(e, "usage_total")
+session_emit :: proc(e: ^json.Emitter, self: Session) {
+    json.object_begin(e)
+    json.field_id(e, "id", ([16]u8)(self.id))
+    json.field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
+    json.field_string(e, "profile", self.profile)
+    json.field_string(e, "model", self.model)
+    json.field_string(e, "reasoning", self.reasoning)
+    json.field_u64(e, "config_rev", u64(self.config_rev))
+    json.field_string(e, "permission", permission_mode_to_wire(self.permission))
+    json.field_required_null_u64(e, "max_rounds", self.max_rounds)
+    json.field_string(e, "title", self.title)
+    json.field_u64(e, "message_count", self.message_count)
+    json.key(e, "usage_total")
     token_usage_emit(e, self.usage_total)
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    field_u64(e, "updated_at_ms", self.updated_at_ms)
-    key(e, "created_by")
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.field_u64(e, "updated_at_ms", self.updated_at_ms)
+    json.key(e, "created_by")
 
     if cb, ok := self.created_by.?; ok {
         client_emit(e, cb)
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    key(e, "origin")
+    json.key(e, "origin")
     session_origin_emit(e, self.origin)
-    field_string_opt(e, "agent", self.agent)
-    object_end(e)
+    json.field_string_opt(e, "agent", self.agent)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -668,12 +669,12 @@ Run_Config :: struct {
 }
 
 // Write a Run_Config object.
-run_config_emit :: proc(e: ^Emitter, self: Run_Config) {
-    object_begin(e)
-    field_u64(e, "config_rev", u64(self.config_rev))
-    field_string(e, "model", self.model)
-    field_string(e, "reasoning", self.reasoning)
-    object_end(e)
+run_config_emit :: proc(e: ^json.Emitter, self: Run_Config) {
+    json.object_begin(e)
+    json.field_u64(e, "config_rev", u64(self.config_rev))
+    json.field_string(e, "model", self.model)
+    json.field_string(e, "reasoning", self.reasoning)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -715,21 +716,21 @@ Session_Activity :: struct {
 
 // Write a Session_Activity object; `config` is omitted when absent, while
 // `pending_compaction` is always present, null when absent.
-session_activity_emit :: proc(e: ^Emitter, self: Session_Activity) {
-    object_begin(e)
-    key(e, "state")
+session_activity_emit :: proc(e: ^json.Emitter, self: Session_Activity) {
+    json.object_begin(e)
+    json.key(e, "state")
     activity_state_emit(e, self.state)
 
     if cfg, ok := self.config.?; ok {
-        key(e, "config")
+        json.key(e, "config")
         run_config_emit(e, cfg)
     }
 
-    field_u64(e, "queued", self.queued)
-    key(e, "context_usage")
+    json.field_u64(e, "queued", self.queued)
+    json.key(e, "context_usage")
     token_usage_emit(e, self.context_usage)
-    field_required_null_u64(e, "pending_compaction", self.pending_compaction)
-    object_end(e)
+    json.field_required_null_u64(e, "pending_compaction", self.pending_compaction)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds and the state/config cross-field invariant: only `idle`
@@ -795,13 +796,13 @@ Session_List_Item :: struct {
 }
 
 // Write a Session_List_Item object.
-session_list_item_emit :: proc(e: ^Emitter, self: Session_List_Item) {
-    object_begin(e)
-    key(e, "session")
+session_list_item_emit :: proc(e: ^json.Emitter, self: Session_List_Item) {
+    json.object_begin(e)
+    json.key(e, "session")
     session_emit(e, self.session)
-    key(e, "activity")
+    json.key(e, "activity")
     session_activity_emit(e, self.activity)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify nested fixed and bounded fields.
@@ -836,19 +837,19 @@ Session_Scope :: union {
 }
 
 // Write internal-tagged JSON with `type` first.
-session_scope_emit :: proc(e: ^Emitter, self: Session_Scope) {
-    object_begin(e)
+session_scope_emit :: proc(e: ^json.Emitter, self: Session_Scope) {
+    json.object_begin(e)
 
     switch v in self {
     case Session_Scope_All:
-        field_string(e, "type", "all")
+        json.field_string(e, "type", "all")
 
     case Session_Scope_Workspace:
-        field_string(e, "type", "workspace")
-        field_id(e, "workspace_id", ([16]u8)(v.workspace_id))
+        json.field_string(e, "type", "workspace")
+        json.field_id(e, "workspace_id", ([16]u8)(v.workspace_id))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify fixed fields.
@@ -893,26 +894,26 @@ Session_Population :: union {
 }
 
 // Write internal-tagged JSON with `type` first.
-session_population_emit :: proc(e: ^Emitter, self: Session_Population) {
-    object_begin(e)
+session_population_emit :: proc(e: ^json.Emitter, self: Session_Population) {
+    json.object_begin(e)
 
     switch v in self {
     case Session_Population_Top_Level:
-        field_string(e, "type", "top_level")
+        json.field_string(e, "type", "top_level")
 
     case Session_Population_Children:
-        field_string(e, "type", "children")
-        field_id(e, "parent_id", ([16]u8)(v.parent_id))
+        json.field_string(e, "type", "children")
+        json.field_id(e, "parent_id", ([16]u8)(v.parent_id))
 
     case Session_Population_Job_Runs:
-        field_string(e, "type", "job_runs")
-        field_id(e, "job_id", ([16]u8)(v.job_id))
+        json.field_string(e, "type", "job_runs")
+        json.field_id(e, "job_id", ([16]u8)(v.job_id))
 
     case Session_Population_All:
-        field_string(e, "type", "all")
+        json.field_string(e, "type", "all")
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify fixed relationship ids.
@@ -979,20 +980,20 @@ Session_List_Params :: struct {
 }
 
 // Write session.list params.
-session_list_params_emit :: proc(e: ^Emitter, self: Session_List_Params) {
-    object_begin(e)
-    key(e, "scope")
+session_list_params_emit :: proc(e: ^json.Emitter, self: Session_List_Params) {
+    json.object_begin(e)
+    json.key(e, "scope")
     session_scope_emit(e, self.scope)
-    key(e, "population")
+    json.key(e, "population")
     session_population_emit(e, self.population)
-    field_string(e, "view", session_view_to_wire(self.view))
+    json.field_string(e, "view", session_view_to_wire(self.view))
 
     if limit, ok := self.limit.?; ok {
-        field_u64(e, "limit", limit)
+        json.field_u64(e, "limit", limit)
     }
 
-    field_string_opt(e, "cursor", self.cursor)
-    object_end(e)
+    json.field_string_opt(e, "cursor", self.cursor)
+    json.object_end(e)
 }
 
 // Verify scope, range, and cursor bound.
@@ -1032,20 +1033,20 @@ Session_List_Result :: struct {
 }
 
 // Write a session.list result; `next_cursor` is always present, null on the final page.
-session_list_result_emit :: proc(e: ^Emitter, self: Session_List_Result) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    key(e, "items")
-    array_begin(e)
+session_list_result_emit :: proc(e: ^json.Emitter, self: Session_List_Result) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.key(e, "items")
+    json.array_begin(e)
     for item in self.items {
-        elem(e)
+        json.elem(e)
         session_list_item_emit(e, item)
     }
 
-    array_end(e)
-    field_required_null_string(e, "next_cursor", self.next_cursor)
-    field_u64(e, "total", self.total)
-    object_end(e)
+    json.array_end(e)
+    json.field_required_null_string(e, "next_cursor", self.next_cursor)
+    json.field_u64(e, "total", self.total)
+    json.object_end(e)
 }
 
 // Verify revision, page, and annotated field bounds.
@@ -1192,62 +1193,62 @@ Activity_State :: union {
 }
 
 // Write internal-tagged JSON with `type` first.
-activity_state_emit :: proc(e: ^Emitter, self: Activity_State) {
-    object_begin(e)
+activity_state_emit :: proc(e: ^json.Emitter, self: Activity_State) {
+    json.object_begin(e)
 
     switch v in self {
     case Activity_State_Idle:
-        field_string(e, "type", "idle")
+        json.field_string(e, "type", "idle")
 
     case Activity_State_Building:
-        field_string(e, "type", "building")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "started_at_ms", v.started_at_ms)
+        json.field_string(e, "type", "building")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "started_at_ms", v.started_at_ms)
 
     case Activity_State_Running:
-        field_string(e, "type", "running")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "started_at_ms", v.started_at_ms)
+        json.field_string(e, "type", "running")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "started_at_ms", v.started_at_ms)
 
     case Activity_State_Reasoning:
-        field_string(e, "type", "reasoning")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "message_id", u64(v.message_id))
-        field_u64(e, "part_id", u64(v.part_id))
+        json.field_string(e, "type", "reasoning")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "message_id", u64(v.message_id))
+        json.field_u64(e, "part_id", u64(v.part_id))
 
     case Activity_State_Waiting_Permission:
-        field_string(e, "type", "waiting_permission")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "message_id", u64(v.message_id))
-        field_u64(e, "part_id", u64(v.part_id))
-        field_string(e, "tool_name", v.tool_name)
-        field_u64(e, "requested_at_ms", v.requested_at_ms)
+        json.field_string(e, "type", "waiting_permission")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "message_id", u64(v.message_id))
+        json.field_u64(e, "part_id", u64(v.part_id))
+        json.field_string(e, "tool_name", v.tool_name)
+        json.field_u64(e, "requested_at_ms", v.requested_at_ms)
 
     case Activity_State_Running_Tool:
-        field_string(e, "type", "running_tool")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "message_id", u64(v.message_id))
-        field_u64(e, "part_id", u64(v.part_id))
-        field_string(e, "tool_name", v.tool_name)
-        field_u64(e, "started_at_ms", v.started_at_ms)
+        json.field_string(e, "type", "running_tool")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "message_id", u64(v.message_id))
+        json.field_u64(e, "part_id", u64(v.part_id))
+        json.field_string(e, "tool_name", v.tool_name)
+        json.field_u64(e, "started_at_ms", v.started_at_ms)
 
     case Activity_State_Retrying:
-        field_string(e, "type", "retrying")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_u64(e, "attempt", v.attempt)
-        field_u64(e, "max_attempts", v.max_attempts)
-        field_u64(e, "next_at_ms", v.next_at_ms)
-        field_string(e, "code", run_error_code_to_wire(v.code))
-        field_string(e, "message", v.message)
+        json.field_string(e, "type", "retrying")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_u64(e, "attempt", v.attempt)
+        json.field_u64(e, "max_attempts", v.max_attempts)
+        json.field_u64(e, "next_at_ms", v.next_at_ms)
+        json.field_string(e, "code", run_error_code_to_wire(v.code))
+        json.field_string(e, "message", v.message)
 
     case Activity_State_Compacting:
-        field_string(e, "type", "compacting")
-        field_u64(e, "run_id", u64(v.run_id))
-        field_string(e, "reason", compaction_reason_to_wire(v.reason))
-        field_u64(e, "started_at_ms", v.started_at_ms)
+        json.field_string(e, "type", "compacting")
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_string(e, "reason", compaction_reason_to_wire(v.reason))
+        json.field_u64(e, "started_at_ms", v.started_at_ms)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -1351,15 +1352,15 @@ Session_Resync_Params :: struct {
 }
 
 // Write session.resync params.
-session_resync_params_emit :: proc(e: ^Emitter, self: Session_Resync_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
+session_resync_params_emit :: proc(e: ^json.Emitter, self: Session_Resync_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
     if limit, ok := self.limit.?; ok {
-        field_u64(e, "limit", limit)
+        json.field_u64(e, "limit", limit)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and optional page-size bound.
@@ -1382,11 +1383,11 @@ Active_Draft :: struct {
 }
 
 // Write an Active_Draft object.
-active_draft_emit :: proc(e: ^Emitter, self: Active_Draft) {
-    object_begin(e)
-    key(e, "message")
+active_draft_emit :: proc(e: ^json.Emitter, self: Active_Draft) {
+    json.object_begin(e)
+    json.key(e, "message")
     assistant_message_emit(e, self.message)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify draft-only semantic state and aggregate live-state bounds.
@@ -1454,44 +1455,44 @@ Session_Resync_Result :: struct {
 
 // Write a session.resync result; `highest_finalized_message_id` is always present,
 // null when no message has finalized.
-session_resync_result_emit :: proc(e: ^Emitter, self: Session_Resync_Result) {
-    object_begin(e)
-    key(e, "item")
+session_resync_result_emit :: proc(e: ^json.Emitter, self: Session_Resync_Result) {
+    json.object_begin(e)
+    json.key(e, "item")
     session_list_item_emit(e, self.item)
-    field_u64(e, "base_seq", u64(self.base_seq))
-    field_required_null_u64(e, "highest_finalized_message_id", self.highest_finalized_message_id)
-    key(e, "messages")
-    array_begin(e)
+    json.field_u64(e, "base_seq", u64(self.base_seq))
+    json.field_required_null_u64(e, "highest_finalized_message_id", self.highest_finalized_message_id)
+    json.key(e, "messages")
+    json.array_begin(e)
     for message in self.messages {
-        elem(e)
+        json.elem(e)
         message_emit(e, message)
     }
 
-    array_end(e)
-    field_bool(e, "has_more", self.has_more)
-    key(e, "configs")
-    array_begin(e)
+    json.array_end(e)
+    json.field_bool(e, "has_more", self.has_more)
+    json.key(e, "configs")
+    json.array_begin(e)
     for cfg in self.configs {
-        elem(e)
+        json.elem(e)
         run_config_emit(e, cfg)
     }
 
-    array_end(e)
+    json.array_end(e)
 
     if active, ok := self.active.?; ok {
-        key(e, "active")
+        json.key(e, "active")
         active_draft_emit(e, active)
     }
 
-    key(e, "queued")
-    array_begin(e)
+    json.key(e, "queued")
+    json.array_begin(e)
     for q in self.queued {
-        elem(e)
+        json.elem(e)
         queued_input_emit(e, q)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Whether `configs` contains `config_rev`.
@@ -1787,16 +1788,16 @@ Session_History_Params :: struct {
 }
 
 // Write session.history params.
-session_history_params_emit :: proc(e: ^Emitter, self: Session_History_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "before_message_id", u64(self.before_message_id))
+session_history_params_emit :: proc(e: ^json.Emitter, self: Session_History_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "before_message_id", u64(self.before_message_id))
 
     if limit, ok := self.limit.?; ok {
-        field_u64(e, "limit", limit)
+        json.field_u64(e, "limit", limit)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // session.history result.
@@ -1817,27 +1818,27 @@ Session_History_Result :: struct {
 }
 
 // Write a session.history result.
-session_history_result_emit :: proc(e: ^Emitter, self: Session_History_Result) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    key(e, "messages")
-    array_begin(e)
+session_history_result_emit :: proc(e: ^json.Emitter, self: Session_History_Result) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.key(e, "messages")
+    json.array_begin(e)
     for message in self.messages {
-        elem(e)
+        json.elem(e)
         message_emit(e, message)
     }
 
-    array_end(e)
-    key(e, "configs")
-    array_begin(e)
+    json.array_end(e)
+    json.key(e, "configs")
+    json.array_begin(e)
     for cfg in self.configs {
-        elem(e)
+        json.elem(e)
         run_config_emit(e, cfg)
     }
 
-    array_end(e)
-    field_bool(e, "has_more", self.has_more)
-    object_end(e)
+    json.array_end(e)
+    json.field_bool(e, "has_more", self.has_more)
+    json.object_end(e)
 }
 
 // Verify annotated bounds and relational page invariants.
@@ -1868,15 +1869,15 @@ Session_Config_Params :: struct {
 }
 
 // Write session.config.get params.
-session_config_params_emit :: proc(e: ^Emitter, self: Session_Config_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
+session_config_params_emit :: proc(e: ^json.Emitter, self: Session_Config_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
     if cr, ok := self.config_rev.?; ok {
-        field_u64(e, "config_rev", u64(cr))
+        json.field_u64(e, "config_rev", u64(cr))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // session.config.get result.
@@ -1892,12 +1893,12 @@ Session_Config_Result :: struct {
 
 // Write a session.config.get result; `system_prompt` is always present, null when
 // no system prompt is sent to the model.
-session_config_result_emit :: proc(e: ^Emitter, self: Session_Config_Result) {
-    object_begin(e)
-    key(e, "config")
+session_config_result_emit :: proc(e: ^json.Emitter, self: Session_Config_Result) {
+    json.object_begin(e)
+    json.key(e, "config")
     run_config_emit(e, self.config)
-    field_required_null_string(e, "system_prompt", self.system_prompt)
-    object_end(e)
+    json.field_required_null_string(e, "system_prompt", self.system_prompt)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -1913,17 +1914,17 @@ Subscription_Set_Params :: struct {
 }
 
 // Write session.subscription.set params.
-subscription_set_params_emit :: proc(e: ^Emitter, self: Subscription_Set_Params) {
-    object_begin(e)
-    key(e, "sessions")
-    array_begin(e)
+subscription_set_params_emit :: proc(e: ^json.Emitter, self: Subscription_Set_Params) {
+    json.object_begin(e)
+    json.key(e, "sessions")
+    json.array_begin(e)
     for sid in self.sessions {
-        elem(e)
-        val_id(e, ([16]u8)(sid))
+        json.elem(e)
+        json.val_id(e, ([16]u8)(sid))
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

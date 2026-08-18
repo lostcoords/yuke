@@ -1,4 +1,5 @@
 package store
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -498,12 +499,12 @@ test_usage_totals_survive_truncation_and_rebuild :: proc(t: ^testing.T) {
 // that wants to be replayable has to store what the pump would have stored.
 @(private)
 test_encode :: proc(data: wire.Broadcast_Data, allocator := context.allocator) -> string {
-    e: wire.Emitter
-    wire.emitter_init(&e, allocator)
-    defer wire.emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e, allocator)
+    defer json.emitter_destroy(&e)
     wire.broadcast_data_emit(&e, data)
 
-    return strings.clone(wire.to_string(&e), allocator)
+    return strings.clone(json.to_string(&e), allocator)
 }
 
 // Snapshot every projected row for one session as comparable text.

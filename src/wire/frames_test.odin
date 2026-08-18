@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -15,11 +16,11 @@ test_request_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, string(req.id), "2")
     testing.expect(t, request_validate(req) == .None, "request should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     request_emit(&e, req)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -51,11 +52,11 @@ test_response_ok_roundtrip :: proc(t: ^testing.T) {
     _, ok := resp.(Response_Ok)
     testing.expect(t, ok, "should be a success response")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     response_emit(&e, resp)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -71,11 +72,11 @@ test_response_error_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, re.error.code, Error_Code.Session_Busy)
     testing.expect(t, response_validate(resp) == .None, "error response should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     response_emit(&e, resp)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -88,11 +89,11 @@ test_notification_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, n.method, Broadcast_Name.Notice)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     notification_emit(&e, n)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -137,11 +138,11 @@ test_request_omitted_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, req.method, Method_Name.Catalog_Refresh)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     request_emit(&e, req)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // `jsonrpc` is required and must be exactly the string "2.0".
@@ -197,10 +198,10 @@ test_request_id_echoes_verbatim :: proc(t: ^testing.T) {
         testing.expect_value(t, string(ok.id), id)
         testing.expect(t, response_validate(resp) == .None, "an echoed id must validate")
 
-        e: Emitter
-        emitter_init(&e, context.temp_allocator)
+        e: json.Emitter
+        json.emitter_init(&e, context.temp_allocator)
         response_emit(&e, resp)
-        testing.expect_value(t, to_string(&e), input)
+        testing.expect_value(t, json.to_string(&e), input)
     }
 }
 

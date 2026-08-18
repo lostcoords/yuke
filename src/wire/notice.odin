@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -87,12 +88,12 @@ notice_from_reader :: proc(d: ^Decoder) -> (n: Notice, err: Validation_Error) {
 }
 
 // Write a notice as JSON.
-notice_emit :: proc(e: ^Emitter, self: Notice) {
-    object_begin(e)
-    field_string(e, "level", notice_level_to_wire(self.level))
-    field_string(e, "source", self.source)
-    field_string(e, "message", self.message)
-    object_end(e)
+notice_emit :: proc(e: ^json.Emitter, self: Notice) {
+    json.object_begin(e)
+    json.field_string(e, "level", notice_level_to_wire(self.level))
+    json.field_string(e, "source", self.source)
+    json.field_string(e, "message", self.message)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

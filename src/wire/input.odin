@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -22,11 +23,11 @@ Skill_Ref :: struct {
 }
 
 // Write a skill reference.
-skill_ref_emit :: proc(e: ^Emitter, self: Skill_Ref) {
-    object_begin(e)
-    field_string(e, "name", self.name)
-    field_string(e, "arguments", self.arguments)
-    object_end(e)
+skill_ref_emit :: proc(e: ^json.Emitter, self: Skill_Ref) {
+    json.object_begin(e)
+    json.field_string(e, "name", self.name)
+    json.field_string(e, "arguments", self.arguments)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -86,28 +87,28 @@ Input :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-input_emit :: proc(e: ^Emitter, self: Input) {
-    object_begin(e)
+input_emit :: proc(e: ^json.Emitter, self: Input) {
+    json.object_begin(e)
 
     switch v in self {
     case Input_Content:
-        field_string(e, "type", "content")
-        key(e, "content")
-        array_begin(e)
+        json.field_string(e, "type", "content")
+        json.key(e, "content")
+        json.array_begin(e)
         for part in v.content {
-            elem(e)
+            json.elem(e)
             content_part_emit(e, part)
         }
 
-        array_end(e)
+        json.array_end(e)
 
     case Input_Skill:
-        field_string(e, "type", "skill")
-        field_string(e, "name", v.name)
-        field_string(e, "arguments", v.arguments)
+        json.field_string(e, "type", "skill")
+        json.field_string(e, "name", v.name)
+        json.field_string(e, "arguments", v.arguments)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -161,19 +162,19 @@ Queued_Input :: struct {
 }
 
 // Write a Queued_Input object.
-queued_input_emit :: proc(e: ^Emitter, self: Queued_Input) {
-    object_begin(e)
-    field_u64(e, "input_id", u64(self.input_id))
-    key(e, "content")
-    array_begin(e)
+queued_input_emit :: proc(e: ^json.Emitter, self: Queued_Input) {
+    json.object_begin(e)
+    json.field_u64(e, "input_id", u64(self.input_id))
+    json.key(e, "content")
+    json.array_begin(e)
     for part in self.content {
-        elem(e)
+        json.elem(e)
         content_part_emit(e, part)
     }
 
-    array_end(e)
-    field_u64(e, "queued_at_ms", self.queued_at_ms)
-    object_end(e)
+    json.array_end(e)
+    json.field_u64(e, "queued_at_ms", self.queued_at_ms)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -212,12 +213,12 @@ Session_Send_Input_Params :: struct {
 }
 
 // Write session.send_input params.
-session_send_input_params_emit :: proc(e: ^Emitter, self: Session_Send_Input_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    key(e, "input")
+session_send_input_params_emit :: proc(e: ^json.Emitter, self: Session_Send_Input_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.key(e, "input")
     input_emit(e, self.input)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -249,21 +250,21 @@ Session_Send_Input_Result :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-session_send_input_result_emit :: proc(e: ^Emitter, self: Session_Send_Input_Result) {
-    object_begin(e)
+session_send_input_result_emit :: proc(e: ^json.Emitter, self: Session_Send_Input_Result) {
+    json.object_begin(e)
 
     switch v in self {
     case Session_Send_Input_Result_Started:
-        field_string(e, "type", "started")
-        field_u64(e, "input_id", u64(v.input_id))
-        field_u64(e, "run_id", u64(v.run_id))
+        json.field_string(e, "type", "started")
+        json.field_u64(e, "input_id", u64(v.input_id))
+        json.field_u64(e, "run_id", u64(v.run_id))
 
     case Session_Send_Input_Result_Queued:
-        field_string(e, "type", "queued")
-        field_u64(e, "input_id", u64(v.input_id))
+        json.field_string(e, "type", "queued")
+        json.field_u64(e, "input_id", u64(v.input_id))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Params for `session.cancel_input`.
@@ -277,11 +278,11 @@ Session_Cancel_Input_Params :: struct {
 }
 
 // Write session.cancel_input params.
-session_cancel_input_params_emit :: proc(e: ^Emitter, self: Session_Cancel_Input_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "input_id", u64(self.input_id))
-    object_end(e)
+session_cancel_input_params_emit :: proc(e: ^json.Emitter, self: Session_Cancel_Input_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "input_id", u64(self.input_id))
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -296,10 +297,10 @@ Session_Cancel_Input_Result :: struct {
 }
 
 // Write a session.cancel_input result.
-session_cancel_input_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Input_Result) {
-    object_begin(e)
-    field_u64(e, "canceled_input", u64(self.canceled_input))
-    object_end(e)
+session_cancel_input_result_emit :: proc(e: ^json.Emitter, self: Session_Cancel_Input_Result) {
+    json.object_begin(e)
+    json.field_u64(e, "canceled_input", u64(self.canceled_input))
+    json.object_end(e)
 }
 
 // Params for `session.cancel_run`.
@@ -317,19 +318,19 @@ Session_Cancel_Run_Params :: struct {
 }
 
 // Write session.cancel_run params, omitting absent optionals.
-session_cancel_run_params_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
+session_cancel_run_params_emit :: proc(e: ^json.Emitter, self: Session_Cancel_Run_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
     if id, ok := self.run_id.?; ok {
-        field_u64(e, "run_id", u64(id))
+        json.field_u64(e, "run_id", u64(id))
     }
 
     if b, ok := self.clear_queue.?; ok {
-        field_bool(e, "clear_queue", b)
+        json.field_bool(e, "clear_queue", b)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -353,22 +354,22 @@ Session_Cancel_Run_Result :: struct {
 }
 
 // Write a session.cancel_run result with explicit nulls for absent runs.
-session_cancel_run_result_emit :: proc(e: ^Emitter, self: Session_Cancel_Run_Result) {
-    object_begin(e)
-    field_required_null_u64(e, "canceled_run", self.canceled_run)
+session_cancel_run_result_emit :: proc(e: ^json.Emitter, self: Session_Cancel_Run_Result) {
+    json.object_begin(e)
+    json.field_required_null_u64(e, "canceled_run", self.canceled_run)
 
-    key(e, "cleared_inputs")
-    array_begin(e)
+    json.key(e, "cleared_inputs")
+    json.array_begin(e)
     for id in self.cleared_inputs {
-        elem(e)
-        val_u64(e, u64(id))
+        json.elem(e)
+        json.val_u64(e, u64(id))
     }
 
-    array_end(e)
+    json.array_end(e)
 
-    field_required_null_u64(e, "cleared_compaction", self.cleared_compaction)
+    json.field_required_null_u64(e, "cleared_compaction", self.cleared_compaction)
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Incremental text/reasoning bytes for a draft. `offset` is UTF-8 bytes already
@@ -398,14 +399,14 @@ Part_Delta :: struct {
 }
 
 // Write a Part_Delta object.
-part_delta_emit :: proc(e: ^Emitter, self: Part_Delta) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    field_u64(e, "part_id", u64(self.part_id))
-    field_string(e, "delta", self.delta)
-    field_u64(e, "offset", self.offset)
-    object_end(e)
+part_delta_emit :: proc(e: ^json.Emitter, self: Part_Delta) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.field_u64(e, "part_id", u64(self.part_id))
+    json.field_string(e, "delta", self.delta)
+    json.field_u64(e, "offset", self.offset)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

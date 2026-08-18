@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -16,11 +17,11 @@ test_input_content_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be a content input")
     testing.expect_value(t, len(content.content), 1)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     input_emit(&e, input)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)
@@ -36,11 +37,11 @@ test_input_skill_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, skill.name, "commit")
     testing.expect_value(t, skill.arguments, "--all")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     input_emit(&e, input)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)
@@ -58,11 +59,11 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
         testing.expect_value(t, started.input_id, Input_Id(1))
         testing.expect_value(t, started.run_id, Run_Id(2))
 
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         session_send_input_result_emit(&e, result)
-        testing.expect_value(t, to_string(&e), src)
+        testing.expect_value(t, json.to_string(&e), src)
     }
     // Queued omits run_id.
     {
@@ -76,11 +77,11 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
         testing.expect(t, ok, "should be queued")
         testing.expect_value(t, queued.input_id, Input_Id(3))
 
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         session_send_input_result_emit(&e, result)
-        testing.expect_value(t, to_string(&e), src)
+        testing.expect_value(t, json.to_string(&e), src)
     }
     // A sibling variant's run_id under `queued` is rejected.
     {
@@ -103,11 +104,11 @@ test_part_delta_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, pd.delta, "hello")
     testing.expect(t, part_delta_validate(pd) == .None, "valid session id")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     part_delta_emit(&e, pd)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)
@@ -120,11 +121,11 @@ test_cancel_input_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, result.canceled_input, Input_Id(7))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_cancel_input_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)
@@ -143,11 +144,11 @@ test_cancel_run_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, len(result.cleared_inputs), 2)
     testing.expect_value(t, result.cleared_inputs[1], Input_Id(4))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_cancel_run_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)
@@ -163,11 +164,11 @@ test_cancel_run_result_writes_absent_as_null :: proc(t: ^testing.T) {
     _, has_run := result.canceled_run.?
     testing.expect(t, !has_run, "canceled_run absent")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_cancel_run_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), src)
+    testing.expect_value(t, json.to_string(&e), src)
 }
 
 @(test)

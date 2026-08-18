@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:math"
 import "core:strconv"
@@ -28,13 +29,13 @@ Model_Cost :: struct {
 }
 
 // Write a Model_Cost object.
-model_cost_emit :: proc(e: ^Emitter, self: Model_Cost) {
-    object_begin(e)
+model_cost_emit :: proc(e: ^json.Emitter, self: Model_Cost) {
+    json.object_begin(e)
     _field_f64(e, "input", self.input)
     _field_f64(e, "output", self.output)
     _field_f64(e, "cache_read", self.cache_read)
     _field_f64(e, "cache_write", self.cache_write)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Closed projection of a provider model record. Non-owning.
@@ -72,27 +73,27 @@ Model_Info :: struct {
 }
 
 // Write a Model_Info object.
-model_info_emit :: proc(e: ^Emitter, self: Model_Info) {
-    object_begin(e)
-    field_string(e, "id", self.id)
-    field_string(e, "provider", self.provider)
-    field_string(e, "name", self.name)
-    field_u64(e, "context_window", self.context_window)
-    field_u64(e, "max_output_tokens", self.max_output_tokens)
-    key(e, "reasoning_levels")
-    array_begin(e)
+model_info_emit :: proc(e: ^json.Emitter, self: Model_Info) {
+    json.object_begin(e)
+    json.field_string(e, "id", self.id)
+    json.field_string(e, "provider", self.provider)
+    json.field_string(e, "name", self.name)
+    json.field_u64(e, "context_window", self.context_window)
+    json.field_u64(e, "max_output_tokens", self.max_output_tokens)
+    json.key(e, "reasoning_levels")
+    json.array_begin(e)
     for level in self.reasoning_levels {
-        elem(e)
-        val_string(e, level)
+        json.elem(e)
+        json.val_string(e, level)
     }
 
-    array_end(e)
-    field_string(e, "default_reasoning", self.default_reasoning)
-    field_bool(e, "supports_vision", self.supports_vision)
-    field_bool(e, "supports_tools", self.supports_tools)
-    key(e, "cost")
+    json.array_end(e)
+    json.field_string(e, "default_reasoning", self.default_reasoning)
+    json.field_bool(e, "supports_vision", self.supports_vision)
+    json.field_bool(e, "supports_tools", self.supports_tools)
+    json.key(e, "cost")
     model_cost_emit(e, self.cost)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -127,14 +128,14 @@ Catalog_List_Params :: struct {
 }
 
 // Write catalog.list params, omitting `since_rev` when absent.
-catalog_list_params_emit :: proc(e: ^Emitter, self: Catalog_List_Params) {
-    object_begin(e)
+catalog_list_params_emit :: proc(e: ^json.Emitter, self: Catalog_List_Params) {
+    json.object_begin(e)
 
     if rev, ok := self.since_rev.?; ok {
-        field_id(e, "since_rev", ([64]u8)(rev))
+        json.field_id(e, "since_rev", ([64]u8)(rev))
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Client's revision is current; no catalog data included.
@@ -163,30 +164,30 @@ Catalog_List_Result :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-catalog_list_result_emit :: proc(e: ^Emitter, self: Catalog_List_Result) {
-    object_begin(e)
+catalog_list_result_emit :: proc(e: ^json.Emitter, self: Catalog_List_Result) {
+    json.object_begin(e)
 
     switch v in self {
     case Catalog_List_Result_Unchanged:
-        field_string(e, "type", "unchanged")
-        field_id(e, "catalog_rev", ([64]u8)(v.catalog_rev))
+        json.field_string(e, "type", "unchanged")
+        json.field_id(e, "catalog_rev", ([64]u8)(v.catalog_rev))
 
     case Catalog_List_Result_Full:
-        field_string(e, "type", "full")
-        field_id(e, "catalog_rev", ([64]u8)(v.catalog_rev))
-        key(e, "models")
-        array_begin(e)
+        json.field_string(e, "type", "full")
+        json.field_id(e, "catalog_rev", ([64]u8)(v.catalog_rev))
+        json.key(e, "models")
+        json.array_begin(e)
         for model in v.models {
-            elem(e)
+            json.elem(e)
             model_info_emit(e, model)
         }
 
-        array_end(e)
-        key(e, "health")
+        json.array_end(e)
+        json.key(e, "health")
         catalog_health_emit(e, v.health)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -222,12 +223,12 @@ Catalog_Refresh_Result :: struct {
 }
 
 // Write a catalog.refresh result.
-catalog_refresh_result_emit :: proc(e: ^Emitter, self: Catalog_Refresh_Result) {
-    object_begin(e)
-    field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
-    key(e, "health")
+catalog_refresh_result_emit :: proc(e: ^json.Emitter, self: Catalog_Refresh_Result) {
+    json.object_begin(e)
+    json.field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
+    json.key(e, "health")
     catalog_health_emit(e, self.health)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -250,18 +251,18 @@ Catalog_Health :: struct {
 }
 
 // Write a Catalog_Health object. `load_error` is always emitted, null when absent.
-catalog_health_emit :: proc(e: ^Emitter, self: Catalog_Health) {
-    object_begin(e)
-    key(e, "skipped")
-    array_begin(e)
+catalog_health_emit :: proc(e: ^json.Emitter, self: Catalog_Health) {
+    json.object_begin(e)
+    json.key(e, "skipped")
+    json.array_begin(e)
     for item in self.skipped {
-        elem(e)
+        json.elem(e)
         skipped_provider_emit(e, item)
     }
 
-    array_end(e)
-    field_required_null_string(e, "load_error", self.load_error)
-    object_end(e)
+    json.array_end(e)
+    json.field_required_null_string(e, "load_error", self.load_error)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -310,12 +311,12 @@ Skipped_Provider :: struct {
 }
 
 // Write a Skipped_Provider object.
-skipped_provider_emit :: proc(e: ^Emitter, self: Skipped_Provider) {
-    object_begin(e)
-    field_string(e, "provider", self.provider)
-    key(e, "reason")
+skipped_provider_emit :: proc(e: ^json.Emitter, self: Skipped_Provider) {
+    json.object_begin(e)
+    json.field_string(e, "provider", self.provider)
+    json.key(e, "reason")
     skip_reason_emit(e, self.reason)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -354,20 +355,20 @@ Skip_Reason :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-skip_reason_emit :: proc(e: ^Emitter, self: Skip_Reason) {
-    object_begin(e)
+skip_reason_emit :: proc(e: ^json.Emitter, self: Skip_Reason) {
+    json.object_begin(e)
 
     switch v in self {
     case Skip_Reason_Missing_Credential:
-        field_string(e, "type", "missing_credential")
-        field_string(e, "env", v.env)
+        json.field_string(e, "type", "missing_credential")
+        json.field_string(e, "env", v.env)
 
     case Skip_Reason_Invalid_Config:
-        field_string(e, "type", "invalid_config")
-        field_string(e, "message", v.message)
+        json.field_string(e, "type", "invalid_config")
+        json.field_string(e, "message", v.message)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the nested diagnostic bound.
@@ -398,7 +399,7 @@ skip_reason_clone :: proc(self: Skip_Reason, allocator := context.allocator) -> 
 
 // Write a bare f64 value in decimal, without a leading plus sign.
 @(private)
-_val_f64 :: proc(e: ^Emitter, f: f64) {
+_val_f64 :: proc(e: ^json.Emitter, f: f64) {
     buf: [32]u8
     s := strconv.write_float(buf[:], f, 'f', -1, 64)
 
@@ -406,13 +407,13 @@ _val_f64 :: proc(e: ^Emitter, f: f64) {
         s = s[1:]
     }
 
-    _put(e, s)
+    json.val_raw(e, s)
 }
 
 // Write a `name: f64` object field.
 @(private)
-_field_f64 :: proc(e: ^Emitter, name: string, f: f64) {
-    key(e, name)
+_field_f64 :: proc(e: ^json.Emitter, name: string, f: f64) {
+    json.key(e, name)
     _val_f64(e, f)
 }
 

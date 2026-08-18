@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -13,11 +14,11 @@ Message_Time :: struct {
 }
 
 // Write creation/completion timestamps with an explicit null while still in flight.
-message_time_emit :: proc(e: ^Emitter, self: Message_Time) {
-    object_begin(e)
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    field_required_null_u64(e, "completed_at_ms", self.completed_at_ms)
-    object_end(e)
+message_time_emit :: proc(e: ^json.Emitter, self: Message_Time) {
+    json.object_begin(e)
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.field_required_null_u64(e, "completed_at_ms", self.completed_at_ms)
+    json.object_end(e)
 }
 
 // Creation timestamp on a user or compaction message. These message kinds carry
@@ -28,10 +29,10 @@ Created_Time :: struct {
 }
 
 // Write a creation timestamp.
-created_time_emit :: proc(e: ^Emitter, self: Created_Time) {
-    object_begin(e)
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    object_end(e)
+created_time_emit :: proc(e: ^json.Emitter, self: Created_Time) {
+    json.object_begin(e)
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.object_end(e)
 }
 
 // Structured error on an assistant message with `finish: "error"`. Non-owning.
@@ -46,11 +47,11 @@ Message_Error :: struct {
 }
 
 // Write a structured message error.
-message_error_emit :: proc(e: ^Emitter, self: Message_Error) {
-    object_begin(e)
-    field_string(e, "type", self.type)
-    field_string(e, "message", self.message)
-    object_end(e)
+message_error_emit :: proc(e: ^json.Emitter, self: Message_Error) {
+    json.object_begin(e)
+    json.field_string(e, "type", self.type)
+    json.field_string(e, "message", self.message)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -232,51 +233,51 @@ Assistant_Part :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-assistant_part_emit :: proc(e: ^Emitter, self: Assistant_Part) {
-    object_begin(e)
+assistant_part_emit :: proc(e: ^json.Emitter, self: Assistant_Part) {
+    json.object_begin(e)
 
     switch v in self {
     case Text_Part:
-        field_string(e, "type", "text")
-        field_u64(e, "id", u64(v.id))
-        field_string(e, "text", v.text)
+        json.field_string(e, "type", "text")
+        json.field_u64(e, "id", u64(v.id))
+        json.field_string(e, "text", v.text)
 
     case Reasoning_Part:
-        field_string(e, "type", "reasoning")
-        field_u64(e, "id", u64(v.id))
-        field_string(e, "text", v.text)
+        json.field_string(e, "type", "reasoning")
+        json.field_u64(e, "id", u64(v.id))
+        json.field_string(e, "text", v.text)
 
         // Always written: the field is required, and "the provider issued none" is the
         // empty string rather than an absent member. Omitting it makes every strict
         // receiver reject the frame.
-        field_string(e, "signature", v.signature)
+        json.field_string(e, "signature", v.signature)
 
     case Redacted_Reasoning_Part:
-        field_string(e, "type", "redacted_reasoning")
-        field_u64(e, "id", u64(v.id))
-        field_string(e, "data", v.data)
+        json.field_string(e, "type", "redacted_reasoning")
+        json.field_u64(e, "id", u64(v.id))
+        json.field_string(e, "data", v.data)
 
     case Tool_Part:
-        field_string(e, "type", "tool")
-        field_u64(e, "id", u64(v.id))
-        field_string_opt(e, "call_id", v.call_id)
-        field_string(e, "name", v.name)
-        field_string(e, "arguments", v.arguments)
+        json.field_string(e, "type", "tool")
+        json.field_u64(e, "id", u64(v.id))
+        json.field_string_opt(e, "call_id", v.call_id)
+        json.field_string(e, "name", v.name)
+        json.field_string(e, "arguments", v.arguments)
 
         if views, ok := v.input_view.?; ok {
             _emit_view_slice(e, "input_view", views)
         }
 
-        key(e, "state")
+        json.key(e, "state")
         tool_state_emit(e, v.state)
 
         if p, ok := v.permission_state.?; ok {
-            key(e, "permission")
+            json.key(e, "permission")
             _permission_state_emit(e, p)
         }
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -407,52 +408,52 @@ Tool_State :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-tool_state_emit :: proc(e: ^Emitter, self: Tool_State) {
-    object_begin(e)
+tool_state_emit :: proc(e: ^json.Emitter, self: Tool_State) {
+    json.object_begin(e)
 
     switch v in self {
     case Tool_State_Pending:
-        field_string(e, "type", "pending")
+        json.field_string(e, "type", "pending")
 
     case Tool_State_Waiting_Permission:
-        field_string(e, "type", "waiting_permission")
+        json.field_string(e, "type", "waiting_permission")
 
     case Tool_State_Running:
-        field_string(e, "type", "running")
-        field_u64(e, "started_at_ms", v.started_at_ms)
-        field_string_opt(e, "output", v.output)
+        json.field_string(e, "type", "running")
+        json.field_u64(e, "started_at_ms", v.started_at_ms)
+        json.field_string_opt(e, "output", v.output)
 
     case Tool_State_Completed:
-        field_string(e, "type", "completed")
-        field_string(e, "output", v.output)
+        json.field_string(e, "type", "completed")
+        json.field_string(e, "output", v.output)
 
         if views, ok := v.view.?; ok {
             _emit_view_slice(e, "view", views)
         }
 
-        field_u64(e, "duration_ms", v.duration_ms)
+        json.field_u64(e, "duration_ms", v.duration_ms)
 
     case Tool_State_Error:
-        field_string(e, "type", "error")
-        field_string(e, "error", v.error)
+        json.field_string(e, "type", "error")
+        json.field_string(e, "error", v.error)
 
         if views, ok := v.view.?; ok {
             _emit_view_slice(e, "view", views)
         }
 
-        field_u64(e, "duration_ms", v.duration_ms)
+        json.field_u64(e, "duration_ms", v.duration_ms)
 
     case Tool_State_Denied:
-        field_string(e, "type", "denied")
-        field_string(e, "reason", v.reason)
-        field_string(e, "denied_by", denied_by_to_wire(v.denied_by))
+        json.field_string(e, "type", "denied")
+        json.field_string(e, "reason", v.reason)
+        json.field_string(e, "denied_by", denied_by_to_wire(v.denied_by))
 
     case Tool_State_Canceled:
-        field_string(e, "type", "canceled")
-        field_required_null_u64(e, "duration_ms", v.duration_ms)
+        json.field_string(e, "type", "canceled")
+        json.field_required_null_u64(e, "duration_ms", v.duration_ms)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -618,11 +619,11 @@ Turn_Provenance :: struct {
 }
 
 // Write a turn provenance object.
-turn_provenance_emit :: proc(e: ^Emitter, self: Turn_Provenance) {
-    object_begin(e)
-    field_string(e, "protocol", provider_protocol_to_wire(self.protocol))
-    field_string(e, "model", self.model)
-    object_end(e)
+turn_provenance_emit :: proc(e: ^json.Emitter, self: Turn_Provenance) {
+    json.object_begin(e)
+    json.field_string(e, "protocol", provider_protocol_to_wire(self.protocol))
+    json.field_string(e, "model", self.model)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -798,28 +799,28 @@ assistant_message_validate_committed :: proc(self: Assistant_Message) -> Validat
 }
 
 // Write an assistant message object with `type` first.
-assistant_message_emit :: proc(e: ^Emitter, self: Assistant_Message) {
-    object_begin(e)
-    field_string(e, "type", "assistant")
-    field_u64(e, "id", u64(self.id))
-    field_u64(e, "run_id", u64(self.run_id))
-    field_u64(e, "config_rev", u64(self.config_rev))
-    field_string(e, "agent", self.agent)
-    key(e, "content")
-    array_begin(e)
+assistant_message_emit :: proc(e: ^json.Emitter, self: Assistant_Message) {
+    json.object_begin(e)
+    json.field_string(e, "type", "assistant")
+    json.field_u64(e, "id", u64(self.id))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.field_u64(e, "config_rev", u64(self.config_rev))
+    json.field_string(e, "agent", self.agent)
+    json.key(e, "content")
+    json.array_begin(e)
     for part in self.content {
-        elem(e)
+        json.elem(e)
         assistant_part_emit(e, part)
     }
 
-    array_end(e)
+    json.array_end(e)
 
     if f, ok := self.finish.?; ok {
-        field_string(e, "finish", stop_reason_to_wire(f))
+        json.field_string(e, "finish", stop_reason_to_wire(f))
     }
 
     if tok, ok := self.tokens.?; ok {
-        key(e, "tokens")
+        json.key(e, "tokens")
         token_usage_emit(e, tok)
     }
 
@@ -827,20 +828,20 @@ assistant_message_emit :: proc(e: ^Emitter, self: Assistant_Message) {
         _field_f64(e, "cost", c)
     }
 
-    key(e, "time")
+    json.key(e, "time")
     message_time_emit(e, self.time)
 
     if me, ok := self.error.?; ok {
-        key(e, "error")
+        json.key(e, "error")
         message_error_emit(e, me)
     }
 
     if prov, ok := self.provenance.?; ok {
-        key(e, "provenance")
+        json.key(e, "provenance")
         turn_provenance_emit(e, prov)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Deep-copy into `allocator`.
@@ -950,47 +951,47 @@ message_type_to_wire :: proc(self: Message) -> string {
 }
 
 // Write internally-tagged JSON with `type` first.
-message_emit :: proc(e: ^Emitter, self: Message) {
+message_emit :: proc(e: ^json.Emitter, self: Message) {
     switch v in self {
     case User_Message:
-        object_begin(e)
-        field_string(e, "type", "user")
-        field_u64(e, "id", u64(v.id))
-        key(e, "content")
-        array_begin(e)
+        json.object_begin(e)
+        json.field_string(e, "type", "user")
+        json.field_u64(e, "id", u64(v.id))
+        json.key(e, "content")
+        json.array_begin(e)
         for part in v.content {
-            elem(e)
+            json.elem(e)
             content_part_emit(e, part)
         }
 
-        array_end(e)
-        field_u64(e, "input_id", u64(v.input_id))
+        json.array_end(e)
+        json.field_u64(e, "input_id", u64(v.input_id))
 
         if s, ok := v.skill.?; ok {
-            key(e, "skill")
+            json.key(e, "skill")
             skill_ref_emit(e, s)
         }
 
-        key(e, "time")
+        json.key(e, "time")
         created_time_emit(e, v.time)
-        object_end(e)
+        json.object_end(e)
 
     case Assistant_Message:
         assistant_message_emit(e, v)
 
     case Compaction_Message:
-        object_begin(e)
-        field_string(e, "type", "compaction")
-        field_u64(e, "id", u64(v.id))
-        field_u64(e, "run_id", u64(v.run_id))
-        field_string(e, "reason", compaction_reason_to_wire(v.reason))
-        field_string(e, "summary", v.summary)
-        field_required_null_u64(e, "first_kept_id", v.first_kept_id)
-        field_u64(e, "tokens_before", v.tokens_before)
-        field_u64(e, "tokens_after", v.tokens_after)
-        key(e, "time")
+        json.object_begin(e)
+        json.field_string(e, "type", "compaction")
+        json.field_u64(e, "id", u64(v.id))
+        json.field_u64(e, "run_id", u64(v.run_id))
+        json.field_string(e, "reason", compaction_reason_to_wire(v.reason))
+        json.field_string(e, "summary", v.summary)
+        json.field_required_null_u64(e, "first_kept_id", v.first_kept_id)
+        json.field_u64(e, "tokens_before", v.tokens_before)
+        json.field_u64(e, "tokens_after", v.tokens_after)
+        json.key(e, "time")
         created_time_emit(e, v.time)
-        object_end(e)
+        json.object_end(e)
     }
 }
 
@@ -1053,62 +1054,62 @@ message_id :: proc(self: Message) -> Message_Id {
 
 // Write a display-only view array field.
 @(private)
-_emit_view_slice :: proc(e: ^Emitter, name: string, views: []View) {
-    key(e, name)
-    array_begin(e)
+_emit_view_slice :: proc(e: ^json.Emitter, name: string, views: []View) {
+    json.key(e, name)
+    json.array_begin(e)
     for v in views {
-        elem(e)
+        json.elem(e)
         view_emit(e, v)
     }
 
-    array_end(e)
+    json.array_end(e)
 }
 
 // Write a Permission_State, omitting absent optionals.
 @(private)
-_permission_state_emit :: proc(e: ^Emitter, self: Permission_State) {
-    object_begin(e)
-    field_u64(e, "requested_at_ms", self.requested_at_ms)
+_permission_state_emit :: proc(e: ^json.Emitter, self: Permission_State) {
+    json.object_begin(e)
+    json.field_u64(e, "requested_at_ms", self.requested_at_ms)
 
     if opts, ok := self.options.?; ok {
-        key(e, "options")
-        array_begin(e)
+        json.key(e, "options")
+        json.array_begin(e)
         for opt in opts {
-            elem(e)
+            json.elem(e)
             _permission_option_emit(e, opt)
         }
 
-        array_end(e)
+        json.array_end(e)
     }
 
     if dec, ok := self.decision.?; ok {
-        key(e, "decision")
+        json.key(e, "decision")
         permission_decision_emit(e, dec)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Write a Permission_Option, omitting absent optionals.
 @(private)
-_permission_option_emit :: proc(e: ^Emitter, self: Permission_Option) {
-    object_begin(e)
-    field_string(e, "id", self.id)
-    field_string(e, "kind", permission_option_kind_to_wire(self.kind))
-    field_string(e, "label", self.label)
+_permission_option_emit :: proc(e: ^json.Emitter, self: Permission_Option) {
+    json.object_begin(e)
+    json.field_string(e, "id", self.id)
+    json.field_string(e, "kind", permission_option_kind_to_wire(self.kind))
+    json.field_string(e, "label", self.label)
 
     if creates, ok := self.creates.?; ok {
-        key(e, "creates")
-        array_begin(e)
+        json.key(e, "creates")
+        json.array_begin(e)
         for pattern in creates {
-            elem(e)
-            val_string(e, pattern)
+            json.elem(e)
+            json.val_string(e, pattern)
         }
 
-        array_end(e)
+        json.array_end(e)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Count the payload string bytes retained by an assistant draft: the agent plus

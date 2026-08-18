@@ -1,5 +1,6 @@
 /*
 package wire is the authoritative Odin representation of the yuke wire protocol
+import "libs:json"
 (version 1): the types, their JSON encoding and decoding, validation, and the
 closed registries of method and broadcast names. Wire values are non-owning and
 borrow the decoder's allocator; data that escapes a frame is deep-copied via a
@@ -43,9 +44,9 @@ The package is layered as:
   - `broadcasts.odin`: the closed `Broadcast_Name` enum, the `Broadcast_Data`
     union, and `broadcast_name_class` — the source of truth for sequencing,
     subscription gating, and droppability.
-  - `json.odin`: the discriminator-first `Emitter` and the field writers shared
-    by every `*_emit`. One encoding serves both the client protocol and the
-    daemon's event log, so a stored row re-emitted for a client is byte-identical.
+  - The encoders (`*_emit`) build frames with the shared `json.Emitter` from
+    `libs/json`, discriminator first. One encoding serves both the client protocol
+    and the daemon's event log, so a stored row re-emitted for a client is byte-identical.
   - `stream.odin`: the streaming `Decoder` front end. Tagged readers scan for a
     discriminator and rewind so member order is insignificant; `dec_skip`
     discards unknown fields or unmaterialized payloads without building a tree.

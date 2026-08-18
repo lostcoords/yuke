@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 // Why a request failed. Distinct from run failures (RunErrorCode).
 Error_Code :: enum {
@@ -242,11 +243,11 @@ error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Valida
 }
 
 // Write an error object.
-error_object_emit :: proc(e: ^Emitter, self: Error_Object) {
-    object_begin(e)
-    field_i64(e, "code", i64(error_code_to_number(self.code)))
-    field_string(e, "message", self.message)
-    object_end(e)
+error_object_emit :: proc(e: ^json.Emitter, self: Error_Object) {
+    json.object_begin(e)
+    json.field_i64(e, "code", i64(error_code_to_number(self.code)))
+    json.field_string(e, "message", self.message)
+    json.object_end(e)
 }
 
 // Why a run failed after daemon retry policy was exhausted.

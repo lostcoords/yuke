@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -21,11 +22,11 @@ test_auth_provider_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, login.flow, Auth_Flow.Browser)
     testing.expect_value(t, auth_provider_validate(provider), Validation_Error.None)
 
-    emitter: Emitter
-    emitter_init(&emitter)
-    defer emitter_destroy(&emitter)
+    emitter: json.Emitter
+    json.emitter_init(&emitter)
+    defer json.emitter_destroy(&emitter)
     auth_provider_emit(&emitter, provider)
-    testing.expect_value(t, to_string(&emitter), input)
+    testing.expect_value(t, json.to_string(&emitter), input)
 }
 
 @(test)
@@ -42,13 +43,13 @@ test_auth_login_browser_result_is_order_independent :: proc(t: ^testing.T) {
     testing.expect_value(t, browser.auth_url, "https://auth.example/start")
     testing.expect_value(t, auth_login_result_validate(result), Validation_Error.None)
 
-    emitter: Emitter
-    emitter_init(&emitter)
-    defer emitter_destroy(&emitter)
+    emitter: json.Emitter
+    json.emitter_init(&emitter)
+    defer json.emitter_destroy(&emitter)
     auth_login_result_emit(&emitter, result)
     testing.expect_value(
         t,
-        to_string(&emitter),
+        json.to_string(&emitter),
         `{"type":"browser","login_id":"0123456789abcdef0123456789abcdef","auth_url":"https://auth.example/start"}`,
     )
 }
@@ -93,12 +94,12 @@ test_auth_methods_roundtrip_without_credentials :: proc(t: ^testing.T) {
     testing.expect_value(t, params_err, Validation_Error.None)
     testing.expect_value(t, request_params_validate(params), Validation_Error.None)
 
-    params_emitter: Emitter
-    emitter_init(&params_emitter)
-    defer emitter_destroy(&params_emitter)
+    params_emitter: json.Emitter
+    json.emitter_init(&params_emitter)
+    defer json.emitter_destroy(&params_emitter)
     request_params_emit(&params_emitter, params)
-    testing.expect_value(t, to_string(&params_emitter), params_input)
-    testing.expect(t, !strings.contains(to_string(&params_emitter), "token"), "wire params carry no credentials")
+    testing.expect_value(t, json.to_string(&params_emitter), params_input)
+    testing.expect(t, !strings.contains(json.to_string(&params_emitter), "token"), "wire params carry no credentials")
 
     list_input := `{"providers":[]}`
     list_decoder := decoder_init(list_input, context.temp_allocator)
@@ -106,11 +107,11 @@ test_auth_methods_roundtrip_without_credentials :: proc(t: ^testing.T) {
     testing.expect_value(t, result_err, Validation_Error.None)
     testing.expect_value(t, response_result_validate(result), Validation_Error.None)
 
-    result_emitter: Emitter
-    emitter_init(&result_emitter)
-    defer emitter_destroy(&result_emitter)
+    result_emitter: json.Emitter
+    json.emitter_init(&result_emitter)
+    defer json.emitter_destroy(&result_emitter)
     response_result_emit(&result_emitter, result)
-    testing.expect_value(t, to_string(&result_emitter), list_input)
+    testing.expect_value(t, json.to_string(&result_emitter), list_input)
 }
 
 @(test)
@@ -124,21 +125,25 @@ test_auth_set_api_key_is_write_only_and_bounded :: proc(t: ^testing.T) {
     testing.expect_value(t, params_err, Validation_Error.None)
     testing.expect_value(t, request_params_validate(params), Validation_Error.None)
 
-    emitter: Emitter
-    emitter_secret_init(&emitter, 1024)
-    defer emitter_destroy(&emitter)
+    emitter: json.Emitter
+    json.emitter_secret_init(&emitter, 1024)
+    defer json.emitter_destroy(&emitter)
     request_params_emit(&emitter, params)
-    testing.expect_value(t, to_string(&emitter), input)
+    testing.expect_value(t, json.to_string(&emitter), input)
 
     result := Auth_Set_Api_Key_Result {
         restart_required = true,
     }
-    result_emitter: Emitter
-    emitter_init(&result_emitter)
-    defer emitter_destroy(&result_emitter)
+    result_emitter: json.Emitter
+    json.emitter_init(&result_emitter)
+    defer json.emitter_destroy(&result_emitter)
     response_result_emit(&result_emitter, result)
-    testing.expect_value(t, to_string(&result_emitter), `{"restart_required":true}`)
-    testing.expect(t, !strings.contains(to_string(&result_emitter), "secret-value"), "result contains no key material")
+    testing.expect_value(t, json.to_string(&result_emitter), `{"restart_required":true}`)
+    testing.expect(
+        t,
+        !strings.contains(json.to_string(&result_emitter), "secret-value"),
+        "result contains no key material",
+    )
 
     testing.expect_value(
         t,
@@ -174,13 +179,13 @@ test_auth_login_finished_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, named, "auth outcome names its broadcast")
     testing.expect_value(t, name, Broadcast_Name.Auth_Login_Finished)
 
-    emitter: Emitter
-    emitter_init(&emitter)
-    defer emitter_destroy(&emitter)
+    emitter: json.Emitter
+    json.emitter_init(&emitter)
+    defer json.emitter_destroy(&emitter)
     broadcast_data_emit(&emitter, data)
     testing.expect_value(
         t,
-        to_string(&emitter),
+        json.to_string(&emitter),
         `{"login_id":"0123456789abcdef0123456789abcdef","provider_id":"openai-codex","outcome":{"type":"failed","message":"authorization denied"}}`,
     )
 }

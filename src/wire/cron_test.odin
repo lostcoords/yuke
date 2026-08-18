@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -14,11 +15,11 @@ test_cron_schedule_every_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be an every schedule")
     testing.expect_value(t, every.interval_ms, u64(300000))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_schedule_emit(&e, sched)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -34,11 +35,11 @@ test_cron_schedule_cron_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, cr.expr, "0 9 * * 1-5")
     testing.expect_value(t, cr.utc_offset_minutes, i64(-480))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_schedule_emit(&e, sched)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -52,11 +53,11 @@ test_cron_schedule_at_after_roundtrip :: proc(t: ^testing.T) {
         at, ok := sched.(Cron_Schedule_At)
         testing.expect(t, ok, "should be an at schedule")
         testing.expect_value(t, at.at_ms, u64(1700000000000))
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         cron_schedule_emit(&e, sched)
-        testing.expect_value(t, to_string(&e), input)
+        testing.expect_value(t, json.to_string(&e), input)
     }
     {
         input := `{"type":"after","delay_ms":60000}`
@@ -67,11 +68,11 @@ test_cron_schedule_at_after_roundtrip :: proc(t: ^testing.T) {
         after, ok := sched.(Cron_Schedule_After)
         testing.expect(t, ok, "should be an after schedule")
         testing.expect_value(t, after.delay_ms, u64(60000))
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         cron_schedule_emit(&e, sched)
-        testing.expect_value(t, to_string(&e), input)
+        testing.expect_value(t, json.to_string(&e), input)
     }
 }
 
@@ -105,11 +106,11 @@ test_cron_job_roundtrip_and_validate :: proc(t: ^testing.T) {
 
     testing.expect(t, cron_job_validate(job) == .None, "job should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_job_emit(&e, job)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -130,11 +131,11 @@ test_cron_job_accepts_all_null_required_null :: proc(t: ^testing.T) {
     testing.expect(t, !has_outcome, "last_outcome should be null")
     testing.expect(t, cron_job_validate(job) == .None, "job should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_job_emit(&e, job)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -151,11 +152,11 @@ test_cron_create_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, params.spec.retain, Cron_Retain.Always)
     testing.expect(t, cron_create_params_validate(params) == .None, "params should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_create_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -176,11 +177,11 @@ test_cron_patch_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, enabled, "enabled should be true")
     testing.expect(t, cron_patch_validate(patch) == .None, "patch should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_patch_emit(&e, patch)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -199,11 +200,11 @@ test_cron_list_result_roundtrip_pagination :: proc(t: ^testing.T) {
         testing.expect(t, ok, "next_cursor should be present")
         testing.expect_value(t, cursor, "opaque")
         testing.expect(t, cron_list_result_validate(result) == .None, "result should validate")
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         cron_list_result_emit(&e, result)
-        testing.expect_value(t, to_string(&e), input)
+        testing.expect_value(t, json.to_string(&e), input)
     }
     // The final page marks `next_cursor` explicitly null.
     {
@@ -214,11 +215,11 @@ test_cron_list_result_roundtrip_pagination :: proc(t: ^testing.T) {
         _, ok := result.next_cursor.?
         testing.expect(t, !ok, "next_cursor should be null")
         testing.expect(t, cron_list_result_validate(result) == .None, "result should validate")
-        e: Emitter
-        emitter_init(&e)
-        defer emitter_destroy(&e)
+        e: json.Emitter
+        json.emitter_init(&e)
+        defer json.emitter_destroy(&e)
         cron_list_result_emit(&e, result)
-        testing.expect_value(t, to_string(&e), input)
+        testing.expect_value(t, json.to_string(&e), input)
     }
 }
 
@@ -235,11 +236,11 @@ test_cron_list_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, limit, u64(10))
     testing.expect(t, cron_list_params_validate(params) == .None, "params should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_list_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -261,11 +262,11 @@ test_cron_run_now_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(result.run_id), u64(7))
     testing.expect(t, cron_run_now_result_validate(result) == .None, "result should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     cron_run_now_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

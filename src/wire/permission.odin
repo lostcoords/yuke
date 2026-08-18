@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -189,27 +190,27 @@ Permission_Decision :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-permission_decision_emit :: proc(e: ^Emitter, self: Permission_Decision) {
-    object_begin(e)
+permission_decision_emit :: proc(e: ^json.Emitter, self: Permission_Decision) {
+    json.object_begin(e)
 
     switch v in self {
     case Permission_Decision_User:
-        field_string(e, "type", "user")
-        field_string(e, "option_id", v.option_id)
-        field_string(e, "kind", permission_option_kind_to_wire(v.kind))
-        field_string(e, "label", v.label)
-        field_u64(e, "resolved_at_ms", v.resolved_at_ms)
-        key(e, "decided_by")
+        json.field_string(e, "type", "user")
+        json.field_string(e, "option_id", v.option_id)
+        json.field_string(e, "kind", permission_option_kind_to_wire(v.kind))
+        json.field_string(e, "label", v.label)
+        json.field_u64(e, "resolved_at_ms", v.resolved_at_ms)
+        json.key(e, "decided_by")
         client_emit(e, v.decided_by)
 
     case Permission_Decision_Rule:
-        field_string(e, "type", "rule")
-        field_id(e, "rule_id", ([16]u8)(v.rule_id))
-        field_string(e, "label", v.label)
-        field_u64(e, "resolved_at_ms", v.resolved_at_ms)
+        json.field_string(e, "type", "rule")
+        json.field_id(e, "rule_id", ([16]u8)(v.rule_id))
+        json.field_string(e, "label", v.label)
+        json.field_u64(e, "resolved_at_ms", v.resolved_at_ms)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -343,21 +344,21 @@ Permission_Rule :: struct {
 }
 
 // Write a permission rule as a JSON object, omitting `session_id` when absent.
-permission_rule_emit :: proc(e: ^Emitter, self: Permission_Rule) {
-    object_begin(e)
-    field_id(e, "id", ([16]u8)(self.id))
+permission_rule_emit :: proc(e: ^json.Emitter, self: Permission_Rule) {
+    json.object_begin(e)
+    json.field_id(e, "id", ([16]u8)(self.id))
 
     if sid, ok := self.session_id.?; ok {
-        field_id(e, "session_id", ([16]u8)(sid))
+        json.field_id(e, "session_id", ([16]u8)(sid))
     }
 
-    field_string(e, "tool", self.tool)
-    field_string(e, "label", self.label)
-    field_string(e, "action", rule_action_to_wire(self.action))
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    key(e, "created_by")
+    json.field_string(e, "tool", self.tool)
+    json.field_string(e, "label", self.label)
+    json.field_string(e, "action", rule_action_to_wire(self.action))
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.key(e, "created_by")
     client_emit(e, self.created_by)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -409,14 +410,14 @@ Permission_Decide_Params :: struct {
 }
 
 // Write permission.decide params.
-permission_decide_params_emit :: proc(e: ^Emitter, self: Permission_Decide_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    field_u64(e, "part_id", u64(self.part_id))
-    field_string(e, "option_id", self.option_id)
-    field_string_opt(e, "message", self.message)
-    object_end(e)
+permission_decide_params_emit :: proc(e: ^json.Emitter, self: Permission_Decide_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.field_u64(e, "part_id", u64(self.part_id))
+    json.field_string(e, "option_id", self.option_id)
+    json.field_string_opt(e, "message", self.message)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -439,17 +440,17 @@ Permission_Rules_Result :: struct {
 }
 
 // Write a permission.rules result.
-permission_rules_result_emit :: proc(e: ^Emitter, self: Permission_Rules_Result) {
-    object_begin(e)
-    key(e, "rules")
-    array_begin(e)
+permission_rules_result_emit :: proc(e: ^json.Emitter, self: Permission_Rules_Result) {
+    json.object_begin(e)
+    json.key(e, "rules")
+    json.array_begin(e)
     for rule in self.rules {
-        elem(e)
+        json.elem(e)
         permission_rule_emit(e, rule)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -475,11 +476,11 @@ Permission_Forget_Params :: struct {
 }
 
 // Write permission.forget params.
-permission_forget_params_emit :: proc(e: ^Emitter, self: Permission_Forget_Params) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    field_id(e, "rule_id", ([16]u8)(self.rule_id))
-    object_end(e)
+permission_forget_params_emit :: proc(e: ^json.Emitter, self: Permission_Forget_Params) {
+    json.object_begin(e)
+    json.field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
+    json.field_id(e, "rule_id", ([16]u8)(self.rule_id))
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -17,11 +18,11 @@ test_permission_decision_user_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, user.kind, Permission_Option_Kind.Allow_Once)
     testing.expect_value(t, user.decided_by.name, "yuke-tui")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_decision_emit(&e, dec)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -66,11 +67,11 @@ test_permission_rule_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, !has_session, "session_id should be absent")
     testing.expect(t, permission_rule_validate(rule) == .None, "rule should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_rule_emit(&e, rule)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -85,11 +86,11 @@ test_permission_decide_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(params.part_id), u64(3))
     testing.expect(t, permission_decide_params_validate(params) == .None, "params should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_decide_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -106,11 +107,11 @@ test_permission_decide_params_message_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, msg, "use ripgrep instead")
     testing.expect(t, permission_decide_params_validate(params) == .None, "params should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_decide_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), with_msg)
+    testing.expect_value(t, json.to_string(&e), with_msg)
 
     // Message absent still roundtrips with nil.
     no_msg := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1"}`
@@ -120,11 +121,11 @@ test_permission_decide_params_message_roundtrip :: proc(t: ^testing.T) {
     _, has2 := p2.message.?
     testing.expect(t, !has2, "message should be absent")
 
-    e2: Emitter
-    emitter_init(&e2)
-    defer emitter_destroy(&e2)
+    e2: json.Emitter
+    json.emitter_init(&e2)
+    defer json.emitter_destroy(&e2)
     permission_decide_params_emit(&e2, p2)
-    testing.expect_value(t, to_string(&e2), no_msg)
+    testing.expect_value(t, json.to_string(&e2), no_msg)
 }
 
 @(test)
@@ -154,11 +155,11 @@ test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, rule.action, Rule_Action.Deny)
     testing.expect(t, permission_rule_validate(rule) == .None, "rule should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_rule_emit(&e, rule)
-    testing.expect_value(t, to_string(&e), deny)
+    testing.expect_value(t, json.to_string(&e), deny)
 
     // Allow roundtrips.
     allow := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
@@ -167,11 +168,11 @@ test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, derr2 == .None, "decode should succeed")
     testing.expect_value(t, r2.action, Rule_Action.Allow)
 
-    e2: Emitter
-    emitter_init(&e2)
-    defer emitter_destroy(&e2)
+    e2: json.Emitter
+    json.emitter_init(&e2)
+    defer json.emitter_destroy(&e2)
     permission_rule_emit(&e2, r2)
-    testing.expect_value(t, to_string(&e2), allow)
+    testing.expect_value(t, json.to_string(&e2), allow)
 }
 
 @(test)
@@ -208,11 +209,11 @@ test_permission_option_kind_reject_always_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, len(creates), 1)
     testing.expect(t, permission_option_validate(opt) == .None, "option should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     _permission_option_emit(&e, opt)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -227,11 +228,11 @@ test_permission_rules_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, len(result.rules), 1)
     testing.expect(t, permission_rules_result_validate(result) == .None, "result should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     permission_rules_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

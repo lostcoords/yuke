@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 // Closed enum of RPC method names. Source of truth for the method set.
 Method_Name :: enum {
@@ -161,9 +162,9 @@ method_name_from_wire :: proc(s: string) -> (Method_Name, bool) {
 Empty :: struct {}
 
 // Write an empty params/result object.
-empty_emit :: proc(e: ^Emitter) {
-    object_begin(e)
-    object_end(e)
+empty_emit :: proc(e: ^json.Emitter) {
+    json.object_begin(e)
+    json.object_end(e)
 }
 
 // Result of `session.create`, `session.fork`, and `session.patch`. The returned session
@@ -174,11 +175,11 @@ Session_Result :: struct {
 }
 
 // Write a session result.
-session_result_emit :: proc(e: ^Emitter, self: Session_Result) {
-    object_begin(e)
-    key(e, "session")
+session_result_emit :: proc(e: ^json.Emitter, self: Session_Result) {
+    json.object_begin(e)
+    json.key(e, "session")
     session_emit(e, self.session)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -196,12 +197,12 @@ Session_Patch_Params :: struct {
 }
 
 // Write session.patch params.
-session_patch_params_emit :: proc(e: ^Emitter, self: Session_Patch_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    key(e, "patch")
+session_patch_params_emit :: proc(e: ^json.Emitter, self: Session_Patch_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.key(e, "patch")
     session_patch_emit(e, self.patch)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -222,11 +223,11 @@ Session_Remove_Params :: struct {
 }
 
 // Write session.remove params.
-session_remove_params_emit :: proc(e: ^Emitter, self: Session_Remove_Params) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_bool(e, "cascade_children", self.cascade_children)
-    object_end(e)
+session_remove_params_emit :: proc(e: ^json.Emitter, self: Session_Remove_Params) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_bool(e, "cascade_children", self.cascade_children)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -241,11 +242,11 @@ Cron_Job_Result :: struct {
 }
 
 // Write a cron job result.
-cron_job_result_emit :: proc(e: ^Emitter, self: Cron_Job_Result) {
-    object_begin(e)
-    key(e, "job")
+cron_job_result_emit :: proc(e: ^json.Emitter, self: Cron_Job_Result) {
+    json.object_begin(e)
+    json.key(e, "job")
     cron_job_emit(e, self.job)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -316,7 +317,7 @@ Response_Result :: union {
 }
 
 // Serialize just the params object, not the method tag.
-request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
+request_params_emit :: proc(e: ^json.Emitter, params: Request_Params) {
     switch p in params {
     case Initialize_Params:
         initialize_params_emit(e, p)
@@ -411,7 +412,7 @@ request_params_emit :: proc(e: ^Emitter, params: Request_Params) {
 }
 
 // Serialize just the result object, not the method tag.
-response_result_emit :: proc(e: ^Emitter, result: Response_Result) {
+response_result_emit :: proc(e: ^json.Emitter, result: Response_Result) {
     switch r in result {
     case Initialize_Result:
         initialize_result_emit(e, r)

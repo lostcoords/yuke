@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -34,46 +35,46 @@ Cron_Patch :: struct {
 }
 
 // Write only fields present in the patch.
-cron_patch_emit :: proc(e: ^Emitter, self: Cron_Patch) {
-    object_begin(e)
-    field_string_opt(e, "name", self.name)
+cron_patch_emit :: proc(e: ^json.Emitter, self: Cron_Patch) {
+    json.object_begin(e)
+    json.field_string_opt(e, "name", self.name)
 
     if self.schedule != nil {
-        key(e, "schedule")
+        json.key(e, "schedule")
         cron_schedule_emit(e, self.schedule)
     }
 
     if s, ok := self.session.?; ok {
-        key(e, "session")
+        json.key(e, "session")
         create_session_emit(e, s)
     }
 
     if r, ok := self.retain.?; ok {
-        field_string(e, "retain", cron_retain_to_wire(r))
+        json.field_string(e, "retain", cron_retain_to_wire(r))
     }
 
     if self.input != nil {
-        key(e, "input")
+        json.key(e, "input")
         input_emit(e, self.input)
     }
 
     if m, ok := self.on_missed.?; ok {
-        field_string(e, "on_missed", cron_missed_policy_to_wire(m))
+        json.field_string(e, "on_missed", cron_missed_policy_to_wire(m))
     }
 
     if o, ok := self.overlap.?; ok {
-        field_string(e, "overlap", cron_overlap_to_wire(o))
+        json.field_string(e, "overlap", cron_overlap_to_wire(o))
     }
 
     if b, ok := self.delete_after_run.?; ok {
-        field_bool(e, "delete_after_run", b)
+        json.field_bool(e, "delete_after_run", b)
     }
 
     if b, ok := self.enabled.?; ok {
-        field_bool(e, "enabled", b)
+        json.field_bool(e, "enabled", b)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -100,11 +101,11 @@ Cron_Create_Params :: struct {
 }
 
 // Write cron.create params.
-cron_create_params_emit :: proc(e: ^Emitter, self: Cron_Create_Params) {
-    object_begin(e)
-    key(e, "spec")
+cron_create_params_emit :: proc(e: ^json.Emitter, self: Cron_Create_Params) {
+    json.object_begin(e)
+    json.key(e, "spec")
     cron_job_spec_emit(e, self.spec)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -122,12 +123,12 @@ Cron_Patch_Params :: struct {
 }
 
 // Write cron.patch params.
-cron_patch_params_emit :: proc(e: ^Emitter, self: Cron_Patch_Params) {
-    object_begin(e)
-    field_id(e, "job_id", ([16]u8)(self.job_id))
-    key(e, "patch")
+cron_patch_params_emit :: proc(e: ^json.Emitter, self: Cron_Patch_Params) {
+    json.object_begin(e)
+    json.field_id(e, "job_id", ([16]u8)(self.job_id))
+    json.key(e, "patch")
     cron_patch_emit(e, self.patch)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the target id and nested patch.
@@ -146,10 +147,10 @@ Cron_Job_Ref :: struct {
 }
 
 // Write a cron job reference.
-cron_job_ref_emit :: proc(e: ^Emitter, self: Cron_Job_Ref) {
-    object_begin(e)
-    field_id(e, "job_id", ([16]u8)(self.job_id))
-    object_end(e)
+cron_job_ref_emit :: proc(e: ^json.Emitter, self: Cron_Job_Ref) {
+    json.object_begin(e)
+    json.field_id(e, "job_id", ([16]u8)(self.job_id))
+    json.object_end(e)
 }
 
 // Verify the target id.
@@ -168,15 +169,15 @@ Cron_List_Params :: struct {
 }
 
 // Write cron.list params.
-cron_list_params_emit :: proc(e: ^Emitter, self: Cron_List_Params) {
-    object_begin(e)
+cron_list_params_emit :: proc(e: ^json.Emitter, self: Cron_List_Params) {
+    json.object_begin(e)
 
     if limit, ok := self.limit.?; ok {
-        field_u64(e, "limit", limit)
+        json.field_u64(e, "limit", limit)
     }
 
-    field_string_opt(e, "cursor", self.cursor)
-    object_end(e)
+    json.field_string_opt(e, "cursor", self.cursor)
+    json.object_end(e)
 }
 
 // Verify the page and cursor bounds.
@@ -210,19 +211,19 @@ Cron_List_Result :: struct {
 }
 
 // Write a cron.list result; `next_cursor` is always present, null on the final page.
-cron_list_result_emit :: proc(e: ^Emitter, self: Cron_List_Result) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    key(e, "jobs")
-    array_begin(e)
+cron_list_result_emit :: proc(e: ^json.Emitter, self: Cron_List_Result) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.key(e, "jobs")
+    json.array_begin(e)
     for job in self.jobs {
-        elem(e)
+        json.elem(e)
         cron_job_emit(e, job)
     }
 
-    array_end(e)
-    field_required_null_string(e, "next_cursor", self.next_cursor)
-    object_end(e)
+    json.array_end(e)
+    json.field_required_null_string(e, "next_cursor", self.next_cursor)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -257,11 +258,11 @@ Cron_Run_Now_Result :: struct {
 }
 
 // Write a cron.run_now result.
-cron_run_now_result_emit :: proc(e: ^Emitter, self: Cron_Run_Now_Result) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "run_id", u64(self.run_id))
-    object_end(e)
+cron_run_now_result_emit :: proc(e: ^json.Emitter, self: Cron_Run_Now_Result) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -418,29 +419,29 @@ Cron_Schedule :: union {
 }
 
 // Write internally-tagged JSON with `type` first.
-cron_schedule_emit :: proc(e: ^Emitter, self: Cron_Schedule) {
-    object_begin(e)
+cron_schedule_emit :: proc(e: ^json.Emitter, self: Cron_Schedule) {
+    json.object_begin(e)
 
     switch v in self {
     case Cron_Schedule_Every:
-        field_string(e, "type", "every")
-        field_u64(e, "interval_ms", v.interval_ms)
+        json.field_string(e, "type", "every")
+        json.field_u64(e, "interval_ms", v.interval_ms)
 
     case Cron_Schedule_Cron:
-        field_string(e, "type", "cron")
-        field_string(e, "expr", v.expr)
-        field_i64(e, "utc_offset_minutes", v.utc_offset_minutes)
+        json.field_string(e, "type", "cron")
+        json.field_string(e, "expr", v.expr)
+        json.field_i64(e, "utc_offset_minutes", v.utc_offset_minutes)
 
     case Cron_Schedule_At:
-        field_string(e, "type", "at")
-        field_u64(e, "at_ms", v.at_ms)
+        json.field_string(e, "type", "at")
+        json.field_u64(e, "at_ms", v.at_ms)
 
     case Cron_Schedule_After:
-        field_string(e, "type", "after")
-        field_u64(e, "delay_ms", v.delay_ms)
+        json.field_string(e, "type", "after")
+        json.field_u64(e, "delay_ms", v.delay_ms)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Deep-copy into `allocator`. Only `cron` owns a slice.
@@ -482,20 +483,20 @@ Cron_Job_Spec :: struct {
 }
 
 // Write a Cron_Job_Spec object.
-cron_job_spec_emit :: proc(e: ^Emitter, self: Cron_Job_Spec) {
-    object_begin(e)
-    field_string_opt(e, "name", self.name)
-    key(e, "schedule")
+cron_job_spec_emit :: proc(e: ^json.Emitter, self: Cron_Job_Spec) {
+    json.object_begin(e)
+    json.field_string_opt(e, "name", self.name)
+    json.key(e, "schedule")
     cron_schedule_emit(e, self.schedule)
-    key(e, "session")
+    json.key(e, "session")
     create_session_emit(e, self.session)
-    field_string(e, "retain", cron_retain_to_wire(self.retain))
-    key(e, "input")
+    json.field_string(e, "retain", cron_retain_to_wire(self.retain))
+    json.key(e, "input")
     input_emit(e, self.input)
-    field_string(e, "on_missed", cron_missed_policy_to_wire(self.on_missed))
-    field_string(e, "overlap", cron_overlap_to_wire(self.overlap))
-    field_bool(e, "delete_after_run", self.delete_after_run)
-    object_end(e)
+    json.field_string(e, "on_missed", cron_missed_policy_to_wire(self.on_missed))
+    json.field_string(e, "overlap", cron_overlap_to_wire(self.overlap))
+    json.field_bool(e, "delete_after_run", self.delete_after_run)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.
@@ -569,34 +570,34 @@ Cron_Job :: struct {
 
 // Write a Cron_Job object; `next_run_ms`, `last_run_ms`, `last_session_id`, and
 // `last_outcome` are always present, null when absent.
-cron_job_emit :: proc(e: ^Emitter, self: Cron_Job) {
-    object_begin(e)
-    field_id(e, "id", ([16]u8)(self.id))
-    key(e, "spec")
+cron_job_emit :: proc(e: ^json.Emitter, self: Cron_Job) {
+    json.object_begin(e)
+    json.field_id(e, "id", ([16]u8)(self.id))
+    json.key(e, "spec")
     cron_job_spec_emit(e, self.spec)
-    field_bool(e, "enabled", self.enabled)
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    field_required_null_u64(e, "next_run_ms", self.next_run_ms)
-    field_required_null_u64(e, "last_run_ms", self.last_run_ms)
-    key(e, "last_session_id")
+    json.field_bool(e, "enabled", self.enabled)
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.field_required_null_u64(e, "next_run_ms", self.next_run_ms)
+    json.field_required_null_u64(e, "last_run_ms", self.last_run_ms)
+    json.key(e, "last_session_id")
 
     if sid, ok := self.last_session_id.?; ok {
-        val_id(e, ([16]u8)(sid))
+        json.val_id(e, ([16]u8)(sid))
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    key(e, "last_outcome")
+    json.key(e, "last_outcome")
 
     if oc, ok := self.last_outcome.?; ok {
-        val_string(e, cron_run_outcome_to_wire(oc))
+        json.val_string(e, cron_run_outcome_to_wire(oc))
     } else {
-        val_null(e)
+        json.val_null(e)
     }
 
-    field_u64(e, "run_count", self.run_count)
-    field_u64(e, "dispatch_failures", self.dispatch_failures)
-    object_end(e)
+    json.field_u64(e, "run_count", self.run_count)
+    json.field_u64(e, "dispatch_failures", self.dispatch_failures)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

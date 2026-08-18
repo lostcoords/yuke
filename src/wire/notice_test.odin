@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -25,9 +26,9 @@ test_notice_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, n.level, Notice_Level.Error)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     notice_emit(&e, n)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }

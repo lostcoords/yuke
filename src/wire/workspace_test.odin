@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -16,11 +17,11 @@ test_workspace_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, ws.title, "repo")
     testing.expect(t, workspace_validate(ws) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_emit(&e, ws)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -40,11 +41,11 @@ test_workspace_describe_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, model, "gpt-4")
     testing.expect(t, workspace_describe_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_describe_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -61,11 +62,11 @@ test_workspace_describe_result_null_git_and_model :: proc(t: ^testing.T) {
     testing.expect(t, !has_model, "last_used_model should be absent")
     testing.expect(t, workspace_describe_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_describe_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -81,11 +82,11 @@ test_workspace_browse_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, limit, u64(50))
     testing.expect(t, workspace_browse_params_validate(params) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_browse_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -118,11 +119,11 @@ test_workspace_browse_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, cursor, "xyz")
     testing.expect(t, workspace_browse_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_browse_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -142,11 +143,11 @@ test_workspace_browse_result_null_next_cursor :: proc(t: ^testing.T) {
     testing.expect_value(t, len(result.entries), 0)
     testing.expect(t, workspace_browse_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_browse_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -164,11 +165,11 @@ test_workspace_remove_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, string(first[:]), "0123456789abcdef")
     testing.expect(t, workspace_remove_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_remove_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -187,11 +188,11 @@ test_skill_list_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, result.skills[0].argument_hint, "env")
     testing.expect(t, workspace_skills_result_validate(result) == .None, "validate should pass")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_skills_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -205,11 +206,11 @@ test_workspace_ref_roundtrip :: proc(t: ^testing.T) {
     wid := ([16]u8)(params.workspace_id)
     testing.expect_value(t, string(wid[:]), "0123456789abcdef")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     workspace_ref_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

@@ -1,4 +1,5 @@
 package daemon
+import "libs:json"
 
 import "core:log"
 import "core:mem"
@@ -51,9 +52,9 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
     scratch := virtual.arena_allocator(&d.pump_scratch)
 
     // Built before anything is committed: a refusal here must never reach the log.
-    frame: wire.Emitter
-    wire.emitter_init(&frame, scratch)
-    defer wire.emitter_destroy(&frame)
+    frame: json.Emitter
+    json.emitter_init(&frame, scratch)
+    defer json.emitter_destroy(&frame)
 
     switch class {
     case .Durable_Gated:
@@ -66,21 +67,21 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
         assert(wire.broadcast_data_validate(stamped) == .None, "stamping a seq keeps the payload valid")
 
         // The durable payload the log stores; the frame carries these same bytes.
-        payload: wire.Emitter
-        wire.emitter_init(&payload, scratch)
-        defer wire.emitter_destroy(&payload)
+        payload: json.Emitter
+        json.emitter_init(&payload, scratch)
+        defer json.emitter_destroy(&payload)
 
         wire.broadcast_data_emit(&payload, stamped)
 
-        if wire.emitter_failed(&payload) {
+        if json.emitter_failed(&payload) {
             log.errorf("daemon: durable broadcast %v could not be encoded", name)
 
             return .Encode_Failed
         }
 
-        wire.notification_emit_raw(&frame, name, wire.to_string(&payload))
+        wire.notification_emit_raw(&frame, name, json.to_string(&payload))
         pump_frame_check(&frame, name) or_return
-        pump_commit(d, name, stamped, sid, seq, wire.to_string(&payload)) or_return
+        pump_commit(d, name, stamped, sid, seq, json.to_string(&payload)) or_return
         out = stamped
 
     case .Live_Gated, .Live_Droppable, .Ungated:
@@ -96,7 +97,7 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
         delete_key(&d.seq_high, sid)
     }
 
-    pump_send(d, name, out, session, transmute([]byte)wire.to_string(&frame))
+    pump_send(d, name, out, session, transmute([]byte)json.to_string(&frame))
 
     return .None
 }
@@ -104,16 +105,16 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
 // Refuse a frame no receiver could take. Both faults are the same decision: nothing is
 // logged and nothing is sent, so the caller sees the failure rather than the subscribers.
 @(private)
-pump_frame_check :: proc(e: ^wire.Emitter, name: wire.Broadcast_Name) -> Pump_Error {
+pump_frame_check :: proc(e: ^json.Emitter, name: wire.Broadcast_Name) -> Pump_Error {
     assert(e != nil, "a frame check needs the emitter that built it")
 
-    if wire.emitter_failed(e) {
+    if json.emitter_failed(e) {
         log.errorf("daemon: broadcast %v could not be encoded", name)
 
         return .Encode_Failed
     }
 
-    size := len(wire.to_string(e))
+    size := len(json.to_string(e))
     assert(size > 0, "a healthy emitter wrote the frame")
 
     // The transport is configured with this same cap at start and enforces it on
@@ -422,7 +423,7 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
 
     note := wire.notification_build(.Session_Deltas_Shed, data)
     e, ok := wire.notification_encode(note, virtual.arena_allocator(&d.pump_scratch))
-    defer wire.emitter_destroy(&e)
+    defer json.emitter_destroy(&e)
 
     if !ok {
         log.error("daemon: a shed marker could not be encoded")
@@ -430,7 +431,7 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
         return
     }
 
-    if conn_send_text(conn, transmute([]byte)wire.to_string(&e)) != .None {
+    if conn_send_text(conn, transmute([]byte)json.to_string(&e)) != .None {
         return
     }
 

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -17,11 +18,11 @@ test_catalog_health_parses_null_load_error :: proc(t: ^testing.T) {
     _, has_error := health.load_error.?
     testing.expect(t, !has_error, "load_error should be the null form")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     catalog_health_emit(&e, health)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -36,11 +37,11 @@ test_skip_reason_missing_credential_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be a missing_credential")
     testing.expect_value(t, mc.env, "ANTHROPIC_API_KEY")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     skip_reason_emit(&e, reason)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -55,11 +56,11 @@ test_skip_reason_invalid_config_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be an invalid_config")
     testing.expect_value(t, ic.message, "bad provider config")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     skip_reason_emit(&e, reason)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -92,11 +93,11 @@ test_catalog_list_result_unchanged_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, string(rev[:]), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
     testing.expect(t, catalog_list_result_validate(result) == .None, "should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     catalog_list_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -118,11 +119,11 @@ test_catalog_list_result_full_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, full.models[0].cost.cache_write, 3.75)
     testing.expect(t, catalog_list_result_validate(result) == .None, "should validate")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     catalog_list_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

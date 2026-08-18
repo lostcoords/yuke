@@ -1,4 +1,5 @@
 package daemon
+import "libs:json"
 
 import "core:log"
 import "core:mem"
@@ -1111,9 +1112,9 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     assert(verr == .None, "daemon built an invalid response frame")
 
     e, _ := wire.response_encode(resp, allocator)
-    defer wire.emitter_destroy(&e)
+    defer json.emitter_destroy(&e)
 
-    if send_err := conn_send_text(conn, transmute([]byte)wire.to_string(&e)); send_err != .None {
+    if send_err := conn_send_text(conn, transmute([]byte)json.to_string(&e)); send_err != .None {
         conn_abort(conn, send_err)
         return false
     }

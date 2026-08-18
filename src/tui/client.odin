@@ -455,13 +455,13 @@ client_on_request_complete :: proc(c: ^client.Client, outcome: client.Request_Ou
     switch result in outcome {
     case client.Request_Response:
         e, encoded := wire.response_encode(result.response, h.allocator)
-        defer wire.emitter_destroy(&e)
+        defer json.emitter_destroy(&e)
         if !encoded {
             client_promise_reject(job, "out_of_memory", true)
             return
         }
 
-        value := qjs.new_string(h.js.ctx, wire.to_string(&e))
+        value := qjs.new_string(h.js.ctx, json.to_string(&e))
         client_promise_resolve(job, value, true)
 
     case client.Request_Failure:

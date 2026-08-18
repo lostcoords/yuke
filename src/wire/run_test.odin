@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -16,11 +17,11 @@ test_run_outcome_turn_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, turn.finish, Stop_Reason.Stop)
     testing.expect_value(t, turn.rounds, u64(3))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_outcome_emit(&e, outcome)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -35,11 +36,11 @@ test_run_outcome_compacted_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be compacted")
     testing.expect_value(t, u64(c.message_id), u64(42))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_outcome_emit(&e, outcome)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -54,11 +55,11 @@ test_run_outcome_skipped_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be skipped")
     testing.expect_value(t, s.reason, Compact_Skip_Reason.Too_Few_Messages)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_outcome_emit(&e, outcome)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -72,11 +73,11 @@ test_run_outcome_canceled_roundtrip :: proc(t: ^testing.T) {
     _, ok := outcome.(Run_Outcome_Canceled)
     testing.expect(t, ok, "should be canceled")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_outcome_emit(&e, outcome)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -93,11 +94,11 @@ test_run_outcome_failed_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, f.message, "boom")
     testing.expect(t, run_outcome_validate(outcome) == .None, "short message is within bound")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_outcome_emit(&e, outcome)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -130,9 +131,9 @@ test_run_canceled_timing_null_start_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, !has, "started_at_ms should be absent")
     testing.expect_value(t, timing.ended_at_ms, u64(100))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     run_canceled_timing_emit(&e, timing)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }

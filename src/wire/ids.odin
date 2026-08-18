@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strconv"
 
@@ -108,8 +109,8 @@ req_id_validate :: proc(id: Request_Id) -> Validation_Error {
 }
 
 // Write an id field verbatim, so the echo is byte-identical.
-field_request_id :: proc(e: ^Emitter, name: string, id: Request_Id) {
+field_request_id :: proc(e: ^json.Emitter, name: string, id: Request_Id) {
     assert(req_id_validate(id) == .None, "emitted a correlation id that is not valid JSON")
-    key(e, name)
-    _put(e, string(id))
+    json.key(e, name)
+    json.val_raw(e, string(id))
 }

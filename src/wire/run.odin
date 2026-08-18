@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -146,11 +147,11 @@ run_canceled_timing_from_reader :: proc(d: ^Decoder) -> (timing: Run_Canceled_Ti
 }
 
 // Write cancellation timing; `started_at_ms` is always present, null when unset.
-run_canceled_timing_emit :: proc(e: ^Emitter, self: Run_Canceled_Timing) {
-    object_begin(e)
-    field_required_null_u64(e, "started_at_ms", self.started_at_ms)
-    field_u64(e, "ended_at_ms", self.ended_at_ms)
-    object_end(e)
+run_canceled_timing_emit :: proc(e: ^json.Emitter, self: Run_Canceled_Timing) {
+    json.object_begin(e)
+    json.field_required_null_u64(e, "started_at_ms", self.started_at_ms)
+    json.field_u64(e, "ended_at_ms", self.ended_at_ms)
+    json.object_end(e)
 }
 
 // Token accounting for one assistant message.
@@ -222,14 +223,14 @@ token_usage_from_reader :: proc(d: ^Decoder) -> (usage: Token_Usage, err: Valida
 }
 
 // Write token usage.
-token_usage_emit :: proc(e: ^Emitter, self: Token_Usage) {
-    object_begin(e)
-    field_u64(e, "input", self.input)
-    field_u64(e, "output", self.output)
-    field_u64(e, "reasoning", self.reasoning)
-    field_u64(e, "cache_read", self.cache_read)
-    field_u64(e, "cache_write", self.cache_write)
-    object_end(e)
+token_usage_emit :: proc(e: ^json.Emitter, self: Token_Usage) {
+    json.object_begin(e)
+    json.field_u64(e, "input", self.input)
+    json.field_u64(e, "output", self.output)
+    json.field_u64(e, "reasoning", self.reasoning)
+    json.field_u64(e, "cache_read", self.cache_read)
+    json.field_u64(e, "cache_write", self.cache_write)
+    json.object_end(e)
 }
 
 // A completed turn: it stopped for a stop reason after some round trips.
@@ -429,33 +430,33 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
 }
 
 // Write internally-tagged JSON with `type` first.
-run_outcome_emit :: proc(e: ^Emitter, self: Run_Outcome) {
-    object_begin(e)
+run_outcome_emit :: proc(e: ^json.Emitter, self: Run_Outcome) {
+    json.object_begin(e)
 
     switch v in self {
     case Run_Outcome_Turn:
-        field_string(e, "type", "turn")
-        field_string(e, "finish", stop_reason_to_wire(v.finish))
-        field_u64(e, "rounds", v.rounds)
+        json.field_string(e, "type", "turn")
+        json.field_string(e, "finish", stop_reason_to_wire(v.finish))
+        json.field_u64(e, "rounds", v.rounds)
 
     case Run_Outcome_Compacted:
-        field_string(e, "type", "compacted")
-        field_u64(e, "message_id", u64(v.message_id))
+        json.field_string(e, "type", "compacted")
+        json.field_u64(e, "message_id", u64(v.message_id))
 
     case Run_Outcome_Skipped:
-        field_string(e, "type", "skipped")
-        field_string(e, "reason", compact_skip_reason_to_wire(v.reason))
+        json.field_string(e, "type", "skipped")
+        json.field_string(e, "reason", compact_skip_reason_to_wire(v.reason))
 
     case Run_Outcome_Canceled:
-        field_string(e, "type", "canceled")
+        json.field_string(e, "type", "canceled")
 
     case Run_Outcome_Failed:
-        field_string(e, "type", "failed")
-        field_string(e, "code", run_error_code_to_wire(v.code))
-        field_string(e, "message", v.message)
+        json.field_string(e, "type", "failed")
+        json.field_string(e, "code", run_error_code_to_wire(v.code))
+        json.field_string(e, "message", v.message)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify annotated field bounds.

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -67,11 +68,11 @@ test_initialize_params_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, p.client.name, "yuke-tui")
     testing.expect_value(t, p.client.version, "0.0.1")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     initialize_params_emit(&e, p)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -150,11 +151,11 @@ test_initialize_result_agents_roundtrip :: proc(t: ^testing.T) {
     h := empty_hello()
     h.agents = []string{"main", "worker"}
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     initialize_result_emit(&e, h)
-    out := to_string(&e)
+    out := json.to_string(&e)
 
     v := decoder_init(out)
     decoded, derr := initialize_result_from_reader(&v)
@@ -243,11 +244,11 @@ test_initialize_result_capabilities_roundtrip :: proc(t: ^testing.T) {
     h := empty_hello()
     h.capabilities = {.Blob_Upload}
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     initialize_result_emit(&e, h)
-    out := to_string(&e)
+    out := json.to_string(&e)
 
     v := decoder_init(out)
     decoded, derr := initialize_result_from_reader(&v)

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -88,11 +89,11 @@ test_session_scope_roundtrip :: proc(t: ^testing.T) {
     wid := ([16]u8)(ws.workspace_id)
     testing.expect_value(t, string(wid[:]), "aaaaaaaaaaaaaaaa")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_scope_emit(&e, scope)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -119,11 +120,11 @@ test_session_population_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, string(pid[:]), "0123456789abcdef")
     testing.expect(t, session_population_validate(pop) == .None, "valid population")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_population_emit(&e, pop)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 
     // Invalid hex in the parent id fails validation.
     invalid := Session_Population_Children {
@@ -159,11 +160,11 @@ test_session_origin_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(ch.parent_message_id), u64(3))
     testing.expect_value(t, u64(ch.parent_part_id), u64(1))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_origin_emit(&e, child)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -231,11 +232,11 @@ test_session_agent_omitted_when_absent :: proc(t: ^testing.T) {
 
     item := _sample_session_list_item()
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_emit(&e, item.session)
-    out := to_string(&e)
+    out := json.to_string(&e)
     testing.expect(t, !strings.contains(out, "\"agent\""), "agent must be omitted when absent")
 }
 
@@ -247,11 +248,11 @@ test_session_agent_roundtrip :: proc(t: ^testing.T) {
     item := _sample_session_list_item()
     item.session.agent = "worker"
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_emit(&e, item.session)
-    out := to_string(&e)
+    out := json.to_string(&e)
 
     v := decoder_init(out, context.temp_allocator)
     decoded, derr := session_from_reader(&v)
@@ -444,11 +445,11 @@ test_session_activity_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, is_idle, "state should be idle")
     testing.expect(t, session_activity_validate(activity) == .None, "idle activity validates")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_activity_emit(&e, activity)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -466,11 +467,11 @@ test_activity_state_running_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(running.run_id), u64(1))
     testing.expect_value(t, running.started_at_ms, u64(1720000000000))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     activity_state_emit(&e, state)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -486,11 +487,11 @@ test_activity_state_building_roundtrip :: proc(t: ^testing.T) {
     _, ok := state.(Activity_State_Building)
     testing.expect(t, ok, "should be a building state")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     activity_state_emit(&e, state)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -519,12 +520,12 @@ test_session_list_item_carries_activity_config :: proc(t: ^testing.T) {
     }
     testing.expect(t, session_list_item_validate(item) == .None, "running row validates")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_list_item_emit(&e, item)
 
-    v := decoder_init(to_string(&e), context.temp_allocator)
+    v := decoder_init(json.to_string(&e), context.temp_allocator)
     decoded, derr := session_list_item_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     cfg, has_config := decoded.activity.config.?
@@ -550,11 +551,11 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, cfg.reasoning, "high")
     testing.expect(t, session_activity_validate(activity) == .None, "running activity with config validates")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_activity_emit(&e, activity)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 
     // `config` trails `pending_compaction`; emitter order is the reverse.
     permuted := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null,"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"}}`
@@ -563,11 +564,11 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
     reordered, perr := session_activity_from_reader(&pv)
     testing.expect(t, perr == .None, "config-last activity should decode")
 
-    pe: Emitter
-    emitter_init(&pe)
-    defer emitter_destroy(&pe)
+    pe: json.Emitter
+    json.emitter_init(&pe)
+    defer json.emitter_destroy(&pe)
     session_activity_emit(&pe, reordered)
-    testing.expect_value(t, to_string(&pe), input)
+    testing.expect_value(t, json.to_string(&pe), input)
 }
 
 @(test)
@@ -776,11 +777,11 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, result.status, Compact_Status.Queued)
     testing.expect_value(t, u64(result.run_id), u64(3))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     session_compact_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

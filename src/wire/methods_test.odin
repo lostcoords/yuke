@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -43,11 +44,11 @@ test_request_params_cancel_input_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(cp.input_id), u64(7))
     testing.expect(t, request_params_validate(params) == .None, "valid params")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     request_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -62,11 +63,11 @@ test_request_params_catalog_refresh_empty :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be empty params")
     testing.expect(t, params_are_default(params), "empty params are the default")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     request_params_emit(&e, params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -80,11 +81,11 @@ test_response_result_remove_empty :: proc(t: ^testing.T) {
     _, ok := result.(Empty)
     testing.expect(t, ok, "should be empty result")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     response_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -101,9 +102,9 @@ test_response_result_send_input_queued_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, is_queued, "should be queued")
     testing.expect_value(t, u64(queued.input_id), u64(8))
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     response_result_emit(&e, result)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }

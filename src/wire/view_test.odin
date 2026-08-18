@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 import "core:testing"
@@ -18,11 +19,11 @@ test_view_text_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has, "language present")
     testing.expect_value(t, lang, "zig")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     view_emit(&e, view)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -36,11 +37,11 @@ test_view_markdown_roundtrip :: proc(t: ^testing.T) {
     _, ok := view.(View_Markdown)
     testing.expect(t, ok, "should be a markdown view")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     view_emit(&e, view)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -60,11 +61,11 @@ test_view_diff_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, diff.files[0].hunks[0].new_lines, u64(3))
     testing.expect_value(t, len(diff.files[0].hunks[0].lines), 3)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     view_emit(&e, view)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -84,11 +85,11 @@ test_view_image_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has, "alt present")
     testing.expect_value(t, alt, "pic")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     view_emit(&e, view)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)

@@ -1,11 +1,9 @@
-package wire
+package json
 
 import "base:intrinsics"
 import "core:crypto"
 import "core:strconv"
 import "core:strings"
-
-import "libs:json"
 
 // Emit a required-but-nullable JSON-number field: always writes the key, null when
 // absent. Parapoly over the `distinct u64` id types so a `Maybe(Message_Id)` needs no
@@ -195,9 +193,9 @@ val_null :: proc(e: ^Emitter) {
 // Splice an already-encoded JSON value in as the current value. The bytes are written
 // verbatim, so they must be one complete value this emitter produced — it is what lets
 // a payload be encoded once and reused inside its envelope.
-val_raw :: proc(e: ^Emitter, json: string) {
-    assert(len(json) > 0, "a spliced value is not empty")
-    _put(e, json)
+val_raw :: proc(e: ^Emitter, encoded: string) {
+    assert(len(encoded) > 0, "a spliced value is not empty")
+    _put(e, encoded)
 }
 
 // Write a `name: string` object field.
@@ -247,7 +245,7 @@ field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
 // Write a JSON string value; a failed builder growth latches `failed`.
 @(private)
 _write_json_string :: proc(e: ^Emitter, s: string) {
-    _, err := json.write_string(strings.to_writer(&e.sb), s)
+    _, err := write_string(strings.to_writer(&e.sb), s)
 
     if err != .None {
         e.failed = true

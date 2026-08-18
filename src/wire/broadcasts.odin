@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:strings"
 
@@ -217,12 +218,12 @@ Session_Summary_Changed_Data :: struct {
 }
 
 // Write a session.summary_changed payload.
-session_summary_changed_data_emit :: proc(e: ^Emitter, self: Session_Summary_Changed_Data) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    key(e, "session")
+session_summary_changed_data_emit :: proc(e: ^json.Emitter, self: Session_Summary_Changed_Data) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.key(e, "session")
     session_emit(e, self.session)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify revision range and nested summary fields.
@@ -244,12 +245,12 @@ Session_Activity_Changed_Data :: struct {
 }
 
 // Write a session.activity_changed payload.
-session_activity_changed_data_emit :: proc(e: ^Emitter, self: Session_Activity_Changed_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    key(e, "activity")
+session_activity_changed_data_emit :: proc(e: ^json.Emitter, self: Session_Activity_Changed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.key(e, "activity")
     session_activity_emit(e, self.activity)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested activity fields.
@@ -269,11 +270,11 @@ Session_Removed_Data :: struct {
 }
 
 // Write a session.removed payload.
-session_removed_data_emit :: proc(e: ^Emitter, self: Session_Removed_Data) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    object_end(e)
+session_removed_data_emit :: proc(e: ^json.Emitter, self: Session_Removed_Data) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.object_end(e)
 }
 
 // Verify revision range and the session id.
@@ -292,11 +293,11 @@ Workspace_Created_Data :: struct {
 }
 
 // Write a workspace.created payload.
-workspace_created_data_emit :: proc(e: ^Emitter, self: Workspace_Created_Data) {
-    object_begin(e)
-    key(e, "workspace")
+workspace_created_data_emit :: proc(e: ^json.Emitter, self: Workspace_Created_Data) {
+    json.object_begin(e)
+    json.key(e, "workspace")
     workspace_emit(e, self.workspace)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify nested workspace fields.
@@ -311,10 +312,10 @@ Workspace_Removed_Data :: struct {
 }
 
 // Write a workspace.removed payload.
-workspace_removed_data_emit :: proc(e: ^Emitter, self: Workspace_Removed_Data) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    object_end(e)
+workspace_removed_data_emit :: proc(e: ^json.Emitter, self: Workspace_Removed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
+    json.object_end(e)
 }
 
 // Verify the workspace id.
@@ -333,18 +334,18 @@ Permission_Rules_Changed_Data :: struct {
 }
 
 // Write a permission.rules_changed payload.
-permission_rules_changed_data_emit :: proc(e: ^Emitter, self: Permission_Rules_Changed_Data) {
-    object_begin(e)
-    field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
-    key(e, "rules")
-    array_begin(e)
+permission_rules_changed_data_emit :: proc(e: ^json.Emitter, self: Permission_Rules_Changed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "workspace_id", ([16]u8)(self.workspace_id))
+    json.key(e, "rules")
+    json.array_begin(e)
     for rule in self.rules {
-        elem(e)
+        json.elem(e)
         permission_rule_emit(e, rule)
     }
 
-    array_end(e)
-    object_end(e)
+    json.array_end(e)
+    json.object_end(e)
 }
 
 // Verify the workspace id, rule count, and each rule.
@@ -372,12 +373,12 @@ Catalog_Changed_Data :: struct {
 }
 
 // Write a catalog.changed payload.
-catalog_changed_data_emit :: proc(e: ^Emitter, self: Catalog_Changed_Data) {
-    object_begin(e)
-    field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
-    key(e, "health")
+catalog_changed_data_emit :: proc(e: ^json.Emitter, self: Catalog_Changed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "catalog_rev", ([64]u8)(self.catalog_rev))
+    json.key(e, "health")
     catalog_health_emit(e, self.health)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the catalog hash and nested health fields.
@@ -397,12 +398,12 @@ Cron_Created_Data :: struct {
 }
 
 // Write a cron.created payload.
-cron_created_data_emit :: proc(e: ^Emitter, self: Cron_Created_Data) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    key(e, "job")
+cron_created_data_emit :: proc(e: ^json.Emitter, self: Cron_Created_Data) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.key(e, "job")
     cron_job_emit(e, self.job)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify revision range and nested job fields.
@@ -424,12 +425,12 @@ Cron_Updated_Data :: struct {
 }
 
 // Write a cron.updated payload.
-cron_updated_data_emit :: proc(e: ^Emitter, self: Cron_Updated_Data) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    key(e, "job")
+cron_updated_data_emit :: proc(e: ^json.Emitter, self: Cron_Updated_Data) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.key(e, "job")
     cron_job_emit(e, self.job)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify revision range and nested job fields.
@@ -451,11 +452,11 @@ Cron_Removed_Data :: struct {
 }
 
 // Write a cron.removed payload.
-cron_removed_data_emit :: proc(e: ^Emitter, self: Cron_Removed_Data) {
-    object_begin(e)
-    field_u64(e, "revision", u64(self.revision))
-    field_id(e, "job_id", ([16]u8)(self.job_id))
-    object_end(e)
+cron_removed_data_emit :: proc(e: ^json.Emitter, self: Cron_Removed_Data) {
+    json.object_begin(e)
+    json.field_u64(e, "revision", u64(self.revision))
+    json.field_id(e, "job_id", ([16]u8)(self.job_id))
+    json.object_end(e)
 }
 
 // Verify revision range and the job id.
@@ -480,13 +481,13 @@ Message_Committed_Data :: struct {
 }
 
 // Write a message.committed payload.
-message_committed_data_emit :: proc(e: ^Emitter, self: Message_Committed_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "seq", u64(self.seq))
-    key(e, "message")
+message_committed_data_emit :: proc(e: ^json.Emitter, self: Message_Committed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "seq", u64(self.seq))
+    json.key(e, "message")
     message_emit(e, self.message)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested message fields.
@@ -522,20 +523,20 @@ Run_Started_Data :: struct {
 }
 
 // Write a run.started payload.
-run_started_data_emit :: proc(e: ^Emitter, self: Run_Started_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "seq", u64(self.seq))
-    field_u64(e, "run_id", u64(self.run_id))
-    field_string(e, "kind", run_kind_to_wire(self.kind))
+run_started_data_emit :: proc(e: ^json.Emitter, self: Run_Started_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "seq", u64(self.seq))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.field_string(e, "kind", run_kind_to_wire(self.kind))
 
     if r, ok := self.reason.?; ok {
-        field_string(e, "reason", compaction_reason_to_wire(r))
+        json.field_string(e, "reason", compaction_reason_to_wire(r))
     }
 
-    field_u64(e, "config_rev", u64(self.config_rev))
-    field_u64(e, "started_at_ms", self.started_at_ms)
-    object_end(e)
+    json.field_u64(e, "config_rev", u64(self.config_rev))
+    json.field_u64(e, "started_at_ms", self.started_at_ms)
+    json.object_end(e)
 }
 
 // Verify the session id and the reason/kind cross-field invariant.
@@ -574,17 +575,17 @@ Run_Done_Data :: struct {
 }
 
 // Write a run.done payload.
-run_done_data_emit :: proc(e: ^Emitter, self: Run_Done_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "seq", u64(self.seq))
-    field_u64(e, "run_id", u64(self.run_id))
-    field_string(e, "kind", run_kind_to_wire(self.kind))
-    key(e, "timing")
+run_done_data_emit :: proc(e: ^json.Emitter, self: Run_Done_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "seq", u64(self.seq))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.field_string(e, "kind", run_kind_to_wire(self.kind))
+    json.key(e, "timing")
     run_canceled_timing_emit(e, self.timing)
-    key(e, "outcome")
+    json.key(e, "outcome")
     run_outcome_emit(e, self.outcome)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested outcome bounds.
@@ -607,13 +608,13 @@ Config_Changed_Data :: struct {
 }
 
 // Write a config.changed payload.
-config_changed_data_emit :: proc(e: ^Emitter, self: Config_Changed_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "seq", u64(self.seq))
-    key(e, "config")
+config_changed_data_emit :: proc(e: ^json.Emitter, self: Config_Changed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "seq", u64(self.seq))
+    json.key(e, "config")
     run_config_emit(e, self.config)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested config fields.
@@ -636,12 +637,12 @@ Transcript_Truncated_Data :: struct {
 }
 
 // Write a transcript.truncated payload.
-transcript_truncated_data_emit :: proc(e: ^Emitter, self: Transcript_Truncated_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "seq", u64(self.seq))
-    field_u64(e, "first_removed_id", u64(self.first_removed_id))
-    object_end(e)
+transcript_truncated_data_emit :: proc(e: ^json.Emitter, self: Transcript_Truncated_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "seq", u64(self.seq))
+    json.field_u64(e, "first_removed_id", u64(self.first_removed_id))
+    json.object_end(e)
 }
 
 // Verify the session id.
@@ -672,15 +673,15 @@ Message_Started_Data :: struct {
 }
 
 // Write a message.started payload.
-message_started_data_emit :: proc(e: ^Emitter, self: Message_Started_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    field_u64(e, "run_id", u64(self.run_id))
-    field_u64(e, "config_rev", u64(self.config_rev))
-    field_string(e, "agent", self.agent)
-    field_u64(e, "created_at_ms", self.created_at_ms)
-    object_end(e)
+message_started_data_emit :: proc(e: ^json.Emitter, self: Message_Started_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.field_u64(e, "run_id", u64(self.run_id))
+    json.field_u64(e, "config_rev", u64(self.config_rev))
+    json.field_string(e, "agent", self.agent)
+    json.field_u64(e, "created_at_ms", self.created_at_ms)
+    json.object_end(e)
 }
 
 // Verify the session id.
@@ -698,11 +699,11 @@ Message_Discarded_Data :: struct {
 }
 
 // Write a message.discarded payload.
-message_discarded_data_emit :: proc(e: ^Emitter, self: Message_Discarded_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    object_end(e)
+message_discarded_data_emit :: proc(e: ^json.Emitter, self: Message_Discarded_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.object_end(e)
 }
 
 // Verify the session id.
@@ -723,13 +724,13 @@ Message_Part_Added_Data :: struct {
 }
 
 // Write a message.part_added payload.
-message_part_added_data_emit :: proc(e: ^Emitter, self: Message_Part_Added_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    key(e, "part")
+message_part_added_data_emit :: proc(e: ^json.Emitter, self: Message_Part_Added_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.key(e, "part")
     assistant_part_emit(e, self.part)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested part fields.
@@ -762,20 +763,20 @@ Tool_State_Changed_Data :: struct {
 }
 
 // Write a tool.state_changed payload.
-tool_state_changed_data_emit :: proc(e: ^Emitter, self: Tool_State_Changed_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "message_id", u64(self.message_id))
-    field_u64(e, "part_id", u64(self.part_id))
-    key(e, "state")
+tool_state_changed_data_emit :: proc(e: ^json.Emitter, self: Tool_State_Changed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "message_id", u64(self.message_id))
+    json.field_u64(e, "part_id", u64(self.part_id))
+    json.key(e, "state")
     tool_state_emit(e, self.state)
 
     if p, ok := self.permission_state.?; ok {
-        key(e, "permission")
+        json.key(e, "permission")
         _permission_state_emit(e, p)
     }
 
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id, nested tool state fields, and the permission cross-field invariant.
@@ -800,12 +801,12 @@ Input_Queued_Data :: struct {
 }
 
 // Write an input.queued payload.
-input_queued_data_emit :: proc(e: ^Emitter, self: Input_Queued_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    key(e, "input")
+input_queued_data_emit :: proc(e: ^json.Emitter, self: Input_Queued_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.key(e, "input")
     queued_input_emit(e, self.input)
-    object_end(e)
+    json.object_end(e)
 }
 
 // Verify the session id and nested input fields.
@@ -825,11 +826,11 @@ Input_Canceled_Data :: struct {
 }
 
 // Write an input.canceled payload.
-input_canceled_data_emit :: proc(e: ^Emitter, self: Input_Canceled_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "input_id", u64(self.input_id))
-    object_end(e)
+input_canceled_data_emit :: proc(e: ^json.Emitter, self: Input_Canceled_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "input_id", u64(self.input_id))
+    json.object_end(e)
 }
 
 // Verify the session id.
@@ -850,11 +851,11 @@ Session_Deltas_Shed_Data :: struct {
 }
 
 // Write a session.deltas_shed payload.
-session_deltas_shed_data_emit :: proc(e: ^Emitter, self: Session_Deltas_Shed_Data) {
-    object_begin(e)
-    field_id(e, "session_id", ([16]u8)(self.session_id))
-    field_u64(e, "count", self.count)
-    object_end(e)
+session_deltas_shed_data_emit :: proc(e: ^json.Emitter, self: Session_Deltas_Shed_Data) {
+    json.object_begin(e)
+    json.field_id(e, "session_id", ([16]u8)(self.session_id))
+    json.field_u64(e, "count", self.count)
+    json.object_end(e)
 }
 
 // Verify the session id and that the shed count is positive and JSON-safe.
@@ -901,7 +902,7 @@ Broadcast_Data :: union {
 }
 
 // Write just the active payload's fields (no tag wrapper).
-broadcast_data_emit :: proc(e: ^Emitter, self: Broadcast_Data) {
+broadcast_data_emit :: proc(e: ^json.Emitter, self: Broadcast_Data) {
     switch v in self {
     case Session_Summary_Changed_Data:
         session_summary_changed_data_emit(e, v)

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:mem"
 import "core:testing"
@@ -78,11 +79,11 @@ test_run_started_turn_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, !has_reason, "a turn carries no compaction reason")
     testing.expect(t, broadcast_data_validate(data) == .None, "valid run.started")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The durable log has to carry the reason, or a resync cannot rebuild a compacting session.
@@ -103,11 +104,11 @@ test_run_started_compaction_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, reason, Compaction_Reason.Manual)
     testing.expect(t, broadcast_data_validate(data) == .None, "valid compaction run.started")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The reason is meaningful only for a compaction run, in both directions.
@@ -174,11 +175,11 @@ test_session_deltas_shed_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has_sid, "the shed marker routes by session")
     testing.expect_value(t, broadcast_name_class(.Session_Deltas_Shed), Broadcast_Class.Live_Droppable)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -240,11 +241,11 @@ test_run_done_turn_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has_sid, "run.done routes by session")
     testing.expect(t, broadcast_data_validate(data) == .None, "valid run.done")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -266,11 +267,11 @@ test_run_done_canceled_null_start_roundtrip :: proc(t: ^testing.T) {
     _, is_canceled := rd.outcome.(Run_Outcome_Canceled)
     testing.expect(t, is_canceled, "outcome should be canceled")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -294,11 +295,11 @@ test_session_summary_changed_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has_sid, "summary_changed routes by session")
     testing.expect(t, broadcast_data_validate(data) == .None, "valid summary_changed")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -320,11 +321,11 @@ test_session_activity_changed_roundtrip :: proc(t: ^testing.T) {
     _, has_seq := broadcast_data_seq(data).?
     testing.expect(t, !has_seq, "activity_changed carries no seq")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The hoisted activity config is borrowed frame data; a clone must own its strings.
@@ -357,11 +358,11 @@ test_session_activity_changed_config_clone_outlives_source :: proc(t: ^testing.T
     testing.expect_value(t, cfg.model, "openai/gpt-5.5")
     testing.expect_value(t, cfg.reasoning, "high")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, clone.params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -378,11 +379,11 @@ test_session_removed_roundtrip :: proc(t: ^testing.T) {
     testing.expect_value(t, u64(rm.revision), u64(2))
     testing.expect(t, broadcast_data_validate(data) == .None, "valid session.removed")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -418,11 +419,11 @@ test_message_part_delta_roundtrip :: proc(t: ^testing.T) {
     _, has_seq := broadcast_data_seq(data).?
     testing.expect(t, !has_seq, "part_delta is not durable")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -441,11 +442,11 @@ test_tool_output_delta_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, has_sid, "tool.output_delta routes by session")
     _ = sid
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -463,11 +464,11 @@ test_config_changed_roundtrip :: proc(t: ^testing.T) {
     s, has_seq := broadcast_data_seq(data).?
     testing.expect(t, has_seq && u64(s) == 5, "config.changed is durable")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -486,11 +487,11 @@ test_broadcast_notice_roundtrip :: proc(t: ^testing.T) {
     _, has_sid := broadcast_data_session_id(data).?
     testing.expect(t, !has_sid, "notice has no session")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 @(test)
@@ -506,11 +507,11 @@ test_workspace_removed_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, ok, "should be workspace.removed")
     testing.expect(t, broadcast_data_validate(data) == .None, "valid workspace.removed")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, data)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The clone must outlive its decode arena. Tracked arenas turn a missed copy into a
@@ -539,11 +540,11 @@ test_broadcast_clone_outlives_source_delta :: proc(t: ^testing.T) {
 
     testing.expect_value(t, clone.method, Broadcast_Name.Message_Part_Delta)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, clone.params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // A nested payload exercises the transitive deep copy through session_clone.
@@ -569,11 +570,11 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
 
     testing.expect_value(t, clone.method, Broadcast_Name.Session_Summary_Changed)
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, clone.params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The part-level permission travels with `tool.state_changed` and must survive the clone
@@ -608,11 +609,11 @@ test_tool_state_changed_permission_clone_outlives_source :: proc(t: ^testing.T) 
     testing.expect(t, has_opts, "cloned options are present")
     testing.expect_value(t, opts[0].label, "Allow once")
 
-    e: Emitter
-    emitter_init(&e)
-    defer emitter_destroy(&e)
+    e: json.Emitter
+    json.emitter_init(&e)
+    defer json.emitter_destroy(&e)
     broadcast_data_emit(&e, clone.params)
-    testing.expect_value(t, to_string(&e), input)
+    testing.expect_value(t, json.to_string(&e), input)
 }
 
 // The payload carries the same state/permission pair a tool part does, under the same
