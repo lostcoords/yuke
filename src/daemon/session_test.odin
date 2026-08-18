@@ -176,8 +176,8 @@ test_session_create_registers_its_workspace_once :: proc(t: ^testing.T) {
             reasoning = "high",
             profile = "review",
             permission = .Yolo,
-            max_rounds = wire.Max_Rounds_Set{value = 7},
-            system_prompt = wire.System_Prompt_Set{value = "be brief"},
+            max_rounds = u64(7),
+            system_prompt = "be brief",
         },
     }
     obs: Create_Obs

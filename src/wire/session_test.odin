@@ -714,19 +714,19 @@ test_create_session_omitted_vs_explicit :: proc(t: ^testing.T) {
     cs, derr := create_session_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, cs.workspace_path, "/repo")
-    _, is_none := cs.system_prompt.(System_Prompt_None)
-    testing.expect(t, is_none, "explicit null system_prompt is the none arm")
-    set, is_set := cs.max_rounds.(Max_Rounds_Set)
-    testing.expect(t, is_set, "explicit max_rounds is the set arm")
-    testing.expect_value(t, set.value, u64(4))
+    _, sp_present := cs.system_prompt.?
+    testing.expect(t, !sp_present, "explicit null system_prompt reads as absent")
+    rounds, mr_present := cs.max_rounds.?
+    testing.expect(t, mr_present, "a supplied max_rounds is present")
+    testing.expect_value(t, rounds, u64(4))
 
     v2 := json.decoder_init(`{"workspace_path":"/repo"}`, context.temp_allocator)
     omitted, derr2 := create_session_from_reader(&v2)
     testing.expect(t, derr2 == .None, "decode should succeed")
-    _, sp_default := omitted.system_prompt.(System_Prompt_Default)
-    testing.expect(t, sp_default, "omitted system_prompt is the default arm")
-    _, mr_default := omitted.max_rounds.(Max_Rounds_Default)
-    testing.expect(t, mr_default, "omitted max_rounds is the default arm")
+    _, sp2 := omitted.system_prompt.?
+    testing.expect(t, !sp2, "omitted system_prompt is absent")
+    _, mr2 := omitted.max_rounds.?
+    testing.expect(t, !mr2, "omitted max_rounds is absent")
 }
 
 @(test)

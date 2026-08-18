@@ -801,10 +801,8 @@ session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
 
     session := session_from_create(job, workspace.id, conn)
 
-    // Only an explicit value is stored. An omitted prompt has no config layer to resolve
-    // against yet, and an explicit null forces none; both read back as `null`.
-    prompt: Maybe(string)
-    if set, ok := job.create.system_prompt.(wire.System_Prompt_Set); ok do prompt = set.value
+    // Omitted means no system prompt; only a supplied value is stored.
+    prompt := job.create.system_prompt
 
     workspace_created, err := store.session_create(d.store, workspace, session, prompt)
     if err != nil {
@@ -853,8 +851,8 @@ session_from_create :: proc(job: ^Fs_Job, workspace: wire.Workspace_Id, conn: ^C
 
     if permission, ok := job.create.permission.?; ok do session.permission = permission
 
-    // `default` and an explicit null are the same live state: no cap. Only `set` carries one.
-    if max_rounds, ok := job.create.max_rounds.(wire.Max_Rounds_Set); ok do session.max_rounds = max_rounds.value
+    // Omitted means no cap; only a supplied value carries one.
+    session.max_rounds = job.create.max_rounds
 
     return session
 }

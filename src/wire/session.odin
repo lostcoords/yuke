@@ -3,90 +3,6 @@ import "libs:json"
 
 import "core:strings"
 
-// Request-time system prompt override; the default arm means the field was omitted.
-System_Prompt_Default :: struct {}
-
-// Field was explicitly `null`.
-System_Prompt_None :: struct {}
-
-// @unbounded
-// Field carried an explicit value.
-System_Prompt_Set :: struct {
-    // @unbounded
-    value: string,
-}
-
-// Request-time system prompt override. `default` means the field was omitted.
-System_Prompt_Override :: union {
-    System_Prompt_Default,
-    System_Prompt_None,
-    System_Prompt_Set,
-}
-
-// Deep-copy into `allocator`. Only `set` owns a slice.
-system_prompt_override_clone :: proc(
-    self: System_Prompt_Override,
-    allocator := context.allocator,
-) -> System_Prompt_Override {
-    #partial switch v in self {
-    case System_Prompt_Set:
-        return System_Prompt_Set{value = strings.clone(v.value, allocator)}
-    }
-
-    return self
-}
-
-// Request-time max-rounds override; the default arm means the field was omitted.
-Max_Rounds_Default :: struct {}
-
-// Field was explicitly `null`.
-Max_Rounds_Unlimited :: struct {}
-
-// Field carried an explicit value.
-Max_Rounds_Set :: struct {
-    value: u64,
-}
-
-// Request-time max-rounds override. `default` means the field was omitted.
-Max_Rounds_Override :: union {
-    Max_Rounds_Default,
-    Max_Rounds_Unlimited,
-    Max_Rounds_Set,
-}
-
-// Deep-copy into `allocator`. All arms are bit-copyable.
-max_rounds_override_clone :: proc(self: Max_Rounds_Override, allocator := context.allocator) -> Max_Rounds_Override {
-    return self
-}
-
-// Write a system-prompt override as its resolved JSON value.
-system_prompt_override_emit :: proc(e: ^json.Emitter, self: System_Prompt_Override) {
-    switch v in self {
-    case System_Prompt_None:
-        json.val_null(e)
-
-    case System_Prompt_Set:
-        json.val_string(e, v.value)
-
-    case System_Prompt_Default:
-    // The default arm is never written; the caller skips it.
-    }
-}
-
-// Write a max-rounds override as its resolved JSON value.
-max_rounds_override_emit :: proc(e: ^json.Emitter, self: Max_Rounds_Override) {
-    switch v in self {
-    case Max_Rounds_Unlimited:
-        json.val_null(e)
-
-    case Max_Rounds_Set:
-        json.val_u64(e, v.value)
-
-    case Max_Rounds_Default:
-    // The default arm is never written; the caller skips it.
-    }
-}
-
 // session.create input. Non-owning.
 Create_Session :: struct {
     // @unbounded
@@ -105,17 +21,17 @@ Create_Session :: struct {
     // Reasoning level override.
     reasoning:      Maybe(string),
 
-    // @tristate
+    // @optional-nullable
     // @unbounded
-    // Omitted = resolve from config. Explicit null = force no system prompt.
-    system_prompt:  System_Prompt_Override,
+    // System prompt override; omitted or null means no system prompt.
+    system_prompt:  Maybe(string),
 
     // Permission mode override.
     permission:     Maybe(Permission_Mode),
 
-    // @tristate
-    // Round-cap override.
-    max_rounds:     Max_Rounds_Override,
+    // @optional-nullable
+    // Round-cap override; omitted or null means no cap.
+    max_rounds:     Maybe(u64),
 }
 
 // Write fields; omitted overrides are skipped.
@@ -125,22 +41,11 @@ create_session_emit :: proc(e: ^json.Emitter, self: Create_Session) {
     json.field_string_opt(e, "profile", self.profile)
     json.field_string_opt(e, "model", self.model)
     json.field_string_opt(e, "reasoning", self.reasoning)
-    _, sp_default := self.system_prompt.(System_Prompt_Default)
-
-    if self.system_prompt != nil && !sp_default {
-        json.key(e, "system_prompt")
-        system_prompt_override_emit(e, self.system_prompt)
-    }
+    json.field_string_opt(e, "system_prompt", self.system_prompt)
 
     if mode, ok := self.permission.?; ok do json.field_string(e, "permission", permission_mode_to_wire(mode))
 
-    _, mr_default := self.max_rounds.(Max_Rounds_Default)
-
-    if self.max_rounds != nil && !mr_default {
-        json.key(e, "max_rounds")
-        max_rounds_override_emit(e, self.max_rounds)
-    }
-
+    json.field_u64_opt(e, "max_rounds", self.max_rounds)
     json.object_end(e)
 }
 
@@ -160,17 +65,23 @@ create_session_validate :: proc(self: Create_Session) -> Validation_Error {
 create_session_clone :: proc(self: Create_Session, allocator := context.allocator) -> Create_Session {
     out: Create_Session
 
-    if p, ok := self.workspace_path.?; ok do out.workspace_path = strings.clone(p, allocator)
+    wp, has_wp := self.workspace_path.?
+    if has_wp do out.workspace_path = strings.clone(wp, allocator)
 
-    if p, ok := self.profile.?; ok do out.profile = strings.clone(p, allocator)
+    prof, has_prof := self.profile.?
+    if has_prof do out.profile = strings.clone(prof, allocator)
 
-    if p, ok := self.model.?; ok do out.model = strings.clone(p, allocator)
+    mdl, has_mdl := self.model.?
+    if has_mdl do out.model = strings.clone(mdl, allocator)
 
-    if p, ok := self.reasoning.?; ok do out.reasoning = strings.clone(p, allocator)
+    rsn, has_rsn := self.reasoning.?
+    if has_rsn do out.reasoning = strings.clone(rsn, allocator)
 
-    out.system_prompt = system_prompt_override_clone(self.system_prompt, allocator)
+    sp, has_sp := self.system_prompt.?
+    if has_sp do out.system_prompt = strings.clone(sp, allocator)
+
     out.permission = self.permission
-    out.max_rounds = max_rounds_override_clone(self.max_rounds, allocator)
+    out.max_rounds = self.max_rounds
 
     return out
 }
@@ -189,9 +100,9 @@ Session_Patch :: struct {
     // New permission mode.
     permission: Maybe(Permission_Mode),
 
-    // @tristate
-    // New round cap.
-    max_rounds: Max_Rounds_Override,
+    // @optional-nullable
+    // New round cap; omitted means no change, null clears the cap.
+    max_rounds: Maybe(u64),
 }
 
 // Write only fields present in the patch.
@@ -202,13 +113,7 @@ session_patch_emit :: proc(e: ^json.Emitter, self: Session_Patch) {
 
     if mode, ok := self.permission.?; ok do json.field_string(e, "permission", permission_mode_to_wire(mode))
 
-    _, mr_default := self.max_rounds.(Max_Rounds_Default)
-
-    if self.max_rounds != nil && !mr_default {
-        json.key(e, "max_rounds")
-        max_rounds_override_emit(e, self.max_rounds)
-    }
-
+    json.field_u64_opt(e, "max_rounds", self.max_rounds)
     json.object_end(e)
 }
 
@@ -1776,8 +1681,6 @@ subscription_set_params_validate :: proc(self: Subscription_Set_Params) -> Valid
 
 // Decode a Create_Session straight from the token stream.
 create_session_from_reader :: proc(d: ^json.Decoder) -> (out: Create_Session, err: json.Decode_Error) {
-    out.system_prompt = System_Prompt_Default{}
-    out.max_rounds = Max_Rounds_Default{}
     json.dec_object_begin(d) or_return
     for {
         k, done := json.dec_key(d) or_return
@@ -1797,27 +1700,13 @@ create_session_from_reader :: proc(d: ^json.Decoder) -> (out: Create_Session, er
             out.reasoning = json.dec_string(d) or_return
 
         case "system_prompt":
-            if json.dec_is_null(d) {
-                out.system_prompt = System_Prompt_None{}
-            } else {
-                s := json.dec_string(d) or_return
-                out.system_prompt = System_Prompt_Set {
-                    value = s,
-                }
-            }
+            if !json.dec_is_null(d) do out.system_prompt = json.dec_string(d) or_return
 
         case "permission":
             out.permission = json.dec_enum(d, permission_mode_wire) or_return
 
         case "max_rounds":
-            if json.dec_is_null(d) {
-                out.max_rounds = Max_Rounds_Unlimited{}
-            } else {
-                n := json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-                out.max_rounds = Max_Rounds_Set {
-                    value = n,
-                }
-            }
+            if !json.dec_is_null(d) do out.max_rounds = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case:
             json.dec_skip(d) or_return
@@ -1829,7 +1718,6 @@ create_session_from_reader :: proc(d: ^json.Decoder) -> (out: Create_Session, er
 
 // Decode a Session_Patch straight from the token stream.
 session_patch_from_reader :: proc(d: ^json.Decoder) -> (patch: Session_Patch, err: json.Decode_Error) {
-    patch.max_rounds = Max_Rounds_Default{}
     json.dec_object_begin(d) or_return
     for {
         k, done := json.dec_key(d) or_return
@@ -1846,14 +1734,7 @@ session_patch_from_reader :: proc(d: ^json.Decoder) -> (patch: Session_Patch, er
             patch.permission = json.dec_enum(d, permission_mode_wire) or_return
 
         case "max_rounds":
-            if json.dec_is_null(d) {
-                patch.max_rounds = Max_Rounds_Unlimited{}
-            } else {
-                n := json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-                patch.max_rounds = Max_Rounds_Set {
-                    value = n,
-                }
-            }
+            if !json.dec_is_null(d) do patch.max_rounds = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case:
             json.dec_skip(d) or_return
