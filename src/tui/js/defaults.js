@@ -47,7 +47,6 @@ function layout(w, h) {
 // --- panes ----------------------------------------------------------------------------------
 // Panes are focus targets: each owns its rect, draw(focused), and onKey(ev) (returns whether it
 // consumed the key). AppView composes them; a `Focus` routes keys to the current one.
-const SESSION_POLL_MS = 2000;
 
 function sessionTitle(s) {
   const t = (s.title || "").trim();
@@ -265,12 +264,8 @@ class AppView extends View {
     return "app";
   }
 
-  // Session load-on-connect / clear-on-drop, plus the repaint heartbeat while connected.
-  needsTick() {
-    return client.connectionState() === "ready" || this.sidebar.loaded ? { periodMs: SESSION_POLL_MS } : null;
-  }
-
-  tick() {
+  // Session load-on-connect / clear-on-drop, re-checked on every repaint.
+  update() {
     this.sidebar.syncConnection();
   }
 
