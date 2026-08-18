@@ -770,6 +770,7 @@ declare module "yuke:ui" {
 declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
   import type { Focus, Pane, Rect, Service, View } from "yuke:core";
+  import type { List } from "yuke:ui";
   import type { SessionActivity } from "yuke:client";
 
   export interface SessionRow {
@@ -780,9 +781,7 @@ declare module "yuke:defaults" {
 
   export class SessionList implements Pane {
     rect: Rect;
-    rows: SessionRow[];
-    selected: number;
-    scroll: number;
+    list: List<SessionRow>;
     activeId: string | null;
     loaded: boolean;
     loading: boolean;
@@ -790,7 +789,6 @@ declare module "yuke:defaults" {
     syncConnection(): void;
     refresh(): void;
     clear(): void;
-    move(delta: number): void;
     current(): SessionRow | null;
     onKey(ev: KeyEvent): boolean;
     draw(focused: boolean): void;

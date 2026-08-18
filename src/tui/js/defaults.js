@@ -3,7 +3,7 @@
 // on top (keymaps, prototype patches, view swaps). Session list / transcript / composer are
 import { term } from "yuke:term";
 import { command, keymap, style, clip, fill, text, strokeOf, View, Focus, root, quit, config } from "yuke:core";
-import { ui } from "yuke:ui";
+import { ui, List } from "yuke:ui";
 import * as client from "yuke:client";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
@@ -66,9 +66,11 @@ function activityMark(activity) {
 class SessionList {
   constructor() {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.rows = []; // [{ id, title, activity }]
-    this.selected = 0;
-    this.scroll = 0;
+
+    // A List owns selection identity, scroll, and nav; we paint the rows ourselves (chrome + a
+    // focus-only cursor), so it renders via ensureVisible, not draw().
+    this.list = new List({ key: (r) => r.id });
+
     this.activeId = null;
     this.loaded = false;
     this.loading = false;
@@ -102,8 +104,7 @@ class SessionList {
       (res) => {
         this.loading = false;
         this.loaded = true;
-        this.rows = res.items.map((it) => ({ id: it.session.id, title: sessionTitle(it.session), activity: it.activity }));
-        if (this.selected >= this.rows.length) this.selected = Math.max(0, this.rows.length - 1);
+        this.list.setItems(res.items.map((it) => ({ id: it.session.id, title: sessionTitle(it.session), activity: it.activity })));
         root.invalidate();
       },
       () => {
@@ -114,37 +115,22 @@ class SessionList {
   }
 
   clear() {
-    this.rows = [];
-    this.selected = 0;
-    this.scroll = 0;
+    this.list.setItems([]);
     this.activeId = null;
     this.loaded = false;
   }
 
-  move(delta) {
-    if (this.rows.length === 0) return;
-    this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + delta));
-  }
-
   current() {
-    return this.rows[this.selected] || null;
+    return this.list.selected();
   }
 
   onKey(ev) {
-    switch (strokeOf(ev)) {
-      case "j":
-      case "down":
-        this.move(1);
-        return true;
-      case "k":
-      case "up":
-        this.move(-1);
-        return true;
-      case "enter": {
-        const row = this.current();
-        if (row) this.activeId = row.id;
-        return true;
-      }
+    if (this.list.onKey(ev)) return true;
+
+    if (strokeOf(ev) === "enter") {
+      const row = this.list.selected();
+      if (row) this.activeId = row.id;
+      return true;
     }
 
     return false;
@@ -191,21 +177,20 @@ class SessionList {
       return;
     }
 
-    if (this.rows.length === 0) {
+    const rows = this.list.items;
+    if (rows.length === 0) {
       text(x, top, clip(this.loading ? "loading…" : "no sessions", w), "YukeEmpty");
       return;
     }
 
-    let first = this.scroll;
-    if (this.selected < first) first = this.selected;
-    if (this.selected >= first + h) first = this.selected - h + 1;
-    this.scroll = first;
+    this.list.ensureVisible(h);
+    const first = this.list.scroll;
 
-    for (let i = 0; i < h && first + i < this.rows.length; i++) {
+    for (let i = 0; i < h && first + i < rows.length; i++) {
       const idx = first + i;
       const rowY = top + i;
-      const data = this.rows[idx];
-      const isCursor = idx === this.selected && focused;
+      const data = rows[idx];
+      const isCursor = data.id === this.list.selectedKey && focused;
       const isActive = data.id === this.activeId;
 
       if (isCursor) fill(x, rowY, w, 1, "YukeSessionSel");
