@@ -1,9 +1,9 @@
 package provider
 
 import "base:runtime"
-import "core:encoding/json"
-import "core:math"
+import stdjson "core:encoding/json"
 
+import "libs:json"
 import "src:wire"
 
 // Largest integer every supported JSON number representation carries exactly.
@@ -19,13 +19,13 @@ decode_json_object :: proc(
     data: string,
     allocator: runtime.Allocator,
 ) -> (
-    value: json.Value,
-    object: json.Object,
+    value: stdjson.Value,
+    object: stdjson.Object,
     err: Transport_Error,
 ) {
-    parser := json.make_parser_from_string(data, .JSON, false, allocator)
-    parse_err: json.Error
-    value, parse_err = json.parse_value(&parser)
+    parser := stdjson.make_parser_from_string(data, .JSON, false, allocator)
+    parse_err: stdjson.Error
+    value, parse_err = stdjson.parse_value(&parser)
     if parse_err != nil {
         assert(parse_err != .Invalid_Allocator, "provider JSON needs a valid allocator")
 
@@ -37,9 +37,9 @@ decode_json_object :: proc(
     }
 
     object_ok: bool
-    object, object_ok = value.(json.Object)
+    object, object_ok = value.(stdjson.Object)
     if !object_ok || parser.curr_token.kind != .EOF {
-        json.destroy_value(value, allocator)
+        stdjson.destroy_value(value, allocator)
         return {}, nil, .Parse_Error
     }
 
@@ -49,112 +49,64 @@ decode_json_object :: proc(
 // Optional object member. Missing and null are both absent; a present value of
 // another type is a provider parse error.
 decode_optional_object :: proc(
-    object: json.Object,
+    object: stdjson.Object,
     name: string,
 ) -> (
-    value: json.Object,
+    value: stdjson.Object,
     present: bool,
     err: Transport_Error,
 ) {
-    field, found := object[name]
-    if !found {
-        return nil, false, .None
-    }
-
-    if _, is_null := field.(json.Null); is_null {
-        return nil, false, .None
-    }
-
-    ok: bool
-    value, ok = field.(json.Object)
-    if !ok {
+    v, p, valid := json.read_object(object, name)
+    if !valid {
         return nil, false, .Parse_Error
     }
 
-    return value, true, .None
+    return v, p, .None
 }
 
 // Optional string member. Missing and null are both absent; a present value of
 // another type is a provider parse error.
 decode_optional_string :: proc(
-    object: json.Object,
+    object: stdjson.Object,
     name: string,
 ) -> (
     value: string,
     present: bool,
     err: Transport_Error,
 ) {
-    field, found := object[name]
-    if !found {
-        return "", false, .None
-    }
-
-    if _, is_null := field.(json.Null); is_null {
-        return "", false, .None
-    }
-
-    text, ok := field.(json.String)
-    if !ok {
+    v, p, valid := json.read_string(object, name, 0, true)
+    if !valid {
         return "", false, .Parse_Error
     }
 
-    return text, true, .None
+    return v, p, .None
 }
 
 // Optional exact non-negative integer member. Missing and null are absent; a
 // fraction, negative value, unsafe integer, or another JSON type is malformed.
-decode_optional_u64 :: proc(object: json.Object, name: string) -> (value: u64, present: bool, err: Transport_Error) {
-    field, found := object[name]
-    if !found {
-        return 0, false, .None
-    }
-
-    if _, is_null := field.(json.Null); is_null {
-        return 0, false, .None
-    }
-
-    #partial switch number in field {
-    case json.Integer:
-        if number < 0 || u64(number) > MAX_EXACT_JSON_INTEGER {
-            return 0, false, .Parse_Error
-        }
-
-        return u64(number), true, .None
-
-    case json.Float:
-        if number < 0 || number > f64(MAX_EXACT_JSON_INTEGER) || math.floor(number) != number {
-            return 0, false, .Parse_Error
-        }
-
-        return u64(number), true, .None
-
-    case:
+decode_optional_u64 :: proc(
+    object: stdjson.Object,
+    name: string,
+) -> (
+    value: u64,
+    present: bool,
+    err: Transport_Error,
+) {
+    v, p, valid := json.read_u64(object, name, 0, MAX_EXACT_JSON_INTEGER)
+    if !valid {
         return 0, false, .Parse_Error
     }
+
+    return v, p, .None
 }
 
 // Read a provider usage counter permissively. Missing, null, non-number,
 // negative, fractional, and unsafe values become zero; usage metadata must
 // never crash or invalidate an otherwise usable answer.
-decode_usage_u64 :: proc(object: json.Object, name: string) -> u64 {
-    field, found := object[name]
-    if !found {
-        return 0
-    }
+decode_usage_u64 :: proc(object: stdjson.Object, name: string) -> u64 {
+    v, present, valid := json.read_u64(object, name, 0, MAX_EXACT_JSON_INTEGER)
 
-    #partial switch number in field {
-    case json.Integer:
-        if number >= 0 && u64(number) <= MAX_EXACT_JSON_INTEGER {
-            return u64(number)
-        }
-
-    case json.Float:
-        if number >= 0 && number <= f64(MAX_EXACT_JSON_INTEGER) && math.floor(number) == number {
-            return u64(number)
-        }
-    }
-
-    return 0
+    return present && valid ? v : 0
 }
 
 // Validate a tool call's argument bytes as a JSON object and return them unchanged,
@@ -176,7 +128,7 @@ tool_arguments :: proc(
         return "", parse_err
     }
 
-    json.destroy_value(value, scratch_allocator)
+    stdjson.destroy_value(value, scratch_allocator)
 
     return raw, .None
 }
