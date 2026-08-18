@@ -41,15 +41,16 @@ Presence :: enum {
     // Omitted when absent; an explicit `null` is malformed.
     Optional,
 
+    // Omitted when absent; an explicit `null` is accepted and read as absence. The daemon
+    // draws no distinction between the two, so both collapse to the same value.
+    Optional_Nullable,
+
     // Omitted on input to select the decoder's declared default; canonical output
     // writes the resolved value.
     Defaulted,
 
     // Always written, `null` when absent. `null` is the value, not an absence.
     Required_Nullable,
-
-    // Absent, explicit `null`, and a value are three distinct states.
-    Tristate,
 }
 
 // One member of a wire struct.
@@ -92,31 +93,8 @@ Union_Def :: struct {
 // One arm and the discriminator value that selects it. `tag` is empty for a union whose arm
 // is chosen from outside the payload.
 Union_Arm :: struct {
-    type:      string,
-    tag:       string,
-
-    // How the arm appears on the wire, for a union the payload does not tag. A tri-state
-    // override has one arm of each form, and a consumer cannot encode the field without
-    // knowing which is which.
-    form:      Arm_Form,
-
-    // Wire type this arm carries, when `form` is `.Value`.
-    wire_type: string,
-}
-
-// What an untagged union's arm writes.
-Arm_Form :: enum {
-    // Not applicable: the arm is selected by a discriminator or by the frame.
-    None,
-
-    // Nothing is written; the member is omitted entirely.
-    Absent,
-
-    // The member is written as `null`.
-    Null,
-
-    // The member is written as a scalar of `wire_type`.
-    Value,
+    type: string,
+    tag:  string,
 }
 
 // One enum member and the string it takes on the wire.

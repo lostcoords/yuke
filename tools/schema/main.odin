@@ -120,7 +120,7 @@ model_report :: proc(m: ^Model) {
     assert(m != nil, "model_report needs a model")
 
     bounded, fixed, unbounded := 0, 0, 0
-    required, optional, nullable, tristate := 0, 0, 0, 0
+    required, optional, nullable, optional_nullable := 0, 0, 0, 0
 
     for s in m.structs {
         for f in s.fields {
@@ -144,14 +144,14 @@ model_report :: proc(m: ^Model) {
             case .Optional:
                 optional += 1
 
+            case .Optional_Nullable:
+                optional_nullable += 1
+
             case .Defaulted:
                 optional += 1
 
             case .Required_Nullable:
                 nullable += 1
-
-            case .Tristate:
-                tristate += 1
             }
         }
     }
@@ -169,11 +169,11 @@ model_report :: proc(m: ^Model) {
     fmt.println()
     fmt.printfln("markers            %d bounded, %d fixed, %d unbounded", bounded, fixed, unbounded)
     fmt.printfln(
-        "presence           %d required, %d optional, %d required-nullable, %d tristate",
+        "presence           %d required, %d optional, %d optional-nullable, %d required-nullable",
         required,
         optional,
+        optional_nullable,
         nullable,
-        tristate,
     )
 
     // Broadcast order, not map order: this line is compared by hand between runs.

@@ -38,9 +38,6 @@ jsonschema_build :: proc(m: ^Model) -> json.Object {
             continue
         }
 
-        // A tri-state wrapper is an encoding of optionality, not a payload; the field expands it.
-        if union_is_tristate(u) do continue
-
         // Tagged from outside the payload: the arms are all that can be said, and `anyOf` rather
         // than `oneOf` because several arms are structurally identical (a shared result type, an
         // empty object). Such a union cannot be validated without knowing the frame's method.
@@ -250,28 +247,16 @@ struct_schema :: proc(m: ^Model, s: Struct_Def) -> json.Value {
     return out
 }
 
-// Optional, defaulted, and tri-state fields may be absent. `requiredNullable` always writes
-// the key with null as its value.
+// Optional, optional-nullable, and defaulted fields may be absent. `requiredNullable` always
+// writes the key with null as its value.
 field_is_required :: proc(f: Field) -> bool {
-    return f.presence != .Optional && f.presence != .Defaulted && f.presence != .Tristate
+    return f.presence != .Optional && f.presence != .Optional_Nullable && f.presence != .Defaulted
 }
 
-// A field's schema, admitting `null` where null is the wire value rather than an absence.
+// A field's schema, admitting `null` where the wire accepts it: as the value of a
+// `requiredNullable` member, or as an accepted-but-collapsed absence for `optionalNullable`.
 field_schema :: proc(m: ^Model, f: Field) -> json.Value {
-    // A tri-state wrapper has no schema of its own — it is not a payload, it is an encoding of
-    // optionality. The field expands to the value arm's type or null, and its absence is handled
-    // by leaving it out of `required`.
-    if f.presence == .Tristate {
-        arms := make(json.Array, 0, 2)
-        append(&arms, tristate_value_schema(m, f.type_expr), json.Value(scalar("null")))
-        out := make(json.Object)
-        out["description"] = json.Value(f.doc)
-        out["anyOf"] = arms
-
-        return out
-    }
-
-    if f.presence != .Required_Nullable {
+    if f.presence != .Required_Nullable && f.presence != .Optional_Nullable {
         out := type_schema(m, f.type_expr, f.bound, f.doc)
 
         if value, ok := f.const_value.?; ok {
@@ -288,30 +273,6 @@ field_schema :: proc(m: ^Model, f: Field) -> json.Value {
     out["anyOf"] = arms
 
     return out
-}
-
-// Whether a union encodes optionality rather than a payload.
-union_is_tristate :: proc(u: Union_Def) -> bool {
-    for arm in u.arms {
-        if arm.form != .None do return true
-    }
-
-    return false
-}
-
-// The schema for a tri-state wrapper's value arm, which the model reads from the wrapper's
-// emitter. Falls back to an unconstrained schema only if the wrapper carries no value arm, which
-// the model's own gate makes unreachable.
-tristate_value_schema :: proc(m: ^Model, wrapper: string) -> json.Value {
-    for u in m.unions {
-        if u.name != wrapper do continue
-
-        for arm in u.arms {
-            if arm.form == .Value && arm.wire_type != "" do return type_schema(m, arm.wire_type, Bound{}, "")
-        }
-    }
-
-    return make(json.Object)
 }
 
 // Map a declared wire type onto JSON Schema. A named type becomes a `$ref`, which the reference

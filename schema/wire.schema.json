@@ -1634,7 +1634,7 @@
               "type": "null"
             }
           ],
-          "description": "Round-cap override."
+          "description": "Round-cap override; omitted or null means no cap."
         },
         "model": {
           "description": "Model id override.",
@@ -1666,7 +1666,7 @@
               "type": "null"
             }
           ],
-          "description": "Omitted = resolve from config. Explicit null = force no system prompt."
+          "description": "System prompt override; omitted or null means no system prompt."
         },
         "workspace_path": {
           "description": "Filesystem path; omitted resolves to the home directory.",
@@ -2662,40 +2662,6 @@
       "minLength": 32,
       "pattern": "^[0-9a-f]{32}$",
       "type": "string"
-    },
-    "Max_Rounds_Default": {
-      "description": "Request-time max-rounds override; the default arm means the field was omitted.",
-      "properties": {
-
-      },
-      "required": [
-
-      ],
-      "type": "object"
-    },
-    "Max_Rounds_Set": {
-      "description": "Field carried an explicit value.",
-      "properties": {
-        "value": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "value"
-      ],
-      "type": "object"
-    },
-    "Max_Rounds_Unlimited": {
-      "description": "Field was explicitly `null`.",
-      "properties": {
-
-      },
-      "required": [
-
-      ],
-      "type": "object"
     },
     "Media_Base64": {
       "description": "Inlined as base64 bytes.",
@@ -7557,7 +7523,7 @@
               "type": "null"
             }
           ],
-          "description": "New round cap."
+          "description": "New round cap; omitted means no change, null clears the cap."
         },
         "model": {
           "description": "New model id.",
@@ -8200,38 +8166,6 @@
       },
       "required": [
         "sessions"
-      ],
-      "type": "object"
-    },
-    "System_Prompt_Default": {
-      "description": "Request-time system prompt override; the default arm means the field was omitted.",
-      "properties": {
-
-      },
-      "required": [
-
-      ],
-      "type": "object"
-    },
-    "System_Prompt_None": {
-      "description": "Field was explicitly `null`.",
-      "properties": {
-
-      },
-      "required": [
-
-      ],
-      "type": "object"
-    },
-    "System_Prompt_Set": {
-      "description": "@unbounded Field carried an explicit value.",
-      "properties": {
-        "value": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "value"
       ],
       "type": "object"
     },

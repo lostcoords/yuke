@@ -23,7 +23,6 @@ types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
 
     tables := tables_collect(ps)
     nullable := nullable_members(ps)
-    tristate := tristate_unions(ps)
 
     for &s in ps.files {
         for decl in s.file.decls {
@@ -37,7 +36,7 @@ types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
 
             #partial switch t in v.values[0].derived {
             case ^ast.Struct_Type:
-                append(&m.structs, struct_read(m, &s, nullable, tristate, name, v, t, d))
+                append(&m.structs, struct_read(m, &s, nullable, name, v, t, d))
 
             case ^ast.Union_Type:
                 append(&m.unions, union_read(&s, ps, name, v, t, d))
@@ -126,7 +125,6 @@ struct_read :: proc(
     m: ^Model,
     s: ^Source,
     nullable: map[string]map[string]bool,
-    tristate: map[string]bool,
     name: string,
     v: ^ast.Value_Decl,
     t: ^ast.Struct_Type,
@@ -167,15 +165,13 @@ struct_read :: proc(
 
         presence := Presence.Required
 
-        if strings.has_prefix(type_expr, "Maybe(") {
-            presence = .Optional
-        } else if tristate[type_expr] do presence = .Tristate
+        if strings.has_prefix(type_expr, "Maybe(") do presence = .Optional
 
         if own[field_name] && (!has_presence || declared_presence != .Required_Nullable) do gen.diagf(d, pos, "%s.%s uses a required-null emitter but lacks @required-nullable", name, field_name)
 
         if has_presence {
             switch declared_presence {
-            case .Optional, .Required_Nullable:
+            case .Optional, .Optional_Nullable, .Required_Nullable:
                 if !strings.has_prefix(type_expr, "Maybe(") {
                     gen.diagf(
                         d,
@@ -186,9 +182,6 @@ struct_read :: proc(
                         type_expr,
                     )
                 }
-
-            case .Tristate:
-                if !tristate[type_expr] do gen.diagf(d, pos, "%s.%s declares @tristate on non-tristate type %s", name, field_name, type_expr)
 
             case .Defaulted:
                 if strings.has_prefix(type_expr, "Maybe(") do gen.diagf(d, pos, "%s.%s declares a decoder default on a Maybe type", name, field_name)
@@ -368,10 +361,10 @@ presence_marker_parse :: proc(line: string) -> (presence: Presence, expr: string
     switch line {
     case "@optional":
         return .Optional, "", true
+    case "@optional-nullable":
+        return .Optional_Nullable, "", true
     case "@required-nullable":
         return .Required_Nullable, "", true
-    case "@tristate":
-        return .Tristate, "", true
     }
 
     if strings.has_prefix(line, "@default ") {
@@ -453,34 +446,6 @@ marker_parse :: proc(line: string) -> (kind: Bound_Kind, expr: string, ok: bool)
     return .Missing, "", false
 }
 
-// Unions with an arm meaning "the member was omitted". That arm, not the wrapper's name, is
-// what makes a field tri-state: absent, explicit null, and a value are three states, and the
-// owner's emitter skips the field entirely for the default arm.
-tristate_unions :: proc(ps: ^Package_Source) -> map[string]bool {
-    out: map[string]bool
-
-    for &s in ps.files {
-        for decl in s.file.decls {
-            v, is_single := decl_single(decl)
-
-            if !is_single || v.is_mutable do continue
-
-            u, is_union := v.values[0].derived.(^ast.Union_Type)
-
-            if !is_union do continue
-
-            for variant in u.variants {
-                if strings.has_suffix(expr_text(&s, variant), "_Default") {
-                    out[expr_text(&s, v.names[0])] = true
-                    break
-                }
-            }
-        }
-    }
-
-    return out
-}
-
 // The declared type as the wire sees it. `bit_set[E]` is emitted as an array of `E`'s wire
 // strings, so it is recorded as `[]E` — the raw Odin spelling would name a type no consumer
 // can resolve.
@@ -520,43 +485,7 @@ union_read :: proc(
 
     discriminator := union_discriminator(ps, name)
 
-    if discriminator == "" {
-        union_arm_forms(ps, name, &arms)
-
-        is_tristate := false
-
-        for arm in arms {
-            if strings.has_suffix(arm.type, "_Default") {
-                is_tristate = true
-                break
-            }
-        }
-
-        if is_tristate {
-            absent, nulls, values := 0, 0, 0
-
-            for arm in arms {
-                switch arm.form {
-                case .Absent:
-                    absent += 1
-                case .Null:
-                    nulls += 1
-                case .Value:
-                    values += 1
-                case .None:
-                }
-            }
-
-            if absent != 1 || nulls != 1 || values != 1 {
-                gen.diagf(
-                    d,
-                    source_pos(s, v.pos.line),
-                    "%s tristate emitter must expose exactly one absent, null, and value arm",
-                    name,
-                )
-            }
-        }
-    } else {
+    if discriminator != "" {
         tags := union_arm_tags(ps, name, known, source_pos(s, v.pos.line), d)
 
         for &arm in arms {
@@ -589,58 +518,6 @@ union_read :: proc(
         arms = arms[:],
         discriminator = discriminator,
         pos = decl_pos,
-    }
-}
-
-// What each arm of an untagged union writes, read from the union's emitter. The emit switch
-// says it directly: no value writer means the member is omitted, `val_null` means null, and any
-// other `val_*` names the scalar type the arm carries.
-//
-// This is the fact a tri-state field cannot be encoded without, and it is not in the
-// declaration — `Maybe(T)` and a three-arm union look the same from the type alone.
-union_arm_forms :: proc(ps: ^Package_Source, union_name: string, arms: ^[dynamic]Union_Arm) {
-    emitter := strings.concatenate(
-        {wire_snake_case(union_name, context.temp_allocator), "_emit"},
-        context.temp_allocator,
-    )
-    ref, has := ps.procs[emitter]
-
-    if !has do return
-
-    clauses, found := switch_clauses(ref.body)
-
-    if !found do return
-
-    for clause in clauses {
-        if len(clause.list) != 1 do continue
-
-        arm_type := expr_text(ref.source, clause.list[0])
-        writers := calls_in_stmts(ref.source, clause.body, nil, "val_")
-        // An empty clause writes nothing, so the member is omitted. A clause that writes no
-        // scalar is emitting a nested object and is not a tri-state arm at all — left
-        // unclassified rather than called absent, which would be a false fact.
-        form := len(clause.body) == 0 ? Arm_Form.Absent : Arm_Form.None
-        wire_type := ""
-
-        for writer in writers {
-            if writer.name == "val_null" {
-                form = .Null
-
-                break
-            }
-
-            form = .Value
-            wire_type = strings.trim_prefix(writer.name, "val_")
-
-            break
-        }
-
-        for &arm in arms {
-            if arm.type != arm_type do continue
-
-            arm.form = form
-            arm.wire_type = wire_type
-        }
     }
 }
 

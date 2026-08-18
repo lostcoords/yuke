@@ -81,9 +81,9 @@ Artifact_Struct :: struct {
 }
 
 // `presence` is the member's absence encoding, which JSON cannot show and an SDK must not
-// collapse: `optional` is omitted and rejects an explicit null, `defaulted` selects a
-// decoder default, `requiredNullable` always writes the key, and `tristate` distinguishes
-// all three states.
+// collapse: `optional` is omitted and rejects an explicit null, `optionalNullable` is omitted
+// but also accepts an explicit null as absence, `defaulted` selects a decoder default, and
+// `requiredNullable` always writes the key.
 Artifact_Field :: struct {
     name:          string `json:"name"`,
     type:          string `json:"type"`,
@@ -118,13 +118,8 @@ Artifact_Union :: struct {
 // discriminated union rather than an untagged one. Absent when the arm is chosen from outside the
 // payload — never present-but-empty, so a present `tag` is always a real one.
 Artifact_Union_Arm :: struct {
-    type:      string `json:"type"`,
-    tag:       string `json:"tag,omitempty"`,
-
-    // For a union the payload does not tag: whether this arm is written as an omitted member,
-    // as null, or as a scalar of `wireType`. A tri-state field cannot be encoded without it.
-    form:      string `json:"form,omitempty"`,
-    wire_type: string `json:"wireType,omitempty"`,
+    type: string `json:"type"`,
+    tag:  string `json:"tag,omitempty"`,
 }
 
 Artifact_Enum :: struct {
@@ -147,15 +142,6 @@ Artifact_Alias :: struct {
     bound: Maybe(Artifact_Bound) `json:"bound,omitempty"`,
 }
 
-// Artifact spelling of an untagged arm's wire form.
-@(rodata)
-arm_form_json := [Arm_Form]string {
-    .None   = "",
-    .Absent = "absent",
-    .Null   = "null",
-    .Value  = "value",
-}
-
 // Artifact spelling of a length rule's kind. Written out rather than derived from the enum
 // name so the published vocabulary is explicit and greppable.
 @(rodata)
@@ -171,9 +157,9 @@ bound_kind_json := [Bound_Kind]string {
 presence_json := [Presence]string {
     .Required          = "required",
     .Optional          = "optional",
+    .Optional_Nullable = "optionalNullable",
     .Defaulted         = "defaulted",
     .Required_Nullable = "requiredNullable",
-    .Tristate          = "tristate",
 }
 
 // Project the model onto the published shape. Order is model order throughout — declaration
@@ -275,15 +261,7 @@ artifact_build :: proc(m: ^Model) -> Artifact {
         arms := make([dynamic]Artifact_Union_Arm, 0, len(u.arms))
 
         for arm in u.arms {
-            append(
-                &arms,
-                Artifact_Union_Arm {
-                    type = arm.type,
-                    tag = arm.tag,
-                    form = arm_form_json[arm.form],
-                    wire_type = arm.wire_type,
-                },
-            )
+            append(&arms, Artifact_Union_Arm{type = arm.type, tag = arm.tag})
         }
 
         append(&unions, Artifact_Union{name = u.name, doc = u.doc, discriminator = u.discriminator, arms = arms[:]})

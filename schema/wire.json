@@ -3449,63 +3449,6 @@
       ]
     },
     {
-      "name": "System_Prompt_Default",
-      "doc": "Request-time system prompt override; the default arm means the field was omitted.",
-      "fields": [
-
-      ]
-    },
-    {
-      "name": "System_Prompt_None",
-      "doc": "Field was explicitly `null`.",
-      "fields": [
-
-      ]
-    },
-    {
-      "name": "System_Prompt_Set",
-      "doc": "@unbounded Field carried an explicit value.",
-      "fields": [
-        {
-          "name": "value",
-          "type": "string",
-          "doc": "",
-          "presence": "required",
-          "bound": {
-            "kind": "unbounded",
-            "expr": "",
-            "value": 0
-          }
-        }
-      ]
-    },
-    {
-      "name": "Max_Rounds_Default",
-      "doc": "Request-time max-rounds override; the default arm means the field was omitted.",
-      "fields": [
-
-      ]
-    },
-    {
-      "name": "Max_Rounds_Unlimited",
-      "doc": "Field was explicitly `null`.",
-      "fields": [
-
-      ]
-    },
-    {
-      "name": "Max_Rounds_Set",
-      "doc": "Field carried an explicit value.",
-      "fields": [
-        {
-          "name": "value",
-          "type": "u64",
-          "doc": "",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "Create_Session",
       "doc": "session.create input. Non-owning.",
       "fields": [
@@ -3555,9 +3498,9 @@
         },
         {
           "name": "system_prompt",
-          "type": "System_Prompt_Override",
-          "doc": "Omitted = resolve from config. Explicit null = force no system prompt.",
-          "presence": "tristate",
+          "type": "Maybe(string)",
+          "doc": "System prompt override; omitted or null means no system prompt.",
+          "presence": "optionalNullable",
           "bound": {
             "kind": "unbounded",
             "expr": "",
@@ -3572,9 +3515,9 @@
         },
         {
           "name": "max_rounds",
-          "type": "Max_Rounds_Override",
-          "doc": "Round-cap override.",
-          "presence": "tristate"
+          "type": "Maybe(u64)",
+          "doc": "Round-cap override; omitted or null means no cap.",
+          "presence": "optionalNullable"
         }
       ]
     },
@@ -3612,9 +3555,9 @@
         },
         {
           "name": "max_rounds",
-          "type": "Max_Rounds_Override",
-          "doc": "New round cap.",
-          "presence": "tristate"
+          "type": "Maybe(u64)",
+          "doc": "New round cap; omitted means no change, null clears the cap.",
+          "presence": "optionalNullable"
         }
       ]
     },
@@ -6099,46 +6042,6 @@
         {
           "type": "Run_Outcome_Failed",
           "tag": "failed"
-        }
-      ]
-    },
-    {
-      "name": "System_Prompt_Override",
-      "doc": "Request-time system prompt override. `default` means the field was omitted.",
-      "discriminator": "",
-      "arms": [
-        {
-          "type": "System_Prompt_Default",
-          "form": "absent"
-        },
-        {
-          "type": "System_Prompt_None",
-          "form": "null"
-        },
-        {
-          "type": "System_Prompt_Set",
-          "form": "value",
-          "wireType": "string"
-        }
-      ]
-    },
-    {
-      "name": "Max_Rounds_Override",
-      "doc": "Request-time max-rounds override. `default` means the field was omitted.",
-      "discriminator": "",
-      "arms": [
-        {
-          "type": "Max_Rounds_Default",
-          "form": "absent"
-        },
-        {
-          "type": "Max_Rounds_Unlimited",
-          "form": "null"
-        },
-        {
-          "type": "Max_Rounds_Set",
-          "form": "value",
-          "wireType": "u64"
         }
       ]
     },
