@@ -160,7 +160,7 @@ Transfer :: struct {
     status:  int,
 
     // @private
-    // `CURLOPT_ERRORBUFFER` storage; curl writes a NUL-terminated reason here.
+    // `Option.Error_Buffer` storage; curl writes a NUL-terminated reason here.
     errbuf:  [ERROR_SIZE]byte,
 }
 
@@ -185,9 +185,8 @@ Client :: struct {
     // The re-armed pump timer; nil exactly when no transfer is live.
     timer_op:    ^nbio.Operation,
 
-    // Set across every curl call region and every curl-to-Odin trampoline.
-    // Removing a handle or adding one from inside that region is undefined
-    // behaviour in libcurl, so the mutating entry points assert on it.
+    // True inside every curl call region; adding or removing a handle there is
+    // undefined behaviour, so the mutating entry points assert `!in_curl`.
     in_curl:     bool,
 
     // @private
@@ -234,7 +233,6 @@ client_init :: proc(c: ^Client, loop: ^nbio.Event_Loop, allocator := context.all
     assert(c.multi == nil, "client_init on an initialized client")
 
     sync.once_do(&global_init_once, global_init)
-
     if global_init_code != .Ok do return .Setup_Failed
 
     multi := c_multi_init()
@@ -433,7 +431,8 @@ transfer_start :: proc(transfer: ^Transfer, c: ^Client, req: Request, cbs: Callb
     transfer.cbs = cbs
     defer if err != .None do transfer_abandon(transfer)
 
-    if code := easy_configure(transfer, req); code != .Ok do return .Out_Of_Memory if code == .Out_Of_Memory else .Setup_Failed
+    code := easy_configure(transfer, req)
+    if code != .Ok do return .Out_Of_Memory if code == .Out_Of_Memory else .Setup_Failed
 
     // Both registers grow before the handle joins the multi, so neither the append
     // below nor the pump's completion drain can fail on allocation, and running out
@@ -493,9 +492,8 @@ transfer_release :: proc(transfer: ^Transfer) {
 
     c := transfer.client
 
-    // Defence in depth: libcurl makes no callbacks from these two, but if that
-    // ever changed the trampolines would land on a transfer that is no longer
-    // Running and abort there instead of touching a half-freed handle.
+    // Defence in depth: `on_write` / `on_header` assert `.Running`, so a stray
+    // callback here would abort instead of touching a half-freed handle.
     c.in_curl = true
 
     // Release has no error channel and the handle is destroyed either way; a refused
@@ -554,7 +552,6 @@ transfer_complete :: proc(transfer: ^Transfer, code: Code) {
 @(private)
 transfer_message :: proc(transfer: ^Transfer, code: Code) -> string {
     assert(transfer != nil, "transfer_message needs a transfer")
-
     return curl_message(&transfer.errbuf, code)
 }
 
@@ -691,10 +688,10 @@ easy_configure :: proc(transfer: ^Transfer, req: Request) -> Code {
 
         // A C long on Windows, and must precede the copy or libcurl looks for a
         // nul terminator instead of this count.
-        assert(len(req.body) <= LONG_MAX, "request body does not fit CURLOPT_POSTFIELDSIZE")
+        assert(len(req.body) <= LONG_MAX, "request body does not fit Option.Post_Field_Size")
         setopt_long(e, .Post_Field_Size, len(req.body)) or_return
 
-        // Non-nil even when empty, or libcurl reads the body through CURLOPT_READFUNCTION.
+        // Non-nil even when empty, or libcurl reads the body through `Option.Read_Function`.
         body := rawptr(&EMPTY_BODY[0]) if len(req.body) == 0 else rawptr(raw_data(req.body))
         setopt_ptr(e, .Copy_Post_Fields, body) or_return
     }
@@ -712,21 +709,16 @@ EMPTY_BODY := [1]byte{0}
 seconds_ceil :: proc(d: time.Duration, fallback: time.Duration) -> int {
     value := d if d > 0 else fallback
     assert(value > 0, "a timeout fallback must be positive")
-
     return int((value + time.Second - 1) / time.Second)
 }
 
-// `CURLOPT_WRITEFUNCTION`. Runs on the loop thread, inside the curl region.
+// `Option.Write_Function`. Runs on the loop thread, inside the curl region.
 @(private)
 on_write :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) -> uint {
     transfer := (^Transfer)(user)
     context = transfer.client.ctx
 
-    prev := transfer.client.in_curl
-    transfer.client.in_curl = true
-    defer transfer.client.in_curl = prev
-
-    assert(prev, "a curl callback ran outside a curl call region")
+    assert(transfer.client.in_curl, "a curl callback ran outside a curl call region")
     assert(transfer.state == .Running, "a body chunk arrived for a transfer that is not running")
 
     n := size * nitems
@@ -737,18 +729,14 @@ on_write :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) -
     return n
 }
 
-// `CURLOPT_HEADERFUNCTION`. Delivers raw response header bytes one line at a
+// `Option.Header_Function`. Delivers raw response header bytes one line at a
 // time, including the status line and the blank line that ends each block.
 @(private)
 on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) -> uint {
     transfer := (^Transfer)(user)
     context = transfer.client.ctx
 
-    prev := transfer.client.in_curl
-    transfer.client.in_curl = true
-    defer transfer.client.in_curl = prev
-
-    assert(prev, "a curl callback ran outside a curl call region")
+    assert(transfer.client.in_curl, "a curl callback ran outside a curl call region")
     assert(transfer.state == .Running, "a header line arrived for a transfer that is not running")
 
     n := size * nitems
@@ -761,9 +749,7 @@ on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) 
     // more than one in front of the real response, and the last one wins.
     if status, is_status := parse_status_line(line); is_status {
         transfer.status = status
-
         if transfer.cbs.on_status != nil do transfer.cbs.on_status(transfer.user, status)
-
         return n
     }
 
@@ -776,9 +762,7 @@ on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) 
 @(private)
 trim_eol :: proc(line: []byte) -> []byte {
     end := len(line)
-
     if end > 0 && line[end - 1] == '\n' do end -= 1
-
     if end > 0 && line[end - 1] == '\r' do end -= 1
 
     return line[:end]

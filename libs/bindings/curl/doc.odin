@@ -31,7 +31,7 @@ Borrowing: `On_Body` chunks and `On_Header` lines borrow libcurl's own buffer
 and are valid for the call only; `Result.message` borrows the transfer's error
 buffer the same way. Copy anything that must outlive the callback. In the other
 direction every request field — URL, header lines, and the POST body (via
-`CURLOPT_COPYPOSTFIELDS`) — is copied by libcurl during `transfer_start`, so the
+`Option.Copy_Post_Fields`) — is copied by libcurl during `transfer_start`, so the
 caller may release the request and its body once `transfer_start` returns.
 
 Addresses are pinned: libcurl and the pump timer hold the `Client` and each live

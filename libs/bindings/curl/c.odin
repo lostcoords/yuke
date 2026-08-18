@@ -175,7 +175,9 @@ OPTTYPE_BLOB :: 40000
 // Every `CURLoption` curl.h defines, in its order. `OFF_T` and `BLOB` options
 // are names only: no typed `setopt_*` wrapper carries them yet.
 Option :: enum c.int {
+    // `CURLOPT_WRITEDATA` https://curl.se/libcurl/c/CURLOPT_WRITEDATA.html
     Write_Data                 = OPTTYPE_CBPOINT + 1,
+    // `CURLOPT_URL` https://curl.se/libcurl/c/CURLOPT_URL.html
     Url                        = OPTTYPE_STRINGPOINT + 2,
     Port                       = OPTTYPE_LONG + 3,
     Proxy                      = OPTTYPE_STRINGPOINT + 4,
@@ -183,9 +185,12 @@ Option :: enum c.int {
     Proxy_User_Pwd             = OPTTYPE_STRINGPOINT + 6,
     Range                      = OPTTYPE_STRINGPOINT + 7,
     Read_Data                  = OPTTYPE_CBPOINT + 9,
+    // `CURLOPT_ERRORBUFFER` https://curl.se/libcurl/c/CURLOPT_ERRORBUFFER.html
     Error_Buffer               = OPTTYPE_OBJECTPOINT + 10,
+    // `CURLOPT_WRITEFUNCTION` https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
     Write_Function             = OPTTYPE_FUNCTIONPOINT + 11,
     Read_Function              = OPTTYPE_FUNCTIONPOINT + 12,
+    // `CURLOPT_TIMEOUT` https://curl.se/libcurl/c/CURLOPT_TIMEOUT.html
     Timeout                    = OPTTYPE_LONG + 13,
     In_File_Size               = OPTTYPE_LONG + 14,
     Post_Fields                = OPTTYPE_OBJECTPOINT + 15,
@@ -193,15 +198,18 @@ Option :: enum c.int {
     Ftp_Port                   = OPTTYPE_STRINGPOINT + 17,
     User_Agent                 = OPTTYPE_STRINGPOINT + 18,
     Low_Speed_Limit            = OPTTYPE_LONG + 19,
+    // `CURLOPT_LOW_SPEED_TIME` https://curl.se/libcurl/c/CURLOPT_LOW_SPEED_TIME.html
     Low_Speed_Time             = OPTTYPE_LONG + 20,
     Resume_From                = OPTTYPE_LONG + 21,
     Cookie                     = OPTTYPE_STRINGPOINT + 22,
+    // `CURLOPT_HTTPHEADER` https://curl.se/libcurl/c/CURLOPT_HTTPHEADER.html
     Http_Header                = OPTTYPE_SLISTPOINT + 23,
     Http_Post                  = OPTTYPE_OBJECTPOINT + 24,
     Ssl_Cert                   = OPTTYPE_STRINGPOINT + 25,
     Key_Passwd                 = OPTTYPE_STRINGPOINT + 26,
     Crlf                       = OPTTYPE_LONG + 27,
     Quote                      = OPTTYPE_SLISTPOINT + 28,
+    // `CURLOPT_HEADERDATA` https://curl.se/libcurl/c/CURLOPT_HEADERDATA.html
     Header_Data                = OPTTYPE_CBPOINT + 29,
     Cookie_File                = OPTTYPE_STRINGPOINT + 31,
     Ssl_Version                = OPTTYPE_VALUES + 32,
@@ -217,10 +225,12 @@ Option :: enum c.int {
     No_Body                    = OPTTYPE_LONG + 44,
     Fail_On_Error              = OPTTYPE_LONG + 45,
     Upload                     = OPTTYPE_LONG + 46,
+    // `CURLOPT_POST` https://curl.se/libcurl/c/CURLOPT_POST.html
     Post                       = OPTTYPE_LONG + 47,
     Dir_List_Only              = OPTTYPE_LONG + 48,
     Append                     = OPTTYPE_LONG + 50,
     Netrc                      = OPTTYPE_VALUES + 51,
+    // `CURLOPT_FOLLOWLOCATION` https://curl.se/libcurl/c/CURLOPT_FOLLOWLOCATION.html
     Follow_Location            = OPTTYPE_LONG + 52,
     Transfer_Text              = OPTTYPE_LONG + 53,
     Put                        = OPTTYPE_LONG + 54,
@@ -228,11 +238,13 @@ Option :: enum c.int {
     Xfer_Info_Data             = OPTTYPE_CBPOINT + 57,
     Auto_Referer               = OPTTYPE_LONG + 58,
     Proxy_Port                 = OPTTYPE_LONG + 59,
+    // `CURLOPT_POSTFIELDSIZE` https://curl.se/libcurl/c/CURLOPT_POSTFIELDSIZE.html
     Post_Field_Size            = OPTTYPE_LONG + 60,
     Http_Proxy_Tunnel          = OPTTYPE_LONG + 61,
     Interface                  = OPTTYPE_STRINGPOINT + 62,
     Krb_Level                  = OPTTYPE_STRINGPOINT + 63,
     Ssl_Verify_Peer            = OPTTYPE_LONG + 64,
+    // `CURLOPT_CAINFO` https://curl.se/libcurl/c/CURLOPT_CAINFO.html
     Ca_Info                    = OPTTYPE_STRINGPOINT + 65,
     Max_Redirs                 = OPTTYPE_LONG + 68,
     File_Time                  = OPTTYPE_LONG + 69,
@@ -243,12 +255,16 @@ Option :: enum c.int {
     Forbid_Reuse               = OPTTYPE_LONG + 75,
     Random_File                = OPTTYPE_STRINGPOINT + 76,
     Egd_Socket                 = OPTTYPE_STRINGPOINT + 77,
+    // `CURLOPT_CONNECTTIMEOUT` https://curl.se/libcurl/c/CURLOPT_CONNECTTIMEOUT.html
     Connect_Timeout            = OPTTYPE_LONG + 78,
+    // `CURLOPT_HEADERFUNCTION` https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html
     Header_Function            = OPTTYPE_FUNCTIONPOINT + 79,
+    // `CURLOPT_HTTPGET` https://curl.se/libcurl/c/CURLOPT_HTTPGET.html
     Http_Get                   = OPTTYPE_LONG + 80,
     Ssl_Verify_Host            = OPTTYPE_LONG + 81,
     Cookie_Jar                 = OPTTYPE_STRINGPOINT + 82,
     Ssl_Cipher_List            = OPTTYPE_STRINGPOINT + 83,
+    // `CURLOPT_HTTP_VERSION` https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
     Http_Version               = OPTTYPE_VALUES + 84,
     Ftp_Use_Epsv               = OPTTYPE_LONG + 85,
     Ssl_Cert_Type              = OPTTYPE_STRINGPOINT + 86,
@@ -264,6 +280,7 @@ Option :: enum c.int {
     Cookie_Session             = OPTTYPE_LONG + 96,
     Ca_Path                    = OPTTYPE_STRINGPOINT + 97,
     Buffer_Size                = OPTTYPE_LONG + 98,
+    // `CURLOPT_NOSIGNAL` https://curl.se/libcurl/c/CURLOPT_NOSIGNAL.html
     No_Signal                  = OPTTYPE_LONG + 99,
     Share                      = OPTTYPE_OBJECTPOINT + 100,
     Proxy_Type                 = OPTTYPE_VALUES + 101,
@@ -297,6 +314,7 @@ Option :: enum c.int {
     Ftp_File_Method            = OPTTYPE_VALUES + 138,
     Local_Port                 = OPTTYPE_LONG + 139,
     Local_Port_Range           = OPTTYPE_LONG + 140,
+    // `CURLOPT_CONNECT_ONLY` https://curl.se/libcurl/c/CURLOPT_CONNECT_ONLY.html
     Connect_Only               = OPTTYPE_LONG + 141,
     Conv_From_Network_Function = OPTTYPE_FUNCTIONPOINT + 142,
     Conv_To_Network_Function   = OPTTYPE_FUNCTIONPOINT + 143,
@@ -321,6 +339,7 @@ Option :: enum c.int {
     Ssh_Host_Public_Key_Md5    = OPTTYPE_STRINGPOINT + 162,
     Open_Socket_Function       = OPTTYPE_FUNCTIONPOINT + 163,
     Open_Socket_Data           = OPTTYPE_CBPOINT + 164,
+    // `CURLOPT_COPYPOSTFIELDS` https://curl.se/libcurl/c/CURLOPT_COPYPOSTFIELDS.html
     Copy_Post_Fields           = OPTTYPE_OBJECTPOINT + 165,
     Proxy_Transfer_Mode        = OPTTYPE_LONG + 166,
     Seek_Function              = OPTTYPE_FUNCTIONPOINT + 167,
@@ -393,6 +412,7 @@ Option :: enum c.int {
     Path_As_Is                 = OPTTYPE_LONG + 234,
     Proxy_Service_Name         = OPTTYPE_STRINGPOINT + 235,
     Service_Name               = OPTTYPE_STRINGPOINT + 236,
+    // `CURLOPT_PIPEWAIT` https://curl.se/libcurl/c/CURLOPT_PIPEWAIT.html
     Pipe_Wait                  = OPTTYPE_LONG + 237,
     Default_Protocol           = OPTTYPE_STRINGPOINT + 238,
     Stream_Weight              = OPTTYPE_LONG + 239,
@@ -474,6 +494,7 @@ Option :: enum c.int {
     Mime_Options               = OPTTYPE_LONG + 315,
     Ssh_Host_Key_Function      = OPTTYPE_FUNCTIONPOINT + 316,
     Ssh_Host_Key_Data          = OPTTYPE_CBPOINT + 317,
+    // `CURLOPT_PROTOCOLS_STR` https://curl.se/libcurl/c/CURLOPT_PROTOCOLS_STR.html
     Protocols_Str              = OPTTYPE_STRINGPOINT + 318,
     Redir_Protocols_Str        = OPTTYPE_STRINGPOINT + 319,
     Ws_Options                 = OPTTYPE_LONG + 320,
@@ -529,7 +550,7 @@ Msg :: struct {
 #assert(offset_of(Msg, easy) == size_of(rawptr))
 #assert(size_of(Msg) == 3 * size_of(rawptr))
 
-// Shared signature of `CURLOPT_WRITEFUNCTION` and `CURLOPT_HEADERFUNCTION`
+// Shared signature of `Option.Write_Function` and `Option.Header_Function`
 // (`curl_write_callback`). `buffer` is curl's own and is valid for the call only.
 Write_Callback :: #type proc "c" (buffer: [^]byte, size: c.size_t, nitems: c.size_t, user: rawptr) -> c.size_t
 
@@ -546,7 +567,7 @@ LONG_MAX :: int(max(c.long))
 // `CURL_HTTP_VERSION_1_1`, the only `Http_Version` value this package sets.
 HTTP_VERSION_1_1 :: 2
 
-// Minimum size of the buffer handed to `CURLOPT_ERRORBUFFER` (`CURL_ERROR_SIZE`).
+// Minimum size of the buffer handed to `Option.Error_Buffer` (`CURL_ERROR_SIZE`).
 ERROR_SIZE :: 256
 
 // `CURL_GLOBAL_DEFAULT` = `CURL_GLOBAL_SSL | CURL_GLOBAL_WIN32`.

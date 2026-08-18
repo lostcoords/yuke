@@ -71,7 +71,7 @@ Socket :: struct {
     in_curl:  bool,
 
     // @private
-    // `CURLOPT_ERRORBUFFER` storage; curl writes a NUL-terminated reason here.
+    // `Option.Error_Buffer` storage; curl writes a NUL-terminated reason here.
     errbuf:   [ERROR_SIZE]byte,
 
     // Lifecycle, readable by callers that keep one across loop ticks.
