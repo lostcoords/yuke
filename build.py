@@ -86,6 +86,7 @@ PACKAGES = (
         in_aggregate=False,
         needs=BINDINGS,
     ),
+    Package("json", "libs/json", "shared JSON primitives: RFC 8259 string escaping"),
     Package("ws", "libs/websocket", "both drivers plus the sans-I/O core"),
     Package("http", "libs/http", "sans-I/O HTTP"),
     Package("http-server", "libs/http/server", "nbio front door"),

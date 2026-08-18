@@ -1,10 +1,12 @@
 package provider
 
 import "base:runtime"
-import "core:encoding/json"
+import cjson "core:encoding/json"
 import "core:io"
 import "core:strings"
 import "core:unicode/utf8"
+
+import "libs:json"
 import "src:wire"
 
 // How Anthropic returns the readable portion of a thinking block.
@@ -110,35 +112,35 @@ anthropic_request_body :: proc(
     }
 
     writer := strings.to_writer(&builder)
-    json_write(writer, `{"model":`)
-    json_write_string(writer, request.model)
-    json_write(writer, `,"max_tokens":`)
-    json_write_u64(writer, request.max_output_tokens)
-    json_write(writer, `,"stream":true`)
+    json.write_raw(writer, `{"model":`)
+    json.write_string(writer, request.model)
+    json.write_raw(writer, `,"max_tokens":`)
+    json.write_u64(writer, request.max_output_tokens)
+    json.write_raw(writer, `,"stream":true`)
 
     if system, present := request.system_prompt.?; present && len(system) > 0 {
-        json_write(writer, `,"system":`)
-        json_write_string(writer, system)
+        json.write_raw(writer, `,"system":`)
+        json.write_string(writer, system)
     }
 
     anthropic_write_thinking(writer, options.thinking)
 
     if effort, present := options.effort.?; present {
-        json_write(writer, `,"output_config":{"effort":`)
-        json_write_string(writer, anthropic_effort_wire[effort])
-        json_write(writer, `}`)
+        json.write_raw(writer, `,"output_config":{"effort":`)
+        json.write_string(writer, anthropic_effort_wire[effort])
+        json.write_raw(writer, `}`)
     }
 
     if temperature, present := request.temperature.?; present {
-        json_write(writer, `,"temperature":`)
-        json_write_f64(writer, temperature)
+        json.write_raw(writer, `,"temperature":`)
+        json.write_f64(writer, temperature)
     }
 
     if len(request.tools) > 0 {
         anthropic_write_tools(writer, request.tools)
     }
 
-    json_write(writer, `,"messages":[`)
+    json.write_raw(writer, `,"messages":[`)
     messages := Anthropic_Message_Writer {
         writer = writer,
     }
@@ -151,7 +153,7 @@ anthropic_request_body :: proc(
     }
 
     anthropic_message_close(&messages)
-    json_write(writer, `]}`)
+    json.write_raw(writer, `]}`)
 
     body = strings.to_string(builder)
     return body, .None
@@ -261,7 +263,7 @@ anthropic_tool_arguments_validate :: proc(
             return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
         }
 
-        json.destroy_value(value, scratch_allocator)
+        cjson.destroy_value(value, scratch_allocator)
     }
 
     return .None
@@ -409,26 +411,26 @@ anthropic_write_thinking :: proc(writer: io.Writer, value: Anthropic_Thinking) {
         return
 
     case Anthropic_Thinking_Disabled:
-        json_write(writer, `,"thinking":{"type":"disabled"}`)
+        json.write_raw(writer, `,"thinking":{"type":"disabled"}`)
 
     case Anthropic_Thinking_Adaptive:
-        json_write(writer, `,"thinking":{"type":"adaptive"`)
+        json.write_raw(writer, `,"thinking":{"type":"adaptive"`)
         anthropic_write_display(writer, thinking.display)
-        json_write(writer, `}`)
+        json.write_raw(writer, `}`)
 
     case Anthropic_Thinking_Enabled:
-        json_write(writer, `,"thinking":{"type":"enabled","budget_tokens":`)
-        json_write_u64(writer, thinking.budget_tokens)
+        json.write_raw(writer, `,"thinking":{"type":"enabled","budget_tokens":`)
+        json.write_u64(writer, thinking.budget_tokens)
         anthropic_write_display(writer, thinking.display)
-        json_write(writer, `}`)
+        json.write_raw(writer, `}`)
     }
 }
 
 @(private)
 anthropic_write_display :: proc(writer: io.Writer, display: Maybe(Anthropic_Thinking_Display)) {
     if value, present := display.?; present {
-        json_write(writer, `,"display":`)
-        json_write_string(writer, anthropic_display_wire[value])
+        json.write_raw(writer, `,"display":`)
+        json.write_string(writer, anthropic_display_wire[value])
     }
 }
 
@@ -436,22 +438,22 @@ anthropic_write_display :: proc(writer: io.Writer, display: Maybe(Anthropic_Thin
 anthropic_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition) {
     assert(len(tools) > 0, "Anthropic tools writer needs a non-empty slice")
 
-    json_write(writer, `,"tools":[`)
+    json.write_raw(writer, `,"tools":[`)
     for tool, index in tools {
         if index > 0 {
-            json_write(writer, `,`)
+            json.write_raw(writer, `,`)
         }
 
-        json_write(writer, `{"name":`)
-        json_write_string(writer, tool.name)
-        json_write(writer, `,"description":`)
-        json_write_string(writer, tool.description)
-        json_write(writer, `,"input_schema":`)
-        json_write(writer, tool.input_schema)
-        json_write(writer, `}`)
+        json.write_raw(writer, `{"name":`)
+        json.write_string(writer, tool.name)
+        json.write_raw(writer, `,"description":`)
+        json.write_string(writer, tool.description)
+        json.write_raw(writer, `,"input_schema":`)
+        json.write_raw(writer, tool.input_schema)
+        json.write_raw(writer, `}`)
     }
 
-    json_write(writer, `]`)
+    json.write_raw(writer, `]`)
 }
 
 @(private)
@@ -542,20 +544,20 @@ anthropic_message_block_begin :: proc(out: ^Anthropic_Message_Writer, role: Anth
         anthropic_message_close(out)
 
         if out.message_count > 0 {
-            json_write(out.writer, `,`)
+            json.write_raw(out.writer, `,`)
         }
 
         role_wire := "user" if role == .User else "assistant"
-        json_write(out.writer, `{"role":`)
-        json_write_string(out.writer, role_wire)
-        json_write(out.writer, `,"content":[`)
+        json.write_raw(out.writer, `{"role":`)
+        json.write_string(out.writer, role_wire)
+        json.write_raw(out.writer, `,"content":[`)
         out.role = role
         out.message_count += 1
         out.block_count = 0
     }
 
     if out.block_count > 0 {
-        json_write(out.writer, `,`)
+        json.write_raw(out.writer, `,`)
     }
     out.block_count += 1
 }
@@ -572,7 +574,7 @@ anthropic_message_close :: proc(out: ^Anthropic_Message_Writer) {
     }
 
     assert(out.block_count > 0, "open Anthropic message must contain a block")
-    json_write(out.writer, `]}`)
+    json.write_raw(out.writer, `]}`)
     out.role = .None
     out.block_count = 0
 }
@@ -582,17 +584,17 @@ anthropic_write_text_block :: proc(out: ^Anthropic_Message_Writer, role: Anthrop
     assert(len(text) > 0, "Anthropic text blocks are never empty")
 
     anthropic_message_block_begin(out, role)
-    json_write(out.writer, `{"type":"text","text":`)
-    json_write_string(out.writer, text)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"type":"text","text":`)
+    json.write_string(out.writer, text)
+    json.write_raw(out.writer, `}`)
 }
 
 @(private)
 anthropic_write_image_block :: proc(out: ^Anthropic_Message_Writer, source: wire.Media_Source) {
     anthropic_message_block_begin(out, .User)
-    json_write(out.writer, `{"type":"image","source":`)
+    json.write_raw(out.writer, `{"type":"image","source":`)
     anthropic_write_image_source(out.writer, source)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `}`)
 }
 
 // Write an Anthropic image `source` object. The wire `detail` hint has no
@@ -602,16 +604,16 @@ anthropic_write_image_block :: proc(out: ^Anthropic_Message_Writer, source: wire
 anthropic_write_image_source :: proc(writer: io.Writer, source: wire.Media_Source) {
     switch s in source {
     case wire.Media_Base64:
-        json_write(writer, `{"type":"base64","media_type":`)
-        json_write_string(writer, s.mime)
-        json_write(writer, `,"data":`)
-        json_write_string(writer, s.data)
-        json_write(writer, `}`)
+        json.write_raw(writer, `{"type":"base64","media_type":`)
+        json.write_string(writer, s.mime)
+        json.write_raw(writer, `,"data":`)
+        json.write_string(writer, s.data)
+        json.write_raw(writer, `}`)
 
     case wire.Media_Url:
-        json_write(writer, `{"type":"url","url":`)
-        json_write_string(writer, s.url)
-        json_write(writer, `}`)
+        json.write_raw(writer, `{"type":"url","url":`)
+        json.write_string(writer, s.url)
+        json.write_raw(writer, `}`)
 
     case wire.Media_Blob:
         assert(false, "a validated Anthropic request never carries an unresolved blob")
@@ -623,11 +625,11 @@ anthropic_write_thinking_block :: proc(out: ^Anthropic_Message_Writer, thinking:
     assert(len(signature) > 0, "replayed Anthropic thinking must be signed")
 
     anthropic_message_block_begin(out, .Assistant)
-    json_write(out.writer, `{"type":"thinking","thinking":`)
-    json_write_string(out.writer, thinking)
-    json_write(out.writer, `,"signature":`)
-    json_write_string(out.writer, signature)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"type":"thinking","thinking":`)
+    json.write_string(out.writer, thinking)
+    json.write_raw(out.writer, `,"signature":`)
+    json.write_string(out.writer, signature)
+    json.write_raw(out.writer, `}`)
 }
 
 @(private)
@@ -635,9 +637,9 @@ anthropic_write_redacted_thinking_block :: proc(out: ^Anthropic_Message_Writer, 
     assert(len(data) > 0, "replayed Anthropic redacted thinking retains provider data")
 
     anthropic_message_block_begin(out, .Assistant)
-    json_write(out.writer, `{"type":"redacted_thinking","data":`)
-    json_write_string(out.writer, data)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"type":"redacted_thinking","data":`)
+    json.write_string(out.writer, data)
+    json.write_raw(out.writer, `}`)
 }
 
 @(private)
@@ -653,13 +655,13 @@ anthropic_write_tool_use_block :: proc(out: ^Anthropic_Message_Writer, tool: wir
     }
 
     anthropic_message_block_begin(out, .Assistant)
-    json_write(out.writer, `{"type":"tool_use","id":`)
-    json_write_string(out.writer, call_id)
-    json_write(out.writer, `,"name":`)
-    json_write_string(out.writer, tool.name)
-    json_write(out.writer, `,"input":`)
-    json_write(out.writer, arguments)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"type":"tool_use","id":`)
+    json.write_string(out.writer, call_id)
+    json.write_raw(out.writer, `,"name":`)
+    json.write_string(out.writer, tool.name)
+    json.write_raw(out.writer, `,"input":`)
+    json.write_raw(out.writer, arguments)
+    json.write_raw(out.writer, `}`)
 }
 
 @(private)
@@ -671,15 +673,15 @@ anthropic_write_tool_result_block :: proc(out: ^Anthropic_Message_Writer, tool: 
     assert(terminal, "a validated Anthropic tool result is in a terminal state")
 
     anthropic_message_block_begin(out, .User)
-    json_write(out.writer, `{"type":"tool_result","tool_use_id":`)
-    json_write_string(out.writer, call_id)
-    json_write(out.writer, `,"content":`)
-    json_write_string(out.writer, result.content)
+    json.write_raw(out.writer, `{"type":"tool_result","tool_use_id":`)
+    json.write_string(out.writer, call_id)
+    json.write_raw(out.writer, `,"content":`)
+    json.write_string(out.writer, result.content)
     if result.is_error {
-        json_write(out.writer, `,"is_error":true`)
+        json.write_raw(out.writer, `,"is_error":true`)
     }
 
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `}`)
 }
 
 #assert(len(Anthropic_Thinking_Display) == 2)

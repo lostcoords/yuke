@@ -4,6 +4,8 @@ import "base:runtime"
 import "core:io"
 import "core:strings"
 import "core:unicode/utf8"
+
+import "libs:json"
 import "src:wire"
 
 // Reasoning effort level, sent verbatim on the wire. `None` is the literal
@@ -161,21 +163,21 @@ openai_chat_request_body :: proc(
     }
 
     writer := strings.to_writer(&builder)
-    json_write(writer, `{"model":`)
-    json_write_string(writer, request.model)
-    json_write(writer, `,"stream":true,"stream_options":{"include_usage":true}`)
+    json.write_raw(writer, `{"model":`)
+    json.write_string(writer, request.model)
+    json.write_raw(writer, `,"stream":true,"stream_options":{"include_usage":true}`)
 
     if !options.store {
-        json_write(writer, `,"store":false`)
+        json.write_raw(writer, `,"store":false`)
     }
 
     max_field := options.max_tokens_field == .Max_Tokens ? `,"max_tokens":` : `,"max_completion_tokens":`
-    json_write(writer, max_field)
-    json_write_u64(writer, request.max_output_tokens)
+    json.write_raw(writer, max_field)
+    json.write_u64(writer, request.max_output_tokens)
 
     if temperature, present := request.temperature.?; present {
-        json_write(writer, `,"temperature":`)
-        json_write_f64(writer, temperature)
+        json.write_raw(writer, `,"temperature":`)
+        json.write_f64(writer, temperature)
     }
 
     openai_write_reasoning(writer, options.thinking_format, options.effort)
@@ -184,7 +186,7 @@ openai_chat_request_body :: proc(
         openai_write_tools(writer, request.tools)
     }
 
-    json_write(writer, `,"messages":[`)
+    json.write_raw(writer, `,"messages":[`)
     messages := Openai_Message_Writer {
         writer = writer,
     }
@@ -201,7 +203,7 @@ openai_chat_request_body :: proc(
         return "", .Invalid_Request
     }
 
-    json_write(writer, `]}`)
+    json.write_raw(writer, `]}`)
 
     body = strings.to_string(builder)
     return body, .None
@@ -403,49 +405,49 @@ openai_write_reasoning :: proc(writer: io.Writer, format: Openai_Thinking_Format
 
     switch format {
     case .Openai:
-        json_write(writer, `,"reasoning_effort":`)
-        json_write_string(writer, level_wire)
+        json.write_raw(writer, `,"reasoning_effort":`)
+        json.write_string(writer, level_wire)
 
     case .Openrouter:
-        json_write(writer, `,"reasoning":{"effort":`)
-        json_write_string(writer, level_wire)
-        json_write(writer, `}`)
+        json.write_raw(writer, `,"reasoning":{"effort":`)
+        json.write_string(writer, level_wire)
+        json.write_raw(writer, `}`)
 
     case .Deepseek:
-        json_write(writer, `,"thinking":{"type":`)
-        json_write_string(writer, on ? "enabled" : "disabled")
-        json_write(writer, `}`)
+        json.write_raw(writer, `,"thinking":{"type":`)
+        json.write_string(writer, on ? "enabled" : "disabled")
+        json.write_raw(writer, `}`)
 
         if on {
-            json_write(writer, `,"reasoning_effort":`)
-            json_write_string(writer, level_wire)
+            json.write_raw(writer, `,"reasoning_effort":`)
+            json.write_string(writer, level_wire)
         }
 
         return
 
     case .Zai:
-        json_write(writer, `,"thinking":{"type":`)
-        json_write_string(writer, on ? "enabled" : "disabled")
-        json_write(writer, `,"clear_thinking":false}`)
+        json.write_raw(writer, `,"thinking":{"type":`)
+        json.write_string(writer, on ? "enabled" : "disabled")
+        json.write_raw(writer, `,"clear_thinking":false}`)
 
     case .Qwen:
-        json_write(writer, `,"enable_thinking":`)
-        json_write(writer, on ? "true" : "false")
+        json.write_raw(writer, `,"enable_thinking":`)
+        json.write_raw(writer, on ? "true" : "false")
 
     case .Together:
-        json_write(writer, `,"reasoning":{"enabled":`)
-        json_write(writer, on ? "true" : "false")
-        json_write(writer, `}`)
+        json.write_raw(writer, `,"reasoning":{"enabled":`)
+        json.write_raw(writer, on ? "true" : "false")
+        json.write_raw(writer, `}`)
 
     case .String_Thinking:
-        json_write(writer, `,"thinking":`)
-        json_write_string(writer, level_wire)
+        json.write_raw(writer, `,"thinking":`)
+        json.write_string(writer, level_wire)
 
     case .Ant_Ling:
         if on {
-            json_write(writer, `,"reasoning":{"effort":`)
-            json_write_string(writer, level_wire)
-            json_write(writer, `}`)
+            json.write_raw(writer, `,"reasoning":{"effort":`)
+            json.write_string(writer, level_wire)
+            json.write_raw(writer, `}`)
         }
 
         return
@@ -459,22 +461,22 @@ openai_write_reasoning :: proc(writer: io.Writer, format: Openai_Thinking_Format
 openai_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition) {
     assert(len(tools) > 0, "OpenAI tools writer needs a non-empty slice")
 
-    json_write(writer, `,"tools":[`)
+    json.write_raw(writer, `,"tools":[`)
     for tool, index in tools {
         if index > 0 {
-            json_write(writer, `,`)
+            json.write_raw(writer, `,`)
         }
 
-        json_write(writer, `{"type":"function","function":{"name":`)
-        json_write_string(writer, tool.name)
-        json_write(writer, `,"description":`)
-        json_write_string(writer, tool.description)
-        json_write(writer, `,"parameters":`)
-        json_write(writer, tool.input_schema)
-        json_write(writer, `}}`)
+        json.write_raw(writer, `{"type":"function","function":{"name":`)
+        json.write_string(writer, tool.name)
+        json.write_raw(writer, `,"description":`)
+        json.write_string(writer, tool.description)
+        json.write_raw(writer, `,"parameters":`)
+        json.write_raw(writer, tool.input_schema)
+        json.write_raw(writer, `}}`)
     }
 
-    json_write(writer, `]`)
+    json.write_raw(writer, `]`)
 }
 
 // Write the leading system message, present only when a non-empty system prompt
@@ -484,9 +486,9 @@ openai_write_system :: proc(out: ^Openai_Message_Writer, system: string) {
     assert(len(system) > 0, "OpenAI system message is never empty")
 
     openai_message_sep(out)
-    json_write(out.writer, `{"role":"system","content":`)
-    json_write_string(out.writer, system)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"role":"system","content":`)
+    json.write_string(out.writer, system)
+    json.write_raw(out.writer, `}`)
 }
 
 @(private)
@@ -518,54 +520,54 @@ openai_write_user_message :: proc(
     scratch_allocator: runtime.Allocator,
 ) {
     openai_message_sep(out)
-    json_write(out.writer, `{"role":"user","content":[`)
+    json.write_raw(out.writer, `{"role":"user","content":[`)
     for part, index in message.content {
         if index > 0 {
-            json_write(out.writer, `,`)
+            json.write_raw(out.writer, `,`)
         }
 
         openai_write_content_part(out.writer, part, scratch_allocator)
     }
 
-    json_write(out.writer, `]}`)
+    json.write_raw(out.writer, `]}`)
 }
 
 @(private)
 openai_write_content_part :: proc(writer: io.Writer, part: wire.Content_Part, scratch_allocator: runtime.Allocator) {
     switch v in part {
     case wire.Content_Text:
-        json_write(writer, `{"type":"text","text":`)
-        json_write_string(writer, v.text)
-        json_write(writer, `}`)
+        json.write_raw(writer, `{"type":"text","text":`)
+        json.write_string(writer, v.text)
+        json.write_raw(writer, `}`)
 
     case wire.Content_Image:
-        json_write(writer, `{"type":"image_url","image_url":{"url":`)
+        json.write_raw(writer, `{"type":"image_url","image_url":{"url":`)
         openai_write_media_url(writer, v.source, scratch_allocator)
 
         if detail, ok := v.detail.?; ok {
-            json_write(writer, `,"detail":`)
-            json_write_string(writer, detail)
+            json.write_raw(writer, `,"detail":`)
+            json.write_string(writer, detail)
         }
 
-        json_write(writer, `}}`)
+        json.write_raw(writer, `}}`)
 
     case wire.Content_Audio:
-        json_write(writer, `{"type":"input_audio","input_audio":{"data":`)
+        json.write_raw(writer, `{"type":"input_audio","input_audio":{"data":`)
         openai_write_media_base64(writer, v.source)
-        json_write(writer, `,"format":`)
-        json_write_string(writer, v.format)
-        json_write(writer, `}}`)
+        json.write_raw(writer, `,"format":`)
+        json.write_string(writer, v.format)
+        json.write_raw(writer, `}}`)
 
     case wire.Content_File:
-        json_write(writer, `{"type":"file","file":{"file_data":`)
+        json.write_raw(writer, `{"type":"file","file":{"file_data":`)
         openai_write_media_url(writer, v.source, scratch_allocator)
 
         if filename, ok := v.filename.?; ok {
-            json_write(writer, `,"filename":`)
-            json_write_string(writer, filename)
+            json.write_raw(writer, `,"filename":`)
+            json.write_string(writer, filename)
         }
 
-        json_write(writer, `}}`)
+        json.write_raw(writer, `}}`)
     }
 }
 
@@ -575,12 +577,12 @@ openai_write_content_part :: proc(writer: io.Writer, part: wire.Content_Part, sc
 openai_write_media_url :: proc(writer: io.Writer, source: wire.Media_Source, scratch_allocator: runtime.Allocator) {
     switch s in source {
     case wire.Media_Url:
-        json_write_string(writer, s.url)
+        json.write_string(writer, s.url)
 
     case wire.Media_Base64:
         uri := strings.concatenate({"data:", s.mime, ";base64,", s.data}, scratch_allocator)
 
-        json_write_string(writer, uri)
+        json.write_string(writer, uri)
 
     case wire.Media_Blob:
         assert(false, "a validated OpenAI request never carries an unresolved blob")
@@ -593,14 +595,14 @@ openai_write_media_url :: proc(writer: io.Writer, source: wire.Media_Source, scr
 openai_write_media_base64 :: proc(writer: io.Writer, source: wire.Media_Source) {
     switch s in source {
     case wire.Media_Base64:
-        json_write_string(writer, s.data)
+        json.write_string(writer, s.data)
 
     case wire.Media_Url:
         marker := "base64,"
         index := strings.index(s.url, marker)
         assert(index >= 0, "a validated OpenAI audio URL embeds a base64 marker")
 
-        json_write_string(writer, s.url[index + len(marker):])
+        json.write_string(writer, s.url[index + len(marker):])
 
     case wire.Media_Blob:
         assert(false, "a validated OpenAI request never carries an unresolved blob")
@@ -615,11 +617,11 @@ openai_write_assistant_message :: proc(
     scratch_allocator: runtime.Allocator,
 ) {
     openai_message_sep(out)
-    json_write(out.writer, `{"role":"assistant","content":`)
+    json.write_raw(out.writer, `{"role":"assistant","content":`)
 
     content := openai_join_assistant_text(message.content, false, scratch_allocator)
 
-    json_write_string(out.writer, content)
+    json.write_string(out.writer, content)
 
     if options.reasoning_replay != .None {
         // @todo: OpenRouter's `reasoning_details` encrypted-on-toolcall array form
@@ -627,10 +629,10 @@ openai_write_assistant_message :: proc(
         field := openai_reasoning_replay_field(options.reasoning_replay)
         reasoning := openai_join_assistant_text(message.content, true, scratch_allocator)
 
-        json_write(out.writer, `,`)
-        json_write_string(out.writer, field)
-        json_write(out.writer, `:`)
-        json_write_string(out.writer, reasoning)
+        json.write_raw(out.writer, `,`)
+        json.write_string(out.writer, field)
+        json.write_raw(out.writer, `:`)
+        json.write_string(out.writer, reasoning)
     }
 
     first := true
@@ -641,20 +643,20 @@ openai_write_assistant_message :: proc(
         }
 
         if first {
-            json_write(out.writer, `,"tool_calls":[`)
+            json.write_raw(out.writer, `,"tool_calls":[`)
             first = false
         } else {
-            json_write(out.writer, `,`)
+            json.write_raw(out.writer, `,`)
         }
 
         openai_write_tool_call(out.writer, tool)
     }
 
     if !first {
-        json_write(out.writer, `]`)
+        json.write_raw(out.writer, `]`)
     }
 
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `}`)
 
     for part in message.content {
         if tool, is_tool := part.(wire.Tool_Part); is_tool {
@@ -676,13 +678,13 @@ openai_write_tool_call :: proc(writer: io.Writer, tool: wire.Tool_Part) {
         arguments = "{}"
     }
 
-    json_write(writer, `{"id":`)
-    json_write_string(writer, call_id)
-    json_write(writer, `,"type":"function","function":{"name":`)
-    json_write_string(writer, tool.name)
-    json_write(writer, `,"arguments":`)
-    json_write_string(writer, arguments)
-    json_write(writer, `}}`)
+    json.write_raw(writer, `{"id":`)
+    json.write_string(writer, call_id)
+    json.write_raw(writer, `,"type":"function","function":{"name":`)
+    json.write_string(writer, tool.name)
+    json.write_raw(writer, `,"arguments":`)
+    json.write_string(writer, arguments)
+    json.write_raw(writer, `}}`)
 }
 
 @(private)
@@ -694,11 +696,11 @@ openai_write_tool_message :: proc(out: ^Openai_Message_Writer, tool: wire.Tool_P
     assert(terminal, "a validated OpenAI tool result is in a terminal state")
 
     openai_message_sep(out)
-    json_write(out.writer, `{"role":"tool","content":`)
-    json_write_string(out.writer, result.content)
-    json_write(out.writer, `,"tool_call_id":`)
-    json_write_string(out.writer, call_id)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"role":"tool","content":`)
+    json.write_string(out.writer, result.content)
+    json.write_raw(out.writer, `,"tool_call_id":`)
+    json.write_string(out.writer, call_id)
+    json.write_raw(out.writer, `}`)
 }
 
 // A compaction divider replays as a `user` message carrying its summary, the
@@ -710,9 +712,9 @@ openai_write_compaction_message :: proc(out: ^Openai_Message_Writer, message: wi
     }
 
     openai_message_sep(out)
-    json_write(out.writer, `{"role":"user","content":`)
-    json_write_string(out.writer, message.summary)
-    json_write(out.writer, `}`)
+    json.write_raw(out.writer, `{"role":"user","content":`)
+    json.write_string(out.writer, message.summary)
+    json.write_raw(out.writer, `}`)
 }
 
 // Concatenate an assistant message's text or reasoning parts in content order.
@@ -760,7 +762,7 @@ openai_message_sep :: proc(out: ^Openai_Message_Writer) {
     assert(out.count >= 0, "OpenAI message count cannot be negative")
 
     if out.count > 0 {
-        json_write(out.writer, `,`)
+        json.write_raw(out.writer, `,`)
     }
     out.count += 1
 }

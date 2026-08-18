@@ -5,6 +5,8 @@ import "core:crypto"
 import "core:strconv"
 import "core:strings"
 
+import "libs:json"
+
 // Emit a required-but-nullable JSON-number field: always writes the key, null when
 // absent. Parapoly over the `distinct u64` id types so a `Maybe(Message_Id)` needs no
 // cast at the call site.
@@ -242,50 +244,12 @@ field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
     }
 }
 
-// Write a JSON string literal with the required escapes.
+// Write a JSON string value; a failed builder growth latches `failed`.
 @(private)
 _write_json_string :: proc(e: ^Emitter, s: string) {
-    _put_byte(e, '"')
-    for i in 0 ..< len(s) {
-        c := s[i]
+    _, err := json.write_string(strings.to_writer(&e.sb), s)
 
-        switch c {
-        case '"':
-            _put(e, "\\\"")
-
-        case '\\':
-            _put(e, "\\\\")
-
-        case '\n':
-            _put(e, "\\n")
-
-        case '\r':
-            _put(e, "\\r")
-
-        case '\t':
-            _put(e, "\\t")
-
-        case '\b':
-            _put(e, "\\b")
-
-        case '\f':
-            _put(e, "\\f")
-
-        case:
-            if c < 0x20 {
-                _put(e, "\\u00")
-                _put_byte(e, _hex_digit(c >> 4))
-                _put_byte(e, _hex_digit(c & 0xf))
-            } else {
-                _put_byte(e, c)
-            }
-        }
+    if err != .None {
+        e.failed = true
     }
-
-    _put_byte(e, '"')
-}
-
-@(private)
-_hex_digit :: proc(n: u8) -> u8 {
-    return n < 10 ? '0' + n : 'a' + (n - 10)
 }
