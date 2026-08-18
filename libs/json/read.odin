@@ -3,6 +3,22 @@ package json
 import "core:math"
 import "core:unicode/utf8"
 
+// The member named `name`, or nil when it is missing or JSON null — both read as
+// absent. A present member is always a variant, so nil is unambiguously absence.
+@(private)
+lookup :: proc(o: Object, name: string) -> Value {
+    v, found := o[name]
+    if !found {
+        return nil
+    }
+
+    if _, is_null := v.(Null); is_null {
+        return nil
+    }
+
+    return v
+}
+
 // `max_bytes <= 0` means uncapped. A present non-string, over-cap, empty (unless
 // `allow_empty`), or non-UTF-8 value is invalid.
 read_string :: proc(
@@ -14,10 +30,10 @@ read_string :: proc(
     value: string,
     present, valid: bool,
 ) {
-    member, found := o[name]
-    if !found do return "", false, true
-
-    if _, is_null := member.(Null); is_null do return "", false, true
+    member := lookup(o, name)
+    if member == nil {
+        return "", false, true
+    }
 
     text, ok := member.(String)
     if !ok ||
@@ -31,13 +47,15 @@ read_string :: proc(
 }
 
 read_bool :: proc(o: Object, name: string) -> (value: bool, present, valid: bool) {
-    member, found := o[name]
-    if !found do return false, false, true
-
-    if _, is_null := member.(Null); is_null do return false, false, true
+    member := lookup(o, name)
+    if member == nil {
+        return false, false, true
+    }
 
     boolean, ok := member.(Boolean)
-    if !ok do return false, true, false
+    if !ok {
+        return false, true, false
+    }
 
     return bool(boolean), true, true
 }
@@ -45,22 +63,24 @@ read_bool :: proc(o: Object, name: string) -> (value: bool, present, valid: bool
 // A non-negative integer in `[lo, hi]`. A fractionless float (`1.0`) counts; a
 // fraction, nan/inf, or out-of-range value is invalid.
 read_u64 :: proc(o: Object, name: string, lo, hi: u64) -> (value: u64, present, valid: bool) {
-    member, found := o[name]
-    if !found do return 0, false, true
-
-    if _, is_null := member.(Null); is_null do return 0, false, true
+    member := lookup(o, name)
+    if member == nil {
+        return 0, false, true
+    }
 
     n, ok := integer_i64(member)
-    if !ok || n < 0 || u64(n) < lo || u64(n) > hi do return 0, true, false
+    if !ok || n < 0 || u64(n) < lo || u64(n) > hi {
+        return 0, true, false
+    }
 
     return u64(n), true, true
 }
 
 read_f64_nonneg :: proc(o: Object, name: string) -> (value: f64, present, valid: bool) {
-    member, found := o[name]
-    if !found do return 0, false, true
-
-    if _, is_null := member.(Null); is_null do return 0, false, true
+    member := lookup(o, name)
+    if member == nil {
+        return 0, false, true
+    }
 
     #partial switch number in member {
     case Integer:
@@ -73,19 +93,23 @@ read_f64_nonneg :: proc(o: Object, name: string) -> (value: f64, present, valid:
         return 0, true, false
     }
 
-    if value < 0 || !f64_is_finite(value) do return 0, true, false
+    if value < 0 || !f64_is_finite(value) {
+        return 0, true, false
+    }
 
     return value, true, true
 }
 
 read_object :: proc(o: Object, name: string) -> (value: Object, present, valid: bool) {
-    member, found := o[name]
-    if !found do return nil, false, true
-
-    if _, is_null := member.(Null); is_null do return nil, false, true
+    member := lookup(o, name)
+    if member == nil {
+        return nil, false, true
+    }
 
     object, ok := member.(Object)
-    if !ok do return nil, true, false
+    if !ok {
+        return nil, true, false
+    }
 
     return object, true, true
 }
@@ -106,10 +130,12 @@ integer_i64 :: proc(v: Value) -> (i64, bool) {
     return 0, false
 }
 
+@(private)
 f64_is_integral :: proc(f: f64) -> bool {
     return f64_is_finite(f) && math.floor(f) == f
 }
 
+@(private)
 f64_is_finite :: proc(f: f64) -> bool {
     return !math.is_nan(f) && !math.is_inf(f)
 }
