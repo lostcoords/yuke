@@ -152,23 +152,17 @@ session_enter :: proc(
     err: Session_Error,
 ) {
     // Validate before touching the terminal so a bad timeout cannot leave raw mode on.
-    if options.query_timeout_ms < 0 {
-        return {}, .Invalid_Query_Timeout
-    }
+    if options.query_timeout_ms < 0 do return {}, .Invalid_Query_Timeout
 
     committed := false
 
     // Console output translation (Windows: VT processing + UTF-8 code pages) before raw
     // mode, so its restore runs last on leave (LIFO). POSIX no-op.
     out_mode := output_mode_enter(size_handle)
-    defer if !committed {
-        output_mode_leave(out_mode)
-    }
+    defer if !committed do output_mode_leave(out_mode)
 
     raw, rerr := enable_raw_mode(tty)
-    if rerr != .None {
-        return {}, .Raw_Mode_Failed
-    }
+    if rerr != .None do return {}, .Raw_Mode_Failed
 
     // errdefer analogue (see src/client/session_replica.odin): any failure after raw mode
     // disables what was turned on, flushes, and drops raw mode. The terminal must be clean.
@@ -185,23 +179,17 @@ session_enter :: proc(
     negotiated: Negotiated
     if options.negotiate {
         n, nerr := negotiate(tty, out, startup_input, options.query_timeout_ms, options.kitty_keyboard)
-        if nerr != .None {
-            return {}, nerr
-        }
+        if nerr != .None do return {}, nerr
 
         negotiated = n
     }
 
     caps := negotiated_capabilities(negotiated)
     new_enabled, eerr := enable_modes(out, options, negotiated)
-    if eerr != .None {
-        return {}, eerr
-    }
+    if eerr != .None do return {}, eerr
     enabled = new_enabled
 
-    if flush_out(out) != .None {
-        return {}, .Write_Failed
-    }
+    if flush_out(out) != .None do return {}, .Write_Failed
 
     committed = true
 
@@ -230,9 +218,7 @@ session_enter :: proc(
 session_leave :: proc(s: ^Session) {
     assert(s != nil, "session_leave needs a session")
 
-    if !s.active {
-        return
-    }
+    if !s.active do return
 
     restore(s.out, s.enabled)
     restore_presentation(s.out, s.initial_cursor, s.initial_synchronized_output)
@@ -300,29 +286,17 @@ enable_modes :: proc(
 // Disable the enabled modes in reverse order of enabling. Writes only, best-effort; the
 // caller flushes.
 restore :: proc(out: io.Writer, enabled: Enabled) {
-    if enabled.kitty_keyboard {
-        _, _ = io.write_string(out, KITTY_POP)
-    }
+    if enabled.kitty_keyboard do _, _ = io.write_string(out, KITTY_POP)
 
-    if enabled.mouse_sgr {
-        _, _ = io.write_string(out, MOUSE_SGR_DISABLE)
-    }
+    if enabled.mouse_sgr do _, _ = io.write_string(out, MOUSE_SGR_DISABLE)
 
-    if enabled.mouse {
-        _, _ = io.write_string(out, MOUSE_TRACKING_DISABLE)
-    }
+    if enabled.mouse do _, _ = io.write_string(out, MOUSE_TRACKING_DISABLE)
 
-    if enabled.in_band_resize {
-        _, _ = io.write_string(out, IN_BAND_RESIZE_DISABLE)
-    }
+    if enabled.in_band_resize do _, _ = io.write_string(out, IN_BAND_RESIZE_DISABLE)
 
-    if enabled.bracketed_paste {
-        _, _ = io.write_string(out, BRACKETED_PASTE_DISABLE)
-    }
+    if enabled.bracketed_paste do _, _ = io.write_string(out, BRACKETED_PASTE_DISABLE)
 
-    if enabled.alternate_screen {
-        _, _ = io.write_string(out, ALT_SCREEN_EXIT)
-    }
+    if enabled.alternate_screen do _, _ = io.write_string(out, ALT_SCREEN_EXIT)
 }
 
 // Restore presentation modes to what the terminal reported at startup: a renderer may
@@ -440,9 +414,7 @@ negotiate :: proc(
     write_out(out, KITTY_QUERY) or_return
     write_out(out, DA1_REQUEST) or_return
 
-    if flush_out(out) != .None {
-        return {}, .Write_Failed
-    }
+    if flush_out(out) != .None do return {}, .Write_Failed
 
     scratch: [MAX_PROBE_BYTES]u8
     n := 0
@@ -457,29 +429,21 @@ negotiate :: proc(
             poll_ms = 0
         } else {
             remaining_ns := budget_ns - i64(time.tick_since(start))
-            if remaining_ns <= 0 {
-                break
-            }
+            if remaining_ns <= 0 do break
 
             rounded_ms := (remaining_ns + i64(time.Millisecond) - 1) / i64(time.Millisecond)
             poll_ms = i32(min(rounded_ms, i64(max(i32))))
         }
 
-        if !poll_readable(tty, poll_ms) {
-            break
-        }
+        if !poll_readable(tty, poll_ms) do break
 
         b, ok := read_byte(tty)
-        if !ok {
-            break // EOF
-        }
+        if !ok do break // EOF
 
         scratch[n] = b
         n += 1
 
-        if has_da_response(scratch[:n]) {
-            break
-        }
+        if has_da_response(scratch[:n]) do break
     }
 
     received := scratch[:n]
@@ -490,9 +454,7 @@ negotiate :: proc(
     if kitty_pushed {
         write_out(out, KITTY_POP) or_return
         kitty_popped = true
-        if flush_out(out) != .None {
-            return {}, .Write_Failed
-        }
+        if flush_out(out) != .None do return {}, .Write_Failed
     }
 
     kitty_flags, kitty_ok := kitty_query_reply(received)
@@ -514,9 +476,7 @@ negotiate :: proc(
     _ = preserve_non_probe_input(startup_input, received)
 
     // A full scratch with no DA1 reply means the replies overran the buffer.
-    if n == len(scratch) && !has_da_response(received) {
-        return {}, .Capability_Response_Too_Large
-    }
+    if n == len(scratch) && !has_da_response(received) do return {}, .Capability_Response_Too_Large
 
     return result, .None
 }
@@ -525,20 +485,14 @@ negotiate :: proc(
 // (0x20..0x3f) up to a final byte (0x40..0x7e). Returns the index one past the final
 // byte. `ok` is false if `start` is not a CSI or the sequence is incomplete.
 csi_end :: proc(bytes: []u8, start: int) -> (int, bool) {
-    if start + 2 > len(bytes) || bytes[start] != 0x1b || bytes[start + 1] != '[' {
-        return 0, false
-    }
+    if start + 2 > len(bytes) || bytes[start] != 0x1b || bytes[start + 1] != '[' do return 0, false
 
     i := start + 2
     for i < len(bytes) {
         b := bytes[i]
-        if b >= 0x40 && b <= 0x7e {
-            return i + 1, true
-        }
+        if b >= 0x40 && b <= 0x7e do return i + 1, true
 
-        if b < 0x20 || b > 0x3f {
-            return 0, false
-        }
+        if b < 0x20 || b > 0x3f do return 0, false
 
         i += 1
     }
@@ -557,9 +511,7 @@ has_da_response :: proc(bytes: []u8) -> bool {
             continue
         }
 
-        if bytes[end - 1] == 'c' {
-            return true
-        }
+        if bytes[end - 1] == 'c' do return true
 
         i = end
     }
@@ -585,9 +537,7 @@ parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
             digit := u32(bytes[j] - '0')
             if m > (max(u32) - digit) / 10 {
                 mode_overflow = true
-            } else if !mode_overflow {
-                m = m * 10 + digit
-            }
+            } else if !mode_overflow do m = m * 10 + digit
             got_mode = true
             j += 1
         }
@@ -605,9 +555,7 @@ parse_mode_report :: proc(bytes: []u8, mode: u16) -> Mode_Status {
             digit := u32(bytes[j] - '0')
             if s > (max(u32) - digit) / 10 {
                 status_overflow = true
-            } else if !status_overflow {
-                s = s * 10 + digit
-            }
+            } else if !status_overflow do s = s * 10 + digit
             got_status = true
             j += 1
         }
@@ -652,9 +600,7 @@ kitty_query_reply :: proc(bytes: []u8) -> (u8, bool) {
 
         if bytes[i + 2] == '?' && bytes[end - 1] == 'u' {
             flags, flags_ok := kitty_flags_response(bytes[i:end])
-            if flags_ok {
-                return flags, true
-            }
+            if flags_ok do return flags, true
         }
 
         i = end
@@ -667,28 +613,18 @@ kitty_query_reply :: proc(bytes: []u8) -> (u8, bool) {
 // the shape does not match or the value cannot be a flag set — the field is only five
 // bits wide, so anything past `max(u8)` is a malformed reply, not a truncated one.
 kitty_flags_response :: proc(bytes: []u8) -> (u8, bool) {
-    if len(bytes) < 4 {
-        return 0, false
-    }
+    if len(bytes) < 4 do return 0, false
 
-    if bytes[0] != 0x1b || bytes[1] != '[' || bytes[2] != '?' {
-        return 0, false
-    }
+    if bytes[0] != 0x1b || bytes[1] != '[' || bytes[2] != '?' do return 0, false
 
-    if bytes[len(bytes) - 1] != 'u' {
-        return 0, false
-    }
+    if bytes[len(bytes) - 1] != 'u' do return 0, false
 
     flags: u32 = 0
     for b in bytes[3:len(bytes) - 1] {
-        if b < '0' || b > '9' {
-            return 0, false
-        }
+        if b < '0' || b > '9' do return 0, false
 
         flags = flags * 10 + u32(b - '0')
-        if flags > u32(max(u8)) {
-            return 0, false
-        }
+        if flags > u32(max(u8)) do return 0, false
     }
 
     return u8(flags), true
@@ -697,9 +633,7 @@ kitty_flags_response :: proc(bytes: []u8) -> (u8, bool) {
 // True if `sequence` (one complete CSI) is a probe reply: DA1 (`... c`), a Kitty query
 // reply (`? ... u`), or a DECRPM report (`? ... $ y`). Everything else is real input.
 is_probe_response :: proc(sequence: []u8) -> bool {
-    if len(sequence) < 3 {
-        return false
-    }
+    if len(sequence) < 3 do return false
 
     switch sequence[len(sequence) - 1] {
     case 'c':
@@ -727,9 +661,7 @@ preserve_non_probe_input :: proc(input: ^Reader, bytes: []u8) -> Reader_Error {
             if end, ok := csi_end(bytes, i); ok {
                 if is_probe_response(bytes[i:end]) {
                     if keep_start < i {
-                        if err := reader_push(input, bytes[keep_start:i]); err != .None {
-                            return err
-                        }
+                        if err := reader_push(input, bytes[keep_start:i]); err != .None do return err
                     }
 
                     keep_start = end
@@ -744,9 +676,7 @@ preserve_non_probe_input :: proc(input: ^Reader, bytes: []u8) -> Reader_Error {
     }
 
     if keep_start < len(bytes) {
-        if err := reader_push(input, bytes[keep_start:]); err != .None {
-            return err
-        }
+        if err := reader_push(input, bytes[keep_start:]); err != .None do return err
     }
 
     return .None
@@ -754,9 +684,7 @@ preserve_non_probe_input :: proc(input: ^Reader, bytes: []u8) -> Reader_Error {
 
 // Write a mode string, mapping any write failure to `.Write_Failed` for `or_return`.
 write_out :: proc(out: io.Writer, s: string) -> Session_Error {
-    if _, err := io.write_string(out, s); err != .None {
-        return .Write_Failed
-    }
+    if _, err := io.write_string(out, s); err != .None do return .Write_Failed
 
     return .None
 }
@@ -765,9 +693,7 @@ write_out :: proc(out: io.Writer, s: string) -> Session_Error {
 // flush. Any other error is a real write failure.
 flush_out :: proc(out: io.Writer) -> io.Error {
     err := io.flush(out)
-    if err == .Unsupported {
-        return .None
-    }
+    if err == .Unsupported do return .None
 
     return err
 }

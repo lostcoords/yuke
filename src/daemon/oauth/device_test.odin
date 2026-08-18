@@ -79,9 +79,7 @@ test_codex_device_classify_and_grant_body :: proc(t: ^testing.T) {
     outcome, outcome_err := device_poll_classify(provider(.Codex), 200, approved, context.allocator)
     testing.expect_value(t, outcome_err, OAuth_Error.None)
     exchange, is_exchange := outcome.(Device_Exchange)
-    if !testing.expect(t, is_exchange, "codex 2xx yields a grant to exchange") {
-        return
-    }
+    if !testing.expect(t, is_exchange, "codex 2xx yields a grant to exchange") do return
     grant := exchange.grant
     defer device_grant_destroy(&grant)
     testing.expect_value(t, grant.authorization_code, "poll-code")

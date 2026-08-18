@@ -85,9 +85,7 @@ bind_prepare :: proc(
     leaves := bind_leaves_collect(info) or_return
     count := bind_parameter_count(statement)
 
-    if count > BIND_MAX_PARAMS {
-        return {}, .Too_Many_Parameters
-    }
+    if count > BIND_MAX_PARAMS do return {}, .Too_Many_Parameters
 
     // `:a`, `@a`, and `$a` are three parameters that strip to one name, so a leaf
     // can be reached more than once. Counting consumed parameters would call that
@@ -100,9 +98,7 @@ bind_prepare :: proc(
 
         // A nameless `?` reports "", and `?NNN` reports its own digits back; both
         // are ordinal markers this mapping has no name to bind them by.
-        if len(name) < 2 || (name[0] != ':' && name[0] != '@' && name[0] != '$') {
-            return {}, .Parameter_Unnamed
-        }
+        if len(name) < 2 || (name[0] != ':' && name[0] != '@' && name[0] != '$') do return {}, .Parameter_Unnamed
 
         found := -1
         for i in 0 ..< leaves.count {
@@ -113,13 +109,9 @@ bind_prepare :: proc(
             }
         }
 
-        if found < 0 {
-            return {}, .Field_Missing
-        }
+        if found < 0 do return {}, .Field_Missing
 
-        if fed[found] {
-            return {}, .Parameter_Duplicate
-        }
+        if fed[found] do return {}, .Parameter_Duplicate
 
         fed[found] = true
         mapping.slots[mapping.count] = Bind_Slot {
@@ -131,9 +123,7 @@ bind_prepare :: proc(
     }
 
     for i in 0 ..< leaves.count {
-        if !fed[i] {
-            return {}, .Parameter_Missing
-        }
+        if !fed[i] do return {}, .Parameter_Missing
     }
 
     return mapping, .None
@@ -164,9 +154,7 @@ bind_with_lifetime :: proc(
 
         rc := bind_slot(mapping.statement, slot, rawptr(uintptr(params) + slot.offset), lifetime)
 
-        if rc != .Ok {
-            return rc
-        }
+        if rc != .Ok do return rc
     }
 
     return .Ok
@@ -225,29 +213,21 @@ bind_collect_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
 bind_leaves_collect :: proc(info: ^reflect.Type_Info) -> (leaves: Bind_Leaves, err: Bind_Error) {
     bind_walk_error(scan_walk(info, 0, bind_collect_visit, &leaves)) or_return
 
-    if leaves.overflow {
-        return {}, .Too_Many_Parameters
-    }
+    if leaves.overflow do return {}, .Too_Many_Parameters
 
     for i in 0 ..< leaves.count {
         leaf := leaves.items[i]
 
         // Both options describe how a scan takes ownership of SQLite's memory;
         // nothing on this side of the boundary can honor them.
-        if leaf.optional || leaf.borrowed {
-            return {}, .Invalid_Tag
-        }
+        if leaf.optional || leaf.borrowed do return {}, .Invalid_Tag
 
         matches := 0
         for j in 0 ..< leaves.count {
-            if leaves.items[j].name == leaf.name {
-                matches += 1
-            }
+            if leaves.items[j].name == leaf.name do matches += 1
         }
 
-        if matches > 1 {
-            return {}, .Parameter_Duplicate
-        }
+        if matches > 1 do return {}, .Parameter_Duplicate
     }
 
     return leaves, .None
@@ -276,9 +256,7 @@ insert_all_sql :: proc(
     strings.write_string(&b, " (")
 
     for i in 0 ..< leaves.count {
-        if i > 0 {
-            strings.write_string(&b, ", ")
-        }
+        if i > 0 do strings.write_string(&b, ", ")
 
         strings.write_string(&b, leaves.items[i].name)
     }
@@ -286,9 +264,7 @@ insert_all_sql :: proc(
     strings.write_string(&b, ") VALUES (")
 
     for i in 0 ..< leaves.count {
-        if i > 0 {
-            strings.write_string(&b, ", ")
-        }
+        if i > 0 do strings.write_string(&b, ", ")
 
         strings.write_byte(&b, ':')
         strings.write_string(&b, leaves.items[i].name)
@@ -331,9 +307,7 @@ bind_slot :: proc(statement: ^Stmt, slot: Bind_Slot, data: rawptr, lifetime: Bin
 
     case reflect.Type_Info_Integer:
         value, rc := bind_integer_load(data, info)
-        if rc != .Ok {
-            return rc
-        }
+        if rc != .Ok do return rc
 
         return bind_i64(statement, slot.param, value)
 
@@ -341,9 +315,7 @@ bind_slot :: proc(statement: ^Stmt, slot: Bind_Slot, data: rawptr, lifetime: Bin
         // Enums travel as their discriminant. A type stored as text keeps its own
         // conversion at the call site; the wire name is not the Odin identifier.
         value, rc := bind_integer_load(data, reflect.type_info_base(kind.base))
-        if rc != .Ok {
-            return rc
-        }
+        if rc != .Ok do return rc
 
         return bind_i64(statement, slot.param, value)
 
@@ -372,9 +344,7 @@ bind_slot :: proc(statement: ^Stmt, slot: Bind_Slot, data: rawptr, lifetime: Bin
         assert(len(kind.variants) == 1, "bind_prepare admits only single-variant unions")
         assert(!kind.no_nil, "bind_prepare admits only nil-able unions")
 
-        if !scan_maybe_is_set(data, kind) {
-            return bind_null(statement, slot.param)
-        }
+        if !scan_maybe_is_set(data, kind) do return bind_null(statement, slot.param)
 
         return bind_slot(
             statement,
@@ -452,9 +422,7 @@ bind_integer_load :: proc(data: rawptr, info: ^reflect.Type_Info) -> (value: i64
 
     case 8:
         value := (^u64)(data)^
-        if value > u64(max(i64)) {
-            return 0, .Range
-        }
+        if value > u64(max(i64)) do return 0, .Range
 
         return i64(value), .Ok
 

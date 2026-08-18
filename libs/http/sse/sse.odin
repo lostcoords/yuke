@@ -93,9 +93,7 @@ feed :: proc(p: ^Parser, chunk: []byte, user: rawptr, on_event: On_Event) -> Err
     assert(p.max_event_bytes > 0, "max_event_bytes must be positive")
 
     input := chunk
-    if p.at_stream_start {
-        input = consume_bom(p, input) or_return
-    }
+    if p.at_stream_start do input = consume_bom(p, input) or_return
 
     for len(input) > 0 {
         // A '\r' just consumed swallows a leading '\n' as one CRLF ending.
@@ -118,9 +116,7 @@ feed :: proc(p: ^Parser, chunk: []byte, user: rawptr, on_event: On_Event) -> Err
         keep_going := end_line(p, user, on_event) or_return
         input = input[idx + 1:]
 
-        if !keep_going {
-            return .None
-        }
+        if !keep_going do return .None
     }
 
     return .None
@@ -159,14 +155,10 @@ consume_bom :: proc(p: ^Parser, input: []byte) -> (remaining: []byte, err: Error
 // Appends line-content bytes to the current line, enforcing the per-line cap.
 @(private)
 push_line_bytes :: proc(p: ^Parser, bytes: []byte) -> Error {
-    if len(p.line) + len(bytes) > p.max_line_bytes {
-        return .Line_Too_Long
-    }
+    if len(p.line) + len(bytes) > p.max_line_bytes do return .Line_Too_Long
 
     _, aerr := append(&p.line, ..bytes)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     // Only reachable if the parser's validated internal state was corrupted.
     assert(len(p.line) <= p.max_line_bytes, "line buffer exceeds its cap")
@@ -180,9 +172,7 @@ push_line_bytes :: proc(p: ^Parser, bytes: []byte) -> Error {
 @(private)
 end_line :: proc(p: ^Parser, user: rawptr, on_event: On_Event) -> (keep_going: bool, err: Error) {
     if len(p.line) == 0 {
-        if !p.has_data {
-            return true, .None
-        }
+        if !p.has_data do return true, .None
 
         assert(len(p.data) <= p.max_event_bytes, "event payload exceeds its cap")
         keep_going = on_event(user, string(p.data[:]))
@@ -208,15 +198,11 @@ end_line :: proc(p: ^Parser, user: rawptr, on_event: On_Event) -> (keep_going: b
         name = p.line[:]
     }
 
-    if len(value) > 0 && value[0] == ' ' {
-        value = value[1:]
-    }
+    if len(value) > 0 && value[0] == ' ' do value = value[1:]
 
     if string(name) == "data" {
         extra := len(value)
-        if p.has_data {
-            extra += 1
-        }
+        if p.has_data do extra += 1
 
         if len(p.data) + extra > p.max_event_bytes {
             err = .Event_Too_Large
@@ -250,9 +236,7 @@ end_line :: proc(p: ^Parser, user: rawptr, on_event: On_Event) -> (keep_going: b
 @(private)
 find_line_end :: proc(input: []byte) -> int {
     for b, i in input {
-        if b == '\n' || b == '\r' {
-            return i
-        }
+        if b == '\n' || b == '\r' do return i
     }
 
     return -1
@@ -262,9 +246,7 @@ find_line_end :: proc(input: []byte) -> int {
 @(private)
 find_colon :: proc(bytes: []byte) -> int {
     for b, i in bytes {
-        if b == ':' {
-            return i
-        }
+        if b == ':' do return i
     }
 
     return -1

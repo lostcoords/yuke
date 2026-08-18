@@ -6,9 +6,7 @@ import "core:time"
 @(private = "file")
 near :: proc(t: ^testing.T, got, want: time.Duration, what: string) {
     delta := got - want
-    if delta < 0 {
-        delta = -delta
-    }
+    if delta < 0 do delta = -delta
 
     testing.expectf(t, delta <= time.Millisecond, "%s: want ~%v, got %v", what, want, got)
 }

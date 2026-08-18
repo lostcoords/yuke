@@ -59,27 +59,19 @@ Response_Head :: struct {
 // origin form and contain exactly one non-empty Host field.
 parse_request_head :: proc(buf: []byte) -> (head: Request_Head, status: Head_Status, err: Head_Error) {
     end := strings.index(string(buf), "\r\n\r\n")
-    if end < 0 {
-        return {}, .Need_More, .None
-    }
+    if end < 0 do return {}, .Need_More, .None
 
     consumed := end + 4
     head.bytes = buf[:consumed]
     head.consumed = consumed
     block := string(buf[:end + 2])
     line, fields, has_line := split_start_line(block)
-    if !has_line {
-        return head, .Ready, .Bad_Start_Line
-    }
+    if !has_line do return head, .Ready, .Bad_Start_Line
 
     method, target, line_err := parse_request_line(line)
-    if line_err != .None {
-        return head, .Ready, line_err
-    }
+    if line_err != .None do return head, .Ready, line_err
 
-    if !fields_valid(fields) {
-        return head, .Ready, .Bad_Header
-    }
+    if !fields_valid(fields) do return head, .Ready, .Bad_Header
 
     value, lookup := header_lookup(fields, "host")
     switch lookup {
@@ -90,9 +82,7 @@ parse_request_head :: proc(buf: []byte) -> (head: Request_Head, status: Head_Sta
         return head, .Ready, .Duplicate_Host
 
     case .One:
-        if len(value) == 0 {
-            return head, .Ready, .Missing_Host
-        }
+        if len(value) == 0 do return head, .Ready, .Missing_Host
     }
 
     head = Request_Head {
@@ -109,27 +99,19 @@ parse_request_head :: proc(buf: []byte) -> (head: Request_Head, status: Head_Sta
 // Parse and validate one HTTP/1.1 response head.
 parse_response_head :: proc(buf: []byte) -> (head: Response_Head, status: Head_Status, err: Head_Error) {
     end := strings.index(string(buf), "\r\n\r\n")
-    if end < 0 {
-        return {}, .Need_More, .None
-    }
+    if end < 0 do return {}, .Need_More, .None
 
     consumed := end + 4
     head.bytes = buf[:consumed]
     head.consumed = consumed
     block := string(buf[:end + 2])
     line, fields, has_line := split_start_line(block)
-    if !has_line {
-        return head, .Ready, .Bad_Start_Line
-    }
+    if !has_line do return head, .Ready, .Bad_Start_Line
 
     status_code, line_err := parse_status_line(line)
-    if line_err != .None {
-        return head, .Ready, line_err
-    }
+    if line_err != .None do return head, .Ready, line_err
 
-    if !fields_valid(fields) {
-        return head, .Ready, .Bad_Header
-    }
+    if !fields_valid(fields) do return head, .Ready, .Bad_Header
 
     head = Response_Head {
         status_code = status_code,
@@ -150,9 +132,7 @@ headers :: proc(fields: string) -> Header_Iterator {
 header_next :: proc(it: ^Header_Iterator) -> (header: Header, ok: bool) {
     assert(it != nil, "header_next needs an iterator")
 
-    if len(it.rest) == 0 {
-        return {}, false
-    }
+    if len(it.rest) == 0 do return {}, false
 
     line: string
     line, it.rest = take_line(it.rest)
@@ -178,14 +158,10 @@ response_header :: proc(head: Response_Head, name: string) -> (value: string, lo
 
 // Whether `name` is an HTTP token and can be emitted as a field name.
 field_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 {
-        return false
-    }
+    if len(name) == 0 do return false
 
     for i in 0 ..< len(name) {
-        if !token_byte(name[i]) {
-            return false
-        }
+        if !token_byte(name[i]) do return false
     }
 
     return true
@@ -196,9 +172,7 @@ field_name_valid :: proc(name: string) -> bool {
 field_value_valid :: proc(value: string) -> bool {
     for i in 0 ..< len(value) {
         c := value[i]
-        if c < 0x20 && c != '\t' || c == 0x7f {
-            return false
-        }
+        if c < 0x20 && c != '\t' || c == 0x7f do return false
     }
 
     return true
@@ -213,30 +187,20 @@ request_target_valid :: proc(target: string) -> bool {
 // origin-form target. Each violation maps to a specific `Head_Error`.
 parse_request_line :: proc(line: string) -> (method: string, target: string, err: Head_Error) {
     first := strings.index_byte(line, ' ')
-    if first <= 0 {
-        return "", "", .Bad_Start_Line
-    }
+    if first <= 0 do return "", "", .Bad_Start_Line
 
     rest := line[first + 1:]
     second := strings.index_byte(rest, ' ')
-    if second <= 0 || strings.index_byte(rest[second + 1:], ' ') >= 0 {
-        return "", "", .Bad_Start_Line
-    }
+    if second <= 0 || strings.index_byte(rest[second + 1:], ' ') >= 0 do return "", "", .Bad_Start_Line
 
     method = line[:first]
     target = rest[:second]
     version := rest[second + 1:]
-    if !field_name_valid(method) {
-        return "", "", .Bad_Start_Line
-    }
+    if !field_name_valid(method) do return "", "", .Bad_Start_Line
 
-    if version != "HTTP/1.1" {
-        return "", "", .Unsupported_Version
-    }
+    if version != "HTTP/1.1" do return "", "", .Unsupported_Version
 
-    if !origin_target_valid(target) {
-        return "", "", .Unsupported_Target
-    }
+    if !origin_target_valid(target) do return "", "", .Unsupported_Target
 
     return method, target, .None
 }
@@ -244,25 +208,17 @@ parse_request_line :: proc(line: string) -> (method: string, target: string, err
 // Parse a status-line into a numeric code, requiring `HTTP/1.1` and the trailing
 // SP after the 3-digit code. The reason phrase is validated as a field value.
 parse_status_line :: proc(line: string) -> (status_code: int, err: Head_Error) {
-    if len(line) < len("HTTP/1.1 000 ") || line[:len("HTTP/1.1 ")] != "HTTP/1.1 " {
-        return 0, .Bad_Start_Line
-    }
+    if len(line) < len("HTTP/1.1 000 ") || line[:len("HTTP/1.1 ")] != "HTTP/1.1 " do return 0, .Bad_Start_Line
 
     code := line[len("HTTP/1.1 "):len("HTTP/1.1 000")]
     for i in 0 ..< len(code) {
         c := code[i]
-        if c < '0' || c > '9' {
-            return 0, .Bad_Start_Line
-        }
+        if c < '0' || c > '9' do return 0, .Bad_Start_Line
     }
 
-    if line[len("HTTP/1.1 000")] != ' ' {
-        return 0, .Bad_Start_Line
-    }
+    if line[len("HTTP/1.1 000")] != ' ' do return 0, .Bad_Start_Line
 
-    if !field_value_valid(line[len("HTTP/1.1 000 "):]) {
-        return 0, .Bad_Start_Line
-    }
+    if !field_value_valid(line[len("HTTP/1.1 000 "):]) do return 0, .Bad_Start_Line
 
     status_code = int(code[0] - '0') * 100 + int(code[1] - '0') * 10 + int(code[2] - '0')
 
@@ -273,14 +229,10 @@ parse_status_line :: proc(line: string) -> (status_code: int, err: Head_Error) {
 // block retains each line's own `CRLF` and excludes the blank terminator line.
 split_start_line :: proc(block: string) -> (line: string, fields: string, ok: bool) {
     line_end := strings.index(block, "\r\n")
-    if line_end < 0 {
-        return "", "", false
-    }
+    if line_end < 0 do return "", "", false
 
     line = block[:line_end]
-    if line_end + 2 < len(block) {
-        fields = block[line_end + 2:]
-    }
+    if line_end + 2 < len(block) do fields = block[line_end + 2:]
 
     return line, fields, true
 }
@@ -296,9 +248,7 @@ fields_valid :: proc(fields: string) -> bool {
         line: string
         line, it.rest = take_line(it.rest)
         colon := strings.index_byte(line, ':')
-        if colon <= 0 || !field_name_valid(line[:colon]) || !field_value_valid(line[colon + 1:]) {
-            return false
-        }
+        if colon <= 0 || !field_name_valid(line[:colon]) || !field_value_valid(line[colon + 1:]) do return false
     }
 
     return true
@@ -311,14 +261,10 @@ header_lookup :: proc(fields: string, name: string) -> (value: string, lookup: L
     it := headers(fields)
     for {
         field, ok := header_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         if strings.equal_fold(field.name, name) {
-            if lookup == .One {
-                return "", .Duplicate
-            }
+            if lookup == .One do return "", .Duplicate
 
             value = field.value
             lookup = .One
@@ -330,9 +276,7 @@ header_lookup :: proc(fields: string, name: string) -> (value: string, lookup: L
 
 take_line :: proc(s: string) -> (line: string, rest: string) {
     idx := strings.index(s, "\r\n")
-    if idx < 0 {
-        return s, ""
-    }
+    if idx < 0 do return s, ""
 
     return s[:idx], s[idx + 2:]
 }
@@ -367,17 +311,13 @@ token_byte :: proc(c: byte) -> bool {
 // only permitted URI bytes and well-formed percent-encoding. Absolute-URI,
 // authority, and asterisk forms are rejected.
 origin_target_valid :: proc(target: string) -> bool {
-    if len(target) == 0 || target[0] != '/' {
-        return false
-    }
+    if len(target) == 0 || target[0] != '/' do return false
 
     for i := 0; i < len(target); i += 1 {
         c := target[i]
         switch {
         case c == '%':
-            if i + 2 >= len(target) || !hex_byte(target[i + 1]) || !hex_byte(target[i + 2]) {
-                return false
-            }
+            if i + 2 >= len(target) || !hex_byte(target[i + 1]) || !hex_byte(target[i + 2]) do return false
 
             i += 2
 

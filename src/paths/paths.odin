@@ -24,23 +24,17 @@ HOME_ENV :: "USERPROFILE" when ODIN_OS == .Windows else "HOME"
 // treat empty as "no home-based path can be resolved" rather than substituting a guess.
 home_dir :: proc(allocator := context.allocator) -> string {
     home, found := os.lookup_env(HOME_ENV, allocator)
-    if !found {
-        return ""
-    }
+    if !found do return ""
 
     return home
 }
 
 // A single directory name: no slashes, not `.` or `..`. Empty is not a profile.
 app_name_valid :: proc(name: string) -> bool {
-    if name == "" || name == "." || name == ".." {
-        return false
-    }
+    if name == "" || name == "." || name == ".." do return false
 
     for r in name {
-        if r == '/' || r == '\\' || r == 0 {
-            return false
-        }
+        if r == '/' || r == '\\' || r == 0 do return false
     }
 
     return true
@@ -49,13 +43,9 @@ app_name_valid :: proc(name: string) -> bool {
 // Reason `YUKE_APPNAME` cannot be used, or empty when the default or a valid name applies.
 app_name_error :: proc() -> string {
     value, set := os.lookup_env(APP_NAME_ENV, context.temp_allocator)
-    if !set || value == "" {
-        return ""
-    }
+    if !set || value == "" do return ""
 
-    if !app_name_valid(value) {
-        return "YUKE_APPNAME must be a single directory name"
-    }
+    if !app_name_valid(value) do return "YUKE_APPNAME must be a single directory name"
 
     return ""
 }
@@ -65,9 +55,7 @@ app_name_error :: proc() -> string {
 app_name :: proc(allocator := context.allocator) -> (name: string, owned: bool, ok: bool) {
     value, set := os.lookup_env(APP_NAME_ENV, allocator)
     if !set || value == "" {
-        if set {
-            delete(value, allocator)
-        }
+        if set do delete(value, allocator)
 
         return APP_DIR, false, true
     }
@@ -87,9 +75,7 @@ app_name :: proc(allocator := context.allocator) -> (name: string, owned: bool, 
 config_dir :: proc(allocator := context.allocator) -> string {
     when ODIN_OS == .Windows {
         base, found := os.lookup_env("APPDATA", allocator)
-        if !found || base == "" {
-            return ""
-        }
+        if !found || base == "" do return ""
 
         defer delete(base, allocator)
 
@@ -98,15 +84,11 @@ config_dir :: proc(allocator := context.allocator) -> string {
         if xdg, set := os.lookup_env("XDG_CONFIG_HOME", allocator); set {
             defer delete(xdg, allocator)
 
-            if xdg != "" {
-                return join_or_empty(xdg, allocator)
-            }
+            if xdg != "" do return join_or_empty(xdg, allocator)
         }
 
         home := home_dir(allocator)
-        if home == "" {
-            return ""
-        }
+        if home == "" do return ""
 
         defer delete(home, allocator)
 
@@ -120,9 +102,7 @@ config_dir :: proc(allocator := context.allocator) -> string {
 data_dir :: proc(allocator := context.allocator) -> string {
     when ODIN_OS == .Windows {
         base, found := os.lookup_env("LOCALAPPDATA", allocator)
-        if !found || base == "" {
-            return ""
-        }
+        if !found || base == "" do return ""
 
         defer delete(base, allocator)
 
@@ -131,15 +111,11 @@ data_dir :: proc(allocator := context.allocator) -> string {
         if xdg, set := os.lookup_env("XDG_DATA_HOME", allocator); set {
             defer delete(xdg, allocator)
 
-            if xdg != "" {
-                return join_or_empty(xdg, allocator)
-            }
+            if xdg != "" do return join_or_empty(xdg, allocator)
         }
 
         home := home_dir(allocator)
-        if home == "" {
-            return ""
-        }
+        if home == "" do return ""
 
         defer delete(home, allocator)
 
@@ -166,31 +142,21 @@ blob_dir_in :: proc(base: string, allocator := context.allocator) -> string {
 // Expand a leading `~` against the home directory. Left unchanged when it does not start with
 // one or there is no home to expand against, so a caller never reports a half-substituted path.
 expand_home :: proc(path: string, allocator := context.allocator) -> string {
-    if path == "" || path[0] != '~' {
-        return path
-    }
+    if path == "" || path[0] != '~' do return path
 
-    if len(path) > 1 && path[1] != filepath.SEPARATOR {
-        return path
-    }
+    if len(path) > 1 && path[1] != filepath.SEPARATOR do return path
 
     home := home_dir(allocator)
-    if home == "" {
-        return path
-    }
+    if home == "" do return path
 
     defer delete(home, allocator)
 
     rest := strings.trim_left_proc(path[1:], proc(r: rune) -> bool {return r == filepath.SEPARATOR})
 
-    if rest == "" {
-        return strings.clone(home, allocator)
-    }
+    if rest == "" do return strings.clone(home, allocator)
 
     joined, join_err := filepath.join({home, rest}, allocator)
-    if join_err != nil {
-        return path
-    }
+    if join_err != nil do return path
 
     return joined
 }
@@ -207,13 +173,9 @@ join_under :: proc(base: string, mid: []string, allocator := context.allocator) 
     assert(len(mid) <= 2, "profile join has at most two middle segments")
 
     name, owned, ok := app_name(allocator)
-    if !ok {
-        return ""
-    }
+    if !ok do return ""
 
-    defer if owned {
-        delete(name, allocator)
-    }
+    defer if owned do delete(name, allocator)
 
     parts: [4]string
     parts[0] = base

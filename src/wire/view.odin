@@ -66,9 +66,7 @@ diff_hunk_from_reader :: proc(d: ^json.Decoder) -> (hunk: Diff_Hunk, err: json.D
         }
     }
 
-    if seen != {.Os, .Ol, .Ns, .Nl, .Lines} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Os, .Ol, .Ns, .Nl, .Lines} do return {}, .Mismatched_Payload
 
     return hunk, .None
 }
@@ -153,9 +151,7 @@ diff_file_from_reader :: proc(d: ^json.Decoder) -> (file: Diff_File, err: json.D
         }
     }
 
-    if seen != {.Path, .Hunks} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Path, .Hunks} do return {}, .Mismatched_Payload
 
     return file, .None
 }
@@ -180,9 +176,7 @@ diff_file_emit :: proc(e: ^json.Emitter, self: Diff_File) {
 diff_file_clone :: proc(self: Diff_File, allocator := context.allocator) -> Diff_File {
     old_path: Maybe(string)
 
-    if p, ok := self.old_path.?; ok {
-        old_path = strings.clone(p, allocator)
-    }
+    if p, ok := self.old_path.?; ok do old_path = strings.clone(p, allocator)
 
     hunks := make([]Diff_Hunk, len(self.hunks), allocator)
     for i in 0 ..< len(hunks) {
@@ -278,9 +272,7 @@ view_from_reader :: proc(d: ^json.Decoder) -> (view: View, err: json.Decode_Erro
             }
         }
 
-        if .Text not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Text not_in seen do return nil, .Mismatched_Payload
 
         return View_Text{text = text, language = language}, .None
 
@@ -309,13 +301,9 @@ view_from_reader :: proc(d: ^json.Decoder) -> (view: View, err: json.Decode_Erro
             }
         }
 
-        if .Text not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Text not_in seen do return nil, .Mismatched_Payload
 
-        if tag == "markdown" {
-            return View_Markdown{text = text}, .None
-        }
+        if tag == "markdown" do return View_Markdown{text = text}, .None
 
         return View_Json{text = text}, .None
 
@@ -344,9 +332,7 @@ view_from_reader :: proc(d: ^json.Decoder) -> (view: View, err: json.Decode_Erro
             }
         }
 
-        if .Files not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Files not_in seen do return nil, .Mismatched_Payload
 
         return View_Diff{files = files}, .None
 
@@ -379,9 +365,7 @@ view_from_reader :: proc(d: ^json.Decoder) -> (view: View, err: json.Decode_Erro
             }
         }
 
-        if .Source not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Source not_in seen do return nil, .Mismatched_Payload
 
         return View_Image{source = source, alt = alt}, .None
     }
@@ -432,46 +416,32 @@ view_emit :: proc(e: ^json.Emitter, self: View) {
 view_validate :: proc(self: View) -> Validation_Error {
     switch v in self {
     case View_Text:
-        if language, ok := v.language.?; ok {
-            enforce_bounded(64, language) or_return
-        }
+        if language, ok := v.language.?; ok do enforce_bounded(64, language) or_return
 
     case View_Markdown:
     case View_Json:
     case View_Diff:
-        if len(v.files) > LIMITS.max_view_items {
-            return .Overflow
-        }
+        if len(v.files) > LIMITS.max_view_items do return .Overflow
 
         for file in v.files {
             enforce_bounded(4096, file.path) or_return
 
-            if path, ok := file.old_path.?; ok {
-                enforce_bounded(4096, path) or_return
-            }
+            if path, ok := file.old_path.?; ok do enforce_bounded(4096, path) or_return
 
-            if len(file.hunks) > LIMITS.max_view_items {
-                return .Overflow
-            }
+            if len(file.hunks) > LIMITS.max_view_items do return .Overflow
 
             for hunk in file.hunks {
-                if len(hunk.lines) > LIMITS.max_view_items {
-                    return .Overflow
-                }
+                if len(hunk.lines) > LIMITS.max_view_items do return .Overflow
             }
         }
 
     case View_Image:
         media_source_validate(v.source) or_return
 
-        if alt, ok := v.alt.?; ok {
-            enforce_bounded(512, alt) or_return
-        }
+        if alt, ok := v.alt.?; ok do enforce_bounded(512, alt) or_return
     }
 
-    if _view_string_bytes(self) > LIMITS.max_view_bytes {
-        return .Overflow
-    }
+    if _view_string_bytes(self) > LIMITS.max_view_bytes do return .Overflow
 
     return .None
 }
@@ -482,9 +452,7 @@ view_clone :: proc(self: View, allocator := context.allocator) -> View {
     case View_Text:
         language: Maybe(string)
 
-        if l, ok := v.language.?; ok {
-            language = strings.clone(l, allocator)
-        }
+        if l, ok := v.language.?; ok do language = strings.clone(l, allocator)
 
         return View_Text{text = strings.clone(v.text, allocator), language = language}
 
@@ -505,9 +473,7 @@ view_clone :: proc(self: View, allocator := context.allocator) -> View {
     case View_Image:
         alt: Maybe(string)
 
-        if a, ok := v.alt.?; ok {
-            alt = strings.clone(a, allocator)
-        }
+        if a, ok := v.alt.?; ok do alt = strings.clone(a, allocator)
 
         return View_Image{source = media_source_clone(v.source, allocator), alt = alt}
     }
@@ -529,9 +495,7 @@ view_clone_slice :: proc(views: []View, allocator := context.allocator) -> []Vie
 
 // Validate one bounded list of display-only views.
 view_validate_slice :: proc(views: []View) -> Validation_Error {
-    if len(views) > LIMITS.max_views_per_tool {
-        return .Overflow
-    }
+    if len(views) > LIMITS.max_views_per_tool do return .Overflow
 
     for v in views {
         view_validate(v) or_return
@@ -549,9 +513,7 @@ _view_string_bytes :: proc(self: View) -> int {
     case View_Text:
         total += len(v.text)
 
-        if l, ok := v.language.?; ok {
-            total += len(l)
-        }
+        if l, ok := v.language.?; ok do total += len(l)
 
     case View_Markdown:
         total += len(v.text)
@@ -563,9 +525,7 @@ _view_string_bytes :: proc(self: View) -> int {
         for file in v.files {
             total += len(file.path)
 
-            if p, ok := file.old_path.?; ok {
-                total += len(p)
-            }
+            if p, ok := file.old_path.?; ok do total += len(p)
 
             for hunk in file.hunks {
                 for line in hunk.lines {
@@ -577,9 +537,7 @@ _view_string_bytes :: proc(self: View) -> int {
     case View_Image:
         total += _media_source_string_bytes(v.source)
 
-        if a, ok := v.alt.?; ok {
-            total += len(a)
-        }
+        if a, ok := v.alt.?; ok do total += len(a)
     }
 
     return total

@@ -49,9 +49,7 @@ client_from_reader :: proc(d: ^json.Decoder) -> (out: Client, err: json.Decode_E
         }
     }
 
-    if seen != {.Name, .Version} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Name, .Version} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -87,9 +85,7 @@ initialize_params_build :: proc(client: Client) -> Initialize_Params {
 
 // Verify protocol and annotated field bounds.
 initialize_params_validate :: proc(self: Initialize_Params) -> Validation_Error {
-    if self.protocol != PROTOCOL_VERSION {
-        return .Unsupported_Protocol
-    }
+    if self.protocol != PROTOCOL_VERSION do return .Unsupported_Protocol
 
     return client_validate(self.client)
 }
@@ -121,9 +117,7 @@ initialize_params_from_reader :: proc(d: ^json.Decoder) -> (out: Initialize_Para
         }
     }
 
-    if .Client not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Client not_in seen do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -258,40 +252,28 @@ initialize_result_emit :: proc(e: ^json.Emitter, self: Initialize_Result) {
 
 // Verify protocol and annotated field bounds.
 initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error {
-    if self.protocol != PROTOCOL_VERSION {
-        return .Unsupported_Protocol
-    }
+    if self.protocol != PROTOCOL_VERSION do return .Unsupported_Protocol
 
     enforce_bounded(32, self.daemon.version) or_return
     enforce_id(([64]u8)(self.catalog_rev)) or_return
 
-    if u64(self.session_revision) > MAX_SESSION_REVISION {
-        return .Out_Of_Range
-    }
+    if u64(self.session_revision) > MAX_SESSION_REVISION do return .Out_Of_Range
 
-    if u64(self.cron_revision) > MAX_CRON_REVISION {
-        return .Out_Of_Range
-    }
+    if u64(self.cron_revision) > MAX_CRON_REVISION do return .Out_Of_Range
 
-    if len(self.workspaces) > LIMITS.max_workspaces {
-        return .Overflow
-    }
+    if len(self.workspaces) > LIMITS.max_workspaces do return .Overflow
 
     for item in self.workspaces {
         workspace_validate(item) or_return
     }
 
-    if len(self.profiles) > LIMITS.max_profiles {
-        return .Overflow
-    }
+    if len(self.profiles) > LIMITS.max_profiles do return .Overflow
 
     for profile in self.profiles {
         enforce_bounded(64, profile) or_return
     }
 
-    if len(self.agents) > LIMITS.max_agents {
-        return .Overflow
-    }
+    if len(self.agents) > LIMITS.max_agents do return .Overflow
 
     for agent in self.agents {
         enforce_bounded(64, agent) or_return
@@ -300,9 +282,7 @@ initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error 
     catalog_health_validate(self.catalog_health) or_return
 
     // Reject any integer carried as a JSON number above the safe range.
-    if self.daemon.server_now_ms > MAX_WIRE_INTEGER {
-        return .Out_Of_Range
-    }
+    if self.daemon.server_now_ms > MAX_WIRE_INTEGER do return .Out_Of_Range
 
     return .None
 }
@@ -335,9 +315,7 @@ daemon_info_from_reader :: proc(d: ^json.Decoder) -> (info: Daemon_Info, err: js
         }
     }
 
-    if seen != {.Ver, .Now} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Ver, .Now} do return {}, .Mismatched_Payload
 
     return info, .None
 }
@@ -409,9 +387,7 @@ initialize_result_from_reader :: proc(d: ^json.Decoder) -> (out: Initialize_Resu
 
                 // Tolerant lookup: an unrecognized token is a newer daemon's
                 // capability this build doesn't know yet — skip it, don't reject.
-                if cap, ok := json.enum_from_wire(capability_wire, s); ok {
-                    out.capabilities += {cap}
-                }
+                if cap, ok := json.enum_from_wire(capability_wire, s); ok do out.capabilities += {cap}
             }
 
         case:
@@ -419,9 +395,7 @@ initialize_result_from_reader :: proc(d: ^json.Decoder) -> (out: Initialize_Resu
         }
     }
 
-    if seen != {.Proto, .Daemon, .Ws, .Profiles, .Agents, .Srev, .Crev, .Catrev, .Health} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Proto, .Daemon, .Ws, .Profiles, .Agents, .Srev, .Crev, .Catrev, .Health} do return {}, .Mismatched_Payload
 
     return out, .None
 }

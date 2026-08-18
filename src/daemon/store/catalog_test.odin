@@ -34,9 +34,7 @@ test_catalog_round_trips_a_provider_and_its_models :: proc(t: ^testing.T) {
 
     testing.expect_value(t, catalog.feed_etag, TEST_CATALOG_ETAG)
 
-    if !testing.expect_value(t, len(catalog.providers), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(catalog.providers), 1) do return
 
     loaded := catalog.providers[0]
     testing.expect_value(t, loaded.id, wire.Provider_Id("openai"))
@@ -45,9 +43,7 @@ test_catalog_round_trips_a_provider_and_its_models :: proc(t: ^testing.T) {
     testing.expect_value(t, loaded.endpoint.base_url, "https://api.openai.com/v1")
     testing.expect_value(t, loaded.endpoint.protocol, wire.Provider_Protocol.Openai_Chat)
 
-    if testing.expect_value(t, len(loaded.credential_env), 1) {
-        testing.expect_value(t, loaded.credential_env[0], "OPENAI_API_KEY")
-    }
+    if testing.expect_value(t, len(loaded.credential_env), 1) do testing.expect_value(t, loaded.credential_env[0], "OPENAI_API_KEY")
 
     // The provider carries its own models, in public-id order.
     if testing.expect_value(t, len(loaded.models), 2) {
@@ -108,14 +104,10 @@ test_catalog_replace_touches_one_provider :: proc(t: ^testing.T) {
     testing.expect_value(t, load_err, nil)
     defer catalog_destroy(&catalog)
 
-    if !testing.expect_value(t, len(catalog.providers), 2) {
-        return
-    }
+    if !testing.expect_value(t, len(catalog.providers), 2) do return
 
     for item in catalog.providers {
-        if !testing.expect_value(t, len(item.models), 1) {
-            continue
-        }
+        if !testing.expect_value(t, len(item.models), 1) do continue
 
         switch item.id {
         case "openai":
@@ -156,9 +148,7 @@ test_catalog_survives_store_restart :: proc(t: ^testing.T) {
     defer catalog_destroy(&catalog)
 
     testing.expect_value(t, catalog.feed_etag, TEST_CATALOG_ETAG)
-    if testing.expect_value(t, len(catalog.providers), 1) {
-        testing.expect_value(t, len(catalog.providers[0].models), 1)
-    }
+    if testing.expect_value(t, len(catalog.providers), 1) do testing.expect_value(t, len(catalog.providers[0].models), 1)
 }
 
 @(test)

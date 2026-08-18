@@ -101,14 +101,10 @@ anthropic_request_body :: proc(
     assert(scratch_allocator.procedure != nil, "Anthropic request builder needs a valid scratch allocator")
 
     err = anthropic_request_validate(request, options, scratch_allocator)
-    if err != .None {
-        return "", err
-    }
+    if err != .None do return "", err
 
     builder := strings.builder_make(0, 4096, allocator)
-    defer if err != .None {
-        strings.builder_destroy(&builder)
-    }
+    defer if err != .None do strings.builder_destroy(&builder)
 
     writer := strings.to_writer(&builder)
     json.write_raw(writer, `{"model":`)
@@ -135,9 +131,7 @@ anthropic_request_body :: proc(
         json.write_f64(writer, temperature)
     }
 
-    if len(request.tools) > 0 {
-        anthropic_write_tools(writer, request.tools)
-    }
+    if len(request.tools) > 0 do anthropic_write_tools(writer, request.tools)
 
     json.write_raw(writer, `,"messages":[`)
     messages := Anthropic_Message_Writer {
@@ -147,9 +141,7 @@ anthropic_request_body :: proc(
         anthropic_write_message(&messages, message, request.provenance_model)
     }
 
-    if messages.message_count == 0 {
-        return "", .Invalid_Request
-    }
+    if messages.message_count == 0 do return "", .Invalid_Request
 
     anthropic_message_close(&messages)
     json.write_raw(writer, `]}`)
@@ -164,21 +156,13 @@ anthropic_request_validate :: proc(
     options: Anthropic_Options,
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
-    if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) {
-        return .Invalid_Request
-    }
+    if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) do return .Invalid_Request
 
-    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) {
-        return .Invalid_Request
-    }
+    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) do return .Invalid_Request
 
-    if request.max_output_tokens == 0 || request.max_output_tokens > MAX_EXACT_JSON_INTEGER {
-        return .Invalid_Request
-    }
+    if request.max_output_tokens == 0 || request.max_output_tokens > MAX_EXACT_JSON_INTEGER do return .Invalid_Request
 
-    if system, present := request.system_prompt.?; present && !utf8.valid_string(system) {
-        return .Invalid_Request
-    }
+    if system, present := request.system_prompt.?; present && !utf8.valid_string(system) do return .Invalid_Request
 
     thinking_on := false
     if options.thinking != nil {
@@ -187,9 +171,7 @@ anthropic_request_validate :: proc(
 
         case Anthropic_Thinking_Adaptive:
             thinking_on = true
-            if !anthropic_display_valid(thinking.display) {
-                return .Invalid_Request
-            }
+            if !anthropic_display_valid(thinking.display) do return .Invalid_Request
 
         case Anthropic_Thinking_Enabled:
             thinking_on = true
@@ -198,38 +180,28 @@ anthropic_request_validate :: proc(
                 return .Invalid_Request
             }
 
-            if !anthropic_display_valid(thinking.display) {
-                return .Invalid_Request
-            }
+            if !anthropic_display_valid(thinking.display) do return .Invalid_Request
         }
     }
 
     if effort, present := options.effort.?; present {
         index := int(effort)
-        if index < 0 || index >= len(anthropic_effort_wire) {
-            return .Invalid_Request
-        }
+        if index < 0 || index >= len(anthropic_effort_wire) do return .Invalid_Request
     }
 
     if temperature, present := request.temperature.?; present {
         bits := transmute(u64)temperature
         finite := (bits >> 52) & 0x7ff != 0x7ff
 
-        if !finite || temperature < 0 || temperature > 1 || thinking_on {
-            return .Invalid_Request
-        }
+        if !finite || temperature < 0 || temperature > 1 || thinking_on do return .Invalid_Request
     }
 
     tools_validate(request.tools, scratch_allocator) or_return
 
-    if len(request.messages) == 0 {
-        return .Invalid_Request
-    }
+    if len(request.messages) == 0 do return .Invalid_Request
 
     for message in request.messages {
-        if wire.message_validate(message) != .None || !anthropic_message_supported(message) {
-            return .Invalid_Request
-        }
+        if wire.message_validate(message) != .None || !anthropic_message_supported(message) do return .Invalid_Request
 
         anthropic_tool_arguments_validate(message, scratch_allocator) or_return
     }
@@ -247,20 +219,14 @@ anthropic_tool_arguments_validate :: proc(
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
     assistant, is_assistant := message.(wire.Assistant_Message)
-    if !is_assistant {
-        return .None
-    }
+    if !is_assistant do return .None
 
     for part in assistant.content {
         tool, is_tool := part.(wire.Tool_Part)
-        if !is_tool || len(tool.arguments) == 0 {
-            continue
-        }
+        if !is_tool || len(tool.arguments) == 0 do continue
 
         value, _, parse_err := decode_json_object(tool.arguments, scratch_allocator)
-        if parse_err != .None {
-            return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
-        }
+        if parse_err != .None do return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
 
         json.destroy_value(value, scratch_allocator)
     }
@@ -273,28 +239,20 @@ anthropic_message_supported :: proc(message: wire.Message) -> bool {
     switch value in message {
     case wire.User_Message:
         for part in value.content {
-            if !anthropic_content_supported(part) {
-                return false
-            }
+            if !anthropic_content_supported(part) do return false
         }
 
     case wire.Assistant_Message:
         for part in value.content {
             switch content in part {
             case wire.Text_Part:
-                if !utf8.valid_string(content.text) {
-                    return false
-                }
+                if !utf8.valid_string(content.text) do return false
 
             case wire.Reasoning_Part:
-                if !utf8.valid_string(content.text) || !utf8.valid_string(content.signature) {
-                    return false
-                }
+                if !utf8.valid_string(content.text) || !utf8.valid_string(content.signature) do return false
 
             case wire.Redacted_Reasoning_Part:
-                if len(content.data) == 0 || !utf8.valid_string(content.data) {
-                    return false
-                }
+                if len(content.data) == 0 || !utf8.valid_string(content.data) do return false
 
             case wire.Tool_Part:
                 call_id, has_call_id := content.call_id.?
@@ -310,19 +268,13 @@ anthropic_message_supported :: proc(message: wire.Message) -> bool {
 
                 switch state in content.state {
                 case wire.Tool_State_Completed:
-                    if !utf8.valid_string(state.output) {
-                        return false
-                    }
+                    if !utf8.valid_string(state.output) do return false
 
                 case wire.Tool_State_Error:
-                    if !utf8.valid_string(state.error) {
-                        return false
-                    }
+                    if !utf8.valid_string(state.error) do return false
 
                 case wire.Tool_State_Denied:
-                    if !utf8.valid_string(state.reason) {
-                        return false
-                    }
+                    if !utf8.valid_string(state.reason) do return false
 
                 case wire.Tool_State_Canceled:
 
@@ -401,9 +353,7 @@ anthropic_effort_wire := [Anthropic_Effort]string {
 
 @(private)
 anthropic_write_thinking :: proc(writer: io.Writer, value: Anthropic_Thinking) {
-    if value == nil {
-        return
-    }
+    if value == nil do return
 
     switch thinking in value {
     case Anthropic_Thinking_Default:
@@ -439,9 +389,7 @@ anthropic_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition) {
 
     json.write_raw(writer, `,"tools":[`)
     for tool, index in tools {
-        if index > 0 {
-            json.write_raw(writer, `,`)
-        }
+        if index > 0 do json.write_raw(writer, `,`)
 
         json.write_raw(writer, `{"name":`)
         json.write_string(writer, tool.name)
@@ -466,9 +414,7 @@ anthropic_write_message :: proc(out: ^Anthropic_Message_Writer, message: wire.Me
         for part in value.content {
             switch content in part {
             case wire.Content_Text:
-                if len(content.text) > 0 {
-                    anthropic_write_text_block(out, .User, content.text)
-                }
+                if len(content.text) > 0 do anthropic_write_text_block(out, .User, content.text)
 
             case wire.Content_Image:
                 anthropic_write_image_block(out, content.source)
@@ -483,9 +429,7 @@ anthropic_write_message :: proc(out: ^Anthropic_Message_Writer, message: wire.Me
     case wire.Assistant_Message:
         // All-or-nothing: the provider rejects a partially dropped sequence.
         replay_thinking := false
-        if provenance, present := value.provenance.?; present {
-            replay_thinking = provenance.protocol == .Anthropic_Messages && provenance.model == provenance_model
-        }
+        if provenance, present := value.provenance.?; present do replay_thinking = provenance.protocol == .Anthropic_Messages && provenance.model == provenance_model
 
         if replay_thinking {
             for part in value.content {
@@ -500,19 +444,13 @@ anthropic_write_message :: proc(out: ^Anthropic_Message_Writer, message: wire.Me
         for part in value.content {
             switch content in part {
             case wire.Text_Part:
-                if len(content.text) > 0 {
-                    anthropic_write_text_block(out, .Assistant, content.text)
-                }
+                if len(content.text) > 0 do anthropic_write_text_block(out, .Assistant, content.text)
 
             case wire.Reasoning_Part:
-                if replay_thinking {
-                    anthropic_write_thinking_block(out, content.text, content.signature)
-                }
+                if replay_thinking do anthropic_write_thinking_block(out, content.text, content.signature)
 
             case wire.Redacted_Reasoning_Part:
-                if replay_thinking {
-                    anthropic_write_redacted_thinking_block(out, content.data)
-                }
+                if replay_thinking do anthropic_write_redacted_thinking_block(out, content.data)
 
             case wire.Tool_Part:
                 anthropic_write_tool_use_block(out, content)
@@ -520,15 +458,11 @@ anthropic_write_message :: proc(out: ^Anthropic_Message_Writer, message: wire.Me
         }
 
         for part in value.content {
-            if tool, is_tool := part.(wire.Tool_Part); is_tool {
-                anthropic_write_tool_result_block(out, tool)
-            }
+            if tool, is_tool := part.(wire.Tool_Part); is_tool do anthropic_write_tool_result_block(out, tool)
         }
 
     case wire.Compaction_Message:
-        if len(value.summary) > 0 {
-            anthropic_write_text_block(out, .User, value.summary)
-        }
+        if len(value.summary) > 0 do anthropic_write_text_block(out, .User, value.summary)
     }
 }
 
@@ -542,9 +476,7 @@ anthropic_message_block_begin :: proc(out: ^Anthropic_Message_Writer, role: Anth
     if out.role != role {
         anthropic_message_close(out)
 
-        if out.message_count > 0 {
-            json.write_raw(out.writer, `,`)
-        }
+        if out.message_count > 0 do json.write_raw(out.writer, `,`)
 
         role_wire := "user" if role == .User else "assistant"
         json.write_raw(out.writer, `{"role":`)
@@ -555,9 +487,7 @@ anthropic_message_block_begin :: proc(out: ^Anthropic_Message_Writer, role: Anth
         out.block_count = 0
     }
 
-    if out.block_count > 0 {
-        json.write_raw(out.writer, `,`)
-    }
+    if out.block_count > 0 do json.write_raw(out.writer, `,`)
     out.block_count += 1
 }
 
@@ -649,9 +579,7 @@ anthropic_write_tool_use_block :: proc(out: ^Anthropic_Message_Writer, tool: wir
 
     // Arguments were structurally validated in preflight; write them raw.
     arguments := tool.arguments
-    if len(arguments) == 0 {
-        arguments = "{}"
-    }
+    if len(arguments) == 0 do arguments = "{}"
 
     anthropic_message_block_begin(out, .Assistant)
     json.write_raw(out.writer, `{"type":"tool_use","id":`)
@@ -676,9 +604,7 @@ anthropic_write_tool_result_block :: proc(out: ^Anthropic_Message_Writer, tool: 
     json.write_string(out.writer, call_id)
     json.write_raw(out.writer, `,"content":`)
     json.write_string(out.writer, result.content)
-    if result.is_error {
-        json.write_raw(out.writer, `,"is_error":true`)
-    }
+    if result.is_error do json.write_raw(out.writer, `,"is_error":true`)
 
     json.write_raw(out.writer, `}`)
 }

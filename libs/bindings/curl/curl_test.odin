@@ -151,9 +151,7 @@ fake_on_gap :: proc(op: ^nbio.Operation, f: ^Fake) {
 
 // EOF is what ends the body: none of the canned responses carry a content-length.
 fake_close :: proc(f: ^Fake) {
-    if f.closed || !f.taken {
-        return
-    }
+    if f.closed || !f.taken do return
 
     f.closed = true
     nbio.close(f.socket, fake_on_closed, f.loop)
@@ -224,25 +222,19 @@ obs_finished :: proc(o: ^Obs) -> bool {
 obs_on_status :: proc(user: rawptr, status: int) {
     o := (^Obs)(user)
 
-    if o.status_count < len(o.status_seen) {
-        o.status_seen[o.status_count] = status
-    }
+    if o.status_count < len(o.status_seen) do o.status_seen[o.status_count] = status
 
     o.status_count += 1
     o.last_status = status
 
-    if o.canceled {
-        o.after_cancel += 1
-    }
+    if o.canceled do o.after_cancel += 1
 }
 
 obs_on_header :: proc(user: rawptr, line: []byte) {
     o := (^Obs)(user)
     o.header_count += 1
 
-    if o.canceled {
-        o.after_cancel += 1
-    }
+    if o.canceled do o.after_cancel += 1
 
     if o.headers_len > 0 && o.headers_len < len(o.headers) {
         o.headers[o.headers_len] = '\n'
@@ -257,13 +249,9 @@ obs_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     o.chunk_count += 1
     o.body_len += copy(o.body[o.body_len:], chunk)
 
-    if o.canceled {
-        o.after_cancel += 1
-    }
+    if o.canceled do o.after_cancel += 1
 
-    if o.abort_after > 0 && o.chunk_count >= o.abort_after {
-        return false
-    }
+    if o.abort_after > 0 && o.chunk_count >= o.abort_after do return false
 
     // Cancellation is deferred to the loop: `transfer_cancel` from inside a curl
     // callback is exactly what the driver forbids.
@@ -282,9 +270,7 @@ obs_on_done :: proc(user: rawptr, result: Result) {
     o.done_status = result.status
     o.message_len = copy(o.message[:], result.message)
 
-    if o.canceled {
-        o.after_cancel += 1
-    }
+    if o.canceled do o.after_cancel += 1
 
     if o.chain != nil {
         next := o.chain
@@ -860,39 +846,25 @@ test_field_validators_match_libs_http :: proc(t: ^testing.T) {
 // Drive a `Connect_Only` handle on `multi` until its transfer completes, and report
 // that transfer's own result.
 connect_only_dial :: proc(easy: ^Easy, multi: ^Multi, url: cstring) -> Code {
-    if code := setopt_str(easy, .Url, url); code != .Ok {
-        return code
-    }
+    if code := setopt_str(easy, .Url, url); code != .Ok do return code
 
-    if code := setopt_long(easy, .Connect_Only, 1); code != .Ok {
-        return code
-    }
+    if code := setopt_long(easy, .Connect_Only, 1); code != .Ok do return code
 
-    if mcode := c_multi_add_handle(multi, easy); mcode != .Ok {
-        return .Failed_Init
-    }
+    if mcode := c_multi_add_handle(multi, easy); mcode != .Ok do return .Failed_Init
 
     deadline := time.time_add(time.now(), 5 * time.Second)
     for time.diff(time.now(), deadline) > 0 {
         running, mcode := multi_perform(multi)
-        if mcode != .Ok && mcode != .Call_Multi_Perform {
-            return .Failed_Init
-        }
+        if mcode != .Ok && mcode != .Call_Multi_Perform do return .Failed_Init
 
         for {
             msg, _ := multi_info_read(multi)
-            if msg == nil {
-                break
-            }
+            if msg == nil do break
 
-            if msg.kind == .Done && msg.easy == easy {
-                return msg.data.result
-            }
+            if msg.kind == .Done && msg.easy == easy do return msg.data.result
         }
 
-        if running == 0 {
-            break
-        }
+        if running == 0 do break
 
         time.sleep(time.Millisecond)
     }
@@ -949,30 +921,20 @@ connect_only_pair :: proc(t: ^testing.T) -> (p: Connect_Only_Pair, ok: bool) {
 }
 
 connect_only_pair_destroy :: proc(p: ^Connect_Only_Pair) {
-    if p.easy != nil {
-        c_easy_cleanup(p.easy)
-    }
+    if p.easy != nil do c_easy_cleanup(p.easy)
 
-    if p.multi != nil {
-        c_multi_cleanup(p.multi)
-    }
+    if p.multi != nil do c_multi_cleanup(p.multi)
 
-    if p.peer != 0 {
-        net.close(p.peer)
-    }
+    if p.peer != 0 do net.close(p.peer)
 
-    if p.listener != 0 {
-        net.close(p.listener)
-    }
+    if p.listener != 0 do net.close(p.listener)
 }
 
 // The control: a `Connect_Only` handle still on the multi can send.
 @(test)
 test_connect_only_sends_while_attached :: proc(t: ^testing.T) {
     p, ok := connect_only_pair(t)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer connect_only_pair_destroy(&p)
 
     payload := "ping"
@@ -994,9 +956,7 @@ test_connect_only_sends_while_attached :: proc(t: ^testing.T) {
 @(test)
 test_connect_only_dies_on_multi_remove :: proc(t: ^testing.T) {
     p, ok := connect_only_pair(t)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer connect_only_pair_destroy(&p)
 
     testing.expect_value(t, c_multi_remove_handle(p.multi, p.easy), Multi_Code.Ok)
@@ -1018,9 +978,7 @@ test_connect_only_dies_on_multi_remove :: proc(t: ^testing.T) {
 @(test)
 test_connect_only_parked_asks_nothing_of_the_pump :: proc(t: ^testing.T) {
     p, ok := connect_only_pair(t)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer connect_only_pair_destroy(&p)
 
     for _ in 0 ..< 3 {

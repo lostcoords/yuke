@@ -43,37 +43,25 @@ RELAY_MAX_CHANNELS :: 8
 // Validate and remove trailing slashes from a control-plane base URL. Remote
 // endpoints require HTTPS; plaintext HTTP is limited to literal IPv4 loopback.
 relay_cloud_url_normalize :: proc(source: string, allocator := context.allocator) -> (normalized: string, err: Error) {
-    if source == "" {
-        return "", .Invalid_Options
-    }
+    if source == "" do return "", .Invalid_Options
 
     for c in transmute([]u8)source {
-        if c <= ' ' || c >= 0x7f {
-            return "", .Invalid_Options
-        }
+        if c <= ' ' || c >= 0x7f do return "", .Invalid_Options
     }
-    if strings.contains_any(source, "@?#") {
-        return "", .Invalid_Options
-    }
+    if strings.contains_any(source, "@?#") do return "", .Invalid_Options
 
     prefix := "https://"
     secure := true
     if strings.has_prefix(source, "http://") {
         prefix = "http://"
         secure = false
-    } else if !strings.has_prefix(source, prefix) {
-        return "", .Invalid_Options
-    }
+    } else if !strings.has_prefix(source, prefix) do return "", .Invalid_Options
 
     rest := source[len(prefix):]
     slash := strings.index_byte(rest, '/')
     authority := rest
-    if slash >= 0 {
-        authority = rest[:slash]
-    }
-    if authority == "" || authority[len(authority) - 1] == ':' {
-        return "", .Invalid_Options
-    }
+    if slash >= 0 do authority = rest[:slash]
+    if authority == "" || authority[len(authority) - 1] == ':' do return "", .Invalid_Options
 
     for c in transmute([]u8)authority {
         if !(c >= 'a' && c <= 'z' ||
@@ -89,30 +77,20 @@ relay_cloud_url_normalize :: proc(source: string, allocator := context.allocator
     }
 
     host, bracketed, host_ok := http.split_host(authority)
-    if !host_ok || host == "" {
-        return "", .Invalid_Options
-    }
+    if !host_ok || host == "" do return "", .Invalid_Options
 
     port_suffix := authority[len(host):]
-    if bracketed {
-        port_suffix = authority[len(host) + 2:]
-    }
+    if bracketed do port_suffix = authority[len(host) + 2:]
     if port_suffix != "" {
-        if len(port_suffix) < 2 || len(port_suffix) > 6 {
-            return "", .Invalid_Options
-        }
+        if len(port_suffix) < 2 || len(port_suffix) > 6 do return "", .Invalid_Options
 
         port, port_ok := strconv.parse_int(port_suffix[1:], 10)
-        if !port_ok || port < 1 || port > 65535 {
-            return "", .Invalid_Options
-        }
+        if !port_ok || port < 1 || port > 65535 do return "", .Invalid_Options
     }
 
     if !secure {
         address, address_ok := net.parse_ip4_address(host)
-        if !address_ok || bracketed || address[0] != 127 {
-            return "", .Invalid_Options
-        }
+        if !address_ok || bracketed || address[0] != 127 do return "", .Invalid_Options
     }
 
     end := len(source)
@@ -327,9 +305,7 @@ relay_autostart :: proc(d: ^Daemon) {
     ecdh.private_key_bytes(&id.static_key, key_bytes[:])
     defer mem.zero_slice(key_bytes[:])
 
-    if err := relay_connect(d, d.relay_cloud_url, id.credential, key_bytes[:]); err != .None {
-        log.errorf("daemon: relay connect failed: %v", err)
-    }
+    if err := relay_connect(d, d.relay_cloud_url, id.credential, key_bytes[:]); err != .None do log.errorf("daemon: relay connect failed: %v", err)
 }
 
 // Whether the relay link has finished, or was never up — so a shutdown may stop waiting.
@@ -340,14 +316,10 @@ relay_closed :: proc(d: ^Daemon) -> bool {
 // Begin a graceful teardown of the link. Idempotent: `.Waiting` cancels its timer, `.Parked`
 // closes and drives to `.Closed`, and an in-flight dial resolves into the stopping path.
 relay_begin_close :: proc(d: ^Daemon) {
-    if d.relay == nil {
-        return
-    }
+    if d.relay == nil do return
 
     r := d.relay
-    if r.state == .Closed || r.state == .Stopping {
-        return
-    }
+    if r.state == .Closed || r.state == .Stopping do return
 
     prior := r.state
     r.state = .Stopping
@@ -355,9 +327,7 @@ relay_begin_close :: proc(d: ^Daemon) {
     switch prior {
     case .Fetching:
         // A ticket fetch is in flight; cancel it (its completion never fires after) and finish.
-        if r.curl_ready && r.ticket_xfer.state == .Running {
-            curl.transfer_cancel(&r.ticket_xfer)
-        }
+        if r.curl_ready && r.ticket_xfer.state == .Running do curl.transfer_cancel(&r.ticket_xfer)
 
         r.state = .Closed
 
@@ -384,9 +354,7 @@ relay_begin_close :: proc(d: ^Daemon) {
 // Release the relay link and its session, wiping key material. Call once, after
 // `relay_closed` is true. The bridged connection and any reconnect timer are already gone.
 relay_destroy :: proc(d: ^Daemon) {
-    if d.relay == nil {
-        return
-    }
+    if d.relay == nil do return
 
     r := d.relay
     assert(r.state == .Closed, "relay destroyed before it closed")
@@ -400,13 +368,9 @@ relay_destroy :: proc(d: ^Daemon) {
         relay.reassembler_destroy(&r.peers[ch].recv_reasm)
     }
 
-    if r.curl_ready {
-        curl.client_destroy(&r.curl_client)
-    }
+    if r.curl_ready do curl.client_destroy(&r.curl_client)
 
-    if r.link_live {
-        relay.link_destroy(&r.link)
-    }
+    if r.link_live do relay.link_destroy(&r.link)
 
     ecdh.private_key_clear(&r.static_key)
     bounded_response_reset(&r.ticket_resp)
@@ -450,14 +414,10 @@ relay_conn_send :: proc(r: ^Relay, channel: u8, plaintext: []byte) -> ws.Server_
         }
 
         send_err := tx_error_client(relay.link_send_channel(&r.link, channel, frame))
-        if send_err == .None {
-            continue
-        }
+        if send_err == .None do continue
 
         // The link is already closing; its terminal tears down the session and reconnects.
-        if send_err == .Not_Open {
-            return .Not_Open
-        }
+        if send_err == .Not_Open do return .Not_Open
 
         // Fatal, a full send queue included: the chunk is sealed, so the nonce advanced and dropping
         // it would desync the cipher. Fail hard so the link reconnects and resyncs.
@@ -489,9 +449,7 @@ relay_conn_close :: proc(r: ^Relay, channel: u8) {
 // `relay_connect` sets, in the order it sets them.
 @(private = "file")
 relay_free_partial :: proc(r: ^Relay) {
-    if r.curl_ready {
-        curl.client_destroy(&r.curl_client)
-    }
+    if r.curl_ready do curl.client_destroy(&r.curl_client)
 
     delete(r.cloud_url, r.daemon.allocator)
     delete(r.credential, r.daemon.allocator)
@@ -576,19 +534,13 @@ relay_ticket_on_done :: proc(user: rawptr, result: curl.Result) {
 @(private = "file")
 relay_ticket_store :: proc(r: ^Relay, body: string) -> bool {
     parsed, cerr := relay.ticket_decode(transmute([]u8)body, context.temp_allocator)
-    if cerr != .None {
-        return false
-    }
+    if cerr != .None do return false
     defer delete(parsed.ticket, context.temp_allocator)
 
-    if _, ok := relay.endpoint_parse(parsed.relay_url); !ok {
-        return false
-    }
+    if _, ok := relay.endpoint_parse(parsed.relay_url); !ok do return false
 
     ticket, t_aerr := strings.clone(parsed.ticket, r.daemon.allocator)
-    if t_aerr != nil {
-        return false
-    }
+    if t_aerr != nil do return false
 
     url, u_aerr := strings.clone(parsed.relay_url, r.daemon.allocator)
     if u_aerr != nil {
@@ -720,9 +672,7 @@ relay_peer_teardown :: proc(r: ^Relay, channel: u8) {
 @(private = "file")
 relay_teardown :: proc(r: ^Relay) {
     for ch in 0 ..< RELAY_MAX_CHANNELS {
-        if r.peers[ch].active {
-            relay_peer_teardown(r, u8(ch))
-        }
+        if r.peers[ch].active do relay_peer_teardown(r, u8(ch))
     }
 }
 
@@ -778,9 +728,7 @@ relay_on_peer_gone :: proc(l: ^relay.Link, reason: string) {
     ch := relay.link_channel(l)
     log.infof("daemon: relay peer gone on channel %d (%s)", ch, reason)
 
-    if int(ch) < RELAY_MAX_CHANNELS && r.peers[ch].active {
-        relay_peer_teardown(r, ch)
-    }
+    if int(ch) < RELAY_MAX_CHANNELS && r.peers[ch].active do relay_peer_teardown(r, ch)
 }
 
 // One SEALED payload: before the handshake it is the initiator's first message, after it is a
@@ -847,13 +795,9 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
         return
     }
 
-    if !done {
-        return
-    }
+    if !done do return
 
-    if peer.conn != nil && peer.conn.state != .Closed {
-        handle_text(peer.conn, frame)
-    }
+    if peer.conn != nil && peer.conn.state != .Closed do handle_text(peer.conn, frame)
 
     relay.reassembler_reset(&peer.recv_reasm)
 }
@@ -904,17 +848,11 @@ relay_close_reason :: proc(code: ws.Close_Code) -> string {
 // closing and backpressure are common to both; anything else is a generic send failure.
 @(private = "file")
 tx_error_client :: proc(e: ws.Client_Error) -> ws.Server_Error {
-    if e == .None {
-        return .None
-    }
+    if e == .None do return .None
 
-    if e == .Not_Open {
-        return .Not_Open
-    }
+    if e == .Not_Open do return .Not_Open
 
-    if e == .Send_Queue_Full {
-        return .Send_Queue_Full
-    }
+    if e == .Send_Queue_Full do return .Send_Queue_Full
 
     return .Send_Failed
 }

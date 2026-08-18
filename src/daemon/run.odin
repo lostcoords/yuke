@@ -104,9 +104,7 @@ run_begin :: proc(s: ^Run_Service, connection: provider.Connection, body: string
     assert(len(body) > 0, "a run needs a built request body")
 
     op, alloc_err := new(Run_Op, s.allocator)
-    if alloc_err != nil {
-        return nil
-    }
+    if alloc_err != nil do return nil
     op^ = {
         service = s,
         sink    = sink,
@@ -139,9 +137,7 @@ run_on_event :: proc(user: rawptr, event: provider.Stream_Event) {
     op := (^Run_Op)(user)
     assert(op != nil && op.service != nil, "a run event lost its owner")
 
-    if op.sink.on_event != nil {
-        op.sink.on_event(op.sink.user, event)
-    }
+    if op.sink.on_event != nil do op.sink.on_event(op.sink.user, event)
 }
 
 // Terminal for one turn. The op is released before the sink runs, so the sink may start
@@ -267,16 +263,12 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
     defer virtual.arena_temp_end(temp)
     sa := virtual.arena_allocator(&d.turn_scratch)
 
-    if session.model == "" {
-        return 0, .No_Model
-    }
+    if session.model == "" do return 0, .No_Model
 
     // The catalog changes only on a refresh, which cannot run while this does; the borrow
     // never outlives this proc.
     model := catalog_model_find(d, session.model)
-    if model == nil {
-        return 0, .Unknown_Model
-    }
+    if model == nil do return 0, .Unknown_Model
 
     connection, bind_err := run_connection_build(d, model)
     if bind_err != .None {
@@ -331,9 +323,7 @@ run_turn_start :: proc(d: ^Daemon, session: wire.Session) -> (wire.Run_Id, Run_S
     }
 
     run, run_err := run_new(d, session, hw, model, run_prompt)
-    if run_err != .None {
-        return 0, run_err
-    }
+    if run_err != .None do return 0, run_err
 
     // `config_rev` 0 means the session has announced none, and a revision no event
     // announced is one a resync cannot resolve.
@@ -402,9 +392,7 @@ run_new :: proc(
     Run_Start_Error,
 ) {
     run, alloc_err := new(Run, d.allocator)
-    if alloc_err != nil {
-        return nil, .Start_Failed
-    }
+    if alloc_err != nil do return nil, .Start_Failed
 
     run^ = {}
 
@@ -529,9 +517,7 @@ run_on_result :: proc(user: rawptr, result: provider.Turn_Result) {
 
     // Tools run before the commit: a transcript carrying a pending tool part is refused by
     // every request builder, so the message that holds one must never reach the log.
-    if run_tools_begin(run) {
-        return
-    }
+    if run_tools_begin(run) do return
 
     if run.fault != .None {
         run_fail_fault(run)
@@ -607,9 +593,7 @@ run_round_continues :: proc(run: ^Run) -> bool {
     assert(run != nil, "checking a round continuation needs its run")
     assert(run.rounds > 0, "a continuation follows a completed round")
 
-    if run.finish != .Tool_Calls {
-        return false
-    }
+    if run.finish != .Tool_Calls do return false
 
     has_tool := false
     for &block in run.blocks {
@@ -620,13 +604,9 @@ run_round_continues :: proc(run: ^Run) -> bool {
         }
     }
 
-    if !has_tool {
-        return false
-    }
+    if !has_tool do return false
 
-    if cap, capped := run.max_rounds.?; capped && cap > 0 && run.rounds >= cap {
-        return false
-    }
+    if cap, capped := run.max_rounds.?; capped && cap > 0 && run.rounds >= cap do return false
 
     return true
 }
@@ -679,9 +659,7 @@ run_round_start_next :: proc(run: ^Run) {
         tools     = tools_definitions(d, sa),
         cache_key = string(run_key[:]),
     }
-    if prompt, has_prompt := run.system_prompt.?; has_prompt {
-        request.system_prompt = prompt
-    }
+    if prompt, has_prompt := run.system_prompt.?; has_prompt do request.system_prompt = prompt
 
     body, build_err := run_request_build(&run.model, connection.auth, run.config.reasoning, request, sa, sa)
     if build_err != .None {
@@ -710,9 +688,7 @@ run_round_start_next :: proc(run: ^Run) {
     run.finish_seen = false
     run.fault = .None
     run.usage = {}
-    if !run_round_begin(run, connection, body) {
-        run_fail(run, .Provider, "the next provider round did not start")
-    }
+    if !run_round_begin(run, connection, body) do run_fail(run, .Provider, "the next provider round did not start")
 }
 
 // Announce one initialized draft, then hand its response sink to the provider transport.
@@ -753,9 +729,7 @@ run_round_init :: proc(run: ^Run) -> bool {
     assert(run.round_allocator.procedure == nil, "a round is initialized once")
     assert(run.blocks == nil, "a new round starts without blocks")
 
-    if virtual.arena_init_growing(&run.round_arena) != nil {
-        return false
-    }
+    if virtual.arena_init_growing(&run.round_arena) != nil do return false
 
     run.round_allocator = virtual.arena_allocator(&run.round_arena)
     run.blocks = make([dynamic]Run_Block, run.round_allocator)
@@ -772,9 +746,7 @@ run_round_release :: proc(run: ^Run) {
 
     run_tools_release(run)
 
-    if run.round_allocator.procedure != nil {
-        virtual.arena_destroy(&run.round_arena)
-    }
+    if run.round_allocator.procedure != nil do virtual.arena_destroy(&run.round_arena)
 
     run.round_arena = {}
     run.round_allocator = {}
@@ -811,9 +783,7 @@ run_turn_cancel :: proc(d: ^Daemon, session: wire.Session_Id) -> (wire.Run_Id, b
     assert(d != nil, "canceling a turn needs daemon state")
 
     run := session_live_run(d, session)
-    if run == nil {
-        return 0, false
-    }
+    if run == nil do return 0, false
 
     if _, pending := run.pending_done.?; pending {
         run_id := run.run_id
@@ -869,9 +839,7 @@ run_finish :: proc(run: ^Run, outcome: wire.Run_Outcome, ended_at_ms: u64) {
         log.errorf("daemon: session %v could not finish run %d: %v", run.session, run.run_id, perr)
         run.pending_done = done
 
-        if perr == .Store_Failed {
-            run_done_retry_schedule(run)
-        }
+        if perr == .Store_Failed do run_done_retry_schedule(run)
 
         return
     }
@@ -886,9 +854,7 @@ run_done_retry_schedule :: proc(run: ^Run) {
     assert(run.done_retry == nil, "a run terminal retry is scheduled once")
     assert(run.pending_done != nil, "a terminal retry has a retained terminal")
 
-    if run.done_retry_delay == 0 {
-        run.done_retry_delay = RUN_DONE_RETRY_MIN
-    }
+    if run.done_retry_delay == 0 do run.done_retry_delay = RUN_DONE_RETRY_MIN
 
     delay := run.done_retry_delay
     run.done_retry_delay = min(delay * 2, RUN_DONE_RETRY_MAX)
@@ -911,9 +877,7 @@ run_done_retry :: proc(run: ^Run) {
 
     if perr := broadcast(run.daemon, done); perr != .None {
         log.errorf("daemon: session %v still could not finish run %d: %v", run.session, run.run_id, perr)
-        if perr == .Store_Failed && run.done_retry == nil {
-            run_done_retry_schedule(run)
-        }
+        if perr == .Store_Failed && run.done_retry == nil do run_done_retry_schedule(run)
 
         return
     }
@@ -1016,9 +980,7 @@ runs_stop :: proc(d: ^Daemon) {
 
     for _, live in d.sessions {
         if live.run != nil {
-            if live.run.op != nil {
-                run_cancel(&d.runs, live.run.op)
-            }
+            if live.run.op != nil do run_cancel(&d.runs, live.run.op)
 
             run_free(live.run)
             live.run = nil
@@ -1099,9 +1061,7 @@ run_on_stream :: proc(user: rawptr, event: provider.Stream_Event) {
     assert(run != nil, "a stream event lost its run")
     assert(run.daemon != nil, "a run lost its daemon")
 
-    if run.fault != .None {
-        return
-    }
+    if run.fault != .None do return
 
     switch v in event {
     case provider.Stream_Block_Started:
@@ -1151,9 +1111,7 @@ run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
 
     // A tool block announces at its terminal instead: the provider names the tool there, so
     // until then there is no part a client could render.
-    if started.kind == .Tool {
-        return
-    }
+    if started.kind == .Tool do return
 
     added := wire.Message_Part_Added_Data {
         session_id = run.session,
@@ -1172,13 +1130,9 @@ run_block_open :: proc(run: ^Run, started: provider.Stream_Block_Started) {
 @(private = "file")
 run_block_fold :: proc(run: ^Run, block_id: provider.Stream_Block_Id, text: string) {
     block, index := run_block_find(run, block_id)
-    if block == nil {
-        return
-    }
+    if block == nil do return
 
-    if !run_string_add(run, len(text)) {
-        return
-    }
+    if !run_string_add(run, len(text)) do return
 
     offset := u64(len(strings.to_string(block.text)))
     if strings.write_string(&block.text, text) != len(text) {
@@ -1201,17 +1155,13 @@ run_block_fold :: proc(run: ^Run, block_id: provider.Stream_Block_Id, text: stri
 @(private = "file")
 run_block_close :: proc(run: ^Run, stopped: provider.Stream_Block_Stopped) {
     block, index := run_block_find(run, stopped.block_id)
-    if block == nil {
-        return
-    }
+    if block == nil do return
 
     was_open := !block.closed
     block.closed = true
 
     // Only the newest reasoning block names a phase, so closing anything else is invisible.
-    if was_open && block.kind == .Reasoning && block == &run.blocks[len(run.blocks) - 1] {
-        session_activity_announce(run.daemon, run.session)
-    }
+    if was_open && block.kind == .Reasoning && block == &run.blocks[len(run.blocks) - 1] do session_activity_announce(run.daemon, run.session)
 
     #partial switch result in stopped.result {
     case provider.Stream_Reasoning_Block:
@@ -1274,16 +1224,12 @@ run_block_drop_unannounced :: proc(run: ^Run, index: int) {
     assert(run != nil, "dropping an unannounced block needs its run")
     assert(index >= 0 && index < len(run.blocks), "an unannounced block has a part ordinal")
 
-    if index == len(run.blocks) - 1 {
-        ordered_remove(&run.blocks, index)
-    }
+    if index == len(run.blocks) - 1 do ordered_remove(&run.blocks, index)
 }
 
 @(private = "file")
 run_block_signature_set :: proc(run: ^Run, block: ^Run_Block, signature: string) {
-    if !run_string_add(run, len(signature)) {
-        return
-    }
+    if !run_string_add(run, len(signature)) do return
 
     owned, err := strings.clone(signature, run.round_allocator)
     if err != nil {
@@ -1302,9 +1248,7 @@ run_string_add :: proc(run: ^Run, bytes: int) -> bool {
     assert(run.string_bytes >= len(RUN_AGENT), "draft bytes include its agent")
     assert(bytes >= 0, "draft byte growth is non-negative")
 
-    if run.fault != .None {
-        return false
-    }
+    if run.fault != .None do return false
 
     if bytes > wire.LIMITS.max_message_string_bytes - run.string_bytes {
         run.fault = .Transcript_Limit
@@ -1334,9 +1278,7 @@ utf8_floor :: proc(text: string, limit: int) -> int {
 @(private = "file")
 run_block_find :: proc(run: ^Run, block_id: provider.Stream_Block_Id) -> (^Run_Block, int) {
     for &block, index in run.blocks {
-        if block.block_id == block_id {
-            return &block, index
-        }
+        if block.block_id == block_id do return &block, index
     }
 
     return nil, 0
@@ -1361,14 +1303,10 @@ run_part_build :: proc(block: ^Run_Block, index: int) -> wire.Assistant_Part {
     case .Tool:
         call_id: Maybe(string)
 
-        if block.call_id != "" {
-            call_id = block.call_id
-        }
+        if block.call_id != "" do call_id = block.call_id
 
         state := block.tool_state
-        if state == nil {
-            state = wire.Tool_State_Pending{}
-        }
+        if state == nil do state = wire.Tool_State_Pending{}
 
         return wire.Tool_Part{id = id, call_id = call_id, name = block.name, arguments = text, state = state}
     }
@@ -1401,13 +1339,9 @@ run_tools_begin :: proc(run: ^Run) -> bool {
     now := now_ms()
 
     for &block, index in run.blocks {
-        if run.fault != .None {
-            break
-        }
+        if run.fault != .None do break
 
-        if block.kind != .Tool || block.tool_state != nil {
-            continue
-        }
+        if block.kind != .Tool || block.tool_state != nil do continue
 
         tool := tools_find(d, block.name)
 
@@ -1425,9 +1359,7 @@ run_tools_begin :: proc(run: ^Run) -> bool {
 
     // A promise can already be settled without queuing a microtask.
     run_tools_poll(run)
-    if run_tools_open(run) == 0 {
-        return false
-    }
+    if run_tools_open(run) == 0 do return false
 
     // Mark the join before the drain. Its hook can settle the last promise and free `run`,
     // so nothing after the drain can read through that pointer.
@@ -1449,9 +1381,7 @@ run_tool_call :: proc(run: ^Run, block: ^Run_Block, index: int, tool: Daemon_Too
 
     arguments := strings.to_string(block.text)
 
-    if arguments == "" {
-        arguments = "{}"
-    }
+    if arguments == "" do arguments = "{}"
 
     args := qjs.parse_json(ctx, arguments, run.round_allocator)
 
@@ -1501,15 +1431,11 @@ run_tools_poll :: proc(run: ^Run) {
     assert(ctx != nil, "polling tools needs a live context")
 
     for &block, index in run.blocks {
-        if !block.tool_awaiting {
-            continue
-        }
+        if !block.tool_awaiting do continue
 
         state := qjs.promise_state(ctx, block.tool_promise)
 
-        if state == .Pending {
-            continue
-        }
+        if state == .Pending do continue
 
         assert(state == .Fulfilled || state == .Rejected, "an owned tool promise has a promise state")
 
@@ -1544,9 +1470,7 @@ run_tools_release :: proc(run: ^Run) {
     assert(ctx != nil, "releasing tools needs a live context")
 
     for &block in run.blocks {
-        if !block.tool_awaiting {
-            continue
-        }
+        if !block.tool_awaiting do continue
 
         qjs.free_value(ctx, block.tool_promise)
         block.tool_promise = {}
@@ -1561,9 +1485,7 @@ run_tools_open :: proc(run: ^Run) -> int {
 
     count := 0
     for &block in run.blocks {
-        if block.tool_awaiting {
-            count += 1
-        }
+        if block.tool_awaiting do count += 1
     }
 
     return count
@@ -1579,9 +1501,7 @@ run_tool_settle :: proc(
     state: wire.Tool_State,
     duration_ms: Maybe(u64) = nil,
 ) {
-    if run.fault != .None {
-        return
-    }
+    if run.fault != .None do return
 
     elapsed: u64
 
@@ -1612,9 +1532,7 @@ run_tool_settle :: proc(
         assert(false, "settling a tool needs a terminal execution state")
     }
 
-    if !run_string_add(run, bytes) {
-        return
-    }
+    if !run_string_add(run, bytes) do return
 
     run_tool_state_set(run, block, index, final)
 }
@@ -1667,13 +1585,9 @@ run_tool_output :: proc(run: ^Run, value: qjs.Value) -> (string, bool) {
     ctx := run.daemon.js.ctx
     assert(ctx != nil, "reading tool output needs a live context")
 
-    if qjs.is_undefined(value) || qjs.is_null(value) {
-        return "", true
-    }
+    if qjs.is_undefined(value) || qjs.is_null(value) do return "", true
 
-    if qjs.is_string(value) {
-        return run_tool_clone(run, value), true
-    }
+    if qjs.is_string(value) do return run_tool_clone(run, value), true
 
     encoded := qjs.json_stringify(ctx, value)
 
@@ -1732,9 +1646,7 @@ js_on_drain :: proc(user: rawptr) {
 
     for _, live in d.sessions {
         run := live.run
-        if run != nil && run_tools_open(run) > 0 {
-            run_tools_poll(run)
-        }
+        if run != nil && run_tools_open(run) > 0 do run_tools_poll(run)
     }
 
     for {
@@ -1749,9 +1661,7 @@ js_on_drain :: proc(user: rawptr) {
             }
         }
 
-        if joined == nil {
-            return
-        }
+        if joined == nil do return
 
         joined.tools_joining = false
         if joined.fault != .None {

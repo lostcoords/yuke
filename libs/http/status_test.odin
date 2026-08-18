@@ -6,14 +6,10 @@ import "core:testing"
 // Leading three digits of a status line, or 0 when the entry is too short to hold one.
 status_code_of :: proc(status: Status) -> int {
     line := status_wire[status]
-    if len(line) < 3 {
-        return 0
-    }
+    if len(line) < 3 do return 0
 
     code, ok := strconv.parse_int(line[:3])
-    if !ok {
-        return 0
-    }
+    if !ok do return 0
 
     return code
 }
@@ -24,9 +20,7 @@ test_status_wire_is_total :: proc(t: ^testing.T) {
     for status in Status {
         line := status_wire[status]
         testing.expectf(t, len(line) > 4, "%v has no status line", status)
-        if len(line) <= 4 {
-            continue
-        }
+        if len(line) <= 4 do continue
 
         code := status_code_of(status)
         testing.expectf(t, code >= 100 && code <= 599, "%v has a bad code: %q", status, line)
@@ -49,9 +43,7 @@ test_status_codes_are_unique_and_ascending :: proc(t: ^testing.T) {
 @(test)
 test_status_is_redirect_covers_only_location_bearing_3xx :: proc(t: ^testing.T) {
     for status in Status {
-        if !status_is_redirect(status) {
-            continue
-        }
+        if !status_is_redirect(status) do continue
 
         code := status_code_of(status)
         testing.expectf(t, code >= 300 && code < 400, "%v is not 3xx but reports as a redirect", status)

@@ -27,15 +27,11 @@ check_bounds :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     enforced := enforced_bound_exprs(ps)
 
     for expr, pos in enforced {
-        if expr not_in declared {
-            gen.diagf(d, pos, "validators enforce bound `%s` but no @bounded marker declares it", expr)
-        }
+        if expr not_in declared do gen.diagf(d, pos, "validators enforce bound `%s` but no @bounded marker declares it", expr)
     }
 
     for expr, pos in declared {
-        if expr not_in enforced {
-            gen.diagf(d, pos, "marker `@bounded %s` is declared but no validator enforces it", expr)
-        }
+        if expr not_in enforced do gen.diagf(d, pos, "marker `@bounded %s` is declared but no validator enforces it", expr)
     }
 }
 
@@ -46,16 +42,12 @@ declared_bound_exprs :: proc(m: ^Model) -> map[string]gen.Pos {
 
     for s in m.structs {
         for f in s.fields {
-            if f.bound.kind == .Bounded && f.bound.expr != "" && f.bound.expr not_in out {
-                out[f.bound.expr] = f.pos
-            }
+            if f.bound.kind == .Bounded && f.bound.expr != "" && f.bound.expr not_in out do out[f.bound.expr] = f.pos
         }
     }
 
     for a in m.aliases {
-        if a.bound.kind == .Bounded && a.bound.expr != "" && a.bound.expr not_in out {
-            out[a.bound.expr] = a.pos
-        }
+        if a.bound.kind == .Bounded && a.bound.expr != "" && a.bound.expr not_in out do out[a.bound.expr] = a.pos
     }
 
     return out
@@ -68,14 +60,10 @@ enforced_bound_exprs :: proc(ps: ^Package_Source) -> map[string]gen.Pos {
     out: map[string]gen.Pos
 
     for name, ref in ps.procs {
-        if !strings.contains(name, "_validate") {
-            continue
-        }
+        if !strings.contains(name, "_validate") do continue
 
         for call in calls_in(ref.source, ref.body, {"enforce_bounded"}) {
-            if len(call.args) == 0 {
-                continue
-            }
+            if len(call.args) == 0 do continue
 
             record_bound(&out, call.args[0], source_pos(ref.source, ref.body.pos.line))
         }
@@ -93,13 +81,9 @@ enforced_bound_exprs :: proc(ps: ^Package_Source) -> map[string]gen.Pos {
 record_bound :: proc(out: ^map[string]gen.Pos, expr: string, pos: gen.Pos) {
     trimmed := strings.trim_space(expr)
 
-    if trimmed == "" || strings.contains(trimmed, "(") {
-        return
-    }
+    if trimmed == "" || strings.contains(trimmed, "(") do return
 
-    if trimmed not_in out {
-        out[trimmed] = pos
-    }
+    if trimmed not_in out do out[trimmed] = pos
 }
 
 // Verify every type the artifact names resolves to something it also defines. A dangling
@@ -169,17 +153,13 @@ element_type :: proc(type_expr: string) -> string {
         break
     }
 
-    if strings.has_prefix(out, "[") {
-        return ""
-    }
+    if strings.has_prefix(out, "[") do return ""
 
     return slice.contains(SCALAR_BASES[:], out) ? "" : out
 }
 
 check_reference :: proc(known: map[string]bool, name: string, d: ^gen.Diags, format: string, args: ..any) {
-    if name == "" || name in known {
-        return
-    }
+    if name == "" || name in known do return
 
     site := fmt.tprintf(format, ..args)
     gen.diagf(d, gen.Pos{}, "%s names `%s`, which the artifact does not define", site, name)
@@ -201,9 +181,7 @@ check_schema_refs :: proc(root: json.Object, d: ^gen.Diags) {
     collect_refs(root, &refs)
 
     for name in refs {
-        if name not_in defs {
-            gen.diagf(d, gen.Pos{}, "the schema document references `#/$defs/%s`, which it does not define", name)
-        }
+        if name not_in defs do gen.diagf(d, gen.Pos{}, "the schema document references `#/$defs/%s`, which it does not define", name)
     }
 }
 
@@ -212,9 +190,7 @@ collect_refs :: proc(value: json.Value, out: ^map[string]bool) {
     case json.Object:
         for key, inner in v {
             if key == "$ref" {
-                if text, is_string := inner.(json.String); is_string {
-                    out[strings.trim_prefix(text, "#/$defs/")] = true
-                }
+                if text, is_string := inner.(json.String); is_string do out[strings.trim_prefix(text, "#/$defs/")] = true
 
                 continue
             }

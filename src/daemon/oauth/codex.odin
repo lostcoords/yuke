@@ -53,25 +53,17 @@ codex_descriptor := Provider {
 // already-transport-authenticated token; does not verify the signature.
 codex_account_id :: proc(id_token: string, allocator := context.allocator) -> (account_id: string, err: OAuth_Error) {
     value, object, parse_err := jwt_payload_object(id_token, allocator)
-    if parse_err != .None {
-        return "", parse_err
-    }
+    if parse_err != .None do return "", parse_err
     defer secret_json_destroy(value, allocator)
 
     claim_value, claim_found := object[CODEX_JWT_AUTH_CLAIM]
-    if !claim_found {
-        return "", .Invalid_Response
-    }
+    if !claim_found do return "", .Invalid_Response
 
     claim, claim_ok := claim_value.(json.Object)
-    if !claim_ok {
-        return "", .Invalid_Response
-    }
+    if !claim_ok do return "", .Invalid_Response
 
     account, account_ok := json_string_member(claim, "chatgpt_account_id")
-    if !account_ok || account == "" || len(account) > 256 {
-        return "", .Invalid_Response
-    }
+    if !account_ok || account == "" || len(account) > 256 do return "", .Invalid_Response
 
     account_id = strings.clone(account, allocator)
 

@@ -24,9 +24,8 @@ workspace_root :: proc(
 
     row, sqlite_err := queries.workspace_root(&s.queries, {id = id}, allocator)
     if sqlite_err != nil {
-        if read_error, is_read := sqlite_err.(sqlite.Read_Error); is_read && read_error == .Row_Count {
-            return "", false, nil
-        }
+        read_error, is_read := sqlite_err.(sqlite.Read_Error)
+        if is_read && read_error == .Row_Count do return "", false, nil
 
         return "", false, read_err(sqlite_err)
     }
@@ -43,9 +42,7 @@ workspace_page :: proc(s: ^Store, limit: int, allocator: mem.Allocator) -> (work
     assert(allocator.procedure != nil, "a workspace page needs an allocator")
 
     read, sqlite_err := queries.workspace_page(&s.queries, {limit = limit}, allocator, cap_hint = limit)
-    if sqlite_err != nil {
-        return nil, read_err(sqlite_err)
-    }
+    if sqlite_err != nil do return nil, read_err(sqlite_err)
 
     page := make([]wire.Workspace, len(read), allocator)
 

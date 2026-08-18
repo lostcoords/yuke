@@ -81,43 +81,27 @@ identity_load :: proc(dir: string, allocator := context.allocator) -> (id: Ident
     cred_path, _ := filepath.join({dir, CREDENTIALS_FILE}, context.temp_allocator)
     key_path, _ := filepath.join({dir, IDENTITY_KEY_FILE}, context.temp_allocator)
 
-    if !os.exists(cred_path) || !os.exists(key_path) {
-        return {}, .Absent
-    }
+    if !os.exists(cred_path) || !os.exists(key_path) do return {}, .Absent
 
     cred_bytes, cred_err := os.read_entire_file(cred_path, context.temp_allocator)
-    if cred_err != nil {
-        return {}, .Unreadable
-    }
+    if cred_err != nil do return {}, .Unreadable
     defer delete(cred_bytes, context.temp_allocator)
 
     cf: Credentials_File
-    if json.unmarshal(cred_bytes, &cf, .JSON, context.temp_allocator) != nil {
-        return {}, .Malformed
-    }
+    if json.unmarshal(cred_bytes, &cf, .JSON, context.temp_allocator) != nil do return {}, .Malformed
 
-    if cf.device_id == "" || cf.credential == "" || cf.relay_url == "" {
-        return {}, .Malformed
-    }
-    if !strings.has_prefix(cf.credential, "yk_dev_") {
-        return {}, .Stale
-    }
+    if cf.device_id == "" || cf.credential == "" || cf.relay_url == "" do return {}, .Malformed
+    if !strings.has_prefix(cf.credential, "yk_dev_") do return {}, .Stale
 
     key_bytes, key_err := os.read_entire_file(key_path, context.temp_allocator)
-    if key_err != nil {
-        return {}, .Unreadable
-    }
+    if key_err != nil do return {}, .Unreadable
     defer delete(key_bytes, context.temp_allocator)
 
-    if len(key_bytes) != NOISE_STATIC_KEY_SIZE {
-        return {}, .Key_Invalid
-    }
+    if len(key_bytes) != NOISE_STATIC_KEY_SIZE do return {}, .Key_Invalid
 
     out: Identity
     out.allocator = allocator
-    if !ecdh.private_key_set_bytes(&out.static_key, .X25519, key_bytes) {
-        return {}, .Key_Invalid
-    }
+    if !ecdh.private_key_set_bytes(&out.static_key, .X25519, key_bytes) do return {}, .Key_Invalid
 
     out.device_id = strings.clone(cf.device_id, allocator)
     out.credential = strings.clone(cf.credential, allocator)
@@ -174,39 +158,23 @@ write_private_file :: proc(path: string, data: []byte, allocator: mem.Allocator)
     defer delete(temp_path, allocator)
 
     handle, open_err := os.open(temp_path, {.Write, .Create, .Excl}, IDENTITY_FILE_PERMISSIONS)
-    if open_err != nil {
-        return .Write_Failed
-    }
+    if open_err != nil do return .Write_Failed
 
     renamed := false
-    defer if !renamed {
-        _ = os.remove(temp_path)
-    }
+    defer if !renamed do _ = os.remove(temp_path)
 
     ok := true
-    if written, err := os.write(handle, data); err != nil || written != len(data) {
-        ok = false
-    }
+    if written, err := os.write(handle, data); err != nil || written != len(data) do ok = false
 
-    if ok && os.fchmod(handle, IDENTITY_FILE_PERMISSIONS) != nil {
-        ok = false
-    }
+    if ok && os.fchmod(handle, IDENTITY_FILE_PERMISSIONS) != nil do ok = false
 
-    if ok && os.sync(handle) != nil {
-        ok = false
-    }
+    if ok && os.sync(handle) != nil do ok = false
 
-    if os.close(handle) != nil {
-        ok = false
-    }
+    if os.close(handle) != nil do ok = false
 
-    if !ok {
-        return .Write_Failed
-    }
+    if !ok do return .Write_Failed
 
-    if os.rename(temp_path, path) != nil {
-        return .Write_Failed
-    }
+    if os.rename(temp_path, path) != nil do return .Write_Failed
 
     renamed = true
 

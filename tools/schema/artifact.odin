@@ -316,9 +316,7 @@ artifact_build :: proc(m: ^Model) -> Artifact {
 
 @(private = "file")
 artifact_bound :: proc(b: Bound) -> Maybe(Artifact_Bound) {
-    if b.kind == .Missing {
-        return nil
-    }
+    if b.kind == .Missing do return nil
 
     return Artifact_Bound{kind = bound_kind_json[b.kind], expr = b.expr, value = b.value}
 }
@@ -334,9 +332,7 @@ json_encode :: proc(value: any, allocator := context.allocator) -> (data: []byte
     }
     bytes, err := json.marshal(value, opts, allocator)
 
-    if err != nil {
-        return nil, false
-    }
+    if err != nil do return nil, false
 
     return transmute([]byte)strings.concatenate({string(bytes), "\n"}, allocator), true
 }

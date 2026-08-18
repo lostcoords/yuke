@@ -7,9 +7,7 @@ feed :: proc(s: string) -> Parse_Event {
     p: Parser
     for i in 0 ..< len(s) {
         ev := parser_step(&p, s[i])
-        if ev != nil {
-            return ev
-        }
+        if ev != nil do return ev
     }
 
     return nil

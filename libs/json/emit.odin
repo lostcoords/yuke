@@ -78,9 +78,7 @@ emitter_failed :: proc(e: ^Emitter) -> bool {
 _put :: proc(e: ^Emitter, s: string) {
     n := strings.write_string(&e.sb, s)
 
-    if n != len(s) {
-        e.failed = true
-    }
+    if n != len(s) do e.failed = true
 }
 
 // Append one byte, latching `failed` when the buffer could not take it.
@@ -88,18 +86,14 @@ _put :: proc(e: ^Emitter, s: string) {
 _put_byte :: proc(e: ^Emitter, c: byte) {
     n := strings.write_byte(&e.sb, c)
 
-    if n != 1 {
-        e.failed = true
-    }
+    if n != 1 do e.failed = true
 }
 
 // Release the emitter's buffer, explicitly wiping it when it carried a secret.
 emitter_destroy :: proc(e: ^Emitter) {
     assert(e != nil, "emitter cleanup needs storage")
 
-    if e.secret && cap(e.sb.buf) > 0 {
-        crypto.zero_explicit(raw_data(e.sb.buf), cap(e.sb.buf))
-    }
+    if e.secret && cap(e.sb.buf) > 0 do crypto.zero_explicit(raw_data(e.sb.buf), cap(e.sb.buf))
     strings.builder_destroy(&e.sb)
     e^ = {}
 }
@@ -112,9 +106,7 @@ to_string :: proc(e: ^Emitter) -> string {
 // Write the element/key separator for the current container, if one is needed.
 @(private)
 _sep :: proc(e: ^Emitter) {
-    if e.depth == 0 {
-        return
-    }
+    if e.depth == 0 do return
 
     if !e.first[e.depth - 1] {
         _put_byte(e, ',')
@@ -237,9 +229,7 @@ field_bool :: proc(e: ^Emitter, name: string, b: bool) {
 
 // Write a `name: string` object field only when the value is present.
 field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
-    if v, ok := m.?; ok {
-        field_string(e, name, v)
-    }
+    if v, ok := m.?; ok do field_string(e, name, v)
 }
 
 // Write a JSON string value; a failed builder growth latches `failed`.
@@ -247,7 +237,5 @@ field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
 _write_json_string :: proc(e: ^Emitter, s: string) {
     _, err := write_string(strings.to_writer(&e.sb), s)
 
-    if err != .None {
-        e.failed = true
-    }
+    if err != .None do e.failed = true
 }

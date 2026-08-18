@@ -126,9 +126,7 @@ run_canceled_timing_from_reader :: proc(d: ^json.Decoder) -> (timing: Run_Cancel
         case "started_at_ms":
             seen += {.Start}
 
-            if !json.dec_is_null(d) {
-                timing.started_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-            }
+            if !json.dec_is_null(d) do timing.started_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "ended_at_ms":
             timing.ended_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
@@ -139,9 +137,7 @@ run_canceled_timing_from_reader :: proc(d: ^json.Decoder) -> (timing: Run_Cancel
         }
     }
 
-    if seen != {.Start, .End} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Start, .End} do return {}, .Mismatched_Payload
 
     return timing, .None
 }
@@ -215,9 +211,7 @@ token_usage_from_reader :: proc(d: ^json.Decoder) -> (usage: Token_Usage, err: j
         }
     }
 
-    if seen != {.Input, .Output, .Reasoning, .Read, .Write} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Input, .Output, .Reasoning, .Read, .Write} do return {}, .Mismatched_Payload
 
     return usage, .None
 }
@@ -314,9 +308,7 @@ run_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Run_Outcome, err:
             }
         }
 
-        if seen != {.Finish, .Rounds} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Finish, .Rounds} do return nil, .Mismatched_Payload
 
         return Run_Outcome_Turn{finish = finish, rounds = rounds}, .None
 
@@ -340,9 +332,7 @@ run_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Run_Outcome, err:
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Run_Outcome_Compacted{message_id = Message_Id(message_id)}, .None
 
@@ -366,9 +356,7 @@ run_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Run_Outcome, err:
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Run_Outcome_Skipped{reason = reason}, .None
 
@@ -419,9 +407,7 @@ run_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Run_Outcome, err:
             }
         }
 
-        if seen != {.Code, .Message} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Code, .Message} do return nil, .Mismatched_Payload
 
         return Run_Outcome_Failed{code = code, message = message}, .None
     }

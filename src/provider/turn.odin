@@ -180,9 +180,7 @@ client_init :: proc(
     assert(c.loop == nil, "provider client_init on an initialized client")
 
     err := curl.client_init(&c.curl_client, loop, allocator)
-    if err != .None {
-        return turn_error_from_curl_start(err)
-    }
+    if err != .None do return turn_error_from_curl_start(err)
 
     c.loop = loop
     c.allocator = allocator
@@ -240,13 +238,9 @@ turn_start :: proc(
     }
 
     ep := request.connection.endpoint
-    if endpoint_validate(ep) != .None || !protocol_supported(ep.protocol) || len(request.body) == 0 {
-        return .Invalid_Request
-    }
+    if endpoint_validate(ep) != .None || !protocol_supported(ep.protocol) || len(request.body) == 0 do return .Invalid_Request
 
-    defer if err != .None {
-        turn_abandon_prepared(turn)
-    }
+    defer if err != .None do turn_abandon_prepared(turn)
 
     _ = virtual.arena_init_growing(&turn.retained)
     _ = virtual.arena_init_growing(&turn.scratch, TURN_SCRATCH_RESERVE)
@@ -282,9 +276,7 @@ turn_start :: proc(
         method  = .Post,
     }
     curl_err := curl.transfer_start(&turn.transfer, &client.curl_client, curl_request, turn_curl_callbacks(), turn)
-    if curl_err != .None {
-        return turn_error_from_curl_start(curl_err)
-    }
+    if curl_err != .None do return turn_error_from_curl_start(curl_err)
 
     turn.state = .Running
     client.live_count += 1
@@ -312,9 +304,7 @@ turn_cancel :: proc(turn: ^Turn) {
 
     turn.state = .Canceled
 
-    if turn.dispatching {
-        return
-    }
+    if turn.dispatching do return
 
     turn_cleanup(turn, .Canceled)
 }
@@ -390,18 +380,14 @@ turn_on_header :: proc(user: rawptr, line: []byte) {
     assert(turn.client.curl_client.in_curl, "curl header must run inside curl")
 
     name, value, ok := turn_header_split(line)
-    if !ok {
-        return
-    }
+    if !ok do return
 
     if strings.equal_fold(name, "content-encoding") {
         turn.unsupported_content_encoding = turn.unsupported_content_encoding || !strings.equal_fold(value, "identity")
         return
     }
 
-    if strings.equal_fold(name, "retry-after") {
-        turn.retry_after = turn_retry_after_parse(value)
-    }
+    if strings.equal_fold(name, "retry-after") do turn.retry_after = turn_retry_after_parse(value)
 }
 
 @(private)
@@ -441,9 +427,7 @@ turn_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     }
 
     feed_err := sse.feed(&turn.sse_parser, chunk, turn, turn_on_sse_event)
-    if turn.callback_error != .None {
-        return false
-    }
+    if turn.callback_error != .None do return false
 
     switch feed_err {
     case .None:
@@ -502,9 +486,7 @@ turn_commit :: proc(turn: ^Turn, before: int, err: Transport_Error) -> Transport
         return .None
     }
 
-    if len(turn.events) > before {
-        turn_schedule_dispatch(turn)
-    }
+    if len(turn.events) > before do turn_schedule_dispatch(turn)
 
     return .None
 }
@@ -522,19 +504,13 @@ turn_on_curl_done :: proc(user: rawptr, result: curl.Result) {
 
     // The `.Write_Error` from capping the error body is our own stop, not a
     // transfer failure.
-    if err == .None && result.code != .Ok && !capped_write {
-        err = transport_error_from_curl(result.code)
-    }
+    if err == .None && result.code != .Ok && !capped_write do err = transport_error_from_curl(result.code)
 
-    if err == .None && turn.unsupported_content_encoding {
-        err = .Unsupported_Content_Encoding
-    }
+    if err == .None && turn.unsupported_content_encoding do err = .Unsupported_Content_Encoding
 
     status := result.status
 
-    if status == 0 {
-        status = turn.status
-    }
+    if status == 0 do status = turn.status
 
     turn.status = status
 
@@ -575,9 +551,7 @@ turn_schedule_dispatch :: proc(turn: ^Turn) {
     assert(turn.state == .Running, "only a running turn can queue new events")
     assert(len(turn.events) > 0, "event scheduling needs queued output")
 
-    if turn.dispatch_op == nil {
-        turn.dispatch_op = nbio.timeout_poly(0, turn, turn_on_dispatch, turn.client.loop)
-    }
+    if turn.dispatch_op == nil do turn.dispatch_op = nbio.timeout_poly(0, turn, turn_on_dispatch, turn.client.loop)
 
     assert(turn.dispatch_op != nil, "nbio returns a live dispatch operation")
 }
@@ -597,9 +571,7 @@ turn_on_dispatch :: proc(op: ^nbio.Operation, turn: ^Turn) {
         assert(turn.callbacks.on_event != nil, "queued events require an event callback")
         turn.callbacks.on_event(turn.user, event)
 
-        if turn.state == .Canceled {
-            break
-        }
+        if turn.state == .Canceled do break
     }
 
     clear(&turn.events)
@@ -610,9 +582,7 @@ turn_on_dispatch :: proc(op: ^nbio.Operation, turn: ^Turn) {
         return
     }
 
-    if turn.state == .Completing {
-        turn_finalize(turn)
-    }
+    if turn.state == .Completing do turn_finalize(turn)
 }
 
 // Deliver terminal completion after queued output has drained. Cleanup happens
@@ -628,17 +598,13 @@ turn_finalize :: proc(turn: ^Turn) {
     result := Turn_Result {
         err = turn.callback_error,
     }
-    if result.err == .Rate_Limited {
-        result.retry_after = turn.retry_after
-    }
+    if result.err == .Rate_Limited do result.retry_after = turn.retry_after
 
     callbacks := turn.callbacks
     user := turn.user
     turn_cleanup(turn, .Done)
 
-    if callbacks.on_done != nil {
-        callbacks.on_done(user, result)
-    }
+    if callbacks.on_done != nil do callbacks.on_done(user, result)
 }
 
 // Tear down all turn-owned allocations while preserving only terminal state.
@@ -665,9 +631,7 @@ turn_cleanup :: proc(turn: ^Turn, terminal: Turn_State) {
         turn.dispatch_op = nil
     }
 
-    if turn.parser_initialized {
-        sse.parser_destroy(&turn.sse_parser)
-    }
+    if turn.parser_initialized do sse.parser_destroy(&turn.sse_parser)
 
     client := turn.client
     virtual.arena_check_temp(&turn.scratch)
@@ -690,9 +654,7 @@ turn_abandon_prepared :: proc(turn: ^Turn) {
     assert(turn.client != nil, "prepared turn must remember its client")
     assert(turn.transfer.state == .Created, "an unregistered provider turn cannot retain curl resources")
 
-    if turn.parser_initialized {
-        sse.parser_destroy(&turn.sse_parser)
-    }
+    if turn.parser_initialized do sse.parser_destroy(&turn.sse_parser)
 
     virtual.arena_destroy(&turn.scratch)
     virtual.arena_destroy(&turn.retained)
@@ -708,15 +670,11 @@ turn_abandon_prepared :: proc(turn: ^Turn) {
 turn_header_split :: proc(line: []byte) -> (name, value: string, ok: bool) {
     text := string(line)
     colon := strings.index_byte(text, ':')
-    if colon <= 0 {
-        return "", "", false
-    }
+    if colon <= 0 do return "", "", false
 
     name = strings.trim_space(text[:colon])
     value = strings.trim_space(text[colon + 1:])
-    if len(name) == 0 {
-        return "", "", false
-    }
+    if len(name) == 0 do return "", "", false
 
     return name, value, true
 }
@@ -726,20 +684,14 @@ turn_header_split :: proc(line: []byte) -> (name, value: string, ok: bool) {
 @(private)
 turn_retry_after_parse :: proc(value: string) -> Maybe(time.Duration) {
     text := strings.trim_space(value)
-    if len(text) == 0 {
-        return nil
-    }
+    if len(text) == 0 do return nil
 
     cap_seconds := int(RETRY_AFTER_CAP / time.Second)
     seconds := 0
     for b in transmute([]byte)text {
-        if b < '0' || b > '9' {
-            return nil
-        }
+        if b < '0' || b > '9' do return nil
 
-        if seconds < cap_seconds {
-            seconds = min(cap_seconds, seconds * 10 + int(b - '0'))
-        }
+        if seconds < cap_seconds do seconds = min(cap_seconds, seconds * 10 + int(b - '0'))
     }
 
     return time.Duration(seconds) * time.Second

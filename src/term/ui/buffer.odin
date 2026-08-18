@@ -96,9 +96,7 @@ Buffer :: struct {
 // value, whose glyph is NUL rather than a space.
 buffer_init :: proc(allocator: mem.Allocator, width, height: u16) -> (Buffer, Buffer_Error) {
     length := int(width) * int(height)
-    if length > MAX_CELLS {
-        return {}, .Grid_Too_Large
-    }
+    if length > MAX_CELLS do return {}, .Grid_Too_Large
 
     cells := make([]Cell, length, allocator)
     prev := make([]Cell, length, allocator)
@@ -130,14 +128,10 @@ buffer_destroy :: proc(b: ^Buffer) {
 // Resize the grid and force a full repaint. No-op when unchanged. Allocates the fresh grids
 // before freeing the old ones so a failed allocation leaves the buffer intact.
 buffer_resize :: proc(b: ^Buffer, width, height: u16) -> Buffer_Error {
-    if b.area.width == width && b.area.height == height {
-        return .None
-    }
+    if b.area.width == width && b.area.height == height do return .None
 
     length := int(width) * int(height)
-    if length > MAX_CELLS {
-        return .Grid_Too_Large
-    }
+    if length > MAX_CELLS do return .Grid_Too_Large
 
     cells := make([]Cell, length, b.allocator)
     prev := make([]Cell, length, b.allocator)
@@ -185,9 +179,7 @@ buffer_begin_frame :: proc(b: ^Buffer) {
 // flush_diff (which swaps grids), and buffer_begin_frame. Do not retain it across those.
 buffer_cell_at :: proc(b: ^Buffer, x, y: u16) -> ^Cell {
     idx, ok := buffer_index(b, x, y)
-    if !ok {
-        return nil
-    }
+    if !ok do return nil
 
     return &b.cells[idx]
 }
@@ -197,18 +189,12 @@ buffer_cell_at :: proc(b: ^Buffer, x, y: u16) -> ^Cell {
 // buffer_cell_at); an inline result borrows `buf`.
 buffer_symbol_at :: proc(b: ^Buffer, x, y: u16, buf: ^[4]u8) -> string {
     idx, ok := buffer_index(b, x, y)
-    if !ok {
-        return ""
-    }
+    if !ok do return ""
 
     c := b.cells[idx]
-    if cell_is_continuation(c) {
-        return ""
-    }
+    if cell_is_continuation(c) do return ""
 
-    if glyph_is_pooled(c.glyph) {
-        return pool_str_of(&b.pool, c.glyph)
-    }
+    if glyph_is_pooled(c.glyph) do return pool_str_of(&b.pool, c.glyph)
 
     r, _ := glyph_scalar(c.glyph)
     bytes, n := utf8.encode_rune(r)
@@ -222,9 +208,7 @@ buffer_symbol_at :: proc(b: ^Buffer, x, y: u16, buf: ^[4]u8) -> string {
 // to a plain space carrying the requested style (after repairs) rather than raising an error.
 buffer_set :: proc(b: ^Buffer, x, y: u16, cluster: string, style: Style) -> Buffer_Error {
     idx, ok := buffer_index(b, x, y)
-    if !ok {
-        return .None
-    }
+    if !ok do return .None
 
     w := checked_grapheme_width(cluster) or_return
 
@@ -283,38 +267,24 @@ buffer_set_string_n :: proc(
     used: u16,
     err: Buffer_Error,
 ) {
-    if int(y) >= int(b.area.height) || int(x) >= int(b.area.width) || max_width == 0 {
-        return 0, .None
-    }
+    if int(y) >= int(b.area.height) || int(x) >= int(b.area.width) || max_width == 0 do return 0, .None
 
     col := x
     it := clusters(text)
     for {
         gc, ok, uerr := iter_next_bounded(&it, MAX_GRAPHEME_BYTES)
-        if uerr != .None {
-            return used, .Grapheme_Too_Long
-        }
-        if !ok {
-            break
-        }
+        if uerr != .None do return used, .Grapheme_Too_Long
+        if !ok do break
 
         bytes := cluster_bytes(gc, text)
-        if !is_valid_utf8(bytes) {
-            return used, .Invalid_Utf8
-        }
+        if !is_valid_utf8(bytes) do return used, .Invalid_Utf8
 
         cw := cluster_width(gc, text)
-        if cw == 0 {
-            continue
-        }
+        if cw == 0 do continue
 
-        if cw > int(max_width) - int(used) || cw > int(b.area.width) - int(col) {
-            break
-        }
+        if cw > int(max_width) - int(used) || cw > int(b.area.width) - int(col) do break
 
-        if cw > 2 {
-            return used, .Unsupported_Grapheme_Width
-        }
+        if cw > 2 do return used, .Unsupported_Grapheme_Width
 
         // Placed directly rather than through `buffer_set`: the cluster is already segmented,
         // validated and measured here, and re-deriving it per character costs more than the
@@ -325,9 +295,7 @@ buffer_set_string_n :: proc(
         col += wv
         used += wv
 
-        if used == max_width || col == b.area.width {
-            break
-        }
+        if used == max_width || col == b.area.width do break
     }
 
     return used, .None
@@ -348,9 +316,7 @@ buffer_fill :: proc(b: ^Buffer, area: Rect, cluster: string, style: Style) -> Bu
     for row < rect_bottom(a) {
         col := a.x
         for col < rect_right(a) {
-            if int(w) > int(rect_right(a)) - int(col) {
-                break
-            }
+            if int(w) > int(rect_right(a)) - int(col) do break
 
             cell_place(b, offset(b, col, row), glyph, w, style)
             col += w
@@ -373,9 +339,7 @@ buffer_fill :: proc(b: ^Buffer, area: Rect, cluster: string, style: Style) -> Bu
 // EMPTY_CELL — INCLUDING its style, unlike buffer_fill's styled blank.
 buffer_clear :: proc(b: ^Buffer, area: Maybe(Rect)) {
     a := b.area
-    if ar, ok := area.?; ok {
-        a = buffer_clamp(b, ar)
-    }
+    if ar, ok := area.?; ok do a = buffer_clamp(b, ar)
 
     y := a.y
     for y < rect_bottom(a) {
@@ -421,9 +385,7 @@ flush_diff :: proc(b: ^Buffer, w: io.Writer, synchronized: bool) -> Buffer_Error
     }
 
     // Hide the cursor proactively whenever painting could move it.
-    if b.force_redraw || b.prev_cursor.visible || b.cursor.visible {
-        write_str(w, CURSOR_HIDE) or_return
-    }
+    if b.force_redraw || b.prev_cursor.visible || b.cursor.visible do write_str(w, CURSOR_HIDE) or_return
 
     full := b.force_redraw
     pen: Pen
@@ -465,15 +427,11 @@ flush_diff :: proc(b: ^Buffer, w: io.Writer, synchronized: bool) -> Buffer_Error
         write_str(w, CURSOR_SHOW) or_return
     }
 
-    if synchronized {
-        write_str(w, SYNC_END) or_return
-    }
+    if synchronized do write_str(w, SYNC_END) or_return
 
     // The frame advances ONLY after the writer flushes successfully. A failed flush leaves
     // committed = false, so finish_frame never runs and the next flush re-sends everything.
-    if io.flush(w) != .None {
-        return .Write_Failed
-    }
+    if io.flush(w) != .None do return .Write_Failed
 
     finish_frame(b)
     committed = true
@@ -498,24 +456,16 @@ finish_frame :: proc(b: ^Buffer) {
 // two terminal cells. Width 0 (e.g. "\n") and width 3 (e.g. U+2E3B, the three-em dash) are
 // both rejected because the Cell wide-bit can only express 1 versus 2 cells.
 checked_grapheme_width :: proc(cluster: string) -> (u16, Buffer_Error) {
-    if len(cluster) > MAX_GRAPHEME_BYTES {
-        return 0, .Grapheme_Too_Long
-    }
+    if len(cluster) > MAX_GRAPHEME_BYTES do return 0, .Grapheme_Too_Long
 
-    if !is_valid_utf8(cluster) {
-        return 0, .Invalid_Utf8
-    }
+    if !is_valid_utf8(cluster) do return 0, .Invalid_Utf8
 
     it := clusters(cluster)
     c, ok := iter_next(&it)
-    if !ok || c.offset != 0 || c.len != len(cluster) {
-        return 0, .Expected_Single_Grapheme
-    }
+    if !ok || c.offset != 0 || c.len != len(cluster) do return 0, .Expected_Single_Grapheme
 
     width := cluster_width(c, cluster)
-    if width == 0 || width > 2 {
-        return 0, .Unsupported_Grapheme_Width
-    }
+    if width == 0 || width > 2 do return 0, .Unsupported_Grapheme_Width
 
     return u16(width), .None
 }
@@ -524,9 +474,7 @@ checked_grapheme_width :: proc(cluster: string) -> (u16, Buffer_Error) {
 // has already validated `cluster` as a single grapheme via checked_grapheme_width.
 glyph_for :: proc(b: ^Buffer, cluster: string) -> (Glyph, Buffer_Error) {
     r, size := utf8.decode_rune(cluster)
-    if size == len(cluster) {
-        return glyph_from_scalar(r), .None
-    }
+    if size == len(cluster) do return glyph_from_scalar(r), .None
 
     g, perr := pool_intern(&b.pool, cluster)
     return g, pool_error_to_buffer(perr)
@@ -562,9 +510,7 @@ set_one :: proc(b: ^Buffer, idx: int, glyph: Glyph, style: Style, flags: Cell_Fl
 // Blank a wide head when writing into its continuation. Guards width != 0 before any
 // `idx % width` (a 0-width grid is representable), and that idx-1 stays on this row.
 repair_landing :: proc(b: ^Buffer, idx: int) {
-    if cell_is_continuation(b.cells[idx]) && idx > 0 && b.area.width != 0 && idx % int(b.area.width) != 0 {
-        b.cells[idx - 1] = EMPTY_CELL
-    }
+    if cell_is_continuation(b.cells[idx]) && idx > 0 && b.area.width != 0 && idx % int(b.area.width) != 0 do b.cells[idx - 1] = EMPTY_CELL
 }
 
 // Blank a stale continuation when overwriting a wide head. Same 0-width and row-boundary
@@ -593,13 +539,9 @@ glyph_eq :: proc(b: ^Buffer, a, other: Glyph) -> bool {
     a_pooled := glyph_is_pooled(a)
     b_pooled := glyph_is_pooled(other)
 
-    if a_pooled && b_pooled {
-        return pool_str_of(&b.pool, a) == pool_str_of(&b.prev_pool, other)
-    }
+    if a_pooled && b_pooled do return pool_str_of(&b.pool, a) == pool_str_of(&b.prev_pool, other)
 
-    if !a_pooled && !b_pooled {
-        return u32(a) == u32(other)
-    }
+    if !a_pooled && !b_pooled do return u32(a) == u32(other)
 
     return false
 }
@@ -608,14 +550,10 @@ glyph_eq :: proc(b: ^Buffer, a, other: Glyph) -> bool {
 // pool; an inline scalar is UTF-8 encoded into a stack buffer (space as a last-resort fallback).
 write_glyph :: proc(b: ^Buffer, w: io.Writer, idx: int) -> Buffer_Error {
     glyph := b.cells[idx].glyph
-    if glyph_is_pooled(glyph) {
-        return write_str(w, pool_str_of(&b.pool, glyph))
-    }
+    if glyph_is_pooled(glyph) do return write_str(w, pool_str_of(&b.pool, glyph))
 
     r, ok := glyph_scalar(glyph)
-    if !ok {
-        return write_str(w, " ")
-    }
+    if !ok do return write_str(w, " ")
 
     bytes, n := utf8.encode_rune(r)
     return write_str(w, string(bytes[:n]))
@@ -632,9 +570,7 @@ Pen :: struct {
 
 // Put the cursor at `x`,`y`. An unpositioned pen always emits.
 pen_move :: proc(w: io.Writer, pen: ^Pen, x, y: u16) -> Buffer_Error {
-    if pen.positioned && pen.x == x && pen.y == y {
-        return .None
-    }
+    if pen.positioned && pen.x == x && pen.y == y do return .None
 
     write_goto(w, x, y) or_return
     pen.x, pen.y = x, y
@@ -645,9 +581,7 @@ pen_move :: proc(w: io.Writer, pen: ^Pen, x, y: u16) -> Buffer_Error {
 
 // Put `style` in force. An unstyled pen always emits.
 pen_style :: proc(w: io.Writer, pen: ^Pen, style: Style) -> Buffer_Error {
-    if pen.styled && pen.style == style {
-        return .None
-    }
+    if pen.styled && pen.style == style do return .None
 
     queue_style(w, style) or_return
     pen.style = style
@@ -682,24 +616,12 @@ queue_style :: proc(w: io.Writer, style: Style) -> Buffer_Error {
     emit_fg(w, style.fg) or_return
     emit_bg(w, style.bg) or_return
 
-    if .Bold in style.mods {
-        write_str(w, "\x1b[1m") or_return
-    }
-    if .Dim in style.mods {
-        write_str(w, "\x1b[2m") or_return
-    }
-    if .Italic in style.mods {
-        write_str(w, "\x1b[3m") or_return
-    }
-    if .Underlined in style.mods {
-        write_str(w, "\x1b[4m") or_return
-    }
-    if .Reversed in style.mods {
-        write_str(w, "\x1b[7m") or_return
-    }
-    if .Crossed_Out in style.mods {
-        write_str(w, "\x1b[9m") or_return
-    }
+    if .Bold in style.mods do write_str(w, "\x1b[1m") or_return
+    if .Dim in style.mods do write_str(w, "\x1b[2m") or_return
+    if .Italic in style.mods do write_str(w, "\x1b[3m") or_return
+    if .Underlined in style.mods do write_str(w, "\x1b[4m") or_return
+    if .Reversed in style.mods do write_str(w, "\x1b[7m") or_return
+    if .Crossed_Out in style.mods do write_str(w, "\x1b[9m") or_return
 
     return .None
 }
@@ -707,15 +629,11 @@ queue_style :: proc(w: io.Writer, style: Style) -> Buffer_Error {
 // Resolve `color` to a foreground SGR escape and emit it. nil and Reset both select the
 // terminal default (SGR 39).
 emit_fg :: proc(w: io.Writer, color: Color) -> Buffer_Error {
-    if color == nil {
-        return write_str(w, SGR_FG_DEFAULT)
-    }
+    if color == nil do return write_str(w, SGR_FG_DEFAULT)
 
     switch v in color {
     case Ansi_Color:
-        if v == .Reset {
-            return write_str(w, SGR_FG_DEFAULT)
-        }
+        if v == .Reset do return write_str(w, SGR_FG_DEFAULT)
 
         return write_fmt(w, "\x1b[38;5;%dm", palette_index(v))
     case Indexed:
@@ -730,15 +648,11 @@ emit_fg :: proc(w: io.Writer, color: Color) -> Buffer_Error {
 // Resolve `color` to a background SGR escape and emit it. nil and Reset both select the
 // terminal default (SGR 49).
 emit_bg :: proc(w: io.Writer, color: Color) -> Buffer_Error {
-    if color == nil {
-        return write_str(w, SGR_BG_DEFAULT)
-    }
+    if color == nil do return write_str(w, SGR_BG_DEFAULT)
 
     switch v in color {
     case Ansi_Color:
-        if v == .Reset {
-            return write_str(w, SGR_BG_DEFAULT)
-        }
+        if v == .Reset do return write_str(w, SGR_BG_DEFAULT)
 
         return write_fmt(w, "\x1b[48;5;%dm", palette_index(v))
     case Indexed:
@@ -772,9 +686,7 @@ write_fmt :: proc(w: io.Writer, format: string, args: ..any) -> Buffer_Error {
 // Write a string, mapping any io.Writer error to .Write_Failed.
 write_str :: proc(w: io.Writer, s: string) -> Buffer_Error {
     _, err := io.write_string(w, s)
-    if err != .None {
-        return .Write_Failed
-    }
+    if err != .None do return .Write_Failed
 
     return .None
 }
@@ -789,9 +701,7 @@ buffer_clamp :: proc(b: ^Buffer, area: Rect) -> Rect {
 
 // Cell index for (x,y), or ok=false when out of bounds.
 buffer_index :: proc(b: ^Buffer, x, y: u16) -> (int, bool) {
-    if x < b.area.width && y < b.area.height {
-        return offset(b, x, y), true
-    }
+    if x < b.area.width && y < b.area.height do return offset(b, x, y), true
 
     return 0, false
 }

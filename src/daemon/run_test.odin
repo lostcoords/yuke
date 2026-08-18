@@ -41,9 +41,7 @@ RUN_DISCARDED_NAMES := [?]wire.Broadcast_Name {
 // Compare the broadcasts a driver recorded against the sequence the turn owes.
 @(private = "file")
 expect_names :: proc(t: ^testing.T, got: [dynamic]wire.Broadcast_Name, want: []wire.Broadcast_Name) {
-    if !testing.expect_value(t, len(got), len(want)) {
-        return
-    }
+    if !testing.expect_value(t, len(got), len(want)) do return
 
     for name, index in want {
         testing.expect_value(t, got[index], name)
@@ -339,9 +337,7 @@ run_fake_on_gap :: proc(_: ^nbio.Operation, fake: ^Run_Fake) {
 
 @(private = "file")
 run_fake_close :: proc(fake: ^Run_Fake) {
-    if fake.closed || !fake.taken {
-        return
-    }
+    if fake.closed || !fake.taken do return
 
     fake.closed = true
 
@@ -530,9 +526,7 @@ run_env_stop :: proc(t: ^testing.T, env: ^Run_Env) {
     run_fake_stop(t, &env.fake)
     testsupport.sqlite_db_remove(env.path)
 
-    if env.config_dir != "" {
-        os.remove_all(env.config_dir)
-    }
+    if env.config_dir != "" do os.remove_all(env.config_dir)
 }
 
 // One text part, the shape every one of these tests sends.
@@ -863,9 +857,7 @@ test_session_run_retries_a_refused_terminal_append :: proc(t: ^testing.T) {
     run_env_drive(t, &env)
 
     run := session_live_run(&env.d, env.session)
-    if !testing.expect(t, run != nil, "the held provider keeps its run live") {
-        return
-    }
+    if !testing.expect(t, run != nil, "the held provider keeps its run live") do return
 
     // The store begins its own transaction for every durable event. Holding one open on
     // the same connection makes that begin fail without damaging the schema or fixtures.
@@ -988,14 +980,10 @@ test_session_run_streams_deltas_as_they_arrive :: proc(t: ^testing.T) {
     first_delta := -1
     commit := -1
     for name, index in obs.names {
-        if name == .Message_Part_Delta && first_delta < 0 {
-            first_delta = index
-        }
+        if name == .Message_Part_Delta && first_delta < 0 do first_delta = index
 
         // The assistant commit is the second one; the first committed the user message.
-        if name == .Message_Committed {
-            commit = index
-        }
+        if name == .Message_Committed do commit = index
     }
 
     if !testing.expect(t, first_delta >= 0 && commit > first_delta, "a delta preceded the commit") {
@@ -1083,9 +1071,7 @@ test_session_send_input_queues_behind_a_live_turn :: proc(t: ^testing.T) {
 
     // The promoted input is running, so the session still holds live state.
     promoted := session_live_run(d, session)
-    if testing.expect(t, promoted != nil, "the promoted input started its own turn") {
-        testing.expect_value(t, promoted.run_id, wire.Run_Id(2))
-    }
+    if testing.expect(t, promoted != nil, "the promoted input started its own turn") do testing.expect_value(t, promoted.run_id, wire.Run_Id(2))
 
     testing.expect_value(t, obs.apply_err, client.Replica_Error.None)
     testing.expect_value(t, len(obs.replica.queued), 0)
@@ -1134,9 +1120,7 @@ test_runs_recover_closes_a_run_the_previous_start_left_open :: proc(t: ^testing.
             testing.expect_value(t, terminal.kind, wire.Run_Kind.Turn)
 
             failed, is_failed := terminal.outcome.(wire.Run_Outcome_Failed)
-            if testing.expect(t, is_failed, "a run nothing finished ended in failure") {
-                testing.expect_value(t, failed.code, wire.Run_Error_Code.Internal)
-            }
+            if testing.expect(t, is_failed, "a run nothing finished ended in failure") do testing.expect_value(t, failed.code, wire.Run_Error_Code.Internal)
         }
     }
 
@@ -1175,9 +1159,7 @@ test_session_activity_follows_the_reasoning_block :: proc(t: ^testing.T) {
     run_env_drive(t, &env)
 
     // Live, reasoning opens, reasoning closes, text opens, and the queue settles.
-    if !testing.expect_value(t, len(obs.activities), 5) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.activities), 5) do return
 
     running_ids := [?]int{0, 2, 3}
     for index in running_ids {
@@ -1250,9 +1232,7 @@ test_session_resync_mid_turn_carries_the_draft_and_the_queue :: proc(t: ^testing
     }
 
     // The waiting input is in the cut too, so a re-entered session shows a full queue.
-    if testing.expect_value(t, len(cut.queued), 1) {
-        testing.expect_value(t, cut.queued[0].input_id, wire.Input_Id(2))
-    }
+    if testing.expect_value(t, len(cut.queued), 1) do testing.expect_value(t, cut.queued[0].input_id, wire.Input_Id(2))
 
     // The draft's revision resolves against the page the same cut carries.
     if testing.expect_value(t, len(cut.configs), 1) {
@@ -1378,21 +1358,15 @@ test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
     obs := &env.obs
     run_env_drive(t, &env)
 
-    if !testing.expect_value(t, len(obs.assistants), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 1) do return
 
     message := obs.assistants[0]
     testing.expect_value(t, message.finish, wire.Stop_Reason.Tool_Calls)
 
-    if !testing.expect_value(t, len(message.content), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(message.content), 1) do return
 
     tool, is_tool := message.content[0].(wire.Tool_Part)
-    if !testing.expect(t, is_tool, "the tool block commits as a tool part") {
-        return
-    }
+    if !testing.expect(t, is_tool, "the tool block commits as a tool part") do return
 
     testing.expect_value(t, tool.name, "get_weather")
     testing.expect_value(t, tool.arguments, `{"city":"Tokyo"}`)
@@ -1410,9 +1384,7 @@ test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
     // where there is nothing to render.
     added := 0
     for name in obs.names {
-        if name == .Message_Part_Added {
-            added += 1
-        }
+        if name == .Message_Part_Added do added += 1
     }
 
     testing.expect_value(t, added, 1)
@@ -1461,33 +1433,23 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
     obs := &env.obs
     run_env_drive(t, &env)
 
-    if !testing.expect_value(t, len(obs.assistants), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 1) do return
 
     content := obs.assistants[0].content
-    if !testing.expect_value(t, len(content), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(content), 1) do return
 
     tool, is_tool := content[0].(wire.Tool_Part)
-    if !testing.expect(t, is_tool, "the call commits as a tool part") {
-        return
-    }
+    if !testing.expect(t, is_tool, "the call commits as a tool part") do return
 
     completed, is_completed := tool.state.(wire.Tool_State_Completed)
-    if !testing.expect(t, is_completed, "the handler completed the call") {
-        return
-    }
+    if !testing.expect(t, is_completed, "the handler completed the call") do return
 
     testing.expect_value(t, completed.output, `{"weather":"sunny","city":"Tokyo"}`)
 
     // Running, then completed: a client watches the call rather than only its result.
     states := 0
     for name in obs.names {
-        if name == .Tool_State_Changed {
-            states += 1
-        }
+        if name == .Tool_State_Changed do states += 1
     }
 
     testing.expect_value(t, states, 2)
@@ -1551,24 +1513,16 @@ test_session_run_exec_defaults_cwd_to_the_workspace :: proc(t: ^testing.T) {
     run_env_drive(t, &env)
 
     obs := &env.obs
-    if !testing.expect_value(t, len(obs.assistants), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 1) do return
 
     content := obs.assistants[0].content
-    if !testing.expect_value(t, len(content), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(content), 1) do return
 
     tool, is_tool := content[0].(wire.Tool_Part)
-    if !testing.expect(t, is_tool, "the call commits as a tool part") {
-        return
-    }
+    if !testing.expect(t, is_tool, "the call commits as a tool part") do return
 
     completed, is_completed := tool.state.(wire.Tool_State_Completed)
-    if !testing.expect(t, is_completed, "the handler completed the call") {
-        return
-    }
+    if !testing.expect(t, is_completed, "the handler completed the call") do return
 
     want := fmt.tprintf(`{{"cwd":%q}}`, daemon_test_workspace().root)
     testing.expect_value(t, completed.output, want)
@@ -1618,9 +1572,7 @@ test_session_run_continues_with_tool_results :: proc(t: ^testing.T) {
         testing.expect(t, !strings.contains(second, `"system":`), "an absent prompt remains absent between rounds")
     }
 
-    if !testing.expect_value(t, len(obs.assistants), 2) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 2) do return
 
     tool_message := obs.assistants[0]
     testing.expect_value(t, tool_message.id, wire.Message_Id(2))
@@ -1631,9 +1583,7 @@ test_session_run_continues_with_tool_results :: proc(t: ^testing.T) {
         tool, is_tool := tool_message.content[0].(wire.Tool_Part)
         if testing.expect(t, is_tool, "the first round commits its tool call") {
             completed, is_completed := tool.state.(wire.Tool_State_Completed)
-            if testing.expect(t, is_completed, "the next round receives a completed result") {
-                testing.expect_value(t, completed.output, `{"weather":"sunny","city":"Tokyo"}`)
-            }
+            if testing.expect(t, is_completed, "the next round receives a completed result") do testing.expect_value(t, completed.output, `{"weather":"sunny","city":"Tokyo"}`)
         }
     }
 
@@ -1644,9 +1594,7 @@ test_session_run_continues_with_tool_results :: proc(t: ^testing.T) {
 
     if testing.expect_value(t, len(answer.content), 1) {
         text, is_text := answer.content[0].(wire.Text_Part)
-        if testing.expect(t, is_text, "the second round commits its natural answer") {
-            testing.expect_value(t, text.text, "hello")
-        }
+        if testing.expect(t, is_text, "the second round commits its natural answer") do testing.expect_value(t, text.text, "hello")
     }
 
     if testing.expect_value(t, len(obs.turns), 1) {
@@ -1722,9 +1670,7 @@ test_session_run_failure_preserves_committed_tool_results :: proc(t: ^testing.T)
 
     testing.expect_value(t, env.fake.requests, 2)
     testing.expect_value(t, len(obs.turns), 0)
-    if testing.expect_value(t, len(obs.failures), 1) {
-        testing.expect_value(t, obs.failures[0], wire.Run_Error_Code.Protocol)
-    }
+    if testing.expect_value(t, len(obs.failures), 1) do testing.expect_value(t, obs.failures[0], wire.Run_Error_Code.Protocol)
 
     if testing.expect_value(t, len(obs.assistants), 1) {
         testing.expect_value(t, obs.assistants[0].id, wire.Message_Id(2))
@@ -1733,9 +1679,7 @@ test_session_run_failure_preserves_committed_tool_results :: proc(t: ^testing.T)
 
     discarded := 0
     for name in obs.names {
-        if name == .Message_Discarded {
-            discarded += 1
-        }
+        if name == .Message_Discarded do discarded += 1
     }
     testing.expect_value(t, discarded, 1)
 
@@ -1781,9 +1725,7 @@ test_session_cancel_run_preserves_committed_tool_results :: proc(t: ^testing.T) 
     held := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
             return env.fake.held
         }, "the second provider request starts")
-    if !testing.expect(t, held, "the second provider request should be held open") {
-        return
-    }
+    if !testing.expect(t, held, "the second provider request should be held open") do return
 
     run := session_live_run(&env.d, env.session)
     if testing.expect(t, run != nil, "the second round should still own the run") {
@@ -1807,9 +1749,7 @@ test_session_cancel_run_preserves_committed_tool_results :: proc(t: ^testing.T) 
 
     discarded := 0
     for name in obs.names {
-        if name == .Message_Discarded {
-            discarded += 1
-        }
+        if name == .Message_Discarded do discarded += 1
     }
     testing.expect_value(t, discarded, 1)
 
@@ -1858,9 +1798,7 @@ test_session_run_keeps_queued_input_between_rounds :: proc(t: ^testing.T) {
     continued := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
             return env.fake.requests >= 2
         }, "the first run starts its second round")
-    if !testing.expect(t, continued, "the first run should reach its held second round") {
-        return
-    }
+    if !testing.expect(t, continued, "the first run should reach its held second round") do return
 
     testing.expect_value(t, session_queue_depth(&env.d, env.session), 1)
     testing.expect_value(t, len(obs.committed), 1)
@@ -1880,9 +1818,7 @@ test_session_run_keeps_queued_input_between_rounds :: proc(t: ^testing.T) {
     promoted := testsupport.nbio_run_until(t, &env, proc(env: ^Run_Env) -> bool {
             return env.fake.requests >= 3
         }, "the queued input is promoted after the terminal")
-    if !testing.expect(t, promoted, "the queued input should start after cancellation") {
-        return
-    }
+    if !testing.expect(t, promoted, "the queued input should start after cancellation") do return
 
     testing.expect_value(t, session_queue_depth(&env.d, env.session), 0)
     testing.expect_value(t, obs.canceled_runs, 1)
@@ -1955,29 +1891,21 @@ test_session_run_joins_concurrent_tool_calls :: proc(t: ^testing.T) {
     obs := &env.obs
     run_env_drive(t, &env)
 
-    if !testing.expect_value(t, len(obs.assistants), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 1) do return
 
     content := obs.assistants[0].content
-    if !testing.expect_value(t, len(content), 2) {
-        return
-    }
+    if !testing.expect_value(t, len(content), 2) do return
 
     first, first_is_tool := content[0].(wire.Tool_Part)
     if testing.expect(t, first_is_tool, "the first joined part is a tool") {
         completed, is_completed := first.state.(wire.Tool_State_Completed)
-        if testing.expect(t, is_completed, "the first joined call completed") {
-            testing.expect_value(t, completed.output, "one")
-        }
+        if testing.expect(t, is_completed, "the first joined call completed") do testing.expect_value(t, completed.output, "one")
     }
 
     second, second_is_tool := content[1].(wire.Tool_Part)
     if testing.expect(t, second_is_tool, "the second joined part is a tool") {
         failed, is_error := second.state.(wire.Tool_State_Error)
-        if testing.expect(t, is_error, "the second joined call failed") {
-            testing.expect_value(t, failed.error, "Error: two failed")
-        }
+        if testing.expect(t, is_error, "the second joined call failed") do testing.expect_value(t, failed.error, "Error: two failed")
     }
 }
 
@@ -2017,19 +1945,13 @@ test_session_run_reports_a_throwing_tool_as_an_error :: proc(t: ^testing.T) {
     obs := &env.obs
     run_env_drive(t, &env)
 
-    if !testing.expect_value(t, len(obs.assistants), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(obs.assistants), 1) do return
 
     content := obs.assistants[0].content
-    if !testing.expect_value(t, len(content), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(content), 1) do return
 
     tool, is_tool := content[0].(wire.Tool_Part)
-    if !testing.expect(t, is_tool, "the call commits as a tool part") {
-        return
-    }
+    if !testing.expect(t, is_tool, "the call commits as a tool part") do return
 
     failed, is_error := tool.state.(wire.Tool_State_Error)
     testing.expect(t, is_error, "a throwing handler fails its call")
@@ -2078,9 +2000,7 @@ test_session_cancel_run_during_a_tool_call :: proc(t: ^testing.T) {
             return run != nil && run_tools_open(run) > 0
         }, "the handler starts")
 
-    if !testing.expect(t, started, "the tool call should be outstanding") {
-        return
-    }
+    if !testing.expect(t, started, "the tool call should be outstanding") do return
 
     run_id, canceled := run_turn_cancel(&env.d, env.session)
     testing.expect(t, canceled, "a turn waiting on a handler is cancelable")
@@ -2140,9 +2060,7 @@ test_session_cancel_run_stops_tool_host_operations :: proc(t: ^testing.T) {
 
             return run != nil && run_tools_open(run) > 0 && env.d.js.pending > 0
         }, "the command starts")
-    if !testing.expect(t, started, "the host operation should be outstanding") {
-        return
-    }
+    if !testing.expect(t, started, "the host operation should be outstanding") do return
 
     _, canceled := run_turn_cancel(&env.d, env.session)
     testing.expect(t, canceled, "the tool run is cancelable")

@@ -46,27 +46,21 @@ new_f64 :: proc "contextless" (v: f64) -> Value {
 // Widens to f64 when the value does not fit the tagged int32 arm, matching
 // `JS_NewInt64`'s behavior so round-tripping through JS stays lossless.
 new_i64 :: proc "contextless" (v: i64) -> Value {
-    if v >= i64(min(i32)) && v <= i64(max(i32)) {
-        return new_i32(i32(v))
-    }
+    if v >= i64(min(i32)) && v <= i64(max(i32)) do return new_i32(i32(v))
 
     return new_f64(f64(v))
 }
 
 // Widens to f64 when the value does not fit the tagged int32 arm.
 new_u32 :: proc "contextless" (v: u32) -> Value {
-    if v <= u32(max(i32)) {
-        return new_i32(i32(v))
-    }
+    if v <= u32(max(i32)) do return new_i32(i32(v))
 
     return new_f64(f64(v))
 }
 
 // Widens to f64 when the value does not fit the tagged int32 arm.
 new_u64 :: proc "contextless" (v: u64) -> Value {
-    if v <= u64(max(i32)) {
-        return new_i32(i32(v))
-    }
+    if v <= u64(max(i32)) do return new_i32(i32(v))
 
     return new_f64(f64(v))
 }

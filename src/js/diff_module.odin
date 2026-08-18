@@ -42,9 +42,7 @@ Diff_Job :: struct {
 diff_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
-    if !qjs.set_module_export(ctx, m, "diff", qjs.new_function(ctx, diff_entry, "diff", 3)) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "diff", qjs.new_function(ctx, diff_entry, "diff", 3)) do return -1
 
     return 0
 }
@@ -56,13 +54,9 @@ diff_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
 
     h := host_of(ctx)
 
-    if h == nil || h.pool == nil {
-        return qjs.throw_type_error(ctx, "yuke:diff needs a configured worker pool")
-    }
+    if h == nil || h.pool == nil do return qjs.throw_type_error(ctx, "yuke:diff needs a configured worker pool")
 
-    if !h.ops_open {
-        return qjs.throw_type_error(ctx, "yuke:diff is closed")
-    }
+    if !h.ops_open do return qjs.throw_type_error(ctx, "yuke:diff is closed")
 
     job := new(Diff_Job, h.allocator)
 
@@ -118,9 +112,7 @@ diff_job_run :: proc(job: ^Diff_Job) {
     assert(job.host != nil, "a host op lost its host")
     assert(!job.done, "a host op ran twice")
 
-    if !diff_job_cancelled(job) {
-        job.file, job.ok = diff_text(job.path, job.before, job.after, job.allocator)
-    }
+    if !diff_job_cancelled(job) do job.file, job.ok = diff_text(job.path, job.before, job.after, job.allocator)
     job.done = true
 }
 

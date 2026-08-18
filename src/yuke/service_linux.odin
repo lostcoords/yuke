@@ -46,17 +46,13 @@ unit_path :: proc(allocator := context.allocator) -> string {
 @(private = "file")
 xdg_config_home :: proc(allocator := context.allocator) -> string {
     if xdg, set := os.lookup_env("XDG_CONFIG_HOME", allocator); set {
-        if xdg != "" {
-            return xdg
-        }
+        if xdg != "" do return xdg
 
         delete(xdg, allocator)
     }
 
     home := paths.home_dir(allocator)
-    if home == "" {
-        return ""
-    }
+    if home == "" do return ""
 
     defer delete(home, allocator)
 
@@ -89,9 +85,7 @@ unit_render :: proc(allocator := context.allocator) -> string {
     strings.write_string(&b, "Restart=on-failure\n")
     strings.write_string(&b, "RestartSec=2\n")
 
-    if has_name && name != "" {
-        fmt.sbprintf(&b, "Environment=\"%s=%s\"\n", paths.APP_NAME_ENV, name)
-    }
+    if has_name && name != "" do fmt.sbprintf(&b, "Environment=\"%s=%s\"\n", paths.APP_NAME_ENV, name)
 
     if log != "" {
         fmt.sbprintf(&b, "StandardOutput=append:%s\n", log)

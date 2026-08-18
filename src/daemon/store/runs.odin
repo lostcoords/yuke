@@ -64,18 +64,12 @@ open_run_from_row :: proc(row: $Row) -> (Maybe(Open_Run), bool) {
     run_id, running := row.open_run_id.?
     kind_wire, has_kind := row.open_run_kind.?
     started_at_ms, has_started := row.open_run_started_at_ms.?
-    if !running {
-        return nil, !has_kind && !has_started
-    }
+    if !running do return nil, !has_kind && !has_started
 
-    if !has_kind || !has_started {
-        return nil, false
-    }
+    if !has_kind || !has_started do return nil, false
 
     kind, kind_ok := wire.run_kind_from_wire(kind_wire)
-    if !kind_ok {
-        return nil, false
-    }
+    if !kind_ok do return nil, false
 
     return Open_Run{run_id = run_id, kind = kind, started_at_ms = started_at_ms}, true
 }
@@ -87,18 +81,14 @@ open_runs :: proc(s: ^Store, allocator: mem.Allocator) -> (runs: []Open_Run_Row,
     assert(allocator.procedure != nil, "an open-run read needs an allocator")
 
     rows, sqlite_err := queries.open_runs(&s.queries, {}, allocator)
-    if sqlite_err != nil {
-        return nil, read_err(sqlite_err)
-    }
+    if sqlite_err != nil do return nil, read_err(sqlite_err)
 
     out := make([]Open_Run_Row, len(rows), allocator)
 
     for row, index in rows {
         kind, kind_ok := wire.run_kind_from_wire(row.open_run_kind)
 
-        if !kind_ok {
-            return nil, Store_Error.Invalid_Row
-        }
+        if !kind_ok do return nil, Store_Error.Invalid_Row
 
         out[index] = Open_Run_Row {
             session = row.session_id,

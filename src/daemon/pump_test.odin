@@ -108,9 +108,7 @@ pump_on_sub :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawpt
 
     resp := answered.response
 
-    if _, ok := resp.(wire.Response_Ok); !ok {
-        o.sub_failed = true
-    }
+    if _, ok := resp.(wire.Response_Ok); !ok do o.sub_failed = true
 
     o.armed = true
 }
@@ -122,9 +120,7 @@ pump_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     seq, sequenced := wire.broadcast_data_seq(bc.params).?
     append(&o.seqs, sequenced ? seq : 0)
 
-    if shed, ok := bc.params.(wire.Session_Deltas_Shed_Data); ok {
-        append(&o.sheds, shed.count)
-    }
+    if shed, ok := bc.params.(wire.Session_Deltas_Shed_Data); ok do append(&o.sheds, shed.count)
 }
 
 pump_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
@@ -168,9 +164,7 @@ pump_client_arm :: proc(t: ^testing.T, c: ^client.Client, loop: ^nbio.Event_Loop
 // Drive the loop until `flag` is set or the tick budget runs out.
 pump_tick_until :: proc(flag: ^bool, ticks := 600) -> bool {
     for _ in 0 ..< ticks {
-        if flag^ {
-            return true
-        }
+        if flag^ do return true
 
         nbio.tick(time.Millisecond)
     }
@@ -242,9 +236,7 @@ test_daemon_subscription_set_replaces_the_prior_set :: proc(t: ^testing.T) {
     testing.expect_value(t, broadcast(&d, pump_message_started(kept)), Pump_Error.None)
     pump_settle()
 
-    if testing.expect_value(t, len(obs.names), 1) {
-        testing.expect_value(t, obs.names[0], wire.Broadcast_Name.Message_Started)
-    }
+    if testing.expect_value(t, len(obs.names), 1) do testing.expect_value(t, obs.names[0], wire.Broadcast_Name.Message_Started)
 
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
@@ -588,9 +580,7 @@ test_daemon_removed_session_drops_its_seq_mark :: proc(t: ^testing.T) {
 
     rows := pump_events(t, d.store, session)
 
-    if testing.expect_value(t, len(rows), 2) {
-        testing.expect_value(t, rows[1].seq, wire.Seq(2))
-    }
+    if testing.expect_value(t, len(rows), 2) do testing.expect_value(t, rows[1].seq, wire.Seq(2))
 
     test_teardown(&d)
 }
@@ -735,9 +725,7 @@ test_daemon_over_cap_durable_broadcast_is_refused_before_the_log :: proc(t: ^tes
 
     rows := pump_events(t, d.store, session)
 
-    if testing.expect_value(t, len(rows), 1) {
-        testing.expect_value(t, rows[0].seq, wire.Seq(1))
-    }
+    if testing.expect_value(t, len(rows), 1) do testing.expect_value(t, rows[0].seq, wire.Seq(1))
 
     test_teardown(&d)
 }
@@ -864,9 +852,7 @@ test_daemon_undeliverable_shed_marker_coalesces_into_the_next :: proc(t: ^testin
     testing.expect_value(t, broadcast(&d, pump_big_delta(session)), Pump_Error.None)
     pump_settle()
 
-    if testing.expect_value(t, len(obs.sheds), 2) {
-        testing.expect_value(t, obs.sheds[1], u64(1))
-    }
+    if testing.expect_value(t, len(obs.sheds), 2) do testing.expect_value(t, obs.sheds[1], u64(1))
 
     client.client_close(&c)
     testing.expect(t, pump_tick_until(&obs.done), "the client should close cleanly")
@@ -948,19 +934,13 @@ sub_peer :: proc(p: ^Sub_Peer) {
     defer free_all(context.temp_allocator)
 
     sock, dialed := raw_dial(p.port)
-    if !dialed {
-        return
-    }
+    if !dialed do return
     defer net.close(sock)
 
-    if !raw_upgrade(sock) {
-        return
-    }
+    if !raw_upgrade(sock) do return
 
     hello := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":{"name":"x","version":"y"}}}`
-    if !peer_send_text(sock, hello) {
-        return
-    }
+    if !peer_send_text(sock, hello) do return
 
     dec: ws.Decoder
     ws.decoder_init(&dec, 1 << 20, 1 << 20, .Client, context.temp_allocator)
@@ -970,9 +950,7 @@ sub_peer :: proc(p: ^Sub_Peer) {
     buf: [4096]byte
     for {
         msg, has, derr := ws.decoder_next(&dec, context.temp_allocator)
-        if derr != .None {
-            break
-        }
+        if derr != .None do break
 
         if has {
             if msg.kind == .Close {
@@ -983,9 +961,7 @@ sub_peer :: proc(p: ^Sub_Peer) {
             }
 
             if msg.kind == .Text && !sent {
-                if !peer_send_text(sock, p.frame) {
-                    return
-                }
+                if !peer_send_text(sock, p.frame) do return
 
                 sent = true
             }
@@ -994,9 +970,7 @@ sub_peer :: proc(p: ^Sub_Peer) {
         }
 
         got, rerr := net.recv_tcp(sock, buf[:])
-        if rerr != nil || got == 0 {
-            break
-        }
+        if rerr != nil || got == 0 do break
 
         ws.decoder_feed(&dec, buf[:got])
     }
@@ -1034,9 +1008,7 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
     b := strings.builder_make(context.temp_allocator)
     strings.write_string(&b, `{"jsonrpc":"2.0","id":2,"method":"subscription.set","params":{"sessions":[`)
     for i in 0 ..< wire.LIMITS.max_subscriptions + 1 {
-        if i > 0 {
-            strings.write_string(&b, ",")
-        }
+        if i > 0 do strings.write_string(&b, ",")
 
         fmt.sbprintf(&b, `"%04x%012x"`, i, i)
     }
@@ -1055,9 +1027,7 @@ test_daemon_subscription_set_over_bound_closes :: proc(t: ^testing.T) {
 
     for _ in 0 ..< 2000 {
         nbio.tick(time.Millisecond)
-        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 {
-            break
-        }
+        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 do break
     }
 
     thread.join(peer)

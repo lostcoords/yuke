@@ -29,15 +29,11 @@ types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || v.is_mutable {
-                continue
-            }
+            if !is_single || v.is_mutable do continue
 
             name := expr_text(&s, v.names[0])
 
-            if slice.contains(NON_WIRE_TYPES[:], name) {
-                continue
-            }
+            if slice.contains(NON_WIRE_TYPES[:], name) do continue
 
             #partial switch t in v.values[0].derived {
             case ^ast.Struct_Type:
@@ -51,9 +47,7 @@ types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
 
                 // An enum with no mapping table never reaches the wire; leaving it out
                 // of the model is deliberate, not an omission.
-                if !has_table {
-                    continue
-                }
+                if !has_table do continue
 
                 append(&m.enums, enum_read(&s, name, v, t, table, d))
 
@@ -63,9 +57,7 @@ types_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
             case ^ast.Ident:
                 // `Model_Id :: string` and friends. A bound declared on the alias is the
                 // only one its fields carry, so skipping these would drop it silently.
-                if slice.contains(SCALAR_BASES[:], t.name) {
-                    append(&m.aliases, alias_read(m, &s, name, t.name, v, d))
-                }
+                if slice.contains(SCALAR_BASES[:], t.name) do append(&m.aliases, alias_read(m, &s, name, t.name, v, d))
             }
         }
     }
@@ -89,28 +81,20 @@ tables_collect :: proc(ps: ^Package_Source) -> map[string]Wire_Table {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || !v.is_mutable {
-                continue
-            }
+            if !is_single || !v.is_mutable do continue
 
             lit, is_lit := v.values[0].derived.(^ast.Comp_Lit)
 
-            if !is_lit || lit.type == nil {
-                continue
-            }
+            if !is_lit || lit.type == nil do continue
 
             array, is_array := lit.type.derived.(^ast.Array_Type)
 
-            if !is_array || array.len == nil {
-                continue
-            }
+            if !is_array || array.len == nil do continue
 
             enum_name := expr_text(&s, array.len)
             elem := expr_text(&s, array.elem)
 
-            if elem != "string" && elem != "i32" {
-                continue
-            }
+            if elem != "string" && elem != "i32" do continue
 
             table := Wire_Table {
                 name    = expr_text(&s, v.names[0]),
@@ -120,9 +104,7 @@ tables_collect :: proc(ps: ^Package_Source) -> map[string]Wire_Table {
             for e in lit.elems {
                 fv, is_fv := e.derived.(^ast.Field_Value)
 
-                if !is_fv {
-                    continue
-                }
+                if !is_fv do continue
 
                 member := strings.trim_prefix(expr_text(&s, fv.field), ".")
                 value := expr_text(&s, fv.value)
@@ -132,9 +114,7 @@ tables_collect :: proc(ps: ^Package_Source) -> map[string]Wire_Table {
             // A second table over the same enum is a diagnostic name map, not a wire
             // form; the first one wins and `error_code_name` is filtered by its `i32`
             // sibling being registered first.
-            if enum_name not_in out {
-                out[enum_name] = table
-            }
+            if enum_name not_in out do out[enum_name] = table
         }
     }
 
@@ -162,17 +142,13 @@ struct_read :: proc(
         pos  = decl_pos,
     }
 
-    if t.fields == nil {
-        return def
-    }
+    if t.fields == nil do return def
 
     own := nullable[wire_snake_case(name, context.temp_allocator)]
     fields := make([dynamic]Field, 0, len(t.fields.list))
 
     for f in t.fields.list {
-        if len(f.names) == 0 {
-            continue
-        }
+        if len(f.names) == 0 do continue
 
         field_name := expr_text(s, f.names[0])
         // The marker requirement follows the declared type; the artifact records the wire
@@ -193,13 +169,9 @@ struct_read :: proc(
 
         if strings.has_prefix(type_expr, "Maybe(") {
             presence = .Optional
-        } else if tristate[type_expr] {
-            presence = .Tristate
-        }
+        } else if tristate[type_expr] do presence = .Tristate
 
-        if own[field_name] && (!has_presence || declared_presence != .Required_Nullable) {
-            gen.diagf(d, pos, "%s.%s uses a required-null emitter but lacks @required-nullable", name, field_name)
-        }
+        if own[field_name] && (!has_presence || declared_presence != .Required_Nullable) do gen.diagf(d, pos, "%s.%s uses a required-null emitter but lacks @required-nullable", name, field_name)
 
         if has_presence {
             switch declared_presence {
@@ -216,14 +188,10 @@ struct_read :: proc(
                 }
 
             case .Tristate:
-                if !tristate[type_expr] {
-                    gen.diagf(d, pos, "%s.%s declares @tristate on non-tristate type %s", name, field_name, type_expr)
-                }
+                if !tristate[type_expr] do gen.diagf(d, pos, "%s.%s declares @tristate on non-tristate type %s", name, field_name, type_expr)
 
             case .Defaulted:
-                if strings.has_prefix(type_expr, "Maybe(") {
-                    gen.diagf(d, pos, "%s.%s declares a decoder default on a Maybe type", name, field_name)
-                }
+                if strings.has_prefix(type_expr, "Maybe(") do gen.diagf(d, pos, "%s.%s declares a decoder default on a Maybe type", name, field_name)
 
             case .Required:
             }
@@ -264,23 +232,17 @@ nullable_members :: proc(ps: ^Package_Source) -> map[string]map[string]bool {
     out: map[string]map[string]bool
 
     for name, ref in ps.procs {
-        if !strings.has_suffix(name, "_emit") {
-            continue
-        }
+        if !strings.has_suffix(name, "_emit") do continue
 
         owner := strings.trim_suffix(name, "_emit")
         record_nullable(&out, owner, calls_in(ref.source, ref.body, nil, "field_required_null_"))
 
         clauses, found := switch_clauses(ref.body)
 
-        if !found {
-            continue
-        }
+        if !found do continue
 
         for clause in clauses {
-            if len(clause.list) != 1 {
-                continue
-            }
+            if len(clause.list) != 1 do continue
 
             // Retained as a key of the returned map, so this outlives any temp scope.
             arm := wire_snake_case(expr_text(ref.source, clause.list[0]))
@@ -293,13 +255,9 @@ nullable_members :: proc(ps: ^Package_Source) -> map[string]map[string]bool {
 
 record_nullable :: proc(out: ^map[string]map[string]bool, owner: string, calls: []Call_Match) {
     for call in calls {
-        if len(call.args) < 2 {
-            continue
-        }
+        if len(call.args) < 2 do continue
 
-        if owner not_in out {
-            out[owner] = make(map[string]bool)
-        }
+        if owner not_in out do out[owner] = make(map[string]bool)
 
         members := &out[owner]
         members[unquote(call.args[1])] = true
@@ -339,17 +297,11 @@ marker_read :: proc(
             continue
         }
 
-        if _, _, is_presence := presence_marker_parse(line); is_presence {
-            continue
-        }
+        if _, _, is_presence := presence_marker_parse(line); is_presence do continue
 
-        if strings.has_prefix(line, "@const ") {
-            continue
-        }
+        if strings.has_prefix(line, "@const ") do continue
 
-        if strings.has_prefix(line, "@delivery ") {
-            continue
-        }
+        if strings.has_prefix(line, "@delivery ") do continue
 
         append(&prose, line)
     }
@@ -375,9 +327,7 @@ marker_read :: proc(
 
     // Strings and arrays are what a length rule applies to; anything else legitimately
     // has none.
-    if bound.kind == .Missing && needs_bound(type_expr) {
-        gen.diagf(d, pos, "%s.%s is a %s with no @bounded/@fixed/@unbounded marker", owner, field, type_expr)
-    }
+    if bound.kind == .Missing && needs_bound(type_expr) do gen.diagf(d, pos, "%s.%s is a %s with no @bounded/@fixed/@unbounded marker", owner, field, type_expr)
 
     return bound, doc
 }
@@ -398,9 +348,7 @@ presence_marker_read :: proc(
     for line in comment_lines(docs, context.temp_allocator) {
         parsed, expr, is_marker := presence_marker_parse(line)
 
-        if !is_marker {
-            continue
-        }
+        if !is_marker do continue
 
         if ok {
             gen.diagf(d, pos, "%s.%s declares more than one presence marker", owner, field)
@@ -447,9 +395,7 @@ const_marker_read :: proc(
     value: Maybe(int),
 ) {
     for line in comment_lines(docs, context.temp_allocator) {
-        if !strings.has_prefix(line, "@const ") {
-            continue
-        }
+        if !strings.has_prefix(line, "@const ") do continue
 
         if expr != "" {
             gen.diagf(d, pos, "%s.%s declares more than one @const marker", owner, field)
@@ -482,9 +428,7 @@ delivery_role_read :: proc(
     role := ""
 
     for line in comment_lines(docs, context.temp_allocator) {
-        if !strings.has_prefix(line, "@delivery ") {
-            continue
-        }
+        if !strings.has_prefix(line, "@delivery ") do continue
 
         if role != "" {
             gen.diagf(d, pos, "%s.%s declares more than one @delivery role", owner, field)
@@ -500,17 +444,11 @@ delivery_role_read :: proc(
 
 // Parse one doc line as a marker.
 marker_parse :: proc(line: string) -> (kind: Bound_Kind, expr: string, ok: bool) {
-    if line == "@unbounded" {
-        return .Unbounded, "", true
-    }
+    if line == "@unbounded" do return .Unbounded, "", true
 
-    if strings.has_prefix(line, "@bounded ") {
-        return .Bounded, strings.trim_space(strings.trim_prefix(line, "@bounded ")), true
-    }
+    if strings.has_prefix(line, "@bounded ") do return .Bounded, strings.trim_space(strings.trim_prefix(line, "@bounded ")), true
 
-    if strings.has_prefix(line, "@fixed ") {
-        return .Fixed, strings.trim_space(strings.trim_prefix(line, "@fixed ")), true
-    }
+    if strings.has_prefix(line, "@fixed ") do return .Fixed, strings.trim_space(strings.trim_prefix(line, "@fixed ")), true
 
     return .Missing, "", false
 }
@@ -525,15 +463,11 @@ tristate_unions :: proc(ps: ^Package_Source) -> map[string]bool {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || v.is_mutable {
-                continue
-            }
+            if !is_single || v.is_mutable do continue
 
             u, is_union := v.values[0].derived.(^ast.Union_Type)
 
-            if !is_union {
-                continue
-            }
+            if !is_union do continue
 
             for variant in u.variants {
                 if strings.has_suffix(expr_text(&s, variant), "_Default") {
@@ -551,9 +485,7 @@ tristate_unions :: proc(ps: ^Package_Source) -> map[string]bool {
 // strings, so it is recorded as `[]E` — the raw Odin spelling would name a type no consumer
 // can resolve.
 wire_type_expr :: proc(type_expr: string) -> string {
-    if !strings.has_prefix(type_expr, "bit_set[") || !strings.has_suffix(type_expr, "]") {
-        return type_expr
-    }
+    if !strings.has_prefix(type_expr, "bit_set[") || !strings.has_suffix(type_expr, "]") do return type_expr
 
     inner := type_expr[len("bit_set["):len(type_expr) - 1]
 
@@ -562,9 +494,7 @@ wire_type_expr :: proc(type_expr: string) -> string {
 
 // Whether a declared type carries a length a marker must state.
 needs_bound :: proc(type_expr: string) -> bool {
-    if type_expr == "string" || type_expr == "Maybe(string)" {
-        return true
-    }
+    if type_expr == "string" || type_expr == "Maybe(string)" do return true
 
     return strings.has_prefix(type_expr, "[]") || strings.has_prefix(type_expr, "Maybe([]")
 }
@@ -675,20 +605,14 @@ union_arm_forms :: proc(ps: ^Package_Source, union_name: string, arms: ^[dynamic
     )
     ref, has := ps.procs[emitter]
 
-    if !has {
-        return
-    }
+    if !has do return
 
     clauses, found := switch_clauses(ref.body)
 
-    if !found {
-        return
-    }
+    if !found do return
 
     for clause in clauses {
-        if len(clause.list) != 1 {
-            continue
-        }
+        if len(clause.list) != 1 do continue
 
         arm_type := expr_text(ref.source, clause.list[0])
         writers := calls_in_stmts(ref.source, clause.body, nil, "val_")
@@ -712,9 +636,7 @@ union_arm_forms :: proc(ps: ^Package_Source, union_name: string, arms: ^[dynamic
         }
 
         for &arm in arms {
-            if arm.type != arm_type {
-                continue
-            }
+            if arm.type != arm_type do continue
 
             arm.form = form
             arm.wire_type = wire_type
@@ -743,28 +665,20 @@ union_arm_tags :: proc(
     )
     ref, has := ps.procs[reader]
 
-    if !has {
-        return out
-    }
+    if !has do return out
 
     clauses, found := switch_clauses(ref.body)
 
-    if !found {
-        return out
-    }
+    if !found do return out
 
     for clause in clauses {
         tags := clause_string_labels(ref.source, clause)
 
-        if len(tags) == 0 {
-            continue
-        }
+        if len(tags) == 0 do continue
 
         arms := returned_arms(ref.source, ps, clause, known)
 
-        if len(arms) == 0 {
-            continue
-        }
+        if len(arms) == 0 do continue
 
         if len(tags) == 1 {
             out[arms[0].arm] = tags[0]
@@ -790,9 +704,7 @@ union_arm_tags :: proc(
         }
 
         for tag in tags {
-            if tag not_in claimed {
-                append(&unclaimed_tags, tag)
-            }
+            if tag not_in claimed do append(&unclaimed_tags, tag)
         }
 
         if len(unclaimed_tags) == 1 && len(unclaimed_arms) == 1 {
@@ -821,14 +733,10 @@ union_discriminator :: proc(ps: ^Package_Source, type_name: string) -> string {
     name := strings.concatenate({wire_snake_case(type_name), "_from_reader"}, context.temp_allocator)
     ref, has := ps.procs[name]
 
-    if !has {
-        return ""
-    }
+    if !has do return ""
 
     for call in calls_in(ref.source, ref.body, {"dec_find_tag"}) {
-        if len(call.args) >= 2 {
-            return unquote(call.args[1])
-        }
+        if len(call.args) >= 2 do return unquote(call.args[1])
     }
 
     return ""
@@ -870,9 +778,7 @@ enum_read :: proc(
         doc := comment_text(docs)
         wire, has := table.entries[member_name]
 
-        if !has {
-            gen.diagf(d, source_pos(s, member.pos.line), "%s.%s has no entry in %s", name, member_name, table.name)
-        }
+        if !has do gen.diagf(d, source_pos(s, member.pos.line), "%s.%s has no entry in %s", name, member_name, table.name)
 
         append(&values, Enum_Value{name = member_name, wire = wire, doc = doc})
     }

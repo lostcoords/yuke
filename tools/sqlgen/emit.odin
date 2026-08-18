@@ -64,9 +64,7 @@ shape_fields :: proc(
     out := make([dynamic]Resolved_Field, 0, len(columns), allocator)
 
     for col in columns {
-        if slice.contains(shape.exclude, col.name) {
-            continue
-        }
+        if slice.contains(shape.exclude, col.name) do continue
 
         base, base_ok := base_type_for(shape, col, sources, d)
 
@@ -106,9 +104,7 @@ base_type_for :: proc(
     for _, source in sources {
         annotated, has_annotation := column_annotation(source, shape.table, col.name)
 
-        if has_annotation {
-            return annotated, true
-        }
+        if has_annotation do return annotated, true
     }
 
     // No annotation, and INTEGER's Odin type isn't derivable from the storage

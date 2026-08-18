@@ -101,9 +101,7 @@ live_turn_run :: proc(
 ) -> Live_Turn {
     key, has_key := os.lookup_env(LIVE_KEY_ENV, context.allocator)
     testing.expectf(t, has_key, "%s must be set for a live turn", LIVE_KEY_ENV)
-    if !has_key {
-        return {}
-    }
+    if !has_key do return {}
     defer delete(key, context.allocator)
 
     testing.expect_value(t, nbio.acquire_thread_event_loop(), nil)
@@ -136,9 +134,7 @@ live_turn_run :: proc(
         scratch,
     )
     testing.expect_value(t, build_err, provider.Transport_Error.None)
-    if build_err != .None {
-        return {}
-    }
+    if build_err != .None do return {}
     fmt.eprintfln("[live] %s level=%q body=%s", model.upstream_id, reasoning, body)
 
     turn := Live_Turn {
@@ -149,9 +145,7 @@ live_turn_run :: proc(
 
     op := run_begin(&service, connection, body, {on_event = live_on_event, on_done = live_on_done, user = &turn})
     testing.expect(t, op != nil, "the live turn started")
-    if op == nil {
-        return turn
-    }
+    if op == nil do return turn
 
     deadline := nbio.timeout_poly(LIVE_TIMEOUT, &turn, proc(_: ^nbio.Operation, turn: ^Live_Turn) {
             testing.expect(turn.t, false, "the live turn timed out")

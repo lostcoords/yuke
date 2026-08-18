@@ -132,13 +132,9 @@ enroll_start_encode :: proc(
 // Decode the 201 device_codes response.
 enroll_start_decode :: proc(body: []u8, allocator := context.allocator) -> (Enroll_Start, Control_Error) {
     out: Enroll_Start
-    if json.unmarshal(body, &out, .JSON, allocator) != nil {
-        return {}, .Malformed
-    }
+    if json.unmarshal(body, &out, .JSON, allocator) != nil do return {}, .Malformed
 
-    if out.device_code == "" || out.user_code == "" || out.verification_uri == "" || out.interval <= 0 {
-        return {}, .Malformed
-    }
+    if out.device_code == "" || out.user_code == "" || out.verification_uri == "" || out.interval <= 0 do return {}, .Malformed
 
     return out, .None
 }
@@ -171,26 +167,16 @@ enroll_poll_decode :: proc(
     switch status {
     case 201:
         cred: Enroll_Credential
-        if json.unmarshal(body, &cred, .JSON, allocator) != nil {
-            return .Expired, {}, .Malformed
-        }
+        if json.unmarshal(body, &cred, .JSON, allocator) != nil do return .Expired, {}, .Malformed
 
-        if cred.relay_url == "" || cred.credential == "" {
-            return .Expired, {}, .Malformed
-        }
+        if cred.relay_url == "" || cred.credential == "" do return .Expired, {}, .Malformed
         switch intent {
         case "client":
-            if cred.session_id == "" {
-                return .Expired, {}, .Malformed
-            }
+            if cred.session_id == "" do return .Expired, {}, .Malformed
         case "both":
-            if cred.device_id == "" || cred.session_id == "" || cred.session_credential == "" {
-                return .Expired, {}, .Malformed
-            }
+            if cred.device_id == "" || cred.session_id == "" || cred.session_credential == "" do return .Expired, {}, .Malformed
         case:
-            if cred.device_id == "" {
-                return .Expired, {}, .Malformed
-            }
+            if cred.device_id == "" do return .Expired, {}, .Malformed
         }
 
         return .Approved, cred, .None
@@ -215,13 +201,9 @@ connect_ticket_encode :: proc(device_id: string, allocator := context.allocator)
 // Decode a relay ticket response (`link_tickets`/`connect_tickets`).
 ticket_decode :: proc(body: []u8, allocator := context.allocator) -> (Control_Ticket, Control_Error) {
     out: Control_Ticket
-    if json.unmarshal(body, &out, .JSON, allocator) != nil {
-        return {}, .Malformed
-    }
+    if json.unmarshal(body, &out, .JSON, allocator) != nil do return {}, .Malformed
 
-    if out.ticket == "" || out.relay_url == "" {
-        return {}, .Malformed
-    }
+    if out.ticket == "" || out.relay_url == "" do return {}, .Malformed
 
     return out, .None
 }
@@ -232,14 +214,10 @@ ticket_decode :: proc(body: []u8, allocator := context.allocator) -> (Control_Ti
 // well-formed roster always carries both on every device.
 roster_decode :: proc(body: []u8, allocator := context.allocator) -> ([]Roster_Device, Control_Error) {
     out: Roster_Body
-    if json.unmarshal(body, &out, .JSON, allocator) != nil {
-        return nil, .Malformed
-    }
+    if json.unmarshal(body, &out, .JSON, allocator) != nil do return nil, .Malformed
 
     for device in out.devices {
-        if device.device_id == "" || device.static_public_key == "" {
-            return nil, .Malformed
-        }
+        if device.device_id == "" || device.static_public_key == "" do return nil, .Malformed
     }
 
     return out.devices, .None
@@ -252,9 +230,7 @@ roster_pin_decode :: proc(static_public_key: string, out: []u8) -> bool {
     assert(len(out) == NOISE_STATIC_KEY_SIZE, "roster pin needs a 32-byte buffer")
 
     raw, err := base64.decode(static_public_key, base64.DEC_TABLE, nil, context.temp_allocator)
-    if err != nil || len(raw) != NOISE_STATIC_KEY_SIZE {
-        return false
-    }
+    if err != nil || len(raw) != NOISE_STATIC_KEY_SIZE do return false
 
     copy(out, raw)
 

@@ -24,9 +24,7 @@ test_responses_drive :: proc(
 
     for data in payloads {
         e := openai_responses_decoder_decode(&decoder, data, &events, scratch)
-        if e != .None {
-            return events, e
-        }
+        if e != .None do return events, e
     }
 
     err = openai_responses_decoder_finish(&decoder, &events)
@@ -35,9 +33,7 @@ test_responses_drive :: proc(
 
 @(private = "file")
 test_responses_last_done :: proc(t: ^testing.T, events: [dynamic]Stream_Event) -> Stream_Done {
-    if !testing.expect(t, len(events) > 0, "a terminated stream has at least one event") {
-        return {}
-    }
+    if !testing.expect(t, len(events) > 0, "a terminated stream has at least one event") do return {}
 
     done, ok := events[len(events) - 1].(Stream_Done)
     testing.expect(t, ok, "the final event is Stream_Done")
@@ -53,9 +49,7 @@ test_responses_expect_started :: proc(
     kind: Stream_Block_Kind,
 ) {
     started, ok := event.(Stream_Block_Started)
-    if !testing.expect(t, ok, "event must be Stream_Block_Started") {
-        return
-    }
+    if !testing.expect(t, ok, "event must be Stream_Block_Started") do return
 
     testing.expect_value(t, started.block_id, block_id)
     testing.expect_value(t, started.kind, kind)
@@ -68,9 +62,7 @@ test_responses_expect_stopped :: proc(
     block_id: Stream_Block_Id,
 ) -> Stream_Block_Result {
     stopped, ok := event.(Stream_Block_Stopped)
-    if !testing.expect(t, ok, "event must be Stream_Block_Stopped") {
-        return nil
-    }
+    if !testing.expect(t, ok, "event must be Stream_Block_Stopped") do return nil
 
     testing.expect_value(t, stopped.block_id, block_id)
 
@@ -89,21 +81,15 @@ test_responses_stream_yields_text_and_done_with_usage :: proc(t: ^testing.T) {
     events, err := test_responses_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 5, "two text deltas then done emits five events") {
-        return
-    }
+    if !testing.expect(t, len(events) == 5, "two text deltas then done emits five events") do return
 
     test_responses_expect_started(t, events[0], 0, .Text)
 
     first, first_ok := events[1].(Stream_Text_Delta)
-    if testing.expect(t, first_ok, "second event is a text delta") {
-        testing.expect_value(t, first.text, "Hel")
-    }
+    if testing.expect(t, first_ok, "second event is a text delta") do testing.expect_value(t, first.text, "Hel")
 
     second, second_ok := events[2].(Stream_Text_Delta)
-    if testing.expect(t, second_ok, "third event is a text delta") {
-        testing.expect_value(t, second.text, "lo")
-    }
+    if testing.expect(t, second_ok, "third event is a text delta") do testing.expect_value(t, second.text, "lo")
 
     _, text_ok := test_responses_expect_stopped(t, events[3], 0).(Stream_Text_Block)
     testing.expect(t, text_ok, "text block closes with Stream_Text_Block")
@@ -129,26 +115,18 @@ test_responses_stream_captures_reasoning_signature_on_item_done :: proc(t: ^test
     events, err := test_responses_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 5, "reasoning deltas then a signed close emits five events") {
-        return
-    }
+    if !testing.expect(t, len(events) == 5, "reasoning deltas then a signed close emits five events") do return
 
     test_responses_expect_started(t, events[0], 0, .Reasoning)
 
     first, first_ok := events[1].(Stream_Reasoning_Delta)
-    if testing.expect(t, first_ok, "second event is a reasoning delta") {
-        testing.expect_value(t, first.text, "Th")
-    }
+    if testing.expect(t, first_ok, "second event is a reasoning delta") do testing.expect_value(t, first.text, "Th")
 
     second, second_ok := events[2].(Stream_Reasoning_Delta)
-    if testing.expect(t, second_ok, "third event is a reasoning delta") {
-        testing.expect_value(t, second.text, "ink")
-    }
+    if testing.expect(t, second_ok, "third event is a reasoning delta") do testing.expect_value(t, second.text, "ink")
 
     reasoning, reasoning_ok := test_responses_expect_stopped(t, events[3], 0).(Stream_Reasoning_Block)
-    if testing.expect(t, reasoning_ok, "the reasoning block closes with its signature") {
-        testing.expect_value(t, reasoning.signature, "sig1")
-    }
+    if testing.expect(t, reasoning_ok, "the reasoning block closes with its signature") do testing.expect_value(t, reasoning.signature, "sig1")
 
     done := test_responses_last_done(t, events)
     testing.expect_value(t, done.reason, Stop_Reason.End_Turn)
@@ -166,16 +144,12 @@ test_responses_stream_synthesizes_encrypted_only_reasoning_block :: proc(t: ^tes
     events, err := test_responses_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 3, "an encrypted-only reasoning item still emits a signed block") {
-        return
-    }
+    if !testing.expect(t, len(events) == 3, "an encrypted-only reasoning item still emits a signed block") do return
 
     test_responses_expect_started(t, events[0], 0, .Reasoning)
 
     reasoning, reasoning_ok := test_responses_expect_stopped(t, events[1], 0).(Stream_Reasoning_Block)
-    if testing.expect(t, reasoning_ok, "the synthesized block carries the signature") {
-        testing.expect_value(t, reasoning.signature, "sigX")
-    }
+    if testing.expect(t, reasoning_ok, "the synthesized block carries the signature") do testing.expect_value(t, reasoning.signature, "sigX")
 }
 
 @(test)
@@ -192,9 +166,7 @@ test_responses_stream_assembles_tool_call_from_argument_deltas :: proc(t: ^testi
     events, err := test_responses_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 3, "one tool call emits start, stop, done") {
-        return
-    }
+    if !testing.expect(t, len(events) == 3, "one tool call emits start, stop, done") do return
 
     test_responses_expect_started(t, events[0], 0, .Tool)
 
@@ -222,9 +194,7 @@ test_responses_stream_prefers_done_item_arguments :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Transport_Error.None)
 
     tool, tool_ok := test_responses_expect_stopped(t, events[1], 0).(Stream_Tool_Block)
-    if testing.expect(t, tool_ok, "the tool block closes with Stream_Tool_Block") {
-        testing.expect_value(t, tool.call.arguments, `{"a":2}`)
-    }
+    if testing.expect(t, tool_ok, "the tool block closes with Stream_Tool_Block") do testing.expect_value(t, tool.call.arguments, `{"a":2}`)
 
     done := test_responses_last_done(t, events)
     testing.expect_value(t, done.reason, Stop_Reason.Tool_Calls)

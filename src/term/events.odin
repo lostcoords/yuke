@@ -164,14 +164,10 @@ key_text :: proc(k: ^Key) -> string {
 key_text_append :: proc(k: ^Key, cp: rune) {
     assert(int(k.text_len) <= len(k.text), "key text length exceeds its buffer")
 
-    if !is_text_rune(cp) {
-        return
-    }
+    if !is_text_rune(cp) do return
 
     encoded, n := utf8.encode_rune(cp)
-    if n > len(k.text) - int(k.text_len) {
-        return
-    }
+    if n > len(k.text) - int(k.text_len) do return
 
     copy(k.text[k.text_len:], encoded[:n])
     k.text_len += u8(n)
@@ -185,21 +181,15 @@ key_matches :: proc(k: ^Key, cp: rune, mods: Modifiers = {}) -> bool {
     assert(int(k.text_len) <= len(k.text), "key text length exceeds its buffer")
 
     // A named key has no character, and `shifted` is 0 when unreported.
-    if cp == 0 {
-        return false
-    }
+    if cp == 0 do return false
 
-    if k.char == cp && k.mods == mods {
-        return true
-    }
+    if k.char == cp && k.mods == mods do return true
 
     rest := k.mods - {.Shift} == mods - {.Shift}
     if rest && k.text_len != 0 {
         want := ascii_upper(cp) if .Shift in mods else cp
         encoded, n := utf8.encode_rune(want)
-        if key_text(k) == string(encoded[:n]) {
-            return true
-        }
+        if key_text(k) == string(encoded[:n]) do return true
     }
 
     return rest && k.shifted == cp
@@ -366,13 +356,9 @@ parser_ground :: proc(p: ^Parser, b: u8) -> Parse_Event {
         return Key{code = .Char, char = rune(b) + 'a' - 0x01, mods = {.Ctrl}}
     case:
         need, ok := utf8_seq_len(b)
-        if !ok {
-            return Invalid{}
-        }
+        if !ok do return Invalid{}
 
-        if need == 1 {
-            return emit_char(rune(b))
-        }
+        if need == 1 do return emit_char(rune(b))
 
         p.utf8[0] = b
         p.utf8_len = 1
@@ -389,16 +375,12 @@ parser_step_utf8 :: proc(p: ^Parser, b: u8) -> Parse_Event {
 
     p.utf8[p.utf8_len] = b
     p.utf8_len += 1
-    if p.utf8_len < p.utf8_need {
-        return nil
-    }
+    if p.utf8_len < p.utf8_need do return nil
 
     cp, size := utf8.decode_rune(p.utf8[:p.utf8_len])
     alt, need := p.utf8_alt, p.utf8_len
     parser_reset(p)
-    if size != need {
-        return Invalid{}
-    }
+    if size != need do return Invalid{}
 
     return emit_alt_char(cp) if alt else emit_char(cp)
 }
@@ -447,9 +429,7 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
         // Saturate rather than wrap: once a field passes `PARAM_MAX` it stops
         // accumulating and stays out of range, so no length of digits can land it back on
         // a meaningful value.
-        if p.param_cur <= PARAM_MAX {
-            p.param_cur = p.param_cur * 10 + u32(b - '0')
-        }
+        if p.param_cur <= PARAM_MAX do p.param_cur = p.param_cur * 10 + u32(b - '0')
 
         p.param_digits = true
         return nil
@@ -476,9 +456,7 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
 
         // `ESC [ < Cb ; Cx ; Cy M` is an SGR press or motion report.
         if p.private == '<' {
-            if p.param_digits || p.param_count > 0 {
-                parser_push_param(p)
-            }
+            if p.param_digits || p.param_count > 0 do parser_push_param(p)
 
             ev := parser_dispatch_sgr_mouse(p, b)
             parser_reset(p)
@@ -489,9 +467,7 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
         parser_reset(p)
         return Invalid{}
     case 0x40 ..= 0x4c, 0x4e ..= 0x7e:
-        if p.param_digits || p.param_count > 0 {
-            parser_push_param(p)
-        }
+        if p.param_digits || p.param_count > 0 do parser_push_param(p)
 
         ev := parser_dispatch_csi(p, b)
         parser_reset(p)
@@ -506,9 +482,7 @@ parser_csi :: proc(p: ^Parser, b: u8) -> Parse_Event {
 parser_step_mouse :: proc(p: ^Parser, b: u8) -> Parse_Event {
     p.mouse[p.mouse_len] = b
     p.mouse_len += 1
-    if p.mouse_len < 3 {
-        return nil
-    }
+    if p.mouse_len < 3 do return nil
 
     // The bias lands on bit 5, the motion flag, so it must come off before any bit is read.
     // SGR sends Cb unbiased.
@@ -525,22 +499,16 @@ parser_step_mouse :: proc(p: ^Parser, b: u8) -> Parse_Event {
 parser_dispatch_sgr_mouse :: proc(p: ^Parser, final: u8) -> Parse_Event {
     assert(final == 'M' || final == 'm', "SGR mouse dispatch takes only the M/m finals")
 
-    if p.param_count != 3 {
-        return Invalid{}
-    }
+    if p.param_count != 3 do return Invalid{}
 
     cb := p.params[0]
-    if cb > 255 {
-        return Invalid{}
-    }
+    if cb > 255 do return Invalid{}
 
     m: Mouse
     m.event, m.button, m.mods = parse_mouse_button(u8(cb))
 
     // `m` is release regardless of the button bits, which still name which button.
-    if final == 'm' {
-        m.event = .Release
-    }
+    if final == 'm' do m.event = .Release
 
     m.x = sgr_coord(p.params[1])
     m.y = sgr_coord(p.params[2])
@@ -550,9 +518,7 @@ parser_dispatch_sgr_mouse :: proc(p: ^Parser, final: u8) -> Parse_Event {
 
 // 1-based decimal to a 0-based cell, clamping rather than wrapping.
 sgr_coord :: proc(v: u32) -> u16 {
-    if v == 0 {
-        return 0
-    }
+    if v == 0 do return 0
 
     return u16(min(v - 1, u32(max(u16))))
 }
@@ -616,9 +582,7 @@ parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u32, bool) {
             }
         }
 
-        if g == gi && s == si {
-            return p.params[i], true
-        }
+        if g == gi && s == si do return p.params[i], true
     }
 
     return 0, false
@@ -627,14 +591,10 @@ parser_group_sub :: proc(p: ^Parser, gi, si: int) -> (u32, bool) {
 // Map a completed CSI sequence (params + final byte) to a key/mouse/resize event.
 parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
     // SGR release; the `M` form is routed earlier because bare `CSI M` is X10 mouse.
-    if final == 'm' && p.private == '<' {
-        return parser_dispatch_sgr_mouse(p, final)
-    }
+    if final == 'm' && p.private == '<' do return parser_dispatch_sgr_mouse(p, final)
 
     // Kitty's own form shares the modifier group but assembles a different key.
-    if final == 'u' {
-        return parser_dispatch_kitty(p)
-    }
+    if final == 'u' do return parser_dispatch_kitty(p)
 
     key := parser_key_envelope(p)
 
@@ -665,26 +625,18 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
         key.mods = {.Shift}
     case '~':
         n := p.params[0] if p.param_count >= 1 else 0
-        if n == 200 {
-            return Paste_Start{}
-        }
+        if n == 200 do return Paste_Start{}
 
-        if n == 201 {
-            return Paste_End{}
-        }
+        if n == 201 do return Paste_End{}
 
         code, ok := tilde_code(n)
-        if !ok {
-            return Invalid{}
-        }
+        if !ok do return Invalid{}
 
         key.code = code
     case 't':
         // In-band resize report `CSI 48 … t` (DEC mode 2048). The reported
         // dimensions are discarded; the caller re-queries via get_size.
-        if p.param_count >= 1 && p.params[0] == 48 {
-            return Resize{}
-        }
+        if p.param_count >= 1 && p.params[0] == 48 do return Resize{}
 
         return Invalid{}
     case:
@@ -698,14 +650,10 @@ parser_dispatch_csi :: proc(p: ^Parser, final: u8) -> Parse_Event {
 // optional, and each is taken only as reported.
 parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
     // A `?`-private payload is a Kitty query reply, never a keystroke.
-    if p.private == '?' {
-        return Invalid{}
-    }
+    if p.private == '?' do return Invalid{}
 
     raw, ok := parser_group_sub(p, 0, 0)
-    if !ok {
-        return Invalid{}
-    }
+    if !ok do return Invalid{}
 
     key := parser_key_envelope(p)
 
@@ -715,9 +663,7 @@ parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
         key.code = .Text
     } else {
         code, char, valid := kitty_key_code(rune(raw))
-        if !valid {
-            return Invalid{}
-        }
+        if !valid do return Invalid{}
 
         key.code, key.char = code, char
 
@@ -731,18 +677,14 @@ parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
     // Third group: the produced text, one decimal codepoint per sub-param.
     for si in 0 ..< MAX_CSI_PARAMS {
         t, has := parser_group_sub(p, 2, si)
-        if !has {
-            break
-        }
+        if !has do break
 
         key_text_append(&key, rune(t))
     }
 
     // Nothing identifies a text event but its text, so an empty one reports no keystroke.
     // An omitted key group (`CSI ; 5 u`) lands here too.
-    if key.code == .Text && key.text_len == 0 {
-        return Invalid{}
-    }
+    if key.code == .Text && key.text_len == 0 do return Invalid{}
 
     assert(key.code != .Text || key.char == 0, "a text event identifies no key")
     assert(
@@ -757,9 +699,7 @@ parser_dispatch_kitty :: proc(p: ^Parser) -> Parse_Event {
 // the key group shift the positions.
 parser_key_envelope :: proc(p: ^Parser) -> Key {
     key: Key
-    if m, has := parser_group_sub(p, 1, 0); has {
-        key.mods, key.locks = mods_from_param(m)
-    }
+    if m, has := parser_group_sub(p, 1, 0); has do key.mods, key.locks = mods_from_param(m)
 
     key.event = parser_event_type(p)
 
@@ -769,9 +709,7 @@ parser_key_envelope :: proc(p: ^Parser) -> Key {
 // Sub-param 1 of the modifier group; absent or unrecognized is a press.
 parser_event_type :: proc(p: ^Parser) -> Key_Event {
     v, has := parser_group_sub(p, 1, 1)
-    if !has {
-        return .Press
-    }
+    if !has do return .Press
 
     switch v {
     case 2:
@@ -788,14 +726,10 @@ kitty_alternate :: proc(p: ^Parser, si: int) -> rune {
     assert(si > 0, "sub-param 0 of the key group is the key itself")
 
     v, ok := parser_group_sub(p, 0, si)
-    if !ok {
-        return 0
-    }
+    if !ok do return 0
 
     cp := rune(v)
-    if !is_text_rune(cp) {
-        return 0
-    }
+    if !is_text_rune(cp) do return 0
 
     return cp
 }
@@ -821,9 +755,7 @@ emit_alt_char :: proc(cp: rune) -> Key {
         char = ascii_lower(cp),
         mods = {.Alt},
     }
-    if key.char != cp {
-        key.shifted = cp
-    }
+    if key.char != cp do key.shifted = cp
 
     return key
 }
@@ -844,38 +776,22 @@ ascii_upper :: proc(cp: rune) -> rune {
 mods_from_param :: proc(v: u32) -> (Modifiers, Locks) {
     m := v - 1 if v > 0 else 0
     mods: Modifiers
-    if m & 1 != 0 {
-        mods += {.Shift}
-    }
+    if m & 1 != 0 do mods += {.Shift}
 
-    if m & 2 != 0 {
-        mods += {.Alt}
-    }
+    if m & 2 != 0 do mods += {.Alt}
 
-    if m & 4 != 0 {
-        mods += {.Ctrl}
-    }
+    if m & 4 != 0 do mods += {.Ctrl}
 
-    if m & 8 != 0 {
-        mods += {.Super}
-    }
+    if m & 8 != 0 do mods += {.Super}
 
-    if m & 16 != 0 {
-        mods += {.Hyper}
-    }
+    if m & 16 != 0 do mods += {.Hyper}
 
-    if m & 32 != 0 {
-        mods += {.Meta}
-    }
+    if m & 32 != 0 do mods += {.Meta}
 
     locks: Locks
-    if m & 64 != 0 {
-        locks += {.Caps}
-    }
+    if m & 64 != 0 do locks += {.Caps}
 
-    if m & 128 != 0 {
-        locks += {.Num}
-    }
+    if m & 128 != 0 do locks += {.Num}
 
     return mods, locks
 }
@@ -896,9 +812,7 @@ kitty_key_code :: proc(cp: rune) -> (code: Key_Code, char: rune, ok: bool) {
     }
 
     if cp >= FUNCTIONAL_KEY_MIN && cp <= FUNCTIONAL_KEY_MAX {
-        if fk, named := functional_key(cp); named {
-            return fk, 0, true
-        }
+        if fk, named := functional_key(cp); named do return fk, 0, true
 
         // A functional key with no name here keeps its codepoint, so a caller can still
         // tell one from another; it is never `.Char`.
@@ -906,9 +820,7 @@ kitty_key_code :: proc(cp: rune) -> (code: Key_Code, char: rune, ok: bool) {
     }
 
     // Every other control code is a key we cannot name, not a character.
-    if !is_text_rune(cp) {
-        return {}, 0, false
-    }
+    if !is_text_rune(cp) do return {}, 0, false
 
     // Kitty is specified to send the unshifted key, but folding here costs nothing and
     // keeps `char` case-independent even from a terminal that sends the shifted one.
@@ -1033,17 +945,11 @@ sat_sub_33 :: proc(b: u8) -> u16 {
 // buttons 4-7; the low two bits name the button within whichever set is in force.
 parse_mouse_button :: proc(cb: u8) -> (event: Mouse_Event, button: Mouse_Button, mods: Modifiers) {
     // The xterm-documented modifier bits: shift=4, meta/alt=8, ctrl=16.
-    if cb & 4 != 0 {
-        mods += {.Shift}
-    }
+    if cb & 4 != 0 do mods += {.Shift}
 
-    if cb & 8 != 0 {
-        mods += {.Alt}
-    }
+    if cb & 8 != 0 do mods += {.Alt}
 
-    if cb & 16 != 0 {
-        mods += {.Ctrl}
-    }
+    if cb & 16 != 0 do mods += {.Ctrl}
 
     // A wheel notch is only ever reported as a press.
     if cb & 64 != 0 {
@@ -1072,14 +978,10 @@ parse_mouse_button :: proc(cb: u8) -> (event: Mouse_Event, button: Mouse_Button,
         button = .None
     }
 
-    if cb & 32 != 0 {
-        return .Move, button, mods
-    }
+    if cb & 32 != 0 do return .Move, button, mods
 
     // Button id 3 outside a motion report is X10's generic release; SGR names it via `m`.
-    if button == .None {
-        return .Release, .None, mods
-    }
+    if button == .None do return .Release, .None, mods
 
     return .Press, button, mods
 }
@@ -1091,9 +993,7 @@ parse :: proc(bytes: []u8) -> (event: Parse_Event, consumed: int, incomplete: bo
     p: Parser
     for b, i in bytes {
         ev := parser_step(&p, b)
-        if ev != nil {
-            return ev, i + 1, false
-        }
+        if ev != nil do return ev, i + 1, false
     }
 
     return nil, 0, true
@@ -1103,18 +1003,12 @@ parse :: proc(bytes: []u8) -> (event: Parse_Event, consumed: int, incomplete: bo
 // becomes the Escape key, empty input becomes `nil` (none), and any other
 // unterminated partial becomes `Invalid`.
 flush :: proc(bytes: []u8) -> Parse_Event {
-    if len(bytes) == 0 {
-        return nil
-    }
+    if len(bytes) == 0 do return nil
 
-    if len(bytes) == 1 && bytes[0] == 0x1b {
-        return Key{code = .Esc}
-    }
+    if len(bytes) == 1 && bytes[0] == 0x1b do return Key{code = .Esc}
 
     event, _, incomplete := parse(bytes)
-    if incomplete {
-        return Invalid{}
-    }
+    if incomplete do return Invalid{}
 
     return event
 }

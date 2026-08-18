@@ -75,9 +75,7 @@ test_offload_runs_off_loop_and_completes_on_it :: proc(t: ^testing.T) {
     submit(&pool, &job, job_work, job_done)
     testing.expect_value(t, pool_outstanding(&pool), 1)
 
-    if !ts.nbio_run_until(t, &job, job_completed, "offloaded job completes") {
-        return
-    }
+    if !ts.nbio_run_until(t, &job, job_completed, "offloaded job completes") do return
 
     testing.expect_value(t, job.output, 42)
     testing.expect(t, job.work_tid != loop_tid, "work must not run on the loop thread")
@@ -184,9 +182,7 @@ test_offload_rejects_drain_from_completion :: proc(t: ^testing.T) {
     }
     submit(&pool, &job, nested_drain_work, nested_drain_done)
 
-    if !ts.nbio_run_until(t, &job, nested_drain_completed, "nested drain is rejected") {
-        return
-    }
+    if !ts.nbio_run_until(t, &job, nested_drain_completed, "nested drain is rejected") do return
 
     switch err in job.drain_err {
     case Drain_State_Error:

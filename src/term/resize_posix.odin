@@ -57,9 +57,7 @@ sigwinch_handler :: proc "c" (sig: posix.Signal) {
     defer intrinsics.atomic_sub(&g_active_handlers, 1)
 
     fd := intrinsics.atomic_load(&g_write_fd)
-    if fd < 0 {
-        return
-    }
+    if fd < 0 do return
 
     b: [1]u8
     // Content-free wake token; a full pipe already has a wake pending, and a handler
@@ -71,9 +69,7 @@ sigwinch_handler :: proc "c" (sig: posix.Signal) {
 // live per process at a time (one tty to resize).
 resize_notifier_init :: proc(tty: Tty_Handle) -> (Resize_Notifier, Resize_Error) {
     fds: [2]posix.FD
-    if posix.pipe(&fds) != .OK {
-        return {}, .Pipe_Failed
-    }
+    if posix.pipe(&fds) != .OK do return {}, .Pipe_Failed
 
     // Both ends non-blocking (the handler must never block; `wait` polls the
     // read end) and close-on-exec (the pipe must not leak into a child).
@@ -111,13 +107,9 @@ resize_notifier_init :: proc(tty: Tty_Handle) -> (Resize_Notifier, Resize_Error)
 
 // Set O_NONBLOCK and FD_CLOEXEC on one pipe end.
 pipe_prepare :: proc(fd: posix.FD) -> Resize_Error {
-    if posix.fcntl(fd, .SETFL, posix.O_Flags{.NONBLOCK}) < 0 {
-        return .Pipe_Failed
-    }
+    if posix.fcntl(fd, .SETFL, posix.O_Flags{.NONBLOCK}) < 0 do return .Pipe_Failed
 
-    if posix.fcntl(fd, .SETFD, i32(posix.FD_CLOEXEC)) < 0 {
-        return .Pipe_Failed
-    }
+    if posix.fcntl(fd, .SETFD, i32(posix.FD_CLOEXEC)) < 0 do return .Pipe_Failed
 
     return .None
 }
@@ -133,9 +125,7 @@ resize_notifier_consume :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
     drain_pipe(n.read_fd)
 
     size, serr := get_size(n.tty)
-    if serr != .None {
-        return {}, .Size_Query_Failed
-    }
+    if serr != .None do return {}, .Size_Query_Failed
 
     return size, .None
 }
@@ -143,21 +133,15 @@ resize_notifier_consume :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
 // Block until a resize is signaled, then return the current size. One waiter at a time;
 // a second concurrent call fails instead of stacking behind the first.
 resize_notifier_wait :: proc(n: ^Resize_Notifier) -> (Size, Resize_Error) {
-    if intrinsics.atomic_exchange(&n.waiting, true) {
-        return {}, .Already_Waiting
-    }
+    if intrinsics.atomic_exchange(&n.waiting, true) do return {}, .Already_Waiting
     defer intrinsics.atomic_store(&n.waiting, false)
 
     for {
         fds := [1]posix.pollfd{{fd = n.read_fd, events = {.IN}, revents = {}}}
         r := posix.poll(raw_data(fds[:]), 1, -1)
-        if r >= 0 {
-            break
-        }
+        if r >= 0 do break
 
-        if posix.errno() == .EINTR {
-            continue
-        }
+        if posix.errno() == .EINTR do continue
 
         // No dedicated poll-failure variant: an unexpected poll error leaves `wait`
         // unable to produce a size, the same outward failure as a bad ioctl.
@@ -173,9 +157,7 @@ drain_pipe :: proc(fd: posix.FD) {
     buf: [64]u8
     for {
         n := posix.read(fd, raw_data(buf[:]), len(buf))
-        if n <= 0 {
-            return
-        }
+        if n <= 0 do return
     }
 }
 

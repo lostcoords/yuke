@@ -72,9 +72,7 @@ acceptance_on_sub :: proc(c: ^client.Client, outcome: client.Request_Outcome, _:
 
     resp := answered.response
 
-    if _, ok := resp.(wire.Response_Ok); !ok {
-        o.sub_failed = true
-    }
+    if _, ok := resp.(wire.Response_Ok); !ok do o.sub_failed = true
 
     client.client_send_request(
         c,
@@ -88,21 +86,15 @@ acceptance_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome,
     o := (^Acceptance_Obs)(c.user_data)
     o.resync_done = true
     answered, has_response := outcome.(client.Request_Response)
-    if !has_response {
-        return
-    }
+    if !has_response do return
 
     resp := answered.response
 
     ok, is_ok := resp.(wire.Response_Ok)
-    if !is_ok {
-        return
-    }
+    if !is_ok do return
 
     cut, is_cut := ok.result.(wire.Session_Resync_Result)
-    if !is_cut {
-        return
-    }
+    if !is_cut do return
 
     o.install_err = client.replica_install_snapshot(&o.replica, cut)
     o.resync_ok = o.install_err == .None
@@ -110,9 +102,7 @@ acceptance_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome,
 
 acceptance_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     o := (^Acceptance_Obs)(c.user_data)
-    if !o.resync_ok {
-        return
-    }
+    if !o.resync_ok do return
 
     o.post_result, o.post_err = client.replica_apply_broadcast(&o.replica, bc)
     o.post_seen = true
@@ -226,9 +216,7 @@ test_daemon_acceptance_durable_broadcast_survives_restart :: proc(t: ^testing.T)
     testing.expect(t, obs.resync_ok, "the snapshot should decode and install into the replica")
     testing.expect_value(t, obs.replica.base_seq, wire.Seq(2))
 
-    if testing.expect_value(t, len(obs.replica.messages), 1) {
-        testing.expect_value(t, wire.message_id(obs.replica.messages[0].message), wire.Message_Id(1))
-    }
+    if testing.expect_value(t, len(obs.replica.messages), 1) do testing.expect_value(t, wire.message_id(obs.replica.messages[0].message), wire.Message_Id(1))
 
     testing.expect_value(t, len(obs.replica.configs), 1)
 

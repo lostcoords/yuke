@@ -133,14 +133,10 @@ resolve_row :: proc(
 ) {
     col_count := sqlite.column_count(st)
 
-    if col_count == 0 {
-        return
-    }
+    if col_count == 0 do return
 
     for c in 0 ..< col_count {
-        if !is_identifier(sqlite.column_name(st, c)) {
-            return
-        }
+        if !is_identifier(sqlite.column_name(st, c)) do return
     }
 
     row = make([dynamic]Resolved_Field, 0, col_count, allocator)

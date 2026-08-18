@@ -147,18 +147,14 @@ test_on_request :: proc(c: ^Conn, req: Request) {
 
         if o.shutdown {
             shutdown(c.server)
-        } else if o.drain {
-            drain(c.server)
-        }
+        } else if o.drain do drain(c.server)
 
         return
     }
 
     test_hijack_and_greet(c)
 
-    if o.shutdown {
-        shutdown(c.server)
-    }
+    if o.shutdown do shutdown(c.server)
 }
 
 // Defer, then answer from a zero-duration timeout: the same shape an offloaded task's
@@ -167,10 +163,7 @@ test_defer_and_answer_later :: proc(c: ^Conn) {
     defer_response(c)
     assert(c.state == .Deferred, "deferring did not reach Deferred")
 
-    if obs_of(c).finalize_while_deferred {
-        // Stand in for teardown landing between the deferral and its answer.
-        conn_finalize(c)
-    }
+    if obs_of(c).finalize_while_deferred do conn_finalize(c)
 
     nbio.timeout_poly(0, c, test_answer_deferred, c.loop)
 }
@@ -184,9 +177,7 @@ test_answer_deferred :: proc(op: ^nbio.Operation, c: ^Conn) {
     o.answered_late = true
 
     // What deferred work must do: answer only what resolving still hands back.
-    if conn_resolve(c.server, c.ticket) == nil {
-        return
-    }
+    if conn_resolve(c.server, c.ticket) == nil do return
 
     respond_text(c, .Ok, "deferred")
 }
@@ -223,14 +214,10 @@ test_hijack_and_greet :: proc(c: ^Conn) {
 // failure, which the test expects against.
 test_stage_file :: proc() -> string {
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        base = "/tmp"
-    }
+    if !has do base = "/tmp"
 
     path, _ := os.join_path({base, "http_server_pending_headers"}, context.temp_allocator)
-    if os.write_entire_file(path, transmute([]byte)string(FILE_BODY)) != nil {
-        return ""
-    }
+    if os.write_entire_file(path, transmute([]byte)string(FILE_BODY)) != nil do return ""
 
     return path
 }
@@ -244,9 +231,7 @@ test_respond_from_file :: proc(c: ^Conn, o: ^Obs) {
     }
 
     o.answer_err = try_respond_file(c, .Ok, "text/plain", file, 1 << 20, .Not_Found, "missing")
-    if o.answer_err != .None {
-        nbio.close(file, l = c.loop)
-    }
+    if o.answer_err != .None do nbio.close(file, l = c.loop)
 
     test_answer_fallback(c, o)
 }
@@ -254,21 +239,15 @@ test_respond_from_file :: proc(c: ^Conn, o: ^Obs) {
 // The answering call refused, so nothing was sent and the connection contract still
 // stands. An oversized pending header poisons every response, so abort is the last resort.
 test_answer_fallback :: proc(c: ^Conn, o: ^Obs) {
-    if o.answer_err == .None {
-        return
-    }
+    if o.answer_err == .None do return
 
-    if try_respond_text(c, .Internal_Server_Error, "answer rejected") != .None {
-        abort(c)
-    }
+    if try_respond_text(c, .Internal_Server_Error, "answer rejected") != .None do abort(c)
 }
 
 // Body sink under test: accumulate the chunk, or reject it to drive the abort path.
 test_body_chunk :: proc(c: ^Conn, user_data: rawptr, chunk: []byte) -> bool {
     o := (^Obs)(user_data)
-    if o.abort_body {
-        return false
-    }
+    if o.abort_body do return false
 
     o.body_got += copy(o.body_buf[o.body_got:], chunk)
 
@@ -281,9 +260,7 @@ test_body_end :: proc(c: ^Conn, user_data: rawptr, ok: bool) {
     o.body_ended = true
     o.body_ok = ok
 
-    if ok {
-        respond_text(c, .Ok, string(o.body_buf[:o.body_got]))
-    }
+    if ok do respond_text(c, .Ok, string(o.body_buf[:o.body_got]))
 }
 
 // A blocking peer: send `request`, read until the server closes.
@@ -300,15 +277,11 @@ Peer :: struct {
 
 peer_run :: proc(p: ^Peer) {
     sock, derr := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = p.port})
-    if derr != nil {
-        return
-    }
+    if derr != nil do return
     defer net.close(sock)
 
     // Bound thread cleanup even if the server and its shutdown path both fail.
-    if net.set_option(sock, .Receive_Timeout, ts.NBIO_WAIT_DEADLINE + time.Second) != nil {
-        return
-    }
+    if net.set_option(sock, .Receive_Timeout, ts.NBIO_WAIT_DEADLINE + time.Second) != nil do return
 
     first := p.request
     second := ""
@@ -317,24 +290,18 @@ peer_run :: proc(p: ^Peer) {
         second = p.request[p.split_at:]
     }
 
-    if _, serr := net.send_tcp(sock, transmute([]byte)first); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, transmute([]byte)first); serr != nil do return
 
     if len(second) > 0 {
         // Give the server time to recv and rescan the first chunk before the rest
         // of the terminator arrives, so the two chunks land as separate recvs.
         time.sleep(50 * time.Millisecond)
-        if _, serr := net.send_tcp(sock, transmute([]byte)second); serr != nil {
-            return
-        }
+        if _, serr := net.send_tcp(sock, transmute([]byte)second); serr != nil do return
     }
 
     for p.length < len(p.response) {
         n, rerr := net.recv_tcp(sock, p.response[p.length:])
-        if rerr != nil || n == 0 {
-            break
-        }
+        if rerr != nil || n == 0 do break
 
         p.length += n
     }
@@ -408,9 +375,7 @@ run_exchange_with :: proc(
 
     shutdown(&s)
 
-    if !ts.nbio_run_until(t, &s.shutdown_complete, "HTTP server shutdown") {
-        return ""
-    }
+    if !ts.nbio_run_until(t, &s.shutdown_complete, "HTTP server shutdown") do return ""
 
     destroy(&s)
 
@@ -1069,9 +1034,7 @@ router_mw_body_end :: proc(c: ^Conn, user_data: rawptr, ok: bool) {
     o := (^Router_Obs)(user_data)
     o.mw_body_ended = true
 
-    if ok {
-        respond_text(c, .Ok, "mw-body")
-    }
+    if ok do respond_text(c, .Ok, "mw-body")
 }
 
 router_mw_count2 :: proc(ctx: ^Context(Router_Obs)) -> Middleware_Result {

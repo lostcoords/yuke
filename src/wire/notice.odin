@@ -80,9 +80,7 @@ notice_from_reader :: proc(d: ^json.Decoder) -> (n: Notice, err: json.Decode_Err
         }
     }
 
-    if seen != {.Level, .Source, .Message} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Level, .Source, .Message} do return {}, .Mismatched_Payload
 
     return n, .None
 }

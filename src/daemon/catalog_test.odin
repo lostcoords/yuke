@@ -140,9 +140,7 @@ test_catalog_state_holds_the_snapshot_it_revised :: proc(t: ^testing.T) {
 
     view := catalog_models_view(d.catalog.snapshot, context.allocator)
     defer delete(view)
-    if testing.expect_value(t, len(view), 1) {
-        testing.expect_value(t, string(view[0].id), "openai/gpt-5")
-    }
+    if testing.expect_value(t, len(view), 1) do testing.expect_value(t, string(view[0].id), "openai/gpt-5")
 
     // The held revision covers the held snapshot — the invariant `catalog.list` relies on
     // when it answers with the held rev and a view built from the same rows.
@@ -150,9 +148,7 @@ test_catalog_state_holds_the_snapshot_it_revised :: proc(t: ^testing.T) {
 
     // The run path resolves against the same snapshot rather than reading the store.
     found := catalog_model_find(&d, "openai/gpt-5")
-    if testing.expect(t, found != nil, "the held snapshot resolves a model by public id") {
-        testing.expect_value(t, found.upstream_id, "upstream")
-    }
+    if testing.expect(t, found != nil, "the held snapshot resolves a model by public id") do testing.expect_value(t, found.upstream_id, "upstream")
 
     testing.expect(t, catalog_model_find(&d, "openai/absent") == nil, "an unknown id resolves to nothing")
 }
@@ -421,19 +417,13 @@ test_catalog_refresh_owns_its_request_id :: proc(t: ^testing.T) {
 check_catalog_full :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "catalog.list should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "catalog.list should succeed") do return true
 
     result, is_cat := ok.result.(wire.Catalog_List_Result)
-    if !testing.expect(t, is_cat, "result is a catalog.list result") {
-        return true
-    }
+    if !testing.expect(t, is_cat, "result is a catalog.list result") do return true
 
     full, is_full := result.(wire.Catalog_List_Result_Full)
-    if !testing.expect(t, is_full, "an absent since_rev yields a full snapshot") {
-        return true
-    }
+    if !testing.expect(t, is_full, "an absent since_rev yields a full snapshot") do return true
 
     testing.expect_value(t, len(full.models), 0)
     testing.expect_value(t, len(full.health.skipped), 0)
@@ -456,14 +446,10 @@ test_daemon_catalog_list_full_when_no_since_rev :: proc(t: ^testing.T) {
 check_catalog_unchanged :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "catalog.list should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "catalog.list should succeed") do return true
 
     result, is_cat := ok.result.(wire.Catalog_List_Result)
-    if !testing.expect(t, is_cat, "result is a catalog.list result") {
-        return true
-    }
+    if !testing.expect(t, is_cat, "result is a catalog.list result") do return true
 
     _, is_unchanged := result.(wire.Catalog_List_Result_Unchanged)
     testing.expect(t, is_unchanged, "a since_rev equal to the current rev yields unchanged")

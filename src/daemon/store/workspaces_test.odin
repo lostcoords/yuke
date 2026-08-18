@@ -47,9 +47,7 @@ test_a_workspace_is_registered_once :: proc(t: ^testing.T) {
     both, both_err := workspace_page(s, 8, context.temp_allocator)
     testing.expect_value(t, both_err, nil)
 
-    if testing.expect_value(t, len(both), 2) {
-        testing.expect(t, both[0].root < both[1].root, "the snapshot is ordered by root")
-    }
+    if testing.expect_value(t, len(both), 2) do testing.expect(t, both[0].root < both[1].root, "the snapshot is ordered by root")
 
     bounded, bounded_err := workspace_page(s, 1, context.temp_allocator)
     testing.expect_value(t, bounded_err, nil)

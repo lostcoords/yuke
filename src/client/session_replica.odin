@@ -281,18 +281,12 @@ replica_on_started :: proc(
     result: Apply_Result,
     err: Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
-    if is_finalized(self, data.message_id) {
-        return {kind = .Ignored}, .None
-    }
+    if is_finalized(self, data.message_id) do return {kind = .Ignored}, .None
 
     if self.active != nil {
-        if self.active.message_id == data.message_id {
-            return {kind = .Ignored}, .None
-        }
+        if self.active.message_id == data.message_id do return {kind = .Ignored}, .None
 
         return {kind = .Gap}, .None
     }
@@ -312,31 +306,21 @@ replica_on_part_added :: proc(
     result: Apply_Result,
     err: Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     draft := open_draft(self, data.message_id)
-    if draft == nil {
-        return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
-    }
+    if draft == nil do return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
 
     ordinal := u64(wire.assistant_part_id(data.part))
     count := u64(len(draft.parts))
 
-    if ordinal < count {
-        return {kind = .Ignored}, .None // duplicated
-    }
+    if ordinal < count do return {kind = .Ignored}, .None // duplicated
 
-    if ordinal > count {
-        return {kind = .Gap}, .None // missing part
-    }
+    if ordinal > count do return {kind = .Gap}, .None // missing part
 
     if tool, is_tool := data.part.(wire.Tool_Part); is_tool {
         if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); is_waiting {
-            if draft_has_waiting_permission(draft, nil) {
-                return {kind = .Gap}, .None
-            }
+            if draft_has_waiting_permission(draft, nil) do return {kind = .Gap}, .None
         }
     }
 
@@ -356,41 +340,27 @@ replica_on_part_delta :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     draft := open_draft(self, data.message_id)
-    if draft == nil {
-        return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
-    }
+    if draft == nil do return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
 
     index, ok := to_index(u64(data.part_id))
-    if !ok || index >= len(draft.parts) {
-        return {kind = .Gap}, .None
-    }
+    if !ok || index >= len(draft.parts) do return {kind = .Gap}, .None
 
     part := &draft.parts[index]
 
     // Only text and visible reasoning parts carry a byte buffer.
-    if part.kind != .Text && part.kind != .Reasoning {
-        return {kind = .Gap}, .None
-    }
+    if part.kind != .Text && part.kind != .Reasoning do return {kind = .Gap}, .None
 
     offset, ook := to_index(data.offset)
-    if !ook {
-        return {kind = .Gap}, .None
-    }
+    if !ook do return {kind = .Gap}, .None
 
     have := len(part.text.bytes)
 
-    if offset < have {
-        return {kind = .Ignored}, .None // already present
-    }
+    if offset < have do return {kind = .Ignored}, .None // already present
 
-    if offset > have {
-        return {kind = .Gap}, .None // missed a delta
-    }
+    if offset > have do return {kind = .Gap}, .None // missed a delta
 
     append(&part.text.bytes, data.delta)
 
@@ -409,51 +379,33 @@ replica_on_tool_output_delta :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     draft := open_draft(self, data.message_id)
-    if draft == nil {
-        return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
-    }
+    if draft == nil do return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
 
     index, ok := to_index(u64(data.part_id))
-    if !ok || index >= len(draft.parts) {
-        return {kind = .Gap}, .None
-    }
+    if !ok || index >= len(draft.parts) do return {kind = .Gap}, .None
 
     part := &draft.parts[index]
 
     // Output deltas only target tool parts.
-    if part.kind != .Tool {
-        return {kind = .Gap}, .None
-    }
+    if part.kind != .Tool do return {kind = .Gap}, .None
 
-    if _, is_running := part.tool.tool.state.(wire.Tool_State_Running); !is_running {
-        return {kind = .Ignored}, .None
-    }
+    if _, is_running := part.tool.tool.state.(wire.Tool_State_Running); !is_running do return {kind = .Ignored}, .None
 
     offset, ook := to_index(data.offset)
-    if !ook {
-        return {kind = .Gap}, .None
-    }
+    if !ook do return {kind = .Gap}, .None
 
     have := len(part.tool.output)
 
-    if offset < have {
-        return {kind = .Ignored}, .None // already present
-    }
+    if offset < have do return {kind = .Ignored}, .None // already present
 
-    if offset > have {
-        return {kind = .Gap}, .None // missed a delta
-    }
+    if offset > have do return {kind = .Gap}, .None // missed a delta
 
     // The client cap matches the daemon's; exceeding it is a protocol violation, handled
     // like an offset gap so the same class-`.Live_Droppable` resync path recovers.
-    if have + len(data.delta) > wire.LIMITS.max_tool_output_stream_bytes {
-        return {kind = .Gap}, .None
-    }
+    if have + len(data.delta) > wire.LIMITS.max_tool_output_stream_bytes do return {kind = .Gap}, .None
 
     append(&part.tool.output, data.delta)
 
@@ -468,41 +420,27 @@ replica_on_tool_state_changed :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     draft := open_draft(self, data.message_id)
-    if draft == nil {
-        return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
-    }
+    if draft == nil do return {kind = is_finalized(self, data.message_id) ? .Ignored : .Gap}, .None
 
     index, ok := to_index(u64(data.part_id))
-    if !ok || index >= len(draft.parts) {
-        return {kind = .Gap}, .None
-    }
+    if !ok || index >= len(draft.parts) do return {kind = .Gap}, .None
 
     part := &draft.parts[index]
-    if part.kind != .Tool {
-        return {kind = .Gap}, .None
-    }
+    if part.kind != .Tool do return {kind = .Gap}, .None
 
     // A stale broadcast must not regress a terminal tool part back to an active state.
-    if tool_state_is_terminal(part.tool.tool.state) && !tool_state_is_terminal(data.state) {
-        return {kind = .Ignored}, .None
-    }
+    if tool_state_is_terminal(part.tool.tool.state) && !tool_state_is_terminal(data.state) do return {kind = .Ignored}, .None
 
     if _, is_waiting := data.state.(wire.Tool_State_Waiting_Permission); is_waiting {
         perm, has_perm := data.permission_state.?
 
         // A resolution must not leave the state in waiting_permission.
-        if !has_perm || !permission_state_is_awaiting(perm) {
-            return {kind = .Gap}, .None
-        }
+        if !has_perm || !permission_state_is_awaiting(perm) do return {kind = .Gap}, .None
 
-        if draft_has_waiting_permission(draft, data.part_id) {
-            return {kind = .Gap}, .None
-        }
+        if draft_has_waiting_permission(draft, data.part_id) do return {kind = .Gap}, .None
     }
 
     // Previous tool state is owned by the draft arena; replaced in place. The superseded
@@ -511,9 +449,7 @@ replica_on_tool_state_changed :: proc(
     part.tool.tool.state = wire.tool_state_clone(data.state, arena_alloc)
     part.tool.tool.permission_state = nil
 
-    if p, has_permission := data.permission_state.?; has_permission {
-        part.tool.tool.permission_state = wire.permission_state_clone(p, arena_alloc)
-    }
+    if p, has_permission := data.permission_state.?; has_permission do part.tool.tool.permission_state = wire.permission_state_clone(p, arena_alloc)
 
     return {kind = .Changed}, .None
 }
@@ -521,9 +457,7 @@ replica_on_tool_state_changed :: proc(
 // Apply the tombstone for an abandoned draft. Idempotent: unknown or finalized ids do not
 // damage another open draft and do not demand resync.
 replica_on_discarded :: proc(self: ^Session_Replica, data: wire.Message_Discarded_Data) -> Apply_Result {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}
 
     if self.active != nil && self.active.message_id == data.message_id {
         advance_finalized(self, data.message_id)
@@ -617,9 +551,7 @@ active_part_from_wire :: proc(
 
 // Pointer to the active draft if `message_id` matches, else nil.
 open_draft :: proc(self: ^Session_Replica, message_id: wire.Message_Id) -> ^Draft_Replica {
-    if self.active != nil && self.active.message_id == message_id {
-        return self.active
-    }
+    if self.active != nil && self.active.message_id == message_id do return self.active
 
     return nil
 }
@@ -630,17 +562,11 @@ draft_has_waiting_permission :: proc(draft: ^Draft_Replica, except: Maybe(wire.P
     assert(draft != nil, "permission scan needs a draft")
 
     for &part in draft.parts {
-        if part.kind != .Tool {
-            continue
-        }
+        if part.kind != .Tool do continue
 
-        if part_id, ok := except.?; ok && part.tool.tool.id == part_id {
-            continue
-        }
+        if part_id, ok := except.?; ok && part.tool.tool.id == part_id do continue
 
-        if _, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission); is_waiting {
-            return true
-        }
+        if _, is_waiting := part.tool.tool.state.(wire.Tool_State_Waiting_Permission); is_waiting do return true
     }
 
     return false
@@ -648,9 +574,7 @@ draft_has_waiting_permission :: proc(draft: ^Draft_Replica, except: Maybe(wire.P
 
 // True if `message_id` is at or below the finalized high-water mark.
 is_finalized :: proc(self: ^Session_Replica, message_id: wire.Message_Id) -> bool {
-    if highest, ok := self.highest_finalized_id.?; ok {
-        return message_id <= highest
-    }
+    if highest, ok := self.highest_finalized_id.?; ok do return message_id <= highest
 
     return false
 }
@@ -658,9 +582,7 @@ is_finalized :: proc(self: ^Session_Replica, message_id: wire.Message_Id) -> boo
 // Raise the finalized high-water mark to `message_id` if it is higher.
 advance_finalized :: proc(self: ^Session_Replica, message_id: wire.Message_Id) {
     highest, ok := self.highest_finalized_id.?
-    if !ok || message_id > highest {
-        self.highest_finalized_id = message_id
-    }
+    if !ok || message_id > highest do self.highest_finalized_id = message_id
 }
 
 // Destroy and clear the active draft.
@@ -673,14 +595,10 @@ drop_active :: proc(self: ^Session_Replica) {
 
 // Pointer to part `part_id`, or nil if the draft or part is absent. Part ids are ordinals.
 part_at :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> ^Active_Part {
-    if self.active == nil {
-        return nil
-    }
+    if self.active == nil do return nil
 
     index, ok := to_index(u64(part_id))
-    if !ok || index >= len(self.active.parts) {
-        return nil
-    }
+    if !ok || index >= len(self.active.parts) do return nil
 
     return &self.active.parts[index]
 }
@@ -688,15 +606,11 @@ part_at :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> ^Active_Part {
 // The draft part an activity locator names, or nil when the replica cannot compare against
 // it: no draft for that message, or an ordinal it has not folded yet.
 located_part :: proc(self: ^Session_Replica, message_id: wire.Message_Id, part_id: wire.Part_Id) -> ^Active_Part {
-    if open_draft(self, message_id) == nil {
-        return nil
-    }
+    if open_draft(self, message_id) == nil do return nil
 
     part := part_at(self, part_id)
 
-    if part == nil {
-        return nil
-    }
+    if part == nil do return nil
 
     stored_id: wire.Part_Id
 
@@ -756,9 +670,7 @@ tool_state_is_terminal :: proc(state: wire.Tool_State) -> bool {
 // A waiting-permission state is still eligible for a decision when it has no decision
 // recorded yet and carries options to decide among.
 permission_state_is_awaiting :: proc(state: wire.Permission_State) -> bool {
-    if _, has_decision := state.decision.?; has_decision {
-        return false
-    }
+    if _, has_decision := state.decision.?; has_decision do return false
 
     _, has_options := state.options.?
 
@@ -767,9 +679,7 @@ permission_state_is_awaiting :: proc(state: wire.Permission_State) -> bool {
 
 // Checked cast from a wire ordinal to an `int` collection index.
 to_index :: proc(v: u64) -> (int, bool) {
-    if v > u64(max(int)) {
-        return 0, false
-    }
+    if v > u64(max(int)) do return 0, false
 
     return int(v), true
 }
@@ -778,9 +688,7 @@ to_index :: proc(v: u64) -> (int, bool) {
 
 // Borrow active draft metadata; ok is false when no draft is open.
 replica_active_info :: proc(self: ^Session_Replica) -> (Active_Info, bool) {
-    if self.active == nil {
-        return {}, false
-    }
+    if self.active == nil do return {}, false
 
     d := self.active
 
@@ -798,9 +706,7 @@ replica_active_info :: proc(self: ^Session_Replica) -> (Active_Info, bool) {
 // A part's kind; carries no borrowed memory. ok is false if the part is absent.
 replica_part_kind :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (Part_Kind, bool) {
     part := part_at(self, part_id)
-    if part == nil {
-        return {}, false
-    }
+    if part == nil do return {}, false
 
     return part.kind, true
 }
@@ -810,9 +716,7 @@ replica_part_kind :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (Par
 // Invalidated by any later replica mutation.
 replica_part_text :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (string, bool) {
     part := part_at(self, part_id)
-    if part == nil || (part.kind != .Text && part.kind != .Reasoning) {
-        return "", false
-    }
+    if part == nil || (part.kind != .Text && part.kind != .Reasoning) do return "", false
 
     return string(part.text.bytes[:]), true
 }
@@ -822,9 +726,7 @@ replica_part_text :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (str
 // ends the draft.
 replica_tool_part :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> ^wire.Tool_Part {
     part := part_at(self, part_id)
-    if part == nil || part.kind != .Tool {
-        return nil
-    }
+    if part == nil || part.kind != .Tool do return nil
 
     return &part.tool.tool
 }
@@ -833,9 +735,7 @@ replica_tool_part :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> ^wir
 // absent part. Invalidated by any later replica mutation, like `replica_tool_part`.
 replica_tool_output :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (string, bool) {
     part := part_at(self, part_id)
-    if part == nil || part.kind != .Tool {
-        return "", false
-    }
+    if part == nil || part.kind != .Tool do return "", false
 
     return string(part.tool.output[:]), true
 }
@@ -843,30 +743,20 @@ replica_tool_output :: proc(self: ^Session_Replica, part_id: wire.Part_Id) -> (s
 // Borrow the tool call awaiting permission, materialized from the active draft's tool
 // state. Invalidated by any later replica mutation, like `replica_tool_part`.
 replica_pending_permission :: proc(self: ^Session_Replica) -> (Pending_Permission_View, bool) {
-    if self.active == nil {
-        return {}, false
-    }
+    if self.active == nil do return {}, false
 
     for &part in self.active.parts {
-        if part.kind != .Tool {
-            continue
-        }
+        if part.kind != .Tool do continue
 
         tool := &part.tool.tool
 
-        if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting {
-            continue
-        }
+        if _, is_waiting := tool.state.(wire.Tool_State_Waiting_Permission); !is_waiting do continue
 
         perm, has_perm := tool.permission_state.?
-        if !has_perm || !permission_state_is_awaiting(perm) {
-            continue
-        }
+        if !has_perm || !permission_state_is_awaiting(perm) do continue
 
         options, has_options := perm.options.?
-        if !has_options {
-            continue
-        }
+        if !has_options do continue
 
         return Pending_Permission_View {
                 message_id = self.active.message_id,
@@ -886,9 +776,7 @@ replica_pending_permission :: proc(self: ^Session_Replica) -> (Pending_Permissio
 // arena, invalidated when that id changes or the replica mutates.
 replica_committed_by_id :: proc(self: ^Session_Replica, id: wire.Message_Id) -> (wire.Message, bool) {
     for owned in self.messages {
-        if wire.message_id(owned.message) == id {
-            return owned.message, true
-        }
+        if wire.message_id(owned.message) == id do return owned.message, true
     }
 
     return {}, false
@@ -897,9 +785,7 @@ replica_committed_by_id :: proc(self: ^Session_Replica, id: wire.Message_Id) -> 
 // Borrow a config by revision; ok is false if absent. Strings borrow `configs_arena`.
 replica_config :: proc(self: ^Session_Replica, config_rev: wire.Config_Rev) -> (wire.Run_Config, bool) {
     for cfg in self.configs {
-        if cfg.config_rev == config_rev {
-            return cfg, true
-        }
+        if cfg.config_rev == config_rev do return cfg, true
     }
 
     return {}, false
@@ -917,9 +803,7 @@ replica_on_committed :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     mid := wire.message_id(data.message)
 
@@ -972,9 +856,7 @@ replica_on_committed :: proc(
     }
 
     // Clear only the draft this commit finalizes.
-    if self.active != nil && self.active.message_id == mid {
-        drop_active(self)
-    }
+    if self.active != nil && self.active.message_id == mid do drop_active(self)
 
     return {kind = .Committed, message_id = mid}, .None
 }
@@ -988,16 +870,12 @@ replica_on_config_changed :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     for existing in self.configs {
         if existing.config_rev == data.config.config_rev {
             // Odin compares strings by content.
-            if existing.model != data.config.model || existing.reasoning != data.config.reasoning {
-                return {}, .Config_Revision_Conflict
-            }
+            if existing.model != data.config.model || existing.reasoning != data.config.reasoning do return {}, .Config_Revision_Conflict
 
             return {kind = .Ignored}, .None
         }
@@ -1014,9 +892,7 @@ replica_on_config_changed :: proc(
 
 // Drop committed messages at or above the cut. The draft is left to discard/resync.
 replica_on_truncated :: proc(self: ^Session_Replica, data: wire.Transcript_Truncated_Data) -> Apply_Result {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}
 
     changed := false
     for i := len(self.messages); i > 0; i -= 1 {
@@ -1040,14 +916,10 @@ replica_on_input_queued :: proc(
     Apply_Result,
     Replica_Error,
 ) {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}, .None
 
     for queued in self.queued {
-        if queued.input.input_id == data.input.input_id {
-            return {kind = .Ignored}, .None
-        }
+        if queued.input.input_id == data.input.input_id do return {kind = .Ignored}, .None
     }
 
     owned := owned_queued_input_clone(data.input, self.allocator)
@@ -1059,9 +931,7 @@ replica_on_input_queued :: proc(
 
 // Remove a queued input by id and reclaim its arena.
 replica_on_input_canceled :: proc(self: ^Session_Replica, data: wire.Input_Canceled_Data) -> Apply_Result {
-    if self.session_id != data.session_id {
-        return {kind = .Ignored}
-    }
+    if self.session_id != data.session_id do return {kind = .Ignored}
 
     for &queued, i in self.queued {
         if queued.input.input_id == data.input_id {
@@ -1111,19 +981,13 @@ replica_apply_broadcast :: proc(
     err: Replica_Error,
 ) {
     sid, ok := replica_domain_session_id(bc.params)
-    if !ok || sid != self.session_id {
-        return {kind = .Ignored}, .None
-    }
+    if !ok || sid != self.session_id do return {kind = .Ignored}, .None
 
     // Durable events gate on the per-session sequence; live events fold directly.
     if seq, has_seq := wire.broadcast_data_seq(bc.params).?; has_seq {
-        if seq <= self.base_seq {
-            return {kind = .Ignored}, .None // stale, already represented
-        }
+        if seq <= self.base_seq do return {kind = .Ignored}, .None // stale, already represented
 
-        if seq > self.base_seq + 1 {
-            return {kind = .Gap}, .None // missed a durable event
-        }
+        if seq > self.base_seq + 1 do return {kind = .Gap}, .None // missed a durable event
 
         result := apply_durable(self, bc) or_return
 
@@ -1156,9 +1020,7 @@ apply_durable :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_R
     case wire.Run_Started_Data:
         // Only a compaction run's start clears the queued compaction; a turn run just
         // advances the sequence.
-        if v.kind == .Compaction {
-            return replica_clear_pending_compaction(self, v.run_id), .None
-        }
+        if v.kind == .Compaction do return replica_clear_pending_compaction(self, v.run_id), .None
 
         return {kind = .Ignored}, .None
     }
@@ -1196,23 +1058,17 @@ apply_live :: proc(self: ^Session_Replica, bc: wire.Notification) -> (Apply_Resu
         return replica_on_input_canceled(self, v), .None
 
     case wire.Session_Activity_Changed_Data:
-        if activity_locators_diverge(self, v.activity.state) {
-            return {kind = .Gap}, .None
-        }
+        if activity_locators_diverge(self, v.activity.state) do return {kind = .Gap}, .None
 
         incoming := v.activity.pending_compaction
 
         // A stale activity must not re-assert a compaction a durable `run.done` already
         // cleared; run ids are never reused, so this can only be that same cleared id.
         if pc, ok := incoming.?; ok {
-            if cleared, has_cleared := self.last_cleared_compaction.?; has_cleared && pc == cleared {
-                incoming = nil
-            }
+            if cleared, has_cleared := self.last_cleared_compaction.?; has_cleared && pc == cleared do incoming = nil
         }
 
-        if self.pending_compaction == incoming {
-            return {kind = .Ignored}, .None
-        }
+        if self.pending_compaction == incoming do return {kind = .Ignored}, .None
 
         self.pending_compaction = incoming
 
@@ -1319,9 +1175,7 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
         // post-resync deltas resume from the snapshot's byte length.
         if tool_part, is_tool := part.(wire.Tool_Part); is_tool {
             if running, is_running := tool_part.state.(wire.Tool_State_Running); is_running {
-                if out, has_out := running.output.?; has_out {
-                    append(&active.tool.output, out)
-                }
+                if out, has_out := running.output.?; has_out do append(&active.tool.output, out)
             }
         }
 
@@ -1336,17 +1190,11 @@ draft_from_snapshot :: proc(self: ^Session_Replica, src: wire.Active_Draft) -> (
 // no replay is needed. Build errors preserve prior state. Odin has no `errdefer`, so a
 // single `committed`-guarded `defer` tears down every candidate before the commit.
 replica_install_snapshot :: proc(self: ^Session_Replica, r: wire.Session_Resync_Result) -> Replica_Error {
-    if wire.session_resync_result_validate(r) != .None {
-        return .Malformed_Snapshot
-    }
+    if wire.session_resync_result_validate(r) != .None do return .Malformed_Snapshot
 
-    if self.session_id != r.item.session.id {
-        return .Session_Mismatch
-    }
+    if self.session_id != r.item.session.id do return .Session_Mismatch
 
-    if len(r.messages) > MAX_RETAINED_MESSAGES {
-        return .Malformed_Snapshot
-    }
+    if len(r.messages) > MAX_RETAINED_MESSAGES do return .Malformed_Snapshot
 
     // --- Build candidates. Nothing below touches `self` until the commit. ---
     committed := false
@@ -1373,9 +1221,7 @@ replica_install_snapshot :: proc(self: ^Session_Replica, r: wire.Session_Resync_
         mem.dynamic_arena_destroy(&cand_cfg_arena)
         delete(cand_configs)
 
-        if cand_active != nil {
-            draft_destroy(self.allocator, cand_active)
-        }
+        if cand_active != nil do draft_destroy(self.allocator, cand_active)
     }
 
     // The wire validator established ordering, uniqueness, boundaries, and references.

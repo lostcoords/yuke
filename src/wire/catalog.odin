@@ -103,9 +103,7 @@ model_info_validate :: proc(self: Model_Info) -> Validation_Error {
     enforce_bounded(128, self.name) or_return
     enforce_bounded(32, self.default_reasoning) or_return
 
-    if len(self.reasoning_levels) > LIMITS.max_reasoning_levels {
-        return .Overflow
-    }
+    if len(self.reasoning_levels) > LIMITS.max_reasoning_levels do return .Overflow
 
     for level in self.reasoning_levels {
         enforce_bounded(32, level) or_return
@@ -113,9 +111,7 @@ model_info_validate :: proc(self: Model_Info) -> Validation_Error {
 
     costs := [4]f64{self.cost.input, self.cost.output, self.cost.cache_read, self.cost.cache_write}
     for c in costs {
-        if math.is_nan(c) || math.is_inf(c) || c < 0 {
-            return .Out_Of_Range
-        }
+        if math.is_nan(c) || math.is_inf(c) || c < 0 do return .Out_Of_Range
     }
 
     return .None
@@ -131,9 +127,7 @@ Catalog_List_Params :: struct {
 catalog_list_params_emit :: proc(e: ^json.Emitter, self: Catalog_List_Params) {
     json.object_begin(e)
 
-    if rev, ok := self.since_rev.?; ok {
-        json.field_id(e, "since_rev", ([64]u8)(rev))
-    }
+    if rev, ok := self.since_rev.?; ok do json.field_id(e, "since_rev", ([64]u8)(rev))
 
     json.object_end(e)
 }
@@ -199,9 +193,7 @@ catalog_list_result_validate :: proc(self: Catalog_List_Result) -> Validation_Er
     case Catalog_List_Result_Full:
         enforce_id(([64]u8)(v.catalog_rev)) or_return
 
-        if len(v.models) > LIMITS.max_catalog_models {
-            return .Overflow
-        }
+        if len(v.models) > LIMITS.max_catalog_models do return .Overflow
 
         for model in v.models {
             model_info_validate(model) or_return
@@ -267,17 +259,13 @@ catalog_health_emit :: proc(e: ^json.Emitter, self: Catalog_Health) {
 
 // Verify annotated field bounds.
 catalog_health_validate :: proc(self: Catalog_Health) -> Validation_Error {
-    if len(self.skipped) > LIMITS.max_skipped_providers {
-        return .Overflow
-    }
+    if len(self.skipped) > LIMITS.max_skipped_providers do return .Overflow
 
     for item in self.skipped {
         skipped_provider_validate(item) or_return
     }
 
-    if msg, ok := self.load_error.?; ok {
-        return enforce_bounded(LIMITS.max_error_message_bytes, msg)
-    }
+    if msg, ok := self.load_error.?; ok do return enforce_bounded(LIMITS.max_error_message_bytes, msg)
 
     return .None
 }
@@ -293,9 +281,7 @@ catalog_health_clone :: proc(self: Catalog_Health, allocator := context.allocato
 
     load_error: Maybe(string)
 
-    if msg, ok := self.load_error.?; ok {
-        load_error = strings.clone(msg, allocator)
-    }
+    if msg, ok := self.load_error.?; ok do load_error = strings.clone(msg, allocator)
 
     return {skipped = skipped, load_error = load_error}
 }
@@ -403,9 +389,7 @@ _val_f64 :: proc(e: ^json.Emitter, f: f64) {
     buf: [32]u8
     s := strconv.write_float(buf[:], f, 'f', -1, 64)
 
-    if len(s) > 0 && s[0] == '+' {
-        s = s[1:]
-    }
+    if len(s) > 0 && s[0] == '+' do s = s[1:]
 
     json.val_raw(e, s)
 }
@@ -455,9 +439,7 @@ model_cost_from_reader :: proc(d: ^json.Decoder) -> (cost: Model_Cost, err: json
         }
     }
 
-    if seen != {.In, .Out, .Cr, .Cw} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.In, .Out, .Cr, .Cw} do return {}, .Mismatched_Payload
 
     return cost, .None
 }
@@ -530,9 +512,7 @@ model_info_from_reader :: proc(d: ^json.Decoder) -> (info: Model_Info, err: json
         }
     }
 
-    if seen != {.Id, .Prov, .Name, .Ctx, .Max, .Levels, .Def, .Vis, .Tools, .Cost} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Prov, .Name, .Ctx, .Max, .Levels, .Def, .Vis, .Tools, .Cost} do return {}, .Mismatched_Payload
 
     return info, .None
 }
@@ -582,9 +562,7 @@ catalog_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Catalog_Li
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Catalog_List_Result_Unchanged{catalog_rev = Catalog_Rev(rev)}, .None
 
@@ -622,9 +600,7 @@ catalog_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Catalog_Li
             }
         }
 
-        if seen != {.Rev, .Models, .Health} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Rev, .Models, .Health} do return nil, .Mismatched_Payload
 
         return Catalog_List_Result_Full{catalog_rev = Catalog_Rev(rev), models = models, health = health}, .None
     }
@@ -665,9 +641,7 @@ catalog_refresh_result_from_reader :: proc(
         }
     }
 
-    if seen != {.Rev, .Health} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Health} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -694,18 +668,14 @@ catalog_health_from_reader :: proc(d: ^json.Decoder) -> (health: Catalog_Health,
         case "load_error":
             seen += {.Load}
 
-            if !json.dec_is_null(d) {
-                health.load_error = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do health.load_error = json.dec_string(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Skipped, .Load} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Skipped, .Load} do return {}, .Mismatched_Payload
 
     return health, .None
 }
@@ -738,9 +708,7 @@ skipped_provider_from_reader :: proc(d: ^json.Decoder) -> (item: Skipped_Provide
         }
     }
 
-    if seen != {.Prov, .Reason} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Prov, .Reason} do return {}, .Mismatched_Payload
 
     return item, .None
 }
@@ -771,9 +739,7 @@ skip_reason_from_reader :: proc(d: ^json.Decoder) -> (reason: Skip_Reason, err: 
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Skip_Reason_Missing_Credential{env = env}, .None
 
@@ -797,9 +763,7 @@ skip_reason_from_reader :: proc(d: ^json.Decoder) -> (reason: Skip_Reason, err: 
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Skip_Reason_Invalid_Config{message = message}, .None
     }

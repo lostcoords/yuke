@@ -72,9 +72,7 @@ schema_build :: proc(
         sql := string(text)
         text_by_path[path] = sql
 
-        if rc := sqlite.exec(opened, sql); rc != .Ok {
-            gen.diagf(d, gen.Pos{file = path}, "migration failed to apply")
-        }
+        if rc := sqlite.exec(opened, sql); rc != .Ok do gen.diagf(d, gen.Pos{file = path}, "migration failed to apply")
     }
 
     if gen.diags_failed(d) {
@@ -113,17 +111,13 @@ table_columns :: proc(
         `SELECT name, type, "notnull" AS not_null FROM pragma_table_info(:table_name) ORDER BY cid`,
     )
 
-    if prep != .Ok {
-        return nil, false
-    }
+    if prep != .Ok do return nil, false
 
     defer sqlite.finalize(st)
 
     reader, reader_err := sqlite.reader_prepare(st, Table_Info_Params, Column, allocator)
 
-    if reader_err != .None {
-        return nil, false
-    }
+    if reader_err != .None do return nil, false
 
     defer sqlite.reader_destroy(&reader, allocator)
 
@@ -142,9 +136,7 @@ column_annotation :: proc(source: string, table: string, column: string) -> (odi
     header := strings.concatenate({"CREATE TABLE ", table, " ("}, context.temp_allocator)
     start := strings.index(source, header)
 
-    if start < 0 {
-        return "", false
-    }
+    if start < 0 do return "", false
 
     body := source[start:]
     lines := strings.split_lines(body, context.temp_allocator)
@@ -165,23 +157,17 @@ column_annotation :: proc(source: string, table: string, column: string) -> (odi
     for line in lines[:end] {
         trimmed := strings.trim_space(line)
 
-        if !strings.has_prefix(trimmed, column) {
-            continue
-        }
+        if !strings.has_prefix(trimmed, column) do continue
 
         // A prefix match must end the identifier: `session_id` must not match
         // inside a line declaring `session_id_high` or similar.
         rest := trimmed[len(column):]
 
-        if len(rest) > 0 && (is_ident_byte(rest[0])) {
-            continue
-        }
+        if len(rest) > 0 && (is_ident_byte(rest[0])) do continue
 
         comment := strings.index(line, "-- ")
 
-        if comment < 0 {
-            return "", false
-        }
+        if comment < 0 do return "", false
 
         return strings.trim_space(line[comment + 3:]), true
     }

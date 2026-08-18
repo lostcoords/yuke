@@ -46,9 +46,7 @@ entry_start :: proc(t: ^testing.T, name: string, source: string) -> Error {
 
     d: Daemon
     err := start(&d, loop, {host = "127.0.0.1", port = 0, config_dir = root})
-    if err == .None {
-        test_teardown(&d)
-    }
+    if err == .None do test_teardown(&d)
 
     return err
 }
@@ -283,9 +281,7 @@ js_result :: proc(t: ^testing.T, d: ^Daemon) -> string {
     defer qjs.free_value(d.js.ctx, value)
 
     text, ok := qjs.to_string(d.js.ctx, value)
-    if !testing.expect(t, ok, "globalThis.result should be readable") {
-        return ""
-    }
+    if !testing.expect(t, ok, "globalThis.result should be readable") do return ""
 
     defer qjs.free_string(d.js.ctx, text)
 
@@ -609,9 +605,7 @@ test_define_tool_registers_a_definition :: proc(t: ^testing.T) {
     defer os.remove_all(root)
     defer test_teardown(&d)
 
-    if !testing.expect_value(t, len(d.tools), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(d.tools), 1) do return
 
     testing.expect_value(t, d.tools[0].name, "read")
     testing.expect_value(t, d.tools[0].description, "Read a file")
@@ -649,9 +643,7 @@ test_define_tool_replaces_a_name :: proc(t: ^testing.T) {
     defer os.remove_all(root)
     defer test_teardown(&d)
 
-    if !testing.expect_value(t, len(d.tools), 2) {
-        return
-    }
+    if !testing.expect_value(t, len(d.tools), 2) do return
 
     testing.expect_value(t, d.tools[0].name, "read")
     testing.expect_value(t, d.tools[0].description, "second")

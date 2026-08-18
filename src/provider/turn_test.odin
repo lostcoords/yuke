@@ -53,9 +53,7 @@ Turn_Fake :: struct {
 @(private = "file")
 turn_fake_capture_header :: proc(dst: []byte, head: http.Request_Head, name: string) -> int {
     value, lookup := http.request_header(head, name)
-    if lookup != .One {
-        return 0
-    }
+    if lookup != .One do return 0
 
     return copy(dst, value)
 }
@@ -131,9 +129,7 @@ turn_fake_on_gap :: proc(op: ^nbio.Operation, fake: ^Turn_Fake) {
 turn_fake_close :: proc(fake: ^Turn_Fake) {
     assert(fake != nil, "provider fixture close needs its fake")
 
-    if fake.closed || !fake.taken {
-        return
-    }
+    if fake.closed || !fake.taken do return
 
     if fake.gap_op != nil {
         nbio.remove(fake.gap_op)
@@ -249,9 +245,7 @@ turn_obs_on_event :: proc(user: rawptr, event: Stream_Event) {
     case Stream_Block_Stopped:
         turn_obs_record(obs, .Stop)
 
-        if _, tool := value.result.(Stream_Tool_Block); tool {
-            obs.tool_call_count += 1
-        }
+        if _, tool := value.result.(Stream_Tool_Block); tool do obs.tool_call_count += 1
 
     case Stream_Done:
         turn_obs_record(obs, .Done)
@@ -327,9 +321,7 @@ turn_restart_on_done :: proc(user: rawptr, result: Turn_Result) {
             Turn_Callbacks{on_done = turn_restart_on_done},
             obs,
         )
-        if obs.restart_err != .None {
-            obs.finished = true
-        }
+        if obs.restart_err != .None do obs.finished = true
 
         return
     }
@@ -394,9 +386,7 @@ turn_run_fixture :: proc(
         body = `{"stream":true}`,
     }
     callbacks := turn_obs_callbacks()
-    if !deliver_events {
-        callbacks.on_event = nil
-    }
+    if !deliver_events do callbacks.on_event = nil
 
     testing.expect_value(t, turn_start(&obs.turn, &client, request, callbacks, obs), Transport_Error.None)
     testing.expect(t, client_busy(&client), "a started provider turn must register with its client")

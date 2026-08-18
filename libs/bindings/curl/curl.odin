@@ -235,14 +235,10 @@ client_init :: proc(c: ^Client, loop: ^nbio.Event_Loop, allocator := context.all
 
     sync.once_do(&global_init_once, global_init)
 
-    if global_init_code != .Ok {
-        return .Setup_Failed
-    }
+    if global_init_code != .Ok do return .Setup_Failed
 
     multi := c_multi_init()
-    if multi == nil {
-        return .Setup_Failed
-    }
+    if multi == nil do return .Setup_Failed
 
     c^ = Client {
         loop  = loop,
@@ -295,9 +291,7 @@ client_sync_timer :: proc(c: ^Client) {
             nbio.remove(c.timer_op)
             c.timer_op = nil
         }
-    } else if c.timer_op == nil {
-        c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
-    }
+    } else if c.timer_op == nil do c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
 
     assert((c.timer_op != nil) == (len(c.live) > 0), "pump timer state disagrees with the live-transfer count")
 }
@@ -309,9 +303,7 @@ multi_period :: proc(multi: ^Multi) -> time.Duration {
     assert(multi != nil, "multi_period needs a multi handle")
 
     ms, code := multi_timeout_ms(multi)
-    if code != .Ok || ms < 0 {
-        return TICK_MAX
-    }
+    if code != .Ok || ms < 0 do return TICK_MAX
 
     return clamp(time.Duration(ms) * time.Millisecond, TICK_MIN, TICK_MAX)
 }
@@ -323,9 +315,7 @@ multi_perform_all :: proc(multi: ^Multi) {
 
     for {
         _, code := multi_perform(multi)
-        if code == .Call_Multi_Perform {
-            continue
-        }
+        if code == .Call_Multi_Perform do continue
 
         assert(code == .Ok, "curl_multi_perform failed on a handle this package owns")
         break
@@ -338,9 +328,7 @@ multi_perform_all :: proc(multi: ^Multi) {
 curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
     assert(errbuf != nil, "curl_message needs an error buffer")
 
-    if errbuf[0] != 0 {
-        return string(cstring(&errbuf[0]))
-    }
+    if errbuf[0] != 0 do return string(cstring(&errbuf[0]))
 
     return string(c_easy_strerror(code))
 }
@@ -370,13 +358,9 @@ client_pump :: proc(c: ^Client) {
 
     for {
         msg, _ := multi_info_read(c.multi)
-        if msg == nil {
-            break
-        }
+        if msg == nil do break
 
-        if msg.kind != .Done {
-            continue
-        }
+        if msg.kind != .Done do continue
 
         t := client_find(c, msg.easy)
         assert(t != nil, "multi_info_read reported an easy handle no transfer owns")
@@ -399,9 +383,7 @@ client_pump :: proc(c: ^Client) {
 
     for done in c.completed {
         // An earlier `On_Done` may have canceled this transfer already.
-        if done.transfer.state != .Running {
-            continue
-        }
+        if done.transfer.state != .Running do continue
 
         transfer_complete(done.transfer, done.code)
     }
@@ -415,9 +397,7 @@ client_find :: proc(c: ^Client, easy: ^Easy) -> ^Transfer {
     assert(easy != nil, "client_find needs an easy handle")
 
     for t in c.live {
-        if t.easy == easy {
-            return t
-        }
+        if t.easy == easy do return t
     }
 
     return nil
@@ -435,9 +415,7 @@ transfer_start :: proc(t: ^Transfer, c: ^Client, req: Request, cbs: Callbacks, u
     assert(t.state != .Running, "transfer_start on a transfer that is already running")
     assert(req.method == .Post || len(req.body) == 0, "a GET carries no body")
 
-    if len(req.url) == 0 {
-        return .Invalid_Request
-    }
+    if len(req.url) == 0 do return .Invalid_Request
 
     headers := build_headers(req.headers) or_return
 
@@ -453,24 +431,16 @@ transfer_start :: proc(t: ^Transfer, c: ^Client, req: Request, cbs: Callbacks, u
     t.headers = headers
     t.user = user
     t.cbs = cbs
-    defer if err != .None {
-        transfer_abandon(t)
-    }
+    defer if err != .None do transfer_abandon(t)
 
-    if code := easy_configure(t, req); code != .Ok {
-        return .Out_Of_Memory if code == .Out_Of_Memory else .Setup_Failed
-    }
+    if code := easy_configure(t, req); code != .Ok do return .Out_Of_Memory if code == .Out_Of_Memory else .Setup_Failed
 
     // Both registers grow before the handle joins the multi, so neither the append
     // below nor the pump's completion drain can fail on allocation, and running out
     // here unwinds through `transfer_abandon` with nothing registered to remove.
-    if reserve(&c.live, len(c.live) + 1) != nil || reserve(&c.completed, len(c.live) + 1) != nil {
-        return .Out_Of_Memory
-    }
+    if reserve(&c.live, len(c.live) + 1) != nil || reserve(&c.completed, len(c.live) + 1) != nil do return .Out_Of_Memory
 
-    if c_multi_add_handle(c.multi, easy) != .Ok {
-        return .Setup_Failed
-    }
+    if c_multi_add_handle(c.multi, easy) != .Ok do return .Setup_Failed
 
     append(&c.live, t)
 
@@ -507,9 +477,7 @@ transfer_abandon :: proc(t: ^Transfer) {
 
     c_easy_cleanup(t.easy)
 
-    if t.headers != nil {
-        c_slist_free_all(t.headers)
-    }
+    if t.headers != nil do c_slist_free_all(t.headers)
 
     t^ = {}
 }
@@ -564,9 +532,7 @@ transfer_complete :: proc(t: ^Transfer, code: Code) {
     assert(t.state == .Running, "transfer_complete on a transfer that is not running")
 
     status, info_code := getinfo_long(t.easy, .Response_Code)
-    if info_code != .Ok || status == 0 {
-        status = t.status
-    }
+    if info_code != .Ok || status == 0 do status = t.status
 
     // Read before the handle goes away; the buffer itself is the transfer's own.
     result := Result {
@@ -580,9 +546,7 @@ transfer_complete :: proc(t: ^Transfer, code: Code) {
     t.state = .Done
     transfer_release(t)
 
-    if cbs.on_done != nil {
-        cbs.on_done(user, result)
-    }
+    if cbs.on_done != nil do cbs.on_done(user, result)
 }
 
 // curl's own reason text: the per-transfer error buffer when it filled one,
@@ -612,14 +576,10 @@ token_byte :: proc(c: byte) -> bool {
 // caller from smuggling a second header into one name.
 @(private)
 field_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 {
-        return false
-    }
+    if len(name) == 0 do return false
 
     for i in 0 ..< len(name) {
-        if !token_byte(name[i]) {
-            return false
-        }
+        if !token_byte(name[i]) do return false
     }
 
     return true
@@ -632,9 +592,7 @@ field_name_valid :: proc(name: string) -> bool {
 field_value_valid :: proc(value: string) -> bool {
     for i in 0 ..< len(value) {
         c := value[i]
-        if c < 0x20 && c != '\t' || c == 0x7f {
-            return false
-        }
+        if c < 0x20 && c != '\t' || c == 0x7f do return false
     }
 
     return true
@@ -648,23 +606,17 @@ build_headers :: proc(headers: []Header) -> (out: ^Slist, err: Error) {
 
     // Cleanup tracks the local: `return nil, err` clears the named result first.
     list: ^Slist
-    defer if err != .None {
-        c_slist_free_all(list)
-    }
+    defer if err != .None do c_slist_free_all(list)
 
     for header, i in headers {
         for previous in headers[:i] {
             assert(!strings.equal_fold(header.name, previous.name), "a request must not repeat a header name")
         }
 
-        if !field_name_valid(header.name) || !field_value_valid(header.value) {
-            return nil, .Invalid_Request
-        }
+        if !field_name_valid(header.name) || !field_value_valid(header.value) do return nil, .Invalid_Request
 
         // `": "` and the nul terminator.
-        if len(header.value) == 0 || len(header.name) + len(header.value) + 3 > len(line) {
-            return nil, .Invalid_Request
-        }
+        if len(header.value) == 0 || len(header.name) + len(header.value) + 3 > len(line) do return nil, .Invalid_Request
 
         at := copy(line[:], header.name)
         at += copy(line[at:], ": ")
@@ -673,9 +625,7 @@ build_headers :: proc(headers: []Header) -> (out: ^Slist, err: Error) {
 
         // A failed append leaves the previous list intact and still owned here.
         next := c_slist_append(list, cstring(&line[0]))
-        if next == nil {
-            return nil, .Out_Of_Memory
-        }
+        if next == nil do return nil, .Out_Of_Memory
 
         list = next
     }
@@ -704,9 +654,7 @@ easy_configure :: proc(t: ^Transfer, req: Request) -> Code {
     // Provider streams leave the total timeout at zero; bounded control-plane
     // requests opt in explicitly.
     setopt_long(e, .Connect_Timeout, seconds_ceil(req.connect_timeout, DEFAULT_CONNECT_TIMEOUT)) or_return
-    if req.total_timeout > 0 {
-        setopt_long(e, .Timeout, seconds_ceil(req.total_timeout, req.total_timeout)) or_return
-    }
+    if req.total_timeout > 0 do setopt_long(e, .Timeout, seconds_ceil(req.total_timeout, req.total_timeout)) or_return
 
     setopt_long(
         e,
@@ -732,9 +680,7 @@ easy_configure :: proc(t: ^Transfer, req: Request) -> Code {
     setopt_write_cb(e, .Header_Function, on_header) or_return
     setopt_ptr(e, .Header_Data, t) or_return
 
-    if t.headers != nil {
-        setopt_ptr(e, .Http_Header, t.headers) or_return
-    }
+    if t.headers != nil do setopt_ptr(e, .Http_Header, t.headers) or_return
 
     switch req.method {
     case .Get:
@@ -784,13 +730,9 @@ on_write :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) -
     assert(t.state == .Running, "a body chunk arrived for a transfer that is not running")
 
     n := size * nitems
-    if n == 0 || t.cbs.on_body == nil {
-        return n
-    }
+    if n == 0 || t.cbs.on_body == nil do return n
 
-    if !t.cbs.on_body(t.user, buffer[:n]) {
-        return WRITEFUNC_ERROR
-    }
+    if !t.cbs.on_body(t.user, buffer[:n]) do return WRITEFUNC_ERROR
 
     return n
 }
@@ -813,25 +755,19 @@ on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) 
     line := trim_eol(buffer[:n])
 
     // The blank line ends a block and carries nothing to deliver.
-    if len(line) == 0 {
-        return n
-    }
+    if len(line) == 0 do return n
 
     // A status line starts a new block: a proxy CONNECT or a 100 Continue puts
     // more than one in front of the real response, and the last one wins.
     if status, is_status := parse_status_line(line); is_status {
         t.status = status
 
-        if t.cbs.on_status != nil {
-            t.cbs.on_status(t.user, status)
-        }
+        if t.cbs.on_status != nil do t.cbs.on_status(t.user, status)
 
         return n
     }
 
-    if t.cbs.on_header != nil {
-        t.cbs.on_header(t.user, line)
-    }
+    if t.cbs.on_header != nil do t.cbs.on_header(t.user, line)
 
     return n
 }
@@ -841,13 +777,9 @@ on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) 
 trim_eol :: proc(line: []byte) -> []byte {
     end := len(line)
 
-    if end > 0 && line[end - 1] == '\n' {
-        end -= 1
-    }
+    if end > 0 && line[end - 1] == '\n' do end -= 1
 
-    if end > 0 && line[end - 1] == '\r' {
-        end -= 1
-    }
+    if end > 0 && line[end - 1] == '\r' do end -= 1
 
     return line[:end]
 }
@@ -856,9 +788,7 @@ trim_eol :: proc(line: []byte) -> []byte {
 // these are peer bytes.
 @(private)
 parse_status_line :: proc(line: []byte) -> (status: int, ok: bool) {
-    if len(line) < 5 || string(line[:5]) != "HTTP/" {
-        return 0, false
-    }
+    if len(line) < 5 || string(line[:5]) != "HTTP/" do return 0, false
 
     i := 5
     for i < len(line) && line[i] != ' ' {
@@ -875,9 +805,7 @@ parse_status_line :: proc(line: []byte) -> (status: int, ok: bool) {
         digits += 1
         i += 1
 
-        if digits > 3 {
-            return 0, false
-        }
+        if digits > 3 do return 0, false
     }
 
     return status, digits == 3

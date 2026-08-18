@@ -50,9 +50,7 @@ messages_insert :: proc(s: ^Store, session: wire.Session_Id, seq: wire.Seq, mess
         params.created_at_ms = m.time.created_at_ms
         params.cost = m.cost
 
-        if finish, ok := m.finish.?; ok {
-            params.finish = wire.stop_reason_to_wire(finish)
-        }
+        if finish, ok := m.finish.?; ok do params.finish = wire.stop_reason_to_wire(finish)
 
         // `config_rev` records what the turn was *requested* under; provenance records what
         // answered, the only correct source for "which model produced this".
@@ -110,9 +108,7 @@ messages_truncate :: proc(s: ^Store, session: wire.Session_Id, first_removed_id:
     removed := sqlite.changes(s.writer)
     assert(removed >= 0, "a delete never reports a negative row count")
 
-    if removed == 0 {
-        return nil
-    }
+    if removed == 0 do return nil
 
     // The marker carries no timestamp, so the update mark is left where it is
     // rather than invented.
@@ -151,9 +147,7 @@ projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.te
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
     defer if err != nil {
-        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
-            err = rollback
-        }
+        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok do err = rollback
     }
 
     // Reset all three projections to empty, then replay. Ids start at 1, so truncating from there
@@ -181,18 +175,12 @@ projection_rebuild :: proc(s: ^Store, session: wire.Session_Id, sa := context.te
             sa,
         )
 
-        if verr != nil {
-            return verr
-        }
+        if verr != nil do return verr
 
-        if rebuild.err != nil {
-            return rebuild.err
-        }
+        if rebuild.err != nil do return rebuild.err
 
         // A short page is the end of the log; a full one may have more behind it.
-        if visited < REBUILD_PAGE {
-            break
-        }
+        if visited < REBUILD_PAGE do break
     }
 
     return sqlite.txn_commit(s.writer)
@@ -217,9 +205,7 @@ durable_decode :: proc(
     dec := json.decoder_init(payload, allocator)
 
     data, derr := wire.broadcast_data_from_reader(name, &dec)
-    if derr != .None || wire.broadcast_data_validate(data) != .None {
-        return {}, Store_Error.Invalid_Row
-    }
+    if derr != .None || wire.broadcast_data_validate(data) != .None do return {}, Store_Error.Invalid_Row
 
     return data, nil
 }
@@ -288,9 +274,7 @@ history_page :: proc(
         allocator,
         cap_hint = limit,
     )
-    if sqlite_err != nil {
-        return nil, read_err(sqlite_err)
-    }
+    if sqlite_err != nil do return nil, read_err(sqlite_err)
 
     out := make([]wire.Message, len(read), allocator)
 
@@ -298,20 +282,14 @@ history_page :: proc(
     n := len(read)
     for row, i in read {
         data, decode_err := durable_decode(.Message_Committed, row.payload, allocator)
-        if decode_err != nil {
-            return nil, decode_err
-        }
+        if decode_err != nil do return nil, decode_err
 
         committed, is_committed := data.(wire.Message_Committed_Data)
-        if !is_committed {
-            return nil, Store_Error.Invalid_Row
-        }
+        if !is_committed do return nil, Store_Error.Invalid_Row
 
         // The projection's id indexes this row; a payload whose id disagrees is damaged,
         // since the two were written from one event in one transaction.
-        if wire.message_id(committed.message) != row.message_id {
-            return nil, Store_Error.Invalid_Row
-        }
+        if wire.message_id(committed.message) != row.message_id do return nil, Store_Error.Invalid_Row
 
         out[n - 1 - i] = committed.message
     }
@@ -334,9 +312,8 @@ messages_last_usage :: proc(
 
     row, sqlite_err := queries.last_assistant_usage(&s.queries, {session_id = session})
     if sqlite_err != nil {
-        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
-            return {}, false, nil
-        }
+        count_err, is_count := sqlite_err.(sqlite.Read_Error)
+        if is_count && count_err == .Row_Count do return {}, false, nil
 
         return {}, false, read_err(sqlite_err)
     }

@@ -125,22 +125,16 @@ init :: proc(h: ^Host, options: Options) -> Error {
 
     if options.base != "" {
         canonical, cerr := os.get_absolute_path(options.base, options.allocator)
-        if cerr != nil {
-            return .Invalid_Root
-        }
+        if cerr != nil do return .Invalid_Root
 
         defer delete(canonical, options.allocator)
 
-        if !os.is_dir(canonical) {
-            return .Invalid_Root
-        }
+        if !os.is_dir(canonical) do return .Invalid_Root
 
         h.base = strings.clone(canonical, options.allocator)
     }
 
-    if len(options.modules) > 0 {
-        h.modules = slice.clone(options.modules, options.allocator)
-    }
+    if len(options.modules) > 0 do h.modules = slice.clone(options.modules, options.allocator)
 
     h.rt = qjs.runtime_new()
 
@@ -260,21 +254,15 @@ arg_string :: proc(
     qjs.Value,
     bool,
 ) {
-    if argc <= index || !qjs.is_string(argv[index]) {
-        return qjs.throw_type_error(ctx, "a string argument is required"), false
-    }
+    if argc <= index || !qjs.is_string(argv[index]) do return qjs.throw_type_error(ctx, "a string argument is required"), false
 
     value, got := qjs.to_string(ctx, argv[index])
-    if !got {
-        return qjs.throw_type_error(ctx, "a string argument could not be read"), false
-    }
+    if !got do return qjs.throw_type_error(ctx, "a string argument could not be read"), false
 
     defer qjs.free_string(ctx, value)
 
     owned, clone_err := strings.clone(value, allocator)
-    if clone_err != nil {
-        return qjs.throw_type_error(ctx, "out of memory"), false
-    }
+    if clone_err != nil do return qjs.throw_type_error(ctx, "out of memory"), false
 
     out^ = owned
 
@@ -288,16 +276,12 @@ arg_string :: proc(
 eval_module :: proc(h: ^Host, name: string, source: string, allocator: mem.Allocator) -> bool {
     assert(h != nil, "a module evaluation needs a host")
 
-    if h.ctx == nil {
-        return false
-    }
+    if h.ctx == nil do return false
 
     csource, source_err := strings.clone_to_cstring(source, allocator)
     cname, name_err := strings.clone_to_cstring(name, allocator)
 
-    if source_err != nil || name_err != nil {
-        return false
-    }
+    if source_err != nil || name_err != nil do return false
 
     defer delete(csource, allocator)
     defer delete(cname, allocator)
@@ -420,10 +404,7 @@ wait_host_ops_idle :: proc(h: ^Host) {
     )
 
     for h.pending > 0 {
-        if err := nbio.tick(MODULE_AWAIT_TICK); err != nil {
-            // Same policy as pool_drain: keep reaping completions despite backend errors.
-            continue
-        }
+        if err := nbio.tick(MODULE_AWAIT_TICK); err != nil do continue
     }
 
     drain(h)
@@ -473,22 +454,16 @@ call_value :: proc(h: ^Host, fn: qjs.Value, this: qjs.Value, args: []qjs.Value) 
 drain :: proc(h: ^Host, budget: time.Duration = 0) {
     assert(h != nil, "a job drain needs a host")
 
-    if h.ctx == nil || !qjs.job_pending(h.rt) {
-        return
-    }
+    if h.ctx == nil || !qjs.job_pending(h.rt) do return
 
     enter(h, budget)
     _, failed := qjs.run_pending_jobs(h.rt)
     leave(h)
 
-    if failed {
-        report_exception(h, "microtask")
-    }
+    if failed do report_exception(h, "microtask")
 
     // After `leave`, so the hook may enter JS again if it needs to.
-    if h.on_drain != nil {
-        h.on_drain(h.user)
-    }
+    if h.on_drain != nil do h.on_drain(h.user)
 }
 
 // Arm the interrupt deadline for one JS entry. Entries do not nest.
@@ -498,9 +473,7 @@ enter :: proc(h: ^Host, budget: time.Duration = 0) {
     assert(h.deadline_at == {}, "an entry into js is never re-entered")
 
     limit := h.deadline
-    if budget > 0 {
-        limit = min(budget, h.deadline)
-    }
+    if budget > 0 do limit = min(budget, h.deadline)
 
     h.deadline_at = time.time_add(time.now(), limit)
     h.interrupted = false
@@ -516,13 +489,9 @@ leave :: proc(h: ^Host) {
 interrupt :: proc "c" (rt: ^qjs.Runtime, user: rawptr) -> c.int {
     h := (^Host)(user)
 
-    if h == nil || h.deadline_at == {} {
-        return 0
-    }
+    if h == nil || h.deadline_at == {} do return 0
 
-    if time.now()._nsec < h.deadline_at._nsec {
-        return 0
-    }
+    if time.now()._nsec < h.deadline_at._nsec do return 0
 
     h.interrupted = true
 
@@ -539,18 +508,14 @@ module_loader :: proc "c" (ctx: ^qjs.Context, module_name: cstring, opaque: rawp
 
     if h != nil {
         for module in h.modules {
-            if module.name == name {
-                return module_define(ctx, module_name, module.init, module.exports)
-            }
+            if module.name == name do return module_define(ctx, module_name, module.init, module.exports)
         }
 
         // Embedder resolve for non-native specs; compile error leaves the pending exception.
         if h.resolve != nil {
             if source, owned, ok := h.resolve(h.user, name, h.allocator); ok {
                 m := compile_module(ctx, module_name, source)
-                if owned {
-                    delete(source, h.allocator)
-                }
+                if owned do delete(source, h.allocator)
 
                 return m
             }
@@ -581,19 +546,13 @@ module_define :: proc(
     exports: []string,
 ) -> ^qjs.Module_Def {
     m := qjs.new_cmodule(ctx, name, init)
-    if m == nil {
-        return nil
-    }
+    if m == nil do return nil
 
     for export in exports {
         cexport, err := strings.clone_to_cstring(export, context.temp_allocator)
-        if err != nil {
-            return nil
-        }
+        if err != nil do return nil
 
-        if !qjs.add_module_export(ctx, m, cexport) {
-            return nil
-        }
+        if !qjs.add_module_export(ctx, m, cexport) do return nil
     }
 
     return m
@@ -614,9 +573,7 @@ compile_module :: proc(ctx: ^qjs.Context, name: cstring, source: string) -> ^qjs
     defer delete(csource, h.allocator)
 
     compiled := qjs.eval(ctx, csource, len(source), name, .Module, {.Compile_Only})
-    if qjs.is_exception(compiled) {
-        return nil
-    }
+    if qjs.is_exception(compiled) do return nil
 
     assert(qjs.is_module(compiled), "a compile-only module eval must yield a module")
     m := (^qjs.Module_Def)(qjs.get_ptr(compiled))
@@ -656,9 +613,7 @@ report_value :: proc(h: ^Host, source: string, value: qjs.Value) {
 
 @(private)
 report :: proc(h: ^Host, source: string, text: string) {
-    if h.report == nil {
-        return
-    }
+    if h.report == nil do return
 
     h.report(h.user, source, text)
 }

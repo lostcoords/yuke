@@ -32,15 +32,11 @@ run_request_build :: proc(
     turn.max_output_tokens = model.info.max_output_tokens
 
     // A model that rejects sampling controls never receives one, whatever the caller asked.
-    if !model.supports_temperature {
-        turn.temperature = nil
-    }
+    if !model.supports_temperature do turn.temperature = nil
 
     // Same for tools: a row that cannot call them fails the turn on the definitions rather
     // than ignoring them, so the registry stops here instead of at the provider.
-    if !model.info.supports_tools {
-        turn.tools = nil
-    }
+    if !model.info.supports_tools do turn.tools = nil
 
     level := run_reasoning_level(model, reasoning)
 
@@ -50,9 +46,7 @@ run_request_build :: proc(
 
         // Anthropic refuses a sampling control while thinking is on, whatever the model
         // otherwise supports, so the resolved thinking mode has the last word.
-        if run_anthropic_thinking_on(options.thinking) {
-            turn.temperature = nil
-        }
+        if run_anthropic_thinking_on(options.thinking) do turn.temperature = nil
 
         return provider.anthropic_request_body(turn, options, allocator, scratch_allocator)
 
@@ -80,14 +74,10 @@ run_request_build :: proc(
 // the row's derived default. An unknown level is never forwarded to a provider.
 @(private)
 run_reasoning_level :: proc(model: ^catalog.Model, reasoning: string) -> string {
-    if len(model.info.reasoning_levels) == 0 {
-        return ""
-    }
+    if len(model.info.reasoning_levels) == 0 do return ""
 
     for level in model.info.reasoning_levels {
-        if level == reasoning {
-            return level
-        }
+        if level == reasoning do return level
     }
 
     return model.info.default_reasoning
@@ -97,20 +87,12 @@ run_reasoning_level :: proc(model: ^catalog.Model, reasoning: string) -> string 
 // whole-request effort. Only one applies to a row — a budget row has bounds, an effort row not.
 @(private)
 run_anthropic_options :: proc(model: ^catalog.Model, level: string) -> provider.Anthropic_Options {
-    if level == "" {
-        return {}
-    }
-    if level == "off" {
-        return {thinking = provider.Anthropic_Thinking_Disabled{}}
-    }
+    if level == "" do return {}
+    if level == "off" do return {thinking = provider.Anthropic_Thinking_Disabled{}}
 
-    if model.anthropic_adaptive {
-        return {thinking = provider.Anthropic_Thinking_Adaptive{}}
-    }
+    if model.anthropic_adaptive do return {thinking = provider.Anthropic_Thinking_Adaptive{}}
 
-    if budget, budgeted := run_anthropic_budget(model, level); budgeted {
-        return {thinking = provider.Anthropic_Thinking_Enabled{budget_tokens = budget}}
-    }
+    if budget, budgeted := run_anthropic_budget(model, level); budgeted do return {thinking = provider.Anthropic_Thinking_Enabled{budget_tokens = budget}}
 
     return {effort = run_anthropic_effort(level)}
 }
@@ -131,23 +113,15 @@ run_anthropic_thinking_on :: proc(thinking: provider.Anthropic_Thinking) -> bool
 run_anthropic_budget :: proc(model: ^catalog.Model, level: string) -> (budget: u64, budgeted: bool) {
     minimum, has_minimum := model.reasoning_budget_min.?
     maximum, has_maximum := model.reasoning_budget_max.?
-    if !has_minimum && !has_maximum {
-        return 0, false
-    }
+    if !has_minimum && !has_maximum do return 0, false
 
     cap := model.info.max_output_tokens
     budget = (cap / 4) * 3 if level == "max" else cap / 2
-    if has_maximum && maximum < budget {
-        budget = maximum
-    }
-    if has_minimum && minimum > 0 && u64(minimum) > budget {
-        budget = u64(minimum)
-    }
+    if has_maximum && maximum < budget do budget = maximum
+    if has_minimum && minimum > 0 && u64(minimum) > budget do budget = u64(minimum)
     budget = max(budget, provider.ANTHROPIC_THINKING_BUDGET_MIN)
 
-    if budget >= cap {
-        return 0, false
-    }
+    if budget >= cap do return 0, false
 
     return budget, true
 }
@@ -161,9 +135,7 @@ run_openai_chat_options :: proc(model: ^catalog.Model, level: string) -> provide
         reasoning_replay = model.reasoning_replay,
         thinking_format  = .None,
     }
-    if level == "" {
-        return options
-    }
+    if level == "" do return options
 
     options.thinking_format = model.thinking_format
     options.effort = run_openai_effort(level)
@@ -237,20 +209,14 @@ run_connection_build :: proc(d: ^Daemon, model: ^catalog.Model) -> (provider.Con
     assert(d != nil && model != nil, "connection build needs a daemon and a model")
 
     endpoint := model.endpoint
-    if provider.endpoint_validate(endpoint) != .None {
-        return {}, .Invalid_Endpoint
-    }
+    if provider.endpoint_validate(endpoint) != .None do return {}, .Invalid_Endpoint
 
     auth, bind_err := run_credential_bind(d, model.info.provider)
 
     // A model server on this machine authenticates nothing, so a missing credential is
     // not an error there. Every routable endpoint still requires one.
-    if bind_err == .Missing_Credential && endpoint_is_loopback(endpoint) {
-        auth, bind_err = nil, .None
-    }
-    if bind_err != .None {
-        return {}, bind_err
-    }
+    if bind_err == .Missing_Credential && endpoint_is_loopback(endpoint) do auth, bind_err = nil, .None
+    if bind_err != .None do return {}, bind_err
 
     return {endpoint = endpoint, auth = auth}, .None
 }
@@ -259,22 +225,16 @@ run_connection_build :: proc(d: ^Daemon, model: ^catalog.Model) -> (provider.Con
 // suffix count without a lookup; anything else must parse as a loopback IP literal.
 endpoint_is_loopback :: proc(endpoint: provider.Endpoint) -> bool {
     host := provider.url_host(endpoint.base_url)
-    if host == "" {
-        return false
-    }
+    if host == "" do return false
 
-    if strings.has_suffix(host, ".") {
-        host = host[:len(host) - 1]
-    }
+    if strings.has_suffix(host, ".") do host = host[:len(host) - 1]
     if strings.equal_fold(host, "localhost") ||
        strings.has_suffix(strings.to_lower(host, context.temp_allocator), ".localhost") {
         return true
     }
 
     address := net.parse_address(host)
-    if address == nil {
-        return false
-    }
+    if address == nil do return false
 
     return http_server.address_is_loopback(address)
 }
@@ -282,9 +242,7 @@ endpoint_is_loopback :: proc(endpoint: provider.Endpoint) -> bool {
 // The ChatGPT-account Codex backend rejects the sampling limits an OpenAI API key
 // accepts, so the Responses dialect follows the bound credential, not model metadata.
 run_responses_dialect :: proc(auth: provider.Auth) -> provider.Openai_Responses_Dialect {
-    if _, codex := auth.(provider.Codex_OAuth); codex {
-        return .Codex
-    }
+    if _, codex := auth.(provider.Codex_OAuth); codex do return .Codex
 
     return .Standard
 }
@@ -293,9 +251,7 @@ run_responses_dialect :: proc(auth: provider.Auth) -> provider.Openai_Responses_
 // tokens, else missing. The credential is bound to this provider only.
 @(private)
 run_credential_bind :: proc(d: ^Daemon, provider_id: string) -> (provider.Auth, Run_Bind_Error) {
-    if key, present := d.provider_auth.api_keys[provider_id]; present {
-        return provider.Api_Key{key = key}, .None
-    }
+    if key, present := d.provider_auth.api_keys[provider_id]; present do return provider.Api_Key{key = key}, .None
 
     if kind, known := oauth.kind_from_id(provider_id); known {
         if credentials, present := provider_credentials_get(d, kind); present {

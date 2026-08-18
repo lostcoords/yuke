@@ -67,9 +67,7 @@ Exec_Job :: struct {
 exec_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
-    if !qjs.set_module_export(ctx, m, "exec", qjs.new_function(ctx, exec_entry, "exec", 2)) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "exec", qjs.new_function(ctx, exec_entry, "exec", 2)) do return -1
 
     return 0
 }
@@ -81,13 +79,9 @@ exec_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
 
     h := host_of(ctx)
 
-    if h == nil || h.exec_pool == nil {
-        return qjs.throw_type_error(ctx, "yuke:exec needs a configured worker pool")
-    }
+    if h == nil || h.exec_pool == nil do return qjs.throw_type_error(ctx, "yuke:exec needs a configured worker pool")
 
-    if !h.ops_open {
-        return qjs.throw_type_error(ctx, "yuke:exec is closed")
-    }
+    if !h.ops_open do return qjs.throw_type_error(ctx, "yuke:exec is closed")
 
     job := new(Exec_Job, h.allocator)
 
@@ -134,9 +128,7 @@ exec_entry :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [
 @(private = "file")
 exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qjs.Value) -> (qjs.Value, bool) {
     if argc < 2 || !qjs.is_object(argv[1]) {
-        if job.host.cancel_enforced {
-            return qjs.throw_type_error(ctx, "yuke:exec requires options with a run cancellation signal"), false
-        }
+        if job.host.cancel_enforced do return qjs.throw_type_error(ctx, "yuke:exec requires options with a run cancellation signal"), false
 
         return qjs.undefined(), true
     }
@@ -144,19 +136,13 @@ exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qj
     signal := qjs.get_property(ctx, argv[1], "signal")
     defer qjs.free_value(ctx, signal)
 
-    if qjs.is_exception(signal) {
-        return signal, false
-    }
+    if qjs.is_exception(signal) do return signal, false
 
     if qjs.is_undefined(signal) || qjs.is_null(signal) {
-        if job.host.cancel_enforced {
-            return qjs.throw_type_error(ctx, "a run cancellation signal is required"), false
-        }
+        if job.host.cancel_enforced do return qjs.throw_type_error(ctx, "a run cancellation signal is required"), false
     } else {
         cancel, thrown, ok := cancel_value(ctx, signal)
-        if !ok {
-            return thrown, false
-        }
+        if !ok do return thrown, false
         job.cancel = cancel
         cancel_retain(cancel)
     }
@@ -166,21 +152,15 @@ exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qj
 
     if !qjs.is_undefined(cwd) && !qjs.is_null(cwd) {
         requested, got := qjs.to_string(ctx, cwd)
-        if !got {
-            return qjs.throw_type_error(ctx, "yuke:exec could not read cwd"), false
-        }
+        if !got do return qjs.throw_type_error(ctx, "yuke:exec could not read cwd"), false
 
         defer qjs.free_string(ctx, requested)
 
         resolved, resolved_ok := path_resolve(job.host.base, requested, job.allocator)
-        if !resolved_ok {
-            return qjs.throw_type_error(ctx, "yuke:exec expects an absolute cwd"), false
-        }
+        if !resolved_ok do return qjs.throw_type_error(ctx, "yuke:exec expects an absolute cwd"), false
 
         job.cwd = resolved
-    } else if job.cancel != nil && job.cancel.default_cwd != "" {
-        job.cwd = strings.clone(job.cancel.default_cwd, job.allocator)
-    }
+    } else if job.cancel != nil && job.cancel.default_cwd != "" do job.cwd = strings.clone(job.cancel.default_cwd, job.allocator)
 
     timeout := qjs.get_property(ctx, argv[1], "timeoutMs")
     defer qjs.free_value(ctx, timeout)
@@ -188,9 +168,7 @@ exec_options :: proc(ctx: ^qjs.Context, job: ^Exec_Job, argc: c.int, argv: [^]qj
     if !qjs.is_undefined(timeout) && !qjs.is_null(timeout) {
         milliseconds, read := qjs.to_i64(ctx, timeout)
 
-        if !read || milliseconds <= 0 {
-            return qjs.throw_type_error(ctx, "yuke:exec expects a positive timeoutMs"), false
-        }
+        if !read || milliseconds <= 0 do return qjs.throw_type_error(ctx, "yuke:exec expects a positive timeoutMs"), false
 
         job.timeout = min(time.Duration(milliseconds) * time.Millisecond, EXEC_MAX_TIMEOUT)
     }
@@ -207,14 +185,10 @@ exec_job_run :: proc(job: ^Exec_Job) {
 
     defer job.done = true
 
-    if exec_job_cancelled(job) {
-        return
-    }
+    if exec_job_cancelled(job) do return
 
     stdout_r, stdout_w, out_err := os.pipe()
-    if out_err != nil {
-        return
-    }
+    if out_err != nil do return
 
     defer os.close(stdout_r)
 
@@ -234,9 +208,7 @@ exec_job_run :: proc(job: ^Exec_Job) {
     os.close(stdout_w)
     os.close(stderr_w)
 
-    if !spawned {
-        return
-    }
+    if !spawned do return
 
     job.started = true
 
@@ -250,9 +222,7 @@ exec_job_run :: proc(job: ^Exec_Job) {
         exec_terminate(job, process)
     }
 
-    if code, exited := exec_reap(process, true); exited {
-        job.code = code
-    }
+    if code, exited := exec_reap(process, true); exited do job.code = code
 }
 
 // Signal the whole group, give it time to act, then kill it. The group is what makes this
@@ -317,21 +287,15 @@ exec_drain :: proc(job: ^Exec_Job, stdout_r: ^os.File, stderr_r: ^os.File, deadl
             moved = moved || read
         }
 
-        if time.since(deadline) >= 0 {
-            return .Deadline
-        }
+        if time.since(deadline) >= 0 do return .Deadline
 
         // Draining the pool joins this worker, so a shutdown must not wait out a command
         // that still has ten minutes of its deadline left.
-        if exec_job_cancelled(job) {
-            return .Cancelled
-        }
+        if exec_job_cancelled(job) do return .Cancelled
 
         // Both pipes quiet and neither finished: the child is working, so yield rather than
         // spin a worker at full tilt on an empty pipe.
-        if !moved {
-            time.sleep(EXEC_POLL_INTERVAL)
-        }
+        if !moved do time.sleep(EXEC_POLL_INTERVAL)
     }
 
     return .Finished
@@ -350,18 +314,12 @@ exec_read_chunk :: proc(
     done: bool,
 ) {
     has_data, poll_err := os.pipe_has_data(file)
-    if poll_err != nil {
-        return false, true
-    }
+    if poll_err != nil do return false, true
 
-    if !has_data {
-        return false, false
-    }
+    if !has_data do return false, false
 
     count, read_err := os.read(file, chunk)
-    if read_err != nil || count == 0 {
-        return false, true
-    }
+    if read_err != nil || count == 0 do return false, true
 
     // Read first and drop after: a stream the caller stopped keeping must still be consumed,
     // or the child blocks on a full pipe for the rest of its deadline.

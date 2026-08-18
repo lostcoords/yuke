@@ -33,9 +33,7 @@ page_session :: proc(
     session.updated_at_ms = updated_at_ms
     session.origin = origin
 
-    if id, named := workspace.?; named {
-        session.workspace_id = id
-    }
+    if id, named := workspace.?; named do session.workspace_id = id
 
     // A creator is carried by exactly the user-created arms; a daemon-created child or cron
     // session must not have one, and the store refuses a row that does.
@@ -125,9 +123,7 @@ test_session_page_cursor_walks_every_row_once :: proc(t: ^testing.T) {
         page, err := session_page(s, FILTER_EVERY, cursor, 2, allocator)
         testing.expect_value(t, err, nil)
 
-        if len(page) == 0 {
-            break
-        }
+        if len(page) == 0 do break
 
         for session in page {
             append(&seen, session.id)

@@ -149,13 +149,9 @@ srv_teardown_server :: proc(t: ^testing.T, s: ^Server, f: ^http.Server) {
     http.shutdown(f)
     server_shutdown(s)
 
-    if !ts.nbio_run_until(t, &s.shutdown_complete, "WebSocket server shutdown") {
-        return
-    }
+    if !ts.nbio_run_until(t, &s.shutdown_complete, "WebSocket server shutdown") do return
 
-    if !ts.nbio_run_until(t, &f.shutdown_complete, "HTTP front-door shutdown") {
-        return
-    }
+    if !ts.nbio_run_until(t, &f.shutdown_complete, "HTTP front-door shutdown") do return
 
     server_destroy(s)
     http.destroy(f)
@@ -263,9 +259,7 @@ srv_run_echo :: proc(t: ^testing.T, binary: bool) {
     )
     testing.expect_value(t, cerr, Client_Error.None)
 
-    if !ts.nbio_run_until(t, &ec.done, "echo client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &ec.done, "echo client completion") do return
 
     client_destroy(&c)
 
@@ -330,9 +324,7 @@ raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
     }
 
     sock, err := net.dial_tcp(endpoint)
-    if err != nil {
-        return {}, false
-    }
+    if err != nil do return {}, false
 
     // Bound thread cleanup even if the server and its shutdown path both fail.
     if net.set_option(sock, .Receive_Timeout, ts.NBIO_WAIT_DEADLINE + time.Second) != nil {
@@ -352,23 +344,17 @@ raw_upgrade :: proc(sock: net.TCP_Socket, allocator := context.temp_allocator) -
     base64.encode_into_buf(key_encoded[:], key_raw[:])
 
     request := build_upgrade_request("/ws", "127.0.0.1:0", key_encoded[:], "", allocator)
-    if _, serr := net.send_tcp(sock, request); serr != nil {
-        return false
-    }
+    if _, serr := net.send_tcp(sock, request); serr != nil do return false
 
     buf: [4096]byte
     n := 0
     for n < len(buf) {
         got, rerr := net.recv_tcp(sock, buf[n:])
-        if rerr != nil || got == 0 {
-            return false
-        }
+        if rerr != nil || got == 0 do return false
 
         n += got
         result, _, status := parse_upgrade_response(buf[:n], key_encoded[:])
-        if status == .Ready {
-            return result == .Ok
-        }
+        if status == .Ready do return result == .Ok
     }
 
     return false
@@ -382,21 +368,15 @@ raw_ping_peer :: proc(p: ^Raw_Peer) {
     defer free_all(context.temp_allocator)
 
     sock, ok := raw_dial(p.port)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(sock)
 
-    if !raw_upgrade(sock) {
-        return
-    }
+    if !raw_upgrade(sock) do return
 
     key: [MASK_KEY_BYTES]byte
     crypto.rand_bytes(key[:])
     ping := encode_frame(true, .Ping, transmute([]byte)string("ping!"), key, context.temp_allocator)
-    if _, serr := net.send_tcp(sock, ping); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, ping); serr != nil do return
 
     // Read back the server's Pong with a client-role decoder (rejects masking, which
     // a server never applies).
@@ -407,9 +387,7 @@ raw_ping_peer :: proc(p: ^Raw_Peer) {
     buf: [4096]byte
     for {
         msg, has, derr := decoder_next(&dec, context.temp_allocator)
-        if derr != .None {
-            return
-        }
+        if derr != .None do return
 
         if has {
             if msg.kind == .Pong {
@@ -421,9 +399,7 @@ raw_ping_peer :: proc(p: ^Raw_Peer) {
         }
 
         n, rerr := net.recv_tcp(sock, buf[:])
-        if rerr != nil || n == 0 {
-            return
-        }
+        if rerr != nil || n == 0 do return
 
         decoder_feed(&dec, buf[:n])
     }
@@ -498,14 +474,10 @@ raw_ping_flood_peer :: proc(p: ^Raw_Peer) {
     defer free_all(context.temp_allocator)
 
     sock, ok := raw_dial(p.port)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(sock)
 
-    if !raw_upgrade(sock) {
-        return
-    }
+    if !raw_upgrade(sock) do return
 
     payload: [125]byte
     for i in 0 ..< len(payload) {
@@ -516,9 +488,7 @@ raw_ping_flood_peer :: proc(p: ^Raw_Peer) {
         key: [MASK_KEY_BYTES]byte
         crypto.rand_bytes(key[:])
         ping := encode_frame(true, .Ping, payload[:], key, context.temp_allocator)
-        if _, serr := net.send_tcp(sock, ping); serr != nil {
-            return
-        }
+        if _, serr := net.send_tcp(sock, ping); serr != nil do return
     }
 
     // The server must fail the connection once the third Pong cannot fit; the
@@ -606,20 +576,14 @@ raw_unmasked_peer :: proc(p: ^Raw_Peer) {
     defer free_all(context.temp_allocator)
 
     sock, ok := raw_dial(p.port)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(sock)
 
-    if !raw_upgrade(sock) {
-        return
-    }
+    if !raw_upgrade(sock) do return
 
     // Hand-roll an unmasked text frame: FIN|Text, mask bit clear, 3-byte payload.
     frame := [?]byte{0x81, 0x03, 'a', 'b', 'c'}
-    if _, serr := net.send_tcp(sock, frame[:]); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, frame[:]); serr != nil do return
 
     // The server must fail the connection; the peer sees the socket close.
     buf: [256]byte
@@ -742,9 +706,7 @@ test_server_client_close_echo :: proc(t: ^testing.T) {
     cerr := client_connect(&c, loop, {host = "127.0.0.1", port = port, path = "/ws"}, callbacks, &cc)
     testing.expect_value(t, cerr, Client_Error.None)
 
-    if !ts.nbio_run_until(t, &cc.done, "client-close completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &cc.done, "client-close completion") do return
 
     client_destroy(&c)
 
@@ -840,9 +802,7 @@ test_server_server_close :: proc(t: ^testing.T) {
     cerr := client_connect(&c, loop, {host = "127.0.0.1", port = port, path = "/ws"}, callbacks, &ic)
     testing.expect_value(t, cerr, Client_Error.None)
 
-    if !ts.nbio_run_until(t, &ic.done, "server-close client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &ic.done, "server-close client completion") do return
 
     client_destroy(&c)
 
@@ -893,15 +853,11 @@ test_server_shutdown_from_on_open :: proc(t: ^testing.T) {
     cerr := client_connect(&c, loop, {host = "127.0.0.1", port = port, path = "/ws"}, callbacks, &ic)
     testing.expect_value(t, cerr, Client_Error.None)
 
-    if !ts.nbio_run_until(t, &ic.done, "shutdown-on-open client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &ic.done, "shutdown-on-open client completion") do return
 
     client_destroy(&c)
 
-    if !ts.nbio_run_until(t, &s.shutdown_complete, "shutdown-on-open server completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &s.shutdown_complete, "shutdown-on-open server completion") do return
 
     testing.expect(t, ic.opened, "client on_open should fire before shutdown reaches it")
     testing.expect_value(t, sobs.open_count, 1)
@@ -977,9 +933,7 @@ test_server_max_connections :: proc(t: ^testing.T) {
     )
 
     // Let the first connection reach Open and occupy the single slot.
-    if !ts.nbio_run_until(t, &first.opened, "first capped client open") {
-        return
-    }
+    if !ts.nbio_run_until(t, &first.opened, "first capped client open") do return
 
     testing.expect(t, first.opened, "first client should open")
 
@@ -998,9 +952,7 @@ test_server_max_connections :: proc(t: ^testing.T) {
         Client_Error.None,
     )
 
-    if !ts.nbio_run_until(t, &second.done, "second capped client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &second.done, "second capped client completion") do return
 
     client_destroy(&c2)
 
@@ -1013,9 +965,7 @@ test_server_max_connections :: proc(t: ^testing.T) {
     // Now close the first client and drain.
     client_close(&c1)
 
-    if !ts.nbio_run_until(t, &first.done, "first capped client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &first.done, "first capped client completion") do return
 
     client_destroy(&c1)
     srv_settle(16)
@@ -1072,17 +1022,13 @@ test_server_conn_lifecycle_no_leak :: proc(t: ^testing.T) {
         )
         testing.expect_value(t, cerr, Client_Error.None)
 
-        if !ts.nbio_run_until(t, &ec.done, "lifecycle client completion") {
-            return
-        }
+        if !ts.nbio_run_until(t, &ec.done, "lifecycle client completion") do return
 
         client_destroy(&c)
 
         // Drain the server-side connection's deferred teardown before the next
         // cycle so releases interleave with fresh accepts, not batch at the end.
-        if !ts.nbio_run_until(t, &s, srv_server_empty, "lifecycle connection teardown") {
-            return
-        }
+        if !ts.nbio_run_until(t, &s, srv_server_empty, "lifecycle connection teardown") do return
 
         testing.expectf(t, string(ec.echoed[:]) == "cycle", "cycle %d should echo", i)
         delete(ec.echoed)
@@ -1132,9 +1078,7 @@ srv_batch_on_message :: proc(c: ^Client, kind: Message_Kind, data: []byte) {
     bc := (^Srv_Batch_Client)(c.user_data)
     append(&bc.received, slice.clone(data, context.temp_allocator))
 
-    if len(bc.received) == len(bc.to_send) {
-        client_close(c)
-    }
+    if len(bc.received) == len(bc.to_send) do client_close(c)
 }
 
 srv_batch_on_close :: proc(c: ^Client, code: Close_Code) {
@@ -1190,9 +1134,7 @@ srv_run_batch :: proc(t: ^testing.T, to_send: [][]byte) {
     )
     testing.expect_value(t, cerr, Client_Error.None)
 
-    if !ts.nbio_run_until(t, &bc.done, "batch client completion") {
-        return
-    }
+    if !ts.nbio_run_until(t, &bc.done, "batch client completion") do return
 
     client_destroy(&c)
     srv_settle(16)

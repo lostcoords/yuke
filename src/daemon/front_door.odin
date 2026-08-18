@@ -61,13 +61,9 @@ router_init :: proc(d: ^Daemon) {
 // marked private, not just 2xx as RFC 6750 §2.3 asks; framing refusals answer unmarked.
 middleware_mark_private :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     // A duplicated `token` still carries a credential, so its 400 is marked too.
-    if _, lookup := http.query_value(ctx.request.query, "token"); lookup == .Missing {
-        return .Continue
-    }
+    if _, lookup := http.query_value(ctx.request.query, "token"); lookup == .Missing do return .Continue
 
-    if !http_server.conn_add_header(ctx.conn, "Cache-Control", "private, no-store") {
-        return .Stop
-    }
+    if !http_server.conn_add_header(ctx.conn, "Cache-Control", "private, no-store") do return .Stop
 
     return .Continue
 }
@@ -79,9 +75,7 @@ middleware_admit :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
 
     // Exact-match against operator config; a duplicated Origin falls through to the refusal.
     if origin, lookup := http.request_header(ctx.request.head, "origin"); lookup == .One {
-        if origin_allowed(d.allowed_origins, origin) {
-            return .Continue
-        }
+        if origin_allowed(d.allowed_origins, origin) do return .Continue
     }
 
     if !http_server.request_is_local(ctx.conn, ctx.request.head) {
@@ -106,13 +100,9 @@ OFFICIAL_ORIGIN :: "https://client.yuke.sh"
 origin_allowed :: proc(allowed: []string, origin: string) -> bool {
     // @Todo(xyaman): Require pairing before an allowed browser origin can control
     // an otherwise unauthenticated loopback daemon.
-    if origin == OFFICIAL_ORIGIN {
-        return true
-    }
+    if origin == OFFICIAL_ORIGIN do return true
     for entry in allowed {
-        if entry == origin {
-            return true
-        }
+        if entry == origin do return true
     }
     return false
 }
@@ -121,16 +111,12 @@ origin_allowed :: proc(allowed: []string, origin: string) -> bool {
 middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
     // /identity is a public discovery endpoint: no secret, and it must answer before a client holds
     // any credential, so it skips authentication. Admission still gates its origin.
-    if ctx.request.path == "/identity" {
-        return .Continue
-    }
+    if ctx.request.path == "/identity" do return .Continue
 
     d := ctx.user_data
 
     auth := authenticate(d, ctx.request.head, ctx.request.query)
-    if auth == .Allowed {
-        return .Continue
-    }
+    if auth == .Allowed do return .Continue
 
     status := http.Status.Unauthorized
     message := "unauthorized"
@@ -142,9 +128,7 @@ middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
         log.warnf("daemon: unauthorized %s %s", ctx.request.head.method, ctx.request.path)
     }
 
-    if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", auth_challenge(auth)) {
-        return .Stop
-    }
+    if !http_server.conn_add_header(ctx.conn, "WWW-Authenticate", auth_challenge(auth)) do return .Stop
 
     http_server.respond_text(ctx.conn, status, message)
     return .Stop
@@ -152,9 +136,7 @@ middleware_auth :: proc(ctx: ^Http_Context) -> http_server.Middleware_Result {
 
 // Unmatched path after auth.
 router_not_found :: proc(ctx: ^Http_Context) {
-    if reject_pipelined(ctx) {
-        return
-    }
+    if reject_pipelined(ctx) do return
 
     log.debugf("daemon: not found %s", ctx.request.path)
     http_server.respond_text(ctx.conn, .Not_Found, "not found")
@@ -163,9 +145,7 @@ router_not_found :: proc(ctx: ^Http_Context) {
 // Path pattern matched a registered route, but not this method. `ctx.allow` borrows router
 // scratch, which `conn_add_header` clones. Pipelining isn't refused: `Allow` says more.
 router_method_not_allowed :: proc(ctx: ^Http_Context) {
-    if !http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) {
-        return
-    }
+    if !http_server.conn_add_header(ctx.conn, "Allow", ctx.allow) do return
 
     log.debugf("daemon: method not allowed %s %s", ctx.request.head.method, ctx.request.path)
     http_server.respond_text(ctx.conn, .Method_Not_Allowed, "method not allowed")
@@ -174,9 +154,7 @@ router_method_not_allowed :: proc(ctx: ^Http_Context) {
 // Refuse a pipelined follow-up request. `/ws` is exempt: a hijacking route keeps its
 // trailing bytes as the peer's eager first frame.
 reject_pipelined :: proc(ctx: ^Http_Context) -> (answered: bool) {
-    if !ctx.request.pipelined {
-        return false
-    }
+    if !ctx.request.pipelined do return false
 
     log.debug("daemon: rejecting pipelined request")
     http_server.respond_text(ctx.conn, .Bad_Request, "pipelining not supported")
@@ -224,12 +202,8 @@ route_identity :: proc(ctx: ^Http_Context) {
 // before a public page may reach a loopback address.
 route_identity_preflight :: proc(ctx: ^Http_Context) {
     identity_cors(ctx)
-    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Methods", "GET, OPTIONS") {
-        return
-    }
-    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Private-Network", "true") {
-        return
-    }
+    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Methods", "GET, OPTIONS") do return
+    if !http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Private-Network", "true") do return
     http_server.respond_text(ctx.conn, .No_Content, "")
 }
 
@@ -237,9 +211,7 @@ route_identity_preflight :: proc(ctx: ^Http_Context) {
 // Admission has already vetted the origin, so this reflects an allowed value, not an arbitrary one.
 identity_cors :: proc(ctx: ^Http_Context) {
     origin, lookup := http.request_header(ctx.request.head, "origin")
-    if lookup != .One {
-        return
-    }
+    if lookup != .One do return
     _ = http_server.conn_add_header(ctx.conn, "Access-Control-Allow-Origin", origin)
     _ = http_server.conn_add_header(ctx.conn, "Vary", "Origin")
 }
@@ -250,9 +222,7 @@ route_blob_get :: proc(ctx: ^Http_Context) {
     d := ctx.user_data
     c := ctx.conn
 
-    if reject_pipelined(ctx) {
-        return
-    }
+    if reject_pipelined(ctx) do return
 
     hash := ctx.params.path_rest
     if d.blob_dir == "" || wire.enforce_fixed_lower_hex(BLOB_HASH_HEX_LEN, hash) != .None {

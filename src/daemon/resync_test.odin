@@ -360,9 +360,7 @@ test_daemon_resync_survives_a_restart :: proc(t: ^testing.T) {
     testing.expect_value(t, len(after.messages), len(before.messages))
     testing.expect_value(t, after.item.session.message_count, before.item.session.message_count)
 
-    if testing.expect_value(t, len(after.messages), 1) {
-        testing.expect_value(t, wire.message_id(after.messages[0]), wire.Message_Id(1))
-    }
+    if testing.expect_value(t, len(after.messages), 1) do testing.expect_value(t, wire.message_id(after.messages[0]), wire.Message_Id(1))
 
     test_teardown(&second)
 }
@@ -431,9 +429,7 @@ test_daemon_resync_configs_cover_the_page :: proc(t: ^testing.T) {
             narrow, nerr := resync_build(d, {session_id = session, limit = u64(1)}, context.temp_allocator)
             testing.expect_value(t, nerr, Resync_Error.None)
 
-            if testing.expect_value(t, len(narrow.configs), 1) {
-                testing.expect_value(t, narrow.configs[0].config_rev, wire.Config_Rev(2))
-            }
+            if testing.expect_value(t, len(narrow.configs), 1) do testing.expect_value(t, narrow.configs[0].config_rev, wire.Config_Rev(2))
         },
     )
 }
@@ -458,9 +454,7 @@ test_daemon_resync_drops_truncated_messages :: proc(t: ^testing.T) {
             cut, err := resync_build(d, {session_id = session}, context.temp_allocator)
             testing.expect_value(t, err, Resync_Error.None)
 
-            if testing.expect_value(t, len(cut.messages), 1) {
-                testing.expect_value(t, wire.message_id(cut.messages[0]), wire.Message_Id(1))
-            }
+            if testing.expect_value(t, len(cut.messages), 1) do testing.expect_value(t, wire.message_id(cut.messages[0]), wire.Message_Id(1))
 
             // A discarded id is finalized too, so the boundary does not move back.
             highest, finalized := cut.highest_finalized_message_id.?
@@ -936,9 +930,7 @@ corrupt_on_ready :: proc(c: ^client.Client, _: wire.Initialize_Result) {
 corrupt_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Corrupt_Obs)(c.user_data)
     answered, has_response := outcome.(client.Request_Response)
-    if !has_response {
-        return
-    }
+    if !has_response do return
 
     resp := answered.response
 
@@ -965,9 +957,7 @@ corrupt_on_resync :: proc(c: ^client.Client, outcome: client.Request_Outcome, _:
 corrupt_on_list :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     o := (^Corrupt_Obs)(c.user_data)
     answered, has_response := outcome.(client.Request_Response)
-    if !has_response {
-        return
-    }
+    if !has_response do return
 
     resp := answered.response
     _, ok := resp.(wire.Response_Ok)

@@ -19,9 +19,7 @@ PIPE_NOWAIT :: windows.DWORD(0x00000001)
 
 inject_open :: proc() -> (r, w: Tty_Handle, ok: bool) {
     read_h, write_h: windows.HANDLE
-    if !windows.CreatePipe(&read_h, &write_h, nil, 0) {
-        return nil, nil, false
-    }
+    if !windows.CreatePipe(&read_h, &write_h, nil, 0) do return nil, nil, false
 
     return read_h, write_h, true
 }
@@ -33,9 +31,7 @@ inject_close :: proc(h: Tty_Handle) {
 // One write attempt; <= 0 means would-block or error.
 inject_write_some :: proc(w: Tty_Handle, data: []u8) -> int {
     written: windows.DWORD
-    if !windows.WriteFile(w, raw_data(data), windows.DWORD(len(data)), &written, nil) {
-        return -1
-    }
+    if !windows.WriteFile(w, raw_data(data), windows.DWORD(len(data)), &written, nil) do return -1
 
     return int(written)
 }

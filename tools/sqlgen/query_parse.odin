@@ -48,9 +48,7 @@ parse_queries :: proc(source: string, allocator := context.allocator) -> (querie
             // typo'd cardinality, a missing name) means a query silently never
             // making it into the generated file — that's a hard error, not a
             // line to skip past.
-            if strings.has_prefix(strings.trim_space(lines[i]), "-- name:") {
-                return nil, false
-            }
+            if strings.has_prefix(strings.trim_space(lines[i]), "-- name:") do return nil, false
 
             i += 1
 
@@ -64,13 +62,9 @@ parse_queries :: proc(source: string, allocator := context.allocator) -> (querie
         for i < len(lines) {
             trimmed := strings.trim_space(lines[i])
 
-            if !strings.has_prefix(trimmed, "--") {
-                break
-            }
+            if !strings.has_prefix(trimmed, "--") do break
 
-            if _, _, is_header := parse_header(lines[i]); is_header {
-                break
-            }
+            if _, _, is_header := parse_header(lines[i]); is_header do break
 
             if field, is_field := parse_field(trimmed); is_field {
                 field.name = strings.clone(field.name, allocator)
@@ -84,9 +78,7 @@ parse_queries :: proc(source: string, allocator := context.allocator) -> (querie
         body := make([dynamic]string, allocator)
 
         for i < len(lines) {
-            if _, _, is_header := parse_header(lines[i]); is_header {
-                break
-            }
+            if _, _, is_header := parse_header(lines[i]); is_header do break
 
             append(&body, lines[i])
             i += 1
@@ -95,9 +87,7 @@ parse_queries :: proc(source: string, allocator := context.allocator) -> (querie
         sql := strings.trim_space(strings.join(body[:], "\n", allocator))
         delete(body)
 
-        if len(sql) == 0 {
-            return nil, false
-        }
+        if len(sql) == 0 do return nil, false
 
         append(
             &out,
@@ -131,16 +121,12 @@ query_defs_destroy :: proc(defs: []Query_Def, allocator := context.allocator) {
 parse_header :: proc(line: string) -> (name: string, cardinality: Cardinality, ok: bool) {
     trimmed := strings.trim_space(line)
 
-    if !strings.has_prefix(trimmed, "-- name:") {
-        return "", .Exec, false
-    }
+    if !strings.has_prefix(trimmed, "-- name:") do return "", .Exec, false
 
     rest := strings.trim_space(trimmed[len("-- name:"):])
     space := strings.last_index_byte(rest, ' ')
 
-    if space < 0 {
-        return "", .Exec, false
-    }
+    if space < 0 do return "", .Exec, false
 
     name = strings.trim_space(rest[:space])
     marker := strings.trim_space(rest[space:])
@@ -158,9 +144,7 @@ parse_header :: proc(line: string) -> (name: string, cardinality: Cardinality, o
         return "", .Exec, false
     }
 
-    if len(name) == 0 {
-        return "", .Exec, false
-    }
+    if len(name) == 0 do return "", .Exec, false
 
     return name, cardinality, true
 }
@@ -173,49 +157,35 @@ parse_field :: proc(trimmed: string) -> (field: Query_Field, ok: bool) {
     body := strings.trim_space(trimmed[2:])
     colon := strings.index_byte(body, ':')
 
-    if colon < 0 {
-        return {}, false
-    }
+    if colon < 0 do return {}, false
 
     name := strings.trim_space(body[:colon])
 
-    if !is_identifier(name) {
-        return {}, false
-    }
+    if !is_identifier(name) do return {}, false
 
     rest := strings.trim_space(body[colon + 1:])
 
-    if len(rest) == 0 {
-        return {}, false
-    }
+    if len(rest) == 0 do return {}, false
 
     required := strings.has_suffix(rest, "!")
     odin_type := strings.trim_space(rest[:len(rest) - 1]) if required else rest
 
-    if len(odin_type) == 0 {
-        return {}, false
-    }
+    if len(odin_type) == 0 do return {}, false
 
     return Query_Field{name = name, odin_type = odin_type, required = required}, true
 }
 
 @(private)
 is_identifier :: proc(s: string) -> bool {
-    if len(s) == 0 {
-        return false
-    }
+    if len(s) == 0 do return false
 
     for b, i in s {
         letter := (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
         digit := b >= '0' && b <= '9'
 
-        if i == 0 && !letter {
-            return false
-        }
+        if i == 0 && !letter do return false
 
-        if i > 0 && !letter && !digit {
-            return false
-        }
+        if i > 0 && !letter && !digit do return false
     }
 
     return true

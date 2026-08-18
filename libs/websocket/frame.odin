@@ -213,33 +213,23 @@ parse_header :: proc(
     status: Header_Status,
     err: Protocol_Error,
 ) {
-    if len(buf) < 2 {
-        return {}, 0, .Need_More, .None
-    }
+    if len(buf) < 2 do return {}, 0, .Need_More, .None
 
     h0 := transmute(Header0)buf[0]
     h1 := transmute(Header1)buf[1]
 
     opcode, ok := op_code_from_u8(h0.opcode)
-    if !ok {
-        return {}, 0, .Ready, .Unrecognized_Opcode
-    }
+    if !ok do return {}, 0, .Ready, .Unrecognized_Opcode
 
-    if h0.rsv1 != 0 || h0.rsv2 != 0 || h0.rsv3 != 0 {
-        return {}, 0, .Ready, .Reserved_Bit_Set
-    }
+    if h0.rsv1 != 0 || h0.rsv2 != 0 || h0.rsv3 != 0 do return {}, 0, .Ready, .Reserved_Bit_Set
 
     // Enforce direction-strict masking before reading anything further.
     switch role {
     case .Client:
-        if h1.mask {
-            return {}, 0, .Ready, .Masked
-        }
+        if h1.mask do return {}, 0, .Ready, .Masked
 
     case .Server:
-        if !h1.mask {
-            return {}, 0, .Ready, .Unmasked
-        }
+        if !h1.mask do return {}, 0, .Ready, .Unmasked
     }
 
     // A masked frame carries a 4-byte key after any extended length bytes.
@@ -247,9 +237,7 @@ parse_header :: proc(
 
     control := op_code_is_control(opcode)
 
-    if !h0.fin && control {
-        return {}, 0, .Ready, .Control_Frame_Fragmented
-    }
+    if !h0.fin && control do return {}, 0, .Ready, .Control_Frame_Fragmented
 
     // Validate the length code before requiring the extended and mask bytes, so an
     // illegal control length fails fast. `extended_length_bytes` is its encoded width.
@@ -258,29 +246,19 @@ parse_header :: proc(
 
     switch h1.payload_len {
     case PAYLOAD_LEN_16:
-        if control {
-            return {}, 0, .Ready, .Control_Frame_Too_Big
-        }
+        if control do return {}, 0, .Ready, .Control_Frame_Too_Big
 
         extended_length_bytes = 2
-        if len(buf) < 2 + extended_length_bytes {
-            return {}, 0, .Need_More, .None
-        }
+        if len(buf) < 2 + extended_length_bytes do return {}, 0, .Need_More, .None
 
         payload_length = int(u16(buf[2]) << 8 | u16(buf[3]))
-        if payload_length < PAYLOAD_LEN_16 {
-            return {}, 0, .Ready, .Non_Minimal_Length
-        }
+        if payload_length < PAYLOAD_LEN_16 do return {}, 0, .Ready, .Non_Minimal_Length
 
     case PAYLOAD_LEN_64:
-        if control {
-            return {}, 0, .Ready, .Control_Frame_Too_Big
-        }
+        if control do return {}, 0, .Ready, .Control_Frame_Too_Big
 
         extended_length_bytes = 8
-        if len(buf) < 2 + extended_length_bytes {
-            return {}, 0, .Need_More, .None
-        }
+        if len(buf) < 2 + extended_length_bytes do return {}, 0, .Need_More, .None
 
         v: u64
         for i in 0 ..< 8 {
@@ -288,29 +266,21 @@ parse_header :: proc(
         }
 
         // Reject the high bit (RFC 6455 forbids it) and anything past int range.
-        if v > u64(max(int)) {
-            return {}, 0, .Ready, .Frame_Length_Overflow
-        }
+        if v > u64(max(int)) do return {}, 0, .Ready, .Frame_Length_Overflow
 
         payload_length = int(v)
-        if payload_length < 1 << 16 {
-            return {}, 0, .Ready, .Non_Minimal_Length
-        }
+        if payload_length < 1 << 16 do return {}, 0, .Ready, .Non_Minimal_Length
 
     case:
         payload_length = int(h1.payload_len)
     }
 
-    if opcode == .Connection_Close && payload_length == 1 {
-        return {}, 0, .Ready, .Bad_Close
-    }
+    if opcode == .Connection_Close && payload_length == 1 do return {}, 0, .Ready, .Bad_Close
 
     // The full header — fixed bytes, extended length, and any masking key — must be
     // buffered before the caller may consume `header_length` and the payload.
     header_length = 2 + extended_length_bytes + mask_len
-    if len(buf) < header_length {
-        return {}, 0, .Need_More, .None
-    }
+    if len(buf) < header_length do return {}, 0, .Need_More, .None
 
     header = Frame_Header {
         opcode         = opcode,
@@ -318,9 +288,7 @@ parse_header :: proc(
         fin            = h0.fin,
         masked         = h1.mask,
     }
-    if h1.mask {
-        copy(header.mask_key[:], buf[2 + extended_length_bytes:][:MASK_KEY_BYTES])
-    }
+    if h1.mask do copy(header.mask_key[:], buf[2 + extended_length_bytes:][:MASK_KEY_BYTES])
 
     return header, header_length, .Ready, .None
 }
@@ -486,19 +454,13 @@ Parsed_Close :: struct {
 // correct in-memory default. A non-empty body's code must pass
 // `close_code_valid_on_wire` and any reason bytes must be valid UTF-8.
 parse_close :: proc(data: []byte) -> (Parsed_Close, Protocol_Error) {
-    if len(data) == 0 {
-        return {code = .No_Status_Rcvd, reason = ""}, .None
-    }
+    if len(data) == 0 do return {code = .No_Status_Rcvd, reason = ""}, .None
 
     code := u16(data[0]) << 8 | u16(data[1])
-    if !close_code_valid_on_wire(code) {
-        return {}, .Invalid_Close_Code
-    }
+    if !close_code_valid_on_wire(code) do return {}, .Invalid_Close_Code
 
     reason := string(data[2:])
-    if !utf8.valid_string(reason) {
-        return {}, .Invalid_Utf8
-    }
+    if !utf8.valid_string(reason) do return {}, .Invalid_Utf8
 
     return {code = Close_Code(code), reason = reason}, .None
 }

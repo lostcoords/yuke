@@ -29,9 +29,7 @@ exec_spawn :: proc(job: ^Exec_Job, stdout_w: ^os.File, stderr_w: ^os.File) -> (E
     assert(stdout_w != nil && stderr_w != nil, "a spawn needs both pipes")
 
     command, command_err := strings.clone_to_cstring(job.command, job.allocator)
-    if command_err != nil {
-        return {}, false
-    }
+    if command_err != nil do return {}, false
 
     // `sh -c <script> <name> <args...>` binds $0 to the name, so the directory is $1 and the
     // command is $2. A trailing nil terminates argv.
@@ -40,54 +38,36 @@ exec_spawn :: proc(job: ^Exec_Job, stdout_w: ^os.File, stderr_w: ^os.File) -> (E
 
     if job.cwd != "" {
         cwd, cwd_err := strings.clone_to_cstring(job.cwd, job.allocator)
-        if cwd_err != nil {
-            return {}, false
-        }
+        if cwd_err != nil do return {}, false
 
         args = {"sh", "-c", EXEC_CWD_SCRIPT, "sh", cwd, command, nil}
     }
 
     actions: Spawn_File_Actions
-    if posix_spawn_file_actions_init(&actions) != .NONE {
-        return {}, false
-    }
+    if posix_spawn_file_actions_init(&actions) != .NONE do return {}, false
 
     defer posix_spawn_file_actions_destroy(&actions)
 
     attr: Spawn_Attr
-    if posix_spawnattr_init(&attr) != .NONE {
-        return {}, false
-    }
+    if posix_spawnattr_init(&attr) != .NONE do return {}, false
 
     defer posix_spawnattr_destroy(&attr)
 
     // Its own group leader: pgroup 0 makes the child's group id its own pid, which is what
     // lets one signal reach the shell and everything the shell starts.
-    if posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP) != .NONE {
-        return {}, false
-    }
+    if posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP) != .NONE do return {}, false
 
-    if posix_spawnattr_setpgroup(&attr, 0) != .NONE {
-        return {}, false
-    }
+    if posix_spawnattr_setpgroup(&attr, 0) != .NONE do return {}, false
 
     // A command must not read the daemon's stdin, so it gets /dev/null rather than a copy.
-    if posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", {}, {}) != .NONE {
-        return {}, false
-    }
+    if posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", {}, {}) != .NONE do return {}, false
 
-    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stdout_w)), 1) != .NONE {
-        return {}, false
-    }
+    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stdout_w)), 1) != .NONE do return {}, false
 
-    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stderr_w)), 2) != .NONE {
-        return {}, false
-    }
+    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stderr_w)), 2) != .NONE do return {}, false
 
     process: Exec_Process
-    if posix.posix_spawn(&process.pid, EXEC_SHELL, &actions, &attr, raw_data(args[:]), posix.environ) != .NONE {
-        return {}, false
-    }
+    if posix.posix_spawn(&process.pid, EXEC_SHELL, &actions, &attr, raw_data(args[:]), posix.environ) != .NONE do return {}, false
 
     return process, true
 }
@@ -106,24 +86,16 @@ exec_reap :: proc(process: Exec_Process, blocking: bool) -> (code: int, exited: 
     status: c.int
     flags: posix.Wait_Flags
 
-    if !blocking {
-        flags += {.NOHANG}
-    }
+    if !blocking do flags += {.NOHANG}
 
     reaped := posix.waitpid(process.pid, &status, flags)
-    if reaped != process.pid {
-        return 0, false
-    }
+    if reaped != process.pid do return 0, false
 
-    if posix.WIFEXITED(status) {
-        return int(posix.WEXITSTATUS(status)), true
-    }
+    if posix.WIFEXITED(status) do return int(posix.WEXITSTATUS(status)), true
 
     // Killed by a signal. The shell's own convention is what a caller already reads for a
     // command its shell terminated.
-    if posix.WIFSIGNALED(status) {
-        return 128 + int(posix.WTERMSIG(status)), true
-    }
+    if posix.WIFSIGNALED(status) do return 128 + int(posix.WTERMSIG(status)), true
 
     return 0, true
 }

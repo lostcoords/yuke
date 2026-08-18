@@ -175,9 +175,7 @@ open :: proc(path: string, allocator := context.allocator) -> (^Store, Error) {
     defer delete(cpath, allocator)
 
     db, rc := sqlite.open(cpath, {.Readwrite, .Create, .Nomutex})
-    if rc != .Ok {
-        return nil, rc
-    }
+    if rc != .Ok do return nil, rc
 
     return open_conn(db, true, allocator)
 }
@@ -186,9 +184,7 @@ open :: proc(path: string, allocator := context.allocator) -> (^Store, Error) {
 // store. Its contents disappear when the store closes.
 open_memory :: proc(allocator := context.allocator) -> (^Store, Error) {
     db, rc := sqlite.open_memory({.Readwrite, .Create, .Nomutex})
-    if rc != .Ok {
-        return nil, rc
-    }
+    if rc != .Ok do return nil, rc
 
     return open_conn(db, false, allocator)
 }
@@ -224,9 +220,7 @@ open_conn :: proc(db: ^sqlite.Conn, durable: bool, allocator: mem.Allocator) -> 
         events_after_destroy(&events_after, allocator)
     }
 
-    if init_err := queries.queries_init(db, &q, allocator); init_err != nil {
-        return nil, read_err(init_err)
-    }
+    if init_err := queries.queries_init(db, &q, allocator); init_err != nil do return nil, read_err(init_err)
     inserts_prepare(db, &inserts, allocator) or_return
     events_after = events_after_prepare(db, allocator) or_return
 
@@ -266,17 +260,13 @@ configure :: proc(db: ^sqlite.Conn, durable: bool) -> Error {
     assert(db != nil, "configure needs a connection")
 
     mode := sqlite.Journal_Mode.Memory
-    if durable {
-        mode = .Wal
-    }
+    if durable do mode = .Wal
 
     // WAL is refused on some filesystems, while an in-memory database cannot
     // leave MEMORY mode. The pragma reports refusal instead of failing.
     journaled := sqlite.journal_mode_set(db, mode) or_return
 
-    if !journaled {
-        return .Durability_Unavailable
-    }
+    if !journaled do return .Durability_Unavailable
 
     sqlite.synchronous_set(db, .Normal) or_return
 
@@ -284,16 +274,12 @@ configure :: proc(db: ^sqlite.Conn, durable: bool) -> Error {
     // the other half silently settled somewhere else.
     level := sqlite.synchronous(db) or_return
 
-    if level != .Normal {
-        return .Durability_Unavailable
-    }
+    if level != .Normal do return .Durability_Unavailable
 
     sqlite.exec(db, "PRAGMA foreign_keys = ON") or_return
     enforced := sqlite.query_one_i64(db, "PRAGMA foreign_keys") or_return
 
-    if enforced != 1 {
-        return .Constraints_Unavailable
-    }
+    if enforced != 1 do return .Constraints_Unavailable
 
     return nil
 }
@@ -305,9 +291,7 @@ check_integrity :: proc(db: ^sqlite.Conn) -> Error {
 
     // The argument caps reporting at the first fault; we only branch on "ok".
     healthy := sqlite.query_one_text_equal(db, "PRAGMA quick_check(1)", "ok") or_return
-    if !healthy {
-        return .Integrity_Failed
-    }
+    if !healthy do return .Integrity_Failed
 
     return nil
 }
@@ -322,24 +306,18 @@ check_identity :: proc(db: ^sqlite.Conn) -> (version: int, err: Error) {
     stored := sqlite.query_one_i64(db, "PRAGMA user_version") or_return
 
     if application_id == APPLICATION_ID {
-        if stored < 1 || stored > i64(len(MIGRATIONS)) {
-            return 0, .Version_Unsupported
-        }
+        if stored < 1 || stored > i64(len(MIGRATIONS)) do return 0, .Version_Unsupported
 
         migration_hash_check(db, MIGRATIONS[:], int(stored)) or_return
 
         return int(stored), nil
     }
 
-    if application_id != 0 || stored != 0 {
-        return 0, .Foreign_Database
-    }
+    if application_id != 0 || stored != 0 do return 0, .Foreign_Database
 
     objects := sqlite.query_one_i64(db, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") or_return
 
-    if objects != 0 {
-        return 0, .Foreign_Database
-    }
+    if objects != 0 do return 0, .Foreign_Database
 
     return 0, nil
 }

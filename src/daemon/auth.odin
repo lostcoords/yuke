@@ -45,9 +45,7 @@ provider_login_flow_allowed :: proc(conn: ^Conn, flow: wire.Auth_Flow) -> bool {
     assert(conn != nil, "login flow admission needs a connection")
     assert(conn.tx != nil, "login flow admission needs a transport")
 
-    if flow != .Browser {
-        return true
-    }
+    if flow != .Browser do return true
 
     _, relayed := conn.tx.(Relay_Client)
     return !relayed
@@ -218,9 +216,7 @@ provider_credentials_load :: proc(d: ^Daemon) -> store.Error {
         }
 
         kind, known := oauth.kind_from_id(row.provider_id)
-        if !known {
-            continue
-        }
+        if !known do continue
 
         credentials := oauth.OAuth_Credentials {
             access_token  = row.access_token,
@@ -307,13 +303,9 @@ auth_callback_open :: proc(d: ^Daemon, provider: ^oauth.Provider) -> Error {
     assert(d.provider_auth.operation == nil, "auth callback opens before publishing its login")
     assert(provider != nil && len(provider.callback_ports) > 0, "auth callback opens for a browser provider")
 
-    if d.provider_auth.callback.state == .Closed {
-        http_server.destroy(&d.provider_auth.callback)
-    }
+    if d.provider_auth.callback.state == .Closed do http_server.destroy(&d.provider_auth.callback)
 
-    if d.provider_auth.callback.state != .Idle {
-        return .Auth_Failed
-    }
+    if d.provider_auth.callback.state != .Idle do return .Auth_Failed
 
     // Serve exactly this provider's registered callback path; the browser is
     // redirected there and the listener rejects anything else.
@@ -339,9 +331,7 @@ auth_callback_open :: proc(d: ^Daemon, provider: ^oauth.Provider) -> Error {
             return .None
         }
 
-        if listen_err == .Invalid_Options {
-            assert(false, "static OAuth callback options are invalid")
-        }
+        if listen_err == .Invalid_Options do assert(false, "static OAuth callback options are invalid")
     }
 
     return .Auth_Failed
@@ -350,17 +340,13 @@ auth_callback_open :: proc(d: ^Daemon, provider: ^oauth.Provider) -> Error {
 auth_callback_close :: proc(d: ^Daemon) {
     assert(d != nil, "auth callback close needs daemon state")
 
-    if d.provider_auth.callback.state == .Serving {
-        http_server.shutdown(&d.provider_auth.callback)
-    }
+    if d.provider_auth.callback.state == .Serving do http_server.shutdown(&d.provider_auth.callback)
 }
 
 auth_callback_drain :: proc(d: ^Daemon) {
     assert(d != nil, "auth callback drain needs daemon state")
 
-    if d.provider_auth.callback.state == .Serving {
-        http_server.drain(&d.provider_auth.callback)
-    }
+    if d.provider_auth.callback.state == .Serving do http_server.drain(&d.provider_auth.callback)
 }
 
 // Stop callback admission and cancel active provider work.
@@ -371,9 +357,7 @@ provider_auth_shutdown :: proc(d: ^Daemon) {
     provider_refresh_timer_cancel(d)
     if provider_refresh(d) != nil {
         provider_refresh_cancel(d)
-    } else if provider_login(d) != nil {
-        provider_login_discard(d)
-    }
+    } else if provider_login(d) != nil do provider_login_discard(d)
 
     auth_callback_close(d)
 }
@@ -384,9 +368,7 @@ provider_auth_destroy :: proc(d: ^Daemon) {
     assert(d.provider_auth.refresh_timer == nil, "provider auth destroyed with a refresh timer")
     assert(d.provider_auth.operation == nil, "provider auth destroyed with active work")
 
-    if d.provider_auth.callback.state == .Closed || d.provider_auth.callback.state == .Idle {
-        http_server.destroy(&d.provider_auth.callback)
-    }
+    if d.provider_auth.callback.state == .Closed || d.provider_auth.callback.state == .Idle do http_server.destroy(&d.provider_auth.callback)
     if d.provider_auth.curl_ready {
         curl.client_destroy(&d.provider_auth.curl)
         d.provider_auth.curl_ready = false
@@ -402,9 +384,7 @@ provider_api_key_stage :: proc(d: ^Daemon, provider_id: string) -> (added: bool)
     assert(d != nil, "API-key staging needs daemon state")
     assert(d.provider_auth.staged_api_keys != nil, "API-key staging needs initialized auth")
 
-    if provider_id in d.provider_auth.staged_api_keys {
-        return false
-    }
+    if provider_id in d.provider_auth.staged_api_keys do return false
 
     map_insert(&d.provider_auth.staged_api_keys, strings.clone(provider_id, d.allocator), true)
 
@@ -431,13 +411,9 @@ provider_refresh_due :: proc(d: ^Daemon) -> (kind: oauth.Kind, found: bool) {
     for candidate in oauth.Kind {
         provider := oauth.provider(candidate)
         credentials, present := provider_credentials_get(d, candidate)
-        if !present {
-            continue
-        }
+        if !present do continue
 
-        if oauth.oauth_needs_refresh(provider, credentials.expires_at_ms, now) {
-            return candidate, true
-        }
+        if oauth.oauth_needs_refresh(provider, credentials.expires_at_ms, now) do return candidate, true
     }
 
     return {}, false
@@ -450,9 +426,7 @@ provider_refresh_schedule :: proc(d: ^Daemon, delay: time.Duration = AUTH_REFRES
     assert(delay >= 0, "refresh scheduling needs a non-negative delay")
 
     provider_refresh_timer_cancel(d)
-    if d.provider_auth.stopping || !d.provider_auth.curl_ready {
-        return
-    }
+    if d.provider_auth.stopping || !d.provider_auth.curl_ready do return
 
     assert(d.provider_auth.refresh_timer == nil, "refresh timer scheduled twice")
 
@@ -481,9 +455,7 @@ provider_refresh_on_timer :: proc(op: ^nbio.Operation, d: ^Daemon) {
     assert(d.provider_auth.refresh_timer == op, "refresh timer crossed ownership")
     d.provider_auth.refresh_timer = nil
 
-    if d.provider_auth.stopping {
-        return
-    }
+    if d.provider_auth.stopping do return
 
     if auth_busy(d) {
         provider_refresh_schedule(d)
@@ -491,9 +463,7 @@ provider_refresh_on_timer :: proc(op: ^nbio.Operation, d: ^Daemon) {
     }
 
     _ = provider_refresh_start(d)
-    if !auth_busy(d) {
-        provider_refresh_schedule(d)
-    }
+    if !auth_busy(d) do provider_refresh_schedule(d)
 }
 
 provider_refresh_start :: proc(d: ^Daemon) -> bool {
@@ -502,18 +472,14 @@ provider_refresh_start :: proc(d: ^Daemon) -> bool {
     assert(!auth_busy(d), "refresh must be single flight")
 
     kind, found := provider_refresh_due(d)
-    if !found {
-        return true
-    }
+    if !found do return true
 
     provider := oauth.provider(kind)
     credentials, present := provider_credentials_get(d, kind)
     assert(present, "refresh scan returned a signed-in provider")
 
     refresh, refresh_aerr := new(Provider_Refresh, d.allocator)
-    if refresh_aerr != nil {
-        return false
-    }
+    if refresh_aerr != nil do return false
     refresh^ = {}
     refresh.kind = kind
 
@@ -591,9 +557,7 @@ provider_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
 
         d.provider_auth.operation = nil
         provider_refresh_free(d, refresh)
-        if !d.provider_auth.stopping {
-            provider_refresh_schedule(d)
-        }
+        if !d.provider_auth.stopping do provider_refresh_schedule(d)
         return
     }
 
@@ -727,9 +691,7 @@ provider_token_exchange_start :: proc(d: ^Daemon, code: string) -> bool {
     provider := oauth.provider(login.kind)
 
     body, body_err := oauth.authorization_code_body(provider, login.authorization, code, d.allocator)
-    if body_err != .None {
-        return false
-    }
+    if body_err != .None do return false
     defer delete(body, d.allocator)
 
     return provider_token_request_start(d, body)
@@ -805,9 +767,7 @@ provider_device_user_code_start :: proc(d: ^Daemon) -> bool {
     provider := oauth.provider(login.kind)
 
     body, content_type, body_err := oauth.device_auth_body(provider, AUTH_ORIGINATOR, d.allocator)
-    if body_err != .None {
-        return false
-    }
+    if body_err != .None do return false
     defer delete(body, d.allocator)
 
     return provider_device_request_start(
@@ -829,9 +789,7 @@ provider_device_poll_start :: proc(d: ^Daemon) -> bool {
     provider := oauth.provider(login.kind)
 
     body, content_type, body_err := oauth.device_poll_body(provider, login.device, d.allocator)
-    if body_err != .None {
-        return false
-    }
+    if body_err != .None do return false
     defer delete(body, d.allocator)
 
     return provider_device_request_start(
@@ -895,9 +853,7 @@ bounded_response_reset :: proc(response: ^Bounded_Response) {
     assert(response != nil, "response reset needs a buffer")
     assert(response.filled >= 0 && response.filled <= len(response.bytes), "response length stays bounded")
 
-    if response.filled > 0 {
-        crypto.zero_explicit(&response.bytes[0], response.filled)
-    }
+    if response.filled > 0 do crypto.zero_explicit(&response.bytes[0], response.filled)
     response.filled = 0
     response.overflow = false
 }
@@ -1018,9 +974,7 @@ provider_device_user_code_on_done :: proc(user: rawptr, result: curl.Result) {
     } else {
         started = provider_device_poll_start(d)
     }
-    if !started {
-        provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device approval poll could not start"})
-    }
+    if !started do provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device approval poll could not start"})
 }
 
 provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
@@ -1072,9 +1026,7 @@ provider_device_poll_on_done :: proc(user: rawptr, result: curl.Result) {
         }
         defer delete(body, d.allocator)
 
-        if !provider_token_request_start(d, body) {
-            provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
-        }
+        if !provider_token_request_start(d, body) do provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device token exchange could not start"})
 
     case oauth.Device_Failed:
         provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = step.message})
@@ -1101,9 +1053,7 @@ provider_device_poll_on_timer :: proc(op: ^nbio.Operation, d: ^Daemon) {
     assert(login.poll_timer == op, "device poll timer crossed attempt ownership")
     login.poll_timer = nil
 
-    if !provider_device_poll_start(d) {
-        provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device approval poll could not start"})
-    }
+    if !provider_device_poll_start(d) do provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = "device approval poll could not start"})
 }
 
 provider_login_deadline_arm :: proc(d: ^Daemon, timeout: time.Duration) {
@@ -1132,9 +1082,7 @@ provider_login_on_deadline :: proc(op: ^nbio.Operation, d: ^Daemon) {
     login.deadline_timer = nil
 
     message := "browser login timed out"
-    if login.requested_flow == .Device_Code {
-        message = "device login timed out"
-    }
+    if login.requested_flow == .Device_Code do message = "device login timed out"
     provider_login_finish(d, wire.Auth_Login_Outcome_Failed{message = message})
 }
 
@@ -1152,9 +1100,7 @@ provider_state :: proc(d: ^Daemon, kind: oauth.Kind) -> wire.Auth_Provider {
     }
 
     credential_kind: Maybe(wire.Auth_Credential_Kind)
-    if _, present := provider_credentials_get(d, kind); present {
-        credential_kind = wire.Auth_Credential_Kind.OAuth
-    }
+    if _, present := provider_credentials_get(d, kind); present do credential_kind = wire.Auth_Credential_Kind.OAuth
 
     return {
         provider_id = wire.Provider_Id(provider.id),
@@ -1181,9 +1127,7 @@ provider_credential_status :: proc(
     found: bool,
 ) {
     for status in statuses {
-        if status.provider_id == provider_id {
-            return status.kind, true
-        }
+        if status.provider_id == provider_id do return status.kind, true
     }
 
     return {}, false
@@ -1194,14 +1138,10 @@ provider_public_count :: proc(d: ^Daemon, statuses: []store.Credential_Status) -
 
     count := len(statuses)
     for kind in oauth.Kind {
-        if _, found := provider_credential_status(statuses, oauth.provider(kind).id); !found {
-            count += 1
-        }
+        if _, found := provider_credential_status(statuses, oauth.provider(kind).id); !found do count += 1
     }
     for provider_id in d.provider_auth.api_keys {
-        if _, found := provider_credential_status(statuses, provider_id); !found {
-            count += 1
-        }
+        if _, found := provider_credential_status(statuses, provider_id); !found do count += 1
     }
 
     return count
@@ -1258,14 +1198,10 @@ method_auth_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
     for kind in oauth.Kind {
         provider := oauth.provider(kind)
-        if _, found := provider_credential_status(statuses[:], provider.id); !found {
-            append(&providers, provider_state(d, kind))
-        }
+        if _, found := provider_credential_status(statuses[:], provider.id); !found do append(&providers, provider_state(d, kind))
     }
     for provider_id in d.provider_auth.api_keys {
-        if _, found := provider_credential_status(statuses[:], provider_id); found {
-            continue
-        }
+        if _, found := provider_credential_status(statuses[:], provider_id); found do continue
 
         assert(provider_id in d.provider_auth.staged_api_keys, "an active removed API key needs restart")
         append(&providers, provider_stored_state(d, provider_id, nil))
@@ -1288,9 +1224,7 @@ provider_api_key_transport_allowed :: proc(conn: ^Conn) -> bool {
 
     case ^ws.Server_Conn:
         endpoint, endpoint_err := net.peer_endpoint(t.socket)
-        if endpoint_err != .None {
-            return false
-        }
+        if endpoint_err != .None do return false
 
         return http_server.address_is_loopback(endpoint.address)
     }
@@ -1341,9 +1275,7 @@ method_auth_set_api_key :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
     staged := provider_api_key_stage(d, provider_id)
 
     if write_err := store.credential_api_key_upsert(d.store, provider_id, api_key); write_err != nil {
-        if staged {
-            provider_api_key_unstage(d, provider_id)
-        }
+        if staged do provider_api_key_unstage(d, provider_id)
         log.errorf("daemon: %s API key could not be stored: %v", provider_id, write_err)
         send_error(conn, req.id, .Internal, "API key could not be stored", sa)
         return
@@ -1494,18 +1426,14 @@ method_auth_logout :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 
         removed, remove_err := store.credential_remove(d.store, provider_id)
         if remove_err != nil {
-            if staged {
-                provider_api_key_unstage(d, provider_id)
-            }
+            if staged do provider_api_key_unstage(d, provider_id)
             log.errorf("daemon: %s API key could not be removed: %v", provider_id, remove_err)
             send_error(conn, req.id, .Internal, "API key could not be removed", sa)
             return
         }
         assert(removed, "saved API-key status must remove one row")
 
-        if provider_id not_in d.provider_auth.api_keys {
-            provider_api_key_unstage(d, provider_id)
-        }
+        if provider_id not_in d.provider_auth.api_keys do provider_api_key_unstage(d, provider_id)
 
         catalog_feed_invalidate(d)
         send_result(conn, req.id, wire.Empty{}, sa)
@@ -1601,9 +1529,7 @@ provider_login_release :: proc(d: ^Daemon, login: ^Provider_Login, drain_callbac
         }
     }
 
-    if login.transfer.state == .Running {
-        curl.transfer_cancel(&login.transfer)
-    }
+    if login.transfer.state == .Running do curl.transfer_cancel(&login.transfer)
     if login.poll_timer != nil {
         nbio.remove(login.poll_timer)
         login.poll_timer = nil
@@ -1634,9 +1560,7 @@ provider_login_request_error :: proc(d: ^Daemon, message: string) {
     if login.request_ticket != 0 {
         assert(login.request_id != "", "retained login requester needs an id")
 
-        if conn := conn_resolve(d, login.request_ticket); conn != nil {
-            send_error(conn, login.request_id, .Internal, message, d.allocator)
-        }
+        if conn := conn_resolve(d, login.request_ticket); conn != nil do send_error(conn, login.request_id, .Internal, message, d.allocator)
         provider_login_request_clear(d, login)
     } else {
         assert(login.request_id == "", "cleared login requester retained an id")
@@ -1646,9 +1570,7 @@ provider_login_request_error :: proc(d: ^Daemon, message: string) {
 provider_login_request_clear :: proc(d: ^Daemon, login: ^Provider_Login) {
     assert(d != nil && login != nil, "login requester cleanup needs owned state")
 
-    if login.request_id != "" {
-        delete(string(login.request_id), d.allocator)
-    }
+    if login.request_id != "" do delete(string(login.request_id), d.allocator)
     login.request_ticket = 0
     login.request_id = ""
 }

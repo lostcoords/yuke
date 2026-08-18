@@ -101,9 +101,7 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
             {`{"exp":`, exp, `,"https://api.openai.com/auth":{"chatgpt_account_id":"acct-123"}}`},
             allocator,
         )
-        if payload_aerr != nil {
-            return ""
-        }
+        if payload_aerr != nil do return ""
         payload_owned = with_exp
         payload_json = payload_owned
     }
@@ -111,9 +109,7 @@ test_access_token_expires :: proc(expires_at_s: u64, allocator := context.alloca
     defer delete(payload, allocator)
 
     token, token_aerr := strings.concatenate({header, ".", payload, ".sig"}, allocator)
-    if token_aerr != nil {
-        return ""
-    }
+    if token_aerr != nil do return ""
 
     return token
 }

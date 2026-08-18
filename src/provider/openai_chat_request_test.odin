@@ -36,9 +36,7 @@ test_openai_build :: proc(t: ^testing.T, request: Request, options: Openai_Chat_
 
     value, _, parse_err := decode_json_object(body, context.temp_allocator)
     testing.expect_value(t, parse_err, Transport_Error.None)
-    if parse_err == .None {
-        json.destroy_value(value, context.temp_allocator)
-    }
+    if parse_err == .None do json.destroy_value(value, context.temp_allocator)
 
     return body
 }
@@ -145,13 +143,9 @@ test_openai_request_writes_each_thinking_format_shape :: proc(t: ^testing.T) {
 
         body := test_openai_build(t, test_openai_request(messages[:]), options)
 
-        if len(c.fragment) > 0 {
-            testing.expectf(t, strings.contains(body, c.fragment), "%v: want %q in %s", c.format, c.fragment, body)
-        }
+        if len(c.fragment) > 0 do testing.expectf(t, strings.contains(body, c.fragment), "%v: want %q in %s", c.format, c.fragment, body)
 
-        if len(c.absent) > 0 {
-            testing.expectf(t, !strings.contains(body, c.absent), "%v: want no %q in %s", c.format, c.absent, body)
-        }
+        if len(c.absent) > 0 do testing.expectf(t, !strings.contains(body, c.absent), "%v: want no %q in %s", c.format, c.absent, body)
     }
 }
 

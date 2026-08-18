@@ -54,9 +54,7 @@ session_test_result :: proc(t: ^testing.T, h: ^Host) -> string {
     defer qjs.free_value(h.js.ctx, value)
 
     result, ok := qjs.to_string(h.js.ctx, value)
-    if !testing.expect(t, ok, "session test result should be readable") {
-        return ""
-    }
+    if !testing.expect(t, ok, "session test result should be readable") do return ""
 
     defer qjs.free_string(h.js.ctx, result)
 
@@ -127,9 +125,7 @@ test_session_open_and_close_lifecycle :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !session_test_host(t, &h) {
-        return
-    }
+    if !session_test_host(t, &h) do return
 
     defer js.destroy(&h.js)
     defer open_session_teardown(&h)
@@ -152,9 +148,7 @@ test_session_open_rejects_non_hex_id :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !session_test_host(t, &h) {
-        return
-    }
+    if !session_test_host(t, &h) do return
 
     defer js.destroy(&h.js)
     defer open_session_teardown(&h)
@@ -178,9 +172,7 @@ test_broadcasts_drop_until_synced :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !session_test_host(t, &h) {
-        return
-    }
+    if !session_test_host(t, &h) do return
 
     defer js.destroy(&h.js)
     defer open_session_teardown(&h)
@@ -205,9 +197,7 @@ test_synced_fold_updates_snapshot_and_rev :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !session_test_host(t, &h) {
-        return
-    }
+    if !session_test_host(t, &h) do return
 
     defer js.destroy(&h.js)
     defer open_session_teardown(&h)
@@ -247,9 +237,7 @@ test_gap_forces_resync_and_then_drops :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !session_test_host(t, &h) {
-        return
-    }
+    if !session_test_host(t, &h) do return
 
     defer js.destroy(&h.js)
     defer open_session_teardown(&h)

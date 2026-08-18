@@ -80,9 +80,7 @@ media_source_from_reader :: proc(d: ^json.Decoder) -> (src: Media_Source, err: j
             }
         }
 
-        if .Url not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Url not_in seen do return nil, .Mismatched_Payload
 
         return Media_Url{url = url}, .None
 
@@ -116,9 +114,7 @@ media_source_from_reader :: proc(d: ^json.Decoder) -> (src: Media_Source, err: j
             }
         }
 
-        if seen != {.Mime, .Data} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Mime, .Data} do return nil, .Mismatched_Payload
 
         return Media_Base64{mime = mime, data = data}, .None
 
@@ -159,9 +155,7 @@ media_source_from_reader :: proc(d: ^json.Decoder) -> (src: Media_Source, err: j
             }
         }
 
-        if seen != {.Hash, .Mime, .Bytes} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Hash, .Mime, .Bytes} do return nil, .Mismatched_Payload
 
         return Media_Blob{hash = hash, mime = mime, bytes = bytes}, .None
     }
@@ -207,9 +201,7 @@ media_source_validate :: proc(self: Media_Source) -> Validation_Error {
         enforce_id(v.hash) or_return
         enforce_bounded(256, v.mime) or_return
 
-        if v.bytes > LIMITS.max_blob_bytes {
-            return .Overflow
-        }
+        if v.bytes > LIMITS.max_blob_bytes do return .Overflow
     }
 
     return .None
@@ -236,26 +228,18 @@ media_source_clone :: proc(self: Media_Source, allocator := context.allocator) -
 _validate_base64_inline :: proc(data: string) -> Validation_Error {
     enforce_bounded(LIMITS.max_inline_media_base64_bytes, data) or_return
 
-    if len(data) % 4 != 0 {
-        return .Mismatched_Payload
-    }
+    if len(data) % 4 != 0 do return .Mismatched_Payload
 
     padding := 0
     n := len(data)
 
-    if n >= 1 && data[n - 1] == '=' {
-        padding += 1
-    }
+    if n >= 1 && data[n - 1] == '=' do padding += 1
 
-    if n >= 2 && data[n - 2] == '=' {
-        padding += 1
-    }
+    if n >= 2 && data[n - 2] == '=' do padding += 1
 
     decoded_len := (n / 4) * 3 - padding
 
-    if decoded_len > LIMITS.max_inline_media_bytes {
-        return .Overflow
-    }
+    if decoded_len > LIMITS.max_inline_media_bytes do return .Overflow
 
     seen_padding := 0
     for i in 0 ..< n {
@@ -264,13 +248,9 @@ _validate_base64_inline :: proc(data: string) -> Validation_Error {
         if b == '=' {
             seen_padding += 1
 
-            if seen_padding > 2 {
-                return .Mismatched_Payload
-            }
+            if seen_padding > 2 do return .Mismatched_Payload
         } else {
-            if seen_padding != 0 || !_is_base64_char(b) {
-                return .Mismatched_Payload
-            }
+            if seen_padding != 0 || !_is_base64_char(b) do return .Mismatched_Payload
         }
     }
 
@@ -358,9 +338,7 @@ content_part_from_reader :: proc(d: ^json.Decoder) -> (part: Content_Part, err: 
             }
         }
 
-        if .Text not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Text not_in seen do return nil, .Mismatched_Payload
 
         return Content_Text{text = text}, .None
 
@@ -393,9 +371,7 @@ content_part_from_reader :: proc(d: ^json.Decoder) -> (part: Content_Part, err: 
             }
         }
 
-        if .Source not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Source not_in seen do return nil, .Mismatched_Payload
 
         return Content_Image{source = source, detail = detail}, .None
 
@@ -430,9 +406,7 @@ content_part_from_reader :: proc(d: ^json.Decoder) -> (part: Content_Part, err: 
             }
         }
 
-        if seen != {.Source, .Format} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Source, .Format} do return nil, .Mismatched_Payload
 
         return Content_Audio{source = source, format = format}, .None
 
@@ -465,9 +439,7 @@ content_part_from_reader :: proc(d: ^json.Decoder) -> (part: Content_Part, err: 
             }
         }
 
-        if .Source not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Source not_in seen do return nil, .Mismatched_Payload
 
         return Content_File{source = source, filename = filename}, .None
     }
@@ -515,9 +487,7 @@ content_part_validate :: proc(self: Content_Part) -> Validation_Error {
     case Content_Image:
         media_source_validate(v.source) or_return
 
-        if detail, ok := v.detail.?; ok {
-            return enforce_bounded(32, detail)
-        }
+        if detail, ok := v.detail.?; ok do return enforce_bounded(32, detail)
 
     case Content_Audio:
         media_source_validate(v.source) or_return
@@ -526,9 +496,7 @@ content_part_validate :: proc(self: Content_Part) -> Validation_Error {
     case Content_File:
         media_source_validate(v.source) or_return
 
-        if filename, ok := v.filename.?; ok {
-            return enforce_bounded(512, filename)
-        }
+        if filename, ok := v.filename.?; ok do return enforce_bounded(512, filename)
     }
 
     return .None
@@ -543,9 +511,7 @@ content_part_clone :: proc(self: Content_Part, allocator := context.allocator) -
     case Content_Image:
         detail: Maybe(string)
 
-        if d, ok := v.detail.?; ok {
-            detail = strings.clone(d, allocator)
-        }
+        if d, ok := v.detail.?; ok do detail = strings.clone(d, allocator)
 
         return Content_Image{source = media_source_clone(v.source, allocator), detail = detail}
 
@@ -558,9 +524,7 @@ content_part_clone :: proc(self: Content_Part, allocator := context.allocator) -
     case Content_File:
         filename: Maybe(string)
 
-        if f, ok := v.filename.?; ok {
-            filename = strings.clone(f, allocator)
-        }
+        if f, ok := v.filename.?; ok do filename = strings.clone(f, allocator)
 
         return Content_File{source = media_source_clone(v.source, allocator), filename = filename}
     }

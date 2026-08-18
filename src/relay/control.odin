@@ -29,9 +29,7 @@ control_decode :: proc(payload: []u8, allocator := context.allocator) -> (out: C
     }
 
     raw: Raw
-    if json.unmarshal(payload, &raw, .JSON, allocator) != nil {
-        return {}, .Control_Malformed
-    }
+    if json.unmarshal(payload, &raw, .JSON, allocator) != nil do return {}, .Control_Malformed
 
     switch raw.type {
     case "peer_attached":

@@ -20,23 +20,17 @@ Raw_Term :: struct {
 // as byte 0x03.
 enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
     saved: windows.DWORD
-    if !windows.GetConsoleMode(handle, &saved) {
-        return {}, .Get_Attr_Failed
-    }
+    if !windows.GetConsoleMode(handle, &saved) do return {}, .Get_Attr_Failed
 
     mode := windows.ENABLE_MOUSE_INPUT | windows.ENABLE_WINDOW_INPUT | windows.ENABLE_VIRTUAL_TERMINAL_INPUT
-    if !windows.SetConsoleMode(handle, mode) {
-        return {}, .Set_Attr_Failed
-    }
+    if !windows.SetConsoleMode(handle, mode) do return {}, .Set_Attr_Failed
 
     return {saved = saved, handle = handle}, .None
 }
 
 // Restore the console input mode captured by `enable_raw_mode`.
 disable_raw_mode :: proc(t: Raw_Term) -> Term_Error {
-    if !windows.SetConsoleMode(t.handle, t.saved) {
-        return .Set_Attr_Failed
-    }
+    if !windows.SetConsoleMode(t.handle, t.saved) do return .Set_Attr_Failed
 
     return .None
 }
@@ -46,18 +40,14 @@ disable_raw_mode :: proc(t: Raw_Term) -> Term_Error {
 // scrollback buffer); SMALL_RECT bounds are inclusive.
 get_size :: proc(handle: Tty_Handle) -> (Size, Term_Error) {
     info: windows.CONSOLE_SCREEN_BUFFER_INFO
-    if !windows.GetConsoleScreenBufferInfo(handle, &info) {
-        return {}, .Size_Query_Failed
-    }
+    if !windows.GetConsoleScreenBufferInfo(handle, &info) do return {}, .Size_Query_Failed
 
     width := int(info.srWindow.Right) - int(info.srWindow.Left) + 1
     height := int(info.srWindow.Bottom) - int(info.srWindow.Top) + 1
 
     // Reject a degenerate viewport before the u16 narrowing: an inverted rect would
     // wrap into a huge bogus size.
-    if width <= 0 || height <= 0 {
-        return {}, .Size_Query_Failed
-    }
+    if width <= 0 || height <= 0 do return {}, .Size_Query_Failed
 
     return {width = u16(width), height = u16(height)}, .None
 }

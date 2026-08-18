@@ -11,9 +11,7 @@ request_is_local :: proc(c: ^Conn, head: http.Request_Head) -> bool {
     assert(c != nil && c.server != nil, "admission needs an owned connection")
     assert(head.consumed == len(head.bytes), "admission received an inconsistent parsed head")
 
-    if _, lookup := http.request_header(head, "origin"); lookup != .Missing {
-        return false
-    }
+    if _, lookup := http.request_header(head, "origin"); lookup != .Missing do return false
 
     host, host_lookup := http.request_header(head, "host")
     assert(host_lookup == .One, "head parser admitted a request without exactly one Host")
@@ -27,14 +25,10 @@ host_is_literal :: proc(bind_address: net.IP4_Address, host: string) -> bool {
     name, bracketed := http.split_host(host) or_return
 
     // Brackets enclose an IP-literal only, so `[localhost]` gets no name exemption.
-    if !bracketed && strings.equal_fold(name, "localhost") {
-        return true
-    }
+    if !bracketed && strings.equal_fold(name, "localhost") do return true
 
     addr := net.parse_address(name)
-    if addr == nil {
-        return false
-    }
+    if addr == nil do return false
 
     return address_is_local(bind_address, addr)
 }
@@ -48,15 +42,11 @@ address_is_local :: proc(bind_address: net.IP4_Address, addr: net.Address) -> bo
 
     switch a in addr {
     case net.IP4_Address:
-        if a == net.IP4_Any {
-            return false
-        }
+        if a == net.IP4_Any do return false
         return a[0] == 127 || a == bind_address
 
     case net.IP6_Address:
-        if a == net.IP6_Any {
-            return false
-        }
+        if a == net.IP6_Any do return false
         // The listen socket is IPv4 only, so loopback is the whole legitimate IPv6 set.
         return a == net.IP6_Loopback || ip6_maps_loopback(a)
     }
@@ -74,9 +64,7 @@ address_is_loopback :: proc(addr: net.Address) -> bool {
 @(private)
 ip6_maps_loopback :: proc(a: net.IP6_Address) -> bool {
     for i in 0 ..< 5 {
-        if a[i] != 0 {
-            return false
-        }
+        if a[i] != 0 do return false
     }
     return a[5] == 0xffff && u16(a[6]) >> 8 == 127
 }

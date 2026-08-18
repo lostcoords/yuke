@@ -58,9 +58,7 @@ Reassembler :: struct {
 transport_chunk_count :: proc(length: int) -> int {
     assert(length >= 0, "frame length is non-negative")
 
-    if length <= TRANSPORT_CHUNK_MAX {
-        return 1
-    }
+    if length <= TRANSPORT_CHUNK_MAX do return 1
 
     return (length + TRANSPORT_CHUNK_MAX - 1) / TRANSPORT_CHUNK_MAX
 }
@@ -72,13 +70,9 @@ transport_chunk_header :: proc(index, count: int) -> u8 {
     assert(index >= 0 && index < count, "chunk index out of range")
 
     flags: u8
-    if index == 0 {
-        flags |= TRANSPORT_CHUNK_FIRST
-    }
+    if index == 0 do flags |= TRANSPORT_CHUNK_FIRST
 
-    if index == count - 1 {
-        flags |= TRANSPORT_CHUNK_LAST
-    }
+    if index == count - 1 do flags |= TRANSPORT_CHUNK_LAST
 
     return flags
 }
@@ -103,9 +97,7 @@ transport_seal_chunk :: proc(
     copy(chunk[1:], body)
 
     sealed, serr := session_seal(sess, chunk, allocator)
-    if serr != .None {
-        return nil, serr
-    }
+    if serr != .None do return nil, serr
 
     return frame_encode(Frame{type = .Sealed, payload = sealed}, allocator), .None
 }
@@ -125,15 +117,11 @@ transport_open_fragment :: proc(
     ok: bool,
 ) {
     chunk, oerr := session_open(sess, payload, allocator)
-    if oerr != .None {
-        return nil, false, false
-    }
+    if oerr != .None do return nil, false, false
 
     rerr: Transport_Error
     frame, done, rerr = reassembler_push(reasm, chunk)
-    if rerr != .None {
-        return nil, false, false
-    }
+    if rerr != .None do return nil, false, false
 
     return frame, done, true
 }
@@ -152,9 +140,7 @@ reassembler_init :: proc(r: ^Reassembler, allocator := context.allocator) {
 reassembler_reset :: proc(r: ^Reassembler) {
     assert(r != nil, "reassembler_reset needs a reassembler")
 
-    if len(r.buf) > 0 {
-        crypto.zero_explicit(raw_data(r.buf[:]), len(r.buf))
-    }
+    if len(r.buf) > 0 do crypto.zero_explicit(raw_data(r.buf[:]), len(r.buf))
     clear(&r.buf)
 }
 
@@ -162,9 +148,7 @@ reassembler_reset :: proc(r: ^Reassembler) {
 reassembler_destroy :: proc(r: ^Reassembler) {
     assert(r != nil, "reassembler_destroy needs a reassembler")
 
-    if cap(r.buf) > 0 {
-        crypto.zero_explicit(raw_data(r.buf), cap(r.buf))
-    }
+    if cap(r.buf) > 0 do crypto.zero_explicit(raw_data(r.buf), cap(r.buf))
     delete(r.buf)
     r^ = {}
 }
@@ -172,9 +156,7 @@ reassembler_destroy :: proc(r: ^Reassembler) {
 reassembler_append :: proc(r: ^Reassembler, body: []u8) {
     assert(r != nil, "reassembler append needs a reassembler")
     assert(len(r.buf) + len(body) <= TRANSPORT_FRAME_MAX, "reassembler append exceeds its bound")
-    if len(body) == 0 {
-        return
-    }
+    if len(body) == 0 do return
 
     old_len := len(r.buf)
     needed := old_len + len(body)
@@ -200,42 +182,28 @@ reassembler_append :: proc(r: ^Reassembler, body: []u8) {
 reassembler_push :: proc(r: ^Reassembler, chunk: []u8) -> (frame: []u8, done: bool, err: Transport_Error) {
     assert(r != nil, "reassembler_push needs a reassembler")
 
-    if len(chunk) == 0 {
-        return nil, false, .Malformed
-    }
+    if len(chunk) == 0 do return nil, false, .Malformed
 
     flags := chunk[0]
     body := chunk[1:]
 
-    if flags & ~TRANSPORT_CHUNK_FLAGS != 0 {
-        return nil, false, .Malformed
-    }
+    if flags & ~TRANSPORT_CHUNK_FLAGS != 0 do return nil, false, .Malformed
 
     is_first := flags & TRANSPORT_CHUNK_FIRST != 0
     is_last := flags & TRANSPORT_CHUNK_LAST != 0
 
     // Sole chunk on an empty buffer: hand the body straight back, no copy.
-    if is_first && is_last && len(r.buf) == 0 {
-        return body, true, .None
-    }
+    if is_first && is_last && len(r.buf) == 0 do return body, true, .None
 
     if is_first {
         reassembler_reset(r)
-    } else if len(r.buf) == 0 {
-        // A continuation with no started frame: the peer skipped a FIRST. Only a sender bug or a
-        // forged/reordered stream reaches here — Noise counters already reject reordering.
-        return nil, false, .Malformed
-    }
+    } else if len(r.buf) == 0 do return nil, false, .Malformed
 
-    if len(r.buf) + len(body) > TRANSPORT_FRAME_MAX {
-        return nil, false, .Frame_Too_Large
-    }
+    if len(r.buf) + len(body) > TRANSPORT_FRAME_MAX do return nil, false, .Frame_Too_Large
 
     reassembler_append(r, body)
 
-    if is_last {
-        return r.buf[:], true, .None
-    }
+    if is_last do return r.buf[:], true, .None
 
     return nil, false, .None
 }

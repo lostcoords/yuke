@@ -45,9 +45,7 @@ test_anthropic_build :: proc(t: ^testing.T, request: Request, options: Anthropic
 
     value, _, parse_err := decode_json_object(body, context.temp_allocator)
     testing.expect_value(t, parse_err, Transport_Error.None)
-    if parse_err == .None {
-        json.destroy_value(value, context.temp_allocator)
-    }
+    if parse_err == .None do json.destroy_value(value, context.temp_allocator)
 
     return body
 }
@@ -211,9 +209,7 @@ test_anthropic_stream_blocks_round_trip_through_wire_request :: proc(t: ^testing
         testing.expectf(t, err == .None, "%s: got %v", data, err)
         testing.expectf(t, len(decoded) <= 1, "%s: Anthropic decode appends at most one event", data)
 
-        if len(decoded) == 0 {
-            continue
-        }
+        if len(decoded) == 0 do continue
 
         switch value in decoded[0] {
         case Stream_Block_Started:

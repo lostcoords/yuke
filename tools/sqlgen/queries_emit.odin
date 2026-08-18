@@ -87,22 +87,16 @@ generate_queries :: proc(
     }
 
     for q in resolved {
-        if len(q.row) > 0 {
-            append(&identity_defs, Struct_Def{name = fmt.tprintf("%s_Row", q.def.name), fields = q.row})
-        }
+        if len(q.row) > 0 do append(&identity_defs, Struct_Def{name = fmt.tprintf("%s_Row", q.def.name), fields = q.row})
     }
 
     alias := dedup_structs(identity_defs[:], allocator)
     defer delete(alias)
 
     for def in identity_defs {
-        if _, aliased := alias[def.name]; !aliased {
-            emit_field_struct(&b, def.name, def.fields)
-        }
+        if _, aliased := alias[def.name]; !aliased do emit_field_struct(&b, def.name, def.fields)
 
-        if def.owns_fields {
-            delete(def.fields, allocator)
-        }
+        if def.owns_fields do delete(def.fields, allocator)
     }
 
     delete(identity_defs)
@@ -172,9 +166,7 @@ dedup_structs :: proc(defs: []Struct_Def, allocator := context.allocator) -> (al
 // if one absorbed it, else `name` itself.
 @(private)
 resolved_name :: proc(alias: map[string]string, name: string) -> string {
-    if canonical, aliased := alias[name]; aliased {
-        return canonical
-    }
+    if canonical, aliased := alias[name]; aliased do return canonical
 
     return name
 }
@@ -328,9 +320,7 @@ emit_queries_destroy :: proc(b: ^strings.Builder, resolved: []Resolved_Query) {
 // no knowledge of a caller's own error type; `store` translates at the call site.
 @(private)
 emit_query_wrapper :: proc(b: ^strings.Builder, q: Resolved_Query, alias: map[string]string) {
-    if q.def.cardinality == .Manual {
-        return
-    }
+    if q.def.cardinality == .Manual do return
 
     field := query_field_name(q.def.name)
     params_type := fmt.tprintf("%s_Params", q.def.name)

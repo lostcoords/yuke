@@ -38,15 +38,11 @@ assert_only_logger_proc :: proc(
     location := #caller_location,
 ) {
     self := (^Assert_Only_Logger)(data)
-    if self == nil || self.backing.procedure == nil {
-        return
-    }
+    if self == nil || self.backing.procedure == nil do return
 
     test_authored :=
         strings.has_suffix(location.file_path, "_test.odin") || strings.contains(location.file_path, "testsupport")
-    if !test_authored {
-        return
-    }
+    if !test_authored do return
 
     self.backing.procedure(self.backing.data, level, text, options, location)
 }

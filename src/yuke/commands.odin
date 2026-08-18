@@ -114,9 +114,7 @@ usage :: proc(out := os.stdout) {
     for c, i in COMMANDS {
         labels[i] = command_label(c)
 
-        if len(labels[i]) > col {
-            col = len(labels[i])
-        }
+        if len(labels[i]) > col do col = len(labels[i])
     }
 
     fmt.fprintfln(out, "  %-*s  run the interactive TUI client (default)", col, "yuke")
@@ -135,9 +133,7 @@ help_flag :: proc(s: string) -> bool {
 // in `main` does not hardcode its own copy of the command set.
 command_exists :: proc(name: string) -> bool {
     for c in COMMANDS {
-        if c.name == name {
-            return true
-        }
+        if c.name == name do return true
     }
 
     return false
@@ -154,9 +150,7 @@ usage_unknown :: proc(cmd: string) -> ! {
 // Print the detail for one command, or report an unknown one and exit non-zero.
 help_command :: proc(name: string) {
     for c in COMMANDS {
-        if c.name != name {
-            continue
-        }
+        if c.name != name do continue
 
         label := command_label(c)
         defer delete(label, context.allocator)
@@ -183,9 +177,7 @@ help_command :: proc(name: string) {
 // "yuke <name>" or "yuke <name> <args>". Caller owns the result.
 @(private = "file")
 command_label :: proc(c: Command, allocator := context.allocator) -> string {
-    if c.args == "" {
-        return fmt.aprintf("yuke %s", c.name, allocator = allocator)
-    }
+    if c.args == "" do return fmt.aprintf("yuke %s", c.name, allocator = allocator)
 
     return fmt.aprintf("yuke %s %s", c.name, c.args, allocator = allocator)
 }

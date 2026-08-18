@@ -135,9 +135,7 @@ error_code_to_number :: proc(c: Error_Code) -> i32 {
 // Error code for a wire `code` number; ok is false for an unrecognized number.
 error_code_from_number :: proc(n: i32) -> (Error_Code, bool) {
     for c in Error_Code {
-        if error_code_number[c] == n {
-            return c, true
-        }
+        if error_code_number[c] == n do return c, true
     }
 
     return .Internal, false
@@ -213,15 +211,11 @@ error_object_from_reader :: proc(d: ^json.Decoder) -> (out: Error_Object, err: j
         case "code":
             n := json.dec_i64(d, MAX_WIRE_INTEGER) or_return
 
-            if n < i64(min(i32)) || n > i64(max(i32)) {
-                return {}, .Out_Of_Range
-            }
+            if n < i64(min(i32)) || n > i64(max(i32)) do return {}, .Out_Of_Range
 
             code, known := error_code_from_number(i32(n))
 
-            if !known {
-                return {}, .Mismatched_Payload
-            }
+            if !known do return {}, .Mismatched_Payload
 
             out.code = code
             seen += {.Code}
@@ -235,9 +229,7 @@ error_object_from_reader :: proc(d: ^json.Decoder) -> (out: Error_Object, err: j
         }
     }
 
-    if seen != {.Code, .Message} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Code, .Message} do return {}, .Mismatched_Payload
 
     return out, .None
 }

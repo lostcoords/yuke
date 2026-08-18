@@ -80,9 +80,7 @@ catalog_list_print :: proc(result: wire.Catalog_List_Result) {
         )
     }
 
-    if message, present := full.health.load_error.?; present {
-        fmt.printfln("  load error: %s", message)
-    }
+    if message, present := full.health.load_error.?; present do fmt.printfln("  load error: %s", message)
     for skipped in full.health.skipped {
         fmt.printfln("  skipped %s", skipped.provider)
     }
@@ -92,9 +90,7 @@ catalog_refresh_print :: proc(result: wire.Catalog_Refresh_Result) {
     revision := ([64]u8)(result.catalog_rev)
     fmt.printfln("catalog refreshed; revision %s", string(revision[:]))
 
-    if message, present := result.health.load_error.?; present {
-        fmt.printfln("  load error: %s", message)
-    }
+    if message, present := result.health.load_error.?; present do fmt.printfln("  load error: %s", message)
     for skipped in result.health.skipped {
         reason := "invalid config"
         #partial switch _ in skipped.reason {

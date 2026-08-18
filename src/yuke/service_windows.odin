@@ -30,9 +30,7 @@ TASK_XML_FILE :: SERVICE_NAME + ".xml"
 // directory, else empty. Caller owns the result.
 @(private = "file")
 service_base :: proc(allocator := context.allocator) -> string {
-    if base := paths.data_dir(allocator); base != "" {
-        return base
-    }
+    if base := paths.data_dir(allocator); base != "" do return base
 
     return paths.config_dir(allocator)
 }
@@ -66,15 +64,11 @@ wrapper_render :: proc(exe, name, log: string, has_name: bool, allocator := cont
 
     strings.write_string(&b, "@echo off\n")
 
-    if has_name && name != "" {
-        fmt.sbprintf(&b, "set \"%s=%s\"\n", paths.APP_NAME_ENV, name)
-    }
+    if has_name && name != "" do fmt.sbprintf(&b, "set \"%s=%s\"\n", paths.APP_NAME_ENV, name)
 
     fmt.sbprintf(&b, "\"%s\" daemon", exe)
 
-    if log != "" {
-        fmt.sbprintf(&b, " >> \"%s\" 2>&1", log)
-    }
+    if log != "" do fmt.sbprintf(&b, " >> \"%s\" 2>&1", log)
 
     strings.write_string(&b, "\n")
 
@@ -123,9 +117,7 @@ task_xml_render :: proc(command, arguments: string, allocator := context.allocat
     strings.write_string(&b, "  <Actions Context=\"Author\">\n    <Exec>\n")
     fmt.sbprintf(&b, "      <Command>%s</Command>\n", command)
 
-    if arguments != "" {
-        fmt.sbprintf(&b, "      <Arguments>%s</Arguments>\n", arguments)
-    }
+    if arguments != "" do fmt.sbprintf(&b, "      <Arguments>%s</Arguments>\n", arguments)
 
     strings.write_string(&b, "    </Exec>\n  </Actions>\n</Task>\n")
 
@@ -239,15 +231,11 @@ service_uninstall :: proc() {
 
     for name in ([]string{WRAPPER_FILE, TASK_XML_FILE}) {
         path, join_err := filepath.join({base, name})
-        if join_err != nil {
-            continue
-        }
+        if join_err != nil do continue
 
         defer delete(path)
 
-        if os.exists(path) {
-            os.remove(path)
-        }
+        if os.exists(path) do os.remove(path)
     }
 
     fmt.printfln("Removed task %s.", SERVICE_NAME)

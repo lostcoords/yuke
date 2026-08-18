@@ -119,9 +119,7 @@ service_install :: proc(force: bool) {
 
     // Boot out any prior instance before overwriting, so the reinstall re-bootstraps cleanly.
     // "not loaded" is not a failure here.
-    if force {
-        run_tool({"launchctl", "bootout", target})
-    }
+    if force do run_tool({"launchctl", "bootout", target})
 
     plist := plist_render()
     defer delete(plist)
@@ -185,9 +183,7 @@ service_stop :: proc() {
     // state, so only a launch failure (could not run launchctl at all) is fatal.
     run_tool({"launchctl", "disable", target})
 
-    if r := run_tool({"launchctl", "bootout", target}); !r.launched {
-        service_tool_failed("launchctl bootout", r)
-    }
+    if r := run_tool({"launchctl", "bootout", target}); !r.launched do service_tool_failed("launchctl bootout", r)
 
     fmt.printfln("Stopped %s.", SERVICE_LABEL)
 }

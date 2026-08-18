@@ -228,9 +228,7 @@ session_summary_changed_data_emit :: proc(e: ^json.Emitter, self: Session_Summar
 
 // Verify revision range and nested summary fields.
 session_summary_changed_data_validate :: proc(self: Session_Summary_Changed_Data) -> Validation_Error {
-    if self.revision == 0 || u64(self.revision) > MAX_SESSION_REVISION {
-        return .Out_Of_Range
-    }
+    if self.revision == 0 || u64(self.revision) > MAX_SESSION_REVISION do return .Out_Of_Range
 
     return session_validate(self.session)
 }
@@ -279,9 +277,7 @@ session_removed_data_emit :: proc(e: ^json.Emitter, self: Session_Removed_Data) 
 
 // Verify revision range and the session id.
 session_removed_data_validate :: proc(self: Session_Removed_Data) -> Validation_Error {
-    if self.revision == 0 || u64(self.revision) > MAX_SESSION_REVISION {
-        return .Out_Of_Range
-    }
+    if self.revision == 0 || u64(self.revision) > MAX_SESSION_REVISION do return .Out_Of_Range
 
     return enforce_id(([16]u8)(self.session_id))
 }
@@ -352,9 +348,7 @@ permission_rules_changed_data_emit :: proc(e: ^json.Emitter, self: Permission_Ru
 permission_rules_changed_data_validate :: proc(self: Permission_Rules_Changed_Data) -> Validation_Error {
     enforce_id(([16]u8)(self.workspace_id)) or_return
 
-    if len(self.rules) > LIMITS.max_permission_rules {
-        return .Overflow
-    }
+    if len(self.rules) > LIMITS.max_permission_rules do return .Overflow
 
     for rule in self.rules {
         permission_rule_validate(rule) or_return
@@ -408,9 +402,7 @@ cron_created_data_emit :: proc(e: ^json.Emitter, self: Cron_Created_Data) {
 
 // Verify revision range and nested job fields.
 cron_created_data_validate :: proc(self: Cron_Created_Data) -> Validation_Error {
-    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION {
-        return .Out_Of_Range
-    }
+    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION do return .Out_Of_Range
 
     return cron_job_validate(self.job)
 }
@@ -435,9 +427,7 @@ cron_updated_data_emit :: proc(e: ^json.Emitter, self: Cron_Updated_Data) {
 
 // Verify revision range and nested job fields.
 cron_updated_data_validate :: proc(self: Cron_Updated_Data) -> Validation_Error {
-    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION {
-        return .Out_Of_Range
-    }
+    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION do return .Out_Of_Range
 
     return cron_job_validate(self.job)
 }
@@ -461,9 +451,7 @@ cron_removed_data_emit :: proc(e: ^json.Emitter, self: Cron_Removed_Data) {
 
 // Verify revision range and the job id.
 cron_removed_data_validate :: proc(self: Cron_Removed_Data) -> Validation_Error {
-    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION {
-        return .Out_Of_Range
-    }
+    if self.revision == 0 || u64(self.revision) > MAX_CRON_REVISION do return .Out_Of_Range
 
     return enforce_id(([16]u8)(self.job_id))
 }
@@ -530,9 +518,7 @@ run_started_data_emit :: proc(e: ^json.Emitter, self: Run_Started_Data) {
     json.field_u64(e, "run_id", u64(self.run_id))
     json.field_string(e, "kind", run_kind_to_wire(self.kind))
 
-    if r, ok := self.reason.?; ok {
-        json.field_string(e, "reason", compaction_reason_to_wire(r))
-    }
+    if r, ok := self.reason.?; ok do json.field_string(e, "reason", compaction_reason_to_wire(r))
 
     json.field_u64(e, "config_rev", u64(self.config_rev))
     json.field_u64(e, "started_at_ms", self.started_at_ms)
@@ -544,9 +530,7 @@ run_started_data_validate :: proc(self: Run_Started_Data) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
     _, has_reason := self.reason.?
 
-    if has_reason != (self.kind == .Compaction) {
-        return .Mismatched_Payload
-    }
+    if has_reason != (self.kind == .Compaction) do return .Mismatched_Payload
 
     return .None
 }
@@ -862,9 +846,7 @@ session_deltas_shed_data_emit :: proc(e: ^json.Emitter, self: Session_Deltas_She
 session_deltas_shed_data_validate :: proc(self: Session_Deltas_Shed_Data) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
 
-    if self.count == 0 || self.count > MAX_WIRE_INTEGER {
-        return .Out_Of_Range
-    }
+    if self.count == 0 || self.count > MAX_WIRE_INTEGER do return .Out_Of_Range
 
     return .None
 }
@@ -1175,9 +1157,7 @@ broadcast_data_clone :: proc(self: Broadcast_Data, allocator := context.allocato
     case Tool_State_Changed_Data:
         permission_state: Maybe(Permission_State)
 
-        if p, ok := v.permission_state.?; ok {
-            permission_state = permission_state_clone(p, allocator)
-        }
+        if p, ok := v.permission_state.?; ok do permission_state = permission_state_clone(p, allocator)
 
         return Tool_State_Changed_Data {
             session_id = v.session_id,
@@ -1406,9 +1386,7 @@ session_summary_changed_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Rev, .Session} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Session} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1445,9 +1423,7 @@ session_activity_changed_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Act} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Act} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1479,9 +1455,7 @@ session_removed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Session_Remo
         }
     }
 
-    if seen != {.Rev, .Sid} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Sid} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1503,9 +1477,7 @@ workspace_created_data_from_reader :: proc(d: ^json.Decoder) -> (out: Workspace_
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1527,9 +1499,7 @@ workspace_removed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Workspace_
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1566,9 +1536,7 @@ permission_rules_changed_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Wid, .Rules} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Wid, .Rules} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1600,9 +1568,7 @@ catalog_changed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Catalog_Chan
         }
     }
 
-    if seen != {.Rev, .Health} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Health} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1634,9 +1600,7 @@ cron_created_data_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Created_Da
         }
     }
 
-    if seen != {.Rev, .Job} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Job} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1668,9 +1632,7 @@ cron_updated_data_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Updated_Da
         }
     }
 
-    if seen != {.Rev, .Job} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Job} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1702,9 +1664,7 @@ cron_removed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Removed_Da
         }
     }
 
-    if seen != {.Rev, .Jid} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Jid} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1741,9 +1701,7 @@ message_committed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Message_Co
         }
     }
 
-    if seen != {.Sid, .Seq, .Msg} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Seq, .Msg} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1798,9 +1756,7 @@ run_started_data_from_reader :: proc(d: ^json.Decoder) -> (out: Run_Started_Data
         }
     }
 
-    if seen != {.Sid, .Seq, .Run, .Kind, .Cfg, .Start} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Seq, .Run, .Kind, .Cfg, .Start} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1852,9 +1808,7 @@ run_done_data_from_reader :: proc(d: ^json.Decoder) -> (out: Run_Done_Data, err:
         }
     }
 
-    if seen != {.Sid, .Seq, .Run, .Kind, .Timing, .Outcome} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Seq, .Run, .Kind, .Timing, .Outcome} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1891,9 +1845,7 @@ config_changed_data_from_reader :: proc(d: ^json.Decoder) -> (out: Config_Change
         }
     }
 
-    if seen != {.Sid, .Seq, .Cfg} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Seq, .Cfg} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1935,9 +1887,7 @@ transcript_truncated_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Seq, .First} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Seq, .First} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -1989,9 +1939,7 @@ message_started_data_from_reader :: proc(d: ^json.Decoder) -> (out: Message_Star
         }
     }
 
-    if seen != {.Sid, .Mid, .Run, .Cfg, .Agent, .Created} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid, .Run, .Cfg, .Agent, .Created} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2023,9 +1971,7 @@ message_discarded_data_from_reader :: proc(d: ^json.Decoder) -> (out: Message_Di
         }
     }
 
-    if seen != {.Sid, .Mid} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2067,9 +2013,7 @@ message_part_added_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Mid, .Part} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid, .Part} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2119,9 +2063,7 @@ tool_state_changed_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Mid, .Pid, .State} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid, .Pid, .State} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2153,9 +2095,7 @@ input_queued_data_from_reader :: proc(d: ^json.Decoder) -> (out: Input_Queued_Da
         }
     }
 
-    if seen != {.Sid, .Input} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Input} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2187,9 +2127,7 @@ input_canceled_data_from_reader :: proc(d: ^json.Decoder) -> (out: Input_Cancele
         }
     }
 
-    if seen != {.Sid, .Input} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Input} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2226,9 +2164,7 @@ session_deltas_shed_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Count} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Count} do return {}, .Mismatched_Payload
 
     return out, .None
 }

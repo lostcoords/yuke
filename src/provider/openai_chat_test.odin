@@ -34,9 +34,7 @@ test_openai_drive :: proc(t: ^testing.T, payloads: []string) -> (events: [dynami
 
     for data in payloads {
         e := openai_chat_decoder_decode(&decoder, data, &events, scratch)
-        if e != .None {
-            return events, e
-        }
+        if e != .None do return events, e
     }
 
     err = openai_chat_decoder_finish(&decoder, &events, scratch)
@@ -45,9 +43,7 @@ test_openai_drive :: proc(t: ^testing.T, payloads: []string) -> (events: [dynami
 
 @(private = "file")
 test_openai_last_done :: proc(t: ^testing.T, events: [dynamic]Stream_Event) -> Stream_Done {
-    if !testing.expect(t, len(events) > 0, "a terminated stream has at least one event") {
-        return {}
-    }
+    if !testing.expect(t, len(events) > 0, "a terminated stream has at least one event") do return {}
 
     done, ok := events[len(events) - 1].(Stream_Done)
     testing.expect(t, ok, "the final event is Stream_Done")
@@ -63,9 +59,7 @@ test_openai_expect_started :: proc(
     kind: Stream_Block_Kind,
 ) {
     started, ok := event.(Stream_Block_Started)
-    if !testing.expect(t, ok, "event must be Stream_Block_Started") {
-        return
-    }
+    if !testing.expect(t, ok, "event must be Stream_Block_Started") do return
 
     testing.expect_value(t, started.block_id, block_id)
     testing.expect_value(t, started.kind, kind)
@@ -78,9 +72,7 @@ test_openai_expect_stopped :: proc(
     block_id: Stream_Block_Id,
 ) -> Stream_Block_Result {
     stopped, ok := event.(Stream_Block_Stopped)
-    if !testing.expect(t, ok, "event must be Stream_Block_Stopped") {
-        return nil
-    }
+    if !testing.expect(t, ok, "event must be Stream_Block_Stopped") do return nil
 
     testing.expect_value(t, stopped.block_id, block_id)
 
@@ -95,9 +87,7 @@ test_openai_stream_yields_text_then_done :: proc(t: ^testing.T) {
     events, err := test_openai_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 4, "text then done emits four events") {
-        return
-    }
+    if !testing.expect(t, len(events) == 4, "text then done emits four events") do return
 
     test_openai_expect_started(t, events[0], 0, .Text)
 
@@ -122,16 +112,12 @@ test_openai_stream_switches_between_reasoning_and_text :: proc(t: ^testing.T) {
     events, err := test_openai_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 7, "reasoning-then-text in one chunk closes the reasoning block") {
-        return
-    }
+    if !testing.expect(t, len(events) == 7, "reasoning-then-text in one chunk closes the reasoning block") do return
 
     test_openai_expect_started(t, events[0], 0, .Reasoning)
 
     reasoning, reasoning_ok := events[1].(Stream_Reasoning_Delta)
-    if testing.expect(t, reasoning_ok, "second event is a reasoning delta") {
-        testing.expect_value(t, reasoning.text, "why")
-    }
+    if testing.expect(t, reasoning_ok, "second event is a reasoning delta") do testing.expect_value(t, reasoning.text, "why")
 
     _, closed_reasoning := test_openai_expect_stopped(t, events[2], 0).(Stream_Reasoning_Block)
     testing.expect(t, closed_reasoning, "the reasoning block closes before text opens")
@@ -204,9 +190,7 @@ test_openai_stream_tolerates_null_content_and_reasoning :: proc(t: ^testing.T) {
     testing.expect_value(t, err, Transport_Error.None)
 
     reasoning, reasoning_ok := events[1].(Stream_Reasoning_Delta)
-    if testing.expect(t, reasoning_ok, "null content still yields the reasoning delta") {
-        testing.expect_value(t, reasoning.text, "Think")
-    }
+    if testing.expect(t, reasoning_ok, "null content still yields the reasoning delta") do testing.expect_value(t, reasoning.text, "Think")
 }
 
 @(test)
@@ -261,9 +245,7 @@ test_openai_stream_assembles_tool_call_split_across_chunks :: proc(t: ^testing.T
     events, err := test_openai_drive(t, payloads[:])
     testing.expect_value(t, err, Transport_Error.None)
 
-    if !testing.expect(t, len(events) == 3, "one tool call emits start, stop, done") {
-        return
-    }
+    if !testing.expect(t, len(events) == 3, "one tool call emits start, stop, done") do return
 
     test_openai_expect_started(t, events[0], 0, .Tool)
 
@@ -291,9 +273,7 @@ test_openai_stream_assembles_parallel_tool_calls_by_index :: proc(t: ^testing.T)
     testing.expect_value(t, err, Transport_Error.None)
 
     first, first_ok := test_openai_expect_stopped(t, events[1], 0).(Stream_Tool_Block)
-    if testing.expect(t, first_ok, "first tool block closes") {
-        testing.expect_value(t, first.call.name, "first")
-    }
+    if testing.expect(t, first_ok, "first tool block closes") do testing.expect_value(t, first.call.name, "first")
 
     test_openai_expect_started(t, events[2], 1, .Tool)
 

@@ -37,16 +37,12 @@ test_writer_proc :: proc(
     #partial switch mode {
     case .Write:
         tw.write_calls += 1
-        if tw.fail_at_call != 0 && tw.write_calls == tw.fail_at_call {
-            return 0, .EOF
-        }
+        if tw.fail_at_call != 0 && tw.write_calls == tw.fail_at_call do return 0, .EOF
 
         append(&tw.buf, ..p)
         return i64(len(p)), .None
     case .Flush:
-        if tw.fail_flush {
-            return 0, .EOF
-        }
+        if tw.fail_flush do return 0, .EOF
 
         return 0, .None
     case .Query:

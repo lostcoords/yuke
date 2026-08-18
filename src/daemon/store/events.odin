@@ -140,9 +140,7 @@ event_append :: proc(
     // A failed ROLLBACK leaves the transaction open, which outlives this call, so it
     // replaces the original error rather than being dropped.
     defer if err != nil {
-        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
-            err = rollback
-        }
+        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok do err = rollback
     }
 
     append_body(s, session, seq, name, payload, ids) or_return
@@ -187,19 +185,13 @@ high_water :: proc(s: ^Store, session: wire.Session_Id) -> (hw: High_Water, err:
         }
     }
 
-    if err == nil && sqlite.is_error(step) {
-        err = step
-    }
+    if err == nil && sqlite.is_error(step) do err = step
 
     // `session_id` is the primary key, so the second step completes the statement;
     // a further row means the read is not the one this proc believes it is.
-    if err == nil && step != .Done {
-        err = .Invalid_Row
-    }
+    if err == nil && step != .Done do err = .Invalid_Row
 
-    if err != nil {
-        return {}, err
-    }
+    if err != nil do return {}, err
 
     return hw, nil
 }
@@ -234,9 +226,7 @@ events_visit_after :: proc(
     previous := seq
     for {
         step = sqlite.step(st)
-        if step != .Row {
-            break
-        }
+        if step != .Row do break
 
         row: Event_Row
         scan_err := sqlite.scan(&s.events_after.scan, &row, allocator)
@@ -278,13 +268,9 @@ events_visit_after :: proc(
         }
     }
 
-    if err == nil && sqlite.is_error(step) {
-        err = step
-    }
+    if err == nil && sqlite.is_error(step) do err = step
 
-    if err != nil {
-        return 0, false, err
-    }
+    if err != nil do return 0, false, err
 
     if stopped {
         assert(step == .Row, "a visitor stops on the row it owns")
@@ -341,9 +327,7 @@ append_body :: proc(
 
     // `config_rev` 0 means "no revision", so a config change can raise nothing at
     // all; the bump would be a no-op UPDATE and `id_marks_advance` asserts otherwise.
-    if ids != (Id_Marks{}) {
-        id_marks_advance(s, session, ids) or_return
-    }
+    if ids != (Id_Marks{}) do id_marks_advance(s, session, ids) or_return
 
     return nil
 }
@@ -362,9 +346,7 @@ session_exists :: proc(s: ^Store, session: wire.Session_Id) -> (exists: bool, er
 
     step := sqlite.step(st)
 
-    if sqlite.is_error(step) {
-        return false, step
-    }
+    if sqlite.is_error(step) do return false, step
 
     assert(step == .Row || step == .Done, "a keyed existence read either matches or completes")
 

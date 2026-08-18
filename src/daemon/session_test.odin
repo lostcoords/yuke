@@ -94,9 +94,7 @@ create_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _
     case wire.Response_Ok:
         o.is_error = false
 
-        if created, ok := resp.result.(wire.Session_Result); ok {
-            append(&o.created, wire.session_clone(created.session, context.temp_allocator))
-        }
+        if created, ok := resp.result.(wire.Session_Result); ok do append(&o.created, wire.session_clone(created.session, context.temp_allocator))
 
     case wire.Response_Error:
         o.is_error = true
@@ -110,9 +108,7 @@ create_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     o := (^Create_Obs)(c.user_data)
     append(&o.names, bc.method)
 
-    if summary, ok := bc.params.(wire.Session_Summary_Changed_Data); ok {
-        append(&o.revisions, summary.revision)
-    }
+    if summary, ok := bc.params.(wire.Session_Summary_Changed_Data); ok do append(&o.revisions, summary.revision)
 }
 
 create_on_close :: proc(c: ^client.Client, _: client.Close_Code) {
@@ -364,9 +360,7 @@ listed_session :: proc(tag: u8, updated_at_ms: u64, title: string) -> wire.Sessi
 list_result :: proc(t: ^testing.T, resp: wire.Response) -> (wire.Session_List_Result, bool) {
     ok, is_ok := resp.(wire.Response_Ok)
 
-    if !testing.expect(t, is_ok, "session.list should answer with a result") {
-        return {}, false
-    }
+    if !testing.expect(t, is_ok, "session.list should answer with a result") do return {}, false
 
     result, is_list := ok.result.(wire.Session_List_Result)
     testing.expect(t, is_list, "session.list should answer with a session list")
@@ -382,9 +376,7 @@ test_session_list_returns_persisted_sessions :: proc(t: ^testing.T) {
 
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         result, ok := list_result(o.t, resp)
-        if !ok {
-            return true
-        }
+        if !ok do return true
 
         testing.expect_value(o.t, result.total, u64(2))
         testing.expect_value(o.t, len(result.items), 2)
@@ -429,9 +421,7 @@ test_session_list_pages_through_a_cursor :: proc(t: ^testing.T) {
 
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         result, ok := list_result(o.t, resp)
-        if !ok {
-            return true
-        }
+        if !ok do return true
 
         // `total` describes the whole view on every page, not the page in hand.
         testing.expect_value(o.t, result.total, u64(3))
@@ -441,9 +431,7 @@ test_session_list_pages_through_a_cursor :: proc(t: ^testing.T) {
             testing.expect_value(o.t, result.items[0].session.title, "third")
 
             cursor, paging := result.next_cursor.?
-            if !testing.expect(o.t, paging, "a page with rows behind it mints a continuation") {
-                return true
-            }
+            if !testing.expect(o.t, paging, "a page with rows behind it mints a continuation") do return true
 
             o.page = 1
 
@@ -501,14 +489,10 @@ test_session_list_refuses_a_cursor_from_another_selection :: proc(t: ^testing.T)
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         if o.page == 0 {
             result, ok := list_result(o.t, resp)
-            if !ok {
-                return true
-            }
+            if !ok do return true
 
             cursor, paging := result.next_cursor.?
-            if !testing.expect(o.t, paging, "the first page mints a continuation") {
-                return true
-            }
+            if !testing.expect(o.t, paging, "the first page mints a continuation") do return true
 
             o.page = 1
 
@@ -532,9 +516,7 @@ test_session_list_refuses_a_cursor_from_another_selection :: proc(t: ^testing.T)
 
         failure, is_error := resp.(wire.Response_Error)
 
-        if testing.expect(o.t, is_error, "a cursor from another selection is refused") {
-            testing.expect_value(o.t, failure.error.code, wire.Error_Code.Bad_Request)
-        }
+        if testing.expect(o.t, is_error, "a cursor from another selection is refused") do testing.expect_value(o.t, failure.error.code, wire.Error_Code.Bad_Request)
 
         return true
     }
@@ -567,9 +549,7 @@ test_session_list_rejects_a_malformed_cursor :: proc(t: ^testing.T) {
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         failure, is_error := resp.(wire.Response_Error)
 
-        if testing.expect(o.t, is_error, "a malformed cursor is refused") {
-            testing.expect_value(o.t, failure.error.code, wire.Error_Code.Bad_Request)
-        }
+        if testing.expect(o.t, is_error, "a malformed cursor is refused") do testing.expect_value(o.t, failure.error.code, wire.Error_Code.Bad_Request)
 
         return true
     }
@@ -596,9 +576,7 @@ test_session_list_active_view_follows_the_engine :: proc(t: ^testing.T) {
 
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         result, ok := list_result(o.t, resp)
-        if !ok {
-            return true
-        }
+        if !ok do return true
 
         // First answer: the registry row exists, but nothing tracks it.
         if o.page == 0 {
@@ -617,9 +595,7 @@ test_session_list_active_view_follows_the_engine :: proc(t: ^testing.T) {
         }
 
         // Second answer: the same registry, one tracked session.
-        if testing.expect_value(o.t, len(result.items), 1) {
-            testing.expect_value(o.t, result.items[0].session.title, "idle")
-        }
+        if testing.expect_value(o.t, len(result.items), 1) do testing.expect_value(o.t, result.items[0].session.title, "idle")
 
         testing.expect_value(o.t, result.total, u64(1))
 
@@ -647,9 +623,7 @@ test_session_list_active_view_pages_through_a_cursor :: proc(t: ^testing.T) {
 
     check :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
         result, ok := list_result(o.t, resp)
-        if !ok {
-            return true
-        }
+        if !ok do return true
 
         // First answer: both rows are persisted, but the engine tracks neither.
         if o.page == 0 {
@@ -677,9 +651,7 @@ test_session_list_active_view_pages_through_a_cursor :: proc(t: ^testing.T) {
             testing.expect_value(o.t, result.items[0].session.title, "newer")
 
             cursor, paging := result.next_cursor.?
-            if !testing.expect(o.t, paging, "a page with a row behind it mints a continuation") {
-                return true
-            }
+            if !testing.expect(o.t, paging, "a page with a row behind it mints a continuation") do return true
 
             o.page = 2
             client.client_send_request(
@@ -906,21 +878,15 @@ input_on_cancel :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: r
     o.settled = true
 
     answered, has_response := outcome.(client.Request_Response)
-    if !has_response {
-        return
-    }
+    if !has_response do return
 
     switch resp in answered.response {
     case wire.Response_Ok:
         o.is_error = false
 
-        if result, ok := resp.result.(wire.Session_Cancel_Run_Result); ok {
-            o.canceled = result
-        }
+        if result, ok := resp.result.(wire.Session_Cancel_Run_Result); ok do o.canceled = result
 
-        if result, ok := resp.result.(wire.Session_Cancel_Input_Result); ok {
-            o.canceled_input = result.canceled_input
-        }
+        if result, ok := resp.result.(wire.Session_Cancel_Input_Result); ok do o.canceled_input = result.canceled_input
 
     case wire.Response_Error:
         o.is_error = true
@@ -974,9 +940,7 @@ input_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
         append(&o.summaries, wire.session_clone(v.session, context.temp_allocator))
     }
 
-    if _, err := client.replica_apply_broadcast(&o.replica, bc); err != .None && o.apply_err == .None {
-        o.apply_err = err
-    }
+    if _, err := client.replica_apply_broadcast(&o.replica, bc); err != .None && o.apply_err == .None do o.apply_err = err
 }
 
 input_on_close :: proc(c: ^client.Client, _: client.Close_Code) {

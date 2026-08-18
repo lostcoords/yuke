@@ -57,9 +57,7 @@ _failing_allocator_procedure :: proc(
     #partial switch mode {
     case .Alloc, .Alloc_Non_Zeroed, .Resize, .Resize_Non_Zeroed:
         if !_is_arena_internal(location) {
-            if fa.count >= fa.fail_at {
-                return nil, .Out_Of_Memory
-            }
+            if fa.count >= fa.fail_at do return nil, .Out_Of_Memory
 
             fa.count += 1
         }

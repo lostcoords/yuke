@@ -92,15 +92,11 @@ socket_connect :: proc(
     assert(loop != nil, "socket_connect needs an event loop")
     assert(s.state == .Created || s.state == .Closed, "socket_connect on a socket that is already dialing")
 
-    if len(req.url) == 0 {
-        return .Invalid_Request
-    }
+    if len(req.url) == 0 do return .Invalid_Request
 
     sync.once_do(&global_init_once, global_init)
 
-    if global_init_code != .Ok {
-        return .Setup_Failed
-    }
+    if global_init_code != .Ok do return .Setup_Failed
 
     s^ = {}
     s.loop = loop
@@ -108,9 +104,7 @@ socket_connect :: proc(
     s.user = user
 
     s.multi = c_multi_init()
-    if s.multi == nil {
-        return .Setup_Failed
-    }
+    if s.multi == nil do return .Setup_Failed
 
     s.easy = c_easy_init()
     if s.easy == nil {
@@ -154,9 +148,7 @@ socket_send :: proc(s: ^Socket, data: []byte) -> (sent: int, code: Code) {
     assert(s != nil, "socket_send needs a socket")
     assert(s.state == .Connected, "socket_send before the dial landed")
 
-    if len(data) == 0 {
-        return 0, .Ok
-    }
+    if len(data) == 0 do return 0, .Ok
 
     out: c.size_t
     code = c_easy_send(s.easy, raw_data(data), c.size_t(len(data)), &out)
@@ -203,9 +195,7 @@ socket_release :: proc(s: ^Socket) {
     assert(!s.in_curl, "socket_release must not run inside a curl callback")
 
     if s.easy != nil {
-        if s.multi != nil {
-            _ = c_multi_remove_handle(s.multi, s.easy)
-        }
+        if s.multi != nil do _ = c_multi_remove_handle(s.multi, s.easy)
 
         c_easy_cleanup(s.easy)
         s.easy = nil
@@ -240,9 +230,7 @@ socket_configure :: proc(s: ^Socket, req: Socket_Request) -> Code {
 
     setopt_long(e, .Connect_Timeout, seconds_ceil(req.connect_timeout, DEFAULT_CONNECT_TIMEOUT)) or_return
 
-    if len(req.ca_file) > 0 {
-        setopt_str(e, .Ca_Info, req.ca_file) or_return
-    }
+    if len(req.ca_file) > 0 do setopt_str(e, .Ca_Info, req.ca_file) or_return
 
     return .Ok
 }
@@ -266,13 +254,9 @@ socket_on_tick :: proc(op: ^nbio.Operation, s: ^Socket) {
 
     for {
         msg, _ := multi_info_read(s.multi)
-        if msg == nil {
-            break
-        }
+        if msg == nil do break
 
-        if msg.kind != .Done {
-            continue
-        }
+        if msg.kind != .Done do continue
 
         assert(msg.easy == s.easy, "multi_info_read reported a handle the socket does not own")
         done = true
@@ -290,7 +274,5 @@ socket_on_tick :: proc(op: ^nbio.Operation, s: ^Socket) {
 
     s.state = .Connected if result == .Ok else .Failed
 
-    if s.cb != nil {
-        s.cb(s.user, Result{code = result, message = curl_message(&s.errbuf, result), status = 0})
-    }
+    if s.cb != nil do s.cb(s.user, Result{code = result, message = curl_message(&s.errbuf, result), status = 0})
 }

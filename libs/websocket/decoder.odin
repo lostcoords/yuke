@@ -7,9 +7,7 @@ import "core:slice"
 import "core:unicode/utf8"
 
 bytes_zero :: proc(data: []byte) {
-    if len(data) > 0 {
-        crypto.zero_explicit(raw_data(data), len(data))
-    }
+    if len(data) > 0 do crypto.zero_explicit(raw_data(data), len(data))
 }
 
 owned_bytes_destroy :: proc(data: []byte, allocator: mem.Allocator) {
@@ -19,9 +17,7 @@ owned_bytes_destroy :: proc(data: []byte, allocator: mem.Allocator) {
 
 dynamic_bytes_destroy :: proc(data: ^[dynamic]byte) {
     assert(data != nil, "dynamic byte cleanup needs storage")
-    if cap(data^) > 0 {
-        crypto.zero_explicit(raw_data(data^), cap(data^))
-    }
+    if cap(data^) > 0 do crypto.zero_explicit(raw_data(data^), cap(data^))
     delete(data^)
     data^ = nil
 }
@@ -34,12 +30,8 @@ dynamic_bytes_clear :: proc(data: ^[dynamic]byte) {
 
 dynamic_bytes_append :: proc(data: ^[dynamic]byte, added: []byte) -> runtime.Allocator_Error {
     assert(data != nil, "dynamic byte append needs storage")
-    if len(added) == 0 {
-        return nil
-    }
-    if len(added) > max(int) - len(data^) {
-        return runtime.Allocator_Error.Out_Of_Memory
-    }
+    if len(added) == 0 do return nil
+    if len(added) > max(int) - len(data^) do return runtime.Allocator_Error.Out_Of_Memory
 
     old_len := len(data^)
     needed := old_len + len(added)
@@ -47,9 +39,7 @@ dynamic_bytes_append :: proc(data: ^[dynamic]byte, added: []byte) -> runtime.All
         allocator := data^.allocator
         new_capacity := max(needed, max(64, min(cap(data^), max(int) / 2) * 2))
         replacement, aerr := make([dynamic]byte, old_len, new_capacity, allocator)
-        if aerr != nil {
-            return aerr
-        }
+        if aerr != nil do return aerr
         copy(replacement[:], data^[:])
         dynamic_bytes_destroy(data)
         data^ = replacement
@@ -138,9 +128,7 @@ decoder_init :: proc(
     assert(role == .Client || role == .Server, "decoder role is invalid")
 
     scratch, aerr := make([dynamic]byte, allocator)
-    if aerr != nil {
-        return aerr
-    }
+    if aerr != nil do return aerr
 
     message: [dynamic]byte
     message, aerr = make([dynamic]byte, allocator)
@@ -179,9 +167,7 @@ decoder_feed :: proc(d: ^Decoder, data: []byte) -> runtime.Allocator_Error {
 
     if d.head > 0 {
         remaining := len(d.scratch) - d.head
-        if remaining > 0 {
-            copy(d.scratch[:remaining], d.scratch[d.head:])
-        }
+        if remaining > 0 do copy(d.scratch[:remaining], d.scratch[d.head:])
 
         bytes_zero(d.scratch[remaining:])
         resize(&d.scratch, remaining)
@@ -204,45 +190,29 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         buf := d.scratch[d.head:]
 
         header, header_length, status, perr := parse_header(buf, d.role)
-        if perr != .None {
-            return {}, false, perr
-        }
+        if perr != .None do return {}, false, perr
 
-        if status == .Need_More {
-            return {}, false, .None
-        }
+        if status == .Need_More do return {}, false, .None
 
         // Enforce the single-frame cap on the announced length before buffering the
         // payload, so an oversized frame fails fast.
-        if header.payload_length > d.max_frame_bytes {
-            return {}, false, .Frame_Too_Big
-        }
+        if header.payload_length > d.max_frame_bytes do return {}, false, .Frame_Too_Big
 
-        if header.payload_length > max(int) - header_length {
-            return {}, false, .Frame_Length_Overflow
-        }
+        if header.payload_length > max(int) - header_length do return {}, false, .Frame_Length_Overflow
 
         frame_length := header_length + header.payload_length
-        if len(buf) < frame_length {
-            return {}, false, .None
-        }
+        if len(buf) < frame_length do return {}, false, .None
 
         payload := buf[header_length:frame_length]
 
-        if header.masked {
-            // Server role: unmask in place on scratch before the payload is cloned
-            // out (control frames) or appended to the reassembly buffer (data).
-            mask_payload(payload, payload, header.mask_key)
-        }
+        if header.masked do mask_payload(payload, payload, header.mask_key)
 
         if op_code_is_control(header.opcode) {
             // `parse_header` already rejected fragmented control frames, so a whole
             // control message is present; hand it up, the driver decides to reply.
             kind: Message_Kind = header.opcode == .Ping ? .Ping : header.opcode == .Pong ? .Pong : .Close
             out_data, aerr := slice.clone(payload, out)
-            if aerr != nil {
-                return {}, false, .Out_Of_Memory
-            }
+            if aerr != nil do return {}, false, .Out_Of_Memory
 
             bytes_zero(payload)
             d.head += frame_length
@@ -253,9 +223,7 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         // Written as `payload_length > budget` (not an overflowing addition), so a
         // cap near `max(int)` is safe. `len(d.message)
         // <= cap` is a loop invariant, so the subtraction never wraps.
-        if header.payload_length > d.max_message_bytes - len(d.message) {
-            return {}, false, .Message_Too_Big
-        }
+        if header.payload_length > d.max_message_bytes - len(d.message) do return {}, false, .Message_Too_Big
 
         // Resolve this frame's data opcode and update fragmentation state: a
         // continuation must follow an open message; a fresh data frame must not
@@ -263,37 +231,25 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         message_opcode: Op_Code
         if header.opcode == .Continuation {
             recalled, open := d.continuing.?
-            if !open {
-                return {}, false, .Invalid_Continuation
-            }
+            if !open do return {}, false, .Invalid_Continuation
 
-            if header.fin {
-                d.continuing = nil
-            }
+            if header.fin do d.continuing = nil
 
             message_opcode = recalled
         } else {
-            if d.continuing != nil {
-                return {}, false, .Interrupted
-            }
+            if d.continuing != nil do return {}, false, .Interrupted
 
-            if !header.fin {
-                d.continuing = header.opcode
-            }
+            if !header.fin do d.continuing = header.opcode
 
             message_opcode = header.opcode
         }
 
-        if aerr := dynamic_bytes_append(&d.message, payload); aerr != nil {
-            return {}, false, .Out_Of_Memory
-        }
+        if aerr := dynamic_bytes_append(&d.message, payload); aerr != nil do return {}, false, .Out_Of_Memory
         bytes_zero(payload)
 
         d.head += frame_length
 
-        if !header.fin {
-            continue
-        }
+        if !header.fin do continue
 
         // Text must be valid UTF-8 (RFC 6455 §5.6). Validate before cloning so the
         // failure path allocates nothing.
@@ -303,9 +259,7 @@ decoder_next :: proc(d: ^Decoder, out := context.allocator) -> (msg: Message, ha
         }
 
         out_data, aerr := slice.clone(d.message[:], out)
-        if aerr != nil {
-            return {}, false, .Out_Of_Memory
-        }
+        if aerr != nil do return {}, false, .Out_Of_Memory
         dynamic_bytes_clear(&d.message)
 
         kind: Message_Kind = message_opcode == .Text ? .Text : .Binary

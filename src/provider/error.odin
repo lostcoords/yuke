@@ -84,9 +84,7 @@ transport_error_from_status :: proc(status: int, body: string, allocator: runtim
 
     case status == 429:
         exhausted, err := body_is_quota_exhausted(body, allocator)
-        if err != .None {
-            return err
-        }
+        if err != .None do return err
 
         return exhausted ? .Quota_Exhausted : .Rate_Limited
 
@@ -116,31 +114,23 @@ body_is_quota_exhausted :: proc(
     exhausted: bool,
     err: Transport_Error,
 ) {
-    if len(body) == 0 {
-        return false, .None
-    }
+    if len(body) == 0 do return false, .None
 
     value, parse_err := json.parse_string(body, json.DEFAULT_SPECIFICATION, false, allocator)
     if parse_err != nil {
-        if parse_err == .Out_Of_Memory {
-            return false, .Resource_Exhausted
-        }
+        if parse_err == .Out_Of_Memory do return false, .Resource_Exhausted
 
         return false, .None
     }
     defer json.destroy_value(value, allocator)
 
     root, root_ok := value.(json.Object)
-    if !root_ok {
-        return false, .None
-    }
+    if !root_ok do return false, .None
 
     if nested, nested_ok := root["error"]; nested_ok {
         if obj, obj_ok := nested.(json.Object); obj_ok {
             nested_exhausted, found := quota_discriminator(obj)
-            if found {
-                return nested_exhausted, .None
-            }
+            if found do return nested_exhausted, .None
         }
     }
 
@@ -155,20 +145,14 @@ body_is_quota_exhausted :: proc(
 quota_discriminator :: proc(scope: json.Object) -> (exhausted, found: bool) {
     for key in ([?]string{"type", "code"}) {
         field, field_ok := scope[key]
-        if !field_ok {
-            continue
-        }
+        if !field_ok do continue
 
         text, text_ok := field.(json.String)
-        if !text_ok {
-            continue
-        }
+        if !text_ok do continue
 
         found = true
         for quota in QUOTA_ERROR_TYPES {
-            if text == quota {
-                return true, true
-            }
+            if text == quota do return true, true
         }
     }
 

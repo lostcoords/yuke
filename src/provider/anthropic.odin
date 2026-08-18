@@ -115,9 +115,7 @@ anthropic_decoder_decode :: proc(
     assert(!decoder.block_open || decoder.started, "an open block belongs to a started message")
     assert(!decoder.metadata_done || !decoder.block_open, "terminal metadata follows every content block")
 
-    if decoder.done || len(strings.trim_space(data)) == 0 {
-        return .None
-    }
+    if decoder.done || len(strings.trim_space(data)) == 0 do return .None
 
     value, object, parse_err := decode_json_object(data, scratch_allocator)
     if parse_err != .None {
@@ -132,9 +130,7 @@ anthropic_decoder_decode :: proc(
         return ferr
     }
 
-    if !present {
-        return .None
-    }
+    if !present do return .None
 
     event: Maybe(Stream_Event)
     err: Transport_Error
@@ -174,9 +170,7 @@ anthropic_decoder_decode :: proc(
 
     assert(decoder.tool_count >= 0 && decoder.tool_count <= MAX_TOOL_CALLS, "successful decode preserves bounds")
 
-    if stream_event, ok := event.?; ok {
-        append(events, stream_event)
-    }
+    if stream_event, ok := event.?; ok do append(events, stream_event)
 
     return .None
 }
@@ -193,9 +187,7 @@ anthropic_decoder_finish :: proc(
     assert(events != nil, "Anthropic finish needs an event queue")
     assert(decoder.allocator.procedure != nil, "Anthropic decoder must be initialized")
 
-    if decoder.done {
-        return .None
-    }
+    if decoder.done do return .None
 
     decoder.done = true
     return .Stream_Truncated
@@ -226,27 +218,17 @@ anthropic_decode_message_start :: proc(
     assert(decoder != nil, "message_start needs a decoder")
     assert(!decoder.done, "message_start cannot run after completion")
 
-    if decoder.started || decoder.metadata_done || decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if decoder.started || decoder.metadata_done || decoder.block_open do return nil, .Parse_Error
 
     message, present, err := decode_optional_object(object, "message")
-    if err != .None {
-        return nil, err
-    }
+    if err != .None do return nil, err
 
-    if !present {
-        return nil, .Parse_Error
-    }
+    if !present do return nil, .Parse_Error
 
     usage, usage_present, uerr := decode_optional_object(message, "usage")
-    if uerr != .None {
-        return nil, uerr
-    }
+    if uerr != .None do return nil, uerr
 
-    if !usage_present {
-        return nil, .Parse_Error
-    }
+    if !usage_present do return nil, .Parse_Error
 
     input, cache_read, cache_write := anthropic_prompt_usage(usage)
 
@@ -272,36 +254,22 @@ anthropic_decode_content_block_start :: proc(
     assert(decoder != nil, "content_block_start needs a decoder")
     assert(!decoder.done, "content_block_start cannot run after completion")
 
-    if !decoder.started || decoder.metadata_done || decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if !decoder.started || decoder.metadata_done || decoder.block_open do return nil, .Parse_Error
 
     index, index_present, ierr := decode_optional_u64(object, "index")
-    if ierr != .None {
-        return nil, ierr
-    }
+    if ierr != .None do return nil, ierr
 
-    if !index_present || index != decoder.next_index {
-        return nil, .Parse_Error
-    }
+    if !index_present || index != decoder.next_index do return nil, .Parse_Error
 
     block, present, berr := decode_optional_object(object, "content_block")
-    if berr != .None {
-        return nil, berr
-    }
+    if berr != .None do return nil, berr
 
-    if !present {
-        return nil, .Parse_Error
-    }
+    if !present do return nil, .Parse_Error
 
     block_type, type_present, terr := decode_optional_string(block, "type")
-    if terr != .None {
-        return nil, terr
-    }
+    if terr != .None do return nil, terr
 
-    if !type_present {
-        return nil, .Parse_Error
-    }
+    if !type_present do return nil, .Parse_Error
 
     open_block := Anthropic_Open_Block {
         index = index,
@@ -310,30 +278,20 @@ anthropic_decode_content_block_start :: proc(
     switch block_type {
     case "text":
         text, text_present, text_err := decode_optional_string(block, "text")
-        if text_err != .None {
-            return nil, text_err
-        }
+        if text_err != .None do return nil, text_err
 
-        if !text_present || len(text) != 0 {
-            return nil, .Parse_Error
-        }
+        if !text_present || len(text) != 0 do return nil, .Parse_Error
 
         open_block.kind = .Text
 
     case "thinking":
         thinking, thinking_present, thinking_err := decode_optional_string(block, "thinking")
-        if thinking_err != .None {
-            return nil, thinking_err
-        }
+        if thinking_err != .None do return nil, thinking_err
 
-        if !thinking_present || len(thinking) != 0 {
-            return nil, .Parse_Error
-        }
+        if !thinking_present || len(thinking) != 0 do return nil, .Parse_Error
 
         signature, signature_present, signature_err := decode_optional_string(block, "signature")
-        if signature_err != .None {
-            return nil, signature_err
-        }
+        if signature_err != .None do return nil, signature_err
 
         if signature_present && len(signature) > 0 {
             owned := strings.clone(signature, decoder.allocator)
@@ -345,13 +303,9 @@ anthropic_decode_content_block_start :: proc(
 
     case "redacted_thinking":
         data, data_present, data_err := decode_optional_string(block, "data")
-        if data_err != .None {
-            return nil, data_err
-        }
+        if data_err != .None do return nil, data_err
 
-        if !data_present || len(data) == 0 {
-            return nil, .Parse_Error
-        }
+        if !data_present || len(data) == 0 do return nil, .Parse_Error
 
         owned := strings.clone(data, decoder.allocator)
 
@@ -359,33 +313,21 @@ anthropic_decode_content_block_start :: proc(
         open_block.redacted_data = owned
 
     case "tool_use":
-        if decoder.tool_count == MAX_TOOL_CALLS {
-            return nil, .Too_Many_Tool_Calls
-        }
+        if decoder.tool_count == MAX_TOOL_CALLS do return nil, .Too_Many_Tool_Calls
 
         id, id_present, id_err := decode_optional_string(block, "id")
-        if id_err != .None {
-            return nil, id_err
-        }
+        if id_err != .None do return nil, id_err
 
         name, name_present, name_err := decode_optional_string(block, "name")
-        if name_err != .None {
-            return nil, name_err
-        }
+        if name_err != .None do return nil, name_err
 
         input, input_present, input_err := decode_optional_object(block, "input")
-        if input_err != .None {
-            return nil, input_err
-        }
+        if input_err != .None do return nil, input_err
 
-        if !id_present || len(id) == 0 || !name_present || len(name) == 0 || !input_present || len(input) != 0 {
-            return nil, .Parse_Error
-        }
+        if !id_present || len(id) == 0 || !name_present || len(name) == 0 || !input_present || len(input) != 0 do return nil, .Parse_Error
 
         for prior in decoder.tool_ids {
-            if id == prior {
-                return nil, .Parse_Error
-            }
+            if id == prior do return nil, .Parse_Error
         }
 
         owned_id := strings.clone(id, decoder.allocator)
@@ -431,55 +373,33 @@ anthropic_decode_content_block_delta :: proc(
     assert(decoder != nil, "content_block_delta needs a decoder")
     assert(!decoder.done, "content_block_delta cannot run after completion")
 
-    if !decoder.started || decoder.metadata_done || !decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if !decoder.started || decoder.metadata_done || !decoder.block_open do return nil, .Parse_Error
 
     index, index_present, ierr := decode_optional_u64(object, "index")
-    if ierr != .None {
-        return nil, ierr
-    }
+    if ierr != .None do return nil, ierr
 
-    if !index_present || index != decoder.open_block.index {
-        return nil, .Parse_Error
-    }
+    if !index_present || index != decoder.open_block.index do return nil, .Parse_Error
 
     delta, present, derr := decode_optional_object(object, "delta")
-    if derr != .None {
-        return nil, derr
-    }
+    if derr != .None do return nil, derr
 
-    if !present {
-        return nil, .Parse_Error
-    }
+    if !present do return nil, .Parse_Error
 
     delta_type, type_present, terr := decode_optional_string(delta, "type")
-    if terr != .None {
-        return nil, terr
-    }
+    if terr != .None do return nil, terr
 
-    if !type_present {
-        return nil, .Parse_Error
-    }
+    if !type_present do return nil, .Parse_Error
 
     switch delta_type {
     case "text_delta":
-        if decoder.open_block.kind != .Text {
-            return nil, .Parse_Error
-        }
+        if decoder.open_block.kind != .Text do return nil, .Parse_Error
 
         text, text_present, text_err := decode_optional_string(delta, "text")
-        if text_err != .None {
-            return nil, text_err
-        }
+        if text_err != .None do return nil, text_err
 
-        if !text_present {
-            return nil, .Parse_Error
-        }
+        if !text_present do return nil, .Parse_Error
 
-        if len(text) == 0 {
-            return nil, .None
-        }
+        if len(text) == 0 do return nil, .None
 
         owned := strings.clone(text, decoder.allocator)
 
@@ -490,22 +410,14 @@ anthropic_decode_content_block_delta :: proc(
         return stream_event, .None
 
     case "thinking_delta":
-        if decoder.open_block.kind != .Reasoning {
-            return nil, .Parse_Error
-        }
+        if decoder.open_block.kind != .Reasoning do return nil, .Parse_Error
 
         thinking, thinking_present, thinking_err := decode_optional_string(delta, "thinking")
-        if thinking_err != .None {
-            return nil, thinking_err
-        }
+        if thinking_err != .None do return nil, thinking_err
 
-        if !thinking_present {
-            return nil, .Parse_Error
-        }
+        if !thinking_present do return nil, .Parse_Error
 
-        if len(thinking) == 0 {
-            return nil, .None
-        }
+        if len(thinking) == 0 do return nil, .None
 
         owned := strings.clone(thinking, decoder.allocator)
 
@@ -516,18 +428,12 @@ anthropic_decode_content_block_delta :: proc(
         return stream_event, .None
 
     case "signature_delta":
-        if decoder.open_block.kind != .Reasoning || len(decoder.open_block.signature) > 0 {
-            return nil, .Parse_Error
-        }
+        if decoder.open_block.kind != .Reasoning || len(decoder.open_block.signature) > 0 do return nil, .Parse_Error
 
         signature, signature_present, signature_err := decode_optional_string(delta, "signature")
-        if signature_err != .None {
-            return nil, signature_err
-        }
+        if signature_err != .None do return nil, signature_err
 
-        if !signature_present || len(signature) == 0 {
-            return nil, .Parse_Error
-        }
+        if !signature_present || len(signature) == 0 do return nil, .Parse_Error
 
         owned := strings.clone(signature, decoder.allocator)
 
@@ -536,24 +442,16 @@ anthropic_decode_content_block_delta :: proc(
         return nil, .None
 
     case "input_json_delta":
-        if decoder.open_block.kind != .Tool {
-            return nil, .Parse_Error
-        }
+        if decoder.open_block.kind != .Tool do return nil, .Parse_Error
 
         fragment, fragment_present, fragment_err := decode_optional_string(delta, "partial_json")
-        if fragment_err != .None {
-            return nil, fragment_err
-        }
+        if fragment_err != .None do return nil, fragment_err
 
-        if !fragment_present {
-            return nil, .Parse_Error
-        }
+        if !fragment_present do return nil, .Parse_Error
 
         assert(len(decoder.open_block.tool.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments start bounded")
 
-        if len(fragment) > MAX_TOOL_CALL_BYTES - len(decoder.open_block.tool.arguments) {
-            return nil, .Tool_Call_Too_Large
-        }
+        if len(fragment) > MAX_TOOL_CALL_BYTES - len(decoder.open_block.tool.arguments) do return nil, .Tool_Call_Too_Large
 
         append(&decoder.open_block.tool.arguments, fragment)
 
@@ -579,18 +477,12 @@ anthropic_decode_content_block_stop :: proc(
     assert(decoder != nil, "content_block_stop needs a decoder")
     assert(!decoder.done, "content_block_stop cannot run after completion")
 
-    if !decoder.started || decoder.metadata_done || !decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if !decoder.started || decoder.metadata_done || !decoder.block_open do return nil, .Parse_Error
 
     index, index_present, index_err := decode_optional_u64(object, "index")
-    if index_err != .None {
-        return nil, index_err
-    }
+    if index_err != .None do return nil, index_err
 
-    if !index_present || index != decoder.open_block.index {
-        return nil, .Parse_Error
-    }
+    if !index_present || index != decoder.open_block.index do return nil, .Parse_Error
 
     result: Stream_Block_Result
 
@@ -599,9 +491,7 @@ anthropic_decode_content_block_stop :: proc(
         result = Stream_Text_Block{}
 
     case .Reasoning:
-        if len(decoder.open_block.signature) == 0 {
-            return nil, .Parse_Error
-        }
+        if len(decoder.open_block.signature) == 0 do return nil, .Parse_Error
 
         result = Stream_Reasoning_Block {
             signature = decoder.open_block.signature,
@@ -620,9 +510,7 @@ anthropic_decode_content_block_stop :: proc(
         assert(len(decoder.open_block.tool.name) > 0, "an open tool block retains its name")
 
         arguments, arguments_err := tool_arguments(decoder.open_block.tool.arguments[:], scratch_allocator)
-        if arguments_err != .None {
-            return nil, arguments_err
-        }
+        if arguments_err != .None do return nil, arguments_err
 
         result = Stream_Tool_Block {
             call = {id = decoder.open_block.tool.id, name = decoder.open_block.tool.name, arguments = arguments},
@@ -655,44 +543,28 @@ anthropic_decode_message_delta :: proc(
     assert(decoder != nil, "message_delta needs a decoder")
     assert(!decoder.done, "message_delta cannot run after completion")
 
-    if !decoder.started || decoder.metadata_done || decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if !decoder.started || decoder.metadata_done || decoder.block_open do return nil, .Parse_Error
 
     delta, delta_present, derr := decode_optional_object(object, "delta")
-    if derr != .None {
-        return nil, derr
-    }
+    if derr != .None do return nil, derr
 
-    if !delta_present {
-        return nil, .Parse_Error
-    }
+    if !delta_present do return nil, .Parse_Error
 
     reason, reason_present, rerr := decode_optional_string(delta, "stop_reason")
-    if rerr != .None {
-        return nil, rerr
-    }
+    if rerr != .None do return nil, rerr
 
-    if !reason_present {
-        return nil, .Parse_Error
-    }
+    if !reason_present do return nil, .Parse_Error
 
     usage, usage_present, uerr := decode_optional_object(object, "usage")
-    if uerr != .None {
-        return nil, uerr
-    }
+    if uerr != .None do return nil, uerr
 
-    if !usage_present {
-        return nil, .Parse_Error
-    }
+    if !usage_present do return nil, .Parse_Error
 
     decoder.pending_reason = anthropic_stop_reason(reason)
     decoder.pending_usage.output = decode_usage_u64(usage, "output_tokens")
 
     // Thinking tokens are a subset of output, reported only on the final message_delta.
-    if details, present, terr := decode_optional_object(usage, "output_tokens_details"); terr == .None && present {
-        decoder.pending_usage.reasoning = decode_usage_u64(details, "thinking_tokens")
-    }
+    if details, present, terr := decode_optional_object(usage, "output_tokens_details"); terr == .None && present do decoder.pending_usage.reasoning = decode_usage_u64(details, "thinking_tokens")
 
     // Max-fold: compat servers report prompt usage only here, real Anthropic repeats what it
     // already gave. Max recovers the real count without double-counting.
@@ -738,17 +610,13 @@ anthropic_terminal_event :: proc(decoder: ^Anthropic_Decoder) -> (Maybe(Stream_E
     assert(decoder != nil, "terminal event needs a decoder")
     assert(!decoder.done, "terminal event is emitted at most once")
 
-    if !decoder.started || !decoder.metadata_done || decoder.block_open {
-        return nil, .Parse_Error
-    }
+    if !decoder.started || !decoder.metadata_done || decoder.block_open do return nil, .Parse_Error
 
     usage := decoder.pending_usage
     usage.total = intrinsics.saturating_add(usage.input, usage.output)
 
     reason := decoder.pending_reason
-    if decoder.tool_count > 0 {
-        reason = .Tool_Calls
-    }
+    if decoder.tool_count > 0 do reason = .Tool_Calls
 
     stream_event: Stream_Event = Stream_Done {
         reason = reason,

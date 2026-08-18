@@ -39,9 +39,7 @@ jsonschema_build :: proc(m: ^Model) -> json.Object {
         }
 
         // A tri-state wrapper is an encoding of optionality, not a payload; the field expands it.
-        if union_is_tristate(u) {
-            continue
-        }
+        if union_is_tristate(u) do continue
 
         // Tagged from outside the payload: the arms are all that can be said, and `anyOf` rather
         // than `oneOf` because several arms are structurally identical (a shared result type, an
@@ -154,9 +152,7 @@ envelope :: proc(with_id: bool) -> json.Object {
     props := make(json.Object)
     props["jsonrpc"] = konst("2.0")
 
-    if with_id {
-        props["id"] = ref("Request_Id")
-    }
+    if with_id do props["id"] = ref("Request_Id")
 
     return props
 }
@@ -242,9 +238,7 @@ struct_schema :: proc(m: ^Model, s: Struct_Def) -> json.Value {
     for f in s.fields {
         props[f.name] = field_schema(m, f)
 
-        if field_is_required(f) {
-            append(&required, f.name)
-        }
+        if field_is_required(f) do append(&required, f.name)
     }
 
     out := make(json.Object)
@@ -281,9 +275,7 @@ field_schema :: proc(m: ^Model, f: Field) -> json.Value {
         out := type_schema(m, f.type_expr, f.bound, f.doc)
 
         if value, ok := f.const_value.?; ok {
-            if object, is_object := out.(json.Object); is_object {
-                object["const"] = json.Value(i64(value))
-            }
+            if object, is_object := out.(json.Object); is_object do object["const"] = json.Value(i64(value))
         }
 
         return out
@@ -301,9 +293,7 @@ field_schema :: proc(m: ^Model, f: Field) -> json.Value {
 // Whether a union encodes optionality rather than a payload.
 union_is_tristate :: proc(u: Union_Def) -> bool {
     for arm in u.arms {
-        if arm.form != .None {
-            return true
-        }
+        if arm.form != .None do return true
     }
 
     return false
@@ -314,14 +304,10 @@ union_is_tristate :: proc(u: Union_Def) -> bool {
 // the model's own gate makes unreachable.
 tristate_value_schema :: proc(m: ^Model, wrapper: string) -> json.Value {
     for u in m.unions {
-        if u.name != wrapper {
-            continue
-        }
+        if u.name != wrapper do continue
 
         for arm in u.arms {
-            if arm.form == .Value && arm.wire_type != "" {
-                return type_schema(m, arm.wire_type, Bound{}, "")
-            }
+            if arm.form == .Value && arm.wire_type != "" do return type_schema(m, arm.wire_type, Bound{}, "")
         }
     }
 
@@ -331,18 +317,14 @@ tristate_value_schema :: proc(m: ^Model, wrapper: string) -> json.Value {
 // Map a declared wire type onto JSON Schema. A named type becomes a `$ref`, which the reference
 // gate has already proven resolves.
 type_schema :: proc(m: ^Model, type_expr: string, bound: Bound, doc: string) -> json.Value {
-    if strings.has_prefix(type_expr, "Maybe(") && strings.has_suffix(type_expr, ")") {
-        return type_schema(m, type_expr[len("Maybe("):len(type_expr) - 1], bound, doc)
-    }
+    if strings.has_prefix(type_expr, "Maybe(") && strings.has_suffix(type_expr, ")") do return type_schema(m, type_expr[len("Maybe("):len(type_expr) - 1], bound, doc)
 
     if strings.has_prefix(type_expr, "[]") {
         out := make(json.Object)
         out["type"] = json.Value("array")
         out["items"] = type_schema(m, type_expr[2:], Bound{}, "")
 
-        if bound.kind == .Bounded {
-            out["maxItems"] = json.Value(i64(bound.value))
-        }
+        if bound.kind == .Bounded do out["maxItems"] = json.Value(i64(bound.value))
 
         return described(out, doc)
     }
@@ -394,9 +376,7 @@ type_schema :: proc(m: ^Model, type_expr: string, bound: Bound, doc: string) -> 
 described :: proc(node: json.Object, doc: string) -> json.Value {
     node := node
 
-    if doc != "" {
-        node["description"] = json.Value(doc)
-    }
+    if doc != "" do node["description"] = json.Value(doc)
 
     return node
 }
@@ -434,20 +414,14 @@ integer_schema :: proc(m: ^Model, type_expr: string) -> json.Object {
 
 // `[N]u8` -> N.
 hex_length :: proc(type_expr: string) -> (count: int, ok: bool) {
-    if !strings.has_prefix(type_expr, "[") || !strings.has_suffix(type_expr, "]u8") {
-        return 0, false
-    }
+    if !strings.has_prefix(type_expr, "[") || !strings.has_suffix(type_expr, "]u8") do return 0, false
 
     digits := type_expr[1:len(type_expr) - len("]u8")]
 
-    if len(digits) == 0 {
-        return 0, false
-    }
+    if len(digits) == 0 do return 0, false
 
     for i in 0 ..< len(digits) {
-        if digits[i] < '0' || digits[i] > '9' {
-            return 0, false
-        }
+        if digits[i] < '0' || digits[i] > '9' do return 0, false
 
         count = count * 10 + int(digits[i] - '0')
     }
@@ -471,9 +445,7 @@ union_schema :: proc(m: ^Model, u: Union_Def) -> json.Value {
             for f in s.fields {
                 props[f.name] = field_schema(m, f)
 
-                if field_is_required(f) {
-                    append(&required, f.name)
-                }
+                if field_is_required(f) do append(&required, f.name)
             }
         }
 
@@ -502,9 +474,7 @@ enum_schema :: proc(e: Enum_Def) -> json.Value {
             continue
         }
 
-        if n, ok := parse_i32(v.wire); ok {
-            append(&values, json.Value(i64(n)))
-        }
+        if n, ok := parse_i32(v.wire); ok do append(&values, json.Value(i64(n)))
     }
 
     out := scalar(e.numeric ? "integer" : "string")

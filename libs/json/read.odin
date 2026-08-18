@@ -8,13 +8,9 @@ import "core:unicode/utf8"
 @(private)
 lookup :: proc(o: Object, name: string) -> Value {
     v, found := o[name]
-    if !found {
-        return nil
-    }
+    if !found do return nil
 
-    if _, is_null := v.(Null); is_null {
-        return nil
-    }
+    if _, is_null := v.(Null); is_null do return nil
 
     return v
 }
@@ -31,9 +27,7 @@ read_string :: proc(
     present, valid: bool,
 ) {
     member := lookup(o, name)
-    if member == nil {
-        return "", false, true
-    }
+    if member == nil do return "", false, true
 
     text, ok := member.(String)
     if !ok ||
@@ -48,14 +42,10 @@ read_string :: proc(
 
 read_bool :: proc(o: Object, name: string) -> (value: bool, present, valid: bool) {
     member := lookup(o, name)
-    if member == nil {
-        return false, false, true
-    }
+    if member == nil do return false, false, true
 
     boolean, ok := member.(Boolean)
-    if !ok {
-        return false, true, false
-    }
+    if !ok do return false, true, false
 
     return bool(boolean), true, true
 }
@@ -64,23 +54,17 @@ read_bool :: proc(o: Object, name: string) -> (value: bool, present, valid: bool
 // fraction, nan/inf, or out-of-range value is invalid.
 read_u64 :: proc(o: Object, name: string, lo, hi: u64) -> (value: u64, present, valid: bool) {
     member := lookup(o, name)
-    if member == nil {
-        return 0, false, true
-    }
+    if member == nil do return 0, false, true
 
     n, ok := integer_i64(member)
-    if !ok || n < 0 || u64(n) < lo || u64(n) > hi {
-        return 0, true, false
-    }
+    if !ok || n < 0 || u64(n) < lo || u64(n) > hi do return 0, true, false
 
     return u64(n), true, true
 }
 
 read_f64_nonneg :: proc(o: Object, name: string) -> (value: f64, present, valid: bool) {
     member := lookup(o, name)
-    if member == nil {
-        return 0, false, true
-    }
+    if member == nil do return 0, false, true
 
     #partial switch number in member {
     case Integer:
@@ -93,23 +77,17 @@ read_f64_nonneg :: proc(o: Object, name: string) -> (value: f64, present, valid:
         return 0, true, false
     }
 
-    if value < 0 || !f64_is_finite(value) {
-        return 0, true, false
-    }
+    if value < 0 || !f64_is_finite(value) do return 0, true, false
 
     return value, true, true
 }
 
 read_object :: proc(o: Object, name: string) -> (value: Object, present, valid: bool) {
     member := lookup(o, name)
-    if member == nil {
-        return nil, false, true
-    }
+    if member == nil do return nil, false, true
 
     object, ok := member.(Object)
-    if !ok {
-        return nil, true, false
-    }
+    if !ok do return nil, true, false
 
     return object, true, true
 }
@@ -122,9 +100,7 @@ integer_i64 :: proc(v: Value) -> (i64, bool) {
         return i64(number), true
 
     case Float:
-        if f64_is_integral(f64(number)) && f64(number) >= f64(min(i64)) && f64(number) <= f64(max(i64)) {
-            return i64(number), true
-        }
+        if f64_is_integral(f64(number)) && f64(number) >= f64(min(i64)) && f64(number) <= f64(max(i64)) do return i64(number), true
     }
 
     return 0, false

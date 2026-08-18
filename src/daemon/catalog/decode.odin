@@ -42,22 +42,14 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
     result.allocator = allocator
     result.providers.allocator = allocator
     result.issues.allocator = allocator
-    defer if err != .None {
-        result_destroy(&result)
-    }
+    defer if err != .None do result_destroy(&result)
 
-    if !selections_valid(selections) {
-        return result, .Invalid_Selection
-    }
+    if !selections_valid(selections) do return result, .Invalid_Selection
 
-    if len(data) > FEED_MAX_BYTES {
-        return result, .Response_Too_Large
-    }
+    if len(data) > FEED_MAX_BYTES do return result, .Response_Too_Large
 
     syntax := json.make_parser(data, .JSON, true, mem.nil_allocator())
-    if !json.validate_value(&syntax) || syntax.curr_token.kind != .EOF {
-        return result, .Invalid_Json
-    }
+    if !json.validate_value(&syntax) || syntax.curr_token.kind != .EOF do return result, .Invalid_Json
 
     scratch: virtual.Arena
     _ = virtual.arena_init_growing(&scratch)
@@ -68,36 +60,26 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
     found := make([]bool, len(selections), sa)
 
     parser := json.make_parser(data, .JSON, true, sa)
-    if parser.curr_token.kind != .Open_Brace {
-        return result, .Invalid_Json
-    }
+    if parser.curr_token.kind != .Open_Brace do return result, .Invalid_Json
     json.advance_token(&parser)
 
     first := true
     for parser.curr_token.kind != .Close_Brace {
         if !first {
-            if parser.curr_token.kind != .Comma {
-                return result, .Invalid_Json
-            }
+            if parser.curr_token.kind != .Comma do return result, .Invalid_Json
             json.advance_token(&parser)
         }
         first = false
 
         key := decode_object_key(&parser) or_return
-        if parser.curr_token.kind != .Colon {
-            return result, .Invalid_Json
-        }
+        if parser.curr_token.kind != .Colon do return result, .Invalid_Json
         json.advance_token(&parser)
 
         wanted := false
         for selection, i in selections {
-            if selection.source_id != key {
-                continue
-            }
+            if selection.source_id != key do continue
 
-            if found[i] {
-                return result, .Invalid_Json
-            }
+            if found[i] do return result, .Invalid_Json
             wanted = true
         }
 
@@ -107,16 +89,12 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
         }
 
         value, parse_err := json.parse_value(&parser)
-        if parse_err != nil {
-            return result, .Invalid_Json
-        }
+        if parse_err != nil do return result, .Invalid_Json
 
         object, object_ok := value.(json.Object)
         if !object_ok {
             for selection, i in selections {
-                if selection.source_id == key {
-                    found[i] = true
-                }
+                if selection.source_id == key do found[i] = true
             }
             continue
         }
@@ -129,9 +107,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
         }
     }
     json.advance_token(&parser)
-    if parser.curr_token.kind != .EOF {
-        return result, .Invalid_Json
-    }
+    if parser.curr_token.kind != .EOF do return result, .Invalid_Json
 
     model_count := 0
     for selection, i in selections {
@@ -170,9 +146,7 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
 
 @(private)
 selections_valid :: proc(selections: []Selection) -> bool {
-    if len(selections) > SELECTIONS_MAX {
-        return false
-    }
+    if len(selections) > SELECTIONS_MAX do return false
 
     for selection, i in selections {
         if wire.provider_id_validate(selection.provider_id) != .None ||
@@ -181,9 +155,7 @@ selections_valid :: proc(selections: []Selection) -> bool {
         }
 
         for previous in selections[:i] {
-            if previous.provider_id == selection.provider_id {
-                return false
-            }
+            if previous.provider_id == selection.provider_id do return false
         }
     }
 
@@ -195,15 +167,11 @@ decode_object_key :: proc(parser: ^json.Parser) -> (string, Error) {
     assert(parser != nil, "catalog object key decode needs a parser")
 
     token := parser.curr_token
-    if token.kind != .String {
-        return "", .Invalid_Json
-    }
+    if token.kind != .String do return "", .Invalid_Json
     json.advance_token(parser)
 
     key, key_err := json.unquote_string(token, .JSON, parser.allocator)
-    if key_err != nil {
-        return "", .Invalid_Json
-    }
+    if key_err != nil do return "", .Invalid_Json
 
     return key, .None
 }
@@ -228,9 +196,7 @@ skip_value :: proc(parser: ^json.Parser) -> Error {
             }
             json.advance_token(parser)
 
-            if depth == 0 {
-                return .None
-            }
+            if depth == 0 do return .None
         }
 
     case .EOF:
@@ -268,9 +234,7 @@ provider_normalize :: proc(
     assert(out.id == "" && out.models == nil, "provider normalization needs empty output storage")
     assert(allocator.procedure != nil, "provider normalization needs an allocator")
     out.models.allocator = allocator
-    defer if err != .None {
-        provider_destroy(out, allocator)
-    }
+    defer if err != .None do provider_destroy(out, allocator)
 
     source_id, source_present, source_valid := json.read_string(object, "id", 64, false)
     name, name_present, name_valid := json.read_string(object, "name", PROVIDER_NAME_MAX_BYTES, false)
@@ -285,26 +249,18 @@ provider_normalize :: proc(
        !api_valid {
         return .Invalid
     }
-    if len(npm) == 0 {
-        npm = "@ai-sdk/openai-compatible"
-    }
+    if len(npm) == 0 do npm = "@ai-sdk/openai-compatible"
 
     endpoint, endpoint_err := endpoint_resolve(selection.source_id, npm, api, "")
-    if endpoint_err != .None {
-        return endpoint_err
-    }
+    if endpoint_err != .None do return endpoint_err
 
     env, env_err := credential_env_normalize(object, allocator)
-    if env_err != .None {
-        return env_err
-    }
+    if env_err != .None do return env_err
     out.credential_env = env
 
     models_value, models_present := object["models"]
     models, models_ok := models_value.(json.Object)
-    if !models_present || !models_ok {
-        return .Invalid
-    }
+    if !models_present || !models_ok do return .Invalid
 
     out.id = wire.Provider_Id(strings.clone(selection.provider_id, allocator))
     out.source_id = strings.clone(selection.source_id, allocator)
@@ -316,9 +272,7 @@ provider_normalize :: proc(
 
     for model_key, value in models {
         model_object, model_ok := value.(json.Object)
-        if !model_ok {
-            return .Invalid
-        }
+        if !model_ok do return .Invalid
 
         model: Model
         model_err := model_normalize(&model, out.id, model_key, model_object, out.endpoint, npm, allocator)
@@ -369,9 +323,7 @@ model_normalize :: proc(
         provider.endpoint_validate(provider_endpoint) == .None,
         "model normalization needs a validated provider endpoint",
     )
-    defer if err != .None {
-        model_destroy(out, allocator)
-    }
+    defer if err != .None do model_destroy(out, allocator)
 
     upstream_id, id_present, id_valid := json.read_string(object, "id", 128, false)
     name, name_present, name_valid := json.read_string(object, "name", 128, false)
@@ -391,45 +343,29 @@ model_normalize :: proc(
     }
 
     text_input, text_output, vision, modalities_valid := model_modalities(object)
-    if !modalities_valid {
-        return .Invalid
-    }
-    if !text_input || !text_output {
-        return .Filtered
-    }
+    if !modalities_valid do return .Invalid
+    if !text_input || !text_output do return .Filtered
 
     limit, _, limit_valid := json.read_object(object, "limit")
     context_window, context_present, context_valid := json.read_u64(limit, "context", 1, u64(wire.MAX_WIRE_INTEGER))
     max_output_tokens, output_present, output_valid := json.read_u64(limit, "output", 1, u64(wire.MAX_WIRE_INTEGER))
-    if !limit_valid || !context_present || !context_valid || !output_present || !output_valid {
-        return .Filtered
-    }
+    if !limit_valid || !context_present || !context_valid || !output_present || !output_valid do return .Filtered
 
     endpoint, npm, route_err := model_route(object, provider_endpoint, provider_package)
-    if route_err != .None {
-        return route_err
-    }
+    if route_err != .None do return route_err
 
     replay, interleaved_present, replay_err := reasoning_replay_normalize(object, npm)
-    if replay_err != .None {
-        return replay_err
-    }
+    if replay_err != .None do return replay_err
 
     reasoning, reasoning_err := reasoning_normalize(object, endpoint.protocol, npm, family, interleaved_present)
-    if reasoning_err != .None {
-        return reasoning_err
-    }
+    if reasoning_err != .None do return reasoning_err
 
     cost, cost_err := cost_normalize(object)
-    if cost_err != .None {
-        return cost_err
-    }
+    if cost_err != .None do return cost_err
 
     public_id := strings.concatenate({provider_id, "/", upstream_id}, allocator)
     out.info.id = wire.Model_Id(public_id)
-    if len(out.info.id) > 128 {
-        return .Filtered
-    }
+    if len(out.info.id) > 128 do return .Filtered
 
     out.info.name = strings.clone(name, allocator)
     out.info.provider = provider_id
@@ -449,18 +385,14 @@ model_normalize :: proc(
 
     // Replay names an assistant-message field in the OpenAI-chat body, so it is recorded
     // only where a builder can act on it. `interleaved` still shapes the level set above.
-    if endpoint.protocol == .Openai_Chat {
-        out.reasoning_replay = replay
-    }
+    if endpoint.protocol == .Openai_Chat do out.reasoning_replay = replay
     out.thinking_format = reasoning.format
     out.anthropic_adaptive = reasoning.adaptive
     out.reasoning_budget_min = reasoning.budget_min
     out.reasoning_budget_max = reasoning.budget_max
     out.max_tokens_field = max_tokens_field_resolve(npm, endpoint.protocol)
 
-    if wire.model_info_validate(out.info) != .None {
-        return .Filtered
-    }
+    if wire.model_info_validate(out.info) != .None do return .Filtered
 
     return .None
 }
@@ -476,9 +408,7 @@ endpoint_resolve :: proc(
     err: Normalize_Error,
 ) {
     protocol, protocol_ok := protocol_resolve(npm, shape)
-    if !protocol_ok {
-        return {}, .Unsupported
-    }
+    if !protocol_ok do return {}, .Unsupported
 
     base_url := api
     if len(base_url) == 0 {
@@ -497,18 +427,14 @@ endpoint_resolve :: proc(
         }
     }
 
-    if strings.contains(base_url, "${") {
-        return {}, .Unsupported
-    }
+    if strings.contains(base_url, "${") do return {}, .Unsupported
 
     base_url = strings.trim_right(base_url, "/")
     endpoint = {
         base_url = base_url,
         protocol = protocol,
     }
-    if provider.endpoint_validate(endpoint) != .None {
-        return {}, .Invalid
-    }
+    if provider.endpoint_validate(endpoint) != .None do return {}, .Invalid
 
     return endpoint, .None
 }
@@ -555,37 +481,23 @@ model_route :: proc(
     err: Normalize_Error,
 ) {
     value, present := object["provider"]
-    if !present {
-        return provider_endpoint, provider_package, .None
-    }
+    if !present do return provider_endpoint, provider_package, .None
 
     route, route_ok := value.(json.Object)
-    if !route_ok {
-        return {}, "", .Invalid
-    }
+    if !route_ok do return {}, "", .Invalid
 
-    if _, body_present := route["body"]; body_present {
-        return {}, "", .Unsupported
-    }
-    if _, headers_present := route["headers"]; headers_present {
-        return {}, "", .Unsupported
-    }
+    if _, body_present := route["body"]; body_present do return {}, "", .Unsupported
+    if _, headers_present := route["headers"]; headers_present do return {}, "", .Unsupported
 
     route_package, _, package_valid := json.read_string(route, "npm", PACKAGE_MAX_BYTES, false)
     route_api, _, api_valid := json.read_string(route, "api", BASE_URL_MAX_BYTES, false)
     shape, _, shape_valid := json.read_string(route, "shape", 32, false)
-    if !package_valid || !api_valid || !shape_valid {
-        return {}, "", .Invalid
-    }
+    if !package_valid || !api_valid || !shape_valid do return {}, "", .Invalid
 
-    if len(route_package) == 0 {
-        route_package = provider_package
-    }
+    if len(route_package) == 0 do route_package = provider_package
     api := route_api if len(route_api) > 0 else provider_endpoint.base_url
     resolved, endpoint_err := endpoint_resolve("", route_package, api, shape)
-    if endpoint_err != .None {
-        return {}, "", endpoint_err
-    }
+    if endpoint_err != .None do return {}, "", endpoint_err
 
     return resolved, route_package, .None
 }
@@ -600,9 +512,7 @@ credential_env_normalize :: proc(
 ) {
     value, present := object["env"]
     array, array_ok := value.(json.Array)
-    if !present || !array_ok || len(array) > 32 {
-        return nil, .Invalid
-    }
+    if !present || !array_ok || len(array) > 32 do return nil, .Invalid
 
     names = make([]string, len(array), allocator)
     defer if err != .None {
@@ -615,15 +525,11 @@ credential_env_normalize :: proc(
 
     for item, i in array {
         name, name_ok := item.(json.String)
-        if !name_ok || !env_name_valid(name) {
-            return names, .Invalid
-        }
+        if !name_ok || !env_name_valid(name) do return names, .Invalid
 
         for previous in array[:i] {
             previous_name, previous_ok := previous.(json.String)
-            if !previous_ok || previous_name == name {
-                return names, .Invalid
-            }
+            if !previous_ok || previous_name == name do return names, .Invalid
         }
 
         names[i] = strings.clone(name, allocator)
@@ -635,37 +541,27 @@ credential_env_normalize :: proc(
 @(private)
 model_modalities :: proc(object: json.Object) -> (input, output, vision, valid: bool) {
     value, present := object["modalities"]
-    if !present {
-        return false, false, false, true
-    }
+    if !present do return false, false, false, true
 
     modalities, object_ok := value.(json.Object)
-    if !object_ok {
-        return false, false, false, false
-    }
+    if !object_ok do return false, false, false, false
 
     input_value, input_present := modalities["input"]
     inputs, input_ok := input_value.(json.Array)
     output_value, output_present := modalities["output"]
     outputs, output_ok := output_value.(json.Array)
-    if !input_present || !input_ok || !output_present || !output_ok {
-        return false, false, false, false
-    }
+    if !input_present || !input_ok || !output_present || !output_ok do return false, false, false, false
 
     for item in inputs {
         modality, modality_ok := item.(json.String)
-        if !modality_ok {
-            return false, false, false, false
-        }
+        if !modality_ok do return false, false, false, false
 
         input = input || modality == "text"
         vision = vision || modality == "image"
     }
     for item in outputs {
         modality, modality_ok := item.(json.String)
-        if !modality_ok {
-            return false, false, false, false
-        }
+        if !modality_ok do return false, false, false, false
 
         output = output || modality == "text"
     }
@@ -683,13 +579,9 @@ reasoning_replay_normalize :: proc(
     err: Normalize_Error,
 ) {
     value, found := object["interleaved"]
-    if !found {
-        return .None, false, .None
-    }
+    if !found do return .None, false, .None
 
-    if npm == "@openrouter/ai-sdk-provider" {
-        return .None, true, .None
-    }
+    if npm == "@openrouter/ai-sdk-provider" do return .None, true, .None
 
     #partial switch item in value {
     case json.Boolean:
@@ -697,9 +589,7 @@ reasoning_replay_normalize :: proc(
 
     case json.Object:
         field, field_present, field_valid := json.read_string(item, "field", 32, false)
-        if !field_present || !field_valid {
-            return .None, true, .Invalid
-        }
+        if !field_present || !field_valid do return .None, true, .Invalid
 
         switch field {
         case "reasoning_content":
@@ -725,31 +615,21 @@ reasoning_normalize :: proc(
     err: Normalize_Error,
 ) {
     value, present := object["reasoning_options"]
-    if !present {
-        return spec, .None
-    }
+    if !present do return spec, .None
 
     options, options_ok := value.(json.Array)
-    if !options_ok {
-        return spec, .Invalid
-    }
-    if len(options) == 0 {
-        return spec, .None
-    }
+    if !options_ok do return spec, .Invalid
+    if len(options) == 0 do return spec, .None
 
     primary: json.Object
     primary_kind := Reasoning_Option_Kind.None
     has_toggle := false
     for item, i in options {
         option, option_ok := item.(json.Object)
-        if !option_ok {
-            return spec, .Invalid
-        }
+        if !option_ok do return spec, .Invalid
 
         kind, kind_err := reasoning_option_kind(option)
-        if kind_err != .None {
-            return spec, kind_err
-        }
+        if kind_err != .None do return spec, kind_err
         has_toggle = has_toggle || kind == .Toggle
 
         if i == 0 {
@@ -785,22 +665,16 @@ reasoning_normalize :: proc(
         }
 
     case .Openai_Responses:
-        if primary_kind == .Effort {
-            effort_levels_add(&spec, primary) or_return
-        }
+        if primary_kind == .Effort do effort_levels_add(&spec, primary) or_return
 
     case .Openai_Chat:
         if primary_kind == .Effort {
             values, values_present := primary["values"]
             effort_values, values_ok := values.(json.Array)
-            if !values_present || !values_ok {
-                return spec, .Invalid
-            }
+            if !values_present || !values_ok do return spec, .Invalid
 
             off_present := effort_values_contain_off(effort_values) or_return
-            if (interleaved_present || has_toggle) && !off_present {
-                reasoning_level_add(&spec, "off")
-            }
+            if (interleaved_present || has_toggle) && !off_present do reasoning_level_add(&spec, "off")
             effort_levels_add(&spec, primary) or_return
 
             spec.format = .Openrouter if npm == "@openrouter/ai-sdk-provider" else .Deepseek if has_toggle else .Openai
@@ -817,9 +691,7 @@ reasoning_normalize :: proc(
 @(private)
 reasoning_option_kind :: proc(object: json.Object) -> (Reasoning_Option_Kind, Normalize_Error) {
     kind, present, valid := json.read_string(object, "type", 32, false)
-    if !present || !valid {
-        return .None, .Invalid
-    }
+    if !present || !valid do return .None, .Invalid
 
     switch kind {
     case "effort":
@@ -841,18 +713,12 @@ effort_levels_add :: proc(spec: ^Reasoning_Spec, option: json.Object) -> Normali
 
     value, present := option["values"]
     values, values_ok := value.(json.Array)
-    if !present || !values_ok {
-        return .Invalid
-    }
+    if !present || !values_ok do return .Invalid
 
     for item in values {
         level, known, valid := reasoning_level(item)
-        if !valid {
-            return .Invalid
-        }
-        if known {
-            reasoning_level_add(spec, level)
-        }
+        if !valid do return .Invalid
+        if known do reasoning_level_add(spec, level)
     }
 
     return .None
@@ -862,12 +728,8 @@ effort_levels_add :: proc(spec: ^Reasoning_Spec, option: json.Object) -> Normali
 effort_values_contain_off :: proc(values: json.Array) -> (bool, Normalize_Error) {
     for value in values {
         level, known, valid := reasoning_level(value)
-        if !valid {
-            return false, .Invalid
-        }
-        if known && level == "off" {
-            return true, .None
-        }
+        if !valid do return false, .Invalid
+        if known && level == "off" do return true, .None
     }
 
     return false, .None
@@ -875,14 +737,10 @@ effort_values_contain_off :: proc(values: json.Array) -> (bool, Normalize_Error)
 
 @(private)
 reasoning_level :: proc(value: json.Value) -> (level: string, known, valid: bool) {
-    if _, null_ok := value.(json.Null); null_ok {
-        return "off", true, true
-    }
+    if _, null_ok := value.(json.Null); null_ok do return "off", true, true
 
     token, string_ok := value.(json.String)
-    if !string_ok {
-        return "", false, false
-    }
+    if !string_ok do return "", false, false
 
     switch token {
     case "none", "off":
@@ -904,9 +762,7 @@ reasoning_level_add :: proc(spec: ^Reasoning_Spec, level: string) {
     assert(len(level) > 0 && len(level) <= 32, "a canonical reasoning level fits the wire")
 
     for previous in spec.levels[:spec.level_count] {
-        if previous == level {
-            return
-        }
+        if previous == level do return
     }
 
     assert(spec.level_count < len(spec.levels), "the closed reasoning level set fits its bound")
@@ -918,24 +774,18 @@ reasoning_level_add :: proc(spec: ^Reasoning_Spec, level: string) {
 reasoning_budget :: proc(object: json.Object) -> (minimum: Maybe(i64), maximum: Maybe(u64), err: Normalize_Error) {
     if value, present := object["min"]; present {
         parsed, valid := json.integer_i64(value)
-        if !valid || parsed < -1 {
-            return nil, nil, .Invalid
-        }
+        if !valid || parsed < -1 do return nil, nil, .Invalid
         minimum = parsed
     }
 
     if value, present := object["max"]; present {
         parsed, valid := json.integer_i64(value)
-        if !valid || parsed < 0 {
-            return nil, nil, .Invalid
-        }
+        if !valid || parsed < 0 do return nil, nil, .Invalid
         maximum = u64(parsed)
     }
 
     if min_value, min_present := minimum.?; min_present {
-        if max_value, max_present := maximum.?; max_present && min_value > i64(max_value) {
-            return nil, nil, .Invalid
-        }
+        if max_value, max_present := maximum.?; max_present && min_value > i64(max_value) do return nil, nil, .Invalid
     }
 
     return minimum, maximum, .None
@@ -955,14 +805,10 @@ reasoning_levels_clone :: proc(spec: Reasoning_Spec, allocator: mem.Allocator) -
 // Prefer "medium", otherwise the middle level, and no default for an empty set. Imported
 // and custom models share this one rule so their defaults cannot diverge.
 default_reasoning_level :: proc(levels: []string) -> string {
-    if len(levels) == 0 {
-        return ""
-    }
+    if len(levels) == 0 do return ""
 
     for level in levels {
-        if level == "medium" {
-            return level
-        }
+        if level == "medium" do return level
     }
 
     return levels[len(levels) / 2]
@@ -971,22 +817,16 @@ default_reasoning_level :: proc(levels: []string) -> string {
 @(private)
 cost_normalize :: proc(object: json.Object) -> (cost: wire.Model_Cost, err: Normalize_Error) {
     value, present := object["cost"]
-    if !present {
-        return {}, .None
-    }
+    if !present do return {}, .None
 
     cost_object, object_ok := value.(json.Object)
-    if !object_ok {
-        return {}, .Invalid
-    }
+    if !object_ok do return {}, .Invalid
 
     input, input_present, input_valid := json.read_f64_nonneg(cost_object, "input")
     output, output_present, output_valid := json.read_f64_nonneg(cost_object, "output")
     cache_read, _, cache_read_valid := json.read_f64_nonneg(cost_object, "cache_read")
     cache_write, _, cache_write_valid := json.read_f64_nonneg(cost_object, "cache_write")
-    if !input_present || !input_valid || !output_present || !output_valid || !cache_read_valid || !cache_write_valid {
-        return {}, .Invalid
-    }
+    if !input_present || !input_valid || !output_present || !output_valid || !cache_read_valid || !cache_write_valid do return {}, .Invalid
 
     return {input = input, output = output, cache_read = cache_read, cache_write = cache_write}, .None
 }

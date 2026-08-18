@@ -14,17 +14,11 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
     methods := model_enum(m, "Method_Name")
     broadcasts := model_enum(m, "Broadcast_Name")
 
-    if methods == nil {
-        gen.diagf(d, gen.Pos{}, "Method_Name is missing from the model, so no method registry can be built")
-    }
+    if methods == nil do gen.diagf(d, gen.Pos{}, "Method_Name is missing from the model, so no method registry can be built")
 
-    if broadcasts == nil {
-        gen.diagf(d, gen.Pos{}, "Broadcast_Name is missing from the model, so no broadcast registry can be built")
-    }
+    if broadcasts == nil do gen.diagf(d, gen.Pos{}, "Broadcast_Name is missing from the model, so no broadcast registry can be built")
 
-    if methods == nil || broadcasts == nil {
-        return
-    }
+    if methods == nil || broadcasts == nil do return
 
     params := dispatch_read(m, ps, "request_params_from_reader", d)
     defer delete(params)
@@ -47,13 +41,9 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
         params_type, has_params := params[value.name]
         result_type, has_result := results[value.name]
 
-        if !has_params {
-            gen.diagf(d, methods.pos, "Method_Name.%s has no case in request_params_from_reader", value.name)
-        }
+        if !has_params do gen.diagf(d, methods.pos, "Method_Name.%s has no case in request_params_from_reader", value.name)
 
-        if !has_result {
-            gen.diagf(d, methods.pos, "Method_Name.%s has no case in response_result_from_reader", value.name)
-        }
+        if !has_result do gen.diagf(d, methods.pos, "Method_Name.%s has no case in response_result_from_reader", value.name)
 
         optional := defaults[value.name]
 
@@ -74,13 +64,9 @@ registry_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
         payload, has_payload := payloads[value.name]
         class, has_class := classes[value.name]
 
-        if !has_payload {
-            gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_data_from_reader", value.name)
-        }
+        if !has_payload do gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_data_from_reader", value.name)
 
-        if !has_class {
-            gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_name_class", value.name)
-        }
+        if !has_class do gen.diagf(d, broadcasts.pos, "Broadcast_Name.%s has no case in broadcast_name_class", value.name)
 
         // The forward and reverse maps must agree: the reverse one is what the daemon's
         // pump and resync fold route on, so a disagreement is a live routing bug.
@@ -141,9 +127,7 @@ dispatch_read :: proc(m: ^Model, ps: ^Package_Source, proc_name: string, d: ^gen
     }
 
     for clause in clauses {
-        if len(clause.list) == 0 {
-            continue
-        }
+        if len(clause.list) == 0 do continue
 
         pos := source_pos(ref.source, clause.pos.line)
         payload, resolved := case_payload_type(m, ps, clause, ref.source)
@@ -195,27 +179,19 @@ case_payload_type :: proc(
     for stmt in clause.body {
         assign, is_assign := stmt.derived_stmt.(^ast.Assign_Stmt)
 
-        if !is_assign {
-            continue
-        }
+        if !is_assign do continue
 
         for rhs in assign.rhs {
-            if name := call_target_name(rhs); name != "" {
-                append(&targets, name)
-            }
+            if name := call_target_name(rhs); name != "" do append(&targets, name)
         }
     }
 
     for name in targets {
-        if is_model_type(m, name) {
-            return name, true
-        }
+        if is_model_type(m, name) do return name, true
     }
 
     for name in targets {
-        if ref, known := ps.procs[name]; known && ref.result_type != "" {
-            return ref.result_type, true
-        }
+        if ref, known := ps.procs[name]; known && ref.result_type != "" do return ref.result_type, true
     }
 
     return "", false
@@ -223,14 +199,10 @@ case_payload_type :: proc(
 
 // Whether `name` is a type the model already holds.
 is_model_type :: proc(m: ^Model, name: string) -> bool {
-    if model_struct(m, name) != nil || model_union(m, name) != nil || model_enum(m, name) != nil {
-        return true
-    }
+    if model_struct(m, name) != nil || model_union(m, name) != nil || model_enum(m, name) != nil do return true
 
     for a in m.aliases {
-        if a.name == name {
-            return true
-        }
+        if a.name == name do return true
     }
 
     return false
@@ -238,9 +210,7 @@ is_model_type :: proc(m: ^Model, name: string) -> bool {
 
 // The called procedure's name, unwrapping `or_return`.
 call_target_name :: proc(e: ^ast.Expr) -> string {
-    if e == nil {
-        return ""
-    }
+    if e == nil do return ""
 
     #partial switch v in e.derived {
     case ^ast.Or_Return_Expr:
@@ -249,9 +219,7 @@ call_target_name :: proc(e: ^ast.Expr) -> string {
     case ^ast.Call_Expr:
         ident, is_ident := v.expr.derived.(^ast.Ident)
 
-        if !is_ident {
-            return ""
-        }
+        if !is_ident do return ""
 
         return ident.name
     }
@@ -281,22 +249,16 @@ broadcast_selector_fields :: proc(ps: ^Package_Source, proc_name: string, d: ^ge
     }
 
     for clause in clauses {
-        if len(clause.list) != 1 {
-            continue
-        }
+        if len(clause.list) != 1 do continue
 
         arm := expr_text(ref.source, clause.list[0])
 
         for stmt in clause.body {
             ret, is_return := stmt.derived_stmt.(^ast.Return_Stmt)
 
-            if !is_return || len(ret.results) == 0 {
-                continue
-            }
+            if !is_return || len(ret.results) == 0 do continue
 
-            if sel, is_sel := ret.results[0].derived.(^ast.Selector_Expr); is_sel && sel.field != nil {
-                out[arm] = sel.field.name
-            }
+            if sel, is_sel := ret.results[0].derived.(^ast.Selector_Expr); is_sel && sel.field != nil do out[arm] = sel.field.name
         }
     }
 
@@ -324,16 +286,12 @@ broadcast_name_reverse :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string
     }
 
     for clause in clauses {
-        if len(clause.list) != 1 {
-            continue
-        }
+        if len(clause.list) != 1 do continue
 
         arm := expr_text(ref.source, clause.list[0])
         member := return_first_enum_member(clause)
 
-        if arm != "" && member != "" {
-            out[arm] = member
-        }
+        if arm != "" && member != "" do out[arm] = member
     }
 
     return out
@@ -344,13 +302,9 @@ return_first_enum_member :: proc(clause: ^ast.Case_Clause) -> string {
     for stmt in clause.body {
         ret, is_return := stmt.derived_stmt.(^ast.Return_Stmt)
 
-        if !is_return || len(ret.results) == 0 {
-            continue
-        }
+        if !is_return || len(ret.results) == 0 do continue
 
-        if name := enum_member_name(ret.results[0]); name != "" {
-            return name
-        }
+        if name := enum_member_name(ret.results[0]); name != "" do return name
     }
 
     return ""
@@ -377,9 +331,7 @@ broadcast_classes :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]stri
     }
 
     for clause in clauses {
-        if len(clause.list) == 0 {
-            continue
-        }
+        if len(clause.list) == 0 do continue
 
         class := return_first_enum_member(clause)
 
@@ -396,9 +348,7 @@ broadcast_classes :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]stri
         class_name := wire_snake_case(class)
 
         for label in clause.list {
-            if member := enum_member_name(label); member != "" {
-                out[member] = class_name
-            }
+            if member := enum_member_name(label); member != "" do out[member] = class_name
         }
     }
 
@@ -427,9 +377,7 @@ params_optional_set :: proc(ps: ^Package_Source, d: ^gen.Diags) -> map[string]bo
 
     for clause in clauses {
         for label in clause.list {
-            if member := enum_member_name(label); member != "" {
-                out[member] = true
-            }
+            if member := enum_member_name(label); member != "" do out[member] = true
         }
     }
 
@@ -449,9 +397,7 @@ delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) 
     defer delete(seen)
 
     for b in m.broadcasts {
-        if b.class in seen {
-            continue
-        }
+        if b.class in seen do continue
 
         seen[b.class] = true
         sequenced := false
@@ -467,13 +413,9 @@ delivery_classes_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) 
         is_gated, gated_known := gated[b.class]
         is_droppable, droppable_known := droppable[b.class]
 
-        if !gated_known {
-            gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_gated", b.class)
-        }
+        if !gated_known do gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_gated", b.class)
 
-        if !droppable_known {
-            gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_droppable", b.class)
-        }
+        if !droppable_known do gen.diagf(d, gen.Pos{}, "delivery class %s has no case in broadcast_class_droppable", b.class)
 
         append(
             &m.delivery_classes,
@@ -519,9 +461,7 @@ broadcast_class_rule :: proc(ps: ^Package_Source, accessor: string, d: ^gen.Diag
         }
 
         for label in clause.list {
-            if member := enum_member_name(label); member != "" {
-                out[wire_snake_case(member)] = value
-            }
+            if member := enum_member_name(label); member != "" do out[wire_snake_case(member)] = value
         }
     }
 
@@ -533,19 +473,13 @@ sole_bool_return :: proc(ref: Proc_Ref, clause: ^ast.Case_Clause) -> (value: boo
     for stmt in clause.body {
         ret, is_return := stmt.derived_stmt.(^ast.Return_Stmt)
 
-        if !is_return || len(ret.results) == 0 {
-            continue
-        }
+        if !is_return || len(ret.results) == 0 do continue
 
-        if sole {
-            return false, false
-        }
+        if sole do return false, false
 
         text := expr_text(ref.source, ret.results[0])
 
-        if text != "true" && text != "false" {
-            return false, false
-        }
+        if text != "true" && text != "false" do return false, false
 
         value, sole = text == "true", true
     }
@@ -563,9 +497,7 @@ errors_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
         return
     }
 
-    if !codes.numeric {
-        gen.diagf(d, codes.pos, "Error_Code is mapped by %s, which is not the numeric wire table", codes.table)
-    }
+    if !codes.numeric do gen.diagf(d, codes.pos, "Error_Code is mapped by %s, which is not the numeric wire table", codes.table)
 
     for value in codes.values {
         number, ok := parse_i32(value.wire)
@@ -583,9 +515,7 @@ errors_collect :: proc(m: ^Model, ps: ^Package_Source, d: ^gen.Diags) {
 parse_i32 :: proc(text: string) -> (out: i32, ok: bool) {
     n := strconv.parse_i64_of_base(strings.trim_space(text), 10) or_return
 
-    if n < i64(min(i32)) || n > i64(max(i32)) {
-        return 0, false
-    }
+    if n < i64(min(i32)) || n > i64(max(i32)) do return 0, false
 
     return i32(n), true
 }

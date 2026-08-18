@@ -23,9 +23,7 @@ App :: struct {
 // callbacks must tolerate a host that does not exist yet. Pre-init input has nowhere to go.
 on_event :: proc(user: rawptr, ev: term.Event) {
     app := (^App)(user)
-    if app.host.js.ctx == nil {
-        return
-    }
+    if app.host.js.ctx == nil do return
 
     host_on_term_event(&app.host, ev)
 }
@@ -77,16 +75,12 @@ run :: proc() {
 
     host_start(&app.host)
     for !app.host.done && app.host.last_err == "" {
-        if terr := nbio.tick(); terr != nil {
-            break
-        }
+        if terr := nbio.tick(); terr != nil do break
     }
 
     // Clone errors before defers free host state. Defers run on return (not os.exit).
     err_copy := ""
-    if app.host.last_err != "" {
-        err_copy = strings.clone(app.host.last_err)
-    }
+    if app.host.last_err != "" do err_copy = strings.clone(app.host.last_err)
 
     if err_copy != "" {
         // Explicit teardown so we never os.exit with live alt-screen / open VM.

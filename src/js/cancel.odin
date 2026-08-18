@@ -33,9 +33,7 @@ cancel_signal_new :: proc(h: ^Host, default_cwd: string) -> (qjs.Value, ^Run_Sco
     assert(h.cancel_class != qjs.INVALID_CLASS_ID, "a live host registered its cancellation class")
 
     scope, alloc_err := new(Run_Scope, h.allocator)
-    if alloc_err != nil {
-        return qjs.undefined(), nil, false
-    }
+    if alloc_err != nil do return qjs.undefined(), nil, false
     scope^ = {
         allocator = h.allocator,
         refs      = 1,
@@ -104,24 +102,18 @@ cancel_retain :: proc(scope: ^Run_Scope) {
 
 @(private = "package")
 cancel_release :: proc(scope: ^Run_Scope) {
-    if scope == nil {
-        return
-    }
+    if scope == nil do return
 
     assert(scope.refs > 0, "a cancellation release has an owner")
     scope.refs -= 1
-    if scope.refs == 0 {
-        run_scope_free(scope)
-    }
+    if scope.refs == 0 do run_scope_free(scope)
 }
 
 @(private = "file")
 run_scope_free :: proc(scope: ^Run_Scope) {
     assert(scope != nil, "freeing a run scope needs one")
 
-    if scope.default_cwd != "" {
-        delete(scope.default_cwd, scope.allocator)
-    }
+    if scope.default_cwd != "" do delete(scope.default_cwd, scope.allocator)
 
     free(scope, scope.allocator)
 }
@@ -143,9 +135,7 @@ cancel_arg :: proc(
     assert(h != nil, "a host operation has a host")
 
     if argc <= index || qjs.is_undefined(argv[index]) || qjs.is_null(argv[index]) {
-        if h.cancel_enforced {
-            return nil, qjs.throw_type_error(ctx, "a run cancellation signal is required"), false
-        }
+        if h.cancel_enforced do return nil, qjs.throw_type_error(ctx, "a run cancellation signal is required"), false
 
         return nil, qjs.undefined(), true
     }
@@ -159,13 +149,9 @@ cancel_value :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (^Run_Scope, qjs.Va
     assert(h != nil, "a cancellation signal has a host")
 
     scope := (^Run_Scope)(qjs.get_opaque(value, h.cancel_class))
-    if scope == nil {
-        return nil, qjs.throw_type_error(ctx, "invalid run cancellation signal"), false
-    }
+    if scope == nil do return nil, qjs.throw_type_error(ctx, "invalid run cancellation signal"), false
 
-    if cancelled_scope(scope) {
-        return nil, qjs.throw_type_error(ctx, "operation canceled"), false
-    }
+    if cancelled_scope(scope) do return nil, qjs.throw_type_error(ctx, "operation canceled"), false
 
     return scope, qjs.undefined(), true
 }

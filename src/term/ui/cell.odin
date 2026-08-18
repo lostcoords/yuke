@@ -46,9 +46,7 @@ glyph_pool_index :: proc(g: Glyph) -> int {
 
 // The inline scalar, or false if `g` is pooled.
 glyph_scalar :: proc(g: Glyph) -> (rune, bool) {
-    if glyph_is_pooled(g) {
-        return 0, false
-    }
+    if glyph_is_pooled(g) do return 0, false
 
     return rune(u32(g)), true
 }
@@ -93,21 +91,13 @@ pool_destroy :: proc(pool: ^Grapheme_Pool) {
 
 // Intern `cluster`, returning its pooled glyph (deduped by content).
 pool_intern :: proc(pool: ^Grapheme_Pool, cluster: string) -> (Glyph, Pool_Error) {
-    if len(cluster) > MAX_GRAPHEME_BYTES {
-        return {}, .Grapheme_Too_Long
-    }
+    if len(cluster) > MAX_GRAPHEME_BYTES do return {}, .Grapheme_Too_Long
 
-    if index, ok := pool.by_str[cluster]; ok {
-        return glyph_pooled(index), .None
-    }
+    if index, ok := pool.by_str[cluster]; ok do return glyph_pooled(index), .None
 
-    if len(pool.strings) >= MAX_GRAPHEMES_PER_GENERATION {
-        return {}, .Pool_Full
-    }
+    if len(pool.strings) >= MAX_GRAPHEMES_PER_GENERATION do return {}, .Pool_Full
 
-    if len(cluster) > MAX_GRAPHEME_BYTES_PER_GENERATION - pool.bytes_len {
-        return {}, .Pool_Full
-    }
+    if len(cluster) > MAX_GRAPHEME_BYTES_PER_GENERATION - pool.bytes_len do return {}, .Pool_Full
 
     owned := strings.clone(cluster, pool.allocator)
 

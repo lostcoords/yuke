@@ -101,14 +101,10 @@ reader_destroy :: proc(r: ^Reader) {
 // Append at most 64 KiB of freshly read bytes; then drain with `reader_next`.
 // `Input_Too_Large` leaves the pending bytes unchanged.
 reader_push :: proc(r: ^Reader, bytes: []u8) -> Reader_Error {
-    if len(bytes) > MAX_PUSH_BYTES {
-        return .Input_Too_Large
-    }
+    if len(bytes) > MAX_PUSH_BYTES do return .Input_Too_Large
 
     pending_len := len(r.tail) - r.tail_start
-    if len(bytes) > MAX_TAIL_BYTES - pending_len {
-        return .Input_Too_Large
-    }
+    if len(bytes) > MAX_TAIL_BYTES - pending_len do return .Input_Too_Large
 
     // Compact once per stdin read, not once per parsed event: draining N events
     // otherwise shifts the tail N times, which is O(n^2) under a burst.
@@ -150,9 +146,7 @@ reader_next :: proc(r: ^Reader) -> Event {
         event, consumed, incomplete := parse(reader_pending(r))
         if incomplete {
             // An oversized unresolved tail is garbage (see MAX_SEQ_BYTES).
-            if len(r.tail) - r.tail_start > MAX_SEQ_BYTES {
-                reader_clear_tail(r)
-            }
+            if len(r.tail) - r.tail_start > MAX_SEQ_BYTES do reader_clear_tail(r)
 
             return nil
         }
@@ -177,9 +171,7 @@ reader_next :: proc(r: ^Reader) -> Event {
 // Resolve a pending partial when no more bytes are coming (ESC-timeout / EOF): a
 // lone ESC becomes Escape. Returns a `nil` event mid-paste or with an empty tail.
 reader_flush :: proc(r: ^Reader) -> Event {
-    if r.in_paste || len(r.tail) - r.tail_start == 0 {
-        return nil
-    }
+    if r.in_paste || len(r.tail) - r.tail_start == 0 do return nil
 
     ev := flush(reader_pending(r))
     reader_clear_tail(r)
@@ -226,17 +218,13 @@ paste_reset :: proc(r: ^Reader) {
 append_paste :: proc(r: ^Reader, bytes: []u8) {
     room := MAX_PASTE_BYTES - len(r.paste)
     if room <= 0 {
-        if len(bytes) > 0 {
-            r.paste_truncated = true
-        }
+        if len(bytes) > 0 do r.paste_truncated = true
 
         return
     }
 
     n := min(room, len(bytes))
-    if n < len(bytes) {
-        r.paste_truncated = true
-    }
+    if n < len(bytes) do r.paste_truncated = true
 
     needed := len(r.paste) + n
     if needed > cap(r.paste) {
@@ -261,9 +249,7 @@ move_to_paste :: proc(r: ^Reader, n: int) {
 // Drop the first `n` unconsumed bytes of `tail`.
 reader_consume :: proc(r: ^Reader, n: int) {
     r.tail_start += n
-    if r.tail_start == len(r.tail) {
-        reader_clear_tail(r)
-    }
+    if r.tail_start == len(r.tail) do reader_clear_tail(r)
 }
 
 // Drop all tail bytes (retaining capacity for reuse) and reset the read cursor.

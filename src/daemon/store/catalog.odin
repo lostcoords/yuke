@@ -129,39 +129,27 @@ catalog_imported_replace :: proc(s: ^Store, item: model_catalog.Provider, feed_e
     assert(s != nil, "catalog_imported_replace needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    if !catalog_provider_valid(item, feed_etag) || len(item.models) > CATALOG_MODELS_MAX {
-        return .Invalid_Catalog
-    }
+    if !catalog_provider_valid(item, feed_etag) || len(item.models) > CATALOG_MODELS_MAX do return .Invalid_Catalog
 
     for model, index in item.models {
-        if !catalog_model_valid(model) || model.info.provider != item.id {
-            return .Invalid_Catalog
-        }
+        if !catalog_model_valid(model) || model.info.provider != item.id do return .Invalid_Catalog
 
         for previous in item.models[:index] {
-            if previous.info.id == model.info.id {
-                return .Invalid_Catalog
-            }
+            if previous.info.id == model.info.id do return .Invalid_Catalog
         }
     }
 
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
     defer if err != nil {
-        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
-            err = rollback
-        }
+        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok do err = rollback
     }
 
     queries.delete_catalog_provider(&s.queries, {provider_id = item.id}) or_return
 
     size, size_err := queries.catalog_size(&s.queries, {})
-    if size_err != nil {
-        return read_err(size_err)
-    }
-    if size.providers >= CATALOG_PROVIDERS_MAX || size.models > u64(CATALOG_MODELS_MAX - len(item.models)) {
-        return .Invalid_Catalog
-    }
+    if size_err != nil do return read_err(size_err)
+    if size.providers >= CATALOG_PROVIDERS_MAX || size.models > u64(CATALOG_MODELS_MAX - len(item.models)) do return .Invalid_Catalog
 
     catalog_provider_insert(s, item, feed_etag) or_return
     for model in item.models {
@@ -193,9 +181,7 @@ catalog_provider_insert :: proc(s: ^Store, item: model_catalog.Provider, feed_et
         protocol      = wire.provider_protocol_to_wire(item.endpoint.protocol),
     }
 
-    if feed_etag != "" {
-        params.etag = feed_etag
-    }
+    if feed_etag != "" do params.etag = feed_etag
 
     queries.insert_catalog_provider(&s.queries, params) or_return
     for name, ordinal in item.credential_env {
@@ -258,9 +244,7 @@ catalog_load :: proc(s: ^Store, allocator := context.allocator) -> (catalog: Cat
     loaded: Catalog
     loaded.allocator = allocator
     loaded.providers.allocator = allocator
-    defer if err != nil {
-        catalog_destroy(&loaded)
-    }
+    defer if err != nil do catalog_destroy(&loaded)
 
     catalog_providers_load(s, &loaded) or_return
     catalog_provider_env_load(s, &loaded) or_return
@@ -274,15 +258,11 @@ catalog_load :: proc(s: ^Store, allocator := context.allocator) -> (catalog: Cat
 
         // The order is what a client pages against, so it is checked rather than assumed.
         for model, index in item.models {
-            if index > 0 && !(string(item.models[index - 1].info.id) < string(model.info.id)) {
-                return {}, .Invalid_Row
-            }
+            if index > 0 && !(string(item.models[index - 1].info.id) < string(model.info.id)) do return {}, .Invalid_Row
         }
     }
 
-    if !catalog_loaded_valid(loaded) {
-        return {}, .Invalid_Row
-    }
+    if !catalog_loaded_valid(loaded) do return {}, .Invalid_Row
 
     return loaded, nil
 }
@@ -297,9 +277,7 @@ catalog_providers_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         row: Catalog_Provider_Row
         sqlite.scan_row(st, &row, catalog.allocator) or_return
@@ -312,9 +290,7 @@ catalog_providers_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
         append(&catalog.providers, item)
 
         // Every row carries the same validator, so the first one answers for all.
-        if etag, has_etag := row.etag.?; has_etag && catalog.feed_etag == "" {
-            catalog.feed_etag = string_clone(etag, catalog.allocator)
-        }
+        if etag, has_etag := row.etag.?; has_etag && catalog.feed_etag == "" do catalog.feed_etag = string_clone(etag, catalog.allocator)
     }
 
     return nil
@@ -328,14 +304,10 @@ catalog_provider_from_row :: proc(
     item: model_catalog.Provider,
     err: Error,
 ) {
-    defer if err != nil {
-        model_catalog.provider_destroy(&item, allocator)
-    }
+    defer if err != nil do model_catalog.provider_destroy(&item, allocator)
 
     protocol, protocol_ok := wire.provider_protocol_from_wire(row.protocol)
-    if !protocol_ok {
-        return item, .Invalid_Row
-    }
+    if !protocol_ok do return item, .Invalid_Row
 
     etag, _ := row.etag.?
 
@@ -347,9 +319,7 @@ catalog_provider_from_row :: proc(
         name = row.name,
         endpoint = {base_url = row.base_url, protocol = protocol},
     }
-    if !catalog_provider_valid(borrowed, etag) {
-        return item, .Invalid_Row
-    }
+    if !catalog_provider_valid(borrowed, etag) do return item, .Invalid_Row
 
     item.models.allocator = allocator
     item.endpoint.protocol = protocol
@@ -370,16 +340,12 @@ catalog_provider_env_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         row: Catalog_Provider_Env_Row
         sqlite.scan_row(st, &row, catalog.allocator) or_return
 
-        if !model_catalog.env_name_valid(row.name) {
-            return .Invalid_Row
-        }
+        if !model_catalog.env_name_valid(row.name) do return .Invalid_Row
 
         index, found := catalog_provider_find(catalog.providers[:], row.provider_id)
         if !found ||
@@ -408,17 +374,13 @@ catalog_models_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
     total := 0
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         row: Catalog_Model_Row
         sqlite.scan_row(st, &row, catalog.allocator) or_return
 
         index, found := catalog_provider_find(catalog.providers[:], row.provider_id)
-        if !found {
-            return .Invalid_Row
-        }
+        if !found do return .Invalid_Row
 
         item := &catalog.providers[index]
         model := catalog_model_from_row(row, item.id, catalog.allocator) or_return
@@ -449,9 +411,7 @@ catalog_model_from_row :: proc(
     replay, replay_ok := model_catalog.reasoning_replay_from_string(row.reasoning_replay)
     format, format_ok := model_catalog.thinking_format_from_string(row.thinking_format)
     max_tokens_field, max_tokens_ok := model_catalog.max_tokens_field_from_string(row.max_tokens_field)
-    if !protocol_ok || !replay_ok || !format_ok || !max_tokens_ok {
-        return {}, .Invalid_Row
-    }
+    if !protocol_ok || !replay_ok || !format_ok || !max_tokens_ok do return {}, .Invalid_Row
 
     borrowed := model_catalog.Model {
         info = {
@@ -481,9 +441,7 @@ catalog_model_from_row :: proc(
     }
 
     // Levels arrive later, so `catalog_loaded_valid` makes the level check.
-    if !catalog_model_shape_valid(borrowed) {
-        return {}, .Invalid_Row
-    }
+    if !catalog_model_shape_valid(borrowed) do return {}, .Invalid_Row
 
     return model_catalog.model_clone(borrowed, provider_id, allocator), nil
 }
@@ -497,16 +455,12 @@ catalog_model_levels_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
     defer sqlite.finalize(st)
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         row: Catalog_Model_Level_Row
         sqlite.scan_row(st, &row, catalog.allocator) or_return
 
-        if !catalog_bounded_string_valid(row.level, 32) {
-            return .Invalid_Row
-        }
+        if !catalog_bounded_string_valid(row.level, 32) do return .Invalid_Row
 
         levels, found := catalog_model_levels_find(catalog, row.public_model_id)
         if !found ||
@@ -545,19 +499,13 @@ catalog_provider_valid :: proc(item: model_catalog.Provider, feed_etag: string) 
         return false
     }
 
-    if feed_etag != "" && !catalog_bounded_string_valid(feed_etag, CATALOG_ETAG_MAX_BYTES) {
-        return false
-    }
+    if feed_etag != "" && !catalog_bounded_string_valid(feed_etag, CATALOG_ETAG_MAX_BYTES) do return false
 
     for name, i in item.credential_env {
-        if !model_catalog.env_name_valid(name) {
-            return false
-        }
+        if !model_catalog.env_name_valid(name) do return false
 
         for previous in item.credential_env[:i] {
-            if previous == name {
-                return false
-            }
+            if previous == name do return false
         }
     }
 
@@ -597,32 +545,22 @@ catalog_budget_valid :: proc(model: model_catalog.Model) -> bool {
     minimum, has_minimum := model.reasoning_budget_min.?
     maximum, has_maximum := model.reasoning_budget_max.?
 
-    if has_minimum && (minimum < -1 || minimum > wire.MAX_WIRE_INTEGER) {
-        return false
-    }
+    if has_minimum && (minimum < -1 || minimum > wire.MAX_WIRE_INTEGER) do return false
 
-    if has_maximum && maximum > u64(wire.MAX_WIRE_INTEGER) {
-        return false
-    }
+    if has_maximum && maximum > u64(wire.MAX_WIRE_INTEGER) do return false
 
     return !has_minimum || !has_maximum || minimum <= i64(maximum)
 }
 
 @(private)
 catalog_reasoning_levels_valid :: proc(levels: []string, default: string) -> bool {
-    if len(levels) > wire.LIMITS.max_reasoning_levels || default != model_catalog.default_reasoning_level(levels) {
-        return false
-    }
+    if len(levels) > wire.LIMITS.max_reasoning_levels || default != model_catalog.default_reasoning_level(levels) do return false
 
     for level, i in levels {
-        if !catalog_bounded_string_valid(level, 32) {
-            return false
-        }
+        if !catalog_bounded_string_valid(level, 32) do return false
 
         for previous in levels[:i] {
-            if previous == level {
-                return false
-            }
+            if previous == level do return false
         }
     }
 
@@ -643,32 +581,22 @@ catalog_public_model_id_valid :: proc(id: wire.Model_Id, provider_id: wire.Provi
 
 @(private)
 catalog_loaded_valid :: proc(catalog: Catalog) -> bool {
-    if len(catalog.providers) > CATALOG_PROVIDERS_MAX {
-        return false
-    }
+    if len(catalog.providers) > CATALOG_PROVIDERS_MAX do return false
 
     total := 0
 
     for item, i in catalog.providers {
-        if !catalog_provider_valid(item, catalog.feed_etag) {
-            return false
-        }
+        if !catalog_provider_valid(item, catalog.feed_etag) do return false
 
         for previous in catalog.providers[:i] {
-            if previous.id == item.id {
-                return false
-            }
+            if previous.id == item.id do return false
         }
 
         total += len(item.models)
-        if total > CATALOG_MODELS_MAX {
-            return false
-        }
+        if total > CATALOG_MODELS_MAX do return false
 
         for model in item.models {
-            if model.info.provider != item.id || !catalog_model_valid(model) {
-                return false
-            }
+            if model.info.provider != item.id || !catalog_model_valid(model) do return false
         }
     }
 
@@ -678,9 +606,7 @@ catalog_loaded_valid :: proc(catalog: Catalog) -> bool {
 @(private)
 catalog_provider_find :: proc(providers: []model_catalog.Provider, provider_id: string) -> (index: int, found: bool) {
     for item, i in providers {
-        if item.id == provider_id {
-            return i, true
-        }
+        if item.id == provider_id do return i, true
     }
 
     return -1, false
@@ -691,9 +617,7 @@ catalog_provider_find :: proc(providers: []model_catalog.Provider, provider_id: 
 catalog_model_levels_find :: proc(catalog: ^Catalog, public_model_id: string) -> (levels: ^[]string, found: bool) {
     for &item in catalog.providers {
         for &model in item.models {
-            if model.info.id == public_model_id {
-                return &model.info.reasoning_levels, true
-            }
+            if model.info.id == public_model_id do return &model.info.reasoning_levels, true
         }
     }
 
@@ -714,18 +638,12 @@ catalog_ordinal_fill :: proc(
     assert(ordinal >= 0 && u64(ordinal) < total, "ordinal fill stays within its total")
 
     if ordinal == 0 {
-        if slot^ != nil {
-            return .Invalid_Row
-        }
+        if slot^ != nil do return .Invalid_Row
 
         slot^ = make([]string, int(total), allocator)
-    } else if len(slot^) != int(total) {
-        return .Invalid_Row
-    }
+    } else if len(slot^) != int(total) do return .Invalid_Row
 
-    if slot^[ordinal] != "" {
-        return .Invalid_Row
-    }
+    if slot^[ordinal] != "" do return .Invalid_Row
     slot^[ordinal] = string_clone(value, allocator)
 
     return nil

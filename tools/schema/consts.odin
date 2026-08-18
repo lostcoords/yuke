@@ -33,9 +33,7 @@ consts_scan :: proc(m: ^Model, ps: ^Package_Source) {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || v.is_mutable {
-                continue
-            }
+            if !is_single || v.is_mutable do continue
 
             if value, ok := const_eval(m, &s, v.values[0]); ok {
                 m.consts[expr_text(&s, v.names[0])] = value
@@ -46,9 +44,7 @@ consts_scan :: proc(m: ^Model, ps: ^Package_Source) {
             if lit, is_lit := v.values[0].derived.(^ast.Basic_Lit); is_lit {
                 text := lit.tok.text
 
-                if len(text) >= 2 && text[0] == '"' {
-                    m.strings[expr_text(&s, v.names[0])] = unquote(text)
-                }
+                if len(text) >= 2 && text[0] == '"' do m.strings[expr_text(&s, v.names[0])] = unquote(text)
             }
         }
     }
@@ -61,13 +57,9 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || v.is_mutable {
-                continue
-            }
+            if !is_single || v.is_mutable do continue
 
-            if expr_text(&s, v.names[0]) != name {
-                continue
-            }
+            if expr_text(&s, v.names[0]) != name do continue
 
             lit, is_lit := v.values[0].derived.(^ast.Comp_Lit)
 
@@ -116,9 +108,7 @@ consts_collect_table :: proc(m: ^Model, ps: ^Package_Source, name: string, out: 
 // literals, identifiers naming already-resolved constants, parentheses, unary minus, and
 // `+ - * /`. Anything else returns ok=false so the caller can diagnose precisely.
 const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool) {
-    if e == nil {
-        return 0, false
-    }
+    if e == nil do return 0, false
 
     #partial switch v in e.derived {
     case ^ast.Basic_Lit:
@@ -134,9 +124,7 @@ const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool
 
     case ^ast.Selector_Expr:
         // `LIMITS.max_page_size`
-        if expr_text(s, v.expr) != "LIMITS" {
-            return 0, false
-        }
+        if expr_text(s, v.expr) != "LIMITS" do return 0, false
 
         found, has := m.limits[v.field.name]
 
@@ -148,9 +136,7 @@ const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool
     case ^ast.Unary_Expr:
         inner, inner_ok := const_eval(m, s, v.expr)
 
-        if !inner_ok {
-            return 0, false
-        }
+        if !inner_ok do return 0, false
 
         switch v.op.text {
         case "-":
@@ -166,9 +152,7 @@ const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool
         left, left_ok := const_eval(m, s, v.left)
         right, right_ok := const_eval(m, s, v.right)
 
-        if !left_ok || !right_ok {
-            return 0, false
-        }
+        if !left_ok || !right_ok do return 0, false
 
         switch v.op.text {
         case "*":
@@ -181,9 +165,7 @@ const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool
             return left - right, true
 
         case "/":
-            if right == 0 {
-                return 0, false
-            }
+            if right == 0 do return 0, false
 
             return left / right, true
         }
@@ -199,13 +181,9 @@ const_eval :: proc(m: ^Model, s: ^Source, e: ^ast.Expr) -> (value: int, ok: bool
 bound_resolve :: proc(m: ^Model, expr: string) -> (value: int, ok: bool) {
     trimmed := strings.trim_space(expr)
 
-    if trimmed == "" {
-        return 0, false
-    }
+    if trimmed == "" do return 0, false
 
-    if n, parsed := strconv.parse_int(trimmed); parsed {
-        return n, true
-    }
+    if n, parsed := strconv.parse_int(trimmed); parsed do return n, true
 
     if strings.has_prefix(trimmed, "LIMITS.") {
         found, has := m.limits[strings.trim_prefix(trimmed, "LIMITS.")]

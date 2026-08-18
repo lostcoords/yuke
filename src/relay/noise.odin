@@ -108,9 +108,7 @@ session_initiate :: proc(sess: ^Session, allocator := context.allocator) -> (msg
     assert(sess != nil && sess.initiator && !sess.split, "session_initiate needs a fresh initiator")
 
     out, _, status := noise.handshake_initiator_step(&sess.hs, nil, nil, nil, allocator)
-    if status == .Handshake_Pending {
-        return out
-    }
+    if status == .Handshake_Pending do return out
 
     // Writing our own msg1 with validated keys has no other outcome.
     unreachable()
@@ -130,9 +128,7 @@ session_respond :: proc(
     assert(sess != nil && !sess.initiator && !sess.split, "session_respond needs a fresh responder")
 
     out, _, status := noise.handshake_responder_step(&sess.hs, msg1, nil, nil, allocator)
-    if status != .Handshake_Complete {
-        return nil, .Handshake_Failed
-    }
+    if status != .Handshake_Complete do return nil, .Handshake_Failed
 
     session_split(sess)
 
@@ -145,9 +141,7 @@ session_complete :: proc(sess: ^Session, msg2: []u8, allocator := context.alloca
     assert(sess != nil && sess.initiator && !sess.split, "session_complete needs a pending initiator")
 
     _, _, status := noise.handshake_initiator_step(&sess.hs, msg2, nil, nil, allocator)
-    if status != .Handshake_Complete {
-        return .Handshake_Failed
-    }
+    if status != .Handshake_Complete do return .Handshake_Failed
 
     session_split(sess)
 
@@ -167,13 +161,9 @@ session_seal :: proc(
     assert(sess != nil && sess.split, "session_seal before the handshake split")
 
     out, status := noise.seal_message(&sess.cs, nil, plaintext, nil, allocator)
-    if status == .Ok {
-        return out, .None
-    }
+    if status == .Ok do return out, .None
 
-    if status == .Max_Packet_Size {
-        return nil, .Frame_Too_Large
-    }
+    if status == .Max_Packet_Size do return nil, .Frame_Too_Large
 
     // Sealing our own frame past a split has no other failure on valid input.
     unreachable()
@@ -193,9 +183,7 @@ session_open :: proc(
     assert(sess != nil && sess.split, "session_open before the handshake split")
 
     out, status := noise.open_message(&sess.cs, nil, ciphertext, nil, allocator)
-    if status != .Ok {
-        return nil, .Decrypt_Failed
-    }
+    if status != .Ok do return nil, .Decrypt_Failed
 
     return out, .None
 }

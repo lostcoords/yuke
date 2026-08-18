@@ -28,15 +28,11 @@ loopback_server :: proc(args: ^Loopback_Args) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&args.port, &args.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     // Send one unmasked server text frame carrying "hello".
     srv_send_frame(conn, true, .Text, transmute([]byte)string("hello"))
@@ -132,9 +128,7 @@ srv_accept :: proc(port: ^int, listening: ^bool) -> (listener: net.TCP_Socket, c
 // fixed port, which fails the moment anything happens to be listening there.
 srv_dead_port :: proc(t: ^testing.T) -> int {
     l, lerr := net.listen_tcp(net.Endpoint{address = net.IP4_Loopback, port = 0})
-    if !testing.expect(t, lerr == nil, "should be able to reserve a port") {
-        return 0
-    }
+    if !testing.expect(t, lerr == nil, "should be able to reserve a port") do return 0
     defer net.close(l)
 
     bound, berr := net.bound_endpoint(l)
@@ -147,14 +141,10 @@ srv_dead_port :: proc(t: ^testing.T) -> int {
 srv_read_request :: proc(conn: net.TCP_Socket, buf: []byte) -> (n: int, ok: bool) {
     for n < len(buf) {
         got, rerr := net.recv_tcp(conn, buf[n:])
-        if rerr != nil || got == 0 {
-            return n, false
-        }
+        if rerr != nil || got == 0 do return n, false
 
         n += got
-        if strings.contains(string(buf[:n]), "\r\n\r\n") {
-            return n, true
-        }
+        if strings.contains(string(buf[:n]), "\r\n\r\n") do return n, true
     }
 
     return n, false
@@ -166,9 +156,7 @@ srv_read_request :: proc(conn: net.TCP_Socket, buf: []byte) -> (n: int, ok: bool
 // server caller. The response borrows `allocator`.
 srv_build_upgrade_response :: proc(request: []byte, allocator := context.temp_allocator) -> (resp: []byte, ok: bool) {
     req, result, _, status := parse_upgrade_request(request)
-    if status != .Ready || result != .Ok {
-        return nil, false
-    }
+    if status != .Ready || result != .Ok do return nil, false
 
     return build_upgrade_response(transmute([]byte)req.key, allocator), true
 }
@@ -177,14 +165,10 @@ srv_build_upgrade_response :: proc(request: []byte, allocator := context.temp_al
 srv_upgrade :: proc(conn: net.TCP_Socket) -> bool {
     req: [4096]byte
     n, ok := srv_read_request(conn, req[:])
-    if !ok {
-        return false
-    }
+    if !ok do return false
 
     resp, dok := srv_build_upgrade_response(req[:n], context.temp_allocator)
-    if !dok {
-        return false
-    }
+    if !dok do return false
 
     _, serr := net.send_tcp(conn, resp)
 
@@ -251,19 +235,13 @@ srv_next_frame :: proc(r: ^Srv_Frame_Reader) -> (opcode: Op_Code, payload: []byt
 
     for {
         msg, has, err := decoder_next(&r.decoder, context.temp_allocator)
-        if err != .None {
-            return .Continuation, nil, false
-        }
+        if err != .None do return .Continuation, nil, false
 
-        if has {
-            return message_kind_opcode(msg.kind), msg.data, true
-        }
+        if has do return message_kind_opcode(msg.kind), msg.data, true
 
         // Not a whole frame yet; pull more bytes and feed the decoder.
         n, rerr := net.recv_tcp(r.conn, r.buf[:])
-        if rerr != nil || n == 0 {
-            return .Continuation, nil, false
-        }
+        if rerr != nil || n == 0 do return .Continuation, nil, false
 
         decoder_feed(&r.decoder, r.buf[:n])
     }
@@ -295,9 +273,7 @@ message_kind_opcode :: proc(kind: Message_Kind) -> Op_Code {
 // A startup readiness backstop, not protocol synchronization.
 srv_wait_listening :: proc(listening: ^bool) -> bool {
     for _ in 0 ..< 500 {
-        if sync.atomic_load(listening) {
-            return true
-        }
+        if sync.atomic_load(listening) do return true
 
         time.sleep(time.Millisecond)
     }
@@ -408,9 +384,7 @@ test_client_loopback :: proc(t: ^testing.T) {
 
         time.sleep(10 * time.Millisecond)
     }
-    if !testing.expect(t, ready, "server should start listening") {
-        return
-    }
+    if !testing.expect(t, ready, "server should start listening") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -467,23 +441,17 @@ srv_regression :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     r := Srv_Frame_Reader {
         conn = conn,
     }
     op, _, fok := srv_next_frame(&r)
-    if fok && op == .Connection_Close {
-        s.close_seen = true
-    }
+    if fok && op == .Connection_Close do s.close_seen = true
 
     s.ok = true
 }
@@ -515,9 +483,7 @@ test_client_teardown_uaf :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -644,16 +610,12 @@ srv_bad_status :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
     req: [4096]byte
-    if _, rok := srv_read_request(conn, req[:]); !rok {
-        return
-    }
+    if _, rok := srv_read_request(conn, req[:]); !rok do return
 
     net.send_tcp(conn, transmute([]byte)string("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
     s.ok = true
@@ -671,9 +633,7 @@ test_client_handshake_bad_status :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -709,16 +669,12 @@ srv_handshake_flood :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
     req: [4096]byte
-    if _, rok := srv_read_request(conn, req[:]); !rok {
-        return
-    }
+    if _, rok := srv_read_request(conn, req[:]); !rok do return
 
     junk: [4096]byte
     for &b in junk {
@@ -728,9 +684,7 @@ srv_handshake_flood :: proc(s: ^Srv) {
     // 20 * 4 KiB = 80 KiB, past MAX_HANDSHAKE_RESPONSE_BYTES; stop once the client
     // gives up and the socket errors.
     for _ in 0 ..< 20 {
-        if _, serr := net.send_tcp(conn, junk[:]); serr != nil {
-            break
-        }
+        if _, serr := net.send_tcp(conn, junk[:]); serr != nil do break
     }
 
     s.ok = true
@@ -749,9 +703,7 @@ test_client_handshake_cap :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -787,22 +739,16 @@ srv_pipelined :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
     req: [4096]byte
     n, rok := srv_read_request(conn, req[:])
-    if !rok {
-        return
-    }
+    if !rok do return
 
     resp, dok := srv_build_upgrade_response(req[:n], context.temp_allocator)
-    if !dok {
-        return
-    }
+    if !dok do return
 
     frame := srv_frame_bytes(true, .Text, transmute([]byte)string("pipelined"), context.temp_allocator)
     combined := make([]byte, len(resp) + len(frame), context.temp_allocator)
@@ -829,9 +775,7 @@ test_client_pipelined_first_frame :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -875,15 +819,11 @@ srv_ping :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     srv_send_frame(conn, true, .Ping, transmute([]byte)string("ping-payload"))
 
@@ -916,9 +856,7 @@ test_client_ping_pong :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -958,23 +896,17 @@ srv_keepalive_silent :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     // Read until the client gives up and closes the transport; never send a Pong.
     scratch: [512]byte
     for {
         n, rerr := net.recv_tcp(conn, scratch[:])
-        if rerr != nil || n == 0 {
-            break
-        }
+        if rerr != nil || n == 0 do break
     }
 
     s.ok = true
@@ -992,9 +924,7 @@ test_client_keepalive_timeout :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1039,24 +969,18 @@ srv_keepalive_ponder :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     r := Srv_Frame_Reader {
         conn = conn,
     }
     for s.pings_ponged < 3 {
         op, pl, fok := srv_next_frame(&r)
-        if !fok {
-            return
-        }
+        if !fok do return
 
         if op == .Ping {
             srv_send_frame(conn, true, .Pong, pl)
@@ -1084,9 +1008,7 @@ test_client_keepalive_stays_open :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1139,15 +1061,11 @@ srv_close_with_code :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     code := u16(Close_Code.Normal_Closure)
     body: [5]byte
@@ -1163,9 +1081,7 @@ srv_close_with_code :: proc(s: ^Srv) {
     if fok && op == .Connection_Close {
         s.close_seen = true
         s.close_body_len = len(pl)
-        if len(pl) >= 2 {
-            s.close_code = u16(pl[0]) << 8 | u16(pl[1])
-        }
+        if len(pl) >= 2 do s.close_code = u16(pl[0]) << 8 | u16(pl[1])
     }
 
     s.ok = true
@@ -1184,9 +1100,7 @@ test_client_peer_close_with_code :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1224,15 +1138,11 @@ srv_close_empty :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     srv_send_frame(conn, true, .Connection_Close, nil)
 
@@ -1261,9 +1171,7 @@ test_client_peer_close_empty :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1300,15 +1208,11 @@ srv_abrupt :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     s.ok = true
     // Defers close the socket abruptly — no WebSocket close frame.
@@ -1327,9 +1231,7 @@ test_client_abrupt_close :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1365,15 +1267,11 @@ srv_fragmented :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     srv_send_frame(conn, false, .Text, transmute([]byte)string("Hel"))
     srv_send_frame(conn, true, .Ping, transmute([]byte)string("p"))
@@ -1386,9 +1284,7 @@ srv_fragmented :: proc(s: ^Srv) {
     }
     for {
         op, _, fok := srv_next_frame(&r)
-        if !fok || op == .Connection_Close {
-            break
-        }
+        if !fok || op == .Connection_Close do break
     }
 
     s.ok = true
@@ -1407,9 +1303,7 @@ test_client_fragmented_message :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1452,24 +1346,18 @@ srv_recv_order :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     r := Srv_Frame_Reader {
         conn = conn,
     }
     for {
         op, pl, fok := srv_next_frame(&r)
-        if !fok || op == .Connection_Close {
-            break
-        }
+        if !fok || op == .Connection_Close do break
 
         if op == .Text && s.text_count < len(s.texts) {
             s.texts[s.text_count].len = copy(s.texts[s.text_count].buf[:], pl)
@@ -1493,9 +1381,7 @@ test_client_send_serialization :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1540,15 +1426,11 @@ srv_await_close :: proc(s: ^Srv) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&s.port, &s.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
-    if !srv_upgrade(conn) {
-        return
-    }
+    if !srv_upgrade(conn) do return
 
     r := Srv_Frame_Reader {
         conn = conn,
@@ -1569,9 +1451,7 @@ test_client_send_after_close :: proc(t: ^testing.T) {
         thread.destroy(server)
     }
 
-    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") {
-        return
-    }
+    if !testing.expect(t, srv_wait_listening(&s.listening), "server should listen") do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -1776,9 +1656,7 @@ stall_server :: proc(args: ^Stall_Args) {
     defer free_all(context.temp_allocator)
 
     listener, conn, ok := srv_accept(&args.port, &args.listening)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(listener)
     defer net.close(conn)
 
@@ -1792,9 +1670,7 @@ stall_server :: proc(args: ^Stall_Args) {
     buf: [64 * 1024]byte
     for {
         n, err := net.recv_tcp(conn, buf[:])
-        if err != nil || n == 0 {
-            break
-        }
+        if err != nil || n == 0 do break
 
         total += n
         sync.atomic_store(&args.received, total)
@@ -1910,9 +1786,7 @@ test_tls_pipe_resumes_a_write_the_socket_refused :: proc(t: ^testing.T) {
     sent_frames := 0
     parked := false
     for _ in 0 ..< 400 {
-        if client_send_text(&c, payload) != .None {
-            break
-        }
+        if client_send_text(&c, payload) != .None do break
 
         sent_frames += 1
 
@@ -1935,9 +1809,7 @@ test_tls_pipe_resumes_a_write_the_socket_refused :: proc(t: ^testing.T) {
     // while the parked one is in flight, so the pump coalesces them into one multi-frame
     // batch when it resumes — which is what walks the front-trim across frames.
     for _ in 0 ..< 8 {
-        if client_send_text(&c, payload) != .None {
-            break
-        }
+        if client_send_text(&c, payload) != .None do break
 
         sent_frames += 1
     }
@@ -1965,9 +1837,7 @@ test_tls_pipe_resumes_a_write_the_socket_refused :: proc(t: ^testing.T) {
     curl.socket_destroy(&pipe.sock)
 
     for _ in 0 ..< 2000 {
-        if sync.atomic_load(&args.finished) {
-            break
-        }
+        if sync.atomic_load(&args.finished) do break
 
         time.sleep(time.Millisecond)
     }

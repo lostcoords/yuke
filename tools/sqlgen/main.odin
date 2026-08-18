@@ -43,9 +43,7 @@ main :: proc() {
     columns_by_table := make(map[string][]Column)
 
     for shape in GENERATED_SHAPES {
-        if shape.table in columns_by_table {
-            continue
-        }
+        if shape.table in columns_by_table do continue
 
         columns, columns_ok := table_columns(db, shape.table)
 
@@ -75,9 +73,7 @@ main :: proc() {
     for def, i in defs {
         query, resolve_ok := query_resolve(db, def, &d)
 
-        if !resolve_ok {
-            continue
-        }
+        if !resolve_ok do continue
 
         resolved[i] = query
     }
@@ -121,25 +117,19 @@ options_parse :: proc(args: []string) -> (opts: Options, ok: bool) {
     for i < len(args) {
         switch args[i] {
         case "--migrations":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.migrations = args[i + 1]
             i += 2
 
         case "--queries":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.queries = args[i + 1]
             i += 2
 
         case "--queries-out":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.queries_out = args[i + 1]
             i += 2

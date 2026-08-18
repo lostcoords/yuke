@@ -234,9 +234,7 @@ model_struct :: proc(m: ^Model, name: string) -> ^Struct_Def {
     assert(m != nil, "model_struct needs a model")
 
     for &s in m.structs {
-        if s.name == name {
-            return &s
-        }
+        if s.name == name do return &s
     }
 
     return nil
@@ -247,9 +245,7 @@ model_union :: proc(m: ^Model, name: string) -> ^Union_Def {
     assert(m != nil, "model_union needs a model")
 
     for &u in m.unions {
-        if u.name == name {
-            return &u
-        }
+        if u.name == name do return &u
     }
 
     return nil
@@ -260,9 +256,7 @@ model_enum :: proc(m: ^Model, name: string) -> ^Enum_Def {
     assert(m != nil, "model_enum needs a model")
 
     for &e in m.enums {
-        if e.name == name {
-            return &e
-        }
+        if e.name == name do return &e
     }
 
     return nil

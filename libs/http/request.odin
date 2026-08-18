@@ -16,13 +16,9 @@ Request_Error :: enum {
 // non-digit, overflowing, or duplicated length is `Invalid_Content_Length`. The caller
 // enforces any route-specific size cap on the returned length.
 validate_body :: proc(head: Request_Head) -> (length: i64, err: Request_Error) {
-    if _, lookup := request_header(head, "transfer-encoding"); lookup != .Missing {
-        return 0, .Unsupported_Transfer_Coding
-    }
+    if _, lookup := request_header(head, "transfer-encoding"); lookup != .Missing do return 0, .Unsupported_Transfer_Coding
 
-    if _, lookup := request_header(head, "expect"); lookup != .Missing {
-        return 0, .Unsupported_Expectation
-    }
+    if _, lookup := request_header(head, "expect"); lookup != .Missing do return 0, .Unsupported_Expectation
 
     content_length, lookup := request_header(head, "content-length")
     switch lookup {
@@ -33,21 +29,15 @@ validate_body :: proc(head: Request_Head) -> (length: i64, err: Request_Error) {
         return 0, .Invalid_Content_Length
 
     case .One:
-        if len(content_length) == 0 {
-            return 0, .Invalid_Content_Length
-        }
+        if len(content_length) == 0 do return 0, .Invalid_Content_Length
 
         value: i64
         for i in 0 ..< len(content_length) {
             c := content_length[i]
-            if c < '0' || c > '9' {
-                return 0, .Invalid_Content_Length
-            }
+            if c < '0' || c > '9' do return 0, .Invalid_Content_Length
 
             digit := i64(c - '0')
-            if value > (max(i64) - digit) / 10 {
-                return 0, .Invalid_Content_Length
-            }
+            if value > (max(i64) - digit) / 10 do return 0, .Invalid_Content_Length
 
             value = value * 10 + digit
         }
@@ -63,9 +53,7 @@ split_target :: proc(target: string) -> (path: string, query: string) {
     assert(origin_target_valid(target), "split_target needs a validated origin-form target")
 
     mark := strings.index_byte(target, '?')
-    if mark < 0 {
-        return target, ""
-    }
+    if mark < 0 do return target, ""
 
     return target[:mark], target[mark + 1:]
 }
@@ -78,36 +66,26 @@ split_target :: proc(target: string) -> (path: string, query: string) {
 // `[1:0]` on a peer-supplied `]:80`; `net.parse_address` panics the same way. Any caller
 // that touches a peer `Host` needs this, so it lives beside the other split helpers.
 split_host :: proc(host: string) -> (name: string, bracketed: bool, ok: bool) {
-    if len(host) == 0 {
-        return "", false, false
-    }
+    if len(host) == 0 do return "", false, false
 
     if host[0] == '[' {
         bracketed = true
 
         close := strings.index_byte(host, ']')
-        if close < 0 {
-            return "", bracketed, false
-        }
+        if close < 0 do return "", bracketed, false
 
-        if rest := host[close + 1:]; len(rest) > 0 && !host_port_valid(rest) {
-            return "", bracketed, false
-        }
+        if rest := host[close + 1:]; len(rest) > 0 && !host_port_valid(rest) do return "", bracketed, false
 
         name = host[1:close]
     } else {
         // A `]` outside a literal is illegal here, and is the shape that panics.
-        if strings.index_byte(host, ']') >= 0 {
-            return "", bracketed, false
-        }
+        if strings.index_byte(host, ']') >= 0 do return "", bracketed, false
 
         colon := strings.index_byte(host, ':')
         if colon < 0 {
             name = host
         } else {
-            if !host_port_valid(host[colon:]) {
-                return "", bracketed, false
-            }
+            if !host_port_valid(host[colon:]) do return "", bracketed, false
 
             name = host[:colon]
         }
@@ -120,14 +98,10 @@ split_host :: proc(host: string) -> (name: string, bracketed: bool, ok: bool) {
 // permits an empty port, so a bare `:` is valid.
 @(private)
 host_port_valid :: proc(port: string) -> bool {
-    if len(port) == 0 || port[0] != ':' {
-        return false
-    }
+    if len(port) == 0 || port[0] != ':' do return false
 
     for i in 1 ..< len(port) {
-        if port[i] < '0' || port[i] > '9' {
-            return false
-        }
+        if port[i] < '0' || port[i] > '9' do return false
     }
 
     return true
@@ -158,9 +132,7 @@ query_value :: proc(query: string, name: string) -> (value: string, lookup: Look
         }
 
         if key == name {
-            if lookup == .One {
-                return "", .Duplicate
-            }
+            if lookup == .One do return "", .Duplicate
 
             value = candidate
             lookup = .One

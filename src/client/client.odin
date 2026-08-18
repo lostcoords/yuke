@@ -271,24 +271,16 @@ client_send_request :: proc(
 ) {
     assert(c != nil, "client_send_request needs a client")
 
-    if c.state != .Ready {
-        return 0, .Not_Ready
-    }
+    if c.state != .Ready do return 0, .Not_Ready
 
-    if c.next_request_id > wire.MAX_REQUEST_ID {
-        return 0, .Request_Id_Exhausted
-    }
+    if c.next_request_id > wire.MAX_REQUEST_ID do return 0, .Request_Id_Exhausted
 
-    if len(c.pending) >= MAX_PENDING_REQUESTS {
-        return 0, .Too_Many_Pending
-    }
+    if len(c.pending) >= MAX_PENDING_REQUESTS do return 0, .Too_Many_Pending
 
     id := c.next_request_id
     id_buf: [20]u8
     req := wire.request_build(wire.req_id(id, id_buf[:]), method, params)
-    if wire.request_validate(req) != .None {
-        return 0, .Bad_Frame
-    }
+    if wire.request_validate(req) != .None do return 0, .Bad_Frame
 
     e, _ := wire.request_encode(req, c.allocator)
     defer json.emitter_destroy(&e)
@@ -343,9 +335,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         if !ok && header.kind == .Response {
             log.warnf("client: response to unknown request id %v", id)
 
-            if c.cbs.on_error != nil {
-                c.cbs.on_error(c, .Unknown_Response)
-            }
+            if c.cbs.on_error != nil do c.cbs.on_error(c, .Unknown_Response)
 
             return .Unknown_Response
         }
@@ -357,9 +347,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         if derr != .None {
             log.warnf("client: response decode failed for %v: %v", req.method, derr)
 
-            if ok {
-                client_complete_failure(c, id, req, .Decode_Failed)
-            }
+            if ok do client_complete_failure(c, id, req, .Decode_Failed)
 
             return .Decode_Failed
         }
@@ -367,9 +355,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         if json.dec_finish(&d) != .None {
             log.warnf("client: response for %v has trailing data", req.method)
 
-            if ok {
-                client_complete_failure(c, id, req, .Decode_Failed)
-            }
+            if ok do client_complete_failure(c, id, req, .Decode_Failed)
 
             return .Decode_Failed
         }
@@ -377,16 +363,12 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
         if wire.response_validate(resp) != .None {
             log.warnf("client: response for %v failed validation", req.method)
 
-            if ok {
-                client_complete_failure(c, id, req, .Decode_Failed)
-            }
+            if ok do client_complete_failure(c, id, req, .Decode_Failed)
 
             return .Decode_Failed
         }
 
-        if ok {
-            client_complete_response(c, id, req, resp)
-        }
+        if ok do client_complete_response(c, id, req, resp)
 
         if c.initialize_error != .None {
             err := c.initialize_error
@@ -409,9 +391,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             // Route an unknown method from the header without reading its payload;
             // trailing bytes are therefore not rejected here as they are on the
             // decoded paths.
-            if c.cbs.on_unknown_broadcast != nil {
-                c.cbs.on_unknown_broadcast(c, header.method)
-            }
+            if c.cbs.on_unknown_broadcast != nil do c.cbs.on_unknown_broadcast(c, header.method)
 
             return .None
         }
@@ -433,9 +413,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             return .Decode_Failed
         }
 
-        if c.cbs.on_broadcast != nil {
-            c.cbs.on_broadcast(c, bc)
-        }
+        if c.cbs.on_broadcast != nil do c.cbs.on_broadcast(c, bc)
 
         return .None
     }
@@ -486,9 +464,7 @@ client_on_initialize_complete :: proc(c: ^Client, outcome: Request_Outcome, user
     c.daemon_version = daemon_version
     c.state = .Ready
 
-    if c.cbs.on_ready != nil {
-        c.cbs.on_ready(c, hello)
-    }
+    if c.cbs.on_ready != nil do c.cbs.on_ready(c, hello)
 }
 
 // Close the connection. An opening transport is canceled; an open transport sends
@@ -497,9 +473,7 @@ client_on_initialize_complete :: proc(c: ^Client, outcome: Request_Outcome, user
 client_close :: proc(c: ^Client, code := CLOSE_NORMAL) {
     assert(c != nil, "client_close needs a client")
 
-    if c.state == .Closing || c.state == .Closed {
-        return
-    }
+    if c.state == .Closing || c.state == .Closed do return
 
     was_connecting := c.state == .Connecting
     c.state = .Closing
@@ -541,17 +515,13 @@ client_destroy :: proc(c: ^Client) {
 // Report a fatal driver error and begin a transport close. `on_error` fires now (at
 // `.Closing`); the terminal `on_close` follows when the close completes. Idempotent.
 client_abort :: proc(c: ^Client, err: Protocol_Error) {
-    if c.state == .Closing || c.state == .Closed {
-        return
-    }
+    if c.state == .Closing || c.state == .Closed do return
 
     was_connecting := c.state == .Connecting
     c.state = .Closing
     client_complete_all_failures(c, err)
 
-    if c.cbs.on_error != nil {
-        c.cbs.on_error(c, err)
-    }
+    if c.cbs.on_error != nil do c.cbs.on_error(c, err)
 
     t := c.transport
     if was_connecting {
@@ -600,9 +570,7 @@ transport_on_text :: proc(c: ^Client, data: []byte) {
 
     // Only Awaiting_Initialize (the initialize response) and Ready carry meaningful frames;
     // drop anything that arrives while connecting, closing, or closed.
-    if c.state != .Awaiting_Initialize && c.state != .Ready {
-        return
-    }
+    if c.state != .Awaiting_Initialize && c.state != .Ready do return
 
     err := client_handle_text(c, data)
 
@@ -618,9 +586,7 @@ transport_on_text :: proc(c: ^Client, data: []byte) {
 transport_on_binary :: proc(c: ^Client) {
     assert(c != nil, "transport binary needs a client")
 
-    if c.state != .Awaiting_Initialize && c.state != .Ready {
-        return
-    }
+    if c.state != .Awaiting_Initialize && c.state != .Ready do return
 
     log.warnf("client: binary frame is not v1 wire")
     client_abort(c, .Bad_Frame)
@@ -633,9 +599,7 @@ transport_on_close :: proc(c: ^Client, code: Close_Code) {
     client_complete_all_failures(c, .Connection_Closed)
     c.state = .Closed
 
-    if c.cbs.on_close != nil {
-        c.cbs.on_close(c, code)
-    }
+    if c.cbs.on_close != nil do c.cbs.on_close(c, code)
 }
 
 // Failed terminally: latch the reason and surface it as `.Transport_Failed`. The
@@ -649,9 +613,7 @@ transport_on_error :: proc(c: ^Client, err: ws.Client_Error) {
         client_complete_all_failures(c, .Connection_Closed)
         c.state = .Closed
 
-        if c.cbs.on_close != nil {
-            c.cbs.on_close(c, CLOSE_NORMAL)
-        }
+        if c.cbs.on_close != nil do c.cbs.on_close(c, CLOSE_NORMAL)
 
         return
     }
@@ -663,9 +625,7 @@ transport_on_error :: proc(c: ^Client, err: ws.Client_Error) {
 
     log.errorf("client: transport failed: %v", err)
 
-    if c.cbs.on_error != nil {
-        c.cbs.on_error(c, .Transport_Failed)
-    }
+    if c.cbs.on_error != nil do c.cbs.on_error(c, .Transport_Failed)
 }
 
 // Consume one correlation and deliver its validated response.
@@ -676,9 +636,7 @@ client_complete_response :: proc(c: ^Client, id: u64, req: Pending_Request, resp
 
     delete_key(&c.pending, id)
 
-    if req.on_complete != nil {
-        req.on_complete(c, Request_Response{response = response}, req.user_data)
-    }
+    if req.on_complete != nil do req.on_complete(c, Request_Response{response = response}, req.user_data)
 }
 
 // Consume one correlation and deliver its local failure.
@@ -690,9 +648,7 @@ client_complete_failure :: proc(c: ^Client, id: u64, req: Pending_Request, err: 
 
     delete_key(&c.pending, id)
 
-    if req.on_complete != nil {
-        req.on_complete(c, Request_Failure{error = err}, req.user_data)
-    }
+    if req.on_complete != nil do req.on_complete(c, Request_Failure{error = err}, req.user_data)
 }
 
 // Fail every remaining request exactly once. The state must already reject new sends so

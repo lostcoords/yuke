@@ -9,9 +9,7 @@ import ws "libs:websocket"
 // runner tracks memory), and a bad endpoint is rejected before anything is allocated.
 @(test)
 test_relay_create_lifecycle :: proc(t: ^testing.T) {
-    if nbio.acquire_thread_event_loop() != nil {
-        return
-    }
+    if nbio.acquire_thread_event_loop() != nil do return
 
     defer nbio.release_thread_event_loop()
     loop := nbio.current_thread_event_loop()

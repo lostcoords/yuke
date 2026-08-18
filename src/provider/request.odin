@@ -93,15 +93,11 @@ tools_validate :: proc(tools: []Tool_Definition, scratch_allocator: runtime.Allo
         }
 
         for prior in tools[:index] {
-            if tool.name == prior.name {
-                return .Invalid_Request
-            }
+            if tool.name == prior.name do return .Invalid_Request
         }
 
         value, _, parse_err := decode_json_object(tool.input_schema, scratch_allocator)
-        if parse_err != .None {
-            return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
-        }
+        if parse_err != .None do return parse_err == .Resource_Exhausted ? .Resource_Exhausted : .Invalid_Request
 
         json.destroy_value(value, scratch_allocator)
     }

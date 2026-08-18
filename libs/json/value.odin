@@ -18,9 +18,7 @@ write_f64 :: proc(w: io.Writer, value: f64) -> (n: int, err: io.Error) {
     // 384 (Decimal's max digits) + sign + point; write_float truncates a short buf.
     buf: [386]byte
     encoded := strconv.write_float(buf[:], value, 'g', -1, 64)
-    if len(encoded) > 0 && encoded[0] == '+' {
-        encoded = encoded[1:]
-    }
+    if len(encoded) > 0 && encoded[0] == '+' do encoded = encoded[1:]
 
     return io.write_string(w, encoded)
 }

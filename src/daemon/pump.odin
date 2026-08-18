@@ -355,28 +355,20 @@ pump_fan_out :: proc(d: ^Daemon, name: wire.Broadcast_Name, session: Maybe(wire.
     aborts.allocator = context.temp_allocator
 
     for _, conn in d.conns {
-        if conn.state != .Ready {
-            continue
-        }
+        if conn.state != .Ready do continue
 
         if wire.broadcast_class_gated(class) {
             sid, named := session.?
             assert(named, "a gated broadcast names its session")
 
-            if !conn_subscribed(conn, sid) {
-                continue
-            }
+            if !conn_subscribed(conn, sid) do continue
         }
 
         send_err := conn_send_text(conn, frame)
-        if send_err == .None {
-            continue
-        }
+        if send_err == .None do continue
 
         // The transport is already closing; its terminal callback frees the `Conn`.
-        if send_err == .Not_Open {
-            continue
-        }
+        if send_err == .Not_Open do continue
 
         // Shedding is the droppable class's contract: the receiver sees the offset gap and
         // resyncs. No other class may skip a frame, so it dies instead and reconnects.
@@ -431,9 +423,7 @@ pump_shed_mark :: proc(d: ^Daemon, conn: ^Conn, session: wire.Session_Id) {
         return
     }
 
-    if conn_send_text(conn, transmute([]byte)json.to_string(&e)) != .None {
-        return
-    }
+    if conn_send_text(conn, transmute([]byte)json.to_string(&e)) != .None do return
 
     conn.shed_counts[index] = 0
 }
@@ -472,9 +462,7 @@ conn_subscription_index :: proc(conn: ^Conn, session: wire.Session_Id) -> (index
     assert(conn.subscription_count <= len(conn.subscriptions), "subscription set over its bound")
 
     for i in 0 ..< conn.subscription_count {
-        if conn.subscriptions[i] == session {
-            return i, true
-        }
+        if conn.subscriptions[i] == session do return i, true
     }
 
     return 0, false
@@ -558,14 +546,10 @@ resync_build :: proc(
         log.errorf("daemon: resync session read failed: %v", serr)
         return {}, .Store_Failed
     }
-    if !found {
-        return {}, .Unknown_Session
-    }
+    if !found do return {}, .Unknown_Session
 
     page_size := wire.LIMITS.default_page_size
-    if limit, ok := params.limit.?; ok {
-        page_size = int(limit)
-    }
+    if limit, ok := params.limit.?; ok do page_size = int(limit)
 
     assert(page_size > 0, "the page size is positive")
     assert(page_size <= wire.LIMITS.max_page_size, "the page size stays within the wire bound")
@@ -580,31 +564,23 @@ resync_build :: proc(
     // The boundary is the store's minted mark, not the page's own maximum: truncated ids
     // and compaction dividers are finalized too, even once no message carries them.
     boundary: Maybe(wire.Message_Id)
-    if hw.message_id > 0 {
-        boundary = hw.message_id
-    }
+    if hw.message_id > 0 do boundary = hw.message_id
 
     // The engine owns every live fact: a run does not outlive the process that started it,
     // so the log can say a run exists but never what it is producing.
     activity := session_activity(d, params.session_id)
     active, queued, draft_ok := session_draft(d, params.session_id, sa)
-    if !draft_ok {
-        return {}, .Resource_Exhausted
-    }
+    if !draft_ok do return {}, .Resource_Exhausted
 
     configs := make([dynamic]wire.Run_Config, 0, len(messages) + 1, sa)
 
     // Collected first, and from the run itself rather than the store: the draft names this
     // revision, so a cut that could not resolve it would be unusable to the replica.
-    if running, has_run := activity.config.?; has_run {
-        append(&configs, running)
-    }
+    if running, has_run := activity.config.?; has_run do append(&configs, running)
 
     for message in messages {
         assistant, is_assistant := message.(wire.Assistant_Message)
-        if !is_assistant {
-            continue
-        }
+        if !is_assistant do continue
 
         resync_config_add(&configs, d.store, params.session_id, assistant.config_rev, sa) or_return
     }
@@ -657,9 +633,7 @@ resync_config_add :: proc(
     assert(out != nil, "collecting configs needs its accumulator")
     assert(s != nil, "collecting configs needs a store")
 
-    if resync_config_collected(out[:], rev) {
-        return .None
-    }
+    if resync_config_collected(out[:], rev) do return .None
 
     cfg, found, read_err := store.session_config(s, session, rev, allocator)
     if read_err != nil {
@@ -679,9 +653,7 @@ resync_config_add :: proc(
 @(private)
 resync_config_collected :: proc(configs: []wire.Run_Config, rev: wire.Config_Rev) -> bool {
     for candidate in configs {
-        if candidate.config_rev == rev {
-            return true
-        }
+        if candidate.config_rev == rev do return true
     }
 
     return false

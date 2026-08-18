@@ -38,9 +38,7 @@ workspace_title :: proc(root: string) -> string {
 
     base := os.base(root)
     title := base
-    if title == "" {
-        title = root
-    }
+    if title == "" do title = root
 
     return clamp_utf8_bytes(title, 256)
 }
@@ -51,9 +49,7 @@ git_info :: proc(root: string, allocator: mem.Allocator) -> Maybe(wire.Git_Info)
     assert(len(root) > 0, "git info needs a canonical root")
 
     git_marker := strings.concatenate({root, "/.git"}, allocator)
-    if !os.exists(git_marker) {
-        return nil
-    }
+    if !os.exists(git_marker) do return nil
 
     return wire.Git_Info{branch = git_branch(root, allocator), dirty = false}
 }
@@ -64,15 +60,11 @@ git_branch :: proc(root: string, allocator: mem.Allocator) -> string {
     assert(len(root) > 0, "git branch needs a canonical root")
 
     head, err := os.read_entire_file_from_path(strings.concatenate({root, "/.git/HEAD"}, allocator), allocator)
-    if err != nil {
-        return ""
-    }
+    if err != nil do return ""
 
     ref := strings.trim_space(string(head))
     PREFIX :: "ref: refs/heads/"
-    if !strings.has_prefix(ref, PREFIX) {
-        return ""
-    }
+    if !strings.has_prefix(ref, PREFIX) do return ""
 
     branch := ref[len(PREFIX):]
 
@@ -84,13 +76,9 @@ git_branch :: proc(root: string, allocator: mem.Allocator) -> string {
 clamp_utf8_bytes :: proc(s: string, max: int) -> string {
     assert(max >= 0, "clamp_utf8_bytes: max must be non-negative")
 
-    if !utf8.valid_string(s) {
-        return ""
-    }
+    if !utf8.valid_string(s) do return ""
 
-    if len(s) <= max {
-        return s
-    }
+    if len(s) <= max do return s
 
     cut := max
     for cut > 0 && s[cut] & 0xC0 == 0x80 {
@@ -105,15 +93,11 @@ path_mtime_ms :: proc(path: string, allocator: mem.Allocator) -> u64 {
     assert(len(path) > 0, "path mtime needs a canonical path")
 
     info, err := os.stat(path, allocator)
-    if err != nil {
-        return 0
-    }
+    if err != nil do return 0
     defer os.file_info_delete(info, allocator)
 
     ns := time.to_unix_nanoseconds(info.modification_time)
-    if ns < 0 {
-        return 0
-    }
+    if ns < 0 do return 0
 
     return u64(ns / 1_000_000)
 }
@@ -122,9 +106,7 @@ path_mtime_ms :: proc(path: string, allocator: mem.Allocator) -> u64 {
 parent_dir :: proc(dir: string) -> Maybe(string) {
     assert(len(dir) > 0, "parent lookup needs a canonical directory")
 
-    if dir == "/" {
-        return nil
-    }
+    if dir == "/" do return nil
 
     return os.dir(dir)
 }
@@ -145,9 +127,7 @@ browse_entries_page :: proc(
     assert(page_size > 0 && page_size <= wire.LIMITS.max_workspace_browse_page_size, "browse needs a bounded page")
 
     directory, open_err := os.open(dir, {.Read})
-    if open_err != nil {
-        return nil, false, open_err
-    }
+    if open_err != nil do return nil, false, open_err
     defer os.close(directory)
 
     iterator := os.read_directory_iterator_create(directory)
@@ -165,38 +145,24 @@ browse_entries_page :: proc(
     }
 
     for info in os.read_directory_iterator(&iterator) {
-        if info.name == ".git" {
-            continue
-        }
+        if info.name == ".git" do continue
 
-        if len(info.name) > 256 {
-            continue
-        }
+        if len(info.name) > 256 do continue
 
-        if !utf8.valid_string(info.name) || !utf8.valid_string(info.fullpath) {
-            continue
-        }
+        if !utf8.valid_string(info.name) || !utf8.valid_string(info.fullpath) do continue
 
-        if cursor != "" && !dir_name_less(cursor, info.name) {
-            continue
-        }
+        if cursor != "" && !dir_name_less(cursor, info.name) do continue
 
         insert_at := 0
         for insert_at < name_count && dir_name_less(names[insert_at], info.name) {
             insert_at += 1
         }
-        if name_count == window_size && insert_at == name_count {
-            continue
-        }
+        if name_count == window_size && insert_at == name_count do continue
 
-        if !file_info_is_dir(info, allocator) {
-            continue
-        }
+        if !file_info_is_dir(info, allocator) do continue
 
         cloned, clone_err := strings.clone(info.name, heap)
-        if clone_err != nil {
-            return nil, false, clone_err
-        }
+        if clone_err != nil do return nil, false, clone_err
 
         if name_count < window_size {
             name_count += 1
@@ -209,29 +175,21 @@ browse_entries_page :: proc(
         names[insert_at] = cloned
     }
 
-    if _, iterator_err := os.read_directory_iterator_error(&iterator); iterator_err != nil {
-        return nil, false, iterator_err
-    }
+    if _, iterator_err := os.read_directory_iterator_error(&iterator); iterator_err != nil do return nil, false, iterator_err
 
     has_more = name_count > page_size
     entry_count := min(name_count, page_size)
     allocated_entries, entries_aerr := make([]wire.Dir_Entry, entry_count, allocator)
-    if entries_aerr != nil {
-        return nil, false, entries_aerr
-    }
+    if entries_aerr != nil do return nil, false, entries_aerr
     entries = allocated_entries
 
     for name, index in names[:entry_count] {
         owned_name, name_aerr := strings.clone(name, allocator)
         path, path_aerr := os.join_path({dir, name}, allocator)
-        if name_aerr != nil || path_aerr != nil {
-            return nil, false, name_aerr if name_aerr != nil else path_aerr
-        }
+        if name_aerr != nil || path_aerr != nil do return nil, false, name_aerr if name_aerr != nil else path_aerr
 
         git_path, git_aerr := strings.concatenate({path, "/.git"}, allocator)
-        if git_aerr != nil {
-            return nil, false, git_aerr
-        }
+        if git_aerr != nil do return nil, false, git_aerr
         entries[index] = {
             name        = owned_name,
             path        = path,
@@ -245,15 +203,11 @@ browse_entries_page :: proc(
 // Whether a directory entry resolves to a directory, following a symlink or an entry
 // whose type the platform left undetermined.
 file_info_is_dir :: proc(info: os.File_Info, allocator: mem.Allocator) -> bool {
-    if info.type == .Directory {
-        return true
-    }
+    if info.type == .Directory do return true
 
     if info.type == .Symlink || info.type == .Undetermined {
         resolved, err := os.stat(info.fullpath, allocator)
-        defer if err == nil {
-            os.file_info_delete(resolved, allocator)
-        }
+        defer if err == nil do os.file_info_delete(resolved, allocator)
 
         return err == nil && resolved.type == .Directory
     }
@@ -268,22 +222,16 @@ dir_name_less :: proc(a, b: string) -> bool {
     for i in 0 ..< n {
         ca := ascii_lower(a[i])
         cb := ascii_lower(b[i])
-        if ca != cb {
-            return ca < cb
-        }
+        if ca != cb do return ca < cb
     }
 
-    if len(a) != len(b) {
-        return len(a) < len(b)
-    }
+    if len(a) != len(b) do return len(a) < len(b)
 
     return a < b
 }
 
 ascii_lower :: proc(c: u8) -> u8 {
-    if c >= 'A' && c <= 'Z' {
-        return c + 32
-    }
+    if c >= 'A' && c <= 'Z' do return c + 32
 
     return c
 }
@@ -368,13 +316,9 @@ Fs_Job :: struct {
 // An omitted path is the daemon user's home. Reading the environment touches no filesystem,
 // so it resolves on the reactor and the worker only sees a concrete path.
 fs_target_path :: proc(path: Maybe(string), sa: mem.Allocator) -> string {
-    if p, ok := path.?; ok {
-        return p
-    }
+    if p, ok := path.?; ok do return p
 
-    if home := paths.home_dir(sa); home != "" {
-        return home
-    }
+    if home := paths.home_dir(sa); home != "" do return home
 
     return "/"
 }
@@ -478,9 +422,7 @@ fs_job_done :: proc(job: ^Fs_Job) {
     d.fs_jobs -= 1
 
     conn := conn_resolve(d, job.ticket)
-    if conn == nil {
-        return
-    }
+    if conn == nil do return
     assert(conn.fs_jobs > 0, "filesystem completion needs a live connection job")
     conn.fs_jobs -= 1
 
@@ -584,15 +526,11 @@ method_workspace_browse :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocato
     params := req.params.(wire.Workspace_Browse_Params)
 
     cursor := ""
-    if requested_cursor, ok := params.cursor.?; ok {
-        cursor = requested_cursor
-    }
+    if requested_cursor, ok := params.cursor.?; ok do cursor = requested_cursor
 
     // Page size is already validated to be within bounds; default when omitted.
     page_size := wire.LIMITS.default_workspace_browse_page_size
-    if limit, ok := params.limit.?; ok {
-        page_size = int(limit)
-    }
+    if limit, ok := params.limit.?; ok do page_size = int(limit)
 
     fs_job_submit(conn, req.id, .Browse, fs_target_path(params.path, sa), cursor, page_size)
 }

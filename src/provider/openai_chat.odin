@@ -92,9 +92,7 @@ openai_chat_decoder_decode :: proc(
     assert(!decoder.block_open || decoder.next_id > 0, "an open block was handed a turn-local id")
 
     trimmed := strings.trim_space(data)
-    if decoder.done || len(trimmed) == 0 {
-        return .None
-    }
+    if decoder.done || len(trimmed) == 0 do return .None
 
     if trimmed == "[DONE]" {
         decoder.done = true
@@ -111,9 +109,7 @@ openai_chat_decoder_decode :: proc(
     if usage, present, uerr := decode_optional_object(object, "usage"); uerr != .None {
         decoder.done = true
         return uerr
-    } else if present {
-        openai_fold_usage(decoder, usage)
-    }
+    } else if present do openai_fold_usage(decoder, usage)
 
     if err := openai_decode_choices(decoder, object, events); err != .None {
         decoder.done = true
@@ -135,14 +131,10 @@ openai_chat_decoder_finish :: proc(
     assert(events != nil, "OpenAI chat finish needs an event queue")
     assert(decoder.allocator.procedure != nil, "OpenAI chat decoder must be initialized")
 
-    if decoder.done {
-        return .None
-    }
+    if decoder.done do return .None
 
     decoder.done = true
-    if !decoder.reason_seen {
-        return .Stream_Truncated
-    }
+    if !decoder.reason_seen do return .Stream_Truncated
 
     return openai_chat_terminal(decoder, events, scratch_allocator)
 }
@@ -158,14 +150,10 @@ openai_fold_usage :: proc(decoder: ^Openai_Chat_Decoder, usage: json.Object) {
     provider_total := decode_usage_u64(usage, "total_tokens")
 
     cache_read: u64
-    if details, present, err := decode_optional_object(usage, "prompt_tokens_details"); err == .None && present {
-        cache_read = decode_usage_u64(details, "cached_tokens")
-    }
+    if details, present, err := decode_optional_object(usage, "prompt_tokens_details"); err == .None && present do cache_read = decode_usage_u64(details, "cached_tokens")
 
     reasoning: u64
-    if details, present, err := decode_optional_object(usage, "completion_tokens_details"); err == .None && present {
-        reasoning = decode_usage_u64(details, "reasoning_tokens")
-    }
+    if details, present, err := decode_optional_object(usage, "completion_tokens_details"); err == .None && present do reasoning = decode_usage_u64(details, "reasoning_tokens")
 
     decoder.pending_usage = Usage {
         input      = input,
@@ -190,59 +178,39 @@ openai_decode_choices :: proc(
     assert(!decoder.done, "choice decoding cannot run after completion")
 
     field, found := object["choices"]
-    if !found {
-        return .None
-    }
+    if !found do return .None
 
-    if _, is_null := field.(json.Null); is_null {
-        return .None
-    }
+    if _, is_null := field.(json.Null); is_null do return .None
 
     choices, ok := field.(json.Array)
-    if !ok {
-        return .Parse_Error
-    }
+    if !ok do return .Parse_Error
 
     content: string
     reasoning: string
 
     for element in choices {
         choice, choice_ok := element.(json.Object)
-        if !choice_ok {
-            return .Parse_Error
-        }
+        if !choice_ok do return .Parse_Error
 
         delta, delta_present, derr := decode_optional_object(choice, "delta")
-        if derr != .None {
-            return derr
-        }
+        if derr != .None do return derr
 
         if delta_present {
             fragment_content, _, cerr := decode_optional_string(delta, "content")
-            if cerr != .None {
-                return cerr
-            }
+            if cerr != .None do return cerr
 
-            if len(content) == 0 && len(fragment_content) > 0 {
-                content = fragment_content
-            }
+            if len(content) == 0 && len(fragment_content) > 0 do content = fragment_content
 
             fragment_reasoning, _, rerr := decode_optional_string(delta, "reasoning_content")
-            if rerr != .None {
-                return rerr
-            }
+            if rerr != .None do return rerr
 
-            if len(reasoning) == 0 && len(fragment_reasoning) > 0 {
-                reasoning = fragment_reasoning
-            }
+            if len(reasoning) == 0 && len(fragment_reasoning) > 0 do reasoning = fragment_reasoning
 
             openai_accumulate_tool_calls(decoder, delta) or_return
         }
 
         reason, reason_present, freason_err := decode_optional_string(choice, "finish_reason")
-        if freason_err != .None {
-            return freason_err
-        }
+        if freason_err != .None do return freason_err
 
         if reason_present {
             decoder.pending_reason = openai_stop_reason(reason)
@@ -250,13 +218,9 @@ openai_decode_choices :: proc(
         }
     }
 
-    if len(reasoning) > 0 {
-        openai_emit_delta(decoder, events, .Reasoning, reasoning)
-    }
+    if len(reasoning) > 0 do openai_emit_delta(decoder, events, .Reasoning, reasoning)
 
-    if len(content) > 0 {
-        openai_emit_delta(decoder, events, .Text, content)
-    }
+    if len(content) > 0 do openai_emit_delta(decoder, events, .Text, content)
 
     return .None
 }
@@ -273,9 +237,7 @@ openai_emit_delta :: proc(
     assert(kind == .Text || kind == .Reasoning, "OpenAI chat only streams text and reasoning deltas")
     assert(len(text) > 0, "a neutral delta is never empty")
 
-    if decoder.block_open && decoder.open_kind != kind {
-        openai_close_block(decoder, events)
-    }
+    if decoder.block_open && decoder.open_kind != kind do openai_close_block(decoder, events)
 
     if !decoder.block_open {
         id := Stream_Block_Id(decoder.next_id)
@@ -340,76 +302,48 @@ openai_close_block :: proc(decoder: ^Openai_Chat_Decoder, events: ^[dynamic]Stre
 @(private)
 openai_accumulate_tool_calls :: proc(decoder: ^Openai_Chat_Decoder, delta: json.Object) -> Transport_Error {
     field, found := delta["tool_calls"]
-    if !found {
-        return .None
-    }
+    if !found do return .None
 
-    if _, is_null := field.(json.Null); is_null {
-        return .None
-    }
+    if _, is_null := field.(json.Null); is_null do return .None
 
     calls, ok := field.(json.Array)
-    if !ok {
-        return .Parse_Error
-    }
+    if !ok do return .Parse_Error
 
     for element in calls {
         call, call_ok := element.(json.Object)
-        if !call_ok {
-            return .Parse_Error
-        }
+        if !call_ok do return .Parse_Error
 
         index, index_present, ierr := decode_optional_u64(call, "index")
-        if ierr != .None {
-            return ierr
-        }
+        if ierr != .None do return ierr
 
         slot := index_present ? index : 0
-        if slot >= MAX_TOOL_CALLS {
-            return .Too_Many_Tool_Calls
-        }
+        if slot >= MAX_TOOL_CALLS do return .Too_Many_Tool_Calls
 
         openai_ensure_tool_slot(decoder, int(slot))
         entry := &decoder.pending_tools[slot]
 
         id, _, id_err := decode_optional_string(call, "id")
-        if id_err != .None {
-            return id_err
-        }
+        if id_err != .None do return id_err
 
-        if len(id) > 0 {
-            append(&entry.id, id)
-        }
+        if len(id) > 0 do append(&entry.id, id)
 
         function, function_present, ferr := decode_optional_object(call, "function")
-        if ferr != .None {
-            return ferr
-        }
+        if ferr != .None do return ferr
 
-        if !function_present {
-            continue
-        }
+        if !function_present do continue
 
         name, _, name_err := decode_optional_string(function, "name")
-        if name_err != .None {
-            return name_err
-        }
+        if name_err != .None do return name_err
 
-        if len(name) > 0 {
-            append(&entry.name, name)
-        }
+        if len(name) > 0 do append(&entry.name, name)
 
         arguments, _, args_err := decode_optional_string(function, "arguments")
-        if args_err != .None {
-            return args_err
-        }
+        if args_err != .None do return args_err
 
         if len(arguments) > 0 {
             assert(len(entry.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments start bounded")
 
-            if len(arguments) > MAX_TOOL_CALL_BYTES - len(entry.arguments) {
-                return .Tool_Call_Too_Large
-            }
+            if len(arguments) > MAX_TOOL_CALL_BYTES - len(entry.arguments) do return .Tool_Call_Too_Large
 
             append(&entry.arguments, arguments)
 
@@ -451,36 +385,24 @@ openai_chat_terminal :: proc(
     assert(decoder != nil, "the terminal event needs a decoder")
     assert(scratch_allocator.procedure != nil, "the terminal event needs a valid scratch allocator")
 
-    if decoder.block_open {
-        openai_close_block(decoder, events)
-    }
+    if decoder.block_open do openai_close_block(decoder, events)
 
     for entry, index in decoder.pending_tools {
-        if len(entry.name) == 0 {
-            continue
-        }
+        if len(entry.name) == 0 do continue
 
-        if len(entry.id) == 0 {
-            return .Parse_Error
-        }
+        if len(entry.id) == 0 do return .Parse_Error
 
         for prior in decoder.pending_tools[:index] {
-            if len(prior.name) > 0 && string(entry.id[:]) == string(prior.id[:]) {
-                return .Parse_Error
-            }
+            if len(prior.name) > 0 && string(entry.id[:]) == string(prior.id[:]) do return .Parse_Error
         }
     }
 
     tools := 0
     for &entry in decoder.pending_tools {
-        if len(entry.name) == 0 {
-            continue
-        }
+        if len(entry.name) == 0 do continue
 
         arguments, arguments_err := tool_arguments(entry.arguments[:], scratch_allocator)
-        if arguments_err != .None {
-            return arguments_err
-        }
+        if arguments_err != .None do return arguments_err
 
         id := Stream_Block_Id(decoder.next_id)
         decoder.next_id += 1
@@ -502,9 +424,7 @@ openai_chat_terminal :: proc(
     }
 
     reason := decoder.pending_reason
-    if tools > 0 {
-        reason = .Tool_Calls
-    }
+    if tools > 0 do reason = .Tool_Calls
 
     append(events, Stream_Done{reason = reason, usage = decoder.pending_usage})
 

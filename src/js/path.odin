@@ -9,41 +9,29 @@ import "core:strings"
 // resolves against `base`, and an empty `base` rejects relative paths rather than letting
 // them mean the process's own working directory.
 path_resolve :: proc(base: string, path: string, allocator: mem.Allocator) -> (string, bool) {
-    if path == "" {
-        return "", false
-    }
+    if path == "" do return "", false
 
     resolved := path
 
     if path == "~" || strings.has_prefix(path, "~/") {
         home, present := os.lookup_env_alloc("HOME", allocator)
-        if !present || home == "" {
-            return "", false
-        }
+        if !present || home == "" do return "", false
 
         joined, join_err := strings.concatenate({home, path[1:]}, allocator)
-        if join_err != nil {
-            return "", false
-        }
+        if join_err != nil do return "", false
 
         resolved = joined
     } else if !filepath.is_abs(resolved) {
-        if base == "" {
-            return "", false
-        }
+        if base == "" do return "", false
 
         joined, join_err := filepath.join({base, resolved}, allocator)
-        if join_err != nil {
-            return "", false
-        }
+        if join_err != nil do return "", false
 
         resolved = joined
     }
 
     cleaned, clean_err := filepath.clean(resolved, allocator)
-    if clean_err != nil {
-        return "", false
-    }
+    if clean_err != nil do return "", false
 
     return cleaned, true
 }
@@ -53,13 +41,9 @@ path_resolve :: proc(base: string, path: string, allocator: mem.Allocator) -> (s
 path_contained :: proc(root: string, path: string) -> bool {
     assert(root != "", "containment needs a root")
 
-    if path == root {
-        return true
-    }
+    if path == root do return true
 
-    if !strings.has_prefix(path, root) {
-        return false
-    }
+    if !strings.has_prefix(path, root) do return false
 
     rest := path[len(root):]
 

@@ -28,9 +28,7 @@ decode_json_object :: proc(
     if parse_err != nil {
         assert(parse_err != .Invalid_Allocator, "provider JSON needs a valid allocator")
 
-        if parse_err == .Out_Of_Memory {
-            return {}, nil, .Resource_Exhausted
-        }
+        if parse_err == .Out_Of_Memory do return {}, nil, .Resource_Exhausted
 
         return {}, nil, .Parse_Error
     }
@@ -56,9 +54,7 @@ decode_optional_object :: proc(
     err: Transport_Error,
 ) {
     v, p, valid := json.read_object(object, name)
-    if !valid {
-        return nil, false, .Parse_Error
-    }
+    if !valid do return nil, false, .Parse_Error
 
     return v, p, .None
 }
@@ -74,9 +70,7 @@ decode_optional_string :: proc(
     err: Transport_Error,
 ) {
     v, p, valid := json.read_string(object, name, 0, true)
-    if !valid {
-        return "", false, .Parse_Error
-    }
+    if !valid do return "", false, .Parse_Error
 
     return v, p, .None
 }
@@ -85,9 +79,7 @@ decode_optional_string :: proc(
 // fraction, negative value, unsafe integer, or another JSON type is malformed.
 decode_optional_u64 :: proc(object: json.Object, name: string) -> (value: u64, present: bool, err: Transport_Error) {
     v, p, valid := json.read_u64(object, name, 0, MAX_EXACT_JSON_INTEGER)
-    if !valid {
-        return 0, false, .Parse_Error
-    }
+    if !valid do return 0, false, .Parse_Error
 
     return v, p, .None
 }
@@ -110,15 +102,11 @@ tool_arguments :: proc(
     arguments: string,
     err: Transport_Error,
 ) {
-    if len(bytes) == 0 {
-        return "{}", .None
-    }
+    if len(bytes) == 0 do return "{}", .None
 
     raw := string(bytes)
     value, _, parse_err := decode_json_object(raw, scratch_allocator)
-    if parse_err != .None {
-        return "", parse_err
-    }
+    if parse_err != .None do return "", parse_err
 
     json.destroy_value(value, scratch_allocator)
 

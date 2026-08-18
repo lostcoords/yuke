@@ -96,9 +96,7 @@ run_tool :: proc(argv: []string, allocator := context.allocator) -> Tool_Result 
     }
 
     state, out, err, perr := os.process_exec(desc, allocator)
-    if perr != nil {
-        return {launched = false}
-    }
+    if perr != nil do return {launched = false}
 
     return {launched = true, exit_code = state.exit_code, stdout = string(out), stderr = string(err)}
 }
@@ -107,9 +105,7 @@ run_tool :: proc(argv: []string, allocator := context.allocator) -> Tool_Result 
 // case: a step whose non-zero exit is fatal. Steps that tolerate a specific failure (an idempotent
 // stop, a best-effort cleanup) call `run_tool` directly and inspect the result themselves.
 run_tool_checked :: proc(argv: []string, what: string) {
-    if r := run_tool(argv); !r.launched || r.exit_code != 0 {
-        service_tool_failed(what, r)
-    }
+    if r := run_tool(argv); !r.launched || r.exit_code != 0 do service_tool_failed(what, r)
 }
 
 // This binary's absolute path, for the generated unit's exec line. Exits on failure: a service
@@ -134,9 +130,7 @@ service_app_name :: proc(allocator := context.allocator) -> (string, bool) {
 // The log path the generated unit redirects to, or "" when no data directory resolves.
 service_log_path :: proc(allocator := context.allocator) -> string {
     base := paths.data_dir(allocator)
-    if base == "" {
-        return ""
-    }
+    if base == "" do return ""
 
     defer delete(base, allocator)
 
@@ -191,19 +185,13 @@ service_xml_escape :: proc(s: string, allocator := context.allocator) -> string 
     // replace_all aliases its input when the pattern is absent; free only real allocations and
     // clone the result so it is always owned.
     amp, amp_alloc := strings.replace_all(s, "&", "&amp;", allocator)
-    defer if amp_alloc {
-        delete(amp, allocator)
-    }
+    defer if amp_alloc do delete(amp, allocator)
 
     lt, lt_alloc := strings.replace_all(amp, "<", "&lt;", allocator)
-    defer if lt_alloc {
-        delete(lt, allocator)
-    }
+    defer if lt_alloc do delete(lt, allocator)
 
     gt, gt_alloc := strings.replace_all(lt, ">", "&gt;", allocator)
-    defer if gt_alloc {
-        delete(gt, allocator)
-    }
+    defer if gt_alloc do delete(gt, allocator)
 
     return strings.clone(gt, allocator)
 }

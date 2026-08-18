@@ -104,9 +104,7 @@ device_auth_body :: proc(
 
     case .Xai:
         assert(provider.authorize_originator_param != "", "RFC 8628 device request needs a client-identity param")
-        if originator == "" || len(originator) > 64 {
-            return "", "", .Invalid_Input
-        }
+        if originator == "" || len(originator) > 64 do return "", "", .Invalid_Input
 
         client_id := url_encode(provider.client_id, allocator)
         scope := url_encode(provider.scope, allocator)
@@ -138,9 +136,7 @@ device_poll_body :: proc(
 ) {
     assert(provider != nil, "device poll needs a provider")
 
-    if !device_session_valid(session) {
-        return "", "", .Invalid_Input
-    }
+    if !device_session_valid(session) do return "", "", .Invalid_Input
 
     switch provider.kind {
     case .Codex:
@@ -186,49 +182,33 @@ device_auth_parse :: proc(
 ) {
     assert(provider != nil, "device parse needs a provider")
 
-    defer if err != .None {
-        device_session_destroy(&out, allocator)
-    }
+    defer if err != .None do device_session_destroy(&out, allocator)
 
     value, object, parse_err := json_object(data, allocator)
-    if parse_err != .None {
-        return {}, parse_err
-    }
+    if parse_err != .None do return {}, parse_err
     defer secret_json_destroy(value, allocator)
 
     handle_key := provider.kind == .Codex ? "device_auth_id" : "device_code"
     handle, handle_ok := json_string_member(object, handle_key)
     user_code, code_ok := json_string_member(object, "user_code")
-    if !code_ok {
-        user_code, code_ok = json_string_member(object, "usercode")
-    }
-    if !handle_ok || !code_ok {
-        return {}, .Invalid_Response
-    }
+    if !code_ok do user_code, code_ok = json_string_member(object, "usercode")
+    if !handle_ok || !code_ok do return {}, .Invalid_Response
 
     interval, interval_err := device_interval_member(object, provider.kind)
-    if interval_err != .None {
-        return {}, interval_err
-    }
+    if interval_err != .None do return {}, interval_err
 
     expires_in_s := u64(CODEX_DEVICE_TIMEOUT_MS / 1000)
     if provider.kind == .Xai {
         expires, expires_present, expires_valid := json_optional_positive_u64_member(object, "expires_in")
-        if !expires_present || !expires_valid || expires > DEVICE_CODE_LIFETIME_MAX_S {
-            return {}, .Invalid_Response
-        }
+        if !expires_present || !expires_valid || expires > DEVICE_CODE_LIFETIME_MAX_S do return {}, .Invalid_Response
         expires_in_s = expires
     }
 
     verification := provider.device_verification_url
     if provider.kind == .Xai {
         uri, uri_ok := json_string_member(object, "verification_uri_complete")
-        if !uri_ok {
-            uri, uri_ok = json_string_member(object, "verification_uri")
-        }
-        if !uri_ok {
-            return {}, .Invalid_Response
-        }
+        if !uri_ok do uri, uri_ok = json_string_member(object, "verification_uri")
+        if !uri_ok do return {}, .Invalid_Response
         verification = uri
     }
 
@@ -238,9 +218,7 @@ device_auth_parse :: proc(
     out.interval_s = interval
     out.expires_in_s = expires_in_s
 
-    if !device_session_valid(out) || out.verification_uri == "" {
-        return {}, .Invalid_Response
-    }
+    if !device_session_valid(out) || out.verification_uri == "" do return {}, .Invalid_Response
 
     return out, .None
 }
@@ -259,27 +237,17 @@ device_poll_classify :: proc(
 
     switch provider.kind {
     case .Codex:
-        if status == 403 || status == 404 {
-            return Device_Pending{}, .None
-        }
-        if status < 200 || status >= 300 {
-            return Device_Failed{message = "device approval was rejected"}, .None
-        }
+        if status == 403 || status == 404 do return Device_Pending{}, .None
+        if status < 200 || status >= 300 do return Device_Failed{message = "device approval was rejected"}, .None
 
         grant, grant_err := codex_device_grant_parse(data, allocator)
-        if grant_err != .None {
-            return {}, grant_err
-        }
+        if grant_err != .None do return {}, grant_err
 
         return Device_Exchange{grant = grant}, .None
 
     case .Xai:
-        if status >= 200 && status < 300 {
-            return Device_Tokens{}, .None
-        }
-        if status == 408 || status == 429 || status >= 500 {
-            return Device_Pending{}, .None
-        }
+        if status >= 200 && status < 300 do return Device_Tokens{}, .None
+        if status == 408 || status == 429 || status >= 500 do return Device_Pending{}, .None
 
         return rfc8628_error_result(data, allocator), .None
     }
@@ -308,14 +276,10 @@ device_grant_body :: proc(
 
 @(private)
 codex_device_grant_parse :: proc(data: string, allocator: mem.Allocator) -> (out: Device_Grant, err: OAuth_Error) {
-    defer if err != .None {
-        device_grant_destroy(&out, allocator)
-    }
+    defer if err != .None do device_grant_destroy(&out, allocator)
 
     value, object, parse_err := json_object(data, allocator)
-    if parse_err != .None {
-        return {}, parse_err
-    }
+    if parse_err != .None do return {}, parse_err
     defer secret_json_destroy(value, allocator)
 
     authorization_code, code_ok := json_string_member(object, "authorization_code")
@@ -345,15 +309,11 @@ codex_device_grant_parse :: proc(data: string, allocator: mem.Allocator) -> (out
 @(private)
 rfc8628_error_result :: proc(data: string, allocator: mem.Allocator) -> Device_Poll_Result {
     value, object, parse_err := json_object(data, allocator)
-    if parse_err != .None {
-        return Device_Failed{message = "device approval failed"}
-    }
+    if parse_err != .None do return Device_Failed{message = "device approval failed"}
     defer secret_json_destroy(value, allocator)
 
     code, code_ok := json_string_member(object, "error")
-    if !code_ok {
-        return Device_Failed{message = "device approval failed"}
-    }
+    if !code_ok do return Device_Failed{message = "device approval failed"}
 
     switch code {
     case "authorization_pending":
@@ -378,9 +338,7 @@ rfc8628_error_result :: proc(data: string, allocator: mem.Allocator) -> Device_P
 device_interval_member :: proc(object: json.Object, kind: Kind) -> (interval: u64, err: OAuth_Error) {
     interval_value, found := object["interval"]
     if !found {
-        if kind == .Xai {
-            return DEVICE_DEFAULT_POLL_INTERVAL_S, .None
-        }
+        if kind == .Xai do return DEVICE_DEFAULT_POLL_INTERVAL_S, .None
 
         return 0, .Invalid_Response
     }
@@ -391,9 +349,7 @@ device_interval_member :: proc(object: json.Object, kind: Kind) -> (interval: u6
     case json.String:
         parsed: bool
         interval, parsed = strconv.parse_u64(strings.trim_space(shape))
-        if !parsed {
-            return 0, .Invalid_Response
-        }
+        if !parsed do return 0, .Invalid_Response
 
     case json.Float:
         if kind == .Codex ||
@@ -408,9 +364,7 @@ device_interval_member :: proc(object: json.Object, kind: Kind) -> (interval: u6
         return 0, .Invalid_Response
     }
 
-    if interval < DEVICE_POLL_INTERVAL_MIN_S || interval > DEVICE_POLL_INTERVAL_MAX_S {
-        return 0, .Invalid_Response
-    }
+    if interval < DEVICE_POLL_INTERVAL_MIN_S || interval > DEVICE_POLL_INTERVAL_MAX_S do return 0, .Invalid_Response
 
     return interval, .None
 }

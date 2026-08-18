@@ -62,24 +62,18 @@ migration_hash_check :: proc(db: ^sqlite.Conn, set: []Migration, applied: int) -
 
     st, rc := sqlite.prepare(db, "SELECT version, hash FROM migration_hash ORDER BY version")
 
-    if rc != .Ok {
-        return .Migration_Drift if rc == .Error else Error(rc)
-    }
+    if rc != .Ok do return .Migration_Drift if rc == .Error else Error(rc)
     defer sqlite.finalize(st)
     assert(sqlite.column_count(st) == 2, "the checksum query returns version and hash")
 
     for expected in 1 ..= applied {
         rc = sqlite.step(st)
-        if rc != .Row {
-            return Error(rc) if sqlite.is_error(rc) else .Migration_Drift
-        }
+        if rc != .Row do return Error(rc) if sqlite.is_error(rc) else .Migration_Drift
 
         hash_buf: [16]byte
         stored_hash := ""
 
-        if sqlite.column_type(st, 1) == .Text {
-            stored_hash = sqlite.column_text(st, 1) or_return
-        }
+        if sqlite.column_type(st, 1) == .Text do stored_hash = sqlite.column_text(st, 1) or_return
 
         if sqlite.column_type(st, 0) != .Integer ||
            sqlite.column_type(st, 1) != .Text ||
@@ -90,9 +84,7 @@ migration_hash_check :: proc(db: ^sqlite.Conn, set: []Migration, applied: int) -
     }
 
     rc = sqlite.step(st)
-    if rc != .Done {
-        return Error(rc) if sqlite.is_error(rc) else .Migration_Drift
-    }
+    if rc != .Done do return Error(rc) if sqlite.is_error(rc) else .Migration_Drift
 
     return nil
 }
@@ -110,9 +102,7 @@ migration_apply :: proc(db: ^sqlite.Conn, m: Migration, application_id: i64) -> 
     // A failed ROLLBACK leaves the transaction open, which outlives this call, so it
     // replaces the original error rather than being dropped.
     defer if err != nil {
-        if rollback := sqlite.txn_rollback(db); rollback != .Ok {
-            err = rollback
-        }
+        if rollback := sqlite.txn_rollback(db); rollback != .Ok do err = rollback
     }
 
     migration_body(db, m, application_id) or_return
@@ -141,9 +131,7 @@ migration_body :: proc(db: ^sqlite.Conn, m: Migration, application_id: i64) -> E
 
     pragma_buf: [64]byte
 
-    if application_id != 0 {
-        sqlite.exec(db, fmt.bprintf(pragma_buf[:], "PRAGMA application_id = %d", application_id)) or_return
-    }
+    if application_id != 0 do sqlite.exec(db, fmt.bprintf(pragma_buf[:], "PRAGMA application_id = %d", application_id)) or_return
 
     // PRAGMA rejects bound parameters; both values are embedded integers.
     return sqlite.exec(db, fmt.bprintf(pragma_buf[:], "PRAGMA user_version = %d", m.version))

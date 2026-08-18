@@ -65,15 +65,11 @@ req_id :: proc(n: u64, buf: []u8) -> Request_Id {
 // Parse an id token back to the number we originated; `ok` is false if it is not a
 // bare integer we could have issued. An over-long token would wrap `parse_i64`.
 req_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
-    if len(id) > json.MAX_INTEGER_TOKEN_DIGITS {
-        return 0, false
-    }
+    if len(id) > json.MAX_INTEGER_TOKEN_DIGITS do return 0, false
 
     i, parsed := strconv.parse_i64(string(id))
 
-    if !parsed || i < 0 || i > MAX_REQUEST_ID {
-        return 0, false
-    }
+    if !parsed || i < 0 || i > MAX_REQUEST_ID do return 0, false
 
     return u64(i), true
 }
@@ -82,28 +78,20 @@ req_id_to_u64 :: proc(id: Request_Id) -> (n: u64, ok: bool) {
 req_id_validate :: proc(id: Request_Id) -> Validation_Error {
     s := string(id)
 
-    if len(s) == 0 {
-        return .Mismatched_Payload
-    }
+    if len(s) == 0 do return .Mismatched_Payload
 
     enforce_bounded(MAX_REQUEST_ID_BYTES, s) or_return
 
     if s[0] == '"' {
-        if len(s) < 2 || s[len(s) - 1] != '"' {
-            return .Mismatched_Payload
-        }
+        if len(s) < 2 || s[len(s) - 1] != '"' do return .Mismatched_Payload
 
         return .None
     }
 
-    if s == "null" {
-        return .None
-    }
+    if s == "null" do return .None
 
     // Must parse in full: the lexer accepts `1e`, which would echo as malformed JSON.
-    if _, ok := strconv.parse_f64(s); !ok {
-        return .Mismatched_Payload
-    }
+    if _, ok := strconv.parse_f64(s); !ok do return .Mismatched_Payload
 
     return .None
 }

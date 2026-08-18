@@ -68,9 +68,7 @@ skill_ref_from_reader :: proc(d: ^json.Decoder) -> (out: Skill_Ref, err: json.De
         }
     }
 
-    if seen != {.Name, .Args} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Name, .Args} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -115,9 +113,7 @@ input_emit :: proc(e: ^json.Emitter, self: Input) {
 input_validate :: proc(self: Input) -> Validation_Error {
     switch v in self {
     case Input_Content:
-        if len(v.content) > LIMITS.max_input_parts {
-            return .Overflow
-        }
+        if len(v.content) > LIMITS.max_input_parts do return .Overflow
 
         for part in v.content {
             content_part_validate(part) or_return
@@ -179,9 +175,7 @@ queued_input_emit :: proc(e: ^json.Emitter, self: Queued_Input) {
 
 // Verify annotated field bounds.
 queued_input_validate :: proc(self: Queued_Input) -> Validation_Error {
-    if len(self.content) > LIMITS.max_input_parts {
-        return .Overflow
-    }
+    if len(self.content) > LIMITS.max_input_parts do return .Overflow
 
     for part in self.content {
         content_part_validate(part) or_return
@@ -322,13 +316,9 @@ session_cancel_run_params_emit :: proc(e: ^json.Emitter, self: Session_Cancel_Ru
     json.object_begin(e)
     json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
-    if id, ok := self.run_id.?; ok {
-        json.field_u64(e, "run_id", u64(id))
-    }
+    if id, ok := self.run_id.?; ok do json.field_u64(e, "run_id", u64(id))
 
-    if b, ok := self.clear_queue.?; ok {
-        json.field_bool(e, "clear_queue", b)
-    }
+    if b, ok := self.clear_queue.?; ok do json.field_bool(e, "clear_queue", b)
 
     json.object_end(e)
 }
@@ -451,9 +441,7 @@ input_from_reader :: proc(d: ^json.Decoder) -> (input: Input, err: json.Decode_E
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Input_Content{content = content}, .None
 
@@ -487,9 +475,7 @@ input_from_reader :: proc(d: ^json.Decoder) -> (input: Input, err: json.Decode_E
             }
         }
 
-        if seen != {.Name, .Args} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Name, .Args} do return nil, .Mismatched_Payload
 
         return Input_Skill{skill = Skill_Ref{name = name, arguments = arguments}}, .None
     }
@@ -530,9 +516,7 @@ queued_input_from_reader :: proc(d: ^json.Decoder) -> (item: Queued_Input, err: 
         }
     }
 
-    if seen != {.Id, .Content, .Queued} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Content, .Queued} do return {}, .Mismatched_Payload
 
     return item, .None
 }
@@ -570,9 +554,7 @@ session_send_input_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Input} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Input} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -615,9 +597,7 @@ session_send_input_result_from_reader :: proc(
             }
         }
 
-        if seen != {.Input, .Run} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Input, .Run} do return nil, .Mismatched_Payload
 
         return Session_Send_Input_Result_Started{input_id = Input_Id(input_id), run_id = Run_Id(run_id)}, .None
 
@@ -646,9 +626,7 @@ session_send_input_result_from_reader :: proc(
             }
         }
 
-        if .Input not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Input not_in seen do return nil, .Mismatched_Payload
 
         return Session_Send_Input_Result_Queued{input_id = Input_Id(input_id)}, .None
     }
@@ -689,9 +667,7 @@ session_cancel_input_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Id} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Id} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -719,9 +695,7 @@ session_cancel_input_result_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -760,9 +734,7 @@ session_cancel_run_params_from_reader :: proc(
         }
     }
 
-    if .Sid not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Sid not_in seen do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -791,9 +763,7 @@ session_cancel_run_result_from_reader :: proc(
         case "canceled_run":
             seen += {.Run}
 
-            if !json.dec_is_null(d) {
-                result.canceled_run = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
-            }
+            if !json.dec_is_null(d) do result.canceled_run = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case "cleared_inputs":
             result.cleared_inputs = json.dec_array(d, _input_id_from_reader) or_return
@@ -802,18 +772,14 @@ session_cancel_run_result_from_reader :: proc(
         case "cleared_compaction":
             seen += {.Compaction}
 
-            if !json.dec_is_null(d) {
-                result.cleared_compaction = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
-            }
+            if !json.dec_is_null(d) do result.cleared_compaction = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Run, .Inputs, .Compaction} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Run, .Inputs, .Compaction} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -868,9 +834,7 @@ part_delta_from_reader :: proc(d: ^json.Decoder) -> (pd: Part_Delta, err: json.D
         }
     }
 
-    if seen != {.Sid, .Mid, .Pid, .Delta, .Offset} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid, .Pid, .Delta, .Offset} do return {}, .Mismatched_Payload
 
     return pd, .None
 }

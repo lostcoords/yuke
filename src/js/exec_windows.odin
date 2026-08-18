@@ -24,9 +24,7 @@ exec_module :: proc() -> Module {
 exec_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
-    if !qjs.set_module_export(ctx, m, "exec", qjs.new_function(ctx, exec_entry, "exec", 2)) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "exec", qjs.new_function(ctx, exec_entry, "exec", 2)) do return -1
 
     return 0
 }

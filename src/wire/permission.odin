@@ -117,9 +117,7 @@ permission_option_validate :: proc(self: Permission_Option) -> Validation_Error 
     enforce_bounded(256, self.label) or_return
 
     if creates, ok := self.creates.?; ok {
-        if len(creates) > LIMITS.max_permission_creates {
-            return .Overflow
-        }
+        if len(creates) > LIMITS.max_permission_creates do return .Overflow
 
         for pattern in creates {
             enforce_bounded(512, pattern) or_return
@@ -270,23 +268,17 @@ permission_state_validate :: proc(self: Permission_State) -> Validation_Error {
     _, has_opts := self.options.?
     _, has_dec := self.decision.?
 
-    if has_opts == has_dec {
-        return .Mismatched_Payload
-    }
+    if has_opts == has_dec do return .Mismatched_Payload
 
     if opts, ok := self.options.?; ok {
-        if len(opts) > LIMITS.max_permission_options {
-            return .Overflow
-        }
+        if len(opts) > LIMITS.max_permission_options do return .Overflow
 
         for opt in opts {
             permission_option_validate(opt) or_return
         }
     }
 
-    if dec, ok := self.decision.?; ok {
-        return permission_decision_validate(dec)
-    }
+    if dec, ok := self.decision.?; ok do return permission_decision_validate(dec)
 
     return .None
 }
@@ -309,9 +301,7 @@ permission_state_clone :: proc(self: Permission_State, allocator := context.allo
     // Assign only when a decision is present. Wrapping a bare (nil) `Permission_Decision`
     // union into the `Maybe` field would spuriously mark the decision present. A local
     // `Maybe(Permission_Decision)` (the obvious alternative) crashes the compiler backend.
-    if dec, ok := self.decision.?; ok {
-        out.decision = permission_decision_clone(dec, allocator)
-    }
+    if dec, ok := self.decision.?; ok do out.decision = permission_decision_clone(dec, allocator)
 
     return out
 }
@@ -348,9 +338,7 @@ permission_rule_emit :: proc(e: ^json.Emitter, self: Permission_Rule) {
     json.object_begin(e)
     json.field_id(e, "id", ([16]u8)(self.id))
 
-    if sid, ok := self.session_id.?; ok {
-        json.field_id(e, "session_id", ([16]u8)(sid))
-    }
+    if sid, ok := self.session_id.?; ok do json.field_id(e, "session_id", ([16]u8)(sid))
 
     json.field_string(e, "tool", self.tool)
     json.field_string(e, "label", self.label)
@@ -365,9 +353,7 @@ permission_rule_emit :: proc(e: ^json.Emitter, self: Permission_Rule) {
 permission_rule_validate :: proc(self: Permission_Rule) -> Validation_Error {
     enforce_id(([16]u8)(self.id)) or_return
 
-    if sid, ok := self.session_id.?; ok {
-        enforce_id(([16]u8)(sid)) or_return
-    }
+    if sid, ok := self.session_id.?; ok do enforce_id(([16]u8)(sid)) or_return
 
     enforce_bounded(128, self.tool) or_return
     enforce_bounded(256, self.label) or_return
@@ -425,9 +411,7 @@ permission_decide_params_validate :: proc(self: Permission_Decide_Params) -> Val
     enforce_id(([16]u8)(self.session_id)) or_return
     enforce_bounded(32, self.option_id) or_return
 
-    if msg, ok := self.message.?; ok {
-        return enforce_bounded(LIMITS.max_permission_reject_message_bytes, msg)
-    }
+    if msg, ok := self.message.?; ok do return enforce_bounded(LIMITS.max_permission_reject_message_bytes, msg)
 
     return .None
 }
@@ -455,9 +439,7 @@ permission_rules_result_emit :: proc(e: ^json.Emitter, self: Permission_Rules_Re
 
 // Verify annotated field bounds.
 permission_rules_result_validate :: proc(self: Permission_Rules_Result) -> Validation_Error {
-    if len(self.rules) > LIMITS.max_permission_rules {
-        return .Overflow
-    }
+    if len(self.rules) > LIMITS.max_permission_rules do return .Overflow
 
     for rule in self.rules {
         permission_rule_validate(rule) or_return
@@ -526,9 +508,7 @@ permission_option_from_reader :: proc(d: ^json.Decoder) -> (opt: Permission_Opti
         }
     }
 
-    if seen != {.Id, .Kind, .Label} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Kind, .Label} do return {}, .Mismatched_Payload
 
     return opt, .None
 }
@@ -584,9 +564,7 @@ permission_decision_from_reader :: proc(d: ^json.Decoder) -> (dec: Permission_De
             }
         }
 
-        if seen != {.Oid, .Kind, .Label, .Res, .Db} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Oid, .Kind, .Label, .Res, .Db} do return nil, .Mismatched_Payload
 
         return out, .None
 
@@ -625,9 +603,7 @@ permission_decision_from_reader :: proc(d: ^json.Decoder) -> (dec: Permission_De
             }
         }
 
-        if seen != {.Rid, .Label, .Res} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Rid, .Label, .Res} do return nil, .Mismatched_Payload
 
         return out, .None
     }
@@ -686,9 +662,7 @@ permission_rule_from_reader :: proc(d: ^json.Decoder) -> (rule: Permission_Rule,
         }
     }
 
-    if seen != {.Id, .Tool, .Label, .Action, .Created, .By} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Tool, .Label, .Action, .Created, .By} do return {}, .Mismatched_Payload
 
     return rule, .None
 }
@@ -739,9 +713,7 @@ permission_decide_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Mid, .Pid, .Oid} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Mid, .Pid, .Oid} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -769,9 +741,7 @@ permission_rules_result_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -809,9 +779,7 @@ permission_forget_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Wid, .Rid} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Wid, .Rid} do return {}, .Mismatched_Payload
 
     return params, .None
 }

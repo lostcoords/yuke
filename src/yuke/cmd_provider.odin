@@ -72,15 +72,9 @@ provider_run :: proc() -> int {
 }
 
 provider_args_parse :: proc(args: []string) -> (options: Provider_Options, ok: bool) {
-    if len(args) == 1 && args[0] == "list" {
-        return {action = .List}, true
-    }
-    if len(args) == 2 && args[0] == "set-key" {
-        return {action = .Set_Key, provider_id = args[1]}, true
-    }
-    if len(args) == 2 && args[0] == "remove-key" {
-        return {action = .Remove_Key, provider_id = args[1]}, true
-    }
+    if len(args) == 1 && args[0] == "list" do return {action = .List}, true
+    if len(args) == 2 && args[0] == "set-key" do return {action = .Set_Key, provider_id = args[1]}, true
+    if len(args) == 2 && args[0] == "remove-key" do return {action = .Remove_Key, provider_id = args[1]}, true
 
     return {}, false
 }
@@ -105,9 +99,7 @@ provider_on_ready :: proc(s: ^Daemon_Session) {
 
 provider_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcome, _: rawptr) {
     s, result, ok := daemon_session_result(c, outcome)
-    if ok && provider_response_apply(s, result) {
-        return
-    }
+    if ok && provider_response_apply(s, result) do return
 
     client.client_close(c)
 }
@@ -131,9 +123,7 @@ provider_response_apply :: proc(s: ^Daemon_Session, result: wire.Response_Result
         if state.stage == 0 {
             listed := result.(wire.Auth_List_Result)
             for provider in listed.providers {
-                if provider.provider_id != wire.Provider_Id(state.provider_id) {
-                    continue
-                }
+                if provider.provider_id != wire.Provider_Id(state.provider_id) do continue
 
                 if len(provider.login_flows) > 0 {
                     fmt.eprintfln("yuke provider: %s uses OAuth; remove-key cannot log it out", state.provider_id)
@@ -168,9 +158,7 @@ provider_list_print :: proc(providers: []wire.Auth_Provider) {
     fmt.println("PROVIDER\tCREDENTIAL\tSTATE")
     for provider in providers {
         credential := "none"
-        if kind, present := provider.credential_kind.?; present {
-            credential = kind == .Api_Key ? "api_key" : "oauth"
-        }
+        if kind, present := provider.credential_kind.?; present do credential = kind == .Api_Key ? "api_key" : "oauth"
 
         state := provider.restart_required ? "restart required" : "current"
         fmt.printfln("%s\t%s\t%s", provider.provider_id, credential, state)
@@ -182,9 +170,7 @@ provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
     os.flush(os.stderr)
 
     raw, term_err := term.enable_raw_mode(term.Tty_Handle(os.fd(os.stdin)))
-    if term_err != .None {
-        return "", .Terminal
-    }
+    if term_err != .None do return "", .Terminal
 
     bytes: [wire.LIMITS.max_api_key_bytes]byte
     defer crypto.zero_explicit(raw_data(bytes[:]), len(bytes))
@@ -201,20 +187,14 @@ provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
     defer crypto.zero_explicit(raw_data(one[:]), len(one))
     for {
         n, read_err := os.read(os.stdin, one[:])
-        if read_err != nil || n != 1 {
-            return "", .Terminal
-        }
+        if read_err != nil || n != 1 do return "", .Terminal
 
         switch one[0] {
         case '\r', '\n':
-            if typed == 0 {
-                return "", .Empty
-            }
+            if typed == 0 do return "", .Empty
 
             text := string(bytes[:typed])
-            if !utf8.valid_string(text) {
-                return "", .Invalid_Utf8
-            }
+            if !utf8.valid_string(text) do return "", .Invalid_Utf8
 
             cloned := strings.clone(text)
 
@@ -230,9 +210,7 @@ provider_key_prompt :: proc() -> (key: string, err: Provider_Prompt_Error) {
             }
 
         case:
-            if typed == len(bytes) {
-                return "", .Too_Long
-            }
+            if typed == len(bytes) do return "", .Too_Long
             bytes[typed] = one[0]
             typed += 1
         }

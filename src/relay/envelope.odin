@@ -85,9 +85,7 @@ frame_decode :: proc(msg: []u8) -> (frame: Frame, err: Error) {
 
     t := Frame_Type(msg[0])
 
-    if t != .Sealed && t != .Control {
-        return {}, .Unknown_Type
-    }
+    if t != .Sealed && t != .Control do return {}, .Unknown_Type
 
     return {type = t, payload = msg[1:]}, .None
 }

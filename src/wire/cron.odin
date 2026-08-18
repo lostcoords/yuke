@@ -49,47 +49,31 @@ cron_patch_emit :: proc(e: ^json.Emitter, self: Cron_Patch) {
         create_session_emit(e, s)
     }
 
-    if r, ok := self.retain.?; ok {
-        json.field_string(e, "retain", cron_retain_to_wire(r))
-    }
+    if r, ok := self.retain.?; ok do json.field_string(e, "retain", cron_retain_to_wire(r))
 
     if self.input != nil {
         json.key(e, "input")
         input_emit(e, self.input)
     }
 
-    if m, ok := self.on_missed.?; ok {
-        json.field_string(e, "on_missed", cron_missed_policy_to_wire(m))
-    }
+    if m, ok := self.on_missed.?; ok do json.field_string(e, "on_missed", cron_missed_policy_to_wire(m))
 
-    if o, ok := self.overlap.?; ok {
-        json.field_string(e, "overlap", cron_overlap_to_wire(o))
-    }
+    if o, ok := self.overlap.?; ok do json.field_string(e, "overlap", cron_overlap_to_wire(o))
 
-    if b, ok := self.delete_after_run.?; ok {
-        json.field_bool(e, "delete_after_run", b)
-    }
+    if b, ok := self.delete_after_run.?; ok do json.field_bool(e, "delete_after_run", b)
 
-    if b, ok := self.enabled.?; ok {
-        json.field_bool(e, "enabled", b)
-    }
+    if b, ok := self.enabled.?; ok do json.field_bool(e, "enabled", b)
 
     json.object_end(e)
 }
 
 // Verify annotated field bounds.
 cron_patch_validate :: proc(self: Cron_Patch) -> Validation_Error {
-    if n, ok := self.name.?; ok {
-        enforce_bounded(128, n) or_return
-    }
+    if n, ok := self.name.?; ok do enforce_bounded(128, n) or_return
 
-    if s, ok := self.session.?; ok {
-        create_session_validate(s) or_return
-    }
+    if s, ok := self.session.?; ok do create_session_validate(s) or_return
 
-    if self.input != nil {
-        return input_validate(self.input)
-    }
+    if self.input != nil do return input_validate(self.input)
 
     return .None
 }
@@ -172,9 +156,7 @@ Cron_List_Params :: struct {
 cron_list_params_emit :: proc(e: ^json.Emitter, self: Cron_List_Params) {
     json.object_begin(e)
 
-    if limit, ok := self.limit.?; ok {
-        json.field_u64(e, "limit", limit)
-    }
+    if limit, ok := self.limit.?; ok do json.field_u64(e, "limit", limit)
 
     json.field_string_opt(e, "cursor", self.cursor)
     json.object_end(e)
@@ -183,14 +165,10 @@ cron_list_params_emit :: proc(e: ^json.Emitter, self: Cron_List_Params) {
 // Verify the page and cursor bounds.
 cron_list_params_validate :: proc(self: Cron_List_Params) -> Validation_Error {
     if limit, ok := self.limit.?; ok {
-        if limit == 0 || limit > u64(LIMITS.max_cron_list_page_size) {
-            return .Out_Of_Range
-        }
+        if limit == 0 || limit > u64(LIMITS.max_cron_list_page_size) do return .Out_Of_Range
     }
 
-    if cursor, ok := self.cursor.?; ok {
-        return enforce_bounded(LIMITS.max_cron_list_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.cursor.?; ok do return enforce_bounded(LIMITS.max_cron_list_cursor_bytes, cursor)
 
     return .None
 }
@@ -228,21 +206,15 @@ cron_list_result_emit :: proc(e: ^json.Emitter, self: Cron_List_Result) {
 
 // Verify annotated field bounds.
 cron_list_result_validate :: proc(self: Cron_List_Result) -> Validation_Error {
-    if u64(self.revision) > MAX_CRON_REVISION {
-        return .Out_Of_Range
-    }
+    if u64(self.revision) > MAX_CRON_REVISION do return .Out_Of_Range
 
-    if len(self.jobs) > LIMITS.max_cron_list_page_size {
-        return .Overflow
-    }
+    if len(self.jobs) > LIMITS.max_cron_list_page_size do return .Overflow
 
     for job in self.jobs {
         cron_job_validate(job) or_return
     }
 
-    if cursor, ok := self.next_cursor.?; ok {
-        return enforce_bounded(LIMITS.max_cron_list_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.next_cursor.?; ok do return enforce_bounded(LIMITS.max_cron_list_cursor_bytes, cursor)
 
     return .None
 }
@@ -501,9 +473,7 @@ cron_job_spec_emit :: proc(e: ^json.Emitter, self: Cron_Job_Spec) {
 
 // Verify annotated field bounds.
 cron_job_spec_validate :: proc(self: Cron_Job_Spec) -> Validation_Error {
-    if n, ok := self.name.?; ok {
-        enforce_bounded(128, n) or_return
-    }
+    if n, ok := self.name.?; ok do enforce_bounded(128, n) or_return
 
     create_session_validate(self.session) or_return
 
@@ -514,9 +484,7 @@ cron_job_spec_validate :: proc(self: Cron_Job_Spec) -> Validation_Error {
 cron_job_spec_clone :: proc(self: Cron_Job_Spec, allocator := context.allocator) -> Cron_Job_Spec {
     name: Maybe(string)
 
-    if n, ok := self.name.?; ok {
-        name = strings.clone(n, allocator)
-    }
+    if n, ok := self.name.?; ok do name = strings.clone(n, allocator)
 
     return Cron_Job_Spec {
         name = name,
@@ -604,9 +572,7 @@ cron_job_emit :: proc(e: ^json.Emitter, self: Cron_Job) {
 cron_job_validate :: proc(self: Cron_Job) -> Validation_Error {
     enforce_id(([16]u8)(self.id)) or_return
 
-    if sid, ok := self.last_session_id.?; ok {
-        enforce_id(([16]u8)(sid)) or_return
-    }
+    if sid, ok := self.last_session_id.?; ok do enforce_id(([16]u8)(sid)) or_return
 
     return cron_job_spec_validate(self.spec)
 }
@@ -653,9 +619,7 @@ cron_schedule_from_reader :: proc(d: ^json.Decoder) -> (sched: Cron_Schedule, er
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Cron_Schedule_Every{interval_ms = interval_ms}, .None
 
@@ -690,9 +654,7 @@ cron_schedule_from_reader :: proc(d: ^json.Decoder) -> (sched: Cron_Schedule, er
             }
         }
 
-        if seen != {.Expr, .Utc} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Expr, .Utc} do return nil, .Mismatched_Payload
 
         return Cron_Schedule_Cron{expr = expr, utc_offset_minutes = utc}, .None
 
@@ -716,9 +678,7 @@ cron_schedule_from_reader :: proc(d: ^json.Decoder) -> (sched: Cron_Schedule, er
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Cron_Schedule_At{at_ms = at_ms}, .None
 
@@ -742,9 +702,7 @@ cron_schedule_from_reader :: proc(d: ^json.Decoder) -> (sched: Cron_Schedule, er
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Cron_Schedule_After{delay_ms = delay_ms}, .None
     }
@@ -808,9 +766,7 @@ cron_job_spec_from_reader :: proc(d: ^json.Decoder) -> (spec: Cron_Job_Spec, err
         }
     }
 
-    if seen != {.Sched, .Sess, .Retain, .Input, .Missed, .Overlap, .Del} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sched, .Sess, .Retain, .Input, .Missed, .Overlap, .Del} do return {}, .Mismatched_Payload
 
     return spec, .None
 }
@@ -857,30 +813,22 @@ cron_job_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Job, err: json.Deco
         case "next_run_ms":
             seen += {.Next}
 
-            if !json.dec_is_null(d) {
-                out.next_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-            }
+            if !json.dec_is_null(d) do out.next_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "last_run_ms":
             seen += {.Last_Run}
 
-            if !json.dec_is_null(d) {
-                out.last_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-            }
+            if !json.dec_is_null(d) do out.last_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "last_session_id":
             seen += {.Last_Sess}
 
-            if !json.dec_is_null(d) {
-                out.last_session_id = Session_Id(json.dec_fixed(d, 16) or_return)
-            }
+            if !json.dec_is_null(d) do out.last_session_id = Session_Id(json.dec_fixed(d, 16) or_return)
 
         case "last_outcome":
             seen += {.Last_Out}
 
-            if !json.dec_is_null(d) {
-                out.last_outcome = json.dec_enum(d, cron_run_outcome_wire) or_return
-            }
+            if !json.dec_is_null(d) do out.last_outcome = json.dec_enum(d, cron_run_outcome_wire) or_return
 
         case "run_count":
             out.run_count = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
@@ -895,9 +843,7 @@ cron_job_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Job, err: json.Deco
         }
     }
 
-    if seen != {.Id, .Spec, .Enabled, .Created, .Next, .Last_Run, .Last_Sess, .Last_Out, .Count, .Disp} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Spec, .Enabled, .Created, .Next, .Last_Run, .Last_Sess, .Last_Out, .Count, .Disp} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -963,9 +909,7 @@ cron_create_params_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Create
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -998,9 +942,7 @@ cron_patch_params_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Patch_P
         }
     }
 
-    if seen != {.Id, .Patch} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Patch} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -1023,9 +965,7 @@ cron_job_ref_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Job_Ref, err
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -1079,18 +1019,14 @@ cron_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_List_Res
         case "next_cursor":
             seen += {.Next}
 
-            if !json.dec_is_null(d) {
-                result.next_cursor = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.next_cursor = json.dec_string(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Rev, .Jobs, .Next} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Jobs, .Next} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -1123,9 +1059,7 @@ cron_run_now_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_Run_N
         }
     }
 
-    if seen != {.Sid, .Run} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Run} do return {}, .Mismatched_Payload
 
     return result, .None
 }

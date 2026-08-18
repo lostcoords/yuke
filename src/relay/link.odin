@@ -144,46 +144,32 @@ link_dispatch :: proc(
     reason: string,
     err: Error,
 ) {
-    if kind != .Binary {
-        // The socket answers ping/pong/close itself, so only a text data frame reaches
-        // here — and the envelope rides only binary.
-        return .Fail, 0, nil, "", .Text
-    }
+    if kind != .Binary do return .Fail, 0, nil, "", .Text
 
     // The daemon's `.Link` prefixes a one-byte channel that routes the frame to one of several
     // clients; the client's `.Connect` carries no prefix (one session per socket).
     body := msg
     if route == .Link {
-        if len(msg) == 0 {
-            return .Fail, 0, nil, "", .Empty
-        }
+        if len(msg) == 0 do return .Fail, 0, nil, "", .Empty
 
         channel = msg[0]
         body = msg[1:]
     }
 
     frame, ferr := frame_decode(body)
-    if ferr != .None {
-        return .Fail, 0, nil, "", ferr
-    }
+    if ferr != .None do return .Fail, 0, nil, "", ferr
 
     switch frame.type {
     case .Sealed:
-        if !attached {
-            return .Drop, 0, nil, "", .None
-        }
+        if !attached do return .Drop, 0, nil, "", .None
 
         return .Sealed, channel, frame.payload, "", .None
 
     case .Control:
-        if route == .Connect {
-            return .Fail, 0, nil, "", .Control_Unexpected
-        }
+        if route == .Connect do return .Fail, 0, nil, "", .Control_Unexpected
 
         ctrl, cerr := control_decode(frame.payload, allocator)
-        if cerr != .None {
-            return .Fail, 0, nil, "", cerr
-        }
+        if cerr != .None do return .Fail, 0, nil, "", cerr
 
         switch ctrl.kind {
         case .Peer_Attached:
@@ -218,13 +204,9 @@ endpoint_parse :: proc(url: string) -> (ep: Endpoint, ok: bool) {
         return {}, false
     }
 
-    if slash := strings.index_byte(rest, '/'); slash >= 0 {
-        rest = rest[:slash]
-    }
+    if slash := strings.index_byte(rest, '/'); slash >= 0 do rest = rest[:slash]
 
-    if rest == "" {
-        return {}, false
-    }
+    if rest == "" do return {}, false
 
     host := rest
     port := 443 if scheme == .Wss else 80
@@ -232,16 +214,12 @@ endpoint_parse :: proc(url: string) -> (ep: Endpoint, ok: bool) {
     if colon := strings.last_index_byte(rest, ':'); colon >= 0 {
         host = rest[:colon]
         parsed, pok := strconv.parse_int(rest[colon + 1:], 10)
-        if !pok || parsed <= 0 || parsed > 65535 {
-            return {}, false
-        }
+        if !pok || parsed <= 0 || parsed > 65535 do return {}, false
 
         port = parsed
     }
 
-    if host == "" {
-        return {}, false
-    }
+    if host == "" do return {}, false
 
     return Endpoint{scheme = scheme, host = host, port = port}, true
 }
@@ -298,9 +276,7 @@ link_dial :: proc(
     }
 
     err := ws.client_connect(&l.sock, loop, options, callbacks, l, allocator)
-    if err != .None {
-        virtual.arena_destroy(&l.scratch)
-    }
+    if err != .None do virtual.arena_destroy(&l.scratch)
 
     return err
 }
@@ -394,15 +370,11 @@ link_on_open :: proc(sock: ^ws.Client) {
     // The client's /connect link is spliced onto the parked daemon the instant it opens —
     // no peer_attached CONTROL arrives, so it is attached from open and may seal at once.
     // The daemon's /link waits for peer_attached to flip `attached`.
-    if l.route == .Connect {
-        l.attached = true
-    }
+    if l.route == .Connect do l.attached = true
 
     log.debugf("relay link: parked on %s", "/link" if l.route == .Link else "/connect")
 
-    if l.cbs.on_parked != nil {
-        l.cbs.on_parked(l)
-    }
+    if l.cbs.on_parked != nil do l.cbs.on_parked(l)
 }
 
 @(private = "file")
@@ -426,23 +398,17 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
         l.peer_count += 1
         l.attached = true
 
-        if l.cbs.on_peer_attached != nil {
-            l.cbs.on_peer_attached(l)
-        }
+        if l.cbs.on_peer_attached != nil do l.cbs.on_peer_attached(l)
 
     case .Peer_Gone:
         // Clamp: an untrusted relay could send peer_gone with no matching peer_attached.
         l.peer_count = max(0, l.peer_count - 1)
         l.attached = l.peer_count > 0
 
-        if l.cbs.on_peer_gone != nil {
-            l.cbs.on_peer_gone(l, reason)
-        }
+        if l.cbs.on_peer_gone != nil do l.cbs.on_peer_gone(l, reason)
 
     case .Sealed:
-        if l.cbs.on_sealed != nil {
-            l.cbs.on_sealed(l, payload)
-        }
+        if l.cbs.on_sealed != nil do l.cbs.on_sealed(l, payload)
 
     case .Drop:
         log.debug("relay link: SEALED before peer_attached, dropping")
@@ -457,16 +423,12 @@ link_on_message :: proc(sock: ^ws.Client, kind: ws.Message_Kind, data: []byte) {
 link_on_close :: proc(sock: ^ws.Client, code: ws.Close_Code) {
     l := link_from_socket(sock)
 
-    if l.cbs.on_closed != nil {
-        l.cbs.on_closed(l, code)
-    }
+    if l.cbs.on_closed != nil do l.cbs.on_closed(l, code)
 }
 
 @(private = "file")
 link_on_error :: proc(sock: ^ws.Client, err: ws.Client_Error) {
     l := link_from_socket(sock)
 
-    if l.cbs.on_error != nil {
-        l.cbs.on_error(l, err)
-    }
+    if l.cbs.on_error != nil do l.cbs.on_error(l, err)
 }

@@ -120,9 +120,7 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
     rc.device = strings.clone(device, h.allocator)
     rc.cloud_url = remote_cloud_url(h.allocator)
     rc.credential = strings.clone(id.credential, h.allocator)
-    if id.local_device_id != "" {
-        rc.local_device_id = strings.clone(id.local_device_id, h.allocator)
-    }
+    if id.local_device_id != "" do rc.local_device_id = strings.clone(id.local_device_id, h.allocator)
 
     if !h.cloud_curl_ready {
         if curl.client_init(&h.cloud_curl, h.drive.loop, h.allocator) != .None {
@@ -142,23 +140,17 @@ remote_connect_start :: proc(h: ^Host, job: ^Client_Promise, device: string) {
 // Cancel an in-flight remote connect, rejecting its promise. Idempotent. Used by
 // `disconnect()` and host teardown; safe to call when no attempt is in flight.
 remote_connect_cancel :: proc(h: ^Host) {
-    if h.remote == nil {
-        return
-    }
+    if h.remote == nil do return
 
     rc := h.remote
-    if h.cloud_curl_ready && rc.xfer.state == .Running {
-        curl.transfer_cancel(&rc.xfer)
-    }
+    if h.cloud_curl_ready && rc.xfer.state == .Running do curl.transfer_cancel(&rc.xfer)
 
     job := rc.job
     h.remote = nil
     rc.job = nil
     remote_free(rc)
 
-    if job != nil {
-        client_promise_reject(job, "connection_closed", true)
-    }
+    if job != nil do client_promise_reject(job, "connection_closed", true)
 }
 
 // Fetch the account roster, then resolve the named device on completion.
@@ -182,9 +174,7 @@ remote_fetch_roster :: proc(rc: ^Remote_Connect) {
         on_done = remote_roster_done,
     }
 
-    if curl.transfer_start(&rc.xfer, &rc.host.cloud_curl, request, callbacks, rc) != .None {
-        remote_fail(rc, "roster_failed")
-    }
+    if curl.transfer_start(&rc.xfer, &rc.host.cloud_curl, request, callbacks, rc) != .None do remote_fail(rc, "roster_failed")
 }
 
 // The roster fetch finished. Resolve the named device to its pinned key, then fetch a
@@ -217,9 +207,7 @@ remote_roster_done :: proc(user: rawptr, result: curl.Result) {
     target_key: string
     local_match := false
     for device in roster {
-        if device.name != rc.device {
-            continue
-        }
+        if device.name != rc.device do continue
         if rc.local_device_id != "" && device.device_id == rc.local_device_id {
             found = true
             ambiguous = false
@@ -228,9 +216,7 @@ remote_roster_done :: proc(user: rawptr, result: curl.Result) {
             target_key = device.static_public_key
             continue
         }
-        if local_match {
-            continue
-        }
+        if local_match do continue
         if found {
             ambiguous = true
             continue
@@ -291,9 +277,7 @@ remote_fetch_ticket :: proc(rc: ^Remote_Connect) {
         on_done = remote_ticket_done,
     }
 
-    if curl.transfer_start(&rc.xfer, &rc.host.cloud_curl, request, callbacks, rc) != .None {
-        remote_fail(rc, "ticket_failed")
-    }
+    if curl.transfer_start(&rc.xfer, &rc.host.cloud_curl, request, callbacks, rc) != .None do remote_fail(rc, "ticket_failed")
 }
 
 // The connect-ticket fetch finished. Build the relay transport pinned to the daemon's key and
@@ -367,9 +351,7 @@ remote_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
         return false
     }
 
-    if _, aerr := append(&rc.resp.body, ..chunk); aerr != nil {
-        return false
-    }
+    if _, aerr := append(&rc.resp.body, ..chunk); aerr != nil do return false
 
     return true
 }
@@ -384,9 +366,7 @@ remote_fail :: proc(rc: ^Remote_Connect, code: string) {
     rc.job = nil
     remote_free(rc)
 
-    if job != nil {
-        client_promise_reject(job, code, true)
-    }
+    if job != nil do client_promise_reject(job, code, true)
 }
 
 // Release an attempt's owned memory, wiping the credential and static key. Never settles the
@@ -429,9 +409,7 @@ CLOUD_URL_ENV :: "YUKE_CLOUD_URL"
 @(private = "file")
 remote_cloud_url :: proc(allocator: mem.Allocator) -> string {
     if v, set := os.lookup_env(CLOUD_URL_ENV, allocator); set {
-        if v != "" {
-            return v
-        }
+        if v != "" do return v
 
         delete(v, allocator)
     }

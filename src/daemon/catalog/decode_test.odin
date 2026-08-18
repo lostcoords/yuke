@@ -103,9 +103,7 @@ test_decode_materializes_only_selected_provider :: proc(t: ^testing.T) {
     selections := [?]Selection{{provider_id = "openai", source_id = "openai"}}
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     testing.expect_value(t, len(result.providers), 1)
@@ -175,9 +173,7 @@ test_reasoning_normalization_by_protocol :: proc(t: ^testing.T) {
     }
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     testing.expect_value(t, len(result.providers), 3)
@@ -271,9 +267,7 @@ test_model_routes_override_and_filters_without_partial_semantic_data :: proc(t: 
     selections := [?]Selection{{provider_id = "gateway", source_id = "gateway"}}
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     testing.expect_value(t, len(result.providers), 1)
@@ -301,9 +295,7 @@ test_provider_defaults_to_chat_and_allows_no_credential_env :: proc(t: ^testing.
     selections := [?]Selection{{provider_id = "local", source_id = "local"}}
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     testing.expect_value(t, len(result.providers), 1)
@@ -327,9 +319,7 @@ test_selected_provider_failures_are_isolated_and_ordered :: proc(t: ^testing.T) 
     }
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     testing.expect_value(t, len(result.providers), 0)
@@ -348,9 +338,7 @@ test_xai_defaults_to_responses :: proc(t: ^testing.T) {
     selections := [?]Selection{{provider_id = "xai", source_id = "xai"}}
     result, err := decode(transmute([]byte)feed, selections[:])
     testing.expect_value(t, err, Error.None)
-    if err != .None {
-        return
-    }
+    if err != .None do return
     defer result_destroy(&result)
 
     model := &result.providers[0].models[0]
@@ -389,9 +377,7 @@ test_model :: proc(item: ^Provider, id: wire.Model_Id) -> ^Model {
     assert(item != nil, "test model lookup needs a provider")
 
     for &model in item.models {
-        if model.info.id == id {
-            return &model
-        }
+        if model.info.id == id do return &model
     }
 
     assert(false, "test fixture model is missing")

@@ -52,18 +52,14 @@ Tls_Pipe :: struct {
 // its own failure, and every other error is just a failed read.
 @(private)
 recv_io_result :: proc(err: net.Recv_Error) -> Io_Result {
-    if err == nil {
-        return .Ok
-    }
+    if err == nil do return .Ok
 
     return .Timed_Out if recv_timed_out(err) else .Failed
 }
 
 @(private)
 send_io_result :: proc(err: net.Send_Error) -> Io_Result {
-    if err == nil {
-        return .Ok
-    }
+    if err == nil do return .Ok
 
     return .Timed_Out if send_timed_out(err) else .Failed
 }
@@ -312,14 +308,10 @@ tls_on_send_failed :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
 // peer accepting a byte at a time cannot extend it park by park.
 @(private)
 tls_send_remaining :: proc(tls: ^Tls_Pipe) -> (remaining: time.Duration, expired: bool) {
-    if tls.send_deadline == (time.Time{}) {
-        return nbio.NO_TIMEOUT, false
-    }
+    if tls.send_deadline == (time.Time{}) do return nbio.NO_TIMEOUT, false
 
     left := time.diff(time.now(), tls.send_deadline)
-    if left <= 0 {
-        return 0, true
-    }
+    if left <= 0 do return 0, true
 
     return left, false
 }

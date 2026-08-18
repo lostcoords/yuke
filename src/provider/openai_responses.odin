@@ -103,9 +103,7 @@ openai_responses_decoder_decode :: proc(
     assert(len(decoder.tools) <= MAX_TOOL_CALLS, "tool count stays within its bound")
 
     trimmed := strings.trim_space(data)
-    if decoder.done || len(trimmed) == 0 {
-        return .None
-    }
+    if decoder.done || len(trimmed) == 0 do return .None
 
     value, object, parse_err := decode_json_object(data, scratch_allocator)
     if parse_err != .None {
@@ -120,9 +118,7 @@ openai_responses_decoder_decode :: proc(
         return ferr
     }
 
-    if !present {
-        return .None
-    }
+    if !present do return .None
 
     err: Transport_Error
 
@@ -154,9 +150,7 @@ openai_responses_decoder_decode :: proc(
         return .None
     }
 
-    if err != .None {
-        decoder.done = true
-    }
+    if err != .None do decoder.done = true
 
     return err
 }
@@ -173,9 +167,7 @@ openai_responses_decoder_finish :: proc(
     assert(events != nil, "OpenAI responses finish needs an event queue")
     assert(decoder.allocator.procedure != nil, "OpenAI responses decoder must be initialized")
 
-    if decoder.done {
-        return .None
-    }
+    if decoder.done do return .None
 
     decoder.done = true
 
@@ -192,13 +184,9 @@ openai_responses_delta_event :: proc(
     kind: Stream_Block_Kind,
 ) -> Transport_Error {
     delta, present, derr := decode_optional_string(object, "delta")
-    if derr != .None {
-        return derr
-    }
+    if derr != .None do return derr
 
-    if !present || len(delta) == 0 {
-        return .None
-    }
+    if !present || len(delta) == 0 do return .None
 
     openai_responses_emit_delta(decoder, events, kind, delta)
 
@@ -217,9 +205,7 @@ openai_responses_emit_delta :: proc(
     assert(kind == .Text || kind == .Reasoning, "OpenAI responses only streams text and reasoning deltas")
     assert(len(text) > 0, "a neutral delta is never empty")
 
-    if decoder.block_open && decoder.open_kind != kind {
-        openai_responses_close_block(decoder, events)
-    }
+    if decoder.block_open && decoder.open_kind != kind do openai_responses_close_block(decoder, events)
 
     if !decoder.block_open {
         id := Stream_Block_Id(decoder.next_id)
@@ -288,30 +274,20 @@ openai_responses_close_block :: proc(decoder: ^Openai_Responses_Decoder, events:
 @(private)
 openai_responses_item_added :: proc(decoder: ^Openai_Responses_Decoder, object: json.Object) -> Transport_Error {
     item, present, ierr := decode_optional_object(object, "item")
-    if ierr != .None {
-        return ierr
-    }
+    if ierr != .None do return ierr
 
-    if !present {
-        return .None
-    }
+    if !present do return .None
 
     item_type, _, terr := decode_optional_string(item, "type")
-    if terr != .None {
-        return terr
-    }
+    if terr != .None do return terr
 
     switch item_type {
     case "function_call":
         call_id, _, cerr := decode_optional_string(item, "call_id")
-        if cerr != .None {
-            return cerr
-        }
+        if cerr != .None do return cerr
 
         name, _, nerr := decode_optional_string(item, "name")
-        if nerr != .None {
-            return nerr
-        }
+        if nerr != .None do return nerr
 
         owned_id := openai_responses_clone(decoder, call_id)
         owned_name := openai_responses_clone(decoder, name)
@@ -336,24 +312,16 @@ openai_responses_item_added :: proc(decoder: ^Openai_Responses_Decoder, object: 
 // call, enforcing the per-call byte bound. A delta with no open call is ignored.
 @(private)
 openai_responses_args_delta :: proc(decoder: ^Openai_Responses_Decoder, object: json.Object) -> Transport_Error {
-    if !decoder.tool_open {
-        return .None
-    }
+    if !decoder.tool_open do return .None
 
     delta, present, derr := decode_optional_string(object, "delta")
-    if derr != .None {
-        return derr
-    }
+    if derr != .None do return derr
 
-    if !present || len(delta) == 0 {
-        return .None
-    }
+    if !present || len(delta) == 0 do return .None
 
     assert(len(decoder.open_tool.arguments) <= MAX_TOOL_CALL_BYTES, "retained arguments start bounded")
 
-    if len(delta) > MAX_TOOL_CALL_BYTES - len(decoder.open_tool.arguments) {
-        return .Tool_Call_Too_Large
-    }
+    if len(delta) > MAX_TOOL_CALL_BYTES - len(decoder.open_tool.arguments) do return .Tool_Call_Too_Large
 
     append(&decoder.open_tool.arguments, delta)
 
@@ -372,18 +340,12 @@ openai_responses_item_done :: proc(
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
     item, present, ierr := decode_optional_object(object, "item")
-    if ierr != .None {
-        return ierr
-    }
+    if ierr != .None do return ierr
 
-    if !present {
-        return .None
-    }
+    if !present do return .None
 
     item_type, _, terr := decode_optional_string(item, "type")
-    if terr != .None {
-        return terr
-    }
+    if terr != .None do return terr
 
     switch item_type {
     case "function_call":
@@ -409,53 +371,37 @@ openai_responses_finalize_tool :: proc(
     call_id := decoder.open_tool.id if decoder.tool_open else ""
     if value, present, err := decode_optional_string(item, "call_id"); err != .None {
         return err
-    } else if present && len(value) > 0 {
-        call_id = openai_responses_clone(decoder, value)
-    }
+    } else if present && len(value) > 0 do call_id = openai_responses_clone(decoder, value)
 
     name := decoder.open_tool.name if decoder.tool_open else ""
     if value, present, err := decode_optional_string(item, "name"); err != .None {
         return err
-    } else if present && len(value) > 0 {
-        name = openai_responses_clone(decoder, value)
-    }
+    } else if present && len(value) > 0 do name = openai_responses_clone(decoder, value)
 
     arguments: []byte
     if value, present, err := decode_optional_string(item, "arguments"); err != .None {
         return err
     } else if present {
-        if len(value) > MAX_TOOL_CALL_BYTES {
-            return .Tool_Call_Too_Large
-        }
+        if len(value) > MAX_TOOL_CALL_BYTES do return .Tool_Call_Too_Large
 
         owned := strings.clone(value, decoder.allocator)
 
         arguments = transmute([]byte)owned
-    } else if decoder.tool_open {
-        arguments = decoder.open_tool.arguments[:]
-    }
+    } else if decoder.tool_open do arguments = decoder.open_tool.arguments[:]
 
     decoder.open_tool = {}
     decoder.tool_open = false
 
-    if len(call_id) == 0 || len(name) == 0 {
-        return .Parse_Error
-    }
+    if len(call_id) == 0 || len(name) == 0 do return .Parse_Error
 
     for prior in decoder.tools {
-        if call_id == prior.id {
-            return .Parse_Error
-        }
+        if call_id == prior.id do return .Parse_Error
     }
 
     validated, validate_err := tool_arguments(arguments, scratch_allocator)
-    if validate_err != .None {
-        return validate_err
-    }
+    if validate_err != .None do return validate_err
 
-    if len(decoder.tools) >= MAX_TOOL_CALLS {
-        return .Too_Many_Tool_Calls
-    }
+    if len(decoder.tools) >= MAX_TOOL_CALLS do return .Too_Many_Tool_Calls
 
     call := Tool_Call {
         id        = call_id,
@@ -507,9 +453,7 @@ openai_responses_finalize_reasoning :: proc(
 @(private)
 openai_responses_capture_signature :: proc(decoder: ^Openai_Responses_Decoder, item: json.Object) -> Transport_Error {
     encrypted, present, err := decode_optional_string(item, "encrypted_content")
-    if err != .None {
-        return err
-    }
+    if err != .None do return err
 
     if present && len(encrypted) > 0 {
         owned := strings.clone(encrypted, decoder.allocator)
@@ -537,22 +481,16 @@ openai_responses_terminal :: proc(
     } else if present {
         if status, spresent, serr := decode_optional_string(response, "status"); serr != .None {
             return serr
-        } else if spresent {
-            reason = openai_responses_stop_reason(status)
-        }
+        } else if spresent do reason = openai_responses_stop_reason(status)
 
         if usage, upresent, uerr := decode_optional_object(response, "usage"); uerr != .None {
             return uerr
-        } else if upresent {
-            openai_responses_fold_usage(decoder, usage)
-        }
+        } else if upresent do openai_responses_fold_usage(decoder, usage)
     }
 
     decoder.pending_reason = reason
 
-    if decoder.block_open {
-        openai_responses_close_block(decoder, events)
-    }
+    if decoder.block_open do openai_responses_close_block(decoder, events)
 
     for call in decoder.tools {
         id := Stream_Block_Id(decoder.next_id)
@@ -568,9 +506,7 @@ openai_responses_terminal :: proc(
     }
 
     final_reason := decoder.pending_reason
-    if len(decoder.tools) > 0 {
-        final_reason = .Tool_Calls
-    }
+    if len(decoder.tools) > 0 do final_reason = .Tool_Calls
 
     append(events, Stream_Done{reason = final_reason, usage = decoder.pending_usage})
 
@@ -586,14 +522,10 @@ openai_responses_fold_usage :: proc(decoder: ^Openai_Responses_Decoder, usage: j
     provider_total := decode_usage_u64(usage, "total_tokens")
 
     cache_read: u64
-    if details, present, err := decode_optional_object(usage, "input_tokens_details"); err == .None && present {
-        cache_read = decode_usage_u64(details, "cached_tokens")
-    }
+    if details, present, err := decode_optional_object(usage, "input_tokens_details"); err == .None && present do cache_read = decode_usage_u64(details, "cached_tokens")
 
     reasoning: u64
-    if details, present, err := decode_optional_object(usage, "output_tokens_details"); err == .None && present {
-        reasoning = decode_usage_u64(details, "reasoning_tokens")
-    }
+    if details, present, err := decode_optional_object(usage, "output_tokens_details"); err == .None && present do reasoning = decode_usage_u64(details, "reasoning_tokens")
 
     decoder.pending_usage = Usage {
         input      = input,
@@ -624,14 +556,10 @@ openai_responses_error :: proc(object: json.Object) -> Transport_Error {
     discriminator := openai_responses_error_discriminator(object)
 
     for quota in QUOTA_ERROR_TYPES {
-        if discriminator == quota {
-            return .Quota_Exhausted
-        }
+        if discriminator == quota do return .Quota_Exhausted
     }
 
-    if len(discriminator) > 0 {
-        return .Rate_Limited
-    }
+    if len(discriminator) > 0 do return .Rate_Limited
 
     return .Server_Error
 }
@@ -643,19 +571,13 @@ openai_responses_error :: proc(object: json.Object) -> Transport_Error {
 openai_responses_error_discriminator :: proc(object: json.Object) -> string {
     if response, present, err := decode_optional_object(object, "response"); err == .None && present {
         if error_object, epresent, eerr := decode_optional_object(response, "error"); eerr == .None && epresent {
-            if code, cpresent, _ := decode_optional_string(error_object, "code"); cpresent && len(code) > 0 {
-                return code
-            }
+            if code, cpresent, _ := decode_optional_string(error_object, "code"); cpresent && len(code) > 0 do return code
 
-            if kind, kpresent, _ := decode_optional_string(error_object, "type"); kpresent && len(kind) > 0 {
-                return kind
-            }
+            if kind, kpresent, _ := decode_optional_string(error_object, "type"); kpresent && len(kind) > 0 do return kind
         }
     }
 
-    if code, present, _ := decode_optional_string(object, "code"); present && len(code) > 0 {
-        return code
-    }
+    if code, present, _ := decode_optional_string(object, "code"); present && len(code) > 0 do return code
 
     return ""
 }
@@ -664,9 +586,7 @@ openai_responses_error_discriminator :: proc(object: json.Object) -> string {
 // source stays the empty string without allocating.
 @(private)
 openai_responses_clone :: proc(decoder: ^Openai_Responses_Decoder, value: string) -> string {
-    if len(value) == 0 {
-        return ""
-    }
+    if len(value) == 0 do return ""
 
     return strings.clone(value, decoder.allocator)
 }

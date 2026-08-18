@@ -20,9 +20,7 @@ test_oauth_store_write :: proc(
     credentials: oauth.OAuth_Credentials,
 ) -> bool {
     opened, open_err := store.open(path)
-    if !testing.expect_value(t, open_err, nil) {
-        return false
-    }
+    if !testing.expect_value(t, open_err, nil) do return false
     defer store.close(opened)
 
     provider := oauth.provider(kind)
@@ -42,15 +40,11 @@ test_oauth_store_write :: proc(
 
 test_store_credential_present :: proc(t: ^testing.T, s: ^store.Store, provider_id: string) -> bool {
     credentials, load_err := store.credentials_load(s)
-    if !testing.expect_value(t, load_err, nil) {
-        return false
-    }
+    if !testing.expect_value(t, load_err, nil) do return false
     defer store.credentials_destroy(credentials)
 
     for credential in credentials {
-        if credential.provider_id == provider_id {
-            return true
-        }
+        if credential.provider_id == provider_id do return true
     }
 
     return false
@@ -58,9 +52,7 @@ test_store_credential_present :: proc(t: ^testing.T, s: ^store.Store, provider_i
 
 test_api_key_store_write :: proc(t: ^testing.T, path, provider_id, api_key: string) -> bool {
     opened, open_err := store.open(path)
-    if !testing.expect_value(t, open_err, nil) {
-        return false
-    }
+    if !testing.expect_value(t, open_err, nil) do return false
     defer store.close(opened)
 
     return testing.expect_value(t, store.credential_api_key_upsert(opened, provider_id, api_key), nil)
@@ -72,18 +64,12 @@ test_api_key_store_write :: proc(t: ^testing.T, path, provider_id, api_key: stri
 check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.list should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.list should succeed") do return true
 
     result, is_list := ok.result.(wire.Auth_List_Result)
-    if !testing.expect(t, is_list, "result is an auth provider list") {
-        return true
-    }
+    if !testing.expect(t, is_list, "result is an auth provider list") do return true
 
-    if !testing.expect_value(t, len(result.providers), 2) {
-        return true
-    }
+    if !testing.expect_value(t, len(result.providers), 2) do return true
 
     codex_entry: Maybe(wire.Auth_Provider)
     xai_entry: Maybe(wire.Auth_Provider)
@@ -98,9 +84,7 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
     }
 
     codex, codex_ok := codex_entry.?
-    if !testing.expect(t, codex_ok, "codex provider is listed") {
-        return true
-    }
+    if !testing.expect(t, codex_ok, "codex provider is listed") do return true
     testing.expect(t, codex.credential_kind == nil, "fresh Codex auth has no credential")
     testing.expect(t, !codex.restart_required, "OAuth state applies immediately")
     _, codex_pending := codex.pending_login.?
@@ -113,9 +97,7 @@ check_auth_list :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs)
     testing.expect(t, codex_device, "codex device login remains available without a callback port")
 
     xai, xai_ok := xai_entry.?
-    if !testing.expect(t, xai_ok, "xai provider is listed") {
-        return true
-    }
+    if !testing.expect(t, xai_ok, "xai provider is listed") do return true
     testing.expect(t, xai.credential_kind == nil, "fresh xAI auth has no credential")
 
     // xAI offers both browser (PKCE) and device (RFC 8628) login.
@@ -145,9 +127,7 @@ test_daemon_auth_list_uses_the_daemon_store :: proc(t: ^testing.T) {
 
 test_auth_provider_find :: proc(providers: []wire.Auth_Provider, provider_id: string) -> (wire.Auth_Provider, bool) {
     for provider in providers {
-        if provider.provider_id == wire.Provider_Id(provider_id) {
-            return provider, true
-        }
+        if provider.provider_id == wire.Provider_Id(provider_id) do return provider, true
     }
 
     return {}, false
@@ -158,14 +138,10 @@ check_auth_set_api_key_stages_until_restart :: proc(c: ^client.Client, resp: wir
 
     if o.auth_stage == 0 {
         ok, is_ok := resp.(wire.Response_Ok)
-        if !testing.expect(t, is_ok, "auth.set_api_key should succeed over loopback") {
-            return true
-        }
+        if !testing.expect(t, is_ok, "auth.set_api_key should succeed over loopback") do return true
 
         result, is_result := ok.result.(wire.Auth_Set_Api_Key_Result)
-        if testing.expect(t, is_result, "auth.set_api_key returns its write-only result") {
-            testing.expect(t, result.restart_required, "API-key writes require restart")
-        }
+        if testing.expect(t, is_result, "auth.set_api_key returns its write-only result") do testing.expect(t, result.restart_required, "API-key writes require restart")
         testing.expect(t, "openai" not_in o.daemon.provider_auth.api_keys, "write does not change active keys")
         testing.expect(t, test_store_credential_present(t, o.daemon.store, "openai"), "write is durable")
 
@@ -175,14 +151,10 @@ check_auth_set_api_key_stages_until_restart :: proc(c: ^client.Client, resp: wir
     }
 
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.list should succeed after an API-key write") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.list should succeed after an API-key write") do return true
 
     result, is_list := ok.result.(wire.Auth_List_Result)
-    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
-        return true
-    }
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") do return true
 
     provider, found := test_auth_provider_find(result.providers, "openai")
     if testing.expect(t, found, "saved API-key provider is listed") {
@@ -201,14 +173,10 @@ check_auth_api_key_active_after_restart :: proc(c: ^client.Client, resp: wire.Re
     testing.expect(t, found_active && active == "test-api-key", "restart activates the saved API key")
 
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.list should succeed after restart") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.list should succeed after restart") do return true
 
     result, is_list := ok.result.(wire.Auth_List_Result)
-    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
-        return true
-    }
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") do return true
 
     provider, found := test_auth_provider_find(result.providers, "openai")
     if testing.expect(t, found, "active API-key provider is listed") {
@@ -252,9 +220,7 @@ check_auth_api_key_remove_stages_until_restart :: proc(
 
     if o.auth_stage == 0 {
         ok, is_ok := resp.(wire.Response_Ok)
-        if !testing.expect(t, is_ok, "auth.logout should remove an API key") {
-            return true
-        }
+        if !testing.expect(t, is_ok, "auth.logout should remove an API key") do return true
         _, is_empty := ok.result.(wire.Empty)
         testing.expect(t, is_empty, "auth.logout returns an empty result")
 
@@ -268,14 +234,10 @@ check_auth_api_key_remove_stages_until_restart :: proc(
     }
 
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.list should succeed after API-key removal") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.list should succeed after API-key removal") do return true
 
     result, is_list := ok.result.(wire.Auth_List_Result)
-    if !testing.expect(t, is_list, "auth.list returns provider statuses") {
-        return true
-    }
+    if !testing.expect(t, is_list, "auth.list returns provider statuses") do return true
 
     provider, found := test_auth_provider_find(result.providers, "openai")
     if testing.expect(t, found, "active removed provider remains listed until restart") {
@@ -293,9 +255,7 @@ test_daemon_auth_remove_api_key_applies_only_after_restart :: proc(t: ^testing.T
     dir := test_make_dir("yuke-daemon-auth-remove-api-key")
     defer os.remove_all(dir)
     path, _ := os.join_path({dir, "yuked.db"}, context.temp_allocator)
-    if !test_api_key_store_write(t, path, "openai", "test-api-key") {
-        return
-    }
+    if !test_api_key_store_write(t, path, "openai", "test-api-key") do return
 
     obs := Handler_Obs {
         method = .Auth_Logout,
@@ -312,9 +272,7 @@ check_auth_set_api_key_rejects_oauth_provider :: proc(
 ) -> bool {
     t := o.t
     rejected, is_error := resp.(wire.Response_Error)
-    if testing.expect(t, is_error, "OAuth-only provider rejects an API key") {
-        testing.expect_value(t, rejected.error.code, wire.Error_Code.Bad_Request)
-    }
+    if testing.expect(t, is_error, "OAuth-only provider rejects an API key") do testing.expect_value(t, rejected.error.code, wire.Error_Code.Bad_Request)
     testing.expect(
         t,
         !test_store_credential_present(t, o.daemon.store, oauth.CODEX_PROVIDER_ID),
@@ -351,9 +309,7 @@ test_daemon_oauth_refresh_timer_is_owned_by_shutdown :: proc(t: ^testing.T) {
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
         account_id    = "account",
     }
-    if !test_oauth_store_write(t, path, .Codex, credentials) {
-        return
-    }
+    if !test_oauth_store_write(t, path, .Codex, credentials) do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -388,9 +344,7 @@ test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
         expires_at_ms = 1,
         account_id    = "account",
     }
-    if !test_oauth_store_write(t, path, .Codex, credentials) {
-        return
-    }
+    if !test_oauth_store_write(t, path, .Codex, credentials) do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -402,9 +356,7 @@ test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
     provider_refresh_timer_cancel(&d)
 
     refresh, aerr := new(Provider_Refresh, d.allocator)
-    if !testing.expect(t, aerr == nil, "allocate refresh attempt") {
-        return
-    }
+    if !testing.expect(t, aerr == nil, "allocate refresh attempt") do return
     refresh^ = {
         kind = .Codex,
         transfer = {state = .Done},
@@ -420,14 +372,10 @@ test_daemon_successful_refresh_updates_the_daemon_store :: proc(t: ^testing.T) {
     testing.expect(t, provider_refresh(&d) == nil, "successful refresh releases the operation")
 
     live, signed_in := provider_credentials_get(&d, .Codex)
-    if testing.expect(t, signed_in, "successful refresh keeps the provider signed in") {
-        testing.expect(t, live.expires_at_ms > credentials.expires_at_ms, "live expiry was refreshed")
-    }
+    if testing.expect(t, signed_in, "successful refresh keeps the provider signed in") do testing.expect(t, live.expires_at_ms > credentials.expires_at_ms, "live expiry was refreshed")
 
     rows, load_err := store.credentials_load(d.store)
-    if !testing.expect_value(t, load_err, nil) {
-        return
-    }
+    if !testing.expect_value(t, load_err, nil) do return
     defer store.credentials_destroy(rows)
 
     stored := false
@@ -514,9 +462,7 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
         expires_at_ms = now_ms() + u64(time.Hour / time.Millisecond),
         account_id    = "",
     }
-    if !test_oauth_store_write(t, path, .Xai, credentials) {
-        return
-    }
+    if !test_oauth_store_write(t, path, .Xai, credentials) do return
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -531,9 +477,7 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
     testing.expect(t, found, "refresh fixture is signed in")
 
     refresh, aerr := new(Provider_Refresh, d.allocator)
-    if !testing.expect(t, aerr == nil, "allocate refresh attempt") {
-        return
-    }
+    if !testing.expect(t, aerr == nil, "allocate refresh attempt") do return
     refresh^ = {
         kind = .Xai,
         transfer = {state = .Done},
@@ -555,9 +499,7 @@ test_daemon_terminal_refresh_invalidates_credentials :: proc(t: ^testing.T) {
 check_auth_logout :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.logout should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.logout should succeed") do return true
 
     _, is_empty := ok.result.(wire.Empty)
     testing.expect(t, is_empty, "auth.logout returns an empty result")
@@ -579,9 +521,7 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
         expires_at_ms = 1_900_000_000_000,
         account_id    = "account",
     }
-    if !test_oauth_store_write(t, path, .Codex, credentials) {
-        return
-    }
+    if !test_oauth_store_write(t, path, .Codex, credentials) do return
 
     obs := Handler_Obs {
         method = .Auth_Logout,
@@ -591,9 +531,7 @@ test_daemon_auth_logout_durably_removes_credentials :: proc(t: ^testing.T) {
     run_handler(t, &obs, db_path = path)
 
     reopened, reopen_err := store.open(path)
-    if !testing.expect_value(t, reopen_err, nil) {
-        return
-    }
+    if !testing.expect_value(t, reopen_err, nil) do return
     defer store.close(reopened)
     testing.expect(
         t,
@@ -612,19 +550,13 @@ check_auth_browser_start_cancel :: proc(c: ^client.Client, resp: wire.Response, 
         }
 
         ok, is_ok := resp.(wire.Response_Ok)
-        if !testing.expect(t, is_ok, "browser auth.login should succeed") {
-            return true
-        }
+        if !testing.expect(t, is_ok, "browser auth.login should succeed") do return true
 
         login_result, is_login := ok.result.(wire.Auth_Login_Result)
-        if !testing.expect(t, is_login, "auth.login returns login details") {
-            return true
-        }
+        if !testing.expect(t, is_login, "auth.login returns login details") do return true
 
         result, is_browser := login_result.(wire.Auth_Login_Result_Browser)
-        if !testing.expect(t, is_browser, "auth.login returns browser details") {
-            return true
-        }
+        if !testing.expect(t, is_browser, "auth.login returns browser details") do return true
         testing.expect(t, strings.has_prefix(result.auth_url, oauth.CODEX_AUTHORIZE_URL), "Codex authorize URL")
         testing.expect(t, strings.contains(result.auth_url, "code_challenge_method=S256"), "browser login uses PKCE")
 
@@ -640,9 +572,7 @@ check_auth_browser_start_cancel :: proc(c: ^client.Client, resp: wire.Response, 
 
     testing.expect_value(t, o.auth_stage, 1)
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "auth.cancel_login should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "auth.cancel_login should succeed") do return true
     _, is_empty := ok.result.(wire.Empty)
     testing.expect(t, is_empty, "auth.cancel_login returns an empty result")
 

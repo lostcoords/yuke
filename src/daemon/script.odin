@@ -77,9 +77,7 @@ js_report :: proc(user: rawptr, source: string, text: string) {
 js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, err: Error) {
     assert(d != nil, "js entry needs daemon state")
 
-    if d.config_dir == "" {
-        return false, .None
-    }
+    if d.config_dir == "" do return false, .None
 
     path, _ := filepath.join({d.config_dir, JS_ENTRY_FILE}, allocator)
     defer delete(path, allocator)
@@ -87,9 +85,7 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, 
     source, read_err := os.read_entire_file(path, allocator)
     defer delete(source, allocator)
     if read_err != nil {
-        if read_err == .Not_Exist {
-            return false, .None
-        }
+        if read_err == .Not_Exist do return false, .None
 
         log.errorf("daemon: cannot read script entry %s: %v", path, read_err)
         return false, .Script_Failed
@@ -97,9 +93,7 @@ js_run_entry :: proc(d: ^Daemon, allocator: mem.Allocator) -> (evaluated: bool, 
 
     evaluated_ok := js.eval_module(&d.js, JS_ENTRY_FILE, string(source), allocator)
 
-    if !evaluated_ok {
-        return false, .Script_Failed
-    }
+    if !evaluated_ok do return false, .Script_Failed
 
     log.infof("daemon: evaluated %s", path)
 
@@ -145,14 +139,10 @@ config_decode :: proc(text: string, allocator := context.allocator) -> (config: 
     defer mem.dynamic_arena_destroy(&parse_arena)
 
     value, parse_err := json.parse(text, .JSON, true, mem.dynamic_arena_allocator(&parse_arena))
-    if parse_err != nil {
-        return {}, false
-    }
+    if parse_err != nil do return {}, false
 
     object, is_object := value.(json.Object)
-    if !is_object {
-        return {}, false
-    }
+    if !is_object do return {}, false
 
     for name in object {
         switch name {
@@ -162,9 +152,7 @@ config_decode :: proc(text: string, allocator := context.allocator) -> (config: 
         }
     }
 
-    if json.unmarshal(transmute([]byte)text, &config, .JSON, allocator) != nil {
-        return {}, false
-    }
+    if json.unmarshal(transmute([]byte)text, &config, .JSON, allocator) != nil do return {}, false
 
     return config, true
 }
@@ -206,15 +194,11 @@ script_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
 
     config_fn := qjs.new_function(ctx, define_config, "defineConfig", 1)
 
-    if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "defineConfig", config_fn) do return -1
 
     tool_fn := qjs.new_function(ctx, define_tool, "defineTool", 2)
 
-    if !qjs.set_module_export(ctx, m, "defineTool", tool_fn) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "defineTool", tool_fn) do return -1
 
     return 0
 }
@@ -226,36 +210,24 @@ define_config :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv
     context = runtime.default_context()
 
     d := (^Daemon)(js.user_of(ctx))
-    if d == nil {
-        return qjs.throw_type_error(ctx, "defineConfig has no daemon")
-    }
+    if d == nil do return qjs.throw_type_error(ctx, "defineConfig has no daemon")
 
-    if argc < 1 || !qjs.is_object(argv[0]) {
-        return qjs.throw_type_error(ctx, "defineConfig expects a config object")
-    }
+    if argc < 1 || !qjs.is_object(argv[0]) do return qjs.throw_type_error(ctx, "defineConfig expects a config object")
 
-    if d.config_seen {
-        return qjs.throw_type_error(ctx, "defineConfig was called more than once")
-    }
+    if d.config_seen do return qjs.throw_type_error(ctx, "defineConfig was called more than once")
 
     encoded := qjs.json_stringify(ctx, argv[0])
-    if qjs.is_exception(encoded) {
-        return encoded
-    }
+    if qjs.is_exception(encoded) do return encoded
 
     defer qjs.free_value(ctx, encoded)
 
     text, readable := qjs.to_string(ctx, encoded)
-    if !readable {
-        return qjs.throw_type_error(ctx, "defineConfig could not serialize its config")
-    }
+    if !readable do return qjs.throw_type_error(ctx, "defineConfig could not serialize its config")
 
     defer qjs.free_string(ctx, text)
 
     cloned, clone_err := strings.clone(text, d.allocator)
-    if clone_err != nil {
-        return qjs.throw_type_error(ctx, "out of memory")
-    }
+    if clone_err != nil do return qjs.throw_type_error(ctx, "out of memory")
 
     d.config_json = cloned
     d.config_seen = true
@@ -282,13 +254,9 @@ define_tool :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: 
     context = runtime.default_context()
 
     d := (^Daemon)(js.user_of(ctx))
-    if d == nil {
-        return qjs.throw_type_error(ctx, "defineTool has no daemon")
-    }
+    if d == nil do return qjs.throw_type_error(ctx, "defineTool has no daemon")
 
-    if argc < 2 || !qjs.is_string(argv[0]) || !qjs.is_object(argv[1]) {
-        return qjs.throw_type_error(ctx, "defineTool expects a name and a definition object")
-    }
+    if argc < 2 || !qjs.is_string(argv[0]) || !qjs.is_object(argv[1]) do return qjs.throw_type_error(ctx, "defineTool expects a name and a definition object")
 
     tool: Daemon_Tool
     if message := tool_read(ctx, d, argv[0], argv[1], &tool); message != nil {
@@ -317,28 +285,18 @@ tool_read :: proc(
     out: ^Daemon_Tool,
 ) -> cstring {
     name, name_ok := tool_own_string(ctx, d, name_value, &out.name)
-    if !name_ok {
-        return name
-    }
+    if !name_ok do return name
 
-    if !tool_name_valid(out.name) {
-        return "defineTool expects a name of 1 to 64 characters from [A-Za-z0-9_-]"
-    }
+    if !tool_name_valid(out.name) do return "defineTool expects a name of 1 to 64 characters from [A-Za-z0-9_-]"
 
     description := qjs.get_property(ctx, spec, "description")
     defer qjs.free_value(ctx, description)
 
-    if !qjs.is_string(description) {
-        return "defineTool expects a description string"
-    }
+    if !qjs.is_string(description) do return "defineTool expects a description string"
 
-    if message, ok := tool_own_string(ctx, d, description, &out.description); !ok {
-        return message
-    }
+    if message, ok := tool_own_string(ctx, d, description, &out.description); !ok do return message
 
-    if out.description == "" {
-        return "defineTool expects a non-empty description"
-    }
+    if out.description == "" do return "defineTool expects a non-empty description"
 
     handler := qjs.get_property(ctx, spec, "handler")
     if !qjs.is_function(ctx, handler) {
@@ -353,9 +311,7 @@ tool_read :: proc(
     params := qjs.get_property(ctx, spec, "params")
     defer qjs.free_value(ctx, params)
 
-    if !qjs.is_undefined(params) && !qjs.is_null(params) && !qjs.is_object(params) {
-        return "defineTool expects params to be an object"
-    }
+    if !qjs.is_undefined(params) && !qjs.is_null(params) && !qjs.is_object(params) do return "defineTool expects params to be an object"
 
     return tool_schema_read(ctx, d, params, &out.input_schema)
 }
@@ -366,9 +322,7 @@ tool_read :: proc(
 tool_schema_read :: proc(ctx: ^qjs.Context, d: ^Daemon, params: qjs.Value, out: ^string) -> cstring {
     if qjs.is_undefined(params) || qjs.is_null(params) {
         schema, err := strings.clone(TOOL_SCHEMA_EMPTY, d.allocator)
-        if err != nil {
-            return "out of memory"
-        }
+        if err != nil do return "out of memory"
 
         out^ = schema
 
@@ -376,16 +330,12 @@ tool_schema_read :: proc(ctx: ^qjs.Context, d: ^Daemon, params: qjs.Value, out: 
     }
 
     encoded := qjs.json_stringify(ctx, params)
-    if qjs.is_exception(encoded) {
-        return "defineTool could not serialize its params"
-    }
+    if qjs.is_exception(encoded) do return "defineTool could not serialize its params"
 
     defer qjs.free_value(ctx, encoded)
 
     text, readable := qjs.to_string(ctx, encoded)
-    if !readable {
-        return "defineTool could not serialize its params"
-    }
+    if !readable do return "defineTool could not serialize its params"
 
     defer qjs.free_string(ctx, text)
 
@@ -415,24 +365,16 @@ tool_schema_compile :: proc(params_json: string, allocator: mem.Allocator) -> (s
     scratch := mem.dynamic_arena_allocator(&parse_arena)
 
     value, parse_err := json.parse(params_json, .JSON, true, scratch)
-    if parse_err != nil {
-        return "", false
-    }
+    if parse_err != nil do return "", false
 
     object, is_object := value.(json.Object)
-    if !is_object {
-        return "", false
-    }
+    if !is_object do return "", false
 
     names, names_err := make([dynamic]string, 0, len(object), scratch)
-    if names_err != nil {
-        return "", false
-    }
+    if names_err != nil do return "", false
 
     for name in object {
-        if !tool_param_name_valid(name) {
-            return "", false
-        }
+        if !tool_param_name_valid(name) do return "", false
 
         append(&names, name)
     }
@@ -448,18 +390,12 @@ tool_schema_compile :: proc(params_json: string, allocator: mem.Allocator) -> (s
 
     for name, index in names {
         declared, is_string := object[name].(json.String)
-        if !is_string {
-            return "", false
-        }
+        if !is_string do return "", false
 
         keyword, keyword_ok := tool_param_keyword(string(declared))
-        if !keyword_ok {
-            return "", false
-        }
+        if !keyword_ok do return "", false
 
-        if index > 0 {
-            strings.write_byte(&out, ',')
-        }
+        if index > 0 do strings.write_byte(&out, ',')
 
         strings.write_byte(&out, '"')
         strings.write_string(&out, name)
@@ -474,13 +410,9 @@ tool_schema_compile :: proc(params_json: string, allocator: mem.Allocator) -> (s
 
     for name in names {
         declared := string(object[name].(json.String))
-        if strings.has_suffix(declared, "?") {
-            continue
-        }
+        if strings.has_suffix(declared, "?") do continue
 
-        if required > 0 {
-            strings.write_byte(&out, ',')
-        }
+        if required > 0 do strings.write_byte(&out, ',')
 
         strings.write_byte(&out, '"')
         strings.write_string(&out, name)
@@ -491,9 +423,7 @@ tool_schema_compile :: proc(params_json: string, allocator: mem.Allocator) -> (s
     strings.write_string(&out, `],"additionalProperties":false}`)
 
     schema, clone_err := strings.clone(strings.to_string(out), allocator)
-    if clone_err != nil {
-        return "", false
-    }
+    if clone_err != nil do return "", false
 
     return schema, true
 }
@@ -513,9 +443,7 @@ tool_param_keyword :: proc(declared: string) -> (string, bool) {
 
 @(private = "file")
 tool_param_name_valid :: proc(name: string) -> bool {
-    if name == "" {
-        return false
-    }
+    if name == "" do return false
 
     for r, index in name {
         switch {
@@ -532,9 +460,7 @@ tool_param_name_valid :: proc(name: string) -> bool {
 // What every provider accepts for a tool name.
 @(private = "file")
 tool_name_valid :: proc(name: string) -> bool {
-    if name == "" || len(name) > TOOL_NAME_MAX {
-        return false
-    }
+    if name == "" || len(name) > TOOL_NAME_MAX do return false
 
     for r in name {
         switch {
@@ -550,16 +476,12 @@ tool_name_valid :: proc(name: string) -> bool {
 @(private = "file")
 tool_own_string :: proc(ctx: ^qjs.Context, d: ^Daemon, value: qjs.Value, out: ^string) -> (cstring, bool) {
     text, readable := qjs.to_string(ctx, value)
-    if !readable {
-        return "defineTool could not read a string argument", false
-    }
+    if !readable do return "defineTool could not read a string argument", false
 
     defer qjs.free_string(ctx, text)
 
     cloned, err := strings.clone(text, d.allocator)
-    if err != nil {
-        return "out of memory", false
-    }
+    if err != nil do return "out of memory", false
 
     out^ = cloned
 
@@ -588,14 +510,10 @@ tool_register :: proc(d: ^Daemon, tool: Daemon_Tool) -> bool {
 tools_definitions :: proc(d: ^Daemon, allocator: mem.Allocator) -> []provider.Tool_Definition {
     assert(d != nil, "tool definitions need daemon state")
 
-    if len(d.tools) == 0 {
-        return nil
-    }
+    if len(d.tools) == 0 do return nil
 
     out, err := make([]provider.Tool_Definition, len(d.tools), allocator)
-    if err != nil {
-        return nil
-    }
+    if err != nil do return nil
 
     for tool, index in d.tools {
         out[index] = {
@@ -613,9 +531,7 @@ tools_find :: proc(d: ^Daemon, name: string) -> ^Daemon_Tool {
     assert(d != nil, "a tool lookup needs daemon state")
 
     for &tool in d.tools {
-        if tool.name == name {
-            return &tool
-        }
+        if tool.name == name do return &tool
     }
 
     return nil
@@ -641,9 +557,7 @@ tool_free :: proc(ctx: ^qjs.Context, d: ^Daemon, tool: ^Daemon_Tool) {
     delete(tool.description, d.allocator)
     delete(tool.input_schema, d.allocator)
 
-    if ctx != nil {
-        qjs.free_value(ctx, tool.handler)
-    }
+    if ctx != nil do qjs.free_value(ctx, tool.handler)
 
     tool^ = {}
 }

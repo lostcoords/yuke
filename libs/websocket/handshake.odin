@@ -188,9 +188,7 @@ parse_upgrade_response :: proc(
     status: Response_Status,
 ) {
     head, head_status, head_err := http.parse_response_head(buf)
-    if head_status == .Need_More {
-        return .Ok, 0, .Need_More
-    }
+    if head_status == .Need_More do return .Ok, 0, .Need_More
 
     consumed = head.consumed
     switch head_err {
@@ -203,9 +201,7 @@ parse_upgrade_response :: proc(
         return .Bad_Headers, consumed, .Ready
     }
 
-    if head.status_code != 101 {
-        return .Bad_Status, consumed, .Ready
-    }
+    if head.status_code != 101 do return .Bad_Status, consumed, .Ready
 
     accept_buf: [SEC_WEBSOCKET_ACCEPT_ENCODED_BYTES]byte
     expected_accept := string(make_sec_websocket_accept(key_encoded, accept_buf[:]))
@@ -213,17 +209,11 @@ parse_upgrade_response :: proc(
     upgrade, upgrade_lookup := http.response_header(head, "upgrade")
     connection, connection_lookup := http.response_header(head, "connection")
     accept, accept_lookup := http.response_header(head, "sec-websocket-accept")
-    if upgrade_lookup == .Duplicate || connection_lookup == .Duplicate || accept_lookup == .Duplicate {
-        return .Bad_Headers, consumed, .Ready
-    }
+    if upgrade_lookup == .Duplicate || connection_lookup == .Duplicate || accept_lookup == .Duplicate do return .Bad_Headers, consumed, .Ready
 
-    if upgrade_lookup == .Missing || connection_lookup == .Missing || accept_lookup == .Missing {
-        return .Missing_Headers, consumed, .Ready
-    }
+    if upgrade_lookup == .Missing || connection_lookup == .Missing || accept_lookup == .Missing do return .Missing_Headers, consumed, .Ready
 
-    if !strings.equal_fold(upgrade, "websocket") || !connection_has_upgrade(connection) || accept != expected_accept {
-        return .Bad_Headers, consumed, .Ready
-    }
+    if !strings.equal_fold(upgrade, "websocket") || !connection_has_upgrade(connection) || accept != expected_accept do return .Bad_Headers, consumed, .Ready
 
     return .Ok, consumed, .Ready
 }
@@ -257,9 +247,7 @@ parse_upgrade_request :: proc(
     status: Request_Status,
 ) {
     head, head_status, head_err := http.parse_request_head(buf)
-    if head_status == .Need_More {
-        return {}, .Ok, 0, .Need_More
-    }
+    if head_status == .Need_More do return {}, .Ok, 0, .Need_More
 
     consumed = head.consumed
     switch head_err {
@@ -284,9 +272,7 @@ parse_upgrade_request :: proc(
 // HTTP head (e.g. a front door dispatching by request line before recognizing the
 // upgrade). `head` must come from a successful `http.parse_request_head`.
 parse_upgrade_request_head :: proc(head: http.Request_Head) -> (req: Upgrade_Request, result: Handshake_Result) {
-    if head.method != "GET" {
-        return {}, .Bad_Status
-    }
+    if head.method != "GET" do return {}, .Bad_Status
 
     upgrade, upgrade_lookup := http.request_header(head, "upgrade")
     connection, connection_lookup := http.request_header(head, "connection")
@@ -319,9 +305,7 @@ parse_upgrade_request_head :: proc(head: http.Request_Head) -> (req: Upgrade_Req
 // Whether `value` is a well-formed Sec-WebSocket-Key: exactly 24 characters (the
 // canonical base64 encoding of a 16-byte nonce (RFC 6455 §4.1).
 sec_websocket_key_valid :: proc(value: string) -> bool {
-    if len(value) != SEC_WEBSOCKET_KEY_ENCODED_BYTES || value[22:] != "==" {
-        return false
-    }
+    if len(value) != SEC_WEBSOCKET_KEY_ENCODED_BYTES || value[22:] != "==" do return false
 
     for i in 0 ..< 22 {
         c := value[i]
@@ -336,9 +320,7 @@ sec_websocket_key_valid :: proc(value: string) -> bool {
 
     raw: [SEC_WEBSOCKET_KEY_BYTES]byte
     decoded, decode_err := base64.decode_into_buf(raw[:], value)
-    if decode_err != nil || len(decoded) != SEC_WEBSOCKET_KEY_BYTES {
-        return false
-    }
+    if decode_err != nil || len(decoded) != SEC_WEBSOCKET_KEY_BYTES do return false
 
     canonical: [SEC_WEBSOCKET_KEY_ENCODED_BYTES]byte
     encoded, encode_err := base64.encode_into_buf(canonical[:], raw[:])
@@ -361,9 +343,7 @@ connection_has_upgrade :: proc(value: string) -> bool {
             rest = rest[comma + 1:]
         }
 
-        if strings.equal_fold(strings.trim_space(token), "upgrade") {
-            return true
-        }
+        if strings.equal_fold(strings.trim_space(token), "upgrade") do return true
     }
 
     return false

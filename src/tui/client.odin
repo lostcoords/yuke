@@ -62,9 +62,7 @@ client_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     _ = qjs.set_property(ctx, native, "state", qjs.new_function(ctx, client_js_state, "state", 0))
     session_native_install(ctx, native)
 
-    if !qjs.set_module_export(ctx, m, "native", native) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "native", native) do return -1
 
     return 0
 }
@@ -76,41 +74,27 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
-    if h.done {
-        return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
-    }
+    if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
 
-    if h.drive == nil || h.drive.loop == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no drive")
-    }
+    if h.drive == nil || h.drive.loop == nil do return qjs.throw_type_error(ctx, "yuke:client has no drive")
 
-    if argc < 1 || !qjs.is_object(argv[0]) {
-        return qjs.throw_type_error(ctx, "connect expects an options object")
-    }
+    if argc < 1 || !qjs.is_object(argv[0]) do return qjs.throw_type_error(ctx, "connect expects an options object")
 
     if h.daemon.live && h.daemon.client.state == .Closed {
         client.client_destroy(&h.daemon.client)
         h.daemon = {}
     }
 
-    if h.remote != nil || h.daemon.live {
-        return qjs.throw_type_error(ctx, "a daemon connection already exists")
-    }
+    if h.remote != nil || h.daemon.live do return qjs.throw_type_error(ctx, "a daemon connection already exists")
 
     options, options_ok := client_connect_options(ctx, argv[0])
-    if !options_ok {
-        return qjs.throw_type_error(ctx, "connect options are invalid")
-    }
+    if !options_ok do return qjs.throw_type_error(ctx, "connect options are invalid")
 
     job, promise := client_promise_new(h)
     if job == nil {
-        if qjs.is_exception(promise) {
-            return promise
-        }
+        if qjs.is_exception(promise) do return promise
 
         return qjs.throw_type_error(ctx, "out of memory")
     }
@@ -129,9 +113,7 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     }
 
     scheme := ws.Scheme.Ws
-    if options.secure {
-        scheme = .Wss
-    }
+    if options.secure do scheme = .Wss
 
     transport := client.ws_create(
         h.drive.loop,
@@ -166,9 +148,7 @@ client_js_disconnect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.in
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
     // Cancel a remote connect still fetching its roster/ticket; its promise rejects.
     if h.remote != nil {
@@ -176,9 +156,7 @@ client_js_disconnect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.in
         return qjs.undefined()
     }
 
-    if !h.daemon.live || h.daemon.client.state == .Closed || h.daemon.client.state == .Closing {
-        return qjs.undefined()
-    }
+    if !h.daemon.live || h.daemon.client.state == .Closed || h.daemon.client.state == .Closing do return qjs.undefined()
 
     client.client_close(&h.daemon.client)
 
@@ -191,48 +169,32 @@ client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
-    if h.done {
-        return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
-    }
+    if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
 
-    if argc < 2 || !qjs.is_string(argv[0]) || !qjs.is_object(argv[1]) {
-        return qjs.throw_type_error(ctx, "request expects a method and params object")
-    }
+    if argc < 2 || !qjs.is_string(argv[0]) || !qjs.is_object(argv[1]) do return qjs.throw_type_error(ctx, "request expects a method and params object")
 
     method_text, method_ok := qjs.to_string(ctx, argv[0])
-    if !method_ok {
-        return qjs.exception()
-    }
+    if !method_ok do return qjs.exception()
 
     defer qjs.free_string(ctx, method_text)
 
     method, known := wire.method_name_from_wire(method_text)
-    if !known || method == .Initialize || method == .Auth_Set_Api_Key {
-        return qjs.throw_type_error(ctx, "request method is not available")
-    }
+    if !known || method == .Initialize || method == .Auth_Set_Api_Key do return qjs.throw_type_error(ctx, "request method is not available")
 
     params, params_ok := client_request_params(ctx, method, argv[1])
-    if !params_ok {
-        return qjs.throw_type_error(ctx, "request params failed wire validation")
-    }
+    if !params_ok do return qjs.throw_type_error(ctx, "request params failed wire validation")
 
     job, promise := client_promise_new(h)
     if job == nil {
-        if qjs.is_exception(promise) {
-            return promise
-        }
+        if qjs.is_exception(promise) do return promise
 
         return qjs.throw_type_error(ctx, "out of memory")
     }
 
     _, send_err := client.client_send_request(&h.daemon.client, method, params, client_on_request_complete, job)
-    if send_err != .None {
-        client_promise_reject(job, client_protocol_error_wire(send_err), false)
-    }
+    if send_err != .None do client_promise_reject(job, client_protocol_error_wire(send_err), false)
 
     return promise
 }
@@ -245,19 +207,13 @@ client_js_state :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, ar
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.new_string(ctx, "disconnected")
-    }
+    if h == nil do return qjs.new_string(ctx, "disconnected")
 
     // A remote connect reports "connecting" through its whole roster/ticket/dial phase, before
     // a daemon client exists.
-    if h.remote != nil {
-        return qjs.new_string(ctx, "connecting")
-    }
+    if h.remote != nil do return qjs.new_string(ctx, "connecting")
 
-    if !h.daemon.live {
-        return qjs.new_string(ctx, "disconnected")
-    }
+    if !h.daemon.live do return qjs.new_string(ctx, "disconnected")
 
     return qjs.new_string(ctx, client_state_wire(h.daemon.client.state))
 }
@@ -265,39 +221,27 @@ client_js_state :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, ar
 @(private = "file")
 client_connect_options :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (options: Client_Connect_Options, ok: bool) {
     encoded := qjs.json_stringify(ctx, value)
-    if qjs.is_exception(encoded) || qjs.is_undefined(encoded) {
-        return {}, false
-    }
+    if qjs.is_exception(encoded) || qjs.is_undefined(encoded) do return {}, false
 
     defer qjs.free_value(ctx, encoded)
 
     text, text_ok := qjs.to_string(ctx, encoded)
-    if !text_ok {
-        return {}, false
-    }
+    if !text_ok do return {}, false
 
     defer qjs.free_string(ctx, text)
 
-    if json.unmarshal(transmute([]byte)text, &options, .JSON, context.temp_allocator) != nil {
-        return {}, false
-    }
+    if json.unmarshal(transmute([]byte)text, &options, .JSON, context.temp_allocator) != nil do return {}, false
 
     // A remote connect selects the daemon by device name; host/port are unused.
     if options.remote {
-        if options.device == "" {
-            return {}, false
-        }
+        if options.device == "" do return {}, false
 
         return options, true
     }
 
-    if options.host == "" {
-        options.host = "127.0.0.1"
-    }
+    if options.host == "" do options.host = "127.0.0.1"
 
-    if options.port <= 0 || options.port > 65535 {
-        return {}, false
-    }
+    if options.port <= 0 || options.port > 65535 do return {}, false
 
     return options, true
 }
@@ -312,28 +256,20 @@ client_request_params :: proc(
     bool,
 ) {
     encoded := qjs.json_stringify(ctx, value)
-    if qjs.is_exception(encoded) || qjs.is_undefined(encoded) {
-        return nil, false
-    }
+    if qjs.is_exception(encoded) || qjs.is_undefined(encoded) do return nil, false
 
     defer qjs.free_value(ctx, encoded)
 
     text, text_ok := qjs.to_string(ctx, encoded)
-    if !text_ok {
-        return nil, false
-    }
+    if !text_ok do return nil, false
 
     defer qjs.free_string(ctx, text)
 
     d := json.decoder_init(text, context.temp_allocator)
     params, decode_err := wire.request_params_from_reader(method, &d)
-    if decode_err != .None || json.dec_finish(&d) != .None {
-        return nil, false
-    }
+    if decode_err != .None || json.dec_finish(&d) != .None do return nil, false
 
-    if wire.request_params_validate(params) != .None {
-        return nil, false
-    }
+    if wire.request_params_validate(params) != .None do return nil, false
 
     return params, true
 }
@@ -394,9 +330,7 @@ client_promise_settle :: proc(job: ^Client_Promise, value: qjs.Value, success: b
     qjs.free_value(h.js.ctx, job.reject)
     free(job, h.allocator)
 
-    if run_jobs {
-        js.drain(&h.js)
-    }
+    if run_jobs do js.drain(&h.js)
 }
 
 client_on_ready :: proc(c: ^client.Client, hello: wire.Initialize_Result) {
@@ -476,20 +410,14 @@ daemon_connection_destroy :: proc(h: ^Host) {
     // reached `.Closed`.
     open_session_teardown(h)
 
-    if !h.daemon.live {
-        return
-    }
+    if !h.daemon.live do return
 
     deadline := time.time_add(time.now(), CLIENT_SHUTDOWN_TIMEOUT)
 
-    if h.daemon.client.state != .Closing && h.daemon.client.state != .Closed {
-        client.client_close(&h.daemon.client)
-    }
+    if h.daemon.client.state != .Closing && h.daemon.client.state != .Closed do client.client_close(&h.daemon.client)
 
     for h.daemon.client.state != .Closed && time.now()._nsec < deadline._nsec {
-        if nbio.tick(50 * time.Millisecond) != nil {
-            break
-        }
+        if nbio.tick(50 * time.Millisecond) != nil do break
     }
 
     assert(h.daemon.client.state == .Closed, "daemon connection did not finish bounded shutdown")

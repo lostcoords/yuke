@@ -343,32 +343,16 @@ listen :: proc(
     user_data: rawptr = nil,
     allocator := context.allocator,
 ) -> Error {
-    if s == nil || loop == nil || on_request == nil {
-        return .Invalid_Options
-    }
+    if s == nil || loop == nil || on_request == nil do return .Invalid_Options
 
     opts := options
-    if opts.host == "" {
-        opts.host = "127.0.0.1"
-    }
-    if opts.max_connections == 0 {
-        opts.max_connections = 512
-    }
-    if opts.max_head_bytes == 0 {
-        opts.max_head_bytes = 64 << 10
-    }
-    if opts.max_body_bytes == 0 {
-        opts.max_body_bytes = 1 << 20
-    }
-    if opts.recv_chunk_bytes == 0 {
-        opts.recv_chunk_bytes = 8 << 10
-    }
-    if opts.request_timeout == 0 {
-        opts.request_timeout = 10 * time.Second
-    }
-    if opts.body_timeout == 0 {
-        opts.body_timeout = 60 * time.Second
-    }
+    if opts.host == "" do opts.host = "127.0.0.1"
+    if opts.max_connections == 0 do opts.max_connections = 512
+    if opts.max_head_bytes == 0 do opts.max_head_bytes = 64 << 10
+    if opts.max_body_bytes == 0 do opts.max_body_bytes = 1 << 20
+    if opts.recv_chunk_bytes == 0 do opts.recv_chunk_bytes = 8 << 10
+    if opts.request_timeout == 0 do opts.request_timeout = 10 * time.Second
+    if opts.body_timeout == 0 do opts.body_timeout = 60 * time.Second
 
     if opts.port < 0 ||
        opts.port > 65535 ||
@@ -382,14 +366,10 @@ listen :: proc(
     }
 
     addr, ok := net.parse_ip4_address(opts.host)
-    if !ok {
-        return .Invalid_Options
-    }
+    if !ok do return .Invalid_Options
 
     conns, aerr := make(map[Ticket]^Conn, opts.max_connections, allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     socket, listen_err := nbio.listen_tcp({address = addr, port = opts.port}, 1000, loop)
     if listen_err != nil {
@@ -430,14 +410,10 @@ shutdown :: proc(s: ^Server) {
 
     if s.state == .Serving {
         shutdown_begin(s)
-    } else if s.state != .Closing {
-        return
-    }
+    } else if s.state != .Closing do return
 
     for _, c in s.conns {
-        if c.state != .Hijacked {
-            conn_finalize(c)
-        }
+        if c.state != .Hijacked do conn_finalize(c)
     }
 
     maybe_finish_shutdown(s)
@@ -448,9 +424,7 @@ shutdown :: proc(s: ^Server) {
 drain :: proc(s: ^Server) {
     assert(s != nil, "drain needs a server")
 
-    if s.state != .Serving {
-        return
-    }
+    if s.state != .Serving do return
 
     shutdown_begin(s)
     maybe_finish_shutdown(s)
@@ -486,9 +460,7 @@ bound_address :: proc(s: ^Server) -> (addr: net.Address, ok: bool) {
     assert(s != nil, "bound_address needs a server")
 
     ep, err := net.bound_endpoint(s.socket)
-    if err != nil {
-        return nil, false
-    }
+    if err != nil do return nil, false
 
     return ep.address, true
 }
@@ -498,9 +470,7 @@ bound_port :: proc(s: ^Server) -> int {
     assert(s != nil, "bound_port needs a server")
 
     ep, err := net.bound_endpoint(s.socket)
-    if err != nil {
-        return 0
-    }
+    if err != nil do return 0
 
     return ep.port
 }
@@ -520,9 +490,7 @@ try_respond :: proc(c: ^Conn, status: Status, content_type: string, body: []byte
     assert(conn_can_respond(c), "respond on an answered connection")
 
     extra, response_err := serialize_pending_headers(c)
-    if response_err != .None {
-        return response_err
-    }
+    if response_err != .None do return response_err
 
     // A HEAD response advertises the length it would have sent; `conn_send_head_and_body`
     // is what withholds the content, so this only avoids a pointless copy.
@@ -578,13 +546,9 @@ try_respond_redirect :: proc(c: ^Conn, status: Status, location: string) -> Resp
     assert(conn_can_respond(c), "respond_redirect on an answered connection")
     assert(http.status_is_redirect(status), "respond_redirect needs a redirect that carries a target")
 
-    if len(location) == 0 || !http.field_value_valid(location) {
-        return .Invalid_Header
-    }
+    if len(location) == 0 || !http.field_value_valid(location) do return .Invalid_Header
 
-    if header_present(c.pending[:], "location") {
-        return .Invalid_Header
-    }
+    if header_present(c.pending[:], "location") do return .Invalid_Header
 
     try_conn_add_header(c, "Location", location) or_return
 
@@ -604,9 +568,7 @@ respond_file :: proc(
     failure_text: string,
 ) {
     err := try_respond_file(c, status, content_type, file, max_file_bytes, failure_status, failure_text)
-    if err == .None {
-        return
-    }
+    if err == .None do return
 
     nbio.close(file, l = c.loop)
     abort_failed_response(c, err)
@@ -629,14 +591,10 @@ try_respond_file :: proc(
     assert(conn_can_respond(c), "respond_file on an answered connection")
     assert(max_file_bytes >= 0, "file response needs a non-negative byte cap")
 
-    if !http.field_value_valid(content_type) {
-        return .Invalid_Header
-    }
+    if !http.field_value_valid(content_type) do return .Invalid_Header
 
     extra, response_err := serialize_pending_headers(c)
-    if response_err != .None {
-        return response_err
-    }
+    if response_err != .None do return response_err
 
     owned_content_type, aerr := strings.clone(content_type, c.allocator)
     if aerr != nil {
@@ -709,9 +667,7 @@ receive_body :: proc(c: ^Conn, user_data: rawptr, on_chunk: On_Body_Chunk, on_en
     trailing := c.head_buf[c.head_consumed:]
     if len(trailing) > 0 {
         take := int(min(i64(len(trailing)), c.body_remaining))
-        if take > 0 && !deliver_body_chunk(c, trailing[:take]) {
-            return
-        }
+        if take > 0 && !deliver_body_chunk(c, trailing[:take]) do return
     }
 
     if c.body_remaining == 0 {
@@ -778,18 +734,12 @@ try_conn_add_header :: proc(c: ^Conn, name: string, value: string) -> Response_E
     assert(c != nil, "adding a header needs a connection")
     assert(conn_can_add_header(c), "response header added after the head was built")
 
-    if !http.field_name_valid(name) || !http.field_value_valid(value) || reserved_field(name) {
-        return .Invalid_Header
-    }
+    if !http.field_name_valid(name) || !http.field_value_valid(value) || reserved_field(name) do return .Invalid_Header
 
-    if header_present(c.pending[:], name) {
-        return .Invalid_Header
-    }
+    if header_present(c.pending[:], name) do return .Invalid_Header
 
     owned_name, aerr := strings.clone(name, c.allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     owned_value: string
     owned_value, aerr = strings.clone(value, c.allocator)
@@ -847,14 +797,10 @@ defer_response :: proc(c: ^Conn) {
 conn_resolve :: proc(s: ^Server, ticket: Ticket) -> ^Conn {
     assert(s != nil, "resolve needs a server")
 
-    if ticket == 0 {
-        return nil
-    }
+    if ticket == 0 do return nil
 
     c := s.conns[ticket]
-    if c == nil {
-        return nil
-    }
+    if c == nil do return nil
 
     assert(c.ticket == ticket, "connection table returned a mismatched ticket")
 
@@ -872,9 +818,7 @@ abort :: proc(c: ^Conn) {
 // Shared tail of the `respond*` wrappers.
 @(private)
 abort_failed_response :: proc(c: ^Conn, err: Response_Error) {
-    if err == .None {
-        return
-    }
+    if err == .None do return
 
     log.errorf("http_server: response failed: %v", err)
     abort(c)
@@ -885,9 +829,7 @@ abort_failed_response :: proc(c: ^Conn, err: Response_Error) {
 arm_accept :: proc(s: ^Server) {
     assert(s != nil, "arm_accept needs a server")
 
-    if s.state != .Serving {
-        return
-    }
+    if s.state != .Serving do return
 
     assert(s.accept_op == nil, "accept already armed")
     s.accept_op = nbio.accept_poly(s.socket, s, on_accept, nbio.NO_TIMEOUT, s.loop)
@@ -901,9 +843,7 @@ on_accept :: proc(op: ^nbio.Operation, s: ^Server) {
     s.accept_op = nil
 
     if s.state != .Serving {
-        if op.accept.err == nil {
-            nbio.close(op.accept.client, l = s.loop)
-        }
+        if op.accept.err == nil do nbio.close(op.accept.client, l = s.loop)
 
         return
     }
@@ -1160,9 +1100,7 @@ conn_on_body_recv :: proc(op: ^nbio.Operation, c: ^Conn) {
     }
 
     assert(i64(op.recv.received) <= c.body_remaining, "body recv delivered past the declared length")
-    if !deliver_body_chunk(c, c.recv_buf[:op.recv.received]) {
-        return
-    }
+    if !deliver_body_chunk(c, c.recv_buf[:op.recv.received]) do return
 
     if c.body_remaining == 0 {
         body_complete(c)
@@ -1267,9 +1205,7 @@ conn_send_head_and_body :: proc(c: ^Conn) {
     // RFC 9110 §9.3.2: a HEAD response keeps its headers and sends no content. Decided
     // here so every response path is covered, not each constructor separately.
     count := 1
-    if len(c.resp_body) > 0 && !c.head_request {
-        count = 2
-    }
+    if len(c.resp_body) > 0 && !c.head_request do count = 2
 
     c.send_op = nbio.send_poly(
         c.socket,
@@ -1371,9 +1307,7 @@ conn_on_file_sent :: proc(op: ^nbio.Operation, c: ^Conn) {
     assert(op == c.file_op, "file send completion does not match stored operation")
     c.file_op = nil
 
-    if op.sendfile.err != nil {
-        log.warnf("http_server: sendfile failed: %v", op.sendfile.err)
-    }
+    if op.sendfile.err != nil do log.warnf("http_server: sendfile failed: %v", op.sendfile.err)
 
     conn_finalize(c)
 }
@@ -1393,9 +1327,7 @@ conn_cancel_timeout :: proc(c: ^Conn) {
 conn_finalize :: proc(c: ^Conn) {
     assert(c.state != .Hijacked, "finalizing a socket owned by the application")
 
-    if c.state == .Closed {
-        return
-    }
+    if c.state == .Closed do return
 
     c.state = .Closed
     if c.recv_op != nil {
@@ -1443,9 +1375,7 @@ conn_on_resource_closed :: proc(op: ^nbio.Operation, c: ^Conn) {
     assert(c.close_pending > 0, "unexpected resource-close completion")
 
     c.close_pending -= 1
-    if c.close_pending == 0 {
-        conn_release(c)
-    }
+    if c.close_pending == 0 do conn_release(c)
 }
 
 // Release connection-owned memory, drop the connection from the server map,
@@ -1457,13 +1387,9 @@ conn_release :: proc(c: ^Conn) {
     assert(s.conns[c.ticket] == c, "releasing a connection the server does not own")
     assert(c.close_pending == 0, "connection released with closes outstanding")
 
-    if cap(c.head_buf) > 0 {
-        crypto.zero_explicit(raw_data(c.head_buf), cap(c.head_buf))
-    }
+    if cap(c.head_buf) > 0 do crypto.zero_explicit(raw_data(c.head_buf), cap(c.head_buf))
     delete(c.head_buf)
-    if len(c.recv_buf) > 0 {
-        crypto.zero_explicit(raw_data(c.recv_buf), len(c.recv_buf))
-    }
+    if len(c.recv_buf) > 0 do crypto.zero_explicit(raw_data(c.recv_buf), len(c.recv_buf))
     delete(c.recv_buf, c.allocator)
     delete(c.resp_head, c.allocator)
     delete(c.resp_body, c.allocator)
@@ -1493,21 +1419,15 @@ serialize_pending_headers :: proc(c: ^Conn) -> (out: []byte, err: Response_Error
     total := 0
     for field in c.pending {
         field_bytes := len(field.name) + 2 + len(field.value) + 2
-        if field_bytes > c.server.max_head_bytes - total {
-            return nil, .Invalid_Header
-        }
+        if field_bytes > c.server.max_head_bytes - total do return nil, .Invalid_Header
         total += field_bytes
     }
 
-    if total == 0 {
-        return nil, .None
-    }
+    if total == 0 do return nil, .None
 
     aerr: runtime.Allocator_Error
     out, aerr = make([]byte, total, c.allocator)
-    if aerr != nil {
-        return nil, .Out_Of_Memory
-    }
+    if aerr != nil do return nil, .Out_Of_Memory
 
     at := 0
     for field in c.pending {
@@ -1526,9 +1446,7 @@ serialize_pending_headers :: proc(c: ^Conn) -> (out: []byte, err: Response_Error
 @(private)
 header_present :: proc(fields: []Header, name: string) -> bool {
     for field in fields {
-        if strings.equal_fold(field.name, name) {
-            return true
-        }
+        if strings.equal_fold(field.name, name) do return true
     }
 
     return false
@@ -1583,9 +1501,7 @@ build_response_head :: proc(
         len("Connection: close\r\n") +
         len("\r\n")
 
-    if len(content_type) > 0 {
-        total += len("Content-Type: ") + len(content_type) + len("\r\n")
-    }
+    if len(content_type) > 0 do total += len("Content-Type: ") + len(content_type) + len("\r\n")
 
     head = make([]byte, total, allocator) or_return
     at := 0
@@ -1614,9 +1530,7 @@ http_date :: proc(now: time.Time, out: ^[29]byte) -> string {
     assert(out != nil, "http_date needs an output buffer")
 
     datetime, ok := time.time_to_datetime(now)
-    if !ok || datetime.year < 0 || datetime.year > 9999 {
-        datetime = {{1970, 1, 1}, {0, 0, 0, 0}, nil}
-    }
+    if !ok || datetime.year < 0 || datetime.year > 9999 do datetime = {{1970, 1, 1}, {0, 0, 0, 0}, nil}
 
     ordinal, date_err := dt.date_to_ordinal(datetime.date)
     assert(date_err == .None, "time_to_datetime returned an invalid date")

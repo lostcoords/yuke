@@ -132,9 +132,7 @@ create_session_emit :: proc(e: ^json.Emitter, self: Create_Session) {
         system_prompt_override_emit(e, self.system_prompt)
     }
 
-    if mode, ok := self.permission.?; ok {
-        json.field_string(e, "permission", permission_mode_to_wire(mode))
-    }
+    if mode, ok := self.permission.?; ok do json.field_string(e, "permission", permission_mode_to_wire(mode))
 
     _, mr_default := self.max_rounds.(Max_Rounds_Default)
 
@@ -149,17 +147,11 @@ create_session_emit :: proc(e: ^json.Emitter, self: Create_Session) {
 // Verify annotated field bounds. Each override is held to the `Session` field it lands in,
 // the same bounds `Session_Patch` enforces on the two it shares.
 create_session_validate :: proc(self: Create_Session) -> Validation_Error {
-    if profile, ok := self.profile.?; ok {
-        enforce_bounded(64, profile) or_return
-    }
+    if profile, ok := self.profile.?; ok do enforce_bounded(64, profile) or_return
 
-    if model, ok := self.model.?; ok {
-        enforce_bounded(128, model) or_return
-    }
+    if model, ok := self.model.?; ok do enforce_bounded(128, model) or_return
 
-    if reasoning, ok := self.reasoning.?; ok {
-        enforce_bounded(32, reasoning) or_return
-    }
+    if reasoning, ok := self.reasoning.?; ok do enforce_bounded(32, reasoning) or_return
 
     return .None
 }
@@ -168,21 +160,13 @@ create_session_validate :: proc(self: Create_Session) -> Validation_Error {
 create_session_clone :: proc(self: Create_Session, allocator := context.allocator) -> Create_Session {
     out: Create_Session
 
-    if p, ok := self.workspace_path.?; ok {
-        out.workspace_path = strings.clone(p, allocator)
-    }
+    if p, ok := self.workspace_path.?; ok do out.workspace_path = strings.clone(p, allocator)
 
-    if p, ok := self.profile.?; ok {
-        out.profile = strings.clone(p, allocator)
-    }
+    if p, ok := self.profile.?; ok do out.profile = strings.clone(p, allocator)
 
-    if p, ok := self.model.?; ok {
-        out.model = strings.clone(p, allocator)
-    }
+    if p, ok := self.model.?; ok do out.model = strings.clone(p, allocator)
 
-    if p, ok := self.reasoning.?; ok {
-        out.reasoning = strings.clone(p, allocator)
-    }
+    if p, ok := self.reasoning.?; ok do out.reasoning = strings.clone(p, allocator)
 
     out.system_prompt = system_prompt_override_clone(self.system_prompt, allocator)
     out.permission = self.permission
@@ -216,9 +200,7 @@ session_patch_emit :: proc(e: ^json.Emitter, self: Session_Patch) {
     json.field_string_opt(e, "model", self.model)
     json.field_string_opt(e, "reasoning", self.reasoning)
 
-    if mode, ok := self.permission.?; ok {
-        json.field_string(e, "permission", permission_mode_to_wire(mode))
-    }
+    if mode, ok := self.permission.?; ok do json.field_string(e, "permission", permission_mode_to_wire(mode))
 
     _, mr_default := self.max_rounds.(Max_Rounds_Default)
 
@@ -232,13 +214,9 @@ session_patch_emit :: proc(e: ^json.Emitter, self: Session_Patch) {
 
 // Verify annotated field bounds.
 session_patch_validate :: proc(self: Session_Patch) -> Validation_Error {
-    if model, ok := self.model.?; ok {
-        enforce_bounded(128, model) or_return
-    }
+    if model, ok := self.model.?; ok do enforce_bounded(128, model) or_return
 
-    if reasoning, ok := self.reasoning.?; ok {
-        enforce_bounded(32, reasoning) or_return
-    }
+    if reasoning, ok := self.reasoning.?; ok do enforce_bounded(32, reasoning) or_return
 
     return .None
 }
@@ -257,9 +235,7 @@ session_fork_params_emit :: proc(e: ^json.Emitter, self: Session_Fork_Params) {
     json.object_begin(e)
     json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
-    if bid, ok := self.before_message_id.?; ok {
-        json.field_u64(e, "before_message_id", u64(bid))
-    }
+    if bid, ok := self.before_message_id.?; ok do json.field_u64(e, "before_message_id", u64(bid))
 
     json.object_end(e)
 }
@@ -590,17 +566,11 @@ session_validate :: proc(self: Session) -> Validation_Error {
     enforce_bounded(32, self.reasoning) or_return
     enforce_bounded(256, self.title) or_return
 
-    if agent, ok := self.agent.?; ok {
-        enforce_bounded(64, agent) or_return
-    }
+    if agent, ok := self.agent.?; ok do enforce_bounded(64, agent) or_return
 
-    if cb, ok := self.created_by.?; ok {
-        client_validate(cb) or_return
-    }
+    if cb, ok := self.created_by.?; ok do client_validate(cb) or_return
 
-    if self.updated_at_ms < self.created_at_ms {
-        return .Mismatched_Payload
-    }
+    if self.updated_at_ms < self.created_at_ms do return .Mismatched_Payload
 
     session_origin_validate(self.origin) or_return
     _, has_creator := self.created_by.?
@@ -608,13 +578,9 @@ session_validate :: proc(self: Session) -> Validation_Error {
     _, is_fork := self.origin.(Session_Origin_Fork)
 
     if is_root || is_fork {
-        if !has_creator {
-            return .Mismatched_Payload
-        }
+        if !has_creator do return .Mismatched_Payload
     } else {
-        if has_creator {
-            return .Mismatched_Payload
-        }
+        if has_creator do return .Mismatched_Payload
     }
 
     return .None
@@ -624,15 +590,11 @@ session_validate :: proc(self: Session) -> Validation_Error {
 session_clone :: proc(self: Session, allocator := context.allocator) -> Session {
     created_by: Maybe(Client)
 
-    if cb, ok := self.created_by.?; ok {
-        created_by = client_clone(cb, allocator)
-    }
+    if cb, ok := self.created_by.?; ok do created_by = client_clone(cb, allocator)
 
     agent: Maybe(string)
 
-    if a, ok := self.agent.?; ok {
-        agent = strings.clone(a, allocator)
-    }
+    if a, ok := self.agent.?; ok do agent = strings.clone(a, allocator)
 
     return Session {
         id = self.id,
@@ -736,23 +698,17 @@ session_activity_emit :: proc(e: ^json.Emitter, self: Session_Activity) {
 // Verify annotated field bounds and the state/config cross-field invariant: only `idle`
 // and `compacting` name no run whose config could be reported.
 session_activity_validate :: proc(self: Session_Activity) -> Validation_Error {
-    if self.queued > u64(LIMITS.max_queued_inputs) {
-        return .Overflow
-    }
+    if self.queued > u64(LIMITS.max_queued_inputs) do return .Overflow
 
     activity_state_validate(self.state) or_return
 
     cfg, has_config := self.config.?
 
-    if has_config {
-        run_config_validate(cfg) or_return
-    }
+    if has_config do run_config_validate(cfg) or_return
 
     switch _ in self.state {
     case Activity_State_Idle, Activity_State_Compacting:
-        if has_config {
-            return .Mismatched_Payload
-        }
+        if has_config do return .Mismatched_Payload
 
     case Activity_State_Building,
          Activity_State_Running,
@@ -760,9 +716,7 @@ session_activity_validate :: proc(self: Session_Activity) -> Validation_Error {
          Activity_State_Waiting_Permission,
          Activity_State_Running_Tool,
          Activity_State_Retrying:
-        if !has_config {
-            return .Mismatched_Payload
-        }
+        if !has_config do return .Mismatched_Payload
     }
 
     return .None
@@ -772,9 +726,7 @@ session_activity_validate :: proc(self: Session_Activity) -> Validation_Error {
 session_activity_clone :: proc(self: Session_Activity, allocator := context.allocator) -> Session_Activity {
     config: Maybe(Run_Config)
 
-    if cfg, ok := self.config.?; ok {
-        config = run_config_clone(cfg, allocator)
-    }
+    if cfg, ok := self.config.?; ok do config = run_config_clone(cfg, allocator)
 
     return Session_Activity {
         state = activity_state_clone(self.state, allocator),
@@ -988,9 +940,7 @@ session_list_params_emit :: proc(e: ^json.Emitter, self: Session_List_Params) {
     session_population_emit(e, self.population)
     json.field_string(e, "view", session_view_to_wire(self.view))
 
-    if limit, ok := self.limit.?; ok {
-        json.field_u64(e, "limit", limit)
-    }
+    if limit, ok := self.limit.?; ok do json.field_u64(e, "limit", limit)
 
     json.field_string_opt(e, "cursor", self.cursor)
     json.object_end(e)
@@ -1002,14 +952,10 @@ session_list_params_validate :: proc(self: Session_List_Params) -> Validation_Er
     session_population_validate(self.population) or_return
 
     if limit, ok := self.limit.?; ok {
-        if limit == 0 || limit > u64(LIMITS.max_session_list_page_size) {
-            return .Out_Of_Range
-        }
+        if limit == 0 || limit > u64(LIMITS.max_session_list_page_size) do return .Out_Of_Range
     }
 
-    if cursor, ok := self.cursor.?; ok {
-        return enforce_bounded(LIMITS.max_session_list_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.cursor.?; ok do return enforce_bounded(LIMITS.max_session_list_cursor_bytes, cursor)
 
     return .None
 }
@@ -1051,25 +997,17 @@ session_list_result_emit :: proc(e: ^json.Emitter, self: Session_List_Result) {
 
 // Verify revision, page, and annotated field bounds.
 session_list_result_validate :: proc(self: Session_List_Result) -> Validation_Error {
-    if u64(self.revision) > MAX_SESSION_REVISION {
-        return .Out_Of_Range
-    }
+    if u64(self.revision) > MAX_SESSION_REVISION do return .Out_Of_Range
 
-    if len(self.items) > LIMITS.max_session_list_page_size {
-        return .Overflow
-    }
+    if len(self.items) > LIMITS.max_session_list_page_size do return .Overflow
 
-    if self.total < u64(len(self.items)) {
-        return .Mismatched_Payload
-    }
+    if self.total < u64(len(self.items)) do return .Mismatched_Payload
 
     for item in self.items {
         session_list_item_validate(item) or_return
     }
 
-    if cursor, ok := self.next_cursor.?; ok {
-        return enforce_bounded(LIMITS.max_session_list_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.next_cursor.?; ok do return enforce_bounded(LIMITS.max_session_list_cursor_bytes, cursor)
 
     return .None
 }
@@ -1356,9 +1294,7 @@ session_resync_params_emit :: proc(e: ^json.Emitter, self: Session_Resync_Params
     json.object_begin(e)
     json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
-    if limit, ok := self.limit.?; ok {
-        json.field_u64(e, "limit", limit)
-    }
+    if limit, ok := self.limit.?; ok do json.field_u64(e, "limit", limit)
 
     json.object_end(e)
 }
@@ -1368,9 +1304,7 @@ session_resync_params_validate :: proc(self: Session_Resync_Params) -> Validatio
     enforce_id(([16]u8)(self.session_id)) or_return
 
     if limit, ok := self.limit.?; ok {
-        if limit == 0 || limit > u64(LIMITS.max_page_size) {
-            return .Out_Of_Range
-        }
+        if limit == 0 || limit > u64(LIMITS.max_page_size) do return .Out_Of_Range
     }
 
     return .None
@@ -1404,14 +1338,10 @@ _activity_config_matches_draft :: proc(
 ) -> bool {
     config, has_config := activity_config.?
 
-    if !has_config || config.config_rev != message.config_rev {
-        return false
-    }
+    if !has_config || config.config_rev != message.config_rev do return false
 
     for candidate in configs {
-        if candidate.config_rev != message.config_rev {
-            continue
-        }
+        if candidate.config_rev != message.config_rev do continue
 
         return config.model == candidate.model && config.reasoning == candidate.reasoning
     }
@@ -1499,9 +1429,7 @@ session_resync_result_emit :: proc(e: ^json.Emitter, self: Session_Resync_Result
 @(private)
 _snapshot_config_rev_present :: proc(configs: []Run_Config, config_rev: Config_Rev) -> bool {
     for cfg in configs {
-        if cfg.config_rev == config_rev {
-            return true
-        }
+        if cfg.config_rev == config_rev do return true
     }
 
     return false
@@ -1514,9 +1442,7 @@ _snapshot_configs_validate :: proc(configs: []Run_Config) -> Validation_Error {
         run_config_validate(cfg) or_return
 
         for prior in configs[:index] {
-            if prior.config_rev == cfg.config_rev {
-                return .Mismatched_Payload
-            }
+            if prior.config_rev == cfg.config_rev do return .Mismatched_Payload
         }
     }
 
@@ -1532,14 +1458,10 @@ _snapshot_messages_validate :: proc(messages: []Message, configs: []Run_Config) 
 
         id := message_id(message)
 
-        if prior, ok := previous.?; ok && id <= prior {
-            return .Mismatched_Payload
-        }
+        if prior, ok := previous.?; ok && id <= prior do return .Mismatched_Payload
 
         if assistant, ok := message.(Assistant_Message); ok {
-            if !_snapshot_config_rev_present(configs, assistant.config_rev) {
-                return .Mismatched_Payload
-            }
+            if !_snapshot_config_rev_present(configs, assistant.config_rev) do return .Mismatched_Payload
         }
 
         previous = id
@@ -1552,20 +1474,14 @@ _snapshot_messages_validate :: proc(messages: []Message, configs: []Run_Config) 
 session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validation_Error {
     session_list_item_validate(self.item) or_return
 
-    if len(self.messages) > LIMITS.max_page_size {
-        return .Overflow
-    }
+    if len(self.messages) > LIMITS.max_page_size do return .Overflow
 
-    if len(self.configs) > LIMITS.max_snapshot_configs {
-        return .Overflow
-    }
+    if len(self.configs) > LIMITS.max_snapshot_configs do return .Overflow
 
     message_count := self.item.session.message_count
     returned_count := u64(len(self.messages))
 
-    if message_count < returned_count || self.has_more != (message_count > returned_count) {
-        return .Mismatched_Payload
-    }
+    if message_count < returned_count || self.has_more != (message_count > returned_count) do return .Mismatched_Payload
 
     _snapshot_configs_validate(self.configs) or_return
     _snapshot_messages_validate(self.messages, self.configs) or_return
@@ -1573,40 +1489,28 @@ session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validatio
     if len(self.messages) != 0 {
         highest, ok := self.highest_finalized_message_id.?
 
-        if !ok || message_id(self.messages[len(self.messages) - 1]) > highest {
-            return .Mismatched_Payload
-        }
+        if !ok || message_id(self.messages[len(self.messages) - 1]) > highest do return .Mismatched_Payload
     }
 
     if active, ok := self.active.?; ok {
         active_draft_validate(active) or_return
 
-        if highest, has_highest := self.highest_finalized_message_id.?; has_highest && active.message.id <= highest {
-            return .Mismatched_Payload
-        }
+        if highest, has_highest := self.highest_finalized_message_id.?; has_highest && active.message.id <= highest do return .Mismatched_Payload
 
-        if !_snapshot_config_rev_present(self.configs, active.message.config_rev) {
-            return .Mismatched_Payload
-        }
+        if !_snapshot_config_rev_present(self.configs, active.message.config_rev) do return .Mismatched_Payload
     }
 
-    if len(self.queued) > LIMITS.max_queued_inputs {
-        return .Overflow
-    }
+    if len(self.queued) > LIMITS.max_queued_inputs do return .Overflow
 
     for q, index in self.queued {
         queued_input_validate(q) or_return
 
         for prior in self.queued[:index] {
-            if prior.input_id == q.input_id {
-                return .Mismatched_Payload
-            }
+            if prior.input_id == q.input_id do return .Mismatched_Payload
         }
     }
 
-    if self.item.activity.queued != u64(len(self.queued)) {
-        return .Mismatched_Payload
-    }
+    if self.item.activity.queued != u64(len(self.queued)) do return .Mismatched_Payload
 
     waiting_tools := 0
 
@@ -1614,161 +1518,101 @@ session_resync_result_validate :: proc(self: Session_Resync_Result) -> Validatio
         for part in active.message.content {
             #partial switch p in part {
             case Tool_Part:
-                if _, is_waiting := p.state.(Tool_State_Waiting_Permission); is_waiting {
-                    waiting_tools += 1
-                }
+                if _, is_waiting := p.state.(Tool_State_Waiting_Permission); is_waiting do waiting_tools += 1
             }
         }
     }
 
     // The activity's hoisted config must name the draft's revision and its content.
     if active, ok := self.active.?; ok {
-        if !_activity_config_matches_draft(self.item.activity.config, active.message, self.configs) {
-            return .Mismatched_Payload
-        }
+        if !_activity_config_matches_draft(self.item.activity.config, active.message, self.configs) do return .Mismatched_Payload
     }
 
     switch st in self.item.activity.state {
     case Activity_State_Idle, Activity_State_Building, Activity_State_Compacting:
-        if _, ok := self.active.?; ok {
-            return .Mismatched_Payload
-        }
+        if _, ok := self.active.?; ok do return .Mismatched_Payload
 
-        if waiting_tools != 0 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 0 do return .Mismatched_Payload
 
     case Activity_State_Running:
-        if waiting_tools != 0 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 0 do return .Mismatched_Payload
 
         if active, ok := self.active.?; ok {
-            if st.run_id != active.message.run_id {
-                return .Mismatched_Payload
-            }
+            if st.run_id != active.message.run_id do return .Mismatched_Payload
         }
 
     case Activity_State_Reasoning:
-        if waiting_tools != 0 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 0 do return .Mismatched_Payload
 
         active, ok := self.active.?
 
-        if !ok {
-            return .Mismatched_Payload
-        }
+        if !ok do return .Mismatched_Payload
 
-        if st.run_id != active.message.run_id || st.message_id != active.message.id {
-            return .Mismatched_Payload
-        }
+        if st.run_id != active.message.run_id || st.message_id != active.message.id do return .Mismatched_Payload
 
-        if u64(st.part_id) >= u64(len(active.message.content)) {
-            return .Mismatched_Payload
-        }
+        if u64(st.part_id) >= u64(len(active.message.content)) do return .Mismatched_Payload
 
         part_index := int(u64(st.part_id))
         reasoning, is_reasoning := active.message.content[part_index].(Reasoning_Part)
 
-        if !is_reasoning {
-            return .Mismatched_Payload
-        }
+        if !is_reasoning do return .Mismatched_Payload
 
-        if reasoning.id != st.part_id {
-            return .Mismatched_Payload
-        }
+        if reasoning.id != st.part_id do return .Mismatched_Payload
 
     case Activity_State_Waiting_Permission:
-        if waiting_tools != 1 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 1 do return .Mismatched_Payload
 
         active, ok := self.active.?
 
-        if !ok {
-            return .Mismatched_Payload
-        }
+        if !ok do return .Mismatched_Payload
 
-        if st.run_id != active.message.run_id || st.message_id != active.message.id {
-            return .Mismatched_Payload
-        }
+        if st.run_id != active.message.run_id || st.message_id != active.message.id do return .Mismatched_Payload
 
-        if u64(st.part_id) >= u64(len(active.message.content)) {
-            return .Mismatched_Payload
-        }
+        if u64(st.part_id) >= u64(len(active.message.content)) do return .Mismatched_Payload
 
         part_index := int(u64(st.part_id))
         tool, is_tool := active.message.content[part_index].(Tool_Part)
 
-        if !is_tool {
-            return .Mismatched_Payload
-        }
+        if !is_tool do return .Mismatched_Payload
 
-        if tool.id != st.part_id || tool.name != st.tool_name {
-            return .Mismatched_Payload
-        }
+        if tool.id != st.part_id || tool.name != st.tool_name do return .Mismatched_Payload
 
-        if _, is_waiting := tool.state.(Tool_State_Waiting_Permission); !is_waiting {
-            return .Mismatched_Payload
-        }
+        if _, is_waiting := tool.state.(Tool_State_Waiting_Permission); !is_waiting do return .Mismatched_Payload
 
         // The activity's `requested_at_ms` locates the same prompt the part carries.
         perm, has_perm := tool.permission_state.?
 
-        if !has_perm || perm.requested_at_ms != st.requested_at_ms {
-            return .Mismatched_Payload
-        }
+        if !has_perm || perm.requested_at_ms != st.requested_at_ms do return .Mismatched_Payload
 
     case Activity_State_Running_Tool:
-        if waiting_tools != 0 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 0 do return .Mismatched_Payload
 
         active, ok := self.active.?
 
-        if !ok {
-            return .Mismatched_Payload
-        }
+        if !ok do return .Mismatched_Payload
 
-        if st.run_id != active.message.run_id || st.message_id != active.message.id {
-            return .Mismatched_Payload
-        }
+        if st.run_id != active.message.run_id || st.message_id != active.message.id do return .Mismatched_Payload
 
-        if u64(st.part_id) >= u64(len(active.message.content)) {
-            return .Mismatched_Payload
-        }
+        if u64(st.part_id) >= u64(len(active.message.content)) do return .Mismatched_Payload
 
         part_index := int(u64(st.part_id))
         tool, is_tool := active.message.content[part_index].(Tool_Part)
 
-        if !is_tool {
-            return .Mismatched_Payload
-        }
+        if !is_tool do return .Mismatched_Payload
 
-        if tool.id != st.part_id || tool.name != st.tool_name {
-            return .Mismatched_Payload
-        }
+        if tool.id != st.part_id || tool.name != st.tool_name do return .Mismatched_Payload
 
         running, is_running := tool.state.(Tool_State_Running)
 
-        if !is_running {
-            return .Mismatched_Payload
-        }
+        if !is_running do return .Mismatched_Payload
 
-        if running.started_at_ms != st.started_at_ms {
-            return .Mismatched_Payload
-        }
+        if running.started_at_ms != st.started_at_ms do return .Mismatched_Payload
 
     case Activity_State_Retrying:
-        if waiting_tools != 0 {
-            return .Mismatched_Payload
-        }
+        if waiting_tools != 0 do return .Mismatched_Payload
 
         if active, ok := self.active.?; ok {
-            if st.run_id != active.message.run_id {
-                return .Mismatched_Payload
-            }
+            if st.run_id != active.message.run_id do return .Mismatched_Payload
         }
     }
 
@@ -1793,9 +1637,7 @@ session_history_params_emit :: proc(e: ^json.Emitter, self: Session_History_Para
     json.field_id(e, "session_id", ([16]u8)(self.session_id))
     json.field_u64(e, "before_message_id", u64(self.before_message_id))
 
-    if limit, ok := self.limit.?; ok {
-        json.field_u64(e, "limit", limit)
-    }
+    if limit, ok := self.limit.?; ok do json.field_u64(e, "limit", limit)
 
     json.object_end(e)
 }
@@ -1845,13 +1687,9 @@ session_history_result_emit :: proc(e: ^json.Emitter, self: Session_History_Resu
 session_history_result_validate :: proc(self: Session_History_Result) -> Validation_Error {
     enforce_id(([16]u8)(self.session_id)) or_return
 
-    if len(self.messages) > LIMITS.max_page_size {
-        return .Overflow
-    }
+    if len(self.messages) > LIMITS.max_page_size do return .Overflow
 
-    if len(self.configs) > LIMITS.max_snapshot_configs {
-        return .Overflow
-    }
+    if len(self.configs) > LIMITS.max_snapshot_configs do return .Overflow
 
     _snapshot_configs_validate(self.configs) or_return
     _snapshot_messages_validate(self.messages, self.configs) or_return
@@ -1873,9 +1711,7 @@ session_config_params_emit :: proc(e: ^json.Emitter, self: Session_Config_Params
     json.object_begin(e)
     json.field_id(e, "session_id", ([16]u8)(self.session_id))
 
-    if cr, ok := self.config_rev.?; ok {
-        json.field_u64(e, "config_rev", u64(cr))
-    }
+    if cr, ok := self.config_rev.?; ok do json.field_u64(e, "config_rev", u64(cr))
 
     json.object_end(e)
 }
@@ -1929,9 +1765,7 @@ subscription_set_params_emit :: proc(e: ^json.Emitter, self: Subscription_Set_Pa
 
 // Verify annotated field bounds.
 subscription_set_params_validate :: proc(self: Subscription_Set_Params) -> Validation_Error {
-    if len(self.sessions) > LIMITS.max_subscriptions {
-        return .Overflow
-    }
+    if len(self.sessions) > LIMITS.max_subscriptions do return .Overflow
 
     for sid in self.sessions {
         enforce_id(([16]u8)(sid)) or_return
@@ -2055,9 +1889,7 @@ session_fork_params_from_reader :: proc(d: ^json.Decoder) -> (params: Session_Fo
         }
     }
 
-    if .Sid not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Sid not_in seen do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -2085,9 +1917,7 @@ session_compact_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -2125,9 +1955,7 @@ session_compact_result_from_reader :: proc(
         }
     }
 
-    if seen != {.Status, .Run} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Status, .Run} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -2165,9 +1993,7 @@ session_rewind_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Before} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Before} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -2229,9 +2055,7 @@ session_origin_from_reader :: proc(d: ^json.Decoder) -> (origin: Session_Origin,
             }
         }
 
-        if seen != {.Pid, .Mid, .Pt} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Pid, .Mid, .Pt} do return nil, .Mismatched_Payload
 
         return Session_Origin_Child {
                 parent_id = Session_Id(pid),
@@ -2260,9 +2084,7 @@ session_origin_from_reader :: proc(d: ^json.Decoder) -> (origin: Session_Origin,
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Session_Origin_Fork{source_id = Session_Id(sid)}, .None
 
@@ -2286,9 +2108,7 @@ session_origin_from_reader :: proc(d: ^json.Decoder) -> (origin: Session_Origin,
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Session_Origin_Cron{job_id = Job_Id(jid)}, .None
     }
@@ -2355,9 +2175,7 @@ session_from_reader :: proc(d: ^json.Decoder) -> (out: Session, err: json.Decode
         case "max_rounds":
             seen += {.Max}
 
-            if !json.dec_is_null(d) {
-                out.max_rounds = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-            }
+            if !json.dec_is_null(d) do out.max_rounds = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "title":
             out.title = json.dec_string(d) or_return
@@ -2382,9 +2200,7 @@ session_from_reader :: proc(d: ^json.Decoder) -> (out: Session, err: json.Decode
         case "created_by":
             seen += {.Created}
 
-            if !json.dec_is_null(d) {
-                out.created_by = client_from_reader(d) or_return
-            }
+            if !json.dec_is_null(d) do out.created_by = client_from_reader(d) or_return
 
         case "origin":
             out.origin = session_origin_from_reader(d) or_return
@@ -2455,9 +2271,7 @@ run_config_from_reader :: proc(d: ^json.Decoder) -> (out: Run_Config, err: json.
         }
     }
 
-    if seen != {.Cfg, .Model, .Reasoning} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Cfg, .Model, .Reasoning} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2497,18 +2311,14 @@ session_activity_from_reader :: proc(d: ^json.Decoder) -> (out: Session_Activity
         case "pending_compaction":
             seen += {.Pc}
 
-            if !json.dec_is_null(d) {
-                out.pending_compaction = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
-            }
+            if !json.dec_is_null(d) do out.pending_compaction = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.State, .Queued, .Ctx, .Pc} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.State, .Queued, .Ctx, .Pc} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2541,9 +2351,7 @@ session_list_item_from_reader :: proc(d: ^json.Decoder) -> (out: Session_List_It
         }
     }
 
-    if seen != {.Session, .Activity} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Session, .Activity} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -2587,9 +2395,7 @@ session_scope_from_reader :: proc(d: ^json.Decoder) -> (scope: Session_Scope, er
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Session_Scope_Workspace{workspace_id = Workspace_Id(wid)}, .None
     }
@@ -2639,9 +2445,7 @@ session_population_from_reader :: proc(d: ^json.Decoder) -> (population: Session
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Session_Population_Children{parent_id = Session_Id(pid)}, .None
 
@@ -2665,9 +2469,7 @@ session_population_from_reader :: proc(d: ^json.Decoder) -> (population: Session
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Session_Population_Job_Runs{job_id = Job_Id(jid)}, .None
 
@@ -2753,9 +2555,7 @@ session_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Session_Li
         case "next_cursor":
             seen += {.Next}
 
-            if !json.dec_is_null(d) {
-                result.next_cursor = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.next_cursor = json.dec_string(d) or_return
 
         case "total":
             result.total = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
@@ -2766,9 +2566,7 @@ session_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Session_Li
         }
     }
 
-    if seen != {.Rev, .Items, .Next, .Total} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Rev, .Items, .Next, .Total} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -2847,13 +2645,9 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Start} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Start} do return nil, .Mismatched_Payload
 
-        if tag == "building" {
-            return Activity_State_Building{run_id = st_run, started_at_ms = st_start}, .None
-        }
+        if tag == "building" do return Activity_State_Building{run_id = st_run, started_at_ms = st_start}, .None
 
         return Activity_State_Running{run_id = st_run, started_at_ms = st_start}, .None
 
@@ -2900,9 +2694,7 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Mid, .Pid} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Mid, .Pid} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -2951,9 +2743,7 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Mid, .Pid, .Tool, .Req} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Mid, .Pid, .Tool, .Req} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -3002,9 +2792,7 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Mid, .Pid, .Tool, .Start} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Mid, .Pid, .Tool, .Start} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -3058,9 +2846,7 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Att, .Max, .Next, .Code, .Msg} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Att, .Max, .Next, .Code, .Msg} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -3107,9 +2893,7 @@ activity_state_from_reader :: proc(d: ^json.Decoder) -> (state: Activity_State, 
             }
         }
 
-        if seen != {.Run, .Reason, .Start} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Run, .Reason, .Start} do return nil, .Mismatched_Payload
 
         return st, .None
     }
@@ -3143,9 +2927,7 @@ session_resync_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -3168,9 +2950,7 @@ active_draft_from_reader :: proc(d: ^json.Decoder) -> (draft: Active_Draft, err:
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return draft, .None
 }
@@ -3211,9 +2991,7 @@ session_resync_result_from_reader :: proc(
         case "highest_finalized_message_id":
             seen += {.Hf}
 
-            if !json.dec_is_null(d) {
-                result.highest_finalized_message_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
-            }
+            if !json.dec_is_null(d) do result.highest_finalized_message_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case "messages":
             result.messages = json.dec_array(d, message_from_reader) or_return
@@ -3239,9 +3017,7 @@ session_resync_result_from_reader :: proc(
         }
     }
 
-    if seen != {.Item, .Seq, .Hf, .Msgs, .More, .Cfgs, .Queued} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Item, .Seq, .Hf, .Msgs, .More, .Cfgs, .Queued} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -3282,9 +3058,7 @@ session_history_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Before} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Before} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -3332,9 +3106,7 @@ session_history_result_from_reader :: proc(
         }
     }
 
-    if seen != {.Sid, .Msgs, .Cfgs, .More} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Msgs, .Cfgs, .More} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -3365,9 +3137,7 @@ session_config_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -3399,18 +3169,14 @@ session_config_result_from_reader :: proc(
         case "system_prompt":
             seen += {.Sp}
 
-            if !json.dec_is_null(d) {
-                result.system_prompt = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.system_prompt = json.dec_string(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Cfg, .Sp} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Cfg, .Sp} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -3445,9 +3211,7 @@ subscription_set_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }

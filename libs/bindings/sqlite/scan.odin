@@ -59,9 +59,7 @@ scan_row :: proc(
     info := reflect.type_info_base(type_info_of(T))
     assert(info != nil, "a scan destination has type information")
 
-    if shape_err := scan_shape(statement, info); shape_err != .None {
-        return shape_err
-    }
+    if shape_err := scan_shape(statement, info); shape_err != .None do return shape_err
 
     assert(scan_value_owns_nothing(rawptr(value), info), "scan destination must own nothing")
     scan_value_clear(rawptr(value), info)
@@ -138,9 +136,7 @@ scan_prepare :: proc(
 
     binds, make_err := make([]Scan_Bind, count, allocator)
 
-    if make_err != nil {
-        return {}, .Out_Of_Memory
-    }
+    if make_err != nil do return {}, .Out_Of_Memory
 
     fill := Scan_Fill {
         statement = statement,
@@ -182,9 +178,7 @@ scan :: proc(
 
     scan_value_clear(rawptr(value), info)
     for bind in mapping.binds {
-        if bind.col < 0 {
-            continue
-        }
+        if bind.col < 0 do continue
 
         destination := any{rawptr(uintptr(value) + bind.offset), bind.type.id}
         column_err := scan_column(mapping.statement, bind.col, destination, bind.borrowed, allocator)
@@ -229,9 +223,7 @@ scan_tag :: proc(field: reflect.Struct_Field) -> (tag: Scan_Tag, err: Scan_Error
 
     value, explicit := reflect.struct_tag_lookup(field.tag, "sql")
 
-    if !explicit {
-        return tag, .None
-    }
+    if !explicit do return tag, .None
 
     tag.explicit = true
     comma := strings.index_byte(value, ',')
@@ -241,44 +233,32 @@ scan_tag :: proc(field: reflect.Struct_Field) -> (tag: Scan_Tag, err: Scan_Error
         tag.name = value[:comma]
         options = value[comma + 1:]
 
-        if options == "" {
-            return {}, .Invalid_Tag
-        }
+        if options == "" do return {}, .Invalid_Tag
     } else {
         tag.name = value
     }
 
-    if tag.name == "" {
-        tag.name = field.name
-    }
+    if tag.name == "" do tag.name = field.name
 
     if tag.name == "-" {
-        if options != "" {
-            return {}, .Invalid_Tag
-        }
+        if options != "" do return {}, .Invalid_Tag
 
         tag.ignored = true
 
         return tag, .None
     }
 
-    if options == "" {
-        return tag, .None
-    }
+    if options == "" do return tag, .None
 
     for option in strings.split_iterator(&options, ",") {
         switch option {
         case "optional":
-            if tag.optional {
-                return {}, .Invalid_Tag
-            }
+            if tag.optional do return {}, .Invalid_Tag
 
             tag.optional = true
 
         case "borrowed":
-            if tag.borrowed {
-                return {}, .Invalid_Tag
-            }
+            if tag.borrowed do return {}, .Invalid_Tag
 
             tag.borrowed = true
 
@@ -326,23 +306,17 @@ scan_walk :: proc(info: ^reflect.Type_Info, offset: uintptr, visit: Scan_Visitor
     base := reflect.type_info_base(info)
     struct_info, is_struct := base.variant.(reflect.Type_Info_Struct)
 
-    if !is_struct || .raw_union in struct_info.flags {
-        return .Unsupported_Type
-    }
+    if !is_struct || .raw_union in struct_info.flags do return .Unsupported_Type
 
     for field in reflect.struct_fields_zipped(base.id) {
         tag := scan_tag(field) or_return
 
-        if tag.ignored {
-            continue
-        }
+        if tag.ignored do continue
 
         if field.is_using {
             // An embedded struct contributes columns; it is never one itself, so a
             // name on it would be ambiguous with the leaves underneath.
-            if tag.explicit {
-                return .Invalid_Tag
-            }
+            if tag.explicit do return .Invalid_Tag
 
             scan_walk(field.type, offset + field.offset, visit, user) or_return
 
@@ -353,9 +327,7 @@ scan_walk :: proc(info: ^reflect.Type_Info, offset: uintptr, visit: Scan_Visitor
 
         // Borrowing is only meaningful where a clone would otherwise be made; on a
         // by-value destination it would silently mean nothing.
-        if tag.borrowed && !scan_type_owns(field.type) {
-            return .Invalid_Tag
-        }
+        if tag.borrowed && !scan_type_owns(field.type) do return .Invalid_Tag
 
         leaf := Scan_Leaf {
             name     = tag.name,
@@ -382,13 +354,9 @@ scan_shape :: proc(statement: ^Stmt, info: ^reflect.Type_Info) -> Scan_Error {
     for col in 0 ..< column_count(statement) {
         matches := scan_leaf_count(info, column_name(statement, col)) or_return
 
-        if matches == 0 {
-            return .Column_Unknown
-        }
+        if matches == 0 do return .Column_Unknown
 
-        if matches > 1 {
-            return .Column_Duplicate
-        }
+        if matches > 1 do return .Column_Duplicate
     }
 
     return scan_walk(info, 0, scan_required_visit, rawptr(statement))
@@ -412,14 +380,10 @@ scan_required_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     matches := 0
 
     for col in 0 ..< column_count(statement) {
-        if column_name(statement, col) == leaf.name {
-            matches += 1
-        }
+        if column_name(statement, col) == leaf.name do matches += 1
     }
 
-    if matches > 1 {
-        return .Column_Duplicate
-    }
+    if matches > 1 do return .Column_Duplicate
 
     return .Column_Missing if matches == 0 && !leaf.optional else .None
 }
@@ -434,9 +398,7 @@ Scan_Leaf_Count :: struct {
 scan_count_visit :: proc(user: rawptr, leaf: Scan_Leaf) -> Scan_Error {
     counter := (^Scan_Leaf_Count)(user)
 
-    if leaf.name == counter.name {
-        counter.matches += 1
-    }
+    if leaf.name == counter.name do counter.matches += 1
 
     return .None
 }
@@ -480,9 +442,7 @@ scan_column_find :: proc(statement: ^Stmt, name: string) -> int {
     assert(statement != nil, "scan_column_find needs a statement")
 
     for col in 0 ..< column_count(statement) {
-        if column_name(statement, col) == name {
-            return col
-        }
+        if column_name(statement, col) == name do return col
     }
 
     return -1
@@ -499,9 +459,7 @@ scan_type_validate :: proc(info: ^reflect.Type_Info) -> Scan_Error {
         return .None
 
     case reflect.Type_Info_Integer:
-        if kind.endianness != .Platform || (base.size != 1 && base.size != 2 && base.size != 4 && base.size != 8) {
-            return .Unsupported_Type
-        }
+        if kind.endianness != .Platform || (base.size != 1 && base.size != 2 && base.size != 4 && base.size != 8) do return .Unsupported_Type
 
         return .None
 
@@ -511,16 +469,12 @@ scan_type_validate :: proc(info: ^reflect.Type_Info) -> Scan_Error {
     case reflect.Type_Info_Union:
         // Only `Maybe(T)`: one variant, nil admitted, payload itself supported. NULL binds
         // from the nil variant and scans back into it, so the two directions are inverses.
-        if len(kind.variants) != 1 || kind.no_nil {
-            return .Unsupported_Type
-        }
+        if len(kind.variants) != 1 || kind.no_nil do return .Unsupported_Type
 
         return scan_type_validate(kind.variants[0])
 
     case reflect.Type_Info_Float:
-        if kind.endianness != .Platform || (base.size != 2 && base.size != 4 && base.size != 8) {
-            return .Unsupported_Type
-        }
+        if kind.endianness != .Platform || (base.size != 2 && base.size != 4 && base.size != 8) do return .Unsupported_Type
 
         return .None
 
@@ -622,9 +576,7 @@ scan_column :: proc(
         assert(len(maybe_info.variants) == 1 && !maybe_info.no_nil, "the walk admits only Maybe destinations")
         assert(maybe_info.tag_type != nil, "scan_type_validate rejects the pointer payloads that erase the tag")
 
-        if storage == .Null {
-            return .None
-        }
+        if storage == .Null do return .None
 
         scan_column(statement, col, any{destination.data, maybe_info.variants[0].id}, borrowed, allocator) or_return
 
@@ -635,35 +587,25 @@ scan_column :: proc(
         )
     }
 
-    if storage == .Null {
-        return .Null_Not_Allowed
-    }
+    if storage == .Null do return .Null_Not_Allowed
 
     #partial switch kind in info.variant {
     case reflect.Type_Info_Boolean:
-        if storage != .Integer {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Integer do return .Storage_Type_Mismatch
 
         value := column_i64(statement, col)
 
-        if value != 0 && value != 1 {
-            return .Value_Out_Of_Range
-        }
+        if value != 0 && value != 1 do return .Value_Out_Of_Range
 
         return scan_bool_store(destination, value == 1)
 
     case reflect.Type_Info_Integer:
-        if storage != .Integer {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Integer do return .Storage_Type_Mismatch
 
         return scan_integer_store(destination.data, info, column_i64(statement, col))
 
     case reflect.Type_Info_Enum:
-        if storage != .Integer {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Integer do return .Storage_Type_Mismatch
 
         value := column_i64(statement, col)
         known := false
@@ -674,23 +616,17 @@ scan_column :: proc(
             }
         }
 
-        if !known {
-            return .Value_Out_Of_Range
-        }
+        if !known do return .Value_Out_Of_Range
 
         return scan_integer_store(destination.data, reflect.type_info_base(kind.base), value)
 
     case reflect.Type_Info_Float:
-        if storage != .Float {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Float do return .Storage_Type_Mismatch
 
         return scan_float_store(destination, column_f64(statement, col))
 
     case reflect.Type_Info_String:
-        if storage != .Text {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Text do return .Storage_Type_Mismatch
 
         assert(!kind.is_cstring && kind.encoding == .UTF_8, "scan_shape admits only UTF-8 string destinations")
 
@@ -709,38 +645,28 @@ scan_column :: proc(
 
         cloned, clone_err := strings.clone(source, allocator)
 
-        if clone_err != nil {
-            return .Out_Of_Memory
-        }
+        if clone_err != nil do return .Out_Of_Memory
 
         (^string)(destination.data)^ = cloned
 
         return .None
 
     case reflect.Type_Info_Array:
-        if storage != .Blob {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Blob do return .Storage_Type_Mismatch
 
         elem := reflect.type_info_base(kind.elem)
         assert(elem.id == typeid_of(u8) && kind.elem_size == 1, "scan_shape admits only byte arrays")
 
         source := column_blob(statement, col)
 
-        if len(source) != kind.count {
-            return .Value_Out_Of_Range
-        }
+        if len(source) != kind.count do return .Value_Out_Of_Range
 
-        if len(source) > 0 {
-            mem.copy(destination.data, raw_data(source), len(source))
-        }
+        if len(source) > 0 do mem.copy(destination.data, raw_data(source), len(source))
 
         return .None
 
     case reflect.Type_Info_Slice:
-        if storage != .Blob {
-            return .Storage_Type_Mismatch
-        }
+        if storage != .Blob do return .Storage_Type_Mismatch
 
         elem := reflect.type_info_base(kind.elem)
         assert(elem.id == typeid_of(u8) && kind.elem_size == 1, "scan_shape admits only byte slices")
@@ -755,9 +681,7 @@ scan_column :: proc(
 
         cloned, clone_err := make([]byte, len(source), allocator)
 
-        if clone_err != nil {
-            return .Out_Of_Memory
-        }
+        if clone_err != nil do return .Out_Of_Memory
 
         copy(cloned, source)
         (^[]byte)(destination.data)^ = cloned
@@ -810,21 +734,15 @@ scan_integer_store :: proc(data: rawptr, info: ^reflect.Type_Info, value: i64) -
     if integer.signed {
         switch info.size {
         case 1:
-            if value < -128 || value > 127 {
-                return .Value_Out_Of_Range
-            }
+            if value < -128 || value > 127 do return .Value_Out_Of_Range
             (^i8)(data)^ = i8(value)
 
         case 2:
-            if value < -32768 || value > 32767 {
-                return .Value_Out_Of_Range
-            }
+            if value < -32768 || value > 32767 do return .Value_Out_Of_Range
             (^i16)(data)^ = i16(value)
 
         case 4:
-            if value < -2147483648 || value > 2147483647 {
-                return .Value_Out_Of_Range
-            }
+            if value < -2147483648 || value > 2147483647 do return .Value_Out_Of_Range
             (^i32)(data)^ = i32(value)
 
         case 8:
@@ -837,29 +755,21 @@ scan_integer_store :: proc(data: rawptr, info: ^reflect.Type_Info, value: i64) -
         return .None
     }
 
-    if value < 0 {
-        return .Value_Out_Of_Range
-    }
+    if value < 0 do return .Value_Out_Of_Range
 
     unsigned := u64(value)
 
     switch info.size {
     case 1:
-        if unsigned > 255 {
-            return .Value_Out_Of_Range
-        }
+        if unsigned > 255 do return .Value_Out_Of_Range
         (^u8)(data)^ = u8(unsigned)
 
     case 2:
-        if unsigned > 65535 {
-            return .Value_Out_Of_Range
-        }
+        if unsigned > 65535 do return .Value_Out_Of_Range
         (^u16)(data)^ = u16(unsigned)
 
     case 4:
-        if unsigned > 4294967295 {
-            return .Value_Out_Of_Range
-        }
+        if unsigned > 4294967295 do return .Value_Out_Of_Range
         (^u32)(data)^ = u32(unsigned)
 
     case 8:
@@ -881,18 +791,14 @@ scan_float_store :: proc(destination: any, value: f64) -> Scan_Error {
     case f16:
         converted := f16(value)
 
-        if math.is_inf(converted) && !math.is_inf(value) {
-            return .Value_Out_Of_Range
-        }
+        if math.is_inf(converted) && !math.is_inf(value) do return .Value_Out_Of_Range
 
         out = converted
 
     case f32:
         converted := f32(value)
 
-        if math.is_inf(converted) && !math.is_inf(value) {
-            return .Value_Out_Of_Range
-        }
+        if math.is_inf(converted) && !math.is_inf(value) do return .Value_Out_Of_Range
 
         out = converted
 
@@ -1007,18 +913,14 @@ scan_leaf_release :: proc(data: rawptr, type: ^reflect.Type_Info, borrowed: bool
     case reflect.Type_Info_String:
         assert(!kind.is_cstring && kind.encoding == .UTF_8, "the walk admits only UTF-8 string leaves")
 
-        if !borrowed {
-            delete((^string)(data)^, allocator)
-        }
+        if !borrowed do delete((^string)(data)^, allocator)
 
         (^string)(data)^ = ""
 
     case reflect.Type_Info_Slice:
         assert(kind.elem_size == 1, "the walk admits only byte slice leaves")
 
-        if !borrowed {
-            delete((^[]byte)(data)^, allocator)
-        }
+        if !borrowed do delete((^[]byte)(data)^, allocator)
 
         (^[]byte)(data)^ = nil
 

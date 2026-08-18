@@ -214,30 +214,14 @@ client_connect :: proc(
     assert(c != nil, "client_connect needs client storage")
 
     opts := options
-    if opts.path == "" {
-        opts.path = "/"
-    }
-    if opts.max_frame_bytes == 0 {
-        opts.max_frame_bytes = 1 << 20
-    }
-    if opts.max_message_bytes == 0 {
-        opts.max_message_bytes = 1 << 20
-    }
-    if opts.recv_chunk_bytes == 0 {
-        opts.recv_chunk_bytes = 64 << 10
-    }
-    if opts.handshake_timeout == 0 {
-        opts.handshake_timeout = 10 * time.Second
-    }
-    if opts.max_frame_bytes > max(int) - MAX_HEADER_BYTES {
-        return .Invalid_Options
-    }
-    if opts.max_send_queue_bytes == 0 {
-        opts.max_send_queue_bytes = max(1 << 20, opts.max_frame_bytes + MAX_HEADER_BYTES)
-    }
-    if opts.close_timeout == 0 {
-        opts.close_timeout = 5 * time.Second
-    }
+    if opts.path == "" do opts.path = "/"
+    if opts.max_frame_bytes == 0 do opts.max_frame_bytes = 1 << 20
+    if opts.max_message_bytes == 0 do opts.max_message_bytes = 1 << 20
+    if opts.recv_chunk_bytes == 0 do opts.recv_chunk_bytes = 64 << 10
+    if opts.handshake_timeout == 0 do opts.handshake_timeout = 10 * time.Second
+    if opts.max_frame_bytes > max(int) - MAX_HEADER_BYTES do return .Invalid_Options
+    if opts.max_send_queue_bytes == 0 do opts.max_send_queue_bytes = max(1 << 20, opts.max_frame_bytes + MAX_HEADER_BYTES)
+    if opts.close_timeout == 0 do opts.close_timeout = 5 * time.Second
 
     if loop == nil ||
        opts.port <= 0 ||
@@ -256,13 +240,9 @@ client_connect :: proc(
         return .Invalid_Options
     }
 
-    if opts.host == "" || !http.field_value_valid(opts.host) || !http.request_target_valid(opts.path) {
-        return .Invalid_Options
-    }
+    if opts.host == "" || !http.field_value_valid(opts.host) || !http.request_target_valid(opts.path) do return .Invalid_Options
 
-    if !extra_headers_valid(opts.extra_headers) {
-        return .Invalid_Options
-    }
+    if !extra_headers_valid(opts.extra_headers) do return .Invalid_Options
 
     c^ = {}
     c.role = .Client
@@ -371,9 +351,7 @@ client_dial_tls :: proc(c: ^Client, opts: Options) -> Client_Error {
     defer delete(url, c.allocator)
 
     ca := strings.clone_to_cstring(opts.ca_file, c.allocator) if len(opts.ca_file) > 0 else nil
-    defer if ca != nil {
-        delete(ca, c.allocator)
-    }
+    defer if ca != nil do delete(ca, c.allocator)
 
     // `tls` is set before the dial so a failed one still tears the curl handles down
     // through the one teardown path.
@@ -386,9 +364,7 @@ client_dial_tls :: proc(c: ^Client, opts: Options) -> Client_Error {
     }
 
     err := curl.socket_connect(&c.tls_pipe.sock, c.loop, req, client_on_tls_connect, c)
-    if err == .None {
-        return .None
-    }
+    if err == .None do return .None
 
     c.tls = nil
     client_connect_rollback(c)
@@ -440,9 +416,7 @@ extra_headers_valid :: proc(s: string) -> bool {
     rest := s
     for len(rest) > 0 {
         line_end := strings.index(rest, "\r\n")
-        if line_end < 0 {
-            return false
-        }
+        if line_end < 0 do return false
 
         line := rest[:line_end]
         colon := strings.index_byte(line, ':')
@@ -524,13 +498,9 @@ client_send_binary :: proc(c: ^Client, data: []byte) -> Client_Error {
 client_close :: proc(c: ^Client, code := Close_Code.Normal_Closure) -> Client_Error {
     assert(c != nil, "client_close needs a client")
 
-    if c.state != .Open {
-        return .Not_Open
-    }
+    if c.state != .Open do return .Not_Open
 
-    if !close_code_valid_on_wire(u16(code)) {
-        return .Invalid_Close_Code
-    }
+    if !close_code_valid_on_wire(u16(code)) do return .Invalid_Close_Code
 
     return client_error(conn_begin_close(&c.core, code, code))
 }
@@ -558,14 +528,10 @@ client_cancel :: proc(c: ^Client) {
 // acceptable since connect runs before the loop.
 @(private)
 resolve_endpoint :: proc(host: string, port: int) -> (net.Endpoint, bool) {
-    if addr, ok := net.parse_ip4_address(host); ok {
-        return {address = addr, port = port}, true
-    }
+    if addr, ok := net.parse_ip4_address(host); ok do return {address = addr, port = port}, true
 
     ep4, err := net.resolve_ip4(host)
-    if err != nil {
-        return {}, false
-    }
+    if err != nil do return {}, false
 
     ep4.port = port
 
@@ -706,28 +672,20 @@ client_handshake_received :: proc(c: ^Client, received: int, result: Io_Result) 
         }
     }
 
-    if c.cbs.on_open != nil {
-        c.cbs.on_open(c)
-    }
+    if c.cbs.on_open != nil do c.cbs.on_open(c)
 
     // `on_open` may have failed the connection — the driver's own `transport_on_open`
     // does exactly that when the first frame cannot be queued. The drain below asserts
     // an active state, and the server path has guarded this since it was written.
-    if c.state == .Closed {
-        return
-    }
+    if c.state == .Closed do return
 
-    if !conn_drain_decoder(&c.core) {
-        return
-    }
+    if !conn_drain_decoder(&c.core) do return
 
     // `on_open` or a pipelined frame may have begun a close; only read on if Open.
     if c.state == .Open {
         conn_keepalive_arm(&c.core)
         conn_start_recv(&c.core)
-    } else if c.state == .Closing {
-        conn_ensure_close_recv(&c.core)
-    }
+    } else if c.state == .Closing do conn_ensure_close_recv(&c.core)
 }
 
 // Message dispatch adapter. `data` is borrowed for the call only; the driver frees
@@ -738,9 +696,7 @@ client_message :: proc(core: ^Conn_Core, kind: Message_Kind, data: []byte) {
     assert(core != nil && core.role == .Client, "client message dispatch on a non-client core")
 
     c := (^Client)(core)
-    if c.cbs.on_message != nil {
-        c.cbs.on_message(c, kind, data)
-    }
+    if c.cbs.on_message != nil do c.cbs.on_message(c, kind, data)
 }
 
 // Terminal dispatch adapter: the driver core hands back the connection it was
@@ -751,14 +707,10 @@ client_terminal :: proc(core: ^Conn_Core) {
 
     c := (^Client)(core)
     if core.terminal_error != .None {
-        if c.cbs.on_error != nil {
-            c.cbs.on_error(c, client_error(core.terminal_error))
-        }
+        if c.cbs.on_error != nil do c.cbs.on_error(c, client_error(core.terminal_error))
 
         return
     }
 
-    if c.cbs.on_close != nil {
-        c.cbs.on_close(c, core.close_code)
-    }
+    if c.cbs.on_close != nil do c.cbs.on_close(c, core.close_code)
 }

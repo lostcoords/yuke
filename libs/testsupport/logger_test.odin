@@ -17,9 +17,7 @@ count_logger_proc :: proc(
     options: log.Options,
     location := #caller_location,
 ) {
-    if level >= .Error {
-        (^Count_Logger)(data).errors += 1
-    }
+    if level >= .Error do (^Count_Logger)(data).errors += 1
 }
 
 // Forwards test-authored records (so their failures reach the runner) and drops the

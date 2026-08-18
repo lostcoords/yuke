@@ -32,9 +32,7 @@ list_files :: proc(
     out := make([dynamic]string, 0, len(infos), allocator)
 
     for info in infos {
-        if info.type != .Regular || !strings.has_suffix(info.name, suffix) {
-            continue
-        }
+        if info.type != .Regular || !strings.has_suffix(info.name, suffix) do continue
 
         joined, join_err := filepath.join({dir, info.name}, allocator)
 

@@ -52,9 +52,7 @@ Login_Options :: struct {
 // The `login` subcommand: enroll this device and persist its identity.
 login_run :: proc() {
     opts, args_ok := login_args_parse(os.args[2:])
-    if !args_ok {
-        os.exit(2)
-    }
+    if !args_ok do os.exit(2)
 
     if msg := paths.app_name_error(); msg != "" {
         fmt.eprintfln("yuke login: %s", msg)
@@ -75,12 +73,8 @@ login_run :: proc() {
     // temp memory. Freed at proc exit for the normal return; os.exit paths leave it to the OS.
     existing_device_id := ""
     existing_session_id := ""
-    defer if len(existing_device_id) > 0 {
-        delete(existing_device_id, context.allocator)
-    }
-    defer if len(existing_session_id) > 0 {
-        delete(existing_session_id, context.allocator)
-    }
+    defer if len(existing_device_id) > 0 do delete(existing_device_id, context.allocator)
+    defer if len(existing_session_id) > 0 do delete(existing_session_id, context.allocator)
     if !opts.force {
         existing, ierr := relay.identity_load(dir)
         switch ierr {
@@ -117,9 +111,7 @@ login_run :: proc() {
             fmt.eprintln("yuke login: scripts must pass --role daemon, client, or both")
             os.exit(2)
         }
-        if have_device && have_session {
-            login_already_enrolled_both(existing_device_id, existing_session_id)
-        }
+        if have_device && have_session do login_already_enrolled_both(existing_device_id, existing_session_id)
         opts.role = login_prompt_role(have_device, have_session)
     }
 
@@ -127,21 +119,15 @@ login_run :: proc() {
     want_session := opts.role == "client" || opts.role == "both"
 
     if !opts.force {
-        if want_device && have_device && want_session && have_session {
-            login_already_enrolled_both(existing_device_id, existing_session_id)
-        }
+        if want_device && have_device && want_session && have_session do login_already_enrolled_both(existing_device_id, existing_session_id)
         if want_device && have_device {
             fmt.printfln("already enrolled as daemon %s; pass --force to re-enroll", existing_device_id)
-            if !want_session {
-                os.exit(0)
-            }
+            if !want_session do os.exit(0)
             want_device = false
         }
         if want_session && have_session {
             fmt.printfln("already enrolled as session %s; pass --force to re-enroll", existing_session_id)
-            if !want_device {
-                os.exit(0)
-            }
+            if !want_device do os.exit(0)
             want_session = false
         }
     }
@@ -157,9 +143,7 @@ login_run :: proc() {
         os.exit(0)
     }
 
-    if opts.role != "client" && (opts.kind_set || len(opts.device_ids) > 0) {
-        fmt.eprintln("yuke login: --kind and --device-ids apply only to --role client; ignoring")
-    }
+    if opts.role != "client" && (opts.kind_set || len(opts.device_ids) > 0) do fmt.eprintln("yuke login: --kind and --device-ids apply only to --role client; ignoring")
 
     if mkerr := os.make_directory_all(dir, LOGIN_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(dir) {
         fmt.eprintfln("yuke login: could not create %s: %v", dir, mkerr)
@@ -197,9 +181,7 @@ login_run :: proc() {
 
     // 1. Request a device code.
     pin: []u8
-    if want_device {
-        pin = pub_bytes[:]
-    }
+    if want_device do pin = pub_bytes[:]
     session_kind := ""
     device_ids: []string
     if opts.role == "client" {
@@ -257,10 +239,7 @@ login_run :: proc() {
         }
 
         pstatus, pbody, pok := cloud_post(&client, poll_url, poll_body, context.allocator)
-        if !pok {
-            // A transient network error mid-poll is not fatal; keep waiting for approval.
-            continue
-        }
+        if !pok do continue
 
         outcome, cred, _ := relay.enroll_poll_decode(pstatus, pbody, context.allocator, intent)
         delete(pbody, context.allocator)
@@ -300,9 +279,7 @@ login_run :: proc() {
                 sess_id := cred.session_id
                 session_key: ecdh.Private_Key
                 sess_kind := "cli"
-                if opts.role == "client" && session_kind != "" {
-                    sess_kind = session_kind
-                }
+                if opts.role == "client" && session_kind != "" do sess_kind = session_kind
                 has_key := sess_kind != "token"
                 if has_key && !ecdh.private_key_generate(&session_key, .X25519) {
                     fmt.eprintln("yuke login: could not generate a session key")
@@ -368,19 +345,13 @@ login_args_parse :: proc(args: []string) -> (opts: Login_Options, ok: bool) {
             return {}, false
         }
 
-        if !valid {
-            return {}, false
-        }
+        if !valid do return {}, false
 
         i += 1
     }
 
-    if opts.name == "" {
-        opts.name = "unknown device"
-    }
-    if opts.kind == "" {
-        opts.kind = "cli"
-    }
+    if opts.name == "" do opts.name = "unknown device"
+    if opts.kind == "" do opts.kind = "cli"
     if opts.role != "" && opts.role != "daemon" && opts.role != "client" && opts.role != "both" {
         fmt.eprintfln("yuke login: --role must be daemon, client, or both")
         return {}, false
@@ -406,9 +377,7 @@ login_prompt_role :: proc(have_device: bool, have_session: bool) -> string {
     default_choice := "1"
     if have_device && !have_session {
         default_choice = "3"
-    } else if have_session && !have_device {
-        default_choice = "2"
-    }
+    } else if have_session && !have_device do default_choice = "2"
 
     fmt.println("Enroll this machine as:")
     fmt.println()
@@ -420,9 +389,7 @@ login_prompt_role :: proc(have_device: bool, have_session: bool) -> string {
     buf: [32]u8
     n, _ := os.read(os.stdin, buf[:])
     line := strings.trim_space(string(buf[:max(n, 0)]))
-    if line == "" {
-        line = default_choice
-    }
+    if line == "" do line = default_choice
     switch line {
     case "1":
         return "both"
@@ -462,9 +429,7 @@ login_flag_value :: proc(
         return args[i^], true, true
     }
 
-    if strings.has_prefix(arg, name) && len(arg) > len(name) && arg[len(name)] == '=' {
-        return arg[len(name) + 1:], true, true
-    }
+    if strings.has_prefix(arg, name) && len(arg) > len(name) && arg[len(name)] == '=' do return arg[len(name) + 1:], true, true
 
     return "", false, true
 }
@@ -475,9 +440,7 @@ login_parse_ids :: proc(raw: string) -> []string {
     n := 0
     for part in parts {
         trimmed := strings.trim_space(part)
-        if trimmed == "" {
-            continue
-        }
+        if trimmed == "" do continue
         parts[n] = trimmed
         n += 1
     }
@@ -487,9 +450,7 @@ login_parse_ids :: proc(raw: string) -> []string {
 // The control-plane base URL: `$YUKE_CLOUD_URL` when set and non-empty, else the hosted default.
 @(private = "file")
 login_default_cloud :: proc() -> string {
-    if v, set := os.lookup_env(CLOUD_URL_ENV, context.allocator); set && v != "" {
-        return v
-    }
+    if v, set := os.lookup_env(CLOUD_URL_ENV, context.allocator); set && v != "" do return v
 
     return DEFAULT_CLOUD_URL
 }
@@ -497,9 +458,7 @@ login_default_cloud :: proc() -> string {
 // The default device name: OS hostname when available, else `"unknown device"`.
 @(private = "file")
 login_default_name :: proc() -> string {
-    if name := login_hostname(); name != "" {
-        return name
-    }
+    if name := login_hostname(); name != "" do return name
 
     return "unknown device"
 }
@@ -556,9 +515,7 @@ cloud_post :: proc(
         if terr := nbio.tick(50 * time.Millisecond); terr != nil {
             // The transfer may have completed in the same tick that reported the loop error;
             // `transfer_cancel` requires a still-running transfer, so only cancel a live one.
-            if !rx.done {
-                curl.transfer_cancel(&transfer)
-            }
+            if !rx.done do curl.transfer_cancel(&transfer)
 
             delete(rx.body)
 
@@ -583,9 +540,7 @@ cloud_on_status :: proc(user: rawptr, status: int) {
 @(private = "file")
 cloud_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     rx := (^Cloud_Rx)(user)
-    if _, aerr := append(&rx.body, ..chunk); aerr != nil {
-        return false
-    }
+    if _, aerr := append(&rx.body, ..chunk); aerr != nil do return false
 
     return true
 }
@@ -594,9 +549,7 @@ cloud_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
 cloud_on_done :: proc(user: rawptr, result: curl.Result) {
     rx := (^Cloud_Rx)(user)
     rx.code = result.code
-    if result.status != 0 {
-        rx.status = result.status
-    }
+    if result.status != 0 do rx.status = result.status
 
     rx.done = true
 }

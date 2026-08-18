@@ -14,27 +14,21 @@ Validation_Error :: enum {
 
 // Enforce `@bounded N` byte/element length.
 enforce_bounded :: proc(max: int, value: string) -> Validation_Error {
-    if len(value) > max {
-        return .Overflow
-    }
+    if len(value) > max do return .Overflow
 
     return .None
 }
 
 // Enforce `@fixed N` byte length.
 enforce_fixed :: proc(length: int, value: string) -> Validation_Error {
-    if len(value) != length {
-        return .Invalid_Length
-    }
+    if len(value) != length do return .Invalid_Length
 
     return .None
 }
 
 // Enforce an optional/deferred `@fixed N` field where empty means absent.
 enforce_fixed_optional :: proc(length: int, value: string) -> Validation_Error {
-    if len(value) != 0 && len(value) != length {
-        return .Invalid_Length
-    }
+    if len(value) != 0 && len(value) != length do return .Invalid_Length
 
     return .None
 }
@@ -43,9 +37,7 @@ enforce_fixed_optional :: proc(length: int, value: string) -> Validation_Error {
 enforce_fixed_lower_hex :: proc(length: int, value: string) -> Validation_Error {
     enforce_fixed(length, value) or_return
 
-    if !is_lower_hex(value) {
-        return .Invalid_Hex
-    }
+    if !is_lower_hex(value) do return .Invalid_Hex
 
     return .None
 }
@@ -60,9 +52,7 @@ enforce_id :: proc(id: [$N]u8) -> Validation_Error {
 // Return whether every byte is an ASCII lowercase hexadecimal digit.
 is_lower_hex :: proc(value: string) -> bool {
     for i in 0 ..< len(value) {
-        if !is_lower_hex_byte(value[i]) {
-            return false
-        }
+        if !is_lower_hex_byte(value[i]) do return false
     }
 
     return true

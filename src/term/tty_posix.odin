@@ -28,9 +28,7 @@ Raw_Term :: struct {
 // clean input, one byte at a time with no read timeout.
 enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
     saved: posix.termios
-    if posix.tcgetattr(handle, &saved) != .OK {
-        return {}, .Get_Attr_Failed
-    }
+    if posix.tcgetattr(handle, &saved) != .OK do return {}, .Get_Attr_Failed
 
     raw := saved
     raw.c_iflag -= {.BRKINT, .ICRNL, .INPCK, .ISTRIP, .IXON}
@@ -47,9 +45,7 @@ enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
     raw.c_cc[.VTIME] = 0
 
     // TCSAFLUSH discards unread input before applying.
-    if posix.tcsetattr(handle, .TCSAFLUSH, &raw) != .OK {
-        return {}, .Set_Attr_Failed
-    }
+    if posix.tcsetattr(handle, .TCSAFLUSH, &raw) != .OK do return {}, .Set_Attr_Failed
 
     return {saved = saved, fd = handle}, .None
 }
@@ -57,9 +53,7 @@ enable_raw_mode :: proc(handle: Tty_Handle) -> (Raw_Term, Term_Error) {
 // Restore the terminal state captured by `enable_raw_mode`.
 disable_raw_mode :: proc(t: Raw_Term) -> Term_Error {
     saved := t.saved
-    if posix.tcsetattr(t.fd, .TCSAFLUSH, &saved) != .OK {
-        return .Set_Attr_Failed
-    }
+    if posix.tcsetattr(t.fd, .TCSAFLUSH, &saved) != .OK do return .Set_Attr_Failed
 
     return .None
 }

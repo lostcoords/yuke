@@ -106,51 +106,31 @@ Endpoint_Validation_Error :: enum {
 
 // Verify a configured endpoint before it becomes resolved internal state.
 endpoint_validate :: proc(ep: Endpoint) -> Endpoint_Validation_Error {
-    if len(ep.base_url) == 0 {
-        return .Empty_Base_Url
-    }
+    if len(ep.base_url) == 0 do return .Empty_Base_Url
 
     protocol_index := int(ep.protocol)
-    if protocol_index < 0 || protocol_index >= len(protocol_path) {
-        return .Invalid_Protocol
-    }
+    if protocol_index < 0 || protocol_index >= len(protocol_path) do return .Invalid_Protocol
 
-    if strings.index_any(ep.base_url, "?#") >= 0 {
-        return .Query_Or_Fragment_Not_Allowed
-    }
+    if strings.index_any(ep.base_url, "?#") >= 0 do return .Query_Or_Fragment_Not_Allowed
 
-    if strings.has_suffix(ep.base_url, "/") {
-        return .Trailing_Slash
-    }
+    if strings.has_suffix(ep.base_url, "/") do return .Trailing_Slash
 
     scheme_end := strings.index(ep.base_url, "://")
-    if scheme_end <= 0 {
-        return .Invalid_Scheme
-    }
+    if scheme_end <= 0 do return .Invalid_Scheme
 
     scheme := ep.base_url[:scheme_end]
-    if !strings.equal_fold(scheme, "http") && !strings.equal_fold(scheme, "https") {
-        return .Invalid_Scheme
-    }
+    if !strings.equal_fold(scheme, "http") && !strings.equal_fold(scheme, "https") do return .Invalid_Scheme
 
     authority := url_authority(ep.base_url)
-    if len(authority) == 0 {
-        return .Invalid_Authority
-    }
+    if len(authority) == 0 do return .Invalid_Authority
 
-    if strings.index_byte(authority, '@') >= 0 {
-        return .Userinfo_Not_Allowed
-    }
+    if strings.index_byte(authority, '@') >= 0 do return .Userinfo_Not_Allowed
 
     for b in transmute([]byte)ep.base_url {
-        if b <= ' ' || b == 0x7f {
-            return .Invalid_Authority
-        }
+        if b <= ' ' || b == 0x7f do return .Invalid_Authority
     }
 
-    if len(url_host(ep.base_url)) == 0 {
-        return .Invalid_Authority
-    }
+    if len(url_host(ep.base_url)) == 0 do return .Invalid_Authority
 
     return .None
 }
@@ -165,32 +145,22 @@ endpoint_url :: proc(ep: Endpoint, allocator := context.allocator) -> string {
 // `url` is malformed or has no host.
 url_host :: proc(url: string) -> string {
     authority := url_authority(url)
-    if len(authority) == 0 {
-        return ""
-    }
+    if len(authority) == 0 do return ""
 
-    if i := strings.last_index_byte(authority, '@'); i >= 0 {
-        authority = authority[i + 1:]
-    }
+    if i := strings.last_index_byte(authority, '@'); i >= 0 do authority = authority[i + 1:]
 
-    if len(authority) == 0 {
-        return ""
-    }
+    if len(authority) == 0 do return ""
 
     if authority[0] == '[' {
         close := strings.index_byte(authority, ']')
-        if close <= 1 || !url_port_valid(authority[close + 1:]) {
-            return ""
-        }
+        if close <= 1 || !url_port_valid(authority[close + 1:]) do return ""
 
         return authority[1:close]
     }
 
     colon := strings.index_byte(authority, ':')
     if colon >= 0 {
-        if colon != strings.last_index_byte(authority, ':') || colon == 0 || !url_port_valid(authority[colon:]) {
-            return ""
-        }
+        if colon != strings.last_index_byte(authority, ':') || colon == 0 || !url_port_valid(authority[colon:]) do return ""
 
         authority = authority[:colon]
     }
@@ -202,14 +172,10 @@ url_host :: proc(url: string) -> string {
 @(private)
 url_authority :: proc(url: string) -> string {
     scheme_end := strings.index(url, "://")
-    if scheme_end <= 0 {
-        return ""
-    }
+    if scheme_end <= 0 do return ""
 
     authority := url[scheme_end + 3:]
-    if end := strings.index_any(authority, "/?#"); end >= 0 {
-        authority = authority[:end]
-    }
+    if end := strings.index_any(authority, "/?#"); end >= 0 do authority = authority[:end]
 
     return authority
 }
@@ -217,13 +183,9 @@ url_authority :: proc(url: string) -> string {
 // Empty means no port. A present port is decimal and fits the URL port range.
 @(private)
 url_port_valid :: proc(suffix: string) -> bool {
-    if len(suffix) == 0 {
-        return true
-    }
+    if len(suffix) == 0 do return true
 
-    if suffix[0] != ':' || len(suffix) == 1 {
-        return false
-    }
+    if suffix[0] != ':' || len(suffix) == 1 do return false
 
     port, ok := strconv.parse_uint(suffix[1:], 10)
     return ok && port <= 65535
@@ -234,9 +196,7 @@ url_port_valid :: proc(suffix: string) -> bool {
 @(private)
 url_is_anthropic :: proc(url: string) -> bool {
     host := url_host(url)
-    if strings.has_suffix(host, ".") {
-        host = host[:len(host) - 1]
-    }
+    if strings.has_suffix(host, ".") do host = host[:len(host) - 1]
 
     return strings.equal_fold(host, ANTHROPIC_HOST)
 }
@@ -273,9 +233,7 @@ auth_headers :: proc(
 
     switch a in connection.auth {
     case Api_Key:
-        if len(a.key) == 0 {
-            return 0, .Invalid_Request
-        }
+        if len(a.key) == 0 do return 0, .Invalid_Request
 
         credential: curl.Header
         if ep.protocol == .Anthropic_Messages && url_is_anthropic(ep.base_url) {

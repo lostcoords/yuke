@@ -23,9 +23,7 @@ drive_start_posix :: proc(
     user: rawptr,
     allocator: mem.Allocator,
 ) -> Drive_Error {
-    if err := drive_start_common(d, loop, opts, on_event, user, allocator); err != .None {
-        return err
-    }
+    if err := drive_start_common(d, loop, opts, on_event, user, allocator); err != .None do return err
 
     flags_raw := posix.fcntl(d.source, .GETFL, 0)
     if flags_raw < 0 {
@@ -39,18 +37,14 @@ drive_start_posix :: proc(
 
     // Hosts without DEC 2048 (tmux, classic TTYs): SIGWINCH → self-pipe → nbio.poll.
     // Soft-fail if init/associate fails; keys still work, resize just stays stale.
-    if d.has_session && !d.caps.in_band_resize {
-        drive_try_start_resize(d, loop)
-    }
+    if d.has_session && !d.caps.in_band_resize do drive_try_start_resize(d, loop)
 
     d.live = true
     drive_arm_source(d)
     drive_arm_resize(d)
 
     // Negotiation / prior pushes may have left complete events or a partial ESC.
-    if !drive_drain_reader(d) {
-        return .Reader_Failed
-    }
+    if !drive_drain_reader(d) do return .Reader_Failed
 
     return .None
 }
@@ -58,9 +52,7 @@ drive_start_posix :: proc(
 drive_arm_source :: proc(d: ^Drive) {
     assert(d != nil, "drive_arm_source needs a drive")
 
-    if d.stopping || !drive_is_input_open(d) {
-        return
-    }
+    if d.stopping || !drive_is_input_open(d) do return
 
     assert(d.relay.source_sock == net.TCP_Socket(d.source), "source poll handle changed")
     assert(d.relay.source_op == nil, "drive_arm_source with in-flight op")
@@ -84,9 +76,7 @@ drive_on_source_poll :: proc(op: ^nbio.Operation, d: ^Drive) {
     assert(d.relay.source_op == op, "source poll completed for another operation")
     d.relay.source_op = nil
 
-    if d.stopping || !drive_is_input_open(d) {
-        return
-    }
+    if d.stopping || !drive_is_input_open(d) do return
 
     if op.poll.result != .Ready {
         drive_mark_input_closed(d, .Recv_Error)
@@ -95,9 +85,7 @@ drive_on_source_poll :: proc(op: ^nbio.Operation, d: ^Drive) {
 
     n := posix.read(d.source, raw_data(d.relay.read_buf[:]), len(d.relay.read_buf))
     if n > 0 {
-        if !drive_feed(d, d.relay.read_buf[:n]) {
-            return
-        }
+        if !drive_feed(d, d.relay.read_buf[:n]) do return
 
         drive_arm_source(d)
         return
@@ -170,9 +158,7 @@ drive_cancel_resize :: proc(d: ^Drive) {
 drive_arm_resize :: proc(d: ^Drive) {
     assert(d != nil, "drive_arm_resize needs a drive")
 
-    if d.stopping || !d.live || !d.has_resize {
-        return
-    }
+    if d.stopping || !d.live || !d.has_resize do return
 
     assert(d.resize_op == nil, "drive_arm_resize with in-flight op")
     d.resize_op = nbio.poll_poly(d.resize_sock, .Receive, d, drive_on_resize_poll, l = d.loop)
@@ -184,17 +170,13 @@ drive_on_resize_poll :: proc(op: ^nbio.Operation, d: ^Drive) {
     assert(op != nil, "drive_on_resize_poll needs an operation")
     d.resize_op = nil
 
-    if d.stopping || !d.live || !d.has_resize {
-        return
-    }
+    if d.stopping || !d.live || !d.has_resize do return
 
     if op.poll.result == .Ready {
         size, cerr := resize_notifier_consume(&d.resize)
         if cerr == .None {
             d.size = size
-            if d.on_event != nil {
-                d.on_event(d.user, Resize{})
-            }
+            if d.on_event != nil do d.on_event(d.user, Resize{})
         }
         // Size_Query_Failed: soft skip emit; still re-arm for later resizes.
     }
@@ -208,9 +190,7 @@ drive_on_resize_poll :: proc(op: ^nbio.Operation, d: ^Drive) {
 drive_stop_posix :: proc(d: ^Drive) {
     assert(d != nil, "drive_stop_posix needs a drive")
 
-    if !d.live {
-        return
-    }
+    if !d.live do return
 
     assert(d.loop == nbio.current_thread_event_loop(), "drive_stop off the I/O thread")
     d.stopping = true

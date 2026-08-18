@@ -15,9 +15,7 @@ poll_readable :: proc(handle: Tty_Handle, timeout_ms: i32) -> bool {
 // Read one byte from the tty fd. `ok` is false on EOF or error.
 read_byte :: proc(handle: Tty_Handle) -> (u8, bool) {
     b: [1]u8
-    if posix.read(handle, raw_data(b[:]), 1) <= 0 {
-        return 0, false
-    }
+    if posix.read(handle, raw_data(b[:]), 1) <= 0 do return 0, false
 
     return b[0], true
 }

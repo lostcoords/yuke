@@ -72,9 +72,7 @@ daemon_session_run :: proc(
 
     deadline := nbio.timeout_poly(timeout, &session, daemon_session_on_timeout, loop)
     nbio.run_until(&session.done)
-    if !session.timed_out {
-        nbio.remove(deadline)
-    }
+    if !session.timed_out do nbio.remove(deadline)
 
     client.client_destroy(&c)
     if session.timed_out {
@@ -156,9 +154,7 @@ daemon_session_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
     }
     s.failed = true
 
-    if c.state == .Closed {
-        s.done = true
-    }
+    if c.state == .Closed do s.done = true
 }
 
 @(private = "file")

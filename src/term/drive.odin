@@ -125,9 +125,7 @@ drive_start :: proc(
     assert(loop != nil, "drive_start needs an event loop")
     assert(on_event != nil, "drive_start needs an event handler")
 
-    if d.live {
-        return .Invalid_Args
-    }
+    if d.live do return .Invalid_Args
 
     when ODIN_OS == .Windows {
         return drive_start_windows(d, loop, opts, on_event, user, allocator)
@@ -173,9 +171,7 @@ drive_start_common :: proc(
     d.source = opts.tty if opts.enter_session else opts.source
 
     when ODIN_OS == .Windows {
-        if opts.enter_session && opts.size_handle == nil {
-            return .Invalid_Args
-        }
+        if opts.enter_session && opts.size_handle == nil do return .Invalid_Args
 
         d.size_handle = opts.size_handle
     } else {
@@ -228,9 +224,7 @@ drive_start_common :: proc(
 // Must run on the nbio I/O thread: it removes in-flight ops and, on Windows, joins the
 // reader. Calling from another thread races the reactor and can deadlock under backpressure.
 drive_stop :: proc(d: ^Drive) {
-    if d == nil || !d.live {
-        return
-    }
+    if d == nil || !d.live do return
 
     when ODIN_OS == .Windows {
         drive_stop_windows(d)
@@ -246,9 +240,7 @@ drive_is_input_open :: proc(d: ^Drive) -> bool {
 
 // Why input closed; `.None` while open or before start.
 drive_input_closed_reason :: proc(d: ^Drive) -> Input_Closed_Reason {
-    if d == nil {
-        return .None
-    }
+    if d == nil do return .None
 
     return d.input_closed
 }
@@ -259,9 +251,7 @@ drive_feed :: proc(d: ^Drive, bytes: []u8) -> bool {
     assert(d != nil, "drive_feed needs a drive")
     assert(d.loop == nbio.current_thread_event_loop(), "drive_feed off the I/O thread")
 
-    if len(bytes) == 0 || d.stopping {
-        return true
-    }
+    if len(bytes) == 0 || d.stopping do return true
 
     if err := reader_push(&d.reader, bytes); err != .None {
         drive_reader_failed(d)
@@ -276,27 +266,19 @@ drive_drain_reader :: proc(d: ^Drive) -> bool {
 
     for {
         ev := reader_next(&d.reader)
-        if ev == nil {
-            break
-        }
+        if ev == nil do break
 
         // Best-effort size refresh on in-band resize when we have a session.
         if _, is_resize := ev.(Resize); is_resize {
             if d.has_session {
-                if size, gerr := get_size(d.size_handle); gerr == .None {
-                    d.size = size
-                }
+                if size, gerr := get_size(d.size_handle); gerr == .None do d.size = size
             }
         }
 
-        if d.on_event != nil {
-            d.on_event(d.user, ev)
-        }
+        if d.on_event != nil do d.on_event(d.user, ev)
 
         // Event handlers may stop and release the drive synchronously.
-        if !d.live || d.stopping {
-            return true
-        }
+        if !d.live || d.stopping do return true
     }
 
     // Partial sequence: arm ESC timeout. More bytes will re-arm.
@@ -316,9 +298,7 @@ drive_reader_failed :: proc(d: ^Drive) {
     assert(d.live, "reader failure on a dead drive")
 
     drive_mark_input_closed(d, .Reader_Failed)
-    if d.live {
-        drive_stop(d)
-    }
+    if d.live do drive_stop(d)
 }
 
 drive_arm_esc :: proc(d: ^Drive) {
@@ -340,14 +320,10 @@ drive_cancel_esc :: proc(d: ^Drive) {
 drive_on_esc_timeout :: proc(_: ^nbio.Operation, d: ^Drive) {
     assert(d != nil, "drive_on_esc_timeout needs a drive")
     d.esc_op = nil
-    if d.stopping || !d.live {
-        return
-    }
+    if d.stopping || !d.live do return
 
     ev := reader_flush(&d.reader)
-    if ev != nil && d.on_event != nil {
-        d.on_event(d.user, ev)
-    }
+    if ev != nil && d.on_event != nil do d.on_event(d.user, ev)
 }
 
 // Mark input closed once and emit the lifecycle event. Does not call `drive_stop`.
@@ -355,14 +331,10 @@ drive_mark_input_closed :: proc(d: ^Drive, reason: Input_Closed_Reason) {
     assert(d != nil, "drive_mark_input_closed needs a drive")
     assert(reason != .None, "drive_mark_input_closed needs a reason")
 
-    if d.input_closed != .None {
-        return
-    }
+    if d.input_closed != .None do return
 
     d.input_closed = reason
     drive_cancel_esc(d)
 
-    if d.on_event != nil {
-        d.on_event(d.user, Input_Closed{reason = reason})
-    }
+    if d.on_event != nil do d.on_event(d.user, Input_Closed{reason = reason})
 }

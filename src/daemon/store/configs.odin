@@ -16,9 +16,7 @@ configs_apply :: proc(s: ^Store, session: wire.Session_Id, data: wire.Broadcast_
 
     changed, is_config := data.(wire.Config_Changed_Data)
 
-    if !is_config {
-        return nil
-    }
+    if !is_config do return nil
 
     sqlite.execute(
         &s.inserts.insert_config,
@@ -61,9 +59,8 @@ session_config :: proc(
 
     row, sqlite_err := queries.session_config(&s.queries, {session_id = session, requested_rev = revision}, allocator)
     if sqlite_err != nil {
-        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
-            return {}, false, nil
-        }
+        count_err, is_count := sqlite_err.(sqlite.Read_Error)
+        if is_count && count_err == .Row_Count do return {}, false, nil
 
         return {}, false, read_err(sqlite_err)
     }
@@ -93,9 +90,8 @@ session_prompt_get :: proc(
 
     row, sqlite_err := queries.session_prompt(&s.queries, {session_id = session}, allocator)
     if sqlite_err != nil {
-        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
-            return "", false, nil
-        }
+        count_err, is_count := sqlite_err.(sqlite.Read_Error)
+        if is_count && count_err == .Row_Count do return "", false, nil
 
         return "", false, read_err(sqlite_err)
     }

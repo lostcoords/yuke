@@ -37,9 +37,7 @@ session_live :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Session_Live {
 // The session's live turn, or nil.
 session_live_run :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Run {
     live := session_live(d, session)
-    if live == nil {
-        return nil
-    }
+    if live == nil do return nil
 
     return live.run
 }
@@ -48,14 +46,10 @@ session_live_run :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Run {
 // failure, which the caller reports rather than announcing a turn it cannot track.
 @(private)
 session_live_ensure :: proc(d: ^Daemon, session: wire.Session_Id) -> ^Session_Live {
-    if existing := session_live(d, session); existing != nil {
-        return existing
-    }
+    if existing := session_live(d, session); existing != nil do return existing
 
     live, alloc_err := new(Session_Live, d.allocator)
-    if alloc_err != nil {
-        return nil
-    }
+    if alloc_err != nil do return nil
 
     live.queue = make([dynamic]Queued_Input_Owned, d.allocator)
 
@@ -86,9 +80,7 @@ session_live_free :: proc(d: ^Daemon, live: ^Session_Live) {
 @(private)
 session_live_release :: proc(d: ^Daemon, session: wire.Session_Id) {
     live := session_live(d, session)
-    if live == nil || live.run != nil || len(live.queue) > 0 {
-        return
-    }
+    if live == nil || live.run != nil || len(live.queue) > 0 do return
 
     delete_key(&d.sessions, session)
     session_live_free(d, live)
@@ -117,9 +109,7 @@ session_queue_push :: proc(d: ^Daemon, session: wire.Session_Id, queued: wire.Qu
 // How many inputs are waiting behind the session's turn.
 session_queue_depth :: proc(d: ^Daemon, session: wire.Session_Id) -> int {
     live := session_live(d, session)
-    if live == nil {
-        return 0
-    }
+    if live == nil do return 0
 
     return len(live.queue)
 }
@@ -128,9 +118,7 @@ session_queue_depth :: proc(d: ^Daemon, session: wire.Session_Id) -> int {
 // inputs, and the queue tail covers the ones accepted but not yet promoted.
 session_input_high :: proc(d: ^Daemon, session: wire.Session_Id, mark: wire.Input_Id) -> wire.Input_Id {
     live := session_live(d, session)
-    if live == nil || len(live.queue) == 0 {
-        return mark
-    }
+    if live == nil || len(live.queue) == 0 do return mark
 
     tail := live.queue[len(live.queue) - 1].input.input_id
     assert(tail >= mark, "a queued input predates the store's own mark")
@@ -142,9 +130,7 @@ session_input_high :: proc(d: ^Daemon, session: wire.Session_Id, mark: wire.Inpu
 // session's arena, which is reclaimed when the session goes idle.
 session_queue_remove :: proc(d: ^Daemon, session: wire.Session_Id, input_id: wire.Input_Id) -> bool {
     live := session_live(d, session)
-    if live == nil {
-        return false
-    }
+    if live == nil do return false
 
     for &queued, index in live.queue {
         if queued.input.input_id == input_id {
@@ -163,9 +149,7 @@ session_queue_remove :: proc(d: ^Daemon, session: wire.Session_Id, input_id: wir
 // queue order, allocated in `sa` for the answer that reports them.
 session_queue_clear :: proc(d: ^Daemon, session: wire.Session_Id, sa: mem.Allocator) -> []wire.Input_Id {
     live := session_live(d, session)
-    if live == nil || len(live.queue) == 0 {
-        return nil
-    }
+    if live == nil || len(live.queue) == 0 do return nil
 
     cleared := make([]wire.Input_Id, len(live.queue), sa)
     for &queued, index in live.queue {
@@ -275,9 +259,7 @@ session_promote_one :: proc(d: ^Daemon, session: wire.Session_Id, input: wire.Qu
     // drained, and draining again would promote behind a live turn.
     _, start_err := run_turn_start(d, snapshot.session)
 
-    if start_err == .None || start_err == .Terminated {
-        return .Settled
-    }
+    if start_err == .None || start_err == .Terminated do return .Settled
 
     log.errorf("daemon: session %v could not run its queued input: %v", session, start_err)
 
@@ -321,17 +303,13 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
     activity.context_usage = session_context_usage(d, session)
 
     live := session_live(d, session)
-    if live == nil {
-        return activity
-    }
+    if live == nil do return activity
 
     assert(len(live.queue) <= wire.LIMITS.max_queued_inputs, "the queue holds no more than its bound")
     activity.queued = u64(len(live.queue))
 
     run := live.run
-    if run == nil {
-        return activity
-    }
+    if run == nil do return activity
 
     activity.config = run.config
     activity.state = wire.Activity_State_Running {
@@ -342,14 +320,10 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
     // A running tool outranks the stream: the turn is waiting on it, not on the provider.
     // The first one still running names the phase when several run at once.
     for &block, index in run.blocks {
-        if block.kind != .Tool {
-            continue
-        }
+        if block.kind != .Tool do continue
 
         running, is_running := block.tool_state.(wire.Tool_State_Running)
-        if !is_running {
-            continue
-        }
+        if !is_running do continue
 
         activity.state = wire.Activity_State_Running_Tool {
             run_id        = run.run_id,
@@ -398,9 +372,7 @@ session_context_usage :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Toke
         return {}
     }
 
-    if !found {
-        return {}
-    }
+    if !found do return {}
 
     return usage
 }
@@ -420,30 +392,22 @@ session_draft :: proc(
     assert(allocator.procedure != nil, "building a draft needs an allocator")
 
     live := session_live(d, session)
-    if live == nil {
-        return nil, nil, true
-    }
+    if live == nil do return nil, nil, true
 
     queue_copy, queue_err := make([]wire.Queued_Input, len(live.queue), allocator)
-    if queue_err != nil {
-        return nil, nil, false
-    }
+    if queue_err != nil do return nil, nil, false
     queued = queue_copy
     for owned, index in live.queue {
         queued[index] = owned.input
     }
 
     run := live.run
-    if run == nil {
-        return nil, queued, true
-    }
+    if run == nil do return nil, queued, true
 
     // Each part carries what its block has accumulated, which is the offset the next
     // `message.part_delta` names, so folding that delta onto this cut leaves no gap.
     content, alloc_err := make([]wire.Assistant_Part, len(run.blocks), allocator)
-    if alloc_err != nil {
-        return nil, nil, false
-    }
+    if alloc_err != nil do return nil, nil, false
 
     for &block, index in run.blocks {
         content[index] = run_part_build(&block, index)
@@ -485,9 +449,7 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     assert(d.store != nil, "a serving daemon always owns an event store")
 
     snapshot, ok := session_require(conn, req, params.session_id, sa)
-    if !ok {
-        return
-    }
+    if !ok do return
 
     // A skill reaches the transcript as rendered content parts, and nothing resolves a
     // name to a body yet, so there is nothing to queue or commit.
@@ -546,14 +508,10 @@ method_session_send_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     // error over a committed message rather than pretending the input was never accepted.
     run_id: wire.Run_Id
     start_err := Run_Start_Error.None
-    if published {
-        run_id, start_err = run_turn_start(d, snapshot.session)
-    }
+    if published do run_id, start_err = run_turn_start(d, snapshot.session)
 
     answer := conn_resolve(d, ticket)
-    if answer == nil {
-        return
-    }
+    if answer == nil do return
 
     if !published {
         send_error(answer, req.id, .Internal, "could not accept input", sa)
@@ -612,17 +570,13 @@ send_input_queue :: proc(
         log.errorf("daemon: session.send_input could not announce input %d: %v", input_id, perr)
         _ = session_queue_remove(d, params.session_id, input_id)
 
-        if answer := conn_resolve(d, ticket); answer != nil {
-            send_error(answer, req.id, .Internal, "could not accept input", sa)
-        }
+        if answer := conn_resolve(d, ticket); answer != nil do send_error(answer, req.id, .Internal, "could not accept input", sa)
 
         return
     }
 
     answer := conn_resolve(d, ticket)
-    if answer == nil {
-        return
-    }
+    if answer == nil do return
 
     send_result(answer, req.id, wire.Session_Send_Input_Result_Queued{input_id = input_id}, sa)
 }
@@ -717,9 +671,7 @@ method_session_cancel_run :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
 
     // A live run proves the session exists; only the idle case has to ask the store.
     if run == nil {
-        if _, ok := session_require(conn, req, params.session_id, sa); !ok {
-            return
-        }
+        if _, ok := session_require(conn, req, params.session_id, sa); !ok do return
     }
 
     // An explicit id names the run the client believes is current. When it is not — it
@@ -738,9 +690,7 @@ method_session_cancel_run :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
 
     // Cleared before the cancel, so the terminal does not promote an input the client
     // just asked to drop.
-    if clear, asked := params.clear_queue.?; asked && clear {
-        result.cleared_inputs = session_queue_clear(d, params.session_id, sa)
-    }
+    if clear, asked := params.clear_queue.?; asked && clear do result.cleared_inputs = session_queue_clear(d, params.session_id, sa)
 
     for input in result.cleared_inputs {
         _ = broadcast(d, wire.Input_Canceled_Data{session_id = params.session_id, input_id = input})
@@ -753,9 +703,7 @@ method_session_cancel_run :: proc(conn: ^Conn, req: wire.Request, sa: mem.Alloca
     }
 
     answer := conn_resolve(d, ticket)
-    if answer == nil {
-        return
-    }
+    if answer == nil do return
 
     send_result(answer, req.id, result, sa)
 }
@@ -772,9 +720,7 @@ method_session_cancel_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allo
     d := conn.daemon
 
     if session_live(d, params.session_id) == nil {
-        if _, ok := session_require(conn, req, params.session_id, sa); !ok {
-            return
-        }
+        if _, ok := session_require(conn, req, params.session_id, sa); !ok do return
     }
 
     // A successful removal announces the new activity, so the connection may be gone by
@@ -790,9 +736,7 @@ method_session_cancel_input :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allo
     _ = broadcast(d, wire.Input_Canceled_Data{session_id = params.session_id, input_id = params.input_id})
 
     answer := conn_resolve(d, ticket)
-    if answer == nil {
-        return
-    }
+    if answer == nil do return
 
     send_result(answer, req.id, wire.Session_Cancel_Input_Result{canceled_input = params.input_id}, sa)
 }
@@ -860,9 +804,7 @@ session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
     // Only an explicit value is stored. An omitted prompt has no config layer to resolve
     // against yet, and an explicit null forces none; both read back as `null`.
     prompt: Maybe(string)
-    if set, ok := job.create.system_prompt.(wire.System_Prompt_Set); ok {
-        prompt = set.value
-    }
+    if set, ok := job.create.system_prompt.(wire.System_Prompt_Set); ok do prompt = set.value
 
     workspace_created, err := store.session_create(d.store, workspace, session, prompt)
     if err != nil {
@@ -872,18 +814,14 @@ session_send_create :: proc(conn: ^Conn, job: ^Fs_Job) {
         return
     }
 
-    if workspace_created {
-        _ = broadcast(d, wire.Workspace_Created_Data{workspace = workspace})
-    }
+    if workspace_created do _ = broadcast(d, wire.Workspace_Created_Data{workspace = workspace})
 
     _ = broadcast(d, wire.Session_Summary_Changed_Data{revision = session_revision_next(d), session = session})
 
     // A failed fan-out aborts the connection it failed on, and a relay one is freed synchronously by
     // that abort — including the asker. The session is durable either way; only the answer is lost.
     answer := conn_resolve(d, job.ticket)
-    if answer == nil {
-        return
-    }
+    if answer == nil do return
 
     send_result(answer, job.id, wire.Session_Result{session = session}, job.allocator)
 }
@@ -907,26 +845,16 @@ session_from_create :: proc(job: ^Fs_Job, workspace: wire.Workspace_Id, conn: ^C
         origin = wire.Session_Origin_Root{},
     }
 
-    if profile, ok := job.create.profile.?; ok {
-        session.profile = profile
-    }
+    if profile, ok := job.create.profile.?; ok do session.profile = profile
 
-    if model, ok := job.create.model.?; ok {
-        session.model = model
-    }
+    if model, ok := job.create.model.?; ok do session.model = model
 
-    if reasoning, ok := job.create.reasoning.?; ok {
-        session.reasoning = reasoning
-    }
+    if reasoning, ok := job.create.reasoning.?; ok do session.reasoning = reasoning
 
-    if permission, ok := job.create.permission.?; ok {
-        session.permission = permission
-    }
+    if permission, ok := job.create.permission.?; ok do session.permission = permission
 
     // `default` and an explicit null are the same live state: no cap. Only `set` carries one.
-    if max_rounds, ok := job.create.max_rounds.(wire.Max_Rounds_Set); ok {
-        session.max_rounds = max_rounds.value
-    }
+    if max_rounds, ok := job.create.max_rounds.(wire.Max_Rounds_Set); ok do session.max_rounds = max_rounds.value
 
     return session
 }
@@ -1007,9 +935,7 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
 
     cursor, limit, window_ok := session_list_window(conn, req, filter, sa)
-    if !window_ok {
-        return
-    }
+    if !window_ok do return
 
     // One row past the page, so a continuation is minted only when a further row exists
     // rather than on every full page. The extra row is dropped before the result is built.
@@ -1022,9 +948,7 @@ method_session_list :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     }
 
     more := len(sessions) > limit
-    if more {
-        sessions = sessions[:limit]
-    }
+    if more do sessions = sessions[:limit]
 
     // A first page that wasn't truncated already holds the whole selection, so its length is
     // the total; only a paged or truncated view pays for the count, which is unbounded work.
@@ -1100,9 +1024,7 @@ session_list_window :: proc(
 
     // Already validated to be within bounds; default when omitted.
     limit = wire.LIMITS.default_session_list_page_size
-    if requested, requested_ok := params.limit.?; requested_ok {
-        limit = int(requested)
-    }
+    if requested, requested_ok := params.limit.?; requested_ok do limit = int(requested)
 
     assert(limit > 0, "a validated page size is positive")
 
@@ -1116,9 +1038,7 @@ session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Sessio
     d := conn.daemon
 
     resume, limit, window_ok := session_list_window(conn, req, filter, sa)
-    if !window_ok {
-        return
-    }
+    if !window_ok do return
 
     items, items_err := make([dynamic]wire.Session_List_Item, 0, len(d.sessions), sa)
     if items_err != nil {
@@ -1138,9 +1058,7 @@ session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Sessio
         }
 
         // A tracked id with no row lost a race with `session.removed`, not an invariant.
-        if !found || !session_filter_matches(filter, snapshot.session) {
-            continue
-        }
+        if !found || !session_filter_matches(filter, snapshot.session) do continue
 
         if _, err := append(
             &items,
@@ -1154,9 +1072,7 @@ session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Sessio
 
     // Map iteration is unordered, so this is what makes the answer reproducible at all.
     slice.sort_by(items[:], proc(a, b: wire.Session_List_Item) -> bool {
-        if a.session.updated_at_ms != b.session.updated_at_ms {
-            return a.session.updated_at_ms > b.session.updated_at_ms
-        }
+        if a.session.updated_at_ms != b.session.updated_at_ms do return a.session.updated_at_ms > b.session.updated_at_ms
 
         return session_id_greater(a.session.id, b.session.id)
     })
@@ -1179,9 +1095,7 @@ session_list_active :: proc(conn: ^Conn, req: wire.Request, filter: store.Sessio
                 break
             }
 
-            if index == len(page) - 1 {
-                page = nil
-            }
+            if index == len(page) - 1 do page = nil
         }
     }
 
@@ -1212,9 +1126,7 @@ session_filter_matches :: proc(filter: store.Session_Filter, session: wire.Sessi
     case wire.Session_Scope_All:
 
     case wire.Session_Scope_Workspace:
-        if session.workspace_id != scope.workspace_id {
-            return false
-        }
+        if session.workspace_id != scope.workspace_id do return false
     }
 
     switch population in filter.population {
@@ -1232,16 +1144,12 @@ session_filter_matches :: proc(filter: store.Session_Filter, session: wire.Sessi
     case wire.Session_Population_Children:
         child, is_child := session.origin.(wire.Session_Origin_Child)
 
-        if !is_child || child.parent_id != population.parent_id {
-            return false
-        }
+        if !is_child || child.parent_id != population.parent_id do return false
 
     case wire.Session_Population_Job_Runs:
         cron, is_cron := session.origin.(wire.Session_Origin_Cron)
 
-        if !is_cron || cron.job_id != population.job_id {
-            return false
-        }
+        if !is_cron || cron.job_id != population.job_id do return false
     }
 
     return true
@@ -1254,9 +1162,7 @@ session_id_greater :: proc(a, b: wire.Session_Id) -> bool {
     right := ([16]u8)(b)
 
     for byte, index in left {
-        if byte != right[index] {
-            return byte > right[index]
-        }
+        if byte != right[index] do return byte > right[index]
     }
 
     return false
@@ -1339,41 +1245,29 @@ session_cursor_decode :: proc(
 
     // The cursor names the selection it is a position in; anything else is a token this
     // request has no meaning for.
-    if len(token) <= len(key) || token[:len(key)] != key || token[len(key)] != CURSOR_SEPARATOR {
-        return {}, false
-    }
+    if len(token) <= len(key) || token[:len(key)] != key || token[len(key)] != CURSOR_SEPARATOR do return {}, false
 
     rest := token[len(key) + 1:]
     split := strings.index_byte(rest, CURSOR_SEPARATOR)
 
-    if split < 0 {
-        return {}, false
-    }
+    if split < 0 do return {}, false
 
     digits := rest[:split]
     id := rest[split + 1:]
 
-    if len(digits) == 0 || len(digits) > MAX_CURSOR_TIMESTAMP_DIGITS {
-        return {}, false
-    }
+    if len(digits) == 0 || len(digits) > MAX_CURSOR_TIMESTAMP_DIGITS do return {}, false
 
     updated_at_ms, parsed := strconv.parse_u64(digits, 10)
-    if !parsed {
-        return {}, false
-    }
+    if !parsed do return {}, false
 
-    if len(id) != size_of(wire.Session_Id) {
-        return {}, false
-    }
+    if len(id) != size_of(wire.Session_Id) do return {}, false
 
     session: [size_of(wire.Session_Id)]u8
     copy(session[:], id)
 
     // A cursor id is compared against stored ids as an opaque blob, so a token outside the
     // id grammar could only ever match nothing. Rejecting it names the fault instead.
-    if wire.enforce_id(session) != .None {
-        return {}, false
-    }
+    if wire.enforce_id(session) != .None do return {}, false
 
     return {updated_at_ms = updated_at_ms, id = wire.Session_Id(session)}, true
 }

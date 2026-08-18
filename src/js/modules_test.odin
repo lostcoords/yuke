@@ -24,9 +24,7 @@ Fixture :: struct {
 @(private)
 fixture_start :: proc(t: ^testing.T, f: ^Fixture, name: string) {
     tmp, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        tmp = "/tmp"
-    }
+    if !has do tmp = "/tmp"
 
     dir, join_err := os.join_path({tmp, name}, context.temp_allocator)
     testing.expect(t, join_err == nil, "the fixture path joins")
@@ -82,9 +80,7 @@ module_run :: proc(t: ^testing.T, name: string, source: string) -> string {
     defer qjs.free_value(f.host.ctx, value)
 
     text, ok := qjs.to_string(f.host.ctx, value)
-    if !testing.expect(t, ok, "globalThis.result should be readable") {
-        return ""
-    }
+    if !testing.expect(t, ok, "globalThis.result should be readable") do return ""
 
     defer qjs.free_string(f.host.ctx, text)
 

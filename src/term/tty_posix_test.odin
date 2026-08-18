@@ -36,9 +36,7 @@ test_get_size_on_non_tty_fails :: proc(t: ^testing.T) {
 // the caller can close it; closing it early would invalidate the slave.
 pty_open :: proc(master: ^posix.FD) -> posix.FD {
     master^ = posix.posix_openpt({.RDWR, .NOCTTY})
-    if master^ < 0 {
-        return -1
-    }
+    if master^ < 0 do return -1
 
     if posix.grantpt(master^) != .OK || posix.unlockpt(master^) != .OK {
         posix.close(master^)

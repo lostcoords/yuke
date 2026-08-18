@@ -240,24 +240,18 @@ auth_provider_emit :: proc(e: ^json.Emitter, self: Auth_Provider) {
 auth_provider_validate :: proc(self: Auth_Provider) -> Validation_Error {
     provider_id_validate(self.provider_id) or_return
 
-    if len(self.login_flows) > LIMITS.max_auth_flows {
-        return .Overflow
-    }
+    if len(self.login_flows) > LIMITS.max_auth_flows do return .Overflow
 
     seen: bit_set[Auth_Flow]
     for flow in self.login_flows {
-        if flow in seen {
-            return .Mismatched_Payload
-        }
+        if flow in seen do return .Mismatched_Payload
         seen += {flow}
     }
 
     if login, ok := self.pending_login.?; ok {
         auth_login_summary_validate(login) or_return
 
-        if login.flow not_in seen {
-            return .Mismatched_Payload
-        }
+        if login.flow not_in seen do return .Mismatched_Payload
     }
 
     return .None
@@ -316,18 +310,14 @@ auth_login_result_validate :: proc(self: Auth_Login_Result) -> Validation_Error 
     case Auth_Login_Result_Browser:
         enforce_id(([32]u8)(result.login_id)) or_return
 
-        if result.auth_url == "" {
-            return .Invalid_Length
-        }
+        if result.auth_url == "" do return .Invalid_Length
 
         return enforce_bounded(LIMITS.max_auth_url_bytes, result.auth_url)
 
     case Auth_Login_Result_Device_Code:
         enforce_id(([32]u8)(result.login_id)) or_return
 
-        if result.verification_url == "" || result.user_code == "" {
-            return .Invalid_Length
-        }
+        if result.verification_url == "" || result.user_code == "" do return .Invalid_Length
 
         enforce_bounded(LIMITS.max_auth_url_bytes, result.verification_url) or_return
 
@@ -375,9 +365,7 @@ auth_set_api_key_params_emit :: proc(e: ^json.Emitter, self: Auth_Set_Api_Key_Pa
 auth_set_api_key_params_validate :: proc(self: Auth_Set_Api_Key_Params) -> Validation_Error {
     provider_id_validate(self.provider_id) or_return
 
-    if self.api_key == "" {
-        return .Invalid_Length
-    }
+    if self.api_key == "" do return .Invalid_Length
 
     return enforce_bounded(LIMITS.max_api_key_bytes, self.api_key)
 }
@@ -391,9 +379,7 @@ auth_set_api_key_result_emit :: proc(e: ^json.Emitter, self: Auth_Set_Api_Key_Re
 
 // A running daemon always requires restart after accepting a key.
 auth_set_api_key_result_validate :: proc(self: Auth_Set_Api_Key_Result) -> Validation_Error {
-    if !self.restart_required {
-        return .Mismatched_Payload
-    }
+    if !self.restart_required do return .Mismatched_Payload
 
     return .None
 }
@@ -414,9 +400,7 @@ auth_list_result_emit :: proc(e: ^json.Emitter, self: Auth_List_Result) {
 
 // Verify auth.list result.
 auth_list_result_validate :: proc(self: Auth_List_Result) -> Validation_Error {
-    if len(self.providers) > LIMITS.max_auth_providers {
-        return .Overflow
-    }
+    if len(self.providers) > LIMITS.max_auth_providers do return .Overflow
 
     for provider in self.providers {
         auth_provider_validate(provider) or_return
@@ -448,9 +432,7 @@ auth_login_outcome_emit :: proc(e: ^json.Emitter, self: Auth_Login_Outcome) {
 auth_login_outcome_validate :: proc(self: Auth_Login_Outcome) -> Validation_Error {
     #partial switch outcome in self {
     case Auth_Login_Outcome_Failed:
-        if outcome.message == "" {
-            return .Invalid_Length
-        }
+        if outcome.message == "" do return .Invalid_Length
 
         return enforce_bounded(LIMITS.max_error_message_bytes, outcome.message)
     }
@@ -545,9 +527,7 @@ auth_login_summary_from_reader :: proc(d: ^json.Decoder) -> (summary: Auth_Login
         }
     }
 
-    if seen != {.Login, .Flow} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Login, .Flow} do return {}, .Mismatched_Payload
 
     return summary, .None
 }
@@ -577,9 +557,7 @@ auth_provider_from_reader :: proc(d: ^json.Decoder) -> (provider: Auth_Provider,
         case "credential_kind":
             seen += {.Credential}
 
-            if !json.dec_is_null(d) {
-                provider.credential_kind = json.dec_enum(d, auth_credential_kind_wire) or_return
-            }
+            if !json.dec_is_null(d) do provider.credential_kind = json.dec_enum(d, auth_credential_kind_wire) or_return
 
         case "restart_required":
             provider.restart_required = json.dec_bool(d) or_return
@@ -592,18 +570,14 @@ auth_provider_from_reader :: proc(d: ^json.Decoder) -> (provider: Auth_Provider,
         case "pending_login":
             seen += {.Pending}
 
-            if !json.dec_is_null(d) {
-                provider.pending_login = auth_login_summary_from_reader(d) or_return
-            }
+            if !json.dec_is_null(d) do provider.pending_login = auth_login_summary_from_reader(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Provider, .Credential, .Restart, .Flows, .Pending} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Provider, .Credential, .Restart, .Flows, .Pending} do return {}, .Mismatched_Payload
 
     return provider, .None
 }
@@ -636,9 +610,7 @@ auth_login_params_from_reader :: proc(d: ^json.Decoder) -> (params: Auth_Login_P
         }
     }
 
-    if seen != {.Provider, .Flow} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Provider, .Flow} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -679,9 +651,7 @@ auth_login_result_from_reader :: proc(d: ^json.Decoder) -> (result: Auth_Login_R
             }
         }
 
-        if seen != {.Login, .Url} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Login, .Url} do return nil, .Mismatched_Payload
 
         return value, .None
 
@@ -720,9 +690,7 @@ auth_login_result_from_reader :: proc(d: ^json.Decoder) -> (result: Auth_Login_R
             }
         }
 
-        if seen != {.Login, .Url, .Code} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Login, .Url, .Code} do return nil, .Mismatched_Payload
 
         return value, .None
     }
@@ -753,9 +721,7 @@ auth_cancel_login_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -778,9 +744,7 @@ auth_logout_params_from_reader :: proc(d: ^json.Decoder) -> (params: Auth_Logout
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -818,9 +782,7 @@ auth_set_api_key_params_from_reader :: proc(
         }
     }
 
-    if seen != {.Provider, .Key} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Provider, .Key} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -848,9 +810,7 @@ auth_set_api_key_result_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -873,9 +833,7 @@ auth_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Auth_List_Res
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -891,15 +849,11 @@ auth_login_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Auth_Login
             field, done := json.dec_key(d) or_return
             if done do break
 
-            if field == "message" {
-                return nil, .Mismatched_Payload
-            }
+            if field == "message" do return nil, .Mismatched_Payload
             json.dec_skip(d) or_return
         }
 
-        if tag == "succeeded" {
-            return Auth_Login_Outcome_Succeeded{}, .None
-        }
+        if tag == "succeeded" do return Auth_Login_Outcome_Succeeded{}, .None
 
         return Auth_Login_Outcome_Canceled{}, .None
 
@@ -920,9 +874,7 @@ auth_login_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Auth_Login
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return Auth_Login_Outcome_Failed{message = message}, .None
     }
@@ -968,9 +920,7 @@ auth_login_finished_data_from_reader :: proc(
         }
     }
 
-    if seen != {.Login, .Provider, .Outcome} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Login, .Provider, .Outcome} do return {}, .Mismatched_Payload
 
     return data, .None
 }
@@ -993,9 +943,7 @@ auth_changed_data_from_reader :: proc(d: ^json.Decoder) -> (data: Auth_Changed_D
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return data, .None
 }
@@ -1004,9 +952,7 @@ auth_changed_data_from_reader :: proc(d: ^json.Decoder) -> (data: Auth_Changed_D
 provider_id_validate :: proc(provider_id: Provider_Id) -> Validation_Error {
     enforce_bounded(64, provider_id) or_return
 
-    if len(provider_id) == 0 {
-        return .Invalid_Length
-    }
+    if len(provider_id) == 0 do return .Invalid_Length
 
     for byte in transmute([]byte)provider_id {
         switch byte {

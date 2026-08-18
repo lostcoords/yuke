@@ -49,20 +49,14 @@ host_resolve :: proc(user: rawptr, name: string, allocator: mem.Allocator) -> (s
     }
 
     h := (^Host)(user)
-    if h == nil || h.config_root == "" {
-        return "", false, false
-    }
+    if h == nil || h.config_root == "" do return "", false, false
 
     // The default module normalize resolves a relative import against the importer's absolute
     // path, so a file specifier arrives already absolute; contain it before touching disk.
-    if !js.path_contained(h.config_root, name) {
-        return "", false, false
-    }
+    if !js.path_contained(h.config_root, name) do return "", false, false
 
     data, read_err := os.read_entire_file(name, allocator)
-    if read_err != nil {
-        return "", false, false
-    }
+    if read_err != nil do return "", false, false
 
     return string(data), true, true
 }
@@ -72,9 +66,7 @@ host_resolve :: proc(user: rawptr, name: string, allocator: mem.Allocator) -> (s
 // does not fail the client — the baked core still runs. `eval_module` reports a top-level throw
 // rather than swallowing it, so a rejection is not misread as the missing `onEvent` below.
 host_eval_app :: proc(h: ^Host) -> bool {
-    if !js.eval_module(&h.js, "yuke:app", APP_JS, h.allocator) {
-        return false
-    }
+    if !js.eval_module(&h.js, "yuke:app", APP_JS, h.allocator) do return false
 
     host_eval_user(h)
 
@@ -99,20 +91,14 @@ host_eval_app :: proc(h: ^Host) -> bool {
 // imports resolve under the config root. Its failure is reported, not fatal: the baked UI stays
 // up rather than a config typo bringing the client down.
 host_eval_user :: proc(h: ^Host) {
-    if h.config_root == "" {
-        return
-    }
+    if h.config_root == "" do return
 
     path, join_err := filepath.join({h.config_root, USER_ENTRY}, h.allocator)
-    if join_err != nil {
-        return
-    }
+    if join_err != nil do return
 
     defer delete(path, h.allocator)
 
-    if !os.exists(path) {
-        return
-    }
+    if !os.exists(path) do return
 
     source, read_err := os.read_entire_file(path, h.allocator)
     if read_err != nil {
@@ -188,9 +174,7 @@ host_term_begin_frame :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.i
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.has_buf {
-        return qjs.throw_type_error(ctx, "term.beginFrame: no host")
-    }
+    if h == nil || !h.has_buf do return qjs.throw_type_error(ctx, "term.beginFrame: no host")
     host_begin_frame(h)
     return qjs.undefined()
 }
@@ -202,9 +186,7 @@ host_term_end_frame :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.has_buf {
-        return qjs.throw_type_error(ctx, "term.endFrame: no host")
-    }
+    if h == nil || !h.has_buf do return qjs.throw_type_error(ctx, "term.endFrame: no host")
     host_end_frame(h)
     return qjs.undefined()
 }
@@ -216,9 +198,7 @@ host_term_size :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, arg
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "term.size: no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "term.size: no host")
     // Return retained object (w/h already updated on resize).
     return qjs.dup_value(ctx, h.size_obj)
 }
@@ -228,23 +208,15 @@ host_term_fill :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, arg
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.has_buf {
-        return qjs.throw_type_error(ctx, "term.fill: no host")
-    }
-    if argc < 4 {
-        return qjs.throw_type_error(ctx, "term.fill(x, y, w, h, style?)")
-    }
+    if h == nil || !h.has_buf do return qjs.throw_type_error(ctx, "term.fill: no host")
+    if argc < 4 do return qjs.throw_type_error(ctx, "term.fill(x, y, w, h, style?)")
 
     x, xok := qjs.to_i32(ctx, argv[0])
     y, yok := qjs.to_i32(ctx, argv[1])
     w, wok := qjs.to_i32(ctx, argv[2])
     ht, hok := qjs.to_i32(ctx, argv[3])
-    if !xok || !yok || !wok || !hok {
-        return qjs.exception()
-    }
-    if x < 0 || y < 0 || w <= 0 || ht <= 0 {
-        return qjs.undefined()
-    }
+    if !xok || !yok || !wok || !hok do return qjs.exception()
+    if x < 0 || y < 0 || w <= 0 || ht <= 0 do return qjs.undefined()
 
     style := host_parse_style(ctx, argc, argv, 4)
     host_ensure_frame(h)
@@ -258,28 +230,18 @@ host_term_text :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, arg
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.has_buf {
-        return qjs.throw_type_error(ctx, "term.text: no host")
-    }
-    if argc < 3 {
-        return qjs.throw_type_error(ctx, "term.text(x, y, s, style?)")
-    }
+    if h == nil || !h.has_buf do return qjs.throw_type_error(ctx, "term.text: no host")
+    if argc < 3 do return qjs.throw_type_error(ctx, "term.text(x, y, s, style?)")
 
     x, xok := qjs.to_i32(ctx, argv[0])
     y, yok := qjs.to_i32(ctx, argv[1])
-    if !xok || !yok {
-        return qjs.exception()
-    }
+    if !xok || !yok do return qjs.exception()
 
     s, sok := qjs.to_string(ctx, argv[2])
-    if !sok {
-        return qjs.exception()
-    }
+    if !sok do return qjs.exception()
     defer qjs.free_string(ctx, s)
 
-    if x < 0 || y < 0 {
-        return qjs.undefined()
-    }
+    if x < 0 || y < 0 do return qjs.undefined()
 
     style := host_parse_style(ctx, argc, argv, 3)
     host_ensure_frame(h)
@@ -293,14 +255,10 @@ host_term_measure :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     context = runtime.default_context()
     _ = this
 
-    if argc < 1 {
-        return qjs.throw_type_error(ctx, "term.measure(s)")
-    }
+    if argc < 1 do return qjs.throw_type_error(ctx, "term.measure(s)")
 
     s, sok := qjs.to_string(ctx, argv[0])
-    if !sok {
-        return qjs.exception()
-    }
+    if !sok do return qjs.exception()
     defer qjs.free_string(ctx, s)
 
     return qjs.new_i32(i32(ui.str_width(s)))
@@ -312,14 +270,10 @@ host_term_graphemes :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int
     context = runtime.default_context()
     _ = this
 
-    if argc < 1 {
-        return qjs.throw_type_error(ctx, "term.graphemes(s)")
-    }
+    if argc < 1 do return qjs.throw_type_error(ctx, "term.graphemes(s)")
 
     s, sok := qjs.to_string(ctx, argv[0])
-    if !sok {
-        return qjs.exception()
-    }
+    if !sok do return qjs.exception()
     defer qjs.free_string(ctx, s)
 
     triples := make([dynamic]i32, 0, 48)
@@ -329,9 +283,7 @@ host_term_graphemes :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int
     it := ui.clusters(s)
     for {
         cl, ok := ui.iter_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         n := i32(ui.str_utf16_len(ui.cluster_bytes(cl, s)))
         append(&triples, u16_off, n, i32(ui.cluster_width(cl, s)))
@@ -346,24 +298,16 @@ host_term_cursor :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, a
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.has_buf {
-        return qjs.throw_type_error(ctx, "term.cursor: no host")
-    }
-    if argc < 3 {
-        return qjs.throw_type_error(ctx, "term.cursor(x, y, visible)")
-    }
+    if h == nil || !h.has_buf do return qjs.throw_type_error(ctx, "term.cursor: no host")
+    if argc < 3 do return qjs.throw_type_error(ctx, "term.cursor(x, y, visible)")
 
     x, xok := qjs.to_i32(ctx, argv[0])
     y, yok := qjs.to_i32(ctx, argv[1])
     vis, vok := qjs.to_bool(ctx, argv[2])
-    if !xok || !yok || !vok {
-        return qjs.exception()
-    }
+    if !xok || !yok || !vok do return qjs.exception()
 
     // Same clipping rule as fill/text: negative cell coords are a no-op.
-    if x < 0 || y < 0 {
-        return qjs.undefined()
-    }
+    if x < 0 || y < 0 do return qjs.undefined()
 
     host_ensure_frame(h)
     ui.buffer_set_cursor(&h.buf, u16(x), u16(y), vis)
@@ -393,29 +337,21 @@ host_term_key_matches :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.i
     context = runtime.default_context()
     _ = this
 
-    if argc < 2 || !qjs.is_object(argv[0]) || !qjs.is_string(argv[1]) {
-        return qjs.throw_type_error(ctx, "term.keyMatches(ev, cp, mods?)")
-    }
+    if argc < 2 || !qjs.is_object(argv[0]) || !qjs.is_string(argv[1]) do return qjs.throw_type_error(ctx, "term.keyMatches(ev, cp, mods?)")
 
     cp, cpok := host_first_rune(ctx, argv[1])
-    if !cpok {
-        return qjs.exception()
-    }
+    if !cpok do return qjs.exception()
 
     mods: term.Modifiers
     if argc >= 3 {
         m, mok := qjs.to_i32(ctx, argv[2])
-        if !mok {
-            return qjs.exception()
-        }
+        if !mok do return qjs.exception()
 
         mods = host_mods_from_bits(m)
     }
 
     key, kok := host_key_from_value(ctx, argv[0])
-    if !kok {
-        return qjs.exception()
-    }
+    if !kok do return qjs.exception()
 
     return qjs.new_bool(term.key_matches(&key, cp, mods))
 }
@@ -429,15 +365,11 @@ host_key_from_value :: proc(ctx: ^qjs.Context, v: qjs.Value) -> (key: term.Key, 
 
     text_val := qjs.get_property(ctx, v, "text")
     defer qjs.free_value(ctx, text_val)
-    if qjs.is_exception(text_val) {
-        return {}, false
-    }
+    if qjs.is_exception(text_val) do return {}, false
 
     if qjs.is_string(text_val) {
         text, tok := qjs.to_string(ctx, text_val)
-        if !tok {
-            return {}, false
-        }
+        if !tok do return {}, false
         defer qjs.free_string(ctx, text)
 
         for r in text {
@@ -447,15 +379,11 @@ host_key_from_value :: proc(ctx: ^qjs.Context, v: qjs.Value) -> (key: term.Key, 
 
     mods_val := qjs.get_property(ctx, v, "mods")
     defer qjs.free_value(ctx, mods_val)
-    if qjs.is_exception(mods_val) {
-        return {}, false
-    }
+    if qjs.is_exception(mods_val) do return {}, false
 
     if !qjs.is_undefined(mods_val) {
         m, mok := qjs.to_i32(ctx, mods_val)
-        if !mok {
-            return {}, false
-        }
+        if !mok do return {}, false
 
         key.mods = host_mods_from_bits(m)
     }
@@ -477,18 +405,12 @@ host_value_rune :: proc(ctx: ^qjs.Context, v: qjs.Value, name: string) -> (rune,
     prop := qjs.get_property(ctx, v, name)
     defer qjs.free_value(ctx, prop)
 
-    if qjs.is_exception(prop) {
-        return 0, false
-    }
+    if qjs.is_exception(prop) do return 0, false
 
-    if !qjs.is_string(prop) {
-        return 0, true
-    }
+    if !qjs.is_string(prop) do return 0, true
 
     s, ok := qjs.to_string(ctx, prop)
-    if !ok {
-        return 0, false
-    }
+    if !ok do return 0, false
     defer qjs.free_string(ctx, s)
 
     return first_rune(s), true
@@ -497,9 +419,7 @@ host_value_rune :: proc(ctx: ^qjs.Context, v: qjs.Value, name: string) -> (rune,
 // First codepoint of a JS string argument; an empty string matches nothing.
 host_first_rune :: proc(ctx: ^qjs.Context, v: qjs.Value) -> (rune, bool) {
     s, ok := qjs.to_string(ctx, v)
-    if !ok {
-        return 0, false
-    }
+    if !ok do return 0, false
     defer qjs.free_string(ctx, s)
 
     return first_rune(s), true
@@ -527,27 +447,17 @@ host_term_set_needs_tick :: proc "c" (
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "term.setNeedsTick: no host")
-    }
-    if argc < 1 {
-        return qjs.throw_type_error(ctx, "term.setNeedsTick(enabled, periodMs?)")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "term.setNeedsTick: no host")
+    if argc < 1 do return qjs.throw_type_error(ctx, "term.setNeedsTick(enabled, periodMs?)")
 
     enabled, ok := qjs.to_bool(ctx, argv[0])
-    if !ok {
-        return qjs.exception()
-    }
+    if !ok do return qjs.exception()
 
     period := h.tick_period
-    if period <= 0 {
-        period = TICK_MS_DEFAULT
-    }
+    if period <= 0 do period = TICK_MS_DEFAULT
     if argc >= 2 && !qjs.is_undefined(argv[1]) && !qjs.is_null(argv[1]) {
         ms, mok := qjs.to_i32(ctx, argv[1])
-        if !mok {
-            return qjs.exception()
-        }
+        if !mok do return qjs.exception()
         period = host_clamp_tick_period(time.Duration(ms) * time.Millisecond)
     }
 
@@ -556,12 +466,8 @@ host_term_set_needs_tick :: proc "c" (
 }
 
 host_clamp_tick_period :: proc(d: time.Duration) -> time.Duration {
-    if d < TICK_MS_MIN {
-        return TICK_MS_MIN
-    }
-    if d > TICK_MS_MAX {
-        return TICK_MS_MAX
-    }
+    if d < TICK_MS_MIN do return TICK_MS_MIN
+    if d > TICK_MS_MAX do return TICK_MS_MAX
     return d
 }
 
@@ -571,33 +477,23 @@ host_parse_style :: proc(ctx: ^qjs.Context, argc: c.int, argv: [^]qjs.Value, sty
     style := ui.Style {
         fg = ui.Ansi_Color.White,
     }
-    if int(argc) <= style_idx {
-        return style
-    }
+    if int(argc) <= style_idx do return style
     st := argv[style_idx]
-    if !qjs.is_object(st) {
-        return style
-    }
+    if !qjs.is_object(st) do return style
 
     if fg := qjs.get_property(ctx, st, "fg"); !qjs.is_undefined(fg) {
         defer qjs.free_value(ctx, fg)
-        if c, ok := host_parse_color(ctx, fg); ok {
-            style.fg = c
-        }
+        if c, ok := host_parse_color(ctx, fg); ok do style.fg = c
     }
     if bg := qjs.get_property(ctx, st, "bg"); !qjs.is_undefined(bg) {
         defer qjs.free_value(ctx, bg)
-        if c, ok := host_parse_color(ctx, bg); ok {
-            style.bg = c
-        }
+        if c, ok := host_parse_color(ctx, bg); ok do style.bg = c
     }
     for f in STYLE_FLAGS {
         b := qjs.get_property(ctx, st, f.prop)
         defer qjs.free_value(ctx, b)
 
-        if v, ok := qjs.to_bool(ctx, b); ok && v {
-            style.mods += {f.mod}
-        }
+        if v, ok := qjs.to_bool(ctx, b); ok && v do style.mods += {f.mod}
     }
 
     return style
@@ -614,18 +510,14 @@ STYLE_FLAGS := [?]struct {
 host_parse_color :: proc(ctx: ^qjs.Context, v: qjs.Value) -> (ui.Color, bool) {
     if qjs.is_number(v) {
         n, ok := qjs.to_i32(ctx, v)
-        if !ok || n < 0 || n > 255 {
-            return nil, false
-        }
+        if !ok || n < 0 || n > 255 do return nil, false
 
         return ui.Indexed(u8(n)), true
     }
 
     if s, ok := qjs.to_string(ctx, v); ok {
         defer qjs.free_string(ctx, s)
-        if c, cok := ansi_color_from_name(s); cok {
-            return c, true
-        }
+        if c, cok := ansi_color_from_name(s); cok do return c, true
     }
 
     return nil, false

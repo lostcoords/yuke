@@ -324,9 +324,7 @@ Conn :: struct {
 // process config directory, except in tests where empty means no script.
 @(private = "file")
 script_dir_from_options :: proc(options: Options, allocator: mem.Allocator) -> (dir: string, owned: bool) {
-    if options.config_dir != "" {
-        return options.config_dir, false
-    }
+    if options.config_dir != "" do return options.config_dir, false
 
     when !ODIN_TEST {
         resolved := paths.config_dir(allocator)
@@ -340,9 +338,7 @@ script_dir_from_options :: proc(options: Options, allocator: mem.Allocator) -> (
 // Begin listening. A synchronous failure returns directly and rolls back the clones
 // and the WebSocket server; past the bind, everything runs on the loop.
 start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator := context.allocator) -> (err: Error) {
-    if d == nil || loop == nil {
-        return .Invalid_Options
-    }
+    if d == nil || loop == nil do return .Invalid_Options
 
     options := options
 
@@ -351,49 +347,33 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     d.allocator = allocator
     d.log_level = .Info
 
-    defer if err != .None {
-        start_rollback(d)
-    }
+    defer if err != .None do start_rollback(d)
 
     version := options.daemon_version
-    if version == "" {
-        version = "0.0.0"
-    }
+    if version == "" do version = "0.0.0"
 
     // The version does not come from the manifest.
     d.daemon_version = strings.clone(version, allocator)
 
     // Started before the script tier: `yuke:fs` offloads onto it, and `workspace.describe`
     // walks paths on it whether or not a blob directory is configured.
-    if perr := offload.pool_init(&d.workers, loop, WORKER_COUNT); perr != .None {
-        return .Invalid_Options
-    }
+    if perr := offload.pool_init(&d.workers, loop, WORKER_COUNT); perr != .None do return .Invalid_Options
 
-    if perr := offload.pool_init(&d.exec_workers, loop, EXEC_WORKER_COUNT); perr != .None {
-        return .Invalid_Options
-    }
+    if perr := offload.pool_init(&d.exec_workers, loop, EXEC_WORKER_COUNT); perr != .None do return .Invalid_Options
 
     // The manifest runs before anything consumes config and supersedes `options` when it calls
     // `defineConfig`. A script tier that won't come up is a start failure.
     dir, dir_owned := script_dir_from_options(options, allocator)
-    defer if dir_owned {
-        delete(dir, allocator)
-    }
+    defer if dir_owned do delete(dir, allocator)
 
     js_err := js_init(d, dir, allocator)
     evaluated := false
-    if js_err == .None {
-        evaluated, js_err = js_run_entry(d, allocator)
-    }
+    if js_err == .None do evaluated, js_err = js_run_entry(d, allocator)
 
-    if js_err != .None {
-        return js_err
-    }
+    if js_err != .None do return js_err
 
     // Startup is over: later host ops must carry a run signal so a cancel stops them.
-    if evaluated {
-        js.cancel_enforce(&d.js)
-    }
+    if evaluated do js.cancel_enforce(&d.js)
 
     // Backs the config decode; proc-scoped because `host`/`db_path` are read later in `start`.
     config_scratch: [16 * mem.Kilobyte]byte
@@ -416,9 +396,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         options.host = config.host
         // A zero from the manifest (omitted, or an explicit 0) does not clobber the port the
         // launcher already chose — its `DEFAULT_PORT`, or a test's OS-assigned 0.
-        if config.port != 0 {
-            options.port = config.port
-        }
+        if config.port != 0 do options.port = config.port
         // A relocated base re-derives both paths; an omitted `dataDir` keeps the launcher's.
         if config.data_dir != "" {
             base := paths.expand_home(config.data_dir, sa)
@@ -431,26 +409,18 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
         options.allowed_origins = config.allowed_origins
 
         d.log_level = config_log_level(config.log_level)
-    } else if evaluated {
-        log.warn("daemon: yuked.js did not call defineConfig; running on defaults")
-    }
+    } else if evaluated do log.warn("daemon: yuked.js did not call defineConfig; running on defaults")
 
     // The token's source is now final — the manifest's when it defined one, else `options`.
-    if !auth_token_valid(options.auth_token) {
-        return .Invalid_Options
-    }
+    if !auth_token_valid(options.auth_token) do return .Invalid_Options
     if !listen_auth_valid(options.host, options.auth_token) {
         log.error("daemon: a non-loopback listener requires an authentication token")
         return .Invalid_Options
     }
 
-    if options.db_path == "" {
-        log.info("daemon: no data directory resolved; using an in-memory event store")
-    }
+    if options.db_path == "" do log.info("daemon: no data directory resolved; using an in-memory event store")
 
-    if options.relay_cloud_url == "" {
-        options.relay_cloud_url = RELAY_CLOUD_URL_DEFAULT
-    }
+    if options.relay_cloud_url == "" do options.relay_cloud_url = RELAY_CLOUD_URL_DEFAULT
 
     normalized_cloud, cloud_err := relay_cloud_url_normalize(options.relay_cloud_url, allocator)
     if cloud_err != .None {
@@ -484,9 +454,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     // The `initialize` result advertises `blob_upload` from this field alone, so an
     // unusable directory must fail the start rather than 500 every upload.
     if d.blob_dir != "" {
-        if mkerr := os.make_directory_all(d.blob_dir, BLOB_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(d.blob_dir) {
-            return .Invalid_Options
-        }
+        if mkerr := os.make_directory_all(d.blob_dir, BLOB_DIR_PERMISSIONS); mkerr != nil && !os.is_dir(d.blob_dir) do return .Invalid_Options
 
         warn_exposed_blob_dir(d.blob_dir, allocator)
     }
@@ -516,21 +484,13 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
     d.store = opened
     d.seq_high = make(map[wire.Session_Id]wire.Seq, 16, allocator)
 
-    if catalog_err := catalog_state_load(d); catalog_err != nil {
-        return .Store_Failed
-    }
+    if catalog_err := catalog_state_load(d); catalog_err != nil do return .Store_Failed
 
-    if auth_err := provider_auth_init(d); auth_err != .None {
-        return auth_err
-    }
+    if auth_err := provider_auth_init(d); auth_err != .None do return auth_err
 
-    if refresh_err := catalog_refresh_init(d); refresh_err != .None {
-        return refresh_err
-    }
+    if refresh_err := catalog_refresh_init(d); refresh_err != .None do return refresh_err
 
-    if run_err := run_service_init(&d.runs, loop, allocator); run_err != .None {
-        return run_err
-    }
+    if run_err := run_service_init(&d.runs, loop, allocator); run_err != .None do return run_err
 
     callbacks := ws.Server_Callbacks {
         on_open    = ws_on_open,
@@ -601,9 +561,7 @@ start :: proc(d: ^Daemon, loop: ^nbio.Event_Loop, options: Options, allocator :=
 
     if d.blob_dir != "" {
         removed := blob_sweep_temps(d.blob_dir, time.time_add(time.now(), -UPLOAD_TEMP_GRACE))
-        if removed > 0 {
-            log.infof("daemon: swept %d stale upload temp file(s) from %s", removed, d.blob_dir)
-        }
+        if removed > 0 do log.infof("daemon: swept %d stale upload temp file(s) from %s", removed, d.blob_dir)
     }
 
     log.infof(
@@ -629,9 +587,7 @@ start_rollback :: proc(d: ^Daemon) {
     provider_auth_shutdown(d)
     js.ops_close(&d.js)
 
-    if d.provider_auth.callback.state != .Idle {
-        nbio.run_until(&d.provider_auth.callback.shutdown_complete)
-    }
+    if d.provider_auth.callback.state != .Idle do nbio.run_until(&d.provider_auth.callback.shutdown_complete)
 
     teardown_release(d)
 }
@@ -652,9 +608,7 @@ teardown_release :: proc(d: ^Daemon) {
     js.destroy(&d.js)
 
     // Unset loop means the transport never came up.
-    if d.ws_server.loop != nil {
-        ws.server_destroy(&d.ws_server)
-    }
+    if d.ws_server.loop != nil do ws.server_destroy(&d.ws_server)
 
     relay_destroy(d)
     http_server.destroy(&d.front_door)
@@ -685,13 +639,9 @@ workers_stop :: proc(d: ^Daemon) {
 
 @(private = "file")
 pool_stop :: proc(pool: ^offload.Pool) {
-    if !offload.pool_is_running(pool) {
-        return
-    }
+    if !offload.pool_is_running(pool) do return
 
-    if derr := offload.pool_drain(pool); derr != nil {
-        log.errorf("daemon: worker drain failed: %v", derr)
-    }
+    if derr := offload.pool_drain(pool); derr != nil do log.errorf("daemon: worker drain failed: %v", derr)
 
     offload.pool_destroy(pool)
 }
@@ -775,9 +725,7 @@ store_close :: proc(d: ^Daemon) {
 // Deep-clone a string slice into `allocator`, outliving the decode arena. Returns nil/false on an
 // allocation failure, freeing the partial clone.
 clone_string_slice :: proc(src: []string, allocator: mem.Allocator) -> (out: []string) {
-    if len(src) == 0 {
-        return nil
-    }
+    if len(src) == 0 do return nil
 
     dst := make([]string, len(src), allocator)
     for s, i in src {
@@ -868,9 +816,7 @@ ws_on_message :: proc(wsc: ^ws.Server_Conn, kind: ws.Message_Kind, data: []byte)
     conn := (^Conn)(wsc.user_data)
     assert(conn != nil, "message callback lost its daemon connection")
     assert(conn_ws(conn) == wsc, "message callback crossed connection ownership")
-    if conn.state == .Closed {
-        return
-    }
+    if conn.state == .Closed do return
 
     switch kind {
     case .Text:
@@ -889,9 +835,7 @@ ws_on_close :: proc(wsc: ^ws.Server_Conn, code: ws.Close_Code) {
     assert(wsc.server != nil, "close callback needs an owning server")
 
     conn := (^Conn)(wsc.user_data)
-    if conn == nil {
-        return
-    }
+    if conn == nil do return
 
     assert(conn_ws(conn) == wsc, "close callback crossed connection ownership")
     log.debugf("daemon: websocket closed code=%v client=%s", code, conn.client_name)
@@ -1062,9 +1006,7 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
     conn.client_name = client_name
     conn.client_version = client_version
 
-    if send_initialize_result(conn, req.id, sa) {
-        conn.state = .Ready
-    }
+    if send_initialize_result(conn, req.id, sa) do conn.state = .Ready
 }
 
 // Validate and emit a successful response. The result comes from trusted daemon state, so an
@@ -1105,9 +1047,7 @@ send_response :: proc(conn: ^Conn, resp: wire.Response, allocator: mem.Allocator
     // An assert with no context is expensive to diagnose once it fires in production, and
     // this one only fires on our own bug: name the fault and the frame before dying.
     verr := wire.response_validate(resp)
-    if verr != .None {
-        response_invalid_report(resp, verr)
-    }
+    if verr != .None do response_invalid_report(resp, verr)
 
     assert(verr == .None, "daemon built an invalid response frame")
 
@@ -1131,9 +1071,7 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
     assert(conn.state == .Awaiting_Initialize, "initialize result sent outside Awaiting_Initialize")
 
     capabilities: bit_set[wire.Capability]
-    if conn.daemon.blob_dir != "" {
-        capabilities += {.Blob_Upload}
-    }
+    if conn.daemon.blob_dir != "" do capabilities += {.Blob_Upload}
 
     // A registry read that fails leaves the snapshot empty rather than refusing the
     // connection: a client rediscovers a workspace from the session rows it lists.
@@ -1143,9 +1081,7 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
         workspaces = nil
     }
 
-    if len(workspaces) == wire.LIMITS.max_workspaces {
-        log.warnf("daemon: the workspace snapshot filled its %d-row bound", wire.LIMITS.max_workspaces)
-    }
+    if len(workspaces) == wire.LIMITS.max_workspaces do log.warnf("daemon: the workspace snapshot filled its %d-row bound", wire.LIMITS.max_workspaces)
 
     result := wire.Initialize_Result {
         protocol = wire.PROTOCOL_VERSION,
@@ -1197,17 +1133,13 @@ conn_close :: proc(conn: ^Conn, code: ws.Close_Code) {
     assert(conn != nil, "connection close needs connection state")
     assert(conn.tx != nil, "connection close needs transport state")
 
-    if conn.state == .Closed {
-        return
-    }
+    if conn.state == .Closed do return
 
     conn.state = .Closed
 
     switch t in conn.tx {
     case ^ws.Server_Conn:
-        if close_err := ws.server_close(t, code); close_err != .None {
-            ws.server_abort(t, close_err)
-        }
+        if close_err := ws.server_close(t, code); close_err != .None do ws.server_abort(t, close_err)
 
     case Relay_Client:
         relay_conn_close(t.relay, t.channel)
@@ -1222,9 +1154,7 @@ conn_abort :: proc(conn: ^Conn, err: ws.Server_Error) {
     assert(err != .None, "connection abort needs an error")
     assert(err != .Not_Open, "Not_Open is already terminal")
 
-    if conn.state == .Closed {
-        return
-    }
+    if conn.state == .Closed do return
 
     conn.state = .Closed
 
@@ -1276,14 +1206,10 @@ conn_tx_open :: proc(conn: ^Conn) -> bool {
 conn_resolve :: proc(d: ^Daemon, ticket: Conn_Ticket) -> ^Conn {
     assert(d != nil, "resolve needs daemon state")
 
-    if ticket == 0 {
-        return nil
-    }
+    if ticket == 0 do return nil
 
     conn := d.conns[ticket]
-    if conn == nil {
-        return nil
-    }
+    if conn == nil do return nil
 
     assert(conn.ticket == ticket, "connection table returned a mismatched ticket")
     assert(conn.tx != nil, "a registered connection has transport state")

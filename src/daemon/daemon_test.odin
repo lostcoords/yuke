@@ -384,9 +384,7 @@ run_handler :: proc(t: ^testing.T, obs: ^Handler_Obs, db_path := "", sessions: .
 // Create a fresh, empty directory under the temp root, removing any stale copy first.
 test_make_dir :: proc(name: string) -> string {
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        base = "/tmp"
-    }
+    if !has do base = "/tmp"
 
     dir, _ := os.join_path({base, name}, context.temp_allocator)
     os.remove_all(dir)
@@ -430,9 +428,7 @@ raw_dial :: proc(port: int) -> (net.TCP_Socket, bool) {
     }
 
     sock, err := net.dial_tcp(endpoint)
-    if err != nil {
-        return {}, false
-    }
+    if err != nil do return {}, false
 
     return sock, true
 }
@@ -445,23 +441,17 @@ raw_upgrade :: proc(sock: net.TCP_Socket) -> bool {
     base64.encode_into_buf(key_encoded[:], key_raw[:])
 
     request := ws.build_upgrade_request("/ws", "127.0.0.1", key_encoded[:], "", context.temp_allocator)
-    if _, serr := net.send_tcp(sock, request); serr != nil {
-        return false
-    }
+    if _, serr := net.send_tcp(sock, request); serr != nil do return false
 
     buf: [4096]byte
     n := 0
     for n < len(buf) {
         got, rerr := net.recv_tcp(sock, buf[n:])
-        if rerr != nil || got == 0 {
-            return false
-        }
+        if rerr != nil || got == 0 do return false
 
         n += got
         result, _, status := ws.parse_upgrade_response(buf[:n], key_encoded[:])
-        if status == .Ready {
-            return result == .Ok
-        }
+        if status == .Ready do return result == .Ok
     }
 
     return false
@@ -473,21 +463,15 @@ raw_peer :: proc(p: ^Raw_Peer) {
     defer free_all(context.temp_allocator)
 
     sock, ok := raw_dial(p.port)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(sock)
 
-    if !raw_upgrade(sock) {
-        return
-    }
+    if !raw_upgrade(sock) do return
 
     key: [ws.MASK_KEY_BYTES]byte
     crypto.rand_bytes(key[:])
     frame := ws.encode_frame(true, p.opcode, p.payload, key, context.temp_allocator)
-    if _, serr := net.send_tcp(sock, frame); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, frame); serr != nil do return
 
     // Read with a client-role decoder (rejects masking, which a server never applies).
     dec: ws.Decoder
@@ -497,9 +481,7 @@ raw_peer :: proc(p: ^Raw_Peer) {
     buf: [4096]byte
     for {
         msg, has, derr := ws.decoder_next(&dec, context.temp_allocator)
-        if derr != .None {
-            break
-        }
+        if derr != .None do break
 
         if has {
             if msg.kind == .Close {
@@ -551,9 +533,7 @@ run_raw :: proc(t: ^testing.T, opcode: ws.Op_Code, payload: string, expect_code:
 
     for _ in 0 ..< 2000 {
         nbio.tick(time.Millisecond)
-        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 {
-            break
-        }
+        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 do break
     }
 
     thread.join(peer)
@@ -630,9 +610,7 @@ test_daemon_second_initialize_after_ready_closes :: proc(t: ^testing.T) {
 
     for _ in 0 ..< 2000 {
         nbio.tick(time.Millisecond)
-        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 {
-            break
-        }
+        if sync.atomic_load(&p.ok) && len(d.ws_server.conns) == 0 do break
     }
 
     thread.join(peer)
@@ -683,9 +661,7 @@ test_daemon_lifecycle_no_leak :: proc(t: ^testing.T) {
         // Drain the daemon-side connection's deferred teardown before the next cycle
         // so releases interleave with fresh accepts, not batch at the end.
         for _ in 0 ..< 64 {
-            if len(d.ws_server.conns) == 0 {
-                break
-            }
+            if len(d.ws_server.conns) == 0 do break
 
             nbio.tick(time.Millisecond)
         }

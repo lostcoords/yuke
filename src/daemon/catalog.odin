@@ -55,17 +55,13 @@ catalog_feed_invalidate :: proc(d: ^Daemon) {
         return
     }
 
-    if load_err := catalog_state_load(d); load_err != nil {
-        log.errorf("daemon: catalog reload after invalidation failed: %v", load_err)
-    }
+    if load_err := catalog_state_load(d); load_err != nil do log.errorf("daemon: catalog reload after invalidation failed: %v", load_err)
 }
 
 catalog_state_destroy :: proc(d: ^Daemon) {
     assert(d != nil, "catalog state teardown needs daemon state")
 
-    if d.catalog.snapshot.allocator.procedure != nil {
-        store.catalog_destroy(&d.catalog.snapshot)
-    }
+    if d.catalog.snapshot.allocator.procedure != nil do store.catalog_destroy(&d.catalog.snapshot)
 
     d.catalog.rev = {}
 }
@@ -77,9 +73,7 @@ catalog_model_find :: proc(d: ^Daemon, public_id: string) -> ^catalog.Model {
 
     for &item in d.catalog.snapshot.providers {
         for &model in item.models {
-            if string(model.info.id) == public_id {
-                return &model
-            }
+            if string(model.info.id) == public_id do return &model
         }
     }
 
@@ -97,9 +91,7 @@ catalog_models_view :: proc(snapshot: store.Catalog, allocator := context.alloca
         total += len(provider.models)
     }
 
-    if total == 0 {
-        return nil
-    }
+    if total == 0 do return nil
 
     view := make([]wire.Model_Info, total, allocator)
     index := 0
@@ -185,9 +177,7 @@ rev_skip_reason_tag :: proc(reason: wire.Skip_Reason) -> u8 {
 @(private)
 rev_str :: proc(ctx: ^sha2.Context_256, value: string) {
     rev_u64(ctx, u64(len(value)))
-    if len(value) > 0 {
-        sha2.update(ctx, transmute([]byte)value)
-    }
+    if len(value) > 0 do sha2.update(ctx, transmute([]byte)value)
 }
 
 @(private)
@@ -231,9 +221,7 @@ catalog_selections_build :: proc(
         source_id := status.provider_id
         if kind, is_oauth := oauth.kind_from_id(status.provider_id); is_oauth {
             source_id = oauth.provider(kind).catalog_source_id
-            if source_id == "" {
-                continue
-            }
+            if source_id == "" do continue
         }
 
         append(
@@ -242,9 +230,7 @@ catalog_selections_build :: proc(
         )
     }
 
-    if len(selections) > catalog.SELECTIONS_MAX {
-        return selections, .Invalid_Catalog
-    }
+    if len(selections) > catalog.SELECTIONS_MAX do return selections, .Invalid_Catalog
 
     return selections, nil
 }
@@ -271,9 +257,7 @@ catalog_refresh_apply :: proc(
     sa := virtual.arena_allocator(&scratch)
 
     result, decode_err := catalog.decode(feed, selections, sa)
-    if decode_err != .None {
-        return false, .Invalid_Catalog
-    }
+    if decode_err != .None do return false, .Invalid_Catalog
 
     // The decoder already produces the shape the store persists, so each provider goes
     // straight in with the feed's own validator.
@@ -290,9 +274,7 @@ catalog_refresh_apply :: proc(
     load_err := catalog_state_load(d)
     changed = d.catalog.rev != old_rev
 
-    if apply_err != nil {
-        return changed, apply_err
-    }
+    if apply_err != nil do return changed, apply_err
 
     return changed, load_err
 }
@@ -338,9 +320,7 @@ catalog_refresh_init :: proc(d: ^Daemon) -> Error {
     assert(d.loop != nil, "catalog refresh init needs an event loop")
     assert(!d.catalog_refresh.ready, "catalog refresh initialized twice")
 
-    if curl_err := curl.client_init(&d.catalog_refresh.curl, d.loop, d.allocator); curl_err != .None {
-        return .Catalog_Failed
-    }
+    if curl_err := curl.client_init(&d.catalog_refresh.curl, d.loop, d.allocator); curl_err != .None do return .Catalog_Failed
     d.catalog_refresh.ready = true
 
     return .None
@@ -382,9 +362,7 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
     assert(!catalog_refresh_busy(d), "catalog refresh must be single flight")
 
     op, op_err := new(Catalog_Refresh_Op, d.allocator)
-    if op_err != nil {
-        return false
-    }
+    if op_err != nil do return false
     op^ = {}
     op.ticket = ticket
     op.feed.allocator = d.allocator
@@ -440,24 +418,16 @@ catalog_refresh_begin :: proc(d: ^Daemon, ticket: Conn_Ticket, request_id: wire.
 catalog_refresh_on_header :: proc(user: rawptr, line: []byte) {
     d := (^Daemon)(user)
     op := d.catalog_refresh.operation
-    if op == nil {
-        return
-    }
+    if op == nil do return
 
     text := string(line)
     colon := strings.index_byte(text, ':')
-    if colon < 0 {
-        return
-    }
+    if colon < 0 do return
 
-    if !strings.equal_fold(strings.trim_space(text[:colon]), "etag") {
-        return
-    }
+    if !strings.equal_fold(strings.trim_space(text[:colon]), "etag") do return
 
     value := strings.trim_space(text[colon + 1:])
-    if len(value) == 0 || len(value) > CATALOG_REFRESH_ETAG_MAX {
-        return
-    }
+    if len(value) == 0 || len(value) > CATALOG_REFRESH_ETAG_MAX do return
 
     copy(op.etag[:], transmute([]byte)value)
     op.etag_len = len(value)
@@ -470,9 +440,7 @@ catalog_refresh_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     assert(op != nil, "catalog refresh body lost its owner")
     assert(op.transfer.state == .Running, "catalog refresh body needs a running transfer")
 
-    if op.overflow {
-        return false
-    }
+    if op.overflow do return false
     if len(op.feed) + len(chunk) > catalog.FEED_MAX_BYTES {
         op.overflow = true
         return false
@@ -507,17 +475,11 @@ catalog_refresh_on_done :: proc(user: rawptr, result: curl.Result) {
     d.catalog_refresh.operation = nil
     defer catalog_refresh_free(d, op)
 
-    if outcome.changed {
-        _ = broadcast(d, wire.Catalog_Changed_Data{catalog_rev = d.catalog.rev, health = d.catalog.health})
-    }
+    if outcome.changed do _ = broadcast(d, wire.Catalog_Changed_Data{catalog_rev = d.catalog.rev, health = d.catalog.health})
 
-    if ticket == 0 {
-        return
-    }
+    if ticket == 0 do return
     conn := conn_resolve(d, ticket)
-    if conn == nil {
-        return
-    }
+    if conn == nil do return
 
     if outcome.ok {
         result_payload := wire.Catalog_Refresh_Result {
@@ -552,34 +514,20 @@ catalog_refresh_settle :: proc(
 ) -> Catalog_Refresh_Outcome {
     // Overflow is our own body-abort, which curl reports as `.Write_Error`; check it
     // first so the client hears the specific reason rather than a generic fetch failure.
-    if overflow {
-        return {ok = false, message = "catalog response exceeded the size limit"}
-    }
-    if code != .Ok {
-        return {ok = false, message = "catalog fetch failed"}
-    }
-    if status == 304 {
-        return {ok = true}
-    }
-    if status < 200 || status >= 300 {
-        return {ok = false, message = "catalog source returned an error status"}
-    }
+    if overflow do return {ok = false, message = "catalog response exceeded the size limit"}
+    if code != .Ok do return {ok = false, message = "catalog fetch failed"}
+    if status == 304 do return {ok = true}
+    if status < 200 || status >= 300 do return {ok = false, message = "catalog source returned an error status"}
 
     scratch: virtual.Arena
-    if virtual.arena_init_growing(&scratch) != nil {
-        return {ok = false, message = "out of memory"}
-    }
+    if virtual.arena_init_growing(&scratch) != nil do return {ok = false, message = "out of memory"}
     defer virtual.arena_destroy(&scratch)
 
     selections, selection_err := catalog_selections_build(d, virtual.arena_allocator(&scratch))
-    if selection_err != nil {
-        return {ok = false, message = "could not build the catalog selection"}
-    }
+    if selection_err != nil do return {ok = false, message = "could not build the catalog selection"}
 
     changed, apply_err := catalog_refresh_apply(d, feed, response_etag, selections[:])
-    if apply_err != nil {
-        return {ok = false, message = "catalog could not be applied"}
-    }
+    if apply_err != nil do return {ok = false, message = "catalog could not be applied"}
 
     return {ok = true, changed = changed}
 }
@@ -642,7 +590,5 @@ method_catalog_refresh :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator
         return
     }
 
-    if !catalog_refresh_begin(d, conn.ticket, req.id) {
-        send_error(conn, req.id, .Internal, "catalog refresh could not start", sa)
-    }
+    if !catalog_refresh_begin(d, conn.ticket, req.id) do send_error(conn, req.id, .Internal, "catalog refresh could not start", sa)
 }

@@ -145,9 +145,7 @@ open_memory :: proc(flags: Open_Flags = DEFAULT_WRITER) -> (db: ^Conn, rc: Resul
 // Close a connection. Reports `.Busy` while a statement or blob still belongs to
 // it, making leaked children observable. Safe on nil (returns `.Ok`).
 close :: proc(db: ^Conn) -> Result {
-    if db == nil {
-        return .Ok
-    }
+    if db == nil do return .Ok
 
     return c_close(db)
 }
@@ -157,9 +155,7 @@ busy_timeout :: proc(db: ^Conn, ms: int) -> Result {
     assert(db != nil, "busy_timeout needs a connection")
     assert(ms >= 0, "busy_timeout ms must be non-negative")
 
-    if ms > bits.I32_MAX {
-        return .Range
-    }
+    if ms > bits.I32_MAX do return .Range
 
     return c_busy_timeout(db, c.int(ms))
 }
@@ -172,26 +168,20 @@ journal_mode_set :: proc(db: ^Conn, mode: Journal_Mode) -> (settled: bool, rc: R
     stmt: ^Stmt
     stmt, rc = prepare(db, journal_mode_sql[mode])
 
-    if rc != .Ok {
-        return false, rc
-    }
+    if rc != .Ok do return false, rc
     defer finalize(stmt)
     assert(column_count(stmt) == 1, "PRAGMA journal_mode reports one column")
 
     rc = step(stmt)
 
-    if is_error(rc) {
-        return false, rc
-    }
+    if is_error(rc) do return false, rc
 
     assert(rc == .Row, "PRAGMA journal_mode always reports a mode")
 
     // A mode this binding does not name is not the one asked for, so an added
     // SQLite mode degrades to `settled = false` instead of asserting.
     reported, column_rc := column_text(stmt, 0)
-    if column_rc != .Ok {
-        return false, column_rc
-    }
+    if column_rc != .Ok do return false, column_rc
 
     return reported == journal_mode_wire[mode], .Ok
 }
@@ -211,17 +201,13 @@ synchronous :: proc(db: ^Conn) -> (level: Synchronous, rc: Result) {
     stmt: ^Stmt
     stmt, rc = prepare(db, "PRAGMA synchronous")
 
-    if rc != .Ok {
-        return .Off, rc
-    }
+    if rc != .Ok do return .Off, rc
     defer finalize(stmt)
     assert(column_count(stmt) == 1, "PRAGMA synchronous reports one column")
 
     rc = step(stmt)
 
-    if is_error(rc) {
-        return .Off, rc
-    }
+    if is_error(rc) do return .Off, rc
 
     assert(rc == .Row, "PRAGMA synchronous always reports a row")
 
@@ -239,9 +225,7 @@ synchronous :: proc(db: ^Conn) -> (level: Synchronous, rc: Result) {
 exec :: proc(db: ^Conn, sql: string) -> Result {
     assert(db != nil, "exec needs a connection")
 
-    if len(sql) > bits.I32_MAX {
-        return .Too_Big
-    }
+    if len(sql) > bits.I32_MAX do return .Too_Big
 
     rest := sql
     for len(rest) > 0 {
@@ -249,9 +233,7 @@ exec :: proc(db: ^Conn, sql: string) -> Result {
         tail: cstring
         rc := c_prepare_v2(db, cstring(raw_data(rest)), c.int(len(rest)), &st, &tail)
 
-        if rc != .Ok {
-            return rc
-        }
+        if rc != .Ok do return rc
 
         // A statement that compiles always advances the tail, so the loop cannot spin.
         consumed := int(uintptr(rawptr(tail)) - uintptr(rawptr(raw_data(rest))))
@@ -267,13 +249,9 @@ exec :: proc(db: ^Conn, sql: string) -> Result {
 
             fin := finalize(st)
 
-            if is_error(rc) {
-                return rc
-            }
+            if is_error(rc) do return rc
 
-            if fin != .Ok {
-                return fin
-            }
+            if fin != .Ok do return fin
         }
 
         rest = rest[consumed:]
@@ -289,9 +267,7 @@ txn_begin :: proc(db: ^Conn, behavior: Transaction_Behavior) -> Result {
 
     rc := exec(db, txn_begin_sql[behavior])
 
-    if rc != .Ok {
-        return rc
-    }
+    if rc != .Ok do return rc
 
     assert(!autocommit(db), "a successful BEGIN starts a transaction")
     return .Ok
@@ -305,9 +281,7 @@ txn_commit :: proc(db: ^Conn) -> Result {
 
     rc := exec(db, "COMMIT")
 
-    if rc != .Ok {
-        return rc
-    }
+    if rc != .Ok do return rc
 
     assert(autocommit(db), "a successful COMMIT ends the transaction")
     return .Ok
@@ -318,15 +292,11 @@ txn_commit :: proc(db: ^Conn) -> Result {
 txn_rollback :: proc(db: ^Conn) -> Result {
     assert(db != nil, "txn_rollback needs a connection")
 
-    if autocommit(db) {
-        return .Ok
-    }
+    if autocommit(db) do return .Ok
 
     rc := exec(db, "ROLLBACK")
 
-    if rc != .Ok {
-        return rc
-    }
+    if rc != .Ok do return rc
 
     assert(autocommit(db), "a successful ROLLBACK ends the transaction")
     return .Ok
@@ -338,16 +308,12 @@ prepare :: proc(db: ^Conn, sql: string) -> (stmt: ^Stmt, rc: Result) {
     assert(db != nil, "prepare needs a connection")
     assert(len(sql) > 0, "prepare needs non-empty sql")
 
-    if len(sql) > bits.I32_MAX {
-        return nil, .Too_Big
-    }
+    if len(sql) > bits.I32_MAX do return nil, .Too_Big
 
     // SQLite accepts a counted, non-NUL-terminated buffer when nByte is exact.
     rc = c_prepare_v2(db, cstring(raw_data(sql)), c.int(len(sql)), &stmt, nil)
 
-    if rc != .Ok {
-        stmt = nil
-    }
+    if rc != .Ok do stmt = nil
 
     return
 }
@@ -387,12 +353,8 @@ step_row :: proc(stmt: ^Stmt) -> (has_row: bool, rc: Result) {
     assert(stmt != nil, "step_row needs a statement")
 
     result := step(stmt)
-    if result == .Row {
-        return true, .Ok
-    }
-    if is_error(result) {
-        return false, result
-    }
+    if result == .Row do return true, .Ok
+    if is_error(result) do return false, result
 
     assert(result == .Done, "step_row either yields a row or completes")
 
@@ -418,9 +380,7 @@ execute_stmt :: proc(stmt: ^Stmt) -> Result {
     stepped := step(stmt)
     finished := reset_and_clear(stmt)
 
-    if stepped != .Done {
-        return stepped
-    }
+    if stepped != .Done do return stepped
 
     return finished
 }
@@ -435,28 +395,20 @@ query_one_i64 :: proc(db: ^Conn, sql: string) -> (value: i64, rc: Result) {
     st: ^Stmt
     st, rc = prepare(db, sql)
 
-    if rc != .Ok {
-        return 0, rc
-    }
+    if rc != .Ok do return 0, rc
     defer finalize(st)
     assert(column_count(st) == 1, "query_one_i64 sql returns one column")
 
     rc = step(st)
 
-    if rc != .Row {
-        return 0, rc
-    }
+    if rc != .Row do return 0, rc
 
-    if column_type(st, 0) != .Integer {
-        return 0, .Mismatch
-    }
+    if column_type(st, 0) != .Integer do return 0, .Mismatch
 
     value = column_i64(st, 0)
     rc = step(st)
 
-    if rc != .Done {
-        return 0, rc
-    }
+    if rc != .Done do return 0, rc
 
     return value, .Ok
 }
@@ -471,31 +423,21 @@ query_one_text :: proc(db: ^Conn, sql: string, allocator := context.allocator) -
     st: ^Stmt
     st, rc = prepare(db, sql)
 
-    if rc != .Ok {
-        return "", rc
-    }
+    if rc != .Ok do return "", rc
     defer finalize(st)
     assert(column_count(st) == 1, "query_one_text sql returns one column")
 
     rc = step(st)
 
-    if rc != .Row {
-        return "", rc
-    }
+    if rc != .Row do return "", rc
 
-    if column_type(st, 0) != .Text {
-        return "", .Mismatch
-    }
+    if column_type(st, 0) != .Text do return "", .Mismatch
 
     borrowed, column_rc := column_text(st, 0)
-    if column_rc != .Ok {
-        return "", column_rc
-    }
+    if column_rc != .Ok do return "", column_rc
 
     cloned, clone_err := strings.clone(borrowed, allocator)
-    if clone_err != nil {
-        return "", .No_Mem
-    }
+    if clone_err != nil do return "", .No_Mem
 
     rc = step(st)
 
@@ -518,33 +460,23 @@ query_one_text_equal :: proc(db: ^Conn, sql: string, expected: string) -> (equal
     st: ^Stmt
     st, rc = prepare(db, sql)
 
-    if rc != .Ok {
-        return false, rc
-    }
+    if rc != .Ok do return false, rc
     defer finalize(st)
     assert(column_count(st) == 1, "query_one_text_equal sql returns one column")
 
     rc = step(st)
 
-    if rc != .Row {
-        return false, rc
-    }
+    if rc != .Row do return false, rc
 
-    if column_type(st, 0) != .Text {
-        return false, .Mismatch
-    }
+    if column_type(st, 0) != .Text do return false, .Mismatch
 
     value, column_rc := column_text(st, 0)
-    if column_rc != .Ok {
-        return false, column_rc
-    }
+    if column_rc != .Ok do return false, column_rc
 
     equal = value == expected
     rc = step(st)
 
-    if rc != .Done {
-        return false, rc
-    }
+    if rc != .Done do return false, rc
 
     return equal, .Ok
 }
@@ -555,9 +487,7 @@ bind_i64 :: proc(stmt: ^Stmt, index: int, value: i64) -> Result {
     assert(stmt != nil, "bind_i64 needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
-    if index > bits.I32_MAX {
-        return .Range
-    }
+    if index > bits.I32_MAX do return .Range
 
     return c_bind_int64(stmt, c.int(index), value)
 }
@@ -568,9 +498,7 @@ bind_f64 :: proc(stmt: ^Stmt, index: int, value: f64) -> Result {
     assert(stmt != nil, "bind_f64 needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
-    if index > bits.I32_MAX {
-        return .Range
-    }
+    if index > bits.I32_MAX do return .Range
 
     return c_bind_double(stmt, c.int(index), value)
 }
@@ -587,25 +515,17 @@ bind_text_lifetime :: proc(stmt: ^Stmt, index: int, value: string, lifetime: Bin
     assert(stmt != nil, "bind_text needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
-    if index > bits.I32_MAX {
-        return .Range
-    }
+    if index > bits.I32_MAX do return .Range
 
-    if len(value) > bits.I32_MAX {
-        return .Too_Big
-    }
+    if len(value) > bits.I32_MAX do return .Too_Big
 
     destructor := TRANSIENT
 
-    if lifetime == .Statement {
-        destructor = STATIC
-    }
+    if lifetime == .Statement do destructor = STATIC
 
     data := cstring("")
 
-    if len(value) > 0 {
-        data = cstring(raw_data(value))
-    }
+    if len(value) > 0 do data = cstring(raw_data(value))
 
     return c_bind_text(stmt, c.int(index), data, c.int(len(value)), destructor)
 }
@@ -621,25 +541,17 @@ bind_blob_lifetime :: proc(stmt: ^Stmt, index: int, value: []byte, lifetime: Bin
     assert(stmt != nil, "bind_blob needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
-    if index > bits.I32_MAX {
-        return .Range
-    }
+    if index > bits.I32_MAX do return .Range
 
-    if len(value) > bits.I32_MAX {
-        return .Too_Big
-    }
+    if len(value) > bits.I32_MAX do return .Too_Big
 
     destructor := TRANSIENT
 
-    if lifetime == .Statement {
-        destructor = STATIC
-    }
+    if lifetime == .Statement do destructor = STATIC
 
     data := rawptr(&empty_blob_sentinel)
 
-    if len(value) > 0 {
-        data = raw_data(value)
-    }
+    if len(value) > 0 do data = raw_data(value)
 
     return c_bind_blob(stmt, c.int(index), data, c.int(len(value)), destructor)
 }
@@ -650,9 +562,7 @@ bind_null :: proc(stmt: ^Stmt, index: int) -> Result {
     assert(stmt != nil, "bind_null needs a statement")
     assert(index >= 1, "bind parameter index is 1-based")
 
-    if index > bits.I32_MAX {
-        return .Range
-    }
+    if index > bits.I32_MAX do return .Range
 
     return c_bind_null(stmt, c.int(index))
 }
@@ -702,9 +612,7 @@ column_name :: proc(stmt: ^Stmt, col: int) -> string {
 
     name := c_column_name(stmt, c.int(col))
 
-    if name == nil {
-        return ""
-    }
+    if name == nil do return ""
 
     return string(name)
 }
@@ -720,9 +628,7 @@ column_decltype :: proc(stmt: ^Stmt, col: int) -> string {
 
     decl := c_column_decltype(stmt, c.int(col))
 
-    if decl == nil {
-        return ""
-    }
+    if decl == nil do return ""
 
     return string(decl)
 }
@@ -769,14 +675,10 @@ column_text :: proc(stmt: ^Stmt, col: int) -> (value: string, rc: Result) {
 
     storage := c_column_type(stmt, c.int(col))
     text := c_column_text(stmt, c.int(col))
-    if text == nil {
-        return "", .Ok if storage == .Null else .No_Mem
-    }
+    if text == nil do return "", .Ok if storage == .Null else .No_Mem
 
     n := int(c_column_bytes(stmt, c.int(col)))
-    if n <= 0 {
-        return "", .Ok
-    }
+    if n <= 0 do return "", .Ok
 
     return string((cast([^]byte)rawptr(text))[:n]), .Ok
 }
@@ -791,13 +693,9 @@ column_blob :: proc(stmt: ^Stmt, col: int) -> []byte {
     p := c_column_blob(stmt, c.int(col))
 
     n := int(c_column_bytes(stmt, c.int(col)))
-    if n <= 0 {
-        return nil
-    }
+    if n <= 0 do return nil
 
-    if p == nil {
-        return nil
-    }
+    if p == nil do return nil
 
     return (cast([^]byte)p)[:n]
 }
@@ -805,14 +703,10 @@ column_blob :: proc(stmt: ^Stmt, col: int) -> []byte {
 // English error message for the most recent failure on `db`. Empty if none.
 // Borrowed until the next SQLite call on this connection.
 errmsg :: proc(db: ^Conn) -> string {
-    if db == nil {
-        return ""
-    }
+    if db == nil do return ""
 
     msg := c_errmsg(db)
-    if msg == nil {
-        return ""
-    }
+    if msg == nil do return ""
 
     return string(msg)
 }
@@ -887,13 +781,9 @@ wal_checkpoint :: proc(db: ^Conn, mode: Checkpoint = .Passive, nlog: ^int = nil,
     pnckpt: ^c.int = nil if nckpt == nil else &cnckpt
     rc := c_wal_checkpoint_v2(db, nil, e_mode, pnlog, pnckpt)
 
-    if nlog != nil {
-        nlog^ = int(cnlog)
-    }
+    if nlog != nil do nlog^ = int(cnlog)
 
-    if nckpt != nil {
-        nckpt^ = int(cnckpt)
-    }
+    if nckpt != nil do nckpt^ = int(cnckpt)
 
     return rc
 }

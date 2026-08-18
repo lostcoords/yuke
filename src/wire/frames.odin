@@ -52,9 +52,7 @@ request_validate :: proc(self: Request) -> Validation_Error {
     req_id_validate(self.id) or_return
 
     _, has_api_key := self.params.(Auth_Set_Api_Key_Params)
-    if (self.method == .Auth_Set_Api_Key) != has_api_key {
-        return .Mismatched_Payload
-    }
+    if (self.method == .Auth_Set_Api_Key) != has_api_key do return .Mismatched_Payload
 
     return request_params_validate(self.params)
 }
@@ -229,9 +227,7 @@ Server_Frame_Header :: struct {
 // framing violation rather than a payload mismatch.
 @(private)
 dec_frame_begin :: proc(d: ^json.Decoder) -> json.Decode_Error {
-    if json.dec_object_begin(d) != .None {
-        return .Bad_Frame_Type
-    }
+    if json.dec_object_begin(d) != .None do return .Bad_Frame_Type
 
     return .None
 }
@@ -241,9 +237,7 @@ dec_frame_begin :: proc(d: ^json.Decoder) -> json.Decode_Error {
 dec_jsonrpc :: proc(d: ^json.Decoder) -> json.Decode_Error {
     s := json.dec_string(d) or_return
 
-    if s != JSONRPC_VERSION {
-        return .Bad_Frame_Type
-    }
+    if s != JSONRPC_VERSION do return .Bad_Frame_Type
 
     return .None
 }
@@ -294,15 +288,11 @@ request_from_reader :: proc(d: ^json.Decoder) -> (out: Request, err: json.Decode
         }
     }
 
-    if .Jsonrpc not_in seen {
-        return {}, .Bad_Frame_Type
-    }
+    if .Jsonrpc not_in seen do return {}, .Bad_Frame_Type
 
     // An id-less request is a notification, and this implementation defines none
     // in the client-to-server direction.
-    if .Id not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Id not_in seen do return {}, .Mismatched_Payload
 
     if .Params not_in seen {
         if dp, has := default_params(method).?; has {
@@ -361,13 +351,9 @@ response_from_reader :: proc(method: Method_Name, d: ^json.Decoder) -> (out: Res
         }
     }
 
-    if .Jsonrpc not_in seen {
-        return nil, .Bad_Frame_Type
-    }
+    if .Jsonrpc not_in seen do return nil, .Bad_Frame_Type
 
-    if .Id not_in seen {
-        return nil, .Mismatched_Payload
-    }
+    if .Id not_in seen do return nil, .Mismatched_Payload
 
     switch seen & {.Result, .Err} {
     case {.Result}:
@@ -422,13 +408,9 @@ notification_from_reader :: proc(d: ^json.Decoder) -> (out: Notification, err: j
         }
     }
 
-    if .Jsonrpc not_in seen {
-        return {}, .Bad_Frame_Type
-    }
+    if .Jsonrpc not_in seen do return {}, .Bad_Frame_Type
 
-    if .Params not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Params not_in seen do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -481,29 +463,19 @@ server_frame_header_stream :: proc(
         }
 
         // A notification routes on `method` alone; a response also needs its id.
-        if seen_kind, ok := kind.?; ok && has_jsonrpc && (seen_kind == .Notification || has_id) {
-            break scan
-        }
+        if seen_kind, ok := kind.?; ok && has_jsonrpc && (seen_kind == .Notification || has_id) do break scan
 
-        if skip_value {
-            json.dec_skip(&d) or_return
-        }
+        if skip_value do json.dec_skip(&d) or_return
     }
 
-    if !has_jsonrpc {
-        return {}, .Bad_Frame_Type
-    }
+    if !has_jsonrpc do return {}, .Bad_Frame_Type
 
     resolved, ok := kind.?
 
-    if !ok {
-        return {}, .Bad_Frame_Type
-    }
+    if !ok do return {}, .Bad_Frame_Type
 
     // A response must correlate; a notification must not.
-    if (resolved == .Notification) == has_id {
-        return {}, .Bad_Frame_Type
-    }
+    if (resolved == .Notification) == has_id do return {}, .Bad_Frame_Type
 
     out.kind = resolved
 

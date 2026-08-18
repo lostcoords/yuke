@@ -21,17 +21,13 @@ coalesce_send_batch :: proc(queue: ^[dynamic][]byte, batch: ^[dynamic][]byte) ->
         frame_bytes := len(queue^[count])
         assert(frame_bytes >= 2, "send queue contains a truncated frame")
 
-        if count > 0 && (total + frame_bytes > SEND_BATCH_BYTES || count >= SEND_BATCH_FRAMES) {
-            break
-        }
+        if count > 0 && (total + frame_bytes > SEND_BATCH_BYTES || count >= SEND_BATCH_FRAMES) do break
 
         total += frame_bytes
         count += 1
     }
 
-    if _, aerr := append(batch, ..queue^[:count]); aerr != nil {
-        return aerr
-    }
+    if _, aerr := append(batch, ..queue^[:count]); aerr != nil do return aerr
     remove_range(queue, 0, count)
 
     assert(count > 0 && len(batch^) == count, "send batch count mismatch")

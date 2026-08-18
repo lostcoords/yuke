@@ -37,9 +37,7 @@ calls_in :: proc(
 
     out := make([dynamic]Call_Match, 0, 8, allocator)
 
-    if body == nil {
-        return out[:]
-    }
+    if body == nil do return out[:]
 
     scan := Call_Scan {
         src    = s.file.src,
@@ -57,22 +55,16 @@ calls_in :: proc(
 }
 
 visit_calls :: proc(v: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
-    if v == nil || node == nil {
-        return v
-    }
+    if v == nil || node == nil do return v
 
     scan := (^Call_Scan)(v.data)
     call, is_call := node.derived.(^ast.Call_Expr)
 
-    if !is_call {
-        return v
-    }
+    if !is_call do return v
 
     name := callee_name(call)
 
-    if name == "" {
-        return v
-    }
+    if name == "" do return v
 
     matched := scan.prefix != "" && strings.has_prefix(name, scan.prefix)
 
@@ -85,9 +77,7 @@ visit_calls :: proc(v: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
         }
     }
 
-    if !matched {
-        return v
-    }
+    if !matched do return v
 
     args := make([dynamic]string, 0, len(call.args), context.temp_allocator)
 
@@ -142,9 +132,7 @@ len_caps_in :: proc(s: ^Source, body: ^ast.Stmt, allocator := context.temp_alloc
 
     out := make([dynamic]string, 0, 4, allocator)
 
-    if body == nil {
-        return out[:]
-    }
+    if body == nil do return out[:]
 
     scan := Cap_Scan {
         src = s.file.src,
@@ -160,22 +148,16 @@ len_caps_in :: proc(s: ^Source, body: ^ast.Stmt, allocator := context.temp_alloc
 }
 
 visit_len_caps :: proc(v: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
-    if v == nil || node == nil {
-        return v
-    }
+    if v == nil || node == nil do return v
 
     scan := (^Cap_Scan)(v.data)
     binary, is_binary := node.derived.(^ast.Binary_Expr)
 
-    if !is_binary || binary.op.text != ">" || binary.left == nil {
-        return v
-    }
+    if !is_binary || binary.op.text != ">" || binary.left == nil do return v
 
     call, is_call := binary.left.derived.(^ast.Call_Expr)
 
-    if !is_call || callee_name(call) != "len" {
-        return v
-    }
+    if !is_call || callee_name(call) != "len" do return v
 
     append(scan.out, node_text(scan.src, binary.right))
 
@@ -185,9 +167,7 @@ visit_len_caps :: proc(v: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
 // The callee's identifier, or "" when the call is not a plain named call. A type
 // conversion parses as a call too, so this also names the target of `Some_Type(x)`.
 callee_name :: proc(call: ^ast.Call_Expr) -> string {
-    if call == nil || call.expr == nil {
-        return ""
-    }
+    if call == nil || call.expr == nil do return ""
 
     // The codec primitives moved to `libs/json`, so a call is either a bare `ident(`
     // or a `json.ident(` selector; match on the leaf name either way.
@@ -205,13 +185,9 @@ callee_name :: proc(call: ^ast.Call_Expr) -> string {
 // Source slice for any node, guarded so a node from another file yields "" rather than a
 // wrong slice.
 node_text :: proc(src: string, node: ^ast.Node) -> string {
-    if node == nil {
-        return ""
-    }
+    if node == nil do return ""
 
-    if node.pos.offset < 0 || node.end.offset > len(src) || node.pos.offset >= node.end.offset {
-        return ""
-    }
+    if node.pos.offset < 0 || node.end.offset > len(src) || node.pos.offset >= node.end.offset do return ""
 
     return src[node.pos.offset:node.end.offset]
 }
@@ -248,15 +224,11 @@ switch_clauses :: proc(
     clauses: []^ast.Case_Clause,
     ok: bool,
 ) {
-    if body == nil {
-        return nil, false
-    }
+    if body == nil do return nil, false
 
     block, is_block := body.derived_stmt.(^ast.Block_Stmt)
 
-    if !is_block {
-        return nil, false
-    }
+    if !is_block do return nil, false
 
     for stmt in block.stmts {
         switch_body: ^ast.Stmt
@@ -269,22 +241,16 @@ switch_clauses :: proc(
             switch_body = v.body
         }
 
-        if switch_body == nil {
-            continue
-        }
+        if switch_body == nil do continue
 
         clause_block, body_is_block := switch_body.derived_stmt.(^ast.Block_Stmt)
 
-        if !body_is_block {
-            continue
-        }
+        if !body_is_block do continue
 
         out := make([dynamic]^ast.Case_Clause, 0, len(clause_block.stmts), allocator)
 
         for clause_stmt in clause_block.stmts {
-            if clause, is_clause := clause_stmt.derived_stmt.(^ast.Case_Clause); is_clause {
-                append(&out, clause)
-            }
+            if clause, is_clause := clause_stmt.derived_stmt.(^ast.Case_Clause); is_clause do append(&out, clause)
         }
 
         return out[:], true
@@ -295,15 +261,11 @@ switch_clauses :: proc(
 
 // `.Session_Create` -> `Session_Create`, for a case label or a returned enum member.
 enum_member_name :: proc(e: ^ast.Expr) -> string {
-    if e == nil {
-        return ""
-    }
+    if e == nil do return ""
 
     sel, is_sel := e.derived.(^ast.Implicit_Selector_Expr)
 
-    if !is_sel || sel.field == nil {
-        return ""
-    }
+    if !is_sel || sel.field == nil do return ""
 
     return sel.field.name
 }
@@ -314,9 +276,7 @@ enum_member_name :: proc(e: ^ast.Expr) -> string {
 decl_single :: proc(decl: ^ast.Stmt) -> (v: ^ast.Value_Decl, ok: bool) {
     value, is_value := decl.derived_stmt.(^ast.Value_Decl)
 
-    if !is_value || len(value.names) != 1 || len(value.values) != 1 {
-        return nil, false
-    }
+    if !is_value || len(value.names) != 1 || len(value.values) != 1 do return nil, false
 
     return value, true
 }
@@ -329,15 +289,11 @@ clause_string_labels :: proc(s: ^Source, clause: ^ast.Case_Clause, allocator := 
     for label in clause.list {
         _, is_lit := label.derived.(^ast.Basic_Lit)
 
-        if !is_lit {
-            continue
-        }
+        if !is_lit do continue
 
         text := expr_text(s, label)
 
-        if len(text) >= 2 && text[0] == '"' {
-            append(&out, unquote(text))
-        }
+        if len(text) >= 2 && text[0] == '"' do append(&out, unquote(text))
     }
 
     return out[:]
@@ -386,9 +342,7 @@ local_result_types :: proc(s: ^Source, ps: ^Package_Source, clause: ^ast.Case_Cl
     for stmt in clause.body {
         v, is_value := stmt.derived_stmt.(^ast.Value_Decl)
 
-        if !is_value || len(v.names) != 1 {
-            continue
-        }
+        if !is_value || len(v.names) != 1 do continue
 
         name := expr_text(s, v.names[0])
 
@@ -398,19 +352,13 @@ local_result_types :: proc(s: ^Source, ps: ^Package_Source, clause: ^ast.Case_Cl
             continue
         }
 
-        if len(v.values) != 1 {
-            continue
-        }
+        if len(v.values) != 1 do continue
 
         target := call_target_name(v.values[0])
 
-        if target == "" {
-            continue
-        }
+        if target == "" do continue
 
-        if ref, known := ps.procs[target]; known && ref.result_type != "" {
-            out[name] = ref.result_type
-        }
+        if ref, known := ps.procs[target]; known && ref.result_type != "" do out[name] = ref.result_type
     }
 
     return out
@@ -428,19 +376,13 @@ collect_returns :: proc(
     guard: string,
     out: ^[dynamic]Returned_Arm,
 ) {
-    if stmt == nil {
-        return
-    }
+    if stmt == nil do return
 
     #partial switch v in stmt.derived_stmt {
     case ^ast.Return_Stmt:
-        if len(v.results) == 0 {
-            return
-        }
+        if len(v.results) == 0 do return
 
-        if arm := returned_arm_name(s, v.results[0], known, locals); arm != "" {
-            append(out, Returned_Arm{arm = arm, guard = guard})
-        }
+        if arm := returned_arm_name(s, v.results[0], known, locals); arm != "" do append(out, Returned_Arm{arm = arm, guard = guard})
 
     case ^ast.Block_Stmt:
         for inner in v.stmts {
@@ -456,9 +398,7 @@ collect_returns :: proc(
 
 // The arm a return result names: a composite literal's type, or a local's resolved type.
 returned_arm_name :: proc(s: ^Source, e: ^ast.Expr, known: map[string]bool, locals: map[string]string) -> string {
-    if e == nil {
-        return ""
-    }
+    if e == nil do return ""
 
     #partial switch v in e.derived {
     case ^ast.Comp_Lit:
@@ -477,19 +417,13 @@ returned_arm_name :: proc(s: ^Source, e: ^ast.Expr, known: map[string]bool, loca
 
 // The literal in a `tag == "x"` comparison, or "" when `cond` is not one.
 tag_comparison :: proc(s: ^Source, cond: ^ast.Expr) -> string {
-    if cond == nil {
-        return ""
-    }
+    if cond == nil do return ""
 
     binary, is_binary := cond.derived.(^ast.Binary_Expr)
 
-    if !is_binary || binary.op.text != "==" {
-        return ""
-    }
+    if !is_binary || binary.op.text != "==" do return ""
 
-    if expr_text(s, binary.left) != "tag" {
-        return ""
-    }
+    if expr_text(s, binary.left) != "tag" do return ""
 
     text := expr_text(s, binary.right)
 

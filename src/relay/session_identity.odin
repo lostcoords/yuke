@@ -43,35 +43,23 @@ session_identity_load :: proc(
     assert(dir != "", "session_identity_load needs a directory")
 
     path, _ := filepath.join({dir, SESSION_FILE}, context.temp_allocator)
-    if !os.exists(path) {
-        return {}, .Absent
-    }
+    if !os.exists(path) do return {}, .Absent
 
     bytes, read_err := os.read_entire_file(path, context.temp_allocator)
-    if read_err != nil {
-        return {}, .Unreadable
-    }
+    if read_err != nil do return {}, .Unreadable
     defer delete(bytes, context.temp_allocator)
 
     sf: Session_File
-    if json.unmarshal(bytes, &sf, .JSON, context.temp_allocator) != nil {
-        return {}, .Malformed
-    }
-    if sf.session_id == "" || sf.credential == "" || sf.relay_url == "" {
-        return {}, .Malformed
-    }
-    if !strings.has_prefix(sf.credential, "yk_sess_") {
-        return {}, .Stale
-    }
+    if json.unmarshal(bytes, &sf, .JSON, context.temp_allocator) != nil do return {}, .Malformed
+    if sf.session_id == "" || sf.credential == "" || sf.relay_url == "" do return {}, .Malformed
+    if !strings.has_prefix(sf.credential, "yk_sess_") do return {}, .Stale
 
     out: Session_Identity
     out.allocator = allocator
     out.session_id = strings.clone(sf.session_id, allocator)
     out.credential = strings.clone(sf.credential, allocator)
     out.relay_url = strings.clone(sf.relay_url, allocator)
-    if sf.local_device_id != "" {
-        out.local_device_id = strings.clone(sf.local_device_id, allocator)
-    }
+    if sf.local_device_id != "" do out.local_device_id = strings.clone(sf.local_device_id, allocator)
     out.kind = strings.clone(sf.kind if sf.kind != "" else "cli", allocator)
 
     if out.kind == "cli" {
@@ -136,8 +124,6 @@ session_identity_destroy :: proc(id: ^Session_Identity) {
         delete(id.local_device_id, id.allocator)
         delete(id.kind, id.allocator)
     }
-    if id.has_static_key {
-        ecdh.private_key_clear(&id.static_key)
-    }
+    if id.has_static_key do ecdh.private_key_clear(&id.static_key)
     id^ = {}
 }

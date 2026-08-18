@@ -87,9 +87,7 @@ test_config_dir_names_the_app_directory :: proc(t: ^testing.T) {
 
     // Whatever base a platform resolves, the leaf is always the application directory; an
     // unresolved base (no home, no XDG) is the one case with nothing to name.
-    if dir != "" {
-        testing.expect(t, strings.has_suffix(dir, APP_DIR), "config dir ends in the app directory")
-    }
+    if dir != "" do testing.expect(t, strings.has_suffix(dir, APP_DIR), "config dir ends in the app directory")
 }
 
 @(test)

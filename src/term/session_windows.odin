@@ -16,9 +16,7 @@ poll_readable :: proc(handle: Tty_Handle, timeout_ms: i32) -> bool {
 read_byte :: proc(handle: Tty_Handle) -> (u8, bool) {
     b: [1]u8
     read: windows.DWORD
-    if !windows.ReadFile(handle, raw_data(b[:]), 1, &read, nil) || read == 0 {
-        return 0, false
-    }
+    if !windows.ReadFile(handle, raw_data(b[:]), 1, &read, nil) || read == 0 do return 0, false
 
     return b[0], true
 }
@@ -70,15 +68,9 @@ output_mode_enter :: proc(handle: Tty_Handle) -> Output_Mode_State {
 
 // Restore whatever `output_mode_enter` changed. Best-effort; results ignored.
 output_mode_leave :: proc(state: Output_Mode_State) {
-    if state.mode_saved {
-        windows.SetConsoleMode(state.handle, state.prev_mode)
-    }
+    if state.mode_saved do windows.SetConsoleMode(state.handle, state.prev_mode)
 
-    if state.prev_out_cp != windows.CODEPAGE.ACP {
-        windows.SetConsoleOutputCP(state.prev_out_cp)
-    }
+    if state.prev_out_cp != windows.CODEPAGE.ACP do windows.SetConsoleOutputCP(state.prev_out_cp)
 
-    if state.prev_in_cp != windows.CODEPAGE.ACP {
-        windows.SetConsoleCP(state.prev_in_cp)
-    }
+    if state.prev_in_cp != windows.CODEPAGE.ACP do windows.SetConsoleCP(state.prev_in_cp)
 }

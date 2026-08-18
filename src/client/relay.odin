@@ -86,9 +86,7 @@ relay_create :: proc(
     assert(len(static_seed) == relay.NOISE_STATIC_KEY_SIZE, "relay_create needs a 32-byte static key")
     assert(len(remote_static) == relay.NOISE_STATIC_KEY_SIZE, "relay_create needs a 32-byte pinned key")
 
-    if _, ok := relay.endpoint_parse(relay_url); !ok {
-        return {}, .Invalid_Options
-    }
+    if _, ok := relay.endpoint_parse(relay_url); !ok do return {}, .Invalid_Options
 
     backend := new(Relay_Backend, allocator)
 
@@ -162,9 +160,7 @@ relay_open :: proc(t: Transport, c: ^Client) -> ws.Client_Error {
         keepalive_interval = RELAY_KEEPALIVE_INTERVAL,
         keepalive_pong_deadline = RELAY_KEEPALIVE_PONG_DEADLINE,
     )
-    if err != .None {
-        return err
-    }
+    if err != .None do return err
 
     backend.dialed = true
 
@@ -193,17 +189,13 @@ relay_send_text :: proc(t: Transport, data: []byte) -> ws.Client_Error {
         hi := min(lo + relay.TRANSPORT_CHUNK_MAX, len(data))
 
         frame, serr := relay.transport_seal_chunk(&backend.session, data[lo:hi], i, count, scratch)
-        if serr != .None {
-            return relay_seal_error(serr)
-        }
+        if serr != .None do return relay_seal_error(serr)
 
         // Not_Open means the link is already closing; its terminal fails the connection. Any
         // other failure is fatal: the chunk is sealed, so the nonce advanced, and unlike a
         // stateless frame a sealed one cannot be dropped without corrupting every later frame.
         // Report it so the connection fails rather than silently desyncing.
-        if send_err := relay.link_send_binary(&backend.link, frame); send_err != .None {
-            return send_err
-        }
+        if send_err := relay.link_send_binary(&backend.link, frame); send_err != .None do return send_err
     }
 
     return .None
@@ -241,9 +233,7 @@ relay_destroy :: proc(t: Transport) {
     backend := (^Relay_Backend)(t.self)
     assert(backend != nil, "relay_destroy needs a backend from a successful create")
 
-    if backend.dialed {
-        relay.link_destroy(&backend.link)
-    }
+    if backend.dialed do relay.link_destroy(&backend.link)
 
     relay_free(backend)
 }
@@ -324,9 +314,7 @@ relay_on_sealed :: proc(l: ^relay.Link, payload: []u8) {
         return
     }
 
-    if !done {
-        return
-    }
+    if !done do return
 
     transport_on_text(backend.client, frame)
     relay.reassembler_reset(&backend.reasm)

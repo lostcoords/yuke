@@ -42,9 +42,7 @@ Open_Session :: struct {
 open_session_teardown :: proc(h: ^Host) {
     assert(h != nil, "open session teardown needs a host")
 
-    if !h.open_session.live {
-        return
-    }
+    if !h.open_session.live do return
 
     client.replica_destroy(&h.open_session.replica)
     h.open_session.live = false
@@ -60,9 +58,7 @@ client_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     h := (^Host)(c.user_data)
     assert(&h.daemon.client == c && h.daemon.live, "broadcast callback crossed connections")
 
-    if h.done || !h.open_session.live || h.open_session.sync != .Synced {
-        return
-    }
+    if h.done || !h.open_session.live || h.open_session.sync != .Synced do return
 
     res, err := client.replica_apply_broadcast(&h.open_session.replica, bc)
 
@@ -101,18 +97,12 @@ client_js_session_open :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.
     _ = this
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
-    if argc < 1 {
-        return qjs.throw_type_error(ctx, "sessionOpen expects a session id")
-    }
+    if argc < 1 do return qjs.throw_type_error(ctx, "sessionOpen expects a session id")
 
     id, ok := session_id_from_js(ctx, argv[0])
-    if !ok {
-        return qjs.throw_type_error(ctx, "sessionOpen expects a 16 hex-char session id")
-    }
+    if !ok do return qjs.throw_type_error(ctx, "sessionOpen expects a 16 hex-char session id")
 
     open_session_teardown(h)
 
@@ -138,9 +128,7 @@ client_js_session_close :: proc "c" (
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
     open_session_teardown(h)
 
@@ -157,9 +145,7 @@ client_js_session_rev :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.i
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.open_session.live {
-        return qjs.new_i64(-1)
-    }
+    if h == nil || !h.open_session.live do return qjs.new_i64(-1)
 
     return qjs.new_i64(i64(h.open_session.rev))
 }
@@ -178,9 +164,7 @@ client_js_session_snapshot :: proc "c" (
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil || !h.open_session.live {
-        return qjs.new_string(ctx, "null")
-    }
+    if h == nil || !h.open_session.live do return qjs.new_string(ctx, "null")
 
     // Reset once `new_string` has copied the bytes into a QuickJS string. The host's shared temp
     // allocator is not reset per frame, so a polled snapshot must not accrue there.
@@ -205,21 +189,13 @@ client_js_session_resync :: proc "c" (
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil {
-        return qjs.throw_type_error(ctx, "yuke:client has no host")
-    }
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
-    if h.done {
-        return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
-    }
+    if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
 
-    if !h.open_session.live {
-        return qjs.throw_type_error(ctx, "no session is open")
-    }
+    if !h.open_session.live do return qjs.throw_type_error(ctx, "no session is open")
 
-    if !h.daemon.live {
-        return qjs.throw_type_error(ctx, "not connected")
-    }
+    if !h.daemon.live do return qjs.throw_type_error(ctx, "not connected")
 
     params := wire.Session_Resync_Params {
         session_id = h.open_session.replica.session_id,
@@ -227,9 +203,7 @@ client_js_session_resync :: proc "c" (
 
     job, promise := client_promise_new(h)
     if job == nil {
-        if qjs.is_exception(promise) {
-            return promise
-        }
+        if qjs.is_exception(promise) do return promise
 
         return qjs.throw_type_error(ctx, "out of memory")
     }
@@ -313,9 +287,7 @@ resync_fail :: proc(h: ^Host, job: ^Client_Promise, reason: string, targeting: b
 
     client_promise_reject(job, reason, true)
 
-    if targeting {
-        host_dispatch_session(h)
-    }
+    if targeting do host_dispatch_session(h)
 }
 
 @(private = "file")
@@ -364,27 +336,19 @@ session_native_install :: proc(ctx: ^qjs.Context, native: qjs.Value) {
 // Parse a JS value into a session id: a 16-char lowercase-hex string held as its bytes.
 @(private = "file")
 session_id_from_js :: proc(ctx: ^qjs.Context, v: qjs.Value) -> (wire.Session_Id, bool) {
-    if !qjs.is_string(v) {
-        return {}, false
-    }
+    if !qjs.is_string(v) do return {}, false
 
     s, ok := qjs.to_string(ctx, v)
-    if !ok {
-        return {}, false
-    }
+    if !ok do return {}, false
 
     defer qjs.free_string(ctx, s)
 
-    if len(s) != 16 {
-        return {}, false
-    }
+    if len(s) != 16 do return {}, false
 
     arr: [16]u8
     copy(arr[:], transmute([]u8)s)
 
-    if wire.enforce_id(arr) != .None {
-        return {}, false
-    }
+    if wire.enforce_id(arr) != .None do return {}, false
 
     return wire.Session_Id(arr), true
 }
@@ -442,9 +406,7 @@ session_snapshot_json :: proc(h: ^Host, allocator: mem.Allocator) -> string {
 
     msgs := make([dynamic]Snapshot_Message, 0, len(open.replica.messages), allocator)
     for owned in open.replica.messages {
-        if m, ok := snapshot_message_from_wire(owned.message, allocator); ok {
-            append(&msgs, m)
-        }
+        if m, ok := snapshot_message_from_wire(owned.message, allocator); ok do append(&msgs, m)
     }
 
     snap := Snapshot {
@@ -462,15 +424,11 @@ session_snapshot_json :: proc(h: ^Host, allocator: mem.Allocator) -> string {
             pid := wire.Part_Id(u64(i))
 
             kind, kok := client.replica_part_kind(&open.replica, pid)
-            if !kok {
-                continue
-            }
+            if !kok do continue
 
             #partial switch kind {
             case .Text, .Reasoning:
-                if txt, tok := client.replica_part_text(&open.replica, pid); tok {
-                    append(&parts, Snapshot_Part{type = kind == .Reasoning ? "reasoning" : "text", text = txt})
-                }
+                if txt, tok := client.replica_part_text(&open.replica, pid); tok do append(&parts, Snapshot_Part{type = kind == .Reasoning ? "reasoning" : "text", text = txt})
             }
         }
 
@@ -482,9 +440,7 @@ session_snapshot_json :: proc(h: ^Host, allocator: mem.Allocator) -> string {
     }
 
     bytes, err := json.marshal(snap, {}, allocator)
-    if err != nil {
-        return "null"
-    }
+    if err != nil do return "null"
 
     return string(bytes)
 }
@@ -497,9 +453,7 @@ snapshot_message_from_wire :: proc(msg: wire.Message, allocator := context.alloc
     case wire.User_Message:
         parts := make([dynamic]Snapshot_Part, 0, len(v.content), allocator)
         for part in v.content {
-            if t, ok := part.(wire.Content_Text); ok {
-                append(&parts, Snapshot_Part{type = "text", text = t.text})
-            }
+            if t, ok := part.(wire.Content_Text); ok do append(&parts, Snapshot_Part{type = "text", text = t.text})
         }
 
         return {type = "user", id = u64(v.id), content = parts[:]}, true

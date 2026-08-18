@@ -12,14 +12,10 @@ clip_cells :: proc(text: string, width: int) -> string {
     it := clusters(text)
     for {
         c, ok := iter_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         w := cluster_width(c, text)
-        if w > intrinsics.saturating_sub(width, used) {
-            break
-        }
+        if w > intrinsics.saturating_sub(width, used) do break
 
         used = intrinsics.saturating_add(used, w)
         end = c.offset + c.len
@@ -47,9 +43,7 @@ slice_cells :: proc(text: string, start, width: int) -> string {
     it := clusters(text)
     for {
         c, ok := iter_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         w := cluster_width(c, text)
         next := intrinsics.saturating_add(used, w)
@@ -58,9 +52,7 @@ slice_cells :: proc(text: string, start, width: int) -> string {
             continue
         }
 
-        if used >= end_cell || next > end_cell {
-            break
-        }
+        if used >= end_cell || next > end_cell do break
 
         if !started {
             byte_start = c.offset
@@ -71,9 +63,7 @@ slice_cells :: proc(text: string, start, width: int) -> string {
         used = next
     }
 
-    if !started {
-        return ""
-    }
+    if !started do return ""
 
     return text[byte_start:byte_end]
 }
@@ -98,9 +88,7 @@ wrap_text :: proc(text: string, width: int, allocator: mem.Allocator) -> []strin
     it := clusters(text)
     for {
         c, ok := iter_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         gw := cluster_width(c, text)
         if gw > intrinsics.saturating_sub(w, row_w) && row_end > row_start {

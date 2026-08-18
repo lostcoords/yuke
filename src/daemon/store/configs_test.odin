@@ -18,9 +18,7 @@ config_model :: proc(s: ^Store, session: wire.Session_Id, rev: wire.Config_Rev) 
         ),
         context.temp_allocator,
     )
-    if err != .Ok {
-        return ""
-    }
+    if err != .Ok do return ""
 
     return text
 }
@@ -31,9 +29,7 @@ prompt_rows :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
         s.writer,
         fmt.tprintf("SELECT count(*) FROM session_prompts WHERE session_id = x'%s'", hex_session(session)),
     )
-    if err != .Ok {
-        return -1
-    }
+    if err != .Ok do return -1
 
     return count
 }

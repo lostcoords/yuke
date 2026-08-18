@@ -68,14 +68,10 @@ diff_text :: proc(
     new_lines := diff_split(after, allocator)
 
     edits, scripted := diff_script(old_lines, new_lines, allocator)
-    if !scripted {
-        return {}, false
-    }
+    if !scripted do return {}, false
 
     hunks, built := diff_hunks(edits, old_lines, new_lines, allocator)
-    if !built {
-        return {}, false
-    }
+    if !built do return {}, false
 
     return Diff_File{path = strings.clone(path, allocator), hunks = hunks}, true
 }
@@ -84,9 +80,7 @@ diff_text :: proc(
 // starting an empty one, so "a\n" and "a" split the same.
 @(private = "file")
 diff_split :: proc(text: string, allocator: mem.Allocator) -> []string {
-    if text == "" {
-        return nil
-    }
+    if text == "" do return nil
 
     body := text[:len(text) - 1] if text[len(text) - 1] == '\n' else text
     return strings.split(body, "\n", allocator)
@@ -162,9 +156,7 @@ diff_script :: proc(
         }
     }
 
-    if reached < 0 {
-        return nil, false
-    }
+    if reached < 0 do return nil, false
 
     return diff_backtrack(trace[:], offset, n, m, allocator), true
 }
@@ -251,9 +243,7 @@ diff_hunks :: proc(
                 gap += 1
             }
 
-            if end + gap >= len(edits) || gap > 2 * DIFF_CONTEXT {
-                break
-            }
+            if end + gap >= len(edits) || gap > 2 * DIFF_CONTEXT do break
 
             end += gap
         }
@@ -261,13 +251,9 @@ diff_hunks :: proc(
         end = min(len(edits), end + DIFF_CONTEXT)
 
         hunk, framed := diff_hunk_build(edits[start:end], old_lines, new_lines, allocator)
-        if !framed {
-            return nil, false
-        }
+        if !framed do return nil, false
 
-        if len(out) >= DIFF_MAX_ITEMS {
-            return nil, false
-        }
+        if len(out) >= DIFF_MAX_ITEMS do return nil, false
 
         append(&out, hunk)
         index = end
@@ -290,9 +276,7 @@ diff_hunk_build :: proc(
 ) {
     assert(len(edits) > 0, "a hunk covers at least one edit")
 
-    if len(edits) > DIFF_MAX_ITEMS {
-        return {}, false
-    }
+    if len(edits) > DIFF_MAX_ITEMS do return {}, false
 
     body := make([]string, len(edits), allocator)
 

@@ -143,9 +143,7 @@ host_calls: int
 host_echo :: proc "c" (ctx: ^Context, this_val: Value, argc: c.int, argv: [^]Value) -> Value {
     context = runtime.default_context()
     host_calls += 1
-    if argc < 1 {
-        return undefined()
-    }
+    if argc < 1 do return undefined()
 
     return dup_value(ctx, argv[0])
 }
@@ -325,15 +323,11 @@ heap_alloc :: proc "c" (user: rawptr, size: c.size_t) -> rawptr {
     h := (^Session_Heap)(user)
     context = h.ctx
     block, err := mem.alloc_bytes(int(size) + HDR, 16, mem.arena_allocator(&h.arena))
-    if err != nil {
-        return nil
-    }
+    if err != nil do return nil
 
     (^u64)(raw_data(block))^ = u64(size)
     h.live += int(size)
-    if h.live > h.peak {
-        h.peak = h.live
-    }
+    if h.live > h.peak do h.peak = h.live
 
     return rawptr(uintptr(raw_data(block)) + HDR)
 }
@@ -352,9 +346,7 @@ heap_calloc :: proc "c" (user: rawptr, count, size: c.size_t) -> rawptr {
 
 @(private = "file")
 heap_free :: proc "c" (user: rawptr, ptr: rawptr) {
-    if ptr == nil {
-        return
-    }
+    if ptr == nil do return
 
     h := (^Session_Heap)(user)
     h.live -= int((^u64)(uintptr(ptr) - HDR)^)
@@ -362,9 +354,7 @@ heap_free :: proc "c" (user: rawptr, ptr: rawptr) {
 
 @(private = "file")
 heap_realloc :: proc "c" (user: rawptr, ptr: rawptr, size: c.size_t) -> rawptr {
-    if ptr == nil {
-        return heap_alloc(user, size)
-    }
+    if ptr == nil do return heap_alloc(user, size)
     if size == 0 {
         heap_free(user, ptr)
         return nil
@@ -372,9 +362,7 @@ heap_realloc :: proc "c" (user: rawptr, ptr: rawptr, size: c.size_t) -> rawptr {
 
     old := int((^u64)(uintptr(ptr) - HDR)^)
     np := heap_alloc(user, size)
-    if np == nil {
-        return nil
-    }
+    if np == nil do return nil
 
     h := (^Session_Heap)(user)
     context = h.ctx
@@ -386,9 +374,7 @@ heap_realloc :: proc "c" (user: rawptr, ptr: rawptr, size: c.size_t) -> rawptr {
 
 @(private = "file")
 heap_usable_size :: proc "c" (ptr: rawptr) -> c.size_t {
-    if ptr == nil {
-        return 0
-    }
+    if ptr == nil do return 0
 
     return c.size_t((^u64)(uintptr(ptr) - HDR)^)
 }

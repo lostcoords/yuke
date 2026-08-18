@@ -62,14 +62,10 @@ Style :: struct {
 // Modifiers are set-unioned (bitwise OR). This is the ONLY merge semantic and preserves base modifiers.
 style_patch :: proc(base, top: Style) -> Style {
     fg := base.fg
-    if top.fg != nil {
-        fg = top.fg
-    }
+    if top.fg != nil do fg = top.fg
 
     bg := base.bg
-    if top.bg != nil {
-        bg = top.bg
-    }
+    if top.bg != nil do bg = top.bg
 
     mods := base.mods | top.mods
 

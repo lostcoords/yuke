@@ -121,9 +121,7 @@ workspace_describe_result_emit :: proc(e: ^json.Emitter, self: Workspace_Describ
 workspace_describe_result_validate :: proc(self: Workspace_Describe_Result) -> Validation_Error {
     workspace_validate(self.workspace) or_return
 
-    if git, ok := self.git.?; ok {
-        git_info_validate(git) or_return
-    }
+    if git, ok := self.git.?; ok do git_info_validate(git) or_return
     // `last_used_model` is @unbounded — no length limit.
     return .None
 }
@@ -147,9 +145,7 @@ workspace_browse_params_emit :: proc(e: ^json.Emitter, self: Workspace_Browse_Pa
     json.object_begin(e)
     json.field_string_opt(e, "path", self.path)
 
-    if limit, ok := self.limit.?; ok {
-        json.field_u64(e, "limit", limit)
-    }
+    if limit, ok := self.limit.?; ok do json.field_u64(e, "limit", limit)
 
     json.field_string_opt(e, "cursor", self.cursor)
     json.object_end(e)
@@ -158,14 +154,10 @@ workspace_browse_params_emit :: proc(e: ^json.Emitter, self: Workspace_Browse_Pa
 // Verify the page and cursor bounds.
 workspace_browse_params_validate :: proc(self: Workspace_Browse_Params) -> Validation_Error {
     if limit, ok := self.limit.?; ok {
-        if limit == 0 || limit > u64(LIMITS.max_workspace_browse_page_size) {
-            return .Out_Of_Range
-        }
+        if limit == 0 || limit > u64(LIMITS.max_workspace_browse_page_size) do return .Out_Of_Range
     }
 
-    if cursor, ok := self.cursor.?; ok {
-        return enforce_bounded(LIMITS.max_workspace_browse_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.cursor.?; ok do return enforce_bounded(LIMITS.max_workspace_browse_cursor_bytes, cursor)
 
     return .None
 }
@@ -239,17 +231,13 @@ workspace_browse_result_emit :: proc(e: ^json.Emitter, self: Workspace_Browse_Re
 
 // Verify annotated field bounds.
 workspace_browse_result_validate :: proc(self: Workspace_Browse_Result) -> Validation_Error {
-    if len(self.entries) > LIMITS.max_workspace_browse_page_size {
-        return .Overflow
-    }
+    if len(self.entries) > LIMITS.max_workspace_browse_page_size do return .Overflow
 
     for entry in self.entries {
         dir_entry_validate(entry) or_return
     }
 
-    if cursor, ok := self.next_cursor.?; ok {
-        return enforce_bounded(LIMITS.max_workspace_browse_cursor_bytes, cursor)
-    }
+    if cursor, ok := self.next_cursor.?; ok do return enforce_bounded(LIMITS.max_workspace_browse_cursor_bytes, cursor)
 
     return .None
 }
@@ -298,9 +286,7 @@ workspace_remove_result_emit :: proc(e: ^json.Emitter, self: Workspace_Remove_Re
 
 // Verify annotated field bounds.
 workspace_remove_result_validate :: proc(self: Workspace_Remove_Result) -> Validation_Error {
-    if len(self.related_job_ids) > LIMITS.max_cron_jobs {
-        return .Overflow
-    }
+    if len(self.related_job_ids) > LIMITS.max_cron_jobs do return .Overflow
 
     for jid in self.related_job_ids {
         enforce_id(([16]u8)(jid)) or_return
@@ -391,9 +377,7 @@ workspace_skills_result_emit :: proc(e: ^json.Emitter, self: Workspace_Skills_Re
 
 // Verify annotated field bounds.
 workspace_skills_result_validate :: proc(self: Workspace_Skills_Result) -> Validation_Error {
-    if len(self.skills) > LIMITS.max_skills {
-        return .Overflow
-    }
+    if len(self.skills) > LIMITS.max_skills do return .Overflow
 
     for skill in self.skills {
         skill_info_validate(skill) or_return
@@ -435,9 +419,7 @@ workspace_from_reader :: proc(d: ^json.Decoder) -> (ws: Workspace, err: json.Dec
         }
     }
 
-    if seen != {.Id, .Root, .Title} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Root, .Title} do return {}, .Mismatched_Payload
 
     return ws, .None
 }
@@ -470,9 +452,7 @@ git_info_from_reader :: proc(d: ^json.Decoder) -> (git: Git_Info, err: json.Deco
         }
     }
 
-    if seen != {.Branch, .Dirty} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Branch, .Dirty} do return {}, .Mismatched_Payload
 
     return git, .None
 }
@@ -510,9 +490,7 @@ dir_entry_from_reader :: proc(d: ^json.Decoder) -> (entry: Dir_Entry, err: json.
         }
     }
 
-    if seen != {.Name, .Path, .Git} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Name, .Path, .Git} do return {}, .Mismatched_Payload
 
     return entry, .None
 }
@@ -555,9 +533,7 @@ skill_info_from_reader :: proc(d: ^json.Decoder) -> (info: Skill_Info, err: json
         }
     }
 
-    if seen != {.Name, .Desc, .Scope, .Hint} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Name, .Desc, .Scope, .Hint} do return {}, .Mismatched_Payload
 
     return info, .None
 }
@@ -591,9 +567,7 @@ workspace_describe_result_from_reader :: proc(
         case "git":
             seen += {.Git}
 
-            if !json.dec_is_null(d) {
-                result.git = git_info_from_reader(d) or_return
-            }
+            if !json.dec_is_null(d) do result.git = git_info_from_reader(d) or_return
 
         case "last_modified_ms":
             result.last_modified_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
@@ -602,18 +576,14 @@ workspace_describe_result_from_reader :: proc(
         case "last_used_model":
             seen += {.Model}
 
-            if !json.dec_is_null(d) {
-                result.last_used_model = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.last_used_model = json.dec_string(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Ws, .Git, .Mod, .Model} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Ws, .Git, .Mod, .Model} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -677,9 +647,7 @@ workspace_browse_result_from_reader :: proc(
         case "parent":
             seen += {.Parent}
 
-            if !json.dec_is_null(d) {
-                result.parent = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.parent = json.dec_string(d) or_return
 
         case "entries":
             result.entries = json.dec_array(d, dir_entry_from_reader) or_return
@@ -688,18 +656,14 @@ workspace_browse_result_from_reader :: proc(
         case "next_cursor":
             seen += {.Next}
 
-            if !json.dec_is_null(d) {
-                result.next_cursor = json.dec_string(d) or_return
-            }
+            if !json.dec_is_null(d) do result.next_cursor = json.dec_string(d) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Path, .Parent, .Entries, .Next} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Path, .Parent, .Entries, .Next} do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -722,9 +686,7 @@ workspace_ref_from_reader :: proc(d: ^json.Decoder) -> (params: Workspace_Ref, e
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -752,9 +714,7 @@ workspace_remove_result_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -789,9 +749,7 @@ workspace_skills_result_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }
@@ -819,9 +777,7 @@ workspace_describe_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }

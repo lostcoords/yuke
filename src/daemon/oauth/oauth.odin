@@ -94,13 +94,9 @@ authorization_flow_create :: proc(
         "browser flow needs a loopback redirect host and path",
     )
 
-    if port <= 0 || port > 65535 || originator == "" || len(originator) > 64 {
-        return {}, .Invalid_Input
-    }
+    if port <= 0 || port > 65535 || originator == "" || len(originator) > 64 do return {}, .Invalid_Input
 
-    defer if err != .None {
-        authorization_flow_destroy(&flow, allocator)
-    }
+    defer if err != .None do authorization_flow_destroy(&flow, allocator)
 
     verifier_bytes: [32]byte
     crypto.rand_bytes(verifier_bytes[:])
@@ -120,9 +116,7 @@ authorization_flow_create :: proc(
     )
 
     challenge, challenge_err := pkce_challenge(flow.verifier, allocator)
-    if challenge_err != .None {
-        return {}, challenge_err
-    }
+    if challenge_err != .None do return {}, challenge_err
     defer delete(challenge, allocator)
 
     client_id := url_encode(provider.client_id, allocator)
@@ -175,9 +169,7 @@ authorization_code_body :: proc(
 ) {
     assert(provider != nil, "authorization-code body needs a provider")
 
-    if code == "" || len(code) > AUTHORIZATION_CODE_MAX_BYTES || flow.verifier == "" || flow.redirect_uri == "" {
-        return "", .Invalid_Input
-    }
+    if code == "" || len(code) > AUTHORIZATION_CODE_MAX_BYTES || flow.verifier == "" || flow.redirect_uri == "" do return "", .Invalid_Input
 
     encoded_code := url_encode(code, allocator)
     encoded_redirect := url_encode(flow.redirect_uri, allocator)
@@ -205,9 +197,7 @@ authorization_code_body :: proc(
 
 // Strict application/x-www-form-urlencoded value decode for an OAuth callback.
 query_value_decode :: proc(input: string, allocator := context.allocator) -> (output: string, err: OAuth_Error) {
-    if len(input) > AUTHORIZATION_CODE_MAX_BYTES * 3 {
-        return "", .Invalid_Input
-    }
+    if len(input) > AUTHORIZATION_CODE_MAX_BYTES * 3 do return "", .Invalid_Input
 
     decoded_len := 0
     index := 0
@@ -218,15 +208,11 @@ query_value_decode :: proc(input: string, allocator := context.allocator) -> (ou
             continue
         }
 
-        if index + 2 >= len(input) {
-            return "", .Invalid_Input
-        }
+        if index + 2 >= len(input) do return "", .Invalid_Input
 
         _, high_ok := hex_digit_value(input[index + 1])
         _, low_ok := hex_digit_value(input[index + 2])
-        if !high_ok || !low_ok {
-            return "", .Invalid_Input
-        }
+        if !high_ok || !low_ok do return "", .Invalid_Input
 
         decoded_len += 1
         index += 3
@@ -234,9 +220,7 @@ query_value_decode :: proc(input: string, allocator := context.allocator) -> (ou
 
     decoded := make([]byte, decoded_len, allocator)
     defer if err != .None {
-        if len(decoded) > 0 {
-            crypto.zero_explicit(raw_data(decoded), len(decoded))
-        }
+        if len(decoded) > 0 do crypto.zero_explicit(raw_data(decoded), len(decoded))
         delete(decoded, allocator)
     }
 
@@ -250,15 +234,11 @@ query_value_decode :: proc(input: string, allocator := context.allocator) -> (ou
             index += 1
 
         case '%':
-            if index + 2 >= len(input) {
-                return "", .Invalid_Input
-            }
+            if index + 2 >= len(input) do return "", .Invalid_Input
 
             high, high_ok := hex_digit_value(input[index + 1])
             low, low_ok := hex_digit_value(input[index + 2])
-            if !high_ok || !low_ok {
-                return "", .Invalid_Input
-            }
+            if !high_ok || !low_ok do return "", .Invalid_Input
 
             decoded[at] = high << 4 | low
             at += 1
@@ -290,9 +270,7 @@ token_response_parse :: proc(
 ) {
     assert(provider != nil, "token parse needs a provider")
 
-    defer if err != .None {
-        credentials_destroy(&credentials, allocator)
-    }
+    defer if err != .None do credentials_destroy(&credentials, allocator)
 
     value, object, parse_err := json_object(data, allocator)
     if parse_err != .None {
@@ -362,9 +340,7 @@ refresh_request_body :: proc(
 ) {
     assert(provider != nil, "refresh body needs a provider")
 
-    if refresh_token == "" {
-        return "", "", .Invalid_Input
-    }
+    if refresh_token == "" do return "", "", .Invalid_Input
 
     if provider.kind == .Codex {
         Payload :: struct {
@@ -405,14 +381,10 @@ refresh_response_parse :: proc(
 ) {
     assert(provider != nil, "refresh parse needs a provider")
 
-    if !credentials_valid_for(provider, existing) {
-        return {}, .Invalid_Input
-    }
+    if !credentials_valid_for(provider, existing) do return {}, .Invalid_Input
 
     credentials = credentials_clone(existing, allocator)
-    defer if err != .None {
-        credentials_destroy(&credentials, allocator)
-    }
+    defer if err != .None do credentials_destroy(&credentials, allocator)
 
     value, object, parse_err := json_object(data, allocator)
     if parse_err != .None {
@@ -466,9 +438,7 @@ refresh_response_parse :: proc(
         delete(credentials.access_token, allocator)
         credentials.access_token = strings.clone(access, allocator)
 
-        if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok {
-            expires_at_ms = jwt_expires_at
-        }
+        if jwt_expires_at, jwt_ok := jwt_expiration_ms(access, allocator); jwt_ok do expires_at_ms = jwt_expires_at
     } else {
         assert(provider.kind == .Codex, "only Codex may omit a refreshed access token")
     }
@@ -490,23 +460,17 @@ refresh_failure_permanent :: proc(provider: ^Provider, data: string, allocator :
     assert(provider != nil, "refresh classification needs a provider")
 
     value, object, parse_err := json_object(data, allocator)
-    if parse_err != .None {
-        return false
-    }
+    if parse_err != .None do return false
     defer secret_json_destroy(value, allocator)
 
     error_value, error_found := object["error"]
-    if !error_found {
-        return false
-    }
+    if !error_found do return false
 
     code: string
     #partial switch shape in error_value {
     case json.Object:
         member, ok := json_string_member(shape, "code")
-        if !ok {
-            return false
-        }
+        if !ok do return false
         code = member
 
     case json.String:
@@ -517,9 +481,7 @@ refresh_failure_permanent :: proc(provider: ^Provider, data: string, allocator :
     }
 
     for permanent in provider.refresh_permanent_codes {
-        if code == permanent {
-            return true
-        }
+        if code == permanent do return true
     }
 
     return false
@@ -545,24 +507,16 @@ jwt_payload_object :: proc(
     err: OAuth_Error,
 ) {
     first := strings.index_byte(token, '.')
-    if first <= 0 || first + 1 >= len(token) {
-        return {}, nil, .Invalid_Response
-    }
+    if first <= 0 || first + 1 >= len(token) do return {}, nil, .Invalid_Response
 
     rest := token[first + 1:]
     second := strings.index_byte(rest, '.')
-    if second <= 0 {
-        return {}, nil, .Invalid_Response
-    }
+    if second <= 0 do return {}, nil, .Invalid_Response
 
     decoded, decode_err := base64url_decode(rest[:second], allocator)
-    if decode_err != .None {
-        return {}, nil, decode_err
-    }
+    if decode_err != .None do return {}, nil, decode_err
     defer {
-        if len(decoded) > 0 {
-            crypto.zero_explicit(raw_data(decoded), len(decoded))
-        }
+        if len(decoded) > 0 do crypto.zero_explicit(raw_data(decoded), len(decoded))
         delete(decoded, allocator)
     }
 
@@ -572,24 +526,18 @@ jwt_payload_object :: proc(
 @(private)
 jwt_expiration_ms :: proc(token: string, allocator: mem.Allocator) -> (u64, bool) {
     value, object, parse_err := jwt_payload_object(token, allocator)
-    if parse_err != .None {
-        return 0, false
-    }
+    if parse_err != .None do return 0, false
     defer secret_json_destroy(value, allocator)
 
     seconds, seconds_present, seconds_valid := json_optional_positive_u64_member(object, "exp")
-    if !seconds_present || !seconds_valid || seconds > max(u64) / 1000 {
-        return 0, false
-    }
+    if !seconds_present || !seconds_valid || seconds > max(u64) / 1000 do return 0, false
 
     return seconds * 1000, true
 }
 
 @(private)
 pkce_challenge :: proc(verifier: string, allocator: mem.Allocator) -> (string, OAuth_Error) {
-    if len(verifier) < 43 || len(verifier) > 128 {
-        return "", .Invalid_Input
-    }
+    if len(verifier) < 43 || len(verifier) > 128 do return "", .Invalid_Input
 
     hash: [sha2.DIGEST_SIZE_256]byte
     ctx: sha2.Context_256
@@ -615,9 +563,7 @@ base64url_encode :: proc(data: []byte, allocator: mem.Allocator) -> string {
 
 @(private)
 base64url_decode :: proc(data: string, allocator: mem.Allocator) -> ([]byte, OAuth_Error) {
-    if len(data) == 0 || len(data) % 4 == 1 {
-        return nil, .Invalid_Response
-    }
+    if len(data) == 0 || len(data) % 4 == 1 do return nil, .Invalid_Response
 
     padded_len := (len(data) + 3) &~ 3
     padded := make([]byte, padded_len, allocator)
@@ -632,9 +578,7 @@ base64url_decode :: proc(data: string, allocator: mem.Allocator) -> ([]byte, OAu
     }
 
     decoded, decode_err := base64.decode(string(padded), base64.DEC_URL_TABLE, allocator = allocator)
-    if decode_err != nil {
-        return nil, .Invalid_Response
-    }
+    if decode_err != nil do return nil, .Invalid_Response
 
     return decoded, .None
 }
@@ -688,9 +632,7 @@ json_object :: proc(
     parser := json.make_parser_from_string(data, .JSON, false, allocator)
     parse_error: json.Error
     value, parse_error = json.parse_value(&parser)
-    if parse_error != nil {
-        return {}, nil, .Invalid_Response
-    }
+    if parse_error != nil do return {}, nil, .Invalid_Response
 
     object_ok: bool
     object, object_ok = value.(json.Object)
@@ -705,9 +647,7 @@ json_object :: proc(
 @(private)
 json_string_member :: proc(object: json.Object, name: string) -> (string, bool) {
     value, found := object[name]
-    if !found {
-        return "", false
-    }
+    if !found do return "", false
 
     text, ok := value.(json.String)
     return text, ok
@@ -716,18 +656,12 @@ json_string_member :: proc(object: json.Object, name: string) -> (string, bool) 
 @(private)
 json_optional_string_member :: proc(object: json.Object, name: string) -> (value: string, present, valid: bool) {
     member, found := object[name]
-    if !found {
-        return "", false, true
-    }
+    if !found do return "", false, true
 
-    if _, is_null := member.(json.Null); is_null {
-        return "", false, true
-    }
+    if _, is_null := member.(json.Null); is_null do return "", false, true
 
     text, ok := member.(json.String)
-    if !ok || text == "" {
-        return "", true, false
-    }
+    if !ok || text == "" do return "", true, false
 
     return text, true, true
 }
@@ -742,21 +676,15 @@ json_optional_positive_u64_member :: proc(
     valid: bool,
 ) {
     value, found := object[name]
-    if !found {
-        return 0, false, true
-    }
+    if !found do return 0, false, true
     present = true
 
     #partial switch candidate in value {
     case json.Integer:
-        if candidate > 0 {
-            return u64(candidate), true, true
-        }
+        if candidate > 0 do return u64(candidate), true, true
 
     case json.Float:
-        if candidate > 0 && candidate < f64(max(u64)) && math.floor(candidate) == candidate {
-            return u64(candidate), true, true
-        }
+        if candidate > 0 && candidate < f64(max(u64)) && math.floor(candidate) == candidate do return u64(candidate), true, true
     }
 
     return 0, true, false
@@ -789,9 +717,7 @@ secret_json_zero :: proc(value: json.Value) {
     #partial switch item in value {
     case json.Object:
         for object_key, child in item {
-            if len(object_key) > 0 {
-                crypto.zero_explicit(raw_data(transmute([]byte)object_key), len(object_key))
-            }
+            if len(object_key) > 0 do crypto.zero_explicit(raw_data(transmute([]byte)object_key), len(object_key))
             secret_json_zero(child)
         }
 
@@ -801,8 +727,6 @@ secret_json_zero :: proc(value: json.Value) {
         }
 
     case json.String:
-        if len(item) > 0 {
-            crypto.zero_explicit(raw_data(transmute([]byte)item), len(item))
-        }
+        if len(item) > 0 do crypto.zero_explicit(raw_data(transmute([]byte)item), len(item))
     }
 }

@@ -138,12 +138,8 @@ host_init :: proc(
     h.tick_period = TICK_MS_DEFAULT
 
     size := drive.size
-    if size.width == 0 {
-        size.width = 80
-    }
-    if size.height == 0 {
-        size.height = 24
-    }
+    if size.width == 0 do size.width = 80
+    if size.height == 0 do size.height = 24
     h.width = size.width
     h.height = size.height
 
@@ -220,17 +216,13 @@ host_init :: proc(
     _ = qjs.set_property(h.js.ctx, h.size_obj, "w", qjs.new_i32(i32(h.width)))
     _ = qjs.set_property(h.js.ctx, h.size_obj, "h", qjs.new_i32(i32(h.height)))
 
-    if !host_eval_app(h) {
-        return false
-    }
+    if !host_eval_app(h) do return false
 
     return true
 }
 
 host_destroy :: proc(h: ^Host) {
-    if h == nil {
-        return
-    }
+    if h == nil do return
 
     host_cancel_tick(h)
     h.needs_tick = false
@@ -252,11 +244,7 @@ host_destroy :: proc(h: ^Host) {
     // error branches in `main`, which is exactly when a read is most likely still in
     // flight.
     if h.has_pool {
-        if derr := offload.pool_drain(&h.pool); derr != nil {
-            // Nothing to report to — the screen is coming down — but the pool must not be
-            // destroyed with work outstanding.
-            assert(derr == nil, "the fs pool did not drain")
-        }
+        if derr := offload.pool_drain(&h.pool); derr != nil do assert(derr == nil, "the fs pool did not drain")
 
         offload.pool_destroy(&h.pool)
         h.has_pool = false
@@ -308,15 +296,11 @@ host_set_last_err :: proc(h: ^Host, msg: string) {
         delete(h.last_err, h.allocator)
         h.last_err = ""
     }
-    if msg != "" {
-        h.last_err = strings.clone(msg, h.allocator)
-    }
+    if msg != "" do h.last_err = strings.clone(msg, h.allocator)
 }
 
 host_dispatch :: proc(h: ^Host, obj: qjs.Value) {
-    if qjs.is_undefined(h.on_event) {
-        return
-    }
+    if qjs.is_undefined(h.on_event) do return
 
     args := [1]qjs.Value{obj}
     result, ok := js.call(&h.js, h.on_event, qjs.undefined(), args[:], "onEvent")
@@ -332,17 +316,13 @@ host_dispatch :: proc(h: ^Host, obj: qjs.Value) {
 
     js.drain(&h.js)
     // Commit any frame left open by script (or auto-drawn without endFrame).
-    if h.dirty {
-        host_end_frame(h)
-    }
+    if h.dirty do host_end_frame(h)
 }
 
 host_on_term_event :: proc(h: ^Host, ev: term.Event) {
     assert(h != nil && h.js.ctx != nil, "host_on_term_event needs a live host")
 
-    if h.done {
-        return
-    }
+    if h.done do return
 
     if closed, is_closed := ev.(term.Input_Closed); is_closed {
         host_on_input_closed(h, closed.reason)
@@ -361,9 +341,7 @@ host_on_term_event :: proc(h: ^Host, ev: term.Event) {
     if qjs.is_undefined(h.on_event) {
         if k, ok := ev.(term.Key); ok {
             // Kitty names the unshifted 'q'; a legacy terminal reports the glyph typed.
-            if k.event != .Release && k.code == .Char && (k.char == 'q' || k.char == 'Q') {
-                h.done = true
-            }
+            if k.event != .Release && k.code == .Char && (k.char == 'q' || k.char == 'Q') do h.done = true
         }
         return
     }
@@ -443,9 +421,7 @@ host_event_object :: proc(h: ^Host, ev: term.Event) -> qjs.Value {
 
 // A codepoint as a JS string; an unreported codepoint (0) becomes the empty string.
 host_rune_value :: proc(h: ^Host, cp: rune) -> qjs.Value {
-    if cp == 0 {
-        return qjs.new_string(h.js.ctx, "")
-    }
+    if cp == 0 do return qjs.new_string(h.js.ctx, "")
 
     enc, n := utf8.encode_rune(cp)
 
@@ -453,16 +429,10 @@ host_rune_value :: proc(h: ^Host, cp: rune) -> qjs.Value {
 }
 
 host_resize_buffer :: proc(h: ^Host, w, ht: u16) {
-    if !h.has_buf || w == 0 || ht == 0 {
-        return
-    }
-    if h.buf.area.width == w && h.buf.area.height == ht {
-        return
-    }
+    if !h.has_buf || w == 0 || ht == 0 do return
+    if h.buf.area.width == w && h.buf.area.height == ht do return
 
-    if ui.buffer_resize(&h.buf, w, ht) != .None {
-        return
-    }
+    if ui.buffer_resize(&h.buf, w, ht) != .None do return
 
     h.width = w
     h.height = ht
@@ -483,9 +453,7 @@ host_resize_buffer :: proc(h: ^Host, w, ht: u16) {
 // Ensure a frame is open (current grid ready for draw). After endFrame the
 // current grid is empty; beginFrame is required for a full immediate-mode pass.
 host_begin_frame :: proc(h: ^Host) {
-    if !h.has_buf {
-        return
-    }
+    if !h.has_buf do return
     ui.buffer_begin_frame(&h.buf)
     h.in_frame = true
     h.dirty = true
@@ -506,9 +474,7 @@ host_end_frame :: proc(h: ^Host) {
 }
 
 host_ensure_frame :: proc(h: ^Host) {
-    if !h.in_frame {
-        host_begin_frame(h)
-    }
+    if !h.in_frame do host_begin_frame(h)
 }
 
 host_start :: proc(h: ^Host) {
@@ -522,9 +488,7 @@ host_start :: proc(h: ^Host) {
 // Repaint after an out-of-band open-session change (a folded broadcast or installed resync). Like
 // a tick, any dispatched event redraws. Never called from a native call, to avoid re-entering a draw.
 host_dispatch_session :: proc(h: ^Host) {
-    if h.done || h.js.ctx == nil {
-        return
-    }
+    if h.done || h.js.ctx == nil do return
 
     obj := qjs.new_object(h.js.ctx)
     _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "session"))
@@ -552,12 +516,8 @@ host_set_needs_tick :: proc(h: ^Host, enabled: bool, period: time.Duration) {
 
     if enabled {
         // Re-arm if newly enabled or period changed so the next wake matches policy.
-        if h.tick_op != nil && period_changed {
-            host_cancel_tick(h)
-        }
-        if h.tick_op == nil {
-            host_arm_tick(h)
-        }
+        if h.tick_op != nil && period_changed do host_cancel_tick(h)
+        if h.tick_op == nil do host_arm_tick(h)
     } else {
         host_cancel_tick(h)
     }
@@ -586,9 +546,7 @@ host_on_tick :: proc(_: ^nbio.Operation, h: ^Host) {
     assert(h != nil, "host_on_tick needs a host")
     h.tick_op = nil
 
-    if h.done || h.js.ctx == nil || !h.needs_tick {
-        return
-    }
+    if h.done || h.js.ctx == nil || !h.needs_tick do return
 
     obj := qjs.new_object(h.js.ctx)
     _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "tick"))
@@ -597,7 +555,5 @@ host_on_tick :: proc(_: ^nbio.Operation, h: ^Host) {
     host_dispatch(h, obj)
 
     // Script may have cleared needs_tick during paint (left home / no runners).
-    if h.needs_tick && !h.done && h.tick_op == nil {
-        host_arm_tick(h)
-    }
+    if h.needs_tick && !h.done && h.tick_op == nil do host_arm_tick(h)
 }

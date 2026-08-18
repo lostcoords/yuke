@@ -28,9 +28,7 @@ test_anthropic_decode :: proc(
     err := anthropic_decoder_decode(decoder, data, &events, scratch_allocator)
     testing.expectf(t, len(events) <= 1, "%s: Anthropic decode appends at most one event", data)
 
-    if len(events) == 1 {
-        return events[0], err
-    }
+    if len(events) == 1 do return events[0], err
 
     return nil, err
 }
@@ -81,14 +79,10 @@ test_anthropic_expect_started :: proc(
     testing.expectf(t, err == .None, "%s: want None, got %v", data, err)
 
     stream_event, present := event.?
-    if !testing.expect(t, present, "content_block_start must emit") {
-        return
-    }
+    if !testing.expect(t, present, "content_block_start must emit") do return
 
     started, ok := stream_event.(Stream_Block_Started)
-    if !testing.expect(t, ok, "content_block_start must emit Stream_Block_Started") {
-        return
-    }
+    if !testing.expect(t, ok, "content_block_start must emit Stream_Block_Started") do return
 
     testing.expect_value(t, started.block_id, block_id)
     testing.expect_value(t, started.kind, kind)
@@ -105,14 +99,10 @@ test_anthropic_expect_stopped :: proc(
     testing.expectf(t, err == .None, "%s: want None, got %v", data, err)
 
     stream_event, present := event.?
-    if !testing.expect(t, present, "content_block_stop must emit") {
-        return {}
-    }
+    if !testing.expect(t, present, "content_block_stop must emit") do return {}
 
     stopped, ok := stream_event.(Stream_Block_Stopped)
-    if !testing.expect(t, ok, "content_block_stop must emit Stream_Block_Stopped") {
-        return {}
-    }
+    if !testing.expect(t, ok, "content_block_stop must emit Stream_Block_Stopped") do return {}
 
     testing.expect_value(t, stopped.block_id, block_id)
 
@@ -125,9 +115,7 @@ test_anthropic_done :: proc(t: ^testing.T, decoder: ^Anthropic_Decoder) -> Strea
     testing.expect_value(t, err, Transport_Error.None)
 
     stream_event, present := event.?
-    if !testing.expect(t, present, "message_stop must emit a terminal event") {
-        return {}
-    }
+    if !testing.expect(t, present, "message_stop must emit a terminal event") do return {}
 
     done, ok := stream_event.(Stream_Done)
     testing.expect(t, ok, "message_stop must emit Stream_Done")
@@ -290,9 +278,7 @@ test_anthropic_reasoning_and_redacted_blocks_preserve_terminal_metadata :: proc(
     )
     stopped := test_anthropic_expect_stopped(t, &decoder, `{"type":"content_block_stop","index":0}`, 0)
     reasoning, reasoning_ok := stopped.result.(Stream_Reasoning_Block)
-    if testing.expect(t, reasoning_ok, "thinking start must close with Stream_Reasoning_Block") {
-        testing.expect_value(t, reasoning.signature, "sig")
-    }
+    if testing.expect(t, reasoning_ok, "thinking start must close with Stream_Reasoning_Block") do testing.expect_value(t, reasoning.signature, "sig")
 
     test_anthropic_expect_started(
         t,
@@ -303,9 +289,7 @@ test_anthropic_reasoning_and_redacted_blocks_preserve_terminal_metadata :: proc(
     )
     stopped = test_anthropic_expect_stopped(t, &decoder, `{"type":"content_block_stop","index":1}`, 1)
     redacted, redacted_ok := stopped.result.(Stream_Redacted_Reasoning_Block)
-    if testing.expect(t, redacted_ok, "redacted start must close with Stream_Redacted_Reasoning_Block") {
-        testing.expect_value(t, redacted.data, "opaque-data")
-    }
+    if testing.expect(t, redacted_ok, "redacted start must close with Stream_Redacted_Reasoning_Block") do testing.expect_value(t, redacted.data, "opaque-data")
 
     test_anthropic_expect_none(
         t,
@@ -356,9 +340,7 @@ test_anthropic_tool_blocks_complete_in_content_order :: proc(t: ^testing.T) {
     )
     stopped = test_anthropic_expect_stopped(t, &decoder, `{"type":"content_block_stop","index":1}`, 1)
     tool, tool_ok = stopped.result.(Stream_Tool_Block)
-    if testing.expect(t, tool_ok, "empty tool arguments still complete") {
-        testing.expect_value(t, tool.call.arguments, "{}")
-    }
+    if testing.expect(t, tool_ok, "empty tool arguments still complete") do testing.expect_value(t, tool.call.arguments, "{}")
 
     test_anthropic_expect_none(
         t,

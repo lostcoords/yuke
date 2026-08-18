@@ -105,9 +105,7 @@ Pool :: struct {
 // than competing for cores, so a small count is usually the right one. Initialization and
 // every later lifecycle operation run on `loop`'s thread.
 pool_init :: proc(p: ^Pool, loop: ^nbio.Event_Loop, worker_count: int) -> Error {
-    if p == nil || loop == nil || loop != nbio.current_thread_event_loop() || worker_count <= 0 {
-        return .Invalid_Options
-    }
+    if p == nil || loop == nil || loop != nbio.current_thread_event_loop() || worker_count <= 0 do return .Invalid_Options
 
     p^ = {}
     p.loop = loop
@@ -194,18 +192,14 @@ pool_drain :: proc(p: ^Pool) -> Drain_Error {
     assert(p != nil, "drain needs a pool")
     assert(p.loop == nbio.current_thread_event_loop(), "drain ran off the pool's loop thread")
 
-    if p.completion_depth > 0 {
-        return Drain_State_Error.Completion_In_Progress
-    }
+    if p.completion_depth > 0 do return Drain_State_Error.Completion_In_Progress
 
     p.accepting = false
 
     drain_err: Drain_Error
     for sync.atomic_load(&p.outstanding) > 0 {
         if err := nbio.tick(DRAIN_TICK); err != nil {
-            if drain_err == nil {
-                drain_err = err
-            }
+            if drain_err == nil do drain_err = err
 
             // A backend error must not abandon workers or their task state. Cross-thread
             // operations are received before the backend tick, so retry until every
@@ -294,9 +288,7 @@ _publish_completed :: proc(p: ^Pool, base: ^Task_Base) {
 
     sync.mutex_unlock(&p.completed_mutex)
 
-    if schedule {
-        nbio.next_tick_poly(p, _dispatch_completed, p.loop)
-    }
+    if schedule do nbio.next_tick_poly(p, _dispatch_completed, p.loop)
 }
 
 // Loop thread. Detach one published batch before invoking user completions. A worker that
@@ -356,8 +348,6 @@ _complete :: proc(base: ^Task_Base) {
 _reap_finished :: proc(p: ^Pool) {
     for {
         _, got := thread.pool_pop_done(&p.workers)
-        if !got {
-            break
-        }
+        if !got do break
     }
 }

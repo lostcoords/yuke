@@ -139,9 +139,7 @@ Tool_Part :: struct {
 tool_part_validate :: proc(self: Tool_Part) -> Validation_Error {
     enforce_bounded(128, self.name) or_return
 
-    if views, ok := self.input_view.?; ok {
-        view_validate_slice(views) or_return
-    }
+    if views, ok := self.input_view.?; ok do view_validate_slice(views) or_return
 
     tool_state_validate(self.state) or_return
 
@@ -156,28 +154,20 @@ tool_permission_state_validate :: proc(
 ) -> Validation_Error {
     p, has_perm := permission_state.?
 
-    if has_perm {
-        permission_state_validate(p) or_return
-    }
+    if has_perm do permission_state_validate(p) or_return
 
     _, has_dec := p.decision.?
     _, has_opts := p.options.?
 
     switch _ in state {
     case Tool_State_Pending:
-        if has_perm {
-            return .Mismatched_Payload
-        }
+        if has_perm do return .Mismatched_Payload
 
     case Tool_State_Waiting_Permission:
-        if !has_perm || !has_opts || has_dec {
-            return .Mismatched_Payload
-        }
+        if !has_perm || !has_opts || has_dec do return .Mismatched_Payload
 
     case Tool_State_Running, Tool_State_Completed, Tool_State_Error, Tool_State_Denied:
-        if has_perm && !has_dec {
-            return .Mismatched_Payload
-        }
+        if has_perm && !has_dec do return .Mismatched_Payload
 
     // Canceled while awaiting a decision leaves the permission state undecided.
     case Tool_State_Canceled:
@@ -190,21 +180,15 @@ tool_permission_state_validate :: proc(
 tool_part_clone :: proc(self: Tool_Part, allocator := context.allocator) -> Tool_Part {
     call_id: Maybe(string)
 
-    if c, ok := self.call_id.?; ok {
-        call_id = strings.clone(c, allocator)
-    }
+    if c, ok := self.call_id.?; ok do call_id = strings.clone(c, allocator)
 
     input_view: Maybe([]View)
 
-    if views, ok := self.input_view.?; ok {
-        input_view = view_clone_slice(views, allocator)
-    }
+    if views, ok := self.input_view.?; ok do input_view = view_clone_slice(views, allocator)
 
     permission_state: Maybe(Permission_State)
 
-    if p, ok := self.permission_state.?; ok {
-        permission_state = permission_state_clone(p, allocator)
-    }
+    if p, ok := self.permission_state.?; ok do permission_state = permission_state_clone(p, allocator)
 
     return Tool_Part {
         id = self.id,
@@ -264,9 +248,7 @@ assistant_part_emit :: proc(e: ^json.Emitter, self: Assistant_Part) {
         json.field_string(e, "name", v.name)
         json.field_string(e, "arguments", v.arguments)
 
-        if views, ok := v.input_view.?; ok {
-            _emit_view_slice(e, "input_view", views)
-        }
+        if views, ok := v.input_view.?; ok do _emit_view_slice(e, "input_view", views)
 
         json.key(e, "state")
         tool_state_emit(e, v.state)
@@ -427,9 +409,7 @@ tool_state_emit :: proc(e: ^json.Emitter, self: Tool_State) {
         json.field_string(e, "type", "completed")
         json.field_string(e, "output", v.output)
 
-        if views, ok := v.view.?; ok {
-            _emit_view_slice(e, "view", views)
-        }
+        if views, ok := v.view.?; ok do _emit_view_slice(e, "view", views)
 
         json.field_u64(e, "duration_ms", v.duration_ms)
 
@@ -437,9 +417,7 @@ tool_state_emit :: proc(e: ^json.Emitter, self: Tool_State) {
         json.field_string(e, "type", "error")
         json.field_string(e, "error", v.error)
 
-        if views, ok := v.view.?; ok {
-            _emit_view_slice(e, "view", views)
-        }
+        if views, ok := v.view.?; ok do _emit_view_slice(e, "view", views)
 
         json.field_u64(e, "duration_ms", v.duration_ms)
 
@@ -461,19 +439,13 @@ tool_state_validate :: proc(self: Tool_State) -> Validation_Error {
     switch v in self {
     case Tool_State_Pending, Tool_State_Waiting_Permission, Tool_State_Denied, Tool_State_Canceled:
     case Tool_State_Running:
-        if out, ok := v.output.?; ok {
-            enforce_bounded(LIMITS.max_tool_output_stream_bytes, out) or_return
-        }
+        if out, ok := v.output.?; ok do enforce_bounded(LIMITS.max_tool_output_stream_bytes, out) or_return
 
     case Tool_State_Completed:
-        if views, ok := v.view.?; ok {
-            view_validate_slice(views) or_return
-        }
+        if views, ok := v.view.?; ok do view_validate_slice(views) or_return
 
     case Tool_State_Error:
-        if views, ok := v.view.?; ok {
-            view_validate_slice(views) or_return
-        }
+        if views, ok := v.view.?; ok do view_validate_slice(views) or_return
     }
 
     return .None
@@ -491,18 +463,14 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
     case Tool_State_Running:
         output: Maybe(string)
 
-        if out, ok := v.output.?; ok {
-            output = strings.clone(out, allocator)
-        }
+        if out, ok := v.output.?; ok do output = strings.clone(out, allocator)
 
         return Tool_State_Running{started_at_ms = v.started_at_ms, output = output}
 
     case Tool_State_Completed:
         view: Maybe([]View)
 
-        if views, ok := v.view.?; ok {
-            view = view_clone_slice(views, allocator)
-        }
+        if views, ok := v.view.?; ok do view = view_clone_slice(views, allocator)
 
         return Tool_State_Completed {
             output = strings.clone(v.output, allocator),
@@ -513,9 +481,7 @@ tool_state_clone :: proc(self: Tool_State, allocator := context.allocator) -> To
     case Tool_State_Error:
         view: Maybe([]View)
 
-        if views, ok := v.view.?; ok {
-            view = view_clone_slice(views, allocator)
-        }
+        if views, ok := v.view.?; ok do view = view_clone_slice(views, allocator)
 
         return Tool_State_Error{error = strings.clone(v.error, allocator), view = view, duration_ms = v.duration_ms}
 
@@ -564,9 +530,7 @@ user_message_clone :: proc(self: User_Message, allocator := context.allocator) -
         time     = self.time,
     }
 
-    if s, ok := self.skill.?; ok {
-        out.skill = skill_ref_clone(s, allocator)
-    }
+    if s, ok := self.skill.?; ok do out.skill = skill_ref_clone(s, allocator)
 
     return out
 }
@@ -664,9 +628,7 @@ turn_provenance_from_reader :: proc(d: ^json.Decoder) -> (out: Turn_Provenance, 
         }
     }
 
-    if seen != {.Protocol, .Model} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Protocol, .Model} do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -713,33 +675,23 @@ Assistant_Message :: struct {
 assistant_message_validate :: proc(self: Assistant_Message) -> Validation_Error {
     enforce_bounded(64, self.agent) or_return
 
-    if len(self.content) > LIMITS.max_message_parts {
-        return .Overflow
-    }
+    if len(self.content) > LIMITS.max_message_parts do return .Overflow
 
     for part, index in self.content {
-        if u64(assistant_part_id(part)) != u64(index) {
-            return .Mismatched_Payload
-        }
+        if u64(assistant_part_id(part)) != u64(index) do return .Mismatched_Payload
 
         assistant_part_validate(part) or_return
     }
 
     if completed, ok := self.time.completed_at_ms.?; ok {
-        if completed < self.time.created_at_ms {
-            return .Mismatched_Payload
-        }
+        if completed < self.time.created_at_ms do return .Mismatched_Payload
     }
 
-    if prov, ok := self.provenance.?; ok {
-        turn_provenance_validate(prov) or_return
-    }
+    if prov, ok := self.provenance.?; ok do turn_provenance_validate(prov) or_return
 
     // Bounds the message so one always fits in a frame. A page of messages is the
     // sender's problem, not this bound's.
-    if _assistant_message_string_bytes(self) > LIMITS.max_message_string_bytes {
-        return .Overflow
-    }
+    if _assistant_message_string_bytes(self) > LIMITS.max_message_string_bytes do return .Overflow
 
     return .None
 }
@@ -753,9 +705,7 @@ assistant_message_validate_draft :: proc(self: Assistant_Message) -> Validation_
     _, has_completed := self.time.completed_at_ms.?
     _, has_error := self.error.?
 
-    if has_finish || has_tokens || has_cost || has_completed || has_error {
-        return .Mismatched_Payload
-    }
+    if has_finish || has_tokens || has_cost || has_completed || has_error do return .Mismatched_Payload
 
     return .None
 }
@@ -765,34 +715,24 @@ assistant_message_validate_committed :: proc(self: Assistant_Message) -> Validat
     assistant_message_validate(self) or_return
     finish, has_finish := self.finish.?
 
-    if !has_finish {
-        return .Mismatched_Payload
-    }
+    if !has_finish do return .Mismatched_Payload
 
     _, has_completed := self.time.completed_at_ms.?
 
-    if !has_completed {
-        return .Mismatched_Payload
-    }
+    if !has_completed do return .Mismatched_Payload
     // A structured error is present exactly when the message finished in error.
     me, has_error := self.error.?
 
-    if (finish == .Error) != has_error {
-        return .Mismatched_Payload
-    }
+    if (finish == .Error) != has_error do return .Mismatched_Payload
 
-    if has_error {
-        message_error_validate(me) or_return
-    }
+    if has_error do message_error_validate(me) or_return
 
     if cost, ok := self.cost.?; ok {
         // isFinite && >= 0: reject non-finite (exponent bits all ones) or negative.
         bits := transmute(u64)cost
         finite := (bits >> 52) & 0x7ff != 0x7ff
 
-        if !finite || cost < 0 {
-            return .Out_Of_Range
-        }
+        if !finite || cost < 0 do return .Out_Of_Range
     }
 
     return .None
@@ -815,18 +755,14 @@ assistant_message_emit :: proc(e: ^json.Emitter, self: Assistant_Message) {
 
     json.array_end(e)
 
-    if f, ok := self.finish.?; ok {
-        json.field_string(e, "finish", stop_reason_to_wire(f))
-    }
+    if f, ok := self.finish.?; ok do json.field_string(e, "finish", stop_reason_to_wire(f))
 
     if tok, ok := self.tokens.?; ok {
         json.key(e, "tokens")
         token_usage_emit(e, tok)
     }
 
-    if c, ok := self.cost.?; ok {
-        _field_f64(e, "cost", c)
-    }
+    if c, ok := self.cost.?; ok do _field_f64(e, "cost", c)
 
     json.key(e, "time")
     message_time_emit(e, self.time)
@@ -853,15 +789,11 @@ assistant_message_clone :: proc(self: Assistant_Message, allocator := context.al
 
     error: Maybe(Message_Error)
 
-    if me, ok := self.error.?; ok {
-        error = message_error_clone(me, allocator)
-    }
+    if me, ok := self.error.?; ok do error = message_error_clone(me, allocator)
 
     provenance: Maybe(Turn_Provenance)
 
-    if prov, ok := self.provenance.?; ok {
-        provenance = turn_provenance_clone(prov, allocator)
-    }
+    if prov, ok := self.provenance.?; ok do provenance = turn_provenance_clone(prov, allocator)
 
     return Assistant_Message {
         id = self.id,
@@ -999,17 +931,13 @@ message_emit :: proc(e: ^json.Emitter, self: Message) {
 message_validate :: proc(self: Message) -> Validation_Error {
     switch v in self {
     case User_Message:
-        if len(v.content) > LIMITS.max_input_parts {
-            return .Overflow
-        }
+        if len(v.content) > LIMITS.max_input_parts do return .Overflow
 
         for part in v.content {
             content_part_validate(part) or_return
         }
 
-        if s, ok := v.skill.?; ok {
-            return skill_ref_validate(s)
-        }
+        if s, ok := v.skill.?; ok do return skill_ref_validate(s)
 
     case Assistant_Message:
         return assistant_message_validate_committed(v)
@@ -1141,9 +1069,7 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
     case Tool_Part:
         total := len(v.name) + len(v.arguments)
 
-        if c, ok := v.call_id.?; ok {
-            total += len(c)
-        }
+        if c, ok := v.call_id.?; ok do total += len(c)
 
         if views, ok := v.input_view.?; ok {
             for view in views {
@@ -1153,9 +1079,7 @@ _assistant_part_string_bytes :: proc(self: Assistant_Part) -> int {
 
         total += _tool_state_string_bytes(v.state)
 
-        if p, ok := v.permission_state.?; ok {
-            total += _permission_state_string_bytes(p)
-        }
+        if p, ok := v.permission_state.?; ok do total += _permission_state_string_bytes(p)
 
         return total
     }
@@ -1170,9 +1094,7 @@ _tool_state_string_bytes :: proc(self: Tool_State) -> int {
         return 0
 
     case Tool_State_Running:
-        if out, ok := v.output.?; ok {
-            return len(out)
-        }
+        if out, ok := v.output.?; ok do return len(out)
 
         return 0
 
@@ -1256,18 +1178,14 @@ message_time_from_reader :: proc(d: ^json.Decoder) -> (time: Message_Time, err: 
         case "completed_at_ms":
             seen += {.Completed}
 
-            if !json.dec_is_null(d) {
-                time.completed_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-            }
+            if !json.dec_is_null(d) do time.completed_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case:
             json.dec_skip(d) or_return
         }
     }
 
-    if seen != {.Created, .Completed} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Created, .Completed} do return {}, .Mismatched_Payload
 
     return time, .None
 }
@@ -1293,9 +1211,7 @@ created_time_from_reader :: proc(d: ^json.Decoder) -> (time: Created_Time, err: 
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return time, .None
 }
@@ -1328,9 +1244,7 @@ message_error_from_reader :: proc(d: ^json.Decoder) -> (me: Message_Error, err: 
         }
     }
 
-    if seen != {.Type, .Message} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Type, .Message} do return {}, .Mismatched_Payload
 
     return me, .None
 }
@@ -1364,9 +1278,7 @@ _permission_state_from_reader :: proc(d: ^json.Decoder) -> (ps: Permission_State
         }
     }
 
-    if .Req not_in seen {
-        return {}, .Mismatched_Payload
-    }
+    if .Req not_in seen do return {}, .Mismatched_Payload
 
     return ps, .None
 }
@@ -1408,9 +1320,7 @@ assistant_part_from_reader :: proc(d: ^json.Decoder) -> (part: Assistant_Part, e
             }
         }
 
-        if seen != {.Id, .Text} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Id, .Text} do return nil, .Mismatched_Payload
 
         return Text_Part{id = Part_Id(id), text = text}, .None
 
@@ -1450,9 +1360,7 @@ assistant_part_from_reader :: proc(d: ^json.Decoder) -> (part: Assistant_Part, e
             }
         }
 
-        if seen != {.Id, .Text} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Id, .Text} do return nil, .Mismatched_Payload
 
         return Reasoning_Part{id = Part_Id(id), text = text, signature = signature}, .None
 
@@ -1487,9 +1395,7 @@ assistant_part_from_reader :: proc(d: ^json.Decoder) -> (part: Assistant_Part, e
             }
         }
 
-        if seen != {.Id, .Data} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Id, .Data} do return nil, .Mismatched_Payload
 
         return Redacted_Reasoning_Part{id = Part_Id(id), data = data}, .None
 
@@ -1542,9 +1448,7 @@ assistant_part_from_reader :: proc(d: ^json.Decoder) -> (part: Assistant_Part, e
             }
         }
 
-        if seen != {.Id, .Name, .Args, .State} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Id, .Name, .Args, .State} do return nil, .Mismatched_Payload
 
         return tp, .None
     }
@@ -1618,9 +1522,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             }
         }
 
-        if .Start not_in seen {
-            return nil, .Mismatched_Payload
-        }
+        if .Start not_in seen do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -1657,9 +1559,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             }
         }
 
-        if seen != {.Output, .Dur} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Output, .Dur} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -1696,9 +1596,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             }
         }
 
-        if seen != {.Msg, .Dur} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Msg, .Dur} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -1732,9 +1630,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             }
         }
 
-        if seen != {.Reason, .By} {
-            return nil, .Mismatched_Payload
-        }
+        if seen != {.Reason, .By} do return nil, .Mismatched_Payload
 
         return st, .None
 
@@ -1749,9 +1645,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             case "duration_ms":
                 have = true
 
-                if !json.dec_is_null(d) {
-                    st.duration_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
-                }
+                if !json.dec_is_null(d) do st.duration_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
             case "permission", "started_at_ms", "output", "error", "view", "reason", "denied_by":
                 return nil, .Mismatched_Payload
@@ -1761,9 +1655,7 @@ tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: jso
             }
         }
 
-        if !have {
-            return nil, .Mismatched_Payload
-        }
+        if !have do return nil, .Mismatched_Payload
 
         return st, .None
     }
@@ -1837,9 +1729,7 @@ _assistant_message_body :: proc(d: ^json.Decoder) -> (msg: Assistant_Message, er
         }
     }
 
-    if seen != {.Id, .Run, .Cfg, .Agent, .Content, .Time} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Run, .Cfg, .Agent, .Content, .Time} do return {}, .Mismatched_Payload
 
     return msg, .None
 }
@@ -1850,9 +1740,7 @@ assistant_message_from_reader :: proc(d: ^json.Decoder) -> (msg: Assistant_Messa
     json.dec_object_begin(d) or_return
     tag := json.dec_find_tag(d, "type") or_return
 
-    if tag != "assistant" {
-        return {}, .Mismatched_Payload
-    }
+    if tag != "assistant" do return {}, .Mismatched_Payload
 
     return _assistant_message_body(d)
 }
@@ -1911,9 +1799,7 @@ _user_message_body :: proc(d: ^json.Decoder) -> (msg: User_Message, err: json.De
         }
     }
 
-    if seen != {.Id, .Content, .Input, .Time} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Content, .Input, .Time} do return {}, .Mismatched_Payload
 
     return msg, .None
 }
@@ -1956,9 +1842,7 @@ _compaction_message_body :: proc(d: ^json.Decoder) -> (msg: Compaction_Message, 
         case "first_kept_id":
             seen += {.Fk}
 
-            if !json.dec_is_null(d) {
-                msg.first_kept_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
-            }
+            if !json.dec_is_null(d) do msg.first_kept_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case "tokens_before":
             msg.tokens_before = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
@@ -1980,9 +1864,7 @@ _compaction_message_body :: proc(d: ^json.Decoder) -> (msg: Compaction_Message, 
         }
     }
 
-    if seen != {.Id, .Run, .Reason, .Summary, .Fk, .Tb, .Ta, .Time} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Id, .Run, .Reason, .Summary, .Fk, .Tb, .Ta, .Time} do return {}, .Mismatched_Payload
 
     return msg, .None
 }

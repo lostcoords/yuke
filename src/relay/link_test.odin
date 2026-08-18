@@ -31,9 +31,7 @@ test_relay_url_parse :: proc(t: ^testing.T) {
     for c in cases {
         ep, ok := endpoint_parse(c.url)
         testing.expectf(t, ok == c.ok, "%q: ok = %v, want %v", c.url, ok, c.ok)
-        if !c.ok {
-            continue
-        }
+        if !c.ok do continue
 
         testing.expectf(t, ep.scheme == c.scheme, "%q: scheme = %v, want %v", c.url, ep.scheme, c.scheme)
         testing.expectf(t, ep.host == c.host, "%q: host = %q, want %q", c.url, ep.host, c.host)

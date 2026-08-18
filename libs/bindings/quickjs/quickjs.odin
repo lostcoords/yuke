@@ -24,9 +24,7 @@ Eval_Flags :: bit_set[Eval_Flag;c.int]
 // handed back to every hook. With `alloc` nil the engine uses its own malloc
 // and `runtime_free` will not return pages to the OS.
 runtime_new :: proc(alloc: ^Alloc_Functions = nil, user: rawptr = nil) -> ^Runtime {
-    if alloc == nil {
-        return c_new_runtime()
-    }
+    if alloc == nil do return c_new_runtime()
 
     assert(alloc.malloc != nil && alloc.free != nil, "allocator needs malloc and free")
     assert(alloc.realloc != nil && alloc.usable_size != nil, "allocator needs realloc and usable_size")
@@ -36,9 +34,7 @@ runtime_new :: proc(alloc: ^Alloc_Functions = nil, user: rawptr = nil) -> ^Runti
 
 // Destroy a runtime and everything in it. Every Context must already be freed.
 runtime_free :: proc(rt: ^Runtime) {
-    if rt == nil {
-        return
-    }
+    if rt == nil do return
 
     c_free_runtime(rt)
 }
@@ -106,9 +102,7 @@ run_pending_jobs :: proc(rt: ^Runtime) -> (executed: int, failed: bool) {
     ctx: ^Context
     for {
         rc := c_execute_pending_job(rt, &ctx)
-        if rc == 0 {
-            break
-        }
+        if rc == 0 do break
         if rc < 0 {
             failed = true
             break
@@ -127,9 +121,7 @@ class_register :: proc(rt: ^Runtime, definition: Class_Def) -> (Class_ID, bool) 
     id: Class_ID
     owned_definition := definition
     c_new_class_id(rt, &id)
-    if id == INVALID_CLASS_ID || c_new_class(rt, id, &owned_definition) != 0 {
-        return INVALID_CLASS_ID, false
-    }
+    if id == INVALID_CLASS_ID || c_new_class(rt, id, &owned_definition) != 0 do return INVALID_CLASS_ID, false
 
     return id, true
 }
@@ -165,9 +157,7 @@ context_new :: proc(rt: ^Runtime) -> ^Context {
 
 // Destroy a context. Its runtime and any sibling contexts stay alive.
 context_free :: proc(ctx: ^Context) {
-    if ctx == nil {
-        return
-    }
+    if ctx == nil do return
 
     c_free_context(ctx)
 }
@@ -255,9 +245,7 @@ get_property :: proc(ctx: ^Context, obj: Value, name: string) -> Value {
 
     atom := c_new_atom_len(ctx, cstring(raw_data(name)), c.size_t(len(name)))
 
-    if atom == ATOM_NULL {
-        return exception()
-    }
+    if atom == ATOM_NULL do return exception()
     defer c_free_atom(ctx, atom)
 
     return c_get_property(ctx, obj, atom)
@@ -327,9 +315,7 @@ to_string :: proc(ctx: ^Context, v: Value) -> (s: string, ok: bool) {
 
     n: c.size_t
     cs := c_to_cstring_len2(ctx, &n, v, false)
-    if cs == nil {
-        return "", false
-    }
+    if cs == nil do return "", false
 
     return string(([^]byte)(cs)[:n]), true
 }
@@ -340,9 +326,7 @@ to_string :: proc(ctx: ^Context, v: Value) -> (s: string, ok: bool) {
 free_string :: proc(ctx: ^Context, s: string) {
     assert(ctx != nil, "free_string needs a context")
 
-    if raw_data(s) == nil {
-        return
-    }
+    if raw_data(s) == nil do return
 
     c_free_cstring(ctx, cstring(raw_data(s)))
 }
@@ -386,9 +370,7 @@ to_bool :: proc(ctx: ^Context, v: Value) -> (value: bool, ok: bool) {
     assert(ctx != nil, "to_bool needs a context")
 
     rc := c_to_bool(ctx, v)
-    if rc < 0 {
-        return false, false
-    }
+    if rc < 0 do return false, false
 
     return rc != 0, true
 }

@@ -37,9 +37,7 @@ Auth_Result :: enum {
 authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth_Result {
     assert(d != nil, "authentication needs a daemon")
 
-    if d.auth_token == "" {
-        return .Allowed
-    }
+    if d.auth_token == "" do return .Allowed
 
     assert(auth_token_valid(d.auth_token), "daemon retained an invalid auth token")
     assert(head.consumed == len(head.bytes), "authentication received an inconsistent parsed head")
@@ -47,9 +45,7 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
     query_token, query_lookup := http.query_value(query, "token")
 
     authorization, header_lookup := http.request_header(head, "authorization")
-    if header_lookup == .Duplicate || query_lookup == .Duplicate || header_lookup == .One && query_lookup == .One {
-        return .Ambiguous
-    }
+    if header_lookup == .Duplicate || query_lookup == .Duplicate || header_lookup == .One && query_lookup == .One do return .Ambiguous
 
     switch header_lookup {
     case .One:
@@ -62,9 +58,7 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
             return .Invalid
 
         case .Ok:
-            if !secret_equal(presented, d.auth_token) {
-                return .Invalid
-            }
+            if !secret_equal(presented, d.auth_token) do return .Invalid
         }
 
         return .Allowed
@@ -77,9 +71,7 @@ authenticate :: proc(d: ^Daemon, head: http.Request_Head, query: string) -> Auth
 
     switch query_lookup {
     case .One:
-        if !secret_equal(query_token, d.auth_token) {
-            return .Invalid
-        }
+        if !secret_equal(query_token, d.auth_token) do return .Invalid
 
         return .Allowed
 
@@ -110,30 +102,20 @@ Bearer_Parse :: enum {
 // case-insensitive and the separator is one or more spaces, per the HTTP auth grammar.
 bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
     separator := strings.index_byte(value, ' ')
-    if separator <= 0 {
-        // No credential at all: a bare `Bearer` is a malformed one, anything else is
-        // another scheme.
-        return "", strings.equal_fold(value, "bearer") ? .Malformed : .Other_Scheme
-    }
+    if separator <= 0 do return "", strings.equal_fold(value, "bearer") ? .Malformed : .Other_Scheme
 
-    if !strings.equal_fold(value[:separator], "bearer") {
-        return "", .Other_Scheme
-    }
+    if !strings.equal_fold(value[:separator], "bearer") do return "", .Other_Scheme
 
     first := separator
     for first < len(value) && value[first] == ' ' {
         first += 1
     }
 
-    if first == len(value) {
-        return "", .Malformed
-    }
+    if first == len(value) do return "", .Malformed
 
     token = value[first:]
     for i in 0 ..< len(token) {
-        if token[i] == ' ' || token[i] == '\t' {
-            return "", .Malformed
-        }
+        if token[i] == ' ' || token[i] == '\t' do return "", .Malformed
     }
 
     return token, .Ok
@@ -142,13 +124,9 @@ bearer_token :: proc(value: string) -> (token: string, result: Bearer_Parse) {
 // Whether a configured token is safe in both a bearer field and a query without escaping. Empty is
 // the distinct "auth disabled" state, not a credential, so it is exempt from the length floor.
 auth_token_valid :: proc(token: string) -> bool {
-    if token == "" {
-        return true
-    }
+    if token == "" do return true
 
-    if len(token) < MIN_AUTH_TOKEN_BYTES || len(token) > MAX_AUTH_TOKEN_BYTES {
-        return false
-    }
+    if len(token) < MIN_AUTH_TOKEN_BYTES || len(token) > MAX_AUTH_TOKEN_BYTES do return false
 
     for i in 0 ..< len(token) {
         c := token[i]
@@ -168,19 +146,13 @@ auth_token_valid :: proc(token: string) -> bool {
 
 // An unauthenticated front door may only bind a literal IPv4 loopback address.
 listen_auth_valid :: proc(host, token: string) -> bool {
-    if !auth_token_valid(token) {
-        return false
-    }
+    if !auth_token_valid(token) do return false
 
     resolved_host := host if host != "" else "127.0.0.1"
     address, parsed := net.parse_ip4_address(resolved_host)
-    if !parsed {
-        return false
-    }
+    if !parsed do return false
 
-    if token != "" {
-        return true
-    }
+    if token != "" do return true
 
     return address[0] == 127
 }

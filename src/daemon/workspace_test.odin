@@ -25,14 +25,10 @@ test_overlong_name :: proc() -> string {
 check_describe_non_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "describe should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "describe should succeed") do return true
 
     result, is_desc := ok.result.(wire.Workspace_Describe_Result)
-    if !testing.expect(t, is_desc, "result is a describe result") {
-        return true
-    }
+    if !testing.expect(t, is_desc, "result is a describe result") do return true
 
     _, has_git := result.git.?
     testing.expect(t, !has_git, "a plain directory has no git info")
@@ -68,19 +64,13 @@ test_daemon_workspace_describe_non_git :: proc(t: ^testing.T) {
 check_describe_git :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "describe should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "describe should succeed") do return true
 
     result, is_desc := ok.result.(wire.Workspace_Describe_Result)
-    if !testing.expect(t, is_desc, "result is a describe result") {
-        return true
-    }
+    if !testing.expect(t, is_desc, "result is a describe result") do return true
 
     git, has_git := result.git.?
-    if !testing.expect(t, has_git, "a directory with a .git is a repo") {
-        return true
-    }
+    if !testing.expect(t, has_git, "a directory with a .git is a repo") do return true
 
     testing.expect_value(t, git.branch, "feature-x")
     testing.expect(t, !git.dirty, "dirty is not detected without the git binary")
@@ -112,19 +102,13 @@ test_daemon_workspace_describe_git :: proc(t: ^testing.T) {
 check_describe_invalid_utf8_branch :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "describe should succeed with a non-UTF-8 branch") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "describe should succeed with a non-UTF-8 branch") do return true
 
     result, is_desc := ok.result.(wire.Workspace_Describe_Result)
-    if !testing.expect(t, is_desc, "result is a describe result") {
-        return true
-    }
+    if !testing.expect(t, is_desc, "result is a describe result") do return true
 
     git, has_git := result.git.?
-    if !testing.expect(t, has_git, "a directory with a .git is a repo") {
-        return true
-    }
+    if !testing.expect(t, has_git, "a directory with a .git is a repo") do return true
 
     // A `.git/HEAD` ref whose branch component is not valid UTF-8 degrades to the same
     // empty branch as a detached or unreadable HEAD; it never rides an invalid frame.
@@ -165,9 +149,7 @@ test_daemon_workspace_describe_invalid_utf8_branch :: proc(t: ^testing.T) {
 check_describe_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     e, is_err := resp.(wire.Response_Error)
-    if !testing.expect(t, is_err, "a missing path is an error response") {
-        return true
-    }
+    if !testing.expect(t, is_err, "a missing path is an error response") do return true
 
     testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
 
@@ -189,14 +171,10 @@ test_daemon_workspace_describe_missing_path :: proc(t: ^testing.T) {
 check_describe_overlong_basename :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "describe should succeed even with an over-bound basename") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "describe should succeed even with an over-bound basename") do return true
 
     result, is_desc := ok.result.(wire.Workspace_Describe_Result)
-    if !testing.expect(t, is_desc, "result is a describe result") {
-        return true
-    }
+    if !testing.expect(t, is_desc, "result is a describe result") do return true
 
     testing.expect(t, len(result.workspace.title) <= 256, "the title is clamped to the wire bound")
     testing.expect(t, utf8.valid_string(result.workspace.title), "a clamped title is still valid UTF-8")
@@ -251,14 +229,10 @@ test_make_browse_dir :: proc(name: string) -> string {
 check_browse_listing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "browse should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "browse should succeed") do return true
 
     result, is_browse := ok.result.(wire.Workspace_Browse_Result)
-    if !testing.expect(t, is_browse, "result is a browse result") {
-        return true
-    }
+    if !testing.expect(t, is_browse, "result is a browse result") do return true
 
     if testing.expect_value(t, len(result.entries), 3) {
         // Directories only, `.git` and files omitted, sorted case-insensitively.
@@ -296,22 +270,16 @@ test_daemon_workspace_browse_lists_directories :: proc(t: ^testing.T) {
 check_browse_paginated :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "browse should succeed") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "browse should succeed") do return true
 
     result, is_browse := ok.result.(wire.Workspace_Browse_Result)
-    if !testing.expect(t, is_browse, "result is a browse result") {
-        return true
-    }
+    if !testing.expect(t, is_browse, "result is a browse result") do return true
 
     if o.page == 0 {
         testing.expect_value(t, len(result.entries), 2)
 
         cursor, has := result.next_cursor.?
-        if !testing.expect(t, has, "a 3-entry dir paged by 2 has a next_cursor") {
-            return true
-        }
+        if !testing.expect(t, has, "a 3-entry dir paged by 2 has a next_cursor") do return true
         testing.expect_value(t, cursor, "beta")
 
         // The cursor is borrowed for this callback only; `client_send_request` copies
@@ -353,9 +321,7 @@ test_daemon_workspace_browse_paginates :: proc(t: ^testing.T) {
 check_browse_missing :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     e, is_err := resp.(wire.Response_Error)
-    if !testing.expect(t, is_err, "a missing path is an error response") {
-        return true
-    }
+    if !testing.expect(t, is_err, "a missing path is an error response") do return true
 
     testing.expect_value(t, e.error.code, wire.Error_Code.Bad_Request)
 
@@ -377,18 +343,12 @@ test_daemon_workspace_browse_missing_path :: proc(t: ^testing.T) {
 check_browse_name_cursor :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "an opaque name cursor is accepted") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "an opaque name cursor is accepted") do return true
 
     result, is_browse := ok.result.(wire.Workspace_Browse_Result)
-    if !testing.expect(t, is_browse, "result is a browse result") {
-        return true
-    }
+    if !testing.expect(t, is_browse, "result is a browse result") do return true
 
-    if testing.expect_value(t, len(result.entries), 1) {
-        testing.expect_value(t, result.entries[0].name, "repo")
-    }
+    if testing.expect_value(t, len(result.entries), 1) do testing.expect_value(t, result.entries[0].name, "repo")
     _, has_cursor := result.next_cursor.?
     testing.expect(t, !has_cursor, "the name boundary reaches the final page")
 
@@ -414,21 +374,15 @@ test_daemon_workspace_browse_uses_name_cursor :: proc(t: ^testing.T) {
 check_browse_skips_overlong_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "browse should succeed even with an unrepresentable entry name") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "browse should succeed even with an unrepresentable entry name") do return true
 
     result, is_browse := ok.result.(wire.Workspace_Browse_Result)
-    if !testing.expect(t, is_browse, "result is a browse result") {
-        return true
-    }
+    if !testing.expect(t, is_browse, "result is a browse result") do return true
 
     found_normal := false
     for entry in result.entries {
         testing.expect(t, len(entry.name) <= 256, "every emitted entry name is within the wire bound")
-        if entry.name == "normal" {
-            found_normal = true
-        }
+        if entry.name == "normal" do found_normal = true
     }
 
     testing.expect(t, found_normal, "the normal sibling entry is still listed")
@@ -467,22 +421,16 @@ test_daemon_workspace_browse_skips_overlong_name :: proc(t: ^testing.T) {
 check_browse_skips_non_utf8_name :: proc(c: ^client.Client, resp: wire.Response, o: ^Handler_Obs) -> bool {
     t := o.t
     ok, is_ok := resp.(wire.Response_Ok)
-    if !testing.expect(t, is_ok, "browse should succeed even with a non-UTF-8 entry name") {
-        return true
-    }
+    if !testing.expect(t, is_ok, "browse should succeed even with a non-UTF-8 entry name") do return true
 
     result, is_browse := ok.result.(wire.Workspace_Browse_Result)
-    if !testing.expect(t, is_browse, "result is a browse result") {
-        return true
-    }
+    if !testing.expect(t, is_browse, "result is a browse result") do return true
 
     found_normal := false
     for entry in result.entries {
         testing.expect(t, utf8.valid_string(entry.name), "every emitted entry name is valid UTF-8")
         testing.expect(t, utf8.valid_string(entry.path), "every emitted entry path is valid UTF-8")
-        if entry.name == "normal" {
-            found_normal = true
-        }
+        if entry.name == "normal" do found_normal = true
     }
 
     testing.expect(t, found_normal, "the normal sibling entry is still listed")
@@ -615,9 +563,7 @@ concurrent_on_response :: proc(c: ^client.Client, outcome: client.Request_Outcom
         return
     }
 
-    if o.answered == 2 {
-        client.client_close(c)
-    }
+    if o.answered == 2 do client.client_close(c)
 }
 
 concurrent_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
@@ -802,9 +748,7 @@ test_daemon_workspace_browse_close_during_pass_no_leak :: proc(t: ^testing.T) {
         // Let the daemon-side release and any finished pass land before the next cycle,
         // so completions interleave with fresh accepts instead of batching at teardown.
         for _ in 0 ..< 64 {
-            if len(d.ws_server.conns) == 0 && offload.pool_outstanding(&d.workers) == 0 {
-                break
-            }
+            if len(d.ws_server.conns) == 0 && offload.pool_outstanding(&d.workers) == 0 do break
 
             nbio.tick(time.Millisecond)
         }

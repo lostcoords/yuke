@@ -32,9 +32,7 @@ test_relay_cloud_url_normalization :: proc(t: ^testing.T) {
         defer delete(normalized)
 
         testing.expect_value(t, err == .None, tc.valid)
-        if tc.valid {
-            testing.expect_value(t, normalized, tc.want)
-        }
+        if tc.valid do testing.expect_value(t, normalized, tc.want)
     }
 }
 

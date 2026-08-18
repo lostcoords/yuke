@@ -59,9 +59,7 @@ drive_start_windows :: proc(
     user: rawptr,
     allocator: mem.Allocator,
 ) -> Drive_Error {
-    if err := drive_start_common(d, loop, opts, on_event, user, allocator); err != .None {
-        return err
-    }
+    if err := drive_start_common(d, loop, opts, on_event, user, allocator); err != .None do return err
 
     q := &d.relay
     q.args = {
@@ -85,9 +83,7 @@ drive_start_windows :: proc(
     drive_arm_idle(d)
 
     // Negotiation may have left complete events or a partial ESC in the reader.
-    if !drive_drain_reader(d) {
-        return .Reader_Failed
-    }
+    if !drive_drain_reader(d) do return .Reader_Failed
 
     return .None
 }
@@ -98,9 +94,7 @@ drive_arm_idle :: proc(d: ^Drive) {
     assert(d != nil, "drive_arm_idle needs a drive")
     assert(d.relay.idle_op == nil, "drive_arm_idle with an op already armed")
 
-    if d.stopping || !d.live {
-        return
-    }
+    if d.stopping || !d.live do return
 
     d.relay.idle_op = nbio.timeout_poly(RELAY_IDLE_HEARTBEAT, d, drive_on_idle, d.loop)
 }
@@ -128,29 +122,21 @@ drive_poll_size :: proc(d: ^Drive) {
     assert(d != nil, "drive_poll_size needs a drive")
     assert(d.loop == nbio.current_thread_event_loop(), "drive_poll_size off the I/O thread")
 
-    if d.stopping || !d.live || !d.has_session {
-        return
-    }
+    if d.stopping || !d.live || !d.has_session do return
 
     size, gerr := get_size(d.size_handle)
-    if gerr != .None || size == d.size {
-        return
-    }
+    if gerr != .None || size == d.size do return
 
     d.size = size
 
-    if d.on_event != nil {
-        d.on_event(d.user, Resize{})
-    }
+    if d.on_event != nil do d.on_event(d.user, Resize{})
 }
 
 // Must run on the nbio I/O thread: it removes in-flight ops and joins the reader.
 drive_stop_windows :: proc(d: ^Drive) {
     assert(d != nil, "drive_stop_windows needs a drive")
 
-    if !d.live {
-        return
-    }
+    if !d.live do return
 
     assert(d.loop == nbio.current_thread_event_loop(), "drive_stop off the I/O thread")
     assert(d.relay.thread != nil, "live Windows drive without a reader thread")
@@ -177,9 +163,7 @@ drive_stop_windows :: proc(d: ^Drive) {
         time.sleep(RELAY_STOP_RETRY)
         retries += 1
 
-        if retries == RELAY_STOP_WARN_RETRIES {
-            fmt.eprintln("term: reader thread has not stopped; still cancelling")
-        }
+        if retries == RELAY_STOP_WARN_RETRIES do fmt.eprintln("term: reader thread has not stopped; still cancelling")
     }
 
     thread.join(q.thread)
@@ -206,18 +190,14 @@ relay_thread_main :: proc(data: rawptr) {
     reason := Input_Closed_Reason.None
 
     for !sync.atomic_load(args.stopping) {
-        if !relay_slot_wait_empty(args) {
-            break
-        }
+        if !relay_slot_wait_empty(args) do break
 
         read: windows.DWORD
         if !windows.ReadFile(args.source, raw_data(args.relay.buf[:]), DRIVE_READ_BYTES, &read, nil) {
             err := windows.GetLastError()
 
             // Our own stop cancelled the read; an external cancellation is an input error.
-            if err == windows.ERROR_OPERATION_ABORTED && sync.atomic_load(args.stopping) {
-                break
-            }
+            if err == windows.ERROR_OPERATION_ABORTED && sync.atomic_load(args.stopping) do break
 
             reason = .Peer_EOF if err == windows.ERROR_BROKEN_PIPE || err == windows.ERROR_HANDLE_EOF else .Recv_Error
             break
@@ -229,14 +209,10 @@ relay_thread_main :: proc(data: rawptr) {
         }
 
         assert(int(read) <= len(args.relay.buf), "ReadFile reported more bytes than the slot holds")
-        if !relay_slot_publish(args, int(read)) {
-            break
-        }
+        if !relay_slot_publish(args, int(read)) do break
     }
 
-    if reason != .None {
-        relay_slot_close(args, reason)
-    }
+    if reason != .None do relay_slot_close(args, reason)
 
     sync.atomic_store(&args.exited, true)
 }
@@ -253,9 +229,7 @@ relay_slot_wait_empty :: proc(args: ^Relay_Thread_Args) -> bool {
     }
 
     stopped := sync.atomic_load(args.stopping)
-    if !stopped {
-        assert(q.count == 0 && !q.scheduled, "empty slot still has a dispatch")
-    }
+    if !stopped do assert(q.count == 0 && !q.scheduled, "empty slot still has a dispatch")
     sync.mutex_unlock(&q.mutex)
 
     return !stopped
@@ -315,9 +289,7 @@ drive_cancel_relay_dispatch :: proc(d: ^Drive) {
     q.scheduled = false
     sync.mutex_unlock(&q.mutex)
 
-    if op != nil {
-        nbio.remove(op)
-    }
+    if op != nil do nbio.remove(op)
 }
 
 // Loop thread. Copy the slot into Reader before releasing the worker to overwrite it, then
@@ -345,9 +317,7 @@ drive_on_relay_dispatch :: proc(op: ^nbio.Operation, d: ^Drive) {
     closed := q.closed
     reason := q.close_reason
     push_err := Reader_Error.None
-    if n > 0 {
-        push_err = reader_push(&d.reader, q.buf[:n])
-    }
+    if n > 0 do push_err = reader_push(&d.reader, q.buf[:n])
 
     q.count = 0
     q.scheduled = false
@@ -362,17 +332,11 @@ drive_on_relay_dispatch :: proc(op: ^nbio.Operation, d: ^Drive) {
     }
 
     if n > 0 {
-        if !drive_drain_reader(d) {
-            return
-        }
+        if !drive_drain_reader(d) do return
     }
 
     // The app handler may have stopped the drive while draining input.
-    if !d.live || d.stopping {
-        return
-    }
+    if !d.live || d.stopping do return
 
-    if closed {
-        drive_mark_input_closed(d, reason)
-    }
+    if closed do drive_mark_input_closed(d, reason)
 }

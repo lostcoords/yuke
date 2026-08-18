@@ -95,9 +95,7 @@ signal_restore_arm :: proc(fd: Tty_Handle, raw: Raw_Term, _: Output_Mode_State) 
 // out any handler still in flight before clearing the snapshot.
 @(private)
 signal_restore_disarm :: proc() {
-    if intrinsics.atomic_load(&g_signal.fd) < 0 {
-        return
-    }
+    if intrinsics.atomic_load(&g_signal.fd) < 0 do return
 
     intrinsics.atomic_store(&g_signal.fd, posix.FD(-1))
 

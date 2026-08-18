@@ -9,9 +9,7 @@ import "core:testing"
 
 inject_open :: proc() -> (r, w: Tty_Handle, ok: bool) {
     fds: [2]posix.FD
-    if posix.pipe(&fds) != .OK {
-        return -1, -1, false
-    }
+    if posix.pipe(&fds) != .OK do return -1, -1, false
 
     return fds[0], fds[1], true
 }
@@ -45,9 +43,7 @@ test_drive_posix_preserves_aliased_source_flags :: proc(t: ^testing.T) {
 
     alias_raw := posix.fcntl(src_r, .DUPFD, 0)
     testing.expect(t, alias_raw >= 0, "source alias")
-    if alias_raw < 0 {
-        return
-    }
+    if alias_raw < 0 do return
     alias := posix.FD(alias_raw)
     defer inject_close(alias)
 

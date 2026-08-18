@@ -207,9 +207,7 @@ conn_on_recv :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
 // is the peer's EOF.
 @(private)
 conn_recv_completed :: proc(core: ^Conn_Core, received: int, failed: bool) {
-    if core.state != .Open && core.state != .Closing {
-        return
-    }
+    if core.state != .Open && core.state != .Closing do return
 
     if failed {
         conn_fail(core, .Recv_Failed)
@@ -229,15 +227,11 @@ conn_recv_completed :: proc(core: ^Conn_Core, received: int, failed: bool) {
         return
     }
 
-    if !conn_drain_decoder(core) {
-        return
-    }
+    if !conn_drain_decoder(core) do return
 
     if core.state == .Open {
         conn_start_recv(core)
-    } else if core.state == .Closing {
-        conn_ensure_close_recv(core)
-    }
+    } else if core.state == .Closing do conn_ensure_close_recv(core)
 }
 
 // Returns false once it has terminated the connection (protocol error or close), so
@@ -250,9 +244,7 @@ conn_drain_decoder :: proc(core: ^Conn_Core) -> bool {
     for {
         // An application message callback may tear the connection down. Preserve
         // graceful Closing drains, but stop immediately after hard teardown.
-        if core.state == .Closed {
-            return false
-        }
+        if core.state == .Closed do return false
 
         msg, has, err := decoder_next(&core.decoder, core.allocator)
         if err != .None {
@@ -260,15 +252,11 @@ conn_drain_decoder :: proc(core: ^Conn_Core) -> bool {
             return false
         }
 
-        if !has {
-            return true
-        }
+        if !has do return true
 
         switch msg.kind {
         case .Text, .Binary:
-            if core.state == .Open {
-                core.message(core, msg.kind, msg.data)
-            }
+            if core.state == .Open do core.message(core, msg.kind, msg.data)
 
             owned_bytes_destroy(msg.data, core.allocator)
 
@@ -307,19 +295,13 @@ conn_drain_decoder :: proc(core: ^Conn_Core) -> bool {
             // on the wire, RFC 6455 §7.4.1). The synthesized code is still reported
             // locally.
             wire_code: Maybe(Close_Code)
-            if had_body {
-                wire_code = parsed.code
-            }
+            if had_body do wire_code = parsed.code
 
             core.close_received = true
             core.close_code = parsed.code
             if core.state == .Open {
-                if close_err := conn_begin_close(core, wire_code, parsed.code); close_err != .None {
-                    conn_fail(core, close_err)
-                }
-            } else if core.close_sent {
-                conn_finalize_close(core, parsed.code)
-            }
+                if close_err := conn_begin_close(core, wire_code, parsed.code); close_err != .None do conn_fail(core, close_err)
+            } else if core.close_sent do conn_finalize_close(core, parsed.code)
 
             return false
         }
@@ -332,22 +314,14 @@ conn_send_data_frame :: proc(core: ^Conn_Core, opcode: Op_Code, data: []byte) ->
     assert(core != nil, "conn_send_data_frame needs a connection")
     assert(opcode == .Text || opcode == .Binary, "data frame path given a control opcode")
 
-    if core.state != .Open {
-        return .Not_Open
-    }
+    if core.state != .Open do return .Not_Open
 
-    if len(data) > core.max_frame_bytes {
-        return .Message_Too_Large
-    }
+    if len(data) > core.max_frame_bytes do return .Message_Too_Large
 
-    if len(data) + MAX_HEADER_BYTES > core.max_send_queue_bytes - core.pending_send_bytes {
-        return .Send_Queue_Full
-    }
+    if len(data) + MAX_HEADER_BYTES > core.max_send_queue_bytes - core.pending_send_bytes do return .Send_Queue_Full
 
     frame, aerr := conn_encode(core, opcode, data)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     return conn_enqueue(core, frame, false)
 }
@@ -387,9 +361,7 @@ conn_enqueue :: proc(core: ^Conn_Core, frame: []byte, control: bool) -> Conn_Err
     )
 
     limit := core.max_send_queue_bytes
-    if control {
-        limit += SEND_CONTROL_RESERVE_BYTES
-    }
+    if control do limit += SEND_CONTROL_RESERVE_BYTES
 
     if core.pending_send_bytes > limit - len(frame) {
         owned_bytes_destroy(frame, core.allocator)
@@ -420,9 +392,7 @@ conn_enqueue_control :: proc(core: ^Conn_Core, opcode: Op_Code, payload: []byte)
     assert(len(payload) <= 125, "control payload exceeds protocol maximum")
 
     frame, aerr := conn_encode(core, opcode, payload)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     return conn_enqueue(core, frame, true)
 }
@@ -435,9 +405,7 @@ conn_keepalive_arm :: proc(core: ^Conn_Core) {
     assert(core.keepalive_op == nil, "keepalive timer armed twice")
     assert(!core.keepalive_awaiting_pong, "keepalive armed with a ping still outstanding")
 
-    if core.keepalive_interval <= 0 {
-        return
-    }
+    if core.keepalive_interval <= 0 do return
 
     core.keepalive_op = nbio.timeout_poly(core.keepalive_interval, core, conn_on_keepalive, core.loop)
 }
@@ -476,9 +444,7 @@ conn_on_keepalive :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
 
     // A coalesce failure inside the send pump may have torn the connection down; never arm
     // the deadline timer past teardown.
-    if core.state != .Open {
-        return
-    }
+    if core.state != .Open do return
 
     core.keepalive_awaiting_pong = true
     core.keepalive_op = nbio.timeout_poly(core.keepalive_pong_deadline, core, conn_on_keepalive, core.loop)
@@ -491,13 +457,9 @@ conn_on_keepalive :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
 conn_pump_send :: proc(core: ^Conn_Core) {
     // A terminal failure stops the pipeline: never send on a closed socket. The
     // queue and `send_batch` are left for the owner to release.
-    if core.state == .Closed {
-        return
-    }
+    if core.state == .Closed do return
 
-    if core.sending {
-        return
-    }
+    if core.sending do return
 
     if len(core.send_queue) == 0 {
         if core.state == .Closing {
@@ -557,9 +519,7 @@ conn_send_completed :: proc(core: ^Conn_Core, failed: bool) {
 
     // Queue drained while Open: signal a streaming producer to refill. It may enqueue
     // here, pumping the next send, so the trailing pump below is a no-op.
-    if core.state == .Open && len(core.send_queue) == 0 && core.drained != nil {
-        core.drained(core)
-    }
+    if core.state == .Open && len(core.send_queue) == 0 && core.drained != nil do core.drained(core)
 
     conn_pump_send(core)
 }
@@ -572,9 +532,7 @@ conn_send_completed :: proc(core: ^Conn_Core, failed: bool) {
 conn_begin_close :: proc(core: ^Conn_Core, wire_code: Maybe(Close_Code), report_code: Close_Code) -> Conn_Error {
     assert(core != nil, "conn_begin_close needs a connection")
 
-    if core.state == .Closing || core.state == .Closed {
-        return .Not_Open
-    }
+    if core.state == .Closing || core.state == .Closed do return .Not_Open
 
     assert(core.state == .Open, "close began outside Open")
     assert(!core.close_sent, "new close already marked sent")
@@ -589,9 +547,7 @@ conn_begin_close :: proc(core: ^Conn_Core, wire_code: Maybe(Close_Code), report_
     }
 
     frame, aerr := conn_encode(core, .Connection_Close, body)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     core.state = .Closing
     core.close_code = report_code
@@ -614,9 +570,7 @@ conn_begin_close :: proc(core: ^Conn_Core, wire_code: Maybe(Close_Code), report_
 conn_ensure_close_recv :: proc(core: ^Conn_Core) {
     assert(core != nil && core.state == .Closing, "closing receive outside Closing")
 
-    if core.close_received || core.recv_op != nil {
-        return
-    }
+    if core.close_received || core.recv_op != nil do return
 
     conn_submit_recv(core, nbio.NO_TIMEOUT)
 }
@@ -636,9 +590,7 @@ conn_on_close_timeout :: proc(op: ^nbio.Operation, core: ^Conn_Core) {
 conn_finalize_close :: proc(core: ^Conn_Core, code: Close_Code) {
     assert(core != nil, "conn_finalize_close needs a connection")
 
-    if core.state == .Closed {
-        return
-    }
+    if core.state == .Closed do return
 
     core.state = .Closed
     core.close_code = code
@@ -651,9 +603,7 @@ conn_fail :: proc(core: ^Conn_Core, err: Conn_Error) {
     assert(core != nil, "conn_fail needs a connection")
     assert(err != .None, "fail without an error")
 
-    if core.state == .Closed {
-        return
-    }
+    if core.state == .Closed do return
 
     log.debugf("websocket %v: fail %v", core.role, err)
 

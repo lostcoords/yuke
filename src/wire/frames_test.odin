@@ -332,9 +332,7 @@ test_error_code_numbers_never_collide_across_protocols :: proc(t: ^testing.T) {
         n := error_code_number[a]
         is_reserved := false
         for r in jsonrpc_reserved {
-            if n == r {
-                is_reserved = true
-            }
+            if n == r do is_reserved = true
         }
 
         if !is_reserved {
@@ -350,9 +348,7 @@ test_error_code_numbers_never_collide_across_protocols :: proc(t: ^testing.T) {
         }
 
         for b in Error_Code {
-            if a != b {
-                testing.expect(t, n != error_code_number[b], "error numbers must be distinct")
-            }
+            if a != b do testing.expect(t, n != error_code_number[b], "error numbers must be distinct")
         }
     }
 }

@@ -91,23 +91,17 @@ openai_responses_request_body :: proc(
     assert(scratch_allocator.procedure != nil, "OpenAI responses request builder needs a valid scratch allocator")
 
     err = openai_responses_request_validate(request, options, scratch_allocator)
-    if err != .None {
-        return "", err
-    }
+    if err != .None do return "", err
 
     builder := strings.builder_make(0, 4096, allocator)
-    defer if err != .None {
-        strings.builder_destroy(&builder)
-    }
+    defer if err != .None do strings.builder_destroy(&builder)
 
     writer := strings.to_writer(&builder)
     json.write_raw(writer, `{"model":`)
     json.write_string(writer, request.model)
 
     instructions := OPENAI_RESPONSES_DEFAULT_INSTRUCTIONS
-    if system, present := request.system_prompt.?; present && len(system) > 0 {
-        instructions = system
-    }
+    if system, present := request.system_prompt.?; present && len(system) > 0 do instructions = system
 
     json.write_raw(writer, `,"instructions":`)
     json.write_string(writer, instructions)
@@ -120,9 +114,7 @@ openai_responses_request_body :: proc(
         openai_responses_write_message(&input, message, request.provenance_model, scratch_allocator)
     }
 
-    if input.count == 0 {
-        return "", .Invalid_Request
-    }
+    if input.count == 0 do return "", .Invalid_Request
 
     json.write_raw(writer, `]`)
 
@@ -177,67 +169,43 @@ openai_responses_request_validate :: proc(
     options: Openai_Responses_Options,
     scratch_allocator: runtime.Allocator,
 ) -> Transport_Error {
-    if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) {
-        return .Invalid_Request
-    }
+    if len(request.model) == 0 || len(request.model) > 128 || !utf8.valid_string(request.model) do return .Invalid_Request
 
-    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) {
-        return .Invalid_Request
-    }
+    if len(request.provenance_model) == 0 || !utf8.valid_string(request.provenance_model) do return .Invalid_Request
 
     dialect_index := int(options.dialect)
-    if dialect_index < 0 || dialect_index >= 2 {
-        return .Invalid_Request
-    }
+    if dialect_index < 0 || dialect_index >= 2 do return .Invalid_Request
 
     if options.dialect == .Codex {
-        if options.store {
-            return .Invalid_Request
-        }
+        if options.store do return .Invalid_Request
 
-        if _, temperature_present := request.temperature.?; temperature_present {
-            return .Invalid_Request
-        }
+        if _, temperature_present := request.temperature.?; temperature_present do return .Invalid_Request
     }
 
-    if request.max_output_tokens == 0 || request.max_output_tokens > MAX_EXACT_JSON_INTEGER {
-        return .Invalid_Request
-    }
+    if request.max_output_tokens == 0 || request.max_output_tokens > MAX_EXACT_JSON_INTEGER do return .Invalid_Request
 
-    if system, present := request.system_prompt.?; present && !utf8.valid_string(system) {
-        return .Invalid_Request
-    }
+    if system, present := request.system_prompt.?; present && !utf8.valid_string(system) do return .Invalid_Request
 
-    if len(request.cache_key) > 0 && !utf8.valid_string(request.cache_key) {
-        return .Invalid_Request
-    }
+    if len(request.cache_key) > 0 && !utf8.valid_string(request.cache_key) do return .Invalid_Request
 
     if effort, present := options.effort.?; present {
         index := int(effort)
-        if index < 0 || index >= len(openai_effort_wire) {
-            return .Invalid_Request
-        }
+        if index < 0 || index >= len(openai_effort_wire) do return .Invalid_Request
     }
 
     if temperature, present := request.temperature.?; present {
         bits := transmute(u64)temperature
         finite := (bits >> 52) & 0x7ff != 0x7ff
 
-        if !finite || temperature < 0 || temperature > 2 {
-            return .Invalid_Request
-        }
+        if !finite || temperature < 0 || temperature > 2 do return .Invalid_Request
     }
 
     tools_validate(request.tools, scratch_allocator) or_return
 
-    if len(request.messages) == 0 {
-        return .Invalid_Request
-    }
+    if len(request.messages) == 0 do return .Invalid_Request
 
     for message in request.messages {
-        if wire.message_validate(message) != .None || !openai_message_supported(message) {
-            return .Invalid_Request
-        }
+        if wire.message_validate(message) != .None || !openai_message_supported(message) do return .Invalid_Request
     }
 
     return .None
@@ -249,9 +217,7 @@ openai_responses_write_tools :: proc(writer: io.Writer, tools: []Tool_Definition
 
     json.write_raw(writer, `,"tools":[`)
     for tool, index in tools {
-        if index > 0 {
-            json.write_raw(writer, `,`)
-        }
+        if index > 0 do json.write_raw(writer, `,`)
 
         json.write_raw(writer, `{"type":"function","name":`)
         json.write_string(writer, tool.name)
@@ -296,9 +262,7 @@ openai_responses_write_user_message :: proc(
     openai_responses_input_sep(out)
     json.write_raw(out.writer, `{"type":"message","role":"user","content":[`)
     for part, index in message.content {
-        if index > 0 {
-            json.write_raw(out.writer, `,`)
-        }
+        if index > 0 do json.write_raw(out.writer, `,`)
 
         openai_responses_write_content_part(out.writer, part, scratch_allocator)
     }
@@ -362,28 +326,20 @@ openai_responses_write_assistant_message :: proc(
     provenance_model: string,
 ) {
     replay_reasoning := false
-    if provenance, present := message.provenance.?; present {
-        replay_reasoning = provenance.protocol == .Openai_Responses && provenance.model == provenance_model
-    }
+    if provenance, present := message.provenance.?; present do replay_reasoning = provenance.protocol == .Openai_Responses && provenance.model == provenance_model
 
     for part in message.content {
         switch content in part {
         case wire.Text_Part:
-            if len(content.text) > 0 {
-                openai_responses_write_output_text(out, content.text)
-            }
+            if len(content.text) > 0 do openai_responses_write_output_text(out, content.text)
 
         case wire.Reasoning_Part:
             // Stateless replay omits the item id and emits only signed reasoning:
             // the backend rejects a prior reasoning item without encrypted state.
-            if replay_reasoning && len(content.signature) > 0 {
-                openai_responses_write_reasoning(out, content.text, content.signature)
-            }
+            if replay_reasoning && len(content.signature) > 0 do openai_responses_write_reasoning(out, content.text, content.signature)
 
         case wire.Redacted_Reasoning_Part:
-            if replay_reasoning {
-                openai_responses_write_reasoning(out, "", content.data)
-            }
+            if replay_reasoning do openai_responses_write_reasoning(out, "", content.data)
 
         case wire.Tool_Part:
             openai_responses_write_function_call(out, content)
@@ -391,9 +347,7 @@ openai_responses_write_assistant_message :: proc(
     }
 
     for part in message.content {
-        if tool, is_tool := part.(wire.Tool_Part); is_tool {
-            openai_responses_write_function_call_output(out, tool)
-        }
+        if tool, is_tool := part.(wire.Tool_Part); is_tool do openai_responses_write_function_call_output(out, tool)
     }
 }
 
@@ -439,9 +393,7 @@ openai_responses_write_function_call :: proc(out: ^Openai_Responses_Input_Writer
     assert(len(tool.name) > 0, "validated OpenAI responses tool call has a name")
 
     arguments := tool.arguments
-    if len(arguments) == 0 {
-        arguments = "{}"
-    }
+    if len(arguments) == 0 do arguments = "{}"
 
     openai_responses_input_sep(out)
     json.write_raw(out.writer, `{"type":"function_call","call_id":`)
@@ -476,9 +428,7 @@ openai_responses_write_compaction_message :: proc(
     out: ^Openai_Responses_Input_Writer,
     message: wire.Compaction_Message,
 ) {
-    if len(message.summary) == 0 {
-        return
-    }
+    if len(message.summary) == 0 do return
 
     openai_responses_input_sep(out)
     json.write_raw(out.writer, `{"type":"message","role":"user","content":[{"type":"input_text","text":`)
@@ -492,9 +442,7 @@ openai_responses_input_sep :: proc(out: ^Openai_Responses_Input_Writer) {
     assert(out != nil, "OpenAI responses input separator needs output state")
     assert(out.count >= 0, "OpenAI responses input count cannot be negative")
 
-    if out.count > 0 {
-        json.write_raw(out.writer, `,`)
-    }
+    if out.count > 0 do json.write_raw(out.writer, `,`)
     out.count += 1
 }
 

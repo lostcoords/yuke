@@ -54,13 +54,9 @@ package_load :: proc(dir: string, d: ^gen.Diags, allocator := context.allocator)
     paths := make([dynamic]string, 0, len(infos), allocator)
 
     for info in infos {
-        if info.type != .Regular || !strings.has_suffix(info.name, ".odin") {
-            continue
-        }
+        if info.type != .Regular || !strings.has_suffix(info.name, ".odin") do continue
 
-        if strings.has_suffix(info.name, "_test.odin") {
-            continue
-        }
+        if strings.has_suffix(info.name, "_test.odin") do continue
 
         joined, join_err := filepath.join({dir, info.name}, allocator)
 
@@ -120,9 +116,7 @@ source_index_comments :: proc(s: ^Source) {
     assert(s != nil, "source_index_comments needs a source")
 
     for group in s.file.comments {
-        if len(group.list) == 0 {
-            continue
-        }
+        if len(group.list) == 0 do continue
 
         s.doc_ends[group.list[len(group.list) - 1].pos.line] = group
     }
@@ -138,15 +132,11 @@ package_index_procs :: proc(ps: ^Package_Source) {
         for decl in s.file.decls {
             v, is_single := decl_single(decl)
 
-            if !is_single || v.is_mutable {
-                continue
-            }
+            if !is_single || v.is_mutable do continue
 
             lit, is_proc := v.values[0].derived.(^ast.Proc_Lit)
 
-            if !is_proc || lit.body == nil {
-                continue
-            }
+            if !is_proc || lit.body == nil do continue
 
             name := expr_text(&s, v.names[0])
             ps.procs[name] = Proc_Ref {
@@ -163,9 +153,7 @@ package_index_procs :: proc(ps: ^Package_Source) {
 proc_first_result_type :: proc(s: ^Source, lit: ^ast.Proc_Lit) -> string {
     assert(lit != nil, "proc_first_result_type needs a procedure literal")
 
-    if lit.type == nil || lit.type.results == nil || len(lit.type.results.list) == 0 {
-        return ""
-    }
+    if lit.type == nil || lit.type.results == nil || len(lit.type.results.list) == 0 do return ""
 
     return expr_text(s, lit.type.results.list[0].type)
 }
@@ -173,9 +161,7 @@ proc_first_result_type :: proc(s: ^Source, lit: ^ast.Proc_Lit) -> string {
 // Source slice for any expression. The model records type expressions verbatim rather
 // than resolving them, so it keeps what the author wrote.
 expr_text :: proc(s: ^Source, e: ^ast.Expr) -> string {
-    if s == nil || e == nil {
-        return ""
-    }
+    if s == nil || e == nil do return ""
 
     return node_text(s.file.src, e)
 }
@@ -183,9 +169,7 @@ expr_text :: proc(s: ^Source, e: ^ast.Expr) -> string {
 // The individual `//` lines of a doc comment group. Markers are matched per line so a
 // bound written inside a prose sentence is not mistaken for a declaration.
 comment_lines :: proc(g: ^ast.Comment_Group, allocator := context.allocator) -> []string {
-    if g == nil {
-        return nil
-    }
+    if g == nil do return nil
 
     out := make([dynamic]string, 0, len(g.list), allocator)
 
@@ -203,9 +187,7 @@ comment_lines :: proc(g: ^ast.Comment_Group, allocator := context.allocator) -> 
 doc_group_check :: proc(g: ^ast.Comment_Group, pos: gen.Pos, owner: string, field: string, d: ^gen.Diags) {
     assert(d != nil, "doc_group_check needs a diagnostic sink")
 
-    if g == nil {
-        return
-    }
+    if g == nil do return
 
     assert(len(g.list) > 0, "the parser only builds non-empty comment groups")
 
@@ -226,9 +208,7 @@ doc_group_check :: proc(g: ^ast.Comment_Group, pos: gen.Pos, owner: string, fiel
 
 // A doc comment group as one line of prose.
 comment_text :: proc(g: ^ast.Comment_Group) -> string {
-    if g == nil {
-        return ""
-    }
+    if g == nil do return ""
 
     return strings.join(comment_lines(g, context.temp_allocator), " ")
 }

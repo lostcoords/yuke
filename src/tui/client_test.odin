@@ -17,9 +17,7 @@ client_test_result :: proc(t: ^testing.T, h: ^Host) -> string {
     defer qjs.free_value(h.js.ctx, value)
 
     result, ok := qjs.to_string(h.js.ctx, value)
-    if !testing.expect(t, ok, "client test result should be readable") {
-        return ""
-    }
+    if !testing.expect(t, ok, "client test result should be readable") do return ""
 
     defer qjs.free_string(h.js.ctx, result)
 
@@ -43,9 +41,7 @@ test_client_script_module_loads :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !client_test_host_init(t, &h) {
-        return
-    }
+    if !client_test_host_init(t, &h) do return
 
     defer js.destroy(&h.js)
 
@@ -62,9 +58,7 @@ test_client_script_request_rejects_when_disconnected :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !client_test_host_init(t, &h) {
-        return
-    }
+    if !client_test_host_init(t, &h) do return
 
     defer js.destroy(&h.js)
 
@@ -86,9 +80,7 @@ test_client_shutdown_reaction_cannot_start_native_work :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     h: Host
-    if !client_test_host_init(t, &h) {
-        return
-    }
+    if !client_test_host_init(t, &h) do return
 
     defer js.destroy(&h.js)
 
@@ -98,9 +90,7 @@ test_client_shutdown_reaction_cannot_start_native_work :: proc(t: ^testing.T) {
     h.drive = &drive
 
     job, closing := client_promise_new(&h)
-    if !testing.expect(t, job != nil, "closing promise should allocate") {
-        return
-    }
+    if !testing.expect(t, job != nil, "closing promise should allocate") do return
 
     global := qjs.global_object(h.js.ctx)
     defer qjs.free_value(h.js.ctx, global)

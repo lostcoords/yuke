@@ -127,9 +127,7 @@ session_create :: proc(
     defer if err != nil {
         workspace_created = false
 
-        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok {
-            err = rollback
-        }
+        if rollback := sqlite.txn_rollback(s.writer); rollback != .Ok do err = rollback
     }
 
     workspace_created = workspace_insert(s, workspace) or_return
@@ -157,18 +155,15 @@ session_snapshot :: proc(
 
     row, sqlite_err := queries.session_snapshot(&s.queries, {session_id = id}, allocator)
     if sqlite_err != nil {
-        if count_err, is_count := sqlite_err.(sqlite.Read_Error); is_count && count_err == .Row_Count {
-            return {}, false, nil
-        }
+        count_err, is_count := sqlite_err.(sqlite.Read_Error)
+        if is_count && count_err == .Row_Count do return {}, false, nil
 
         return {}, false, read_err(sqlite_err)
     }
 
     session, session_valid := session_row_to_wire(row)
     open_run, run_valid := open_run_from_row(row)
-    if !session_valid || !run_valid {
-        return {}, false, Store_Error.Invalid_Row
-    }
+    if !session_valid || !run_valid do return {}, false, Store_Error.Invalid_Row
 
     return Session_Snapshot{session = session, open_run = open_run}, true, nil
 }
@@ -205,9 +200,7 @@ session_page :: proc(
     }
 
     read, sqlite_err := queries.session_page(&s.queries, params, allocator, cap_hint = limit)
-    if sqlite_err != nil {
-        return nil, read_err(sqlite_err)
-    }
+    if sqlite_err != nil do return nil, read_err(sqlite_err)
 
     page := make([dynamic]wire.Session, 0, len(read), allocator)
 
@@ -216,9 +209,7 @@ session_page :: proc(
         // documented shape, so a row that will not rebuild was not written by this store.
         session, rebuilt := session_row_to_wire(row)
 
-        if !rebuilt {
-            return nil, Store_Error.Invalid_Row
-        }
+        if !rebuilt do return nil, Store_Error.Invalid_Row
 
         append(&page, session)
     }
@@ -244,9 +235,7 @@ session_count :: proc(s: ^Store, filter: Session_Filter) -> (total: u64, err: Er
 
     // An aggregate with no GROUP BY produces exactly one row on every input.
     row, sqlite_err := queries.session_count(&s.queries, params, context.allocator)
-    if sqlite_err != nil {
-        return 0, read_err(sqlite_err)
-    }
+    if sqlite_err != nil do return 0, read_err(sqlite_err)
 
     return row.total, nil
 }
@@ -287,9 +276,7 @@ session_row_to_wire :: proc(row: $Row) -> (session: wire.Session, ok: bool) {
     name, named := row.created_by_name.?
     version, versioned := row.created_by_version.?
 
-    if named != versioned {
-        return {}, false
-    }
+    if named != versioned do return {}, false
 
     if named {
         session.created_by = wire.Client {
@@ -298,9 +285,7 @@ session_row_to_wire :: proc(row: $Row) -> (session: wire.Session, ok: bool) {
         }
     }
 
-    if wire.session_validate(session) != .None {
-        return {}, false
-    }
+    if wire.session_validate(session) != .None do return {}, false
 
     return session, true
 }
@@ -320,27 +305,21 @@ session_origin_from_row :: proc(row: $Row) -> (origin: wire.Session_Origin, ok: 
         message, has_message := row.parent_message_id.?
         part, has_part := row.parent_part_id.?
 
-        if !has_parent || !has_message || !has_part {
-            return nil, false
-        }
+        if !has_parent || !has_message || !has_part do return nil, false
 
         return wire.Session_Origin_Child{parent_id = parent, parent_message_id = message, parent_part_id = part}, true
 
     case wire.Session_Origin_Fork:
         source, has_source := row.source_id.?
 
-        if !has_source {
-            return nil, false
-        }
+        if !has_source do return nil, false
 
         return wire.Session_Origin_Fork{source_id = source}, true
 
     case wire.Session_Origin_Cron:
         job, has_job := row.job_id.?
 
-        if !has_job {
-            return nil, false
-        }
+        if !has_job do return nil, false
 
         return wire.Session_Origin_Cron{job_id = job}, true
     }

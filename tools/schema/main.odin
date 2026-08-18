@@ -82,25 +82,19 @@ options_parse :: proc(args: []string) -> (opts: Options, ok: bool) {
     for i < len(args) {
         switch args[i] {
         case "--wire":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.wire_dir = args[i + 1]
             i += 2
 
         case "--out":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.out = args[i + 1]
             i += 2
 
         case "--schema-out":
-            if i + 1 >= len(args) {
-                return opts, false
-            }
+            if i + 1 >= len(args) do return opts, false
 
             opts.schema = args[i + 1]
             i += 2
@@ -188,17 +182,13 @@ model_report :: proc(m: ^Model) {
     sep := ""
 
     for b in m.broadcasts {
-        if b.class in seen {
-            continue
-        }
+        if b.class in seen do continue
 
         seen[b.class] = true
         count := 0
 
         for other in m.broadcasts {
-            if other.class == b.class {
-                count += 1
-            }
+            if other.class == b.class do count += 1
         }
 
         fmt.printf("%s%d %s", sep, count, b.class)

@@ -79,9 +79,7 @@ provider :: proc(kind: Kind) -> ^Provider {
 // Resolve a durable/wire provider id to the closed provider identity.
 kind_from_id :: proc(id: string) -> (Kind, bool) {
     for kind in Kind {
-        if provider(kind).id == id {
-            return kind, true
-        }
+        if provider(kind).id == id do return kind, true
     }
 
     return {}, false

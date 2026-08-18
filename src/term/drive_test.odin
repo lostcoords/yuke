@@ -54,9 +54,7 @@ inject_write :: proc(w: Tty_Handle, data: string) -> bool {
         }
 
         stalls += 1
-        if stalls > 1000 {
-            return false
-        }
+        if stalls > 1000 do return false
 
         time.sleep(time.Millisecond)
     }
@@ -122,9 +120,7 @@ test_drive_arrow_up_via_pipe :: proc(t: ^testing.T) {
     testing.expect(t, inject_write(src_w, "\x1b[A"), "inject CSI up")
     ts.nbio_run_until(t, &h.done, "arrow up")
     testing.expect(t, len(h.keys) >= 1, "one key")
-    if len(h.keys) > 0 {
-        testing.expect_value(t, h.keys[0].code, Key_Code.Up)
-    }
+    if len(h.keys) > 0 do testing.expect_value(t, h.keys[0].code, Key_Code.Up)
 }
 
 @(test)
@@ -160,9 +156,7 @@ test_drive_burst_larger_than_one_read_is_lossless :: proc(t: ^testing.T) {
     start := time.tick_now()
     for len(h.keys) < len(bytes) && time.tick_since(start) < 2 * time.Second {
         if sent < len(bytes) {
-            if n := inject_write_some(src_w, bytes[sent:]); n > 0 {
-                sent += n
-            }
+            if n := inject_write_some(src_w, bytes[sent:]); n > 0 do sent += n
         }
 
         _ = nbio.tick(5 * time.Millisecond)
@@ -263,9 +257,7 @@ test_drive_esc_timeout_flushes_lone_esc :: proc(t: ^testing.T) {
     // ESC is incomplete until timeout flush.
     ts.nbio_run_until(t, &h.done, "lone ESC flush")
     testing.expect(t, len(h.keys) >= 1, "esc key")
-    if len(h.keys) > 0 {
-        testing.expect_value(t, h.keys[0].code, Key_Code.Esc)
-    }
+    if len(h.keys) > 0 do testing.expect_value(t, h.keys[0].code, Key_Code.Esc)
 }
 
 @(test)
@@ -373,10 +365,7 @@ flood_main :: proc(data: rawptr) {
     sync.atomic_store(&a.started, true)
     for !sync.atomic_load(&a.stop) {
         n := inject_write_some(a.w, chunk[:])
-        if n <= 0 {
-            // Sink full or closed - brief yield then retry until stop.
-            time.sleep(time.Millisecond)
-        }
+        if n <= 0 do time.sleep(time.Millisecond)
     }
 }
 
@@ -414,9 +403,7 @@ test_drive_stop_under_backpressure :: proc(t: ^testing.T) {
     // Wait until flood is writing, then give it time to fill buffers. Do not tick
     // nbio so the relay is not drained.
     for _ in 0 ..< 200 {
-        if sync.atomic_load(&flood.started) {
-            break
-        }
+        if sync.atomic_load(&flood.started) do break
 
         time.sleep(time.Millisecond)
     }

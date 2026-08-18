@@ -49,29 +49,21 @@ Http_Peer :: struct {
 
 http_peer :: proc(p: ^Http_Peer) {
     sock, ok := raw_dial(p.port)
-    if !ok {
-        return
-    }
+    if !ok do return
     defer net.close(sock)
 
-    if _, serr := net.send_tcp(sock, transmute([]byte)p.request); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, transmute([]byte)p.request); serr != nil do return
 
     for p.length < len(p.response) {
         n, rerr := net.recv_tcp(sock, p.response[p.length:])
-        if rerr != nil || n == 0 {
-            break
-        }
+        if rerr != nil || n == 0 do break
 
         p.length += n
 
         // A 101 keeps the socket open for frames, so stop at its head; every other
         // answer is followed by a close, and reading on to EOF collects the body.
         got := string(p.response[:p.length])
-        if strings.has_prefix(got, "HTTP/1.1 101") && strings.contains(got, "\r\n\r\n") {
-            break
-        }
+        if strings.has_prefix(got, "HTTP/1.1 101") && strings.contains(got, "\r\n\r\n") do break
     }
 
     sync.atomic_store(&p.ok, true)
@@ -103,9 +95,7 @@ run_http :: proc(t: ^testing.T, request: string, options: Options = {}) -> strin
 
     for _ in 0 ..< 2000 {
         nbio.tick(time.Millisecond)
-        if sync.atomic_load(&p.ok) {
-            break
-        }
+        if sync.atomic_load(&p.ok) do break
     }
 
     thread.join(peer)
@@ -158,9 +148,7 @@ test_make_identity_dir :: proc(name: string, device_id: string) -> string {
 // Count directory entries, or -1 if the directory cannot be read.
 blob_dir_count :: proc(dir: string) -> int {
     infos, err := os.read_all_directory_by_path(dir, context.temp_allocator)
-    if err != nil {
-        return -1
-    }
+    if err != nil do return -1
 
     return len(infos)
 }
@@ -168,14 +156,10 @@ blob_dir_count :: proc(dir: string) -> int {
 // Whether any in-flight upload temp file was left behind under `dir`.
 blob_dir_has_temp :: proc(dir: string) -> bool {
     infos, err := os.read_all_directory_by_path(dir, context.temp_allocator)
-    if err != nil {
-        return false
-    }
+    if err != nil do return false
 
     for info in infos {
-        if strings.has_prefix(info.name, BLOB_TEMP_PREFIX) {
-            return true
-        }
+        if strings.has_prefix(info.name, BLOB_TEMP_PREFIX) do return true
     }
 
     return false
@@ -195,9 +179,7 @@ test_write_temp :: proc(dir: string, hash: string) -> string {
 // block (for auth) and an override for the declared Content-Length.
 blob_put_request :: proc(hash: string, body: string, extra := "", content_length := -1) -> string {
     length := content_length
-    if length < 0 {
-        length = len(body)
-    }
+    if length < 0 do length = len(body)
 
     return fmt.tprintf(
         "PUT /blob/%s HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: %d\r\n%s\r\n%s",
@@ -374,18 +356,12 @@ Partial_Put_Peer :: struct {
 
 partial_put_peer :: proc(p: ^Partial_Put_Peer) {
     sock, dialed := raw_dial(p.port)
-    if !dialed {
-        return
-    }
+    if !dialed do return
     defer net.close(sock)
 
-    if _, serr := net.send_tcp(sock, transmute([]byte)p.headers); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, transmute([]byte)p.headers); serr != nil do return
 
-    if _, serr := net.send_tcp(sock, transmute([]byte)p.partial); serr != nil {
-        return
-    }
+    if _, serr := net.send_tcp(sock, transmute([]byte)p.partial); serr != nil do return
 
     // The deferred `net.close` above drops the connection here, short of the
     // declared Content-Length.

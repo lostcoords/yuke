@@ -150,27 +150,19 @@ blob_publish :: proc(up: ^Blob_Upload) {
 blob_finalize :: proc(up: ^Blob_Upload) -> Blob_Outcome {
     // Flush before a hard link publishes the content-addressed name. Narrows the power-loss
     // window rather than closing it; darwin needs `F_FULLFSYNC` for a media barrier.
-    if up.publish {
-        up.err = os.sync(up.file)
-    }
+    if up.publish do up.err = os.sync(up.file)
 
     os.close(up.file)
     up.file = nil
 
-    if !up.publish {
-        return .Discarded
-    }
+    if !up.publish do return .Discarded
 
-    if up.err != nil {
-        return .Failed
-    }
+    if up.err != nil do return .Failed
 
     digest: [sha2.DIGEST_SIZE_256]byte
     sha2.final(&up.sha, digest[:])
 
-    if digest != up.claimed_raw {
-        return .Mismatch
-    }
+    if digest != up.claimed_raw do return .Mismatch
 
     // A hard link is an atomic no-replace publish: exactly one concurrent upload can
     // create the content address, and no existing file can be overwritten.
@@ -203,9 +195,7 @@ blob_published :: proc(up: ^Blob_Upload) {
     }
 
     c := http_server.conn_resolve(&up.daemon.front_door, up.ticket)
-    if c == nil {
-        return
-    }
+    if c == nil do return
 
     switch outcome {
     case .Stored:
@@ -251,9 +241,7 @@ warn_exposed_blob_dir :: proc(blob_dir: string, allocator := context.allocator) 
     assert(len(blob_dir) > 0, "blob dir exposure check needs a configured directory")
 
     info, err := os.stat(blob_dir, allocator)
-    if err != nil {
-        return
-    }
+    if err != nil do return
     defer os.file_info_delete(info, allocator)
 
     if exposed := info.mode & ~BLOB_DIR_PERMISSIONS; exposed != {} {
@@ -275,27 +263,17 @@ blob_sweep_temps :: proc(blob_dir: string, cutoff: time.Time) -> (removed: int) 
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
     infos, err := os.read_all_directory_by_path(blob_dir, context.temp_allocator)
-    if err != nil {
-        return 0
-    }
+    if err != nil do return 0
 
     for info in infos {
-        if !strings.has_prefix(info.name, BLOB_TEMP_PREFIX) {
-            continue
-        }
+        if !strings.has_prefix(info.name, BLOB_TEMP_PREFIX) do continue
 
-        if time.diff(info.modification_time, cutoff) <= 0 {
-            continue
-        }
+        if time.diff(info.modification_time, cutoff) <= 0 do continue
 
         path, aerr := strings.concatenate({blob_dir, "/", info.name}, context.temp_allocator)
-        if aerr != nil {
-            continue
-        }
+        if aerr != nil do continue
 
-        if os.remove(path) == nil {
-            removed += 1
-        }
+        if os.remove(path) == nil do removed += 1
     }
 
     return removed

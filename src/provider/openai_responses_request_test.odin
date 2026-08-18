@@ -39,9 +39,7 @@ test_responses_build :: proc(t: ^testing.T, request: Request, options: Openai_Re
 
     value, _, parse_err := decode_json_object(body, context.temp_allocator)
     testing.expect_value(t, parse_err, Transport_Error.None)
-    if parse_err == .None {
-        json.destroy_value(value, context.temp_allocator)
-    }
+    if parse_err == .None do json.destroy_value(value, context.temp_allocator)
 
     return body
 }

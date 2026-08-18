@@ -206,36 +206,20 @@ server_init :: proc(
     user_data: rawptr = nil,
     allocator := context.allocator,
 ) -> Server_Error {
-    if s == nil || loop == nil {
-        return .Invalid_Options
-    }
+    if s == nil || loop == nil do return .Invalid_Options
 
     opts := options
-    if opts.max_frame_bytes == 0 {
-        opts.max_frame_bytes = 1 << 20
-    }
-    if opts.max_message_bytes == 0 {
-        opts.max_message_bytes = 1 << 20
-    }
-    if opts.recv_chunk_bytes == 0 {
-        opts.recv_chunk_bytes = 64 << 10
-    }
-    if opts.max_connections == 0 {
-        opts.max_connections = 1024
-    }
-    if opts.handshake_timeout == 0 {
-        opts.handshake_timeout = 10 * time.Second
-    }
+    if opts.max_frame_bytes == 0 do opts.max_frame_bytes = 1 << 20
+    if opts.max_message_bytes == 0 do opts.max_message_bytes = 1 << 20
+    if opts.recv_chunk_bytes == 0 do opts.recv_chunk_bytes = 64 << 10
+    if opts.max_connections == 0 do opts.max_connections = 1024
+    if opts.handshake_timeout == 0 do opts.handshake_timeout = 10 * time.Second
     if opts.max_send_queue_bytes == 0 {
-        if opts.max_frame_bytes > max(int) - MAX_HEADER_BYTES {
-            return .Invalid_Options
-        }
+        if opts.max_frame_bytes > max(int) - MAX_HEADER_BYTES do return .Invalid_Options
 
         opts.max_send_queue_bytes = max(1 << 20, opts.max_frame_bytes + MAX_HEADER_BYTES)
     }
-    if opts.close_timeout == 0 {
-        opts.close_timeout = 5 * time.Second
-    }
+    if opts.close_timeout == 0 do opts.close_timeout = 5 * time.Second
 
     if opts.max_frame_bytes <= 0 ||
        opts.max_message_bytes <= 0 ||
@@ -250,9 +234,7 @@ server_init :: proc(
     }
 
     conns, aerr := make(map[^Server_Conn]bool, opts.max_connections, allocator)
-    if aerr != nil {
-        return .Out_Of_Memory
-    }
+    if aerr != nil do return .Out_Of_Memory
 
     s^ = {}
     s.loop = loop
@@ -307,9 +289,7 @@ server_adopt :: proc(
     }
 
     c, aerr := new(Server_Conn, s.allocator)
-    if aerr != nil {
-        return nil, .Out_Of_Memory
-    }
+    if aerr != nil do return nil, .Out_Of_Memory
 
     c^ = {}
     c.role = .Server
@@ -412,9 +392,7 @@ server_can_adopt :: proc(s: ^Server) -> bool {
 server_shutdown :: proc(s: ^Server) {
     assert(s != nil, "server_shutdown needs a server")
 
-    if s.state != .Serving {
-        return
-    }
+    if s.state != .Serving do return
 
     log.debug("websocket server: shutdown started")
     s.state = .Closing
@@ -422,9 +400,7 @@ server_shutdown :: proc(s: ^Server) {
     for conn in s.conns {
         switch conn.state {
         case .Open:
-            if close_err := conn_begin_close(&conn.core, Close_Code.Going_Away, .Going_Away); close_err != .None {
-                conn_fail(&conn.core, close_err)
-            }
+            if close_err := conn_begin_close(&conn.core, Close_Code.Going_Away, .Going_Away); close_err != .None do conn_fail(&conn.core, close_err)
 
         case .Upgrading:
             conn_finalize_close(&conn.core, .Going_Away)
@@ -468,13 +444,9 @@ server_send_binary :: proc(conn: ^Server_Conn, data: []byte) -> Server_Error {
 server_close :: proc(conn: ^Server_Conn, code := Close_Code.Normal_Closure) -> Server_Error {
     assert(conn != nil, "server_close needs a connection")
 
-    if conn.state != .Open {
-        return .Not_Open
-    }
+    if conn.state != .Open do return .Not_Open
 
-    if !close_code_valid_on_wire(u16(code)) {
-        return .Invalid_Close_Code
-    }
+    if !close_code_valid_on_wire(u16(code)) do return .Invalid_Close_Code
 
     return server_error(conn_begin_close(&conn.core, code, code))
 }
@@ -524,26 +496,18 @@ conn_on_response_sent :: proc(op: ^nbio.Operation, conn: ^Server_Conn) {
     conn.state = .Open
     conn.opened = true
 
-    if conn.server.cbs.on_open != nil {
-        conn.server.cbs.on_open(conn)
-    }
+    if conn.server.cbs.on_open != nil do conn.server.cbs.on_open(conn)
 
     // `on_open` may shut the server down, which finalizes this connection rather
     // than beginning a graceful WebSocket close.
-    if conn.state == .Closed {
-        return
-    }
+    if conn.state == .Closed do return
 
-    if !conn_drain_decoder(&conn.core) {
-        return
-    }
+    if !conn_drain_decoder(&conn.core) do return
 
     // `on_open` or a pipelined frame may have begun a close; only read on if Open.
     if conn.state == .Open {
         conn_start_recv(&conn.core)
-    } else if conn.state == .Closing {
-        conn_ensure_close_recv(&conn.core)
-    }
+    } else if conn.state == .Closing do conn_ensure_close_recv(&conn.core)
 }
 
 // Message dispatch adapter. `data` is borrowed for the call only; the driver frees it
@@ -554,9 +518,7 @@ conn_message :: proc(core: ^Conn_Core, kind: Message_Kind, data: []byte) {
     assert(core != nil && core.role == .Server, "server message dispatch on a non-server core")
 
     conn := (^Server_Conn)(core)
-    if conn.server.cbs.on_message != nil {
-        conn.server.cbs.on_message(conn, kind, data)
-    }
+    if conn.server.cbs.on_message != nil do conn.server.cbs.on_message(conn, kind, data)
 }
 
 // Terminal dispatch adapter: the driver core hands back the connection it was given,
@@ -569,12 +531,8 @@ conn_terminal :: proc(core: ^Conn_Core) {
     conn := (^Server_Conn)(core)
     if conn.opened {
         if core.terminal_error != .None {
-            if conn.server.cbs.on_error != nil {
-                conn.server.cbs.on_error(conn, server_error(core.terminal_error))
-            }
-        } else if conn.server.cbs.on_close != nil {
-            conn.server.cbs.on_close(conn, core.close_code)
-        }
+            if conn.server.cbs.on_error != nil do conn.server.cbs.on_error(conn, server_error(core.terminal_error))
+        } else if conn.server.cbs.on_close != nil do conn.server.cbs.on_close(conn, core.close_code)
     }
 
     conn_release(conn)
@@ -587,9 +545,7 @@ conn_drained :: proc(core: ^Conn_Core) {
     assert(core != nil && core.role == .Server, "server drain dispatch on a non-server core")
 
     conn := (^Server_Conn)(core)
-    if conn.server.cbs.on_drain != nil {
-        conn.server.cbs.on_drain(conn)
-    }
+    if conn.server.cbs.on_drain != nil do conn.server.cbs.on_drain(conn)
 }
 
 // Free every owned buffer, drop the connection from the server, and free it;

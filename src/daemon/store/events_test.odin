@@ -613,18 +613,14 @@ events_after :: proc(
     err: Error,
 ) {
     rows := make([dynamic]Event, 0, min(limit, 16), allocator)
-    defer if err != nil {
-        events_destroy(rows)
-    }
+    defer if err != nil do events_destroy(rows)
 
     collect := Events_Collect {
         rows = &rows,
     }
     visited, stopped, visit_err := events_visit_after(s, session, seq, limit, events_collect, &collect, allocator)
 
-    if visit_err != nil {
-        return nil, visit_err
-    }
+    if visit_err != nil do return nil, visit_err
 
     if stopped {
         assert(collect.err != nil, "the collector stops only on append failure")

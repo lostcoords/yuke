@@ -41,14 +41,10 @@ main :: proc() {
         login_run()
 
     case "provider":
-        if code := provider_run(); code != 0 {
-            os.exit(code)
-        }
+        if code := provider_run(); code != 0 do os.exit(code)
 
     case "catalog":
-        if code := catalog_run(); code != 0 {
-            os.exit(code)
-        }
+        if code := catalog_run(); code != 0 do os.exit(code)
 
     case "help", "--help", "-h":
         if rest == "" || help_flag(rest) {

@@ -132,9 +132,7 @@ stop :: proc(d: ^daemon.Daemon) -> bool {
     first := signals_seen()
 
     for !daemon.shutdown_complete(d) {
-        if time.since(deadline) >= 0 {
-            return false
-        }
+        if time.since(deadline) >= 0 do return false
 
         if signals_seen() > first {
             log.warn("yuke: second signal; abandoning the graceful shutdown")

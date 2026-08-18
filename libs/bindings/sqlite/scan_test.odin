@@ -571,9 +571,7 @@ scan_test_error :: proc(db: ^Conn, sql: string, $T: typeid) -> Scan_Error where 
 
     // A shape failure can be an invalid tag, which the release walker asserts against;
     // only a successful scan owns anything to release.
-    if err == .None {
-        scan_destroy(&row)
-    }
+    if err == .None do scan_destroy(&row)
 
     return err
 }

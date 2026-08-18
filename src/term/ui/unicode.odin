@@ -57,9 +57,7 @@ iter_next :: proc(it: ^Iterator) -> (Cluster, bool) {
 // The contract is intended for abort-on-error callers; buffer.odin treats this
 // error as fatal today.
 iter_next_bounded :: proc(it: ^Iterator, max_bytes: int) -> (Cluster, bool, Unicode_Error) {
-    if it.done {
-        return {}, false, .None
-    }
+    if it.done do return {}, false, .None
 
     start := it.offset
     remaining := len(it.str) - start
@@ -76,9 +74,7 @@ iter_next_bounded :: proc(it: ^Iterator, max_bytes: int) -> (Cluster, bool, Unic
     // `start`, so the cluster is rejected either way.
     MAX_RUNE_BYTES :: 4
     bounded_len := remaining
-    if max_bytes >= 0 && remaining >= MAX_RUNE_BYTES && max_bytes <= remaining - MAX_RUNE_BYTES {
-        bounded_len = max_bytes + MAX_RUNE_BYTES
-    }
+    if max_bytes >= 0 && remaining >= MAX_RUNE_BYTES && max_bytes <= remaining - MAX_RUNE_BYTES do bounded_len = max_bytes + MAX_RUNE_BYTES
 
     bounded_str := it.str[start:start + bounded_len]
     bounded_it := utf8.decode_grapheme_iterator_make(bounded_str)
@@ -95,14 +91,10 @@ iter_next_bounded :: proc(it: ^Iterator, max_bytes: int) -> (Cluster, bool, Unic
     end := start + (next_g.byte_index if next_ok else bounded_len)
     length := end - start
 
-    if length > max_bytes {
-        return resume_after_too_long(it, start, max_bytes)
-    }
+    if length > max_bytes do return resume_after_too_long(it, start, max_bytes)
 
     it.offset = end
-    if it.offset >= len(it.str) {
-        it.done = true
-    }
+    if it.offset >= len(it.str) do it.done = true
 
     return {offset = start, len = length}, true, .None
 }
@@ -113,9 +105,7 @@ resume_after_too_long :: proc(it: ^Iterator, start, max_bytes: int) -> (Cluster,
     pos := 0
     for pos < max_bytes {
         _, size := utf8.decode_rune(it.str[start + pos:])
-        if pos + size > max_bytes {
-            break
-        }
+        if pos + size > max_bytes do break
         pos += size
     }
 
@@ -127,9 +117,7 @@ resume_after_too_long :: proc(it: ^Iterator, start, max_bytes: int) -> (Cluster,
     }
 
     it.offset = start + pos
-    if it.offset >= len(it.str) {
-        it.done = true
-    }
+    if it.offset >= len(it.str) do it.done = true
 
     return {}, false, .Grapheme_Too_Long
 }
@@ -145,9 +133,7 @@ str_width :: proc(str: string) -> int {
     it := clusters(str)
     for {
         c, ok := iter_next(&it)
-        if !ok {
-            break
-        }
+        if !ok do break
 
         width = intrinsics.saturating_add(width, cluster_width(c, str))
     }
@@ -181,9 +167,7 @@ cluster_width :: proc(c: Cluster, src: string) -> int {
         off += size
 
         cw := codepoint_width(cp)
-        if cw == 0 {
-            continue
-        }
+        if cw == 0 do continue
 
         width = cw
 
@@ -228,9 +212,7 @@ cluster_width :: proc(c: Cluster, src: string) -> int {
 // codepoint of a real-world cluster, so cluster_width is unaffected.
 @(private)
 codepoint_width :: proc(cp: rune) -> int {
-    if cp == 0x08 || cp == 0x7F {
-        return -1
-    }
+    if cp == 0x08 || cp == 0x7F do return -1
 
     switch cp {
     case 0x2E3A:
@@ -239,9 +221,7 @@ codepoint_width :: proc(cp: rune) -> int {
         return 3 // three-em dash
     }
 
-    if cp >= 0x1F1E6 && cp <= 0x1F200 {
-        return 2 // regional indicators
-    }
+    if cp >= 0x1F1E6 && cp <= 0x1F200 do return 2 // regional indicators
 
     return unicode.normalized_east_asian_width(cp)
 }

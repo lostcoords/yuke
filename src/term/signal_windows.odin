@@ -73,9 +73,7 @@ signal_restore_arm :: proc(out_handle: Tty_Handle, raw: Raw_Term, out_mode: Outp
 // Uninstall the fatal-signal restore: remove the handler, then clear the snapshot.
 @(private)
 signal_restore_disarm :: proc() {
-    if !g_signal.armed {
-        return
-    }
+    if !g_signal.armed do return
 
     windows.SetConsoleCtrlHandler(ctrl_handler, windows.FALSE)
     g_signal = {}

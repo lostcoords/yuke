@@ -11,15 +11,11 @@ import "src:wire"
 @(private = "file")
 message_row_count :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
     st, prep := sqlite.prepare(s.writer, "SELECT count(*) FROM messages WHERE session_id = ?1")
-    if prep != .Ok {
-        return -1
-    }
+    if prep != .Ok do return -1
     defer sqlite.finalize(st)
 
     sid := ([16]u8)(session)
-    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row {
-        return -1
-    }
+    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row do return -1
 
     return sqlite.column_i64(st, 0)
 }
@@ -27,15 +23,11 @@ message_row_count :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
 @(private)
 session_message_count :: proc(s: ^Store, session: wire.Session_Id) -> i64 {
     st, prep := sqlite.prepare(s.writer, "SELECT message_count FROM sessions WHERE id = ?1")
-    if prep != .Ok {
-        return -1
-    }
+    if prep != .Ok do return -1
     defer sqlite.finalize(st)
 
     sid := ([16]u8)(session)
-    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row {
-        return -1
-    }
+    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row do return -1
 
     return sqlite.column_i64(st, 0)
 }
@@ -288,15 +280,11 @@ usage_total :: proc(s: ^Store, session: wire.Session_Id) -> wire.Token_Usage {
                 usage_cache_read_total, usage_cache_write_total
          FROM sessions WHERE id = ?1`,
     )
-    if prep != .Ok {
-        return {}
-    }
+    if prep != .Ok do return {}
     defer sqlite.finalize(st)
 
     sid := ([16]u8)(session)
-    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row {
-        return {}
-    }
+    if sqlite.bind_blob(st, 1, sid[:]) != .Ok || sqlite.step(st) != .Row do return {}
 
     return wire.Token_Usage {
         input = u64(sqlite.column_i64(st, 0)),
@@ -519,22 +507,16 @@ project_snapshot :: proc(s: ^Store, session: wire.Session_Id, allocator := conte
                 COALESCE(cost, -1) || '|' || created_at_ms
          FROM messages WHERE session_id = ?1 ORDER BY message_id`,
     )
-    if prep != .Ok {
-        return ""
-    }
+    if prep != .Ok do return ""
     defer sqlite.finalize(st)
 
     sid := ([16]u8)(session)
-    if sqlite.bind_blob(st, 1, sid[:]) != .Ok {
-        return ""
-    }
+    if sqlite.bind_blob(st, 1, sid[:]) != .Ok do return ""
 
     b := strings.builder_make(allocator)
     for sqlite.step(st) == .Row {
         row, rc := sqlite.column_text(st, 0)
-        if rc != .Ok {
-            return ""
-        }
+        if rc != .Ok do return ""
 
         strings.write_string(&b, row)
         strings.write_byte(&b, '\n')

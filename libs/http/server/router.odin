@@ -124,9 +124,7 @@ router_validate :: proc(r: ^Router($T)) {
         assert(len(route.method) > 0, "router route needs a method")
         assert(len(route.pattern) > 0 && route.pattern[0] == '/', "router pattern must start with `/`")
 
-        if strings.index_byte(route.pattern, '*') >= 0 {
-            assert(strings.has_suffix(route.pattern, "/*"), "`*` is only valid as a trailing `/*` segment")
-        }
+        if strings.index_byte(route.pattern, '*') >= 0 do assert(strings.has_suffix(route.pattern, "/*"), "`*` is only valid as a trailing `/*` segment")
 
         for earlier in r.routes[:i] {
             duplicate := earlier.method == route.method && earlier.pattern == route.pattern
@@ -204,14 +202,10 @@ router_dispatch :: proc(r: ^Router($T), c: ^Conn, req: Request) {
     path_matched := false
     for route in r.routes {
         rest, path_ok := match_route_path(route.pattern, path)
-        if !path_ok {
-            continue
-        }
+        if !path_ok do continue
 
         path_matched = true
-        if route.method != method {
-            continue
-        }
+        if route.method != method do continue
 
         assert(ctx.allow == "", "`allow` belongs to the 405 fallback alone")
 
@@ -237,9 +231,7 @@ router_dispatch :: proc(r: ^Router($T), c: ^Conn, req: Request) {
 
         // RFC 9110 §15.5.6: a 405 names the methods the path does route, so one that
         // cannot carry `Allow` is torn down rather than sent without it.
-        if !conn_add_header(c, "Allow", ctx.allow) {
-            return
-        }
+        if !conn_add_header(c, "Allow", ctx.allow) do return
 
         conn_respond_error(c, .Method_Not_Allowed, "method not allowed")
 
@@ -263,16 +255,12 @@ match_route_path :: proc(pattern: string, path: string) -> (rest: string, ok: bo
         // Drop the trailing `*`; keep the slash so `/blob/*` → prefix `/blob/`.
         prefix := pattern[:len(pattern) - 1]
 
-        if !strings.has_prefix(path, prefix) {
-            return "", false
-        }
+        if !strings.has_prefix(path, prefix) do return "", false
 
         return path[len(prefix):], true
     }
 
-    if path == pattern {
-        return "", true
-    }
+    if path == pattern do return "", true
 
     return "", false
 }
@@ -286,13 +274,9 @@ router_allow_value :: proc(r: ^Router($T), path: string, buf: []byte) -> string 
 
     n := 0
     for route in r.routes {
-        if _, ok := match_route_path(route.pattern, path); !ok {
-            continue
-        }
+        if _, ok := match_route_path(route.pattern, path); !ok do continue
 
-        if n > 0 {
-            n += copy(buf[n:], ", ")
-        }
+        if n > 0 do n += copy(buf[n:], ", ")
 
         n += copy(buf[n:], route.method)
     }

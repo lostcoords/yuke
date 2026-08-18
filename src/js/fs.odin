@@ -100,9 +100,7 @@ fs_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
         {"hash", fs_hash, 1},
     }
     for export in exports {
-        if !qjs.set_module_export(ctx, m, export.name, qjs.new_function(ctx, export.entry, export.name, export.argc)) {
-            return -1
-        }
+        if !qjs.set_module_export(ctx, m, export.name, qjs.new_function(ctx, export.entry, export.name, export.argc)) do return -1
     }
 
     return 0
@@ -113,9 +111,7 @@ fs_read_file :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv:
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Read_File, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     return fs_submit(ctx, job)
 }
@@ -125,9 +121,7 @@ fs_write_file :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Write_File, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     if failure, got := arg_string(ctx, argv, argc, 1, job.allocator, &job.text); !got {
         fs_job_free(job)
@@ -145,9 +139,7 @@ fs_edit :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]q
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Edit, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     fields := [2]^string{&job.text, &job.replacement}
 
@@ -179,9 +171,7 @@ fs_read_dir :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: 
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Read_Dir, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     return fs_submit(ctx, job)
 }
@@ -191,9 +181,7 @@ fs_stat :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]q
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Stat, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     return fs_submit(ctx, job)
 }
@@ -203,9 +191,7 @@ fs_exists :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Exists, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     return fs_submit(ctx, job)
 }
@@ -215,9 +201,7 @@ fs_hash :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]q
     context = runtime.default_context()
 
     job, thrown, ok := fs_begin(ctx, .Hash, argc, argv)
-    if !ok {
-        return thrown
-    }
+    if !ok do return thrown
 
     return fs_submit(ctx, job)
 }
@@ -228,14 +212,10 @@ fs_hash :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]q
 fs_begin :: proc(ctx: ^qjs.Context, op: Fs_Op, argc: c.int, argv: [^]qjs.Value) -> (^Fs_Job, qjs.Value, bool) {
     h := host_of(ctx)
 
-    if h == nil || h.pool == nil {
-        return nil, qjs.throw_type_error(ctx, "yuke:fs needs a configured worker pool"), false
-    }
+    if h == nil || h.pool == nil do return nil, qjs.throw_type_error(ctx, "yuke:fs needs a configured worker pool"), false
 
     // Closed while abandoning a failed eval so continuations cannot re-submit.
-    if !h.ops_open {
-        return nil, qjs.throw_type_error(ctx, "yuke:fs is closed"), false
-    }
+    if !h.ops_open do return nil, qjs.throw_type_error(ctx, "yuke:fs is closed"), false
 
     job := new(Fs_Job, h.allocator)
 
@@ -336,16 +316,12 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
 
     case .Read_Dir:
         handle, oerr := os.open(job.path)
-        if oerr != nil {
-            return .Unreadable
-        }
+        if oerr != nil do return .Unreadable
 
         defer os.close(handle)
 
         entries, rerr := os.read_dir(handle, -1, job.allocator)
-        if rerr != nil {
-            return .Unreadable
-        }
+        if rerr != nil do return .Unreadable
 
         job.entries = entries
 
@@ -353,9 +329,7 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
 
     case .Stat:
         info, ierr := os.stat(job.path, job.allocator)
-        if ierr != nil {
-            return .Unreadable
-        }
+        if ierr != nil do return .Unreadable
 
         job.info = info
 
@@ -376,51 +350,35 @@ fs_pass :: proc(job: ^Fs_Job) -> Fs_Error {
 @(private = "file")
 fs_read_contents :: proc(job: ^Fs_Job) -> (contents: string, err: Fs_Error) {
     handle, oerr := os.open(job.path)
-    if oerr != nil {
-        return "", .Unreadable
-    }
+    if oerr != nil do return "", .Unreadable
 
     defer os.close(handle)
 
     // Open once: the size guard must run before the read materializes anything.
     size, serr := os.file_size(handle)
-    if serr != nil {
-        return "", .Unreadable
-    }
+    if serr != nil do return "", .Unreadable
 
-    if size > FS_MAX_FILE_BYTES {
-        return "", .Too_Large
-    }
+    if size > FS_MAX_FILE_BYTES do return "", .Too_Large
 
     data, rerr := os.read_entire_file(f = handle, allocator = job.allocator)
-    if rerr != nil {
-        return "", .Unreadable
-    }
+    if rerr != nil do return "", .Unreadable
 
     return string(data), .None
 }
 
 @(private = "file")
 fs_write_contents :: proc(job: ^Fs_Job) -> Fs_Error {
-    if fs_job_cancelled(job) {
-        return .Canceled
-    }
+    if fs_job_cancelled(job) do return .Canceled
 
     // Writing a new file in a new directory is ordinary, so the parents are made rather than
     // reported as a missing-path failure.
     if parent := filepath.dir(job.path); parent != "" {
-        if mkerr := os.make_directory_all(parent); mkerr != nil && !os.is_dir(parent) {
-            return .Unwritable
-        }
+        if mkerr := os.make_directory_all(parent); mkerr != nil && !os.is_dir(parent) do return .Unwritable
     }
 
-    if fs_job_cancelled(job) {
-        return .Canceled
-    }
+    if fs_job_cancelled(job) do return .Canceled
 
-    if werr := os.write_entire_file(job.path, transmute([]byte)job.text); werr != nil {
-        return .Unwritable
-    }
+    if werr := os.write_entire_file(job.path, transmute([]byte)job.text); werr != nil do return .Unwritable
 
     job.count = len(job.text)
 
@@ -430,18 +388,12 @@ fs_write_contents :: proc(job: ^Fs_Job) -> Fs_Error {
 @(private = "file")
 fs_edit_contents :: proc(job: ^Fs_Job) -> Fs_Error {
     contents, err := fs_read_contents(job)
-    if err != .None {
-        return err
-    }
+    if err != .None do return err
 
     occurrences := strings.count(contents, job.text)
-    if occurrences == 0 {
-        return .No_Match
-    }
+    if occurrences == 0 do return .No_Match
 
-    if occurrences > 1 && !job.replace_all {
-        return .Ambiguous
-    }
+    if occurrences > 1 && !job.replace_all do return .Ambiguous
 
     replaced, _ := strings.replace(
         contents,
@@ -451,13 +403,9 @@ fs_edit_contents :: proc(job: ^Fs_Job) -> Fs_Error {
         job.allocator,
     )
 
-    if fs_job_cancelled(job) {
-        return .Canceled
-    }
+    if fs_job_cancelled(job) do return .Canceled
 
-    if werr := os.write_entire_file(job.path, transmute([]byte)replaced); werr != nil {
-        return .Unwritable
-    }
+    if werr := os.write_entire_file(job.path, transmute([]byte)replaced); werr != nil do return .Unwritable
 
     job.count = occurrences if job.replace_all else 1
 
@@ -475,9 +423,7 @@ fs_hash_contents :: proc(job: ^Fs_Job) -> Fs_Error {
     }
 
     contents, err := fs_read_contents(job)
-    if err != .None {
-        return err
-    }
+    if err != .None do return err
 
     hasher: sha2.Context_256
     sha2.init_256(&hasher)
@@ -530,9 +476,7 @@ fs_settle :: proc(job: ^Fs_Job, outcome: Fs_Error) {
     settle := job.reject
     value := qjs.new_string(ctx, fs_error_message(outcome)) if outcome != .None else fs_value(job)
 
-    if outcome == .None {
-        settle = job.resolve
-    }
+    if outcome == .None do settle = job.resolve
 
     defer qjs.free_value(ctx, value)
 

@@ -45,9 +45,7 @@ reader_prepare :: proc(
     assert(bind_err == .None, "reader_prepare's parameter struct matches the statement")
 
     scan_mapping, scan_err := scan_prepare(statement, T, allocator)
-    if scan_err == .Out_Of_Memory {
-        return {}, .Out_Of_Memory
-    }
+    if scan_err == .Out_Of_Memory do return {}, .Out_Of_Memory
 
     assert(scan_err == .None, "reader_prepare's row struct matches the statement")
 
@@ -100,9 +98,7 @@ read_all :: proc(
     bind(&reader.bind, params) or_return
 
     list, make_err := make([dynamic]T, 0, cap_hint, allocator)
-    if make_err != nil {
-        return nil, Scan_Error.Out_Of_Memory
-    }
+    if make_err != nil do return nil, Scan_Error.Out_Of_Memory
 
     for {
         result := step(reader.statement)
@@ -159,9 +155,7 @@ read_one :: proc(reader: ^Reader($P, $T), params: ^P, allocator := context.alloc
     bind(&reader.bind, params) or_return
 
     first := step(reader.statement)
-    if first != .Row {
-        return {}, first if is_error(first) else Read_Error.Row_Count
-    }
+    if first != .Row do return {}, first if is_error(first) else Read_Error.Row_Count
 
     scan(&reader.scan, &row, allocator) or_return
 

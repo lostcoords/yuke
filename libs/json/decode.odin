@@ -30,9 +30,7 @@ decoder_init :: proc(data: string, allocator := context.allocator) -> Decoder {
 // Assert the input held exactly one JSON value: trailing bytes after the root are
 // rejected rather than silently dropped.
 dec_finish :: proc(d: ^Decoder) -> Decode_Error {
-    if d.curr_token.kind != .EOF {
-        return .Bad_Frame_Type
-    }
+    if d.curr_token.kind != .EOF do return .Bad_Frame_Type
 
     return .None
 }
@@ -41,16 +39,12 @@ dec_finish :: proc(d: ^Decoder) -> Decode_Error {
 dec_string :: proc(d: ^Decoder) -> (string, Decode_Error) {
     tok := d.curr_token
 
-    if tok.kind != .String {
-        return "", .Mismatched_Payload
-    }
+    if tok.kind != .String do return "", .Mismatched_Payload
 
     advance_token(d)
     s, err := unquote_string(tok, .JSON, d.allocator)
 
-    if err != nil {
-        return "", .Mismatched_Payload
-    }
+    if err != nil do return "", .Mismatched_Payload
 
     return s, .None
 }
@@ -65,9 +59,7 @@ dec_raw_scalar :: proc(d: ^Decoder) -> (string, Decode_Error) {
         advance_token(d)
         text, err := strings.clone(tok.text, d.allocator)
 
-        if err != nil {
-            return "", .Mismatched_Payload
-        }
+        if err != nil do return "", .Mismatched_Payload
 
         return text, .None
     }
@@ -84,13 +76,9 @@ MAX_INTEGER_TOKEN_DIGITS :: 16
 dec_u64 :: proc(d: ^Decoder, max: i64) -> (u64, Decode_Error) {
     tok := d.curr_token
 
-    if tok.kind != .Integer {
-        return 0, .Mismatched_Payload
-    }
+    if tok.kind != .Integer do return 0, .Mismatched_Payload
 
-    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS {
-        return 0, .Out_Of_Range
-    }
+    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS do return 0, .Out_Of_Range
 
     advance_token(d)
     i, ok := strconv.parse_i64(tok.text)
@@ -104,25 +92,17 @@ dec_u64 :: proc(d: ^Decoder, max: i64) -> (u64, Decode_Error) {
 dec_i64 :: proc(d: ^Decoder, max: i64) -> (i64, Decode_Error) {
     tok := d.curr_token
 
-    if tok.kind != .Integer {
-        return 0, .Mismatched_Payload
-    }
+    if tok.kind != .Integer do return 0, .Mismatched_Payload
 
     // One byte wider than `dec_u64` for a leading `-`.
-    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 {
-        return 0, .Out_Of_Range
-    }
+    if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 do return 0, .Out_Of_Range
 
     advance_token(d)
     i, ok := strconv.parse_i64(tok.text)
 
-    if !ok {
-        return 0, .Out_Of_Range
-    }
+    if !ok do return 0, .Out_Of_Range
 
-    if i < -max || i > max {
-        return 0, .Out_Of_Range
-    }
+    if i < -max || i > max do return 0, .Out_Of_Range
 
     return i, .None
 }
@@ -134,16 +114,12 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Decode_Error) {
 
     #partial switch tok.kind {
     case .Integer:
-        if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 {
-            return 0, .Out_Of_Range
-        }
+        if len(tok.text) > MAX_INTEGER_TOKEN_DIGITS + 1 do return 0, .Out_Of_Range
 
         advance_token(d)
         i, ok := strconv.parse_i64(tok.text)
 
-        if !ok {
-            return 0, .Out_Of_Range
-        }
+        if !ok do return 0, .Out_Of_Range
 
         return f64(i), .None
 
@@ -151,9 +127,7 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Decode_Error) {
         advance_token(d)
         f, ok := strconv.parse_f64(tok.text)
 
-        if !ok {
-            return 0, .Mismatched_Payload
-        }
+        if !ok do return 0, .Mismatched_Payload
 
         return f, .None
     }
@@ -213,9 +187,7 @@ dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Decode_Error) {
 
     s := dec_string(d) or_return
 
-    if len(s) != N {
-        return {}, .Invalid_Length
-    }
+    if len(s) != N do return {}, .Invalid_Length
 
     copy(out[:], s)
 
@@ -226,9 +198,7 @@ dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Decode_Error) {
 // string yields `ok=false`.
 enum_from_wire :: proc(table: [$E]string, s: string) -> (E, bool) {
     for str, e in table {
-        if str == s {
-            return e, true
-        }
+        if str == s do return e, true
     }
 
     return {}, false
@@ -238,9 +208,7 @@ enum_from_wire :: proc(table: [$E]string, s: string) -> (E, bool) {
 enum_from_wire_checked :: proc(table: [$E]string, s: string) -> (out: E, err: Decode_Error) {
     value, ok := enum_from_wire(table, s)
 
-    if !ok {
-        return {}, .Mismatched_Payload
-    }
+    if !ok do return {}, .Mismatched_Payload
 
     return value, .None
 }
@@ -272,9 +240,7 @@ dec_skip :: proc(d: ^Decoder) -> Decode_Error {
 
             advance_token(d)
 
-            if depth == 0 {
-                break
-            }
+            if depth == 0 do break
         }
 
     case .EOF:
@@ -289,9 +255,7 @@ dec_skip :: proc(d: ^Decoder) -> Decode_Error {
 
 // Consume the opening `{`. A non-object is an error.
 dec_object_begin :: proc(d: ^Decoder) -> Decode_Error {
-    if d.curr_token.kind != .Open_Brace {
-        return .Mismatched_Payload
-    }
+    if d.curr_token.kind != .Open_Brace do return .Mismatched_Payload
 
     advance_token(d)
 
@@ -313,22 +277,16 @@ dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Decode_Error) {
 
     tok := d.curr_token
 
-    if tok.kind != .String {
-        return "", false, .Mismatched_Payload
-    }
+    if tok.kind != .String do return "", false, .Mismatched_Payload
 
     advance_token(d)
 
-    if d.curr_token.kind != .Colon {
-        return "", false, .Mismatched_Payload
-    }
+    if d.curr_token.kind != .Colon do return "", false, .Mismatched_Payload
 
     advance_token(d)
     k, uerr := unquote_string(tok, .JSON, d.allocator)
 
-    if uerr != nil {
-        return "", false, .Mismatched_Payload
-    }
+    if uerr != nil do return "", false, .Mismatched_Payload
 
     return k, false, .None
 }
@@ -365,9 +323,7 @@ dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Decode_E
 
 // Consume the opening `[`. A non-array is an error.
 dec_array_begin :: proc(d: ^Decoder) -> Decode_Error {
-    if d.curr_token.kind != .Open_Bracket {
-        return .Mismatched_Payload
-    }
+    if d.curr_token.kind != .Open_Bracket do return .Mismatched_Payload
 
     advance_token(d)
 
@@ -387,9 +343,7 @@ dec_elem :: proc(d: ^Decoder) -> (more: bool, err: Decode_Error) {
         advance_token(d)
     }
 
-    if d.curr_token.kind == .Close_Bracket {
-        return false, .Mismatched_Payload
-    }
+    if d.curr_token.kind == .Close_Bracket do return false, .Mismatched_Payload
 
     return true, .None
 }

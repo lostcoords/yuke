@@ -40,9 +40,7 @@ retry_backoff :: proc(attempt: int, retry_after: Maybe(time.Duration), jitter: f
     for _ in 1 ..< attempt {
         delay *= RETRY_FACTOR
 
-        if delay >= f64(RETRY_CAP) {
-            break
-        }
+        if delay >= f64(RETRY_CAP) do break
     }
 
     capped := min(time.Duration(delay), RETRY_CAP)

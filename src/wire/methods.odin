@@ -629,13 +629,9 @@ response_result_validate :: proc(result: Response_Result) -> Validation_Error {
 params_are_default :: proc(params: Request_Params) -> bool {
     #partial switch p in params {
     case Session_List_Params:
-        if _, is_all := p.scope.(Session_Scope_All); !is_all {
-            return false
-        }
+        if _, is_all := p.scope.(Session_Scope_All); !is_all do return false
 
-        if _, is_top := p.population.(Session_Population_Top_Level); !is_top {
-            return false
-        }
+        if _, is_top := p.population.(Session_Population_Top_Level); !is_top do return false
 
         return p.view == .Active_Recent && p.limit == nil && p.cursor == nil
 
@@ -719,9 +715,7 @@ session_result_from_reader :: proc(d: ^json.Decoder) -> (out: Session_Result, er
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return out, .None
 }
@@ -754,9 +748,7 @@ session_patch_params_from_reader :: proc(d: ^json.Decoder) -> (params: Session_P
         }
     }
 
-    if seen != {.Sid, .Patch} {
-        return {}, .Mismatched_Payload
-    }
+    if seen != {.Sid, .Patch} do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -787,9 +779,7 @@ session_remove_params_from_reader :: proc(
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return params, .None
 }
@@ -812,9 +802,7 @@ cron_job_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_Job_Resul
         }
     }
 
-    if !have {
-        return {}, .Mismatched_Payload
-    }
+    if !have do return {}, .Mismatched_Payload
 
     return result, .None
 }

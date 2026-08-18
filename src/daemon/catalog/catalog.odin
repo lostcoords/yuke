@@ -74,9 +74,7 @@ max_tokens_field_string := [provider.Openai_Max_Tokens_Field]string {
 
 reasoning_replay_from_string :: proc(name: string) -> (provider.Openai_Reasoning_Replay, bool) {
     for candidate, value in reasoning_replay_string {
-        if candidate == name {
-            return value, true
-        }
+        if candidate == name do return value, true
     }
 
     return {}, false
@@ -84,9 +82,7 @@ reasoning_replay_from_string :: proc(name: string) -> (provider.Openai_Reasoning
 
 thinking_format_from_string :: proc(name: string) -> (provider.Openai_Thinking_Format, bool) {
     for candidate, value in thinking_format_string {
-        if candidate == name {
-            return value, true
-        }
+        if candidate == name do return value, true
     }
 
     return {}, false
@@ -94,9 +90,7 @@ thinking_format_from_string :: proc(name: string) -> (provider.Openai_Thinking_F
 
 max_tokens_field_from_string :: proc(name: string) -> (provider.Openai_Max_Tokens_Field, bool) {
     for candidate, value in max_tokens_field_string {
-        if candidate == name {
-            return value, true
-        }
+        if candidate == name do return value, true
     }
 
     return {}, false
@@ -122,15 +116,11 @@ reasoning_shape_compatible :: proc(model: Model) -> bool {
 // A provider credential environment-variable name: a non-empty ASCII identifier
 // within the shared bound. Shared by the decoder and the store.
 env_name_valid :: proc(name: string) -> bool {
-    if len(name) == 0 || len(name) > ENV_NAME_MAX_BYTES {
-        return false
-    }
+    if len(name) == 0 || len(name) > ENV_NAME_MAX_BYTES do return false
 
     for byte, i in transmute([]byte)name {
         if i == 0 {
-            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') {
-                return false
-            }
+            if byte != '_' && !(byte >= 'a' && byte <= 'z') && !(byte >= 'A' && byte <= 'Z') do return false
         } else if byte != '_' &&
            !(byte >= 'a' && byte <= 'z') &&
            !(byte >= 'A' && byte <= 'Z') &&
@@ -162,9 +152,7 @@ Model :: struct {
 // Real OpenAI chat counts output with `max_completion_tokens`; every other
 // OpenAI-compatible endpoint uses `max_tokens`. Consulted only by the chat protocol.
 max_tokens_field_resolve :: proc(npm: string, protocol: wire.Provider_Protocol) -> provider.Openai_Max_Tokens_Field {
-    if protocol == .Openai_Chat && npm == "@ai-sdk/openai" {
-        return .Max_Completion_Tokens
-    }
+    if protocol == .Openai_Chat && npm == "@ai-sdk/openai" do return .Max_Completion_Tokens
 
     return .Max_Tokens
 }
@@ -247,9 +235,7 @@ model_clone :: proc(src: Model, provider_id: wire.Provider_Id, allocator: mem.Al
 // Clone a bounded slice of owned strings. An empty input yields nil, not an allocation.
 @(private)
 string_slice_clone :: proc(values: []string, allocator: mem.Allocator) -> (owned: []string) {
-    if len(values) == 0 {
-        return nil
-    }
+    if len(values) == 0 do return nil
 
     owned = make([]string, len(values), allocator)
 

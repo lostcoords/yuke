@@ -12,9 +12,7 @@ diff_body :: proc(t: ^testing.T, file: Diff_File) -> string {
     strings.builder_init(&out, context.temp_allocator)
 
     for hunk, index in file.hunks {
-        if index > 0 {
-            strings.write_string(&out, "@@\n")
-        }
+        if index > 0 do strings.write_string(&out, "@@\n")
 
         for line in hunk.lines {
             strings.write_string(&out, line)
@@ -47,9 +45,7 @@ test_diff_writes_a_new_file_as_pure_insertion :: proc(t: ^testing.T) {
     file, ok := diff_text("new.txt", "", "one\ntwo\n", context.temp_allocator)
     testing.expect(t, ok, "a new file diffs")
 
-    if !testing.expect_value(t, len(file.hunks), 1) {
-        return
-    }
+    if !testing.expect_value(t, len(file.hunks), 1) do return
 
     hunk := file.hunks[0]
     testing.expect_value(t, hunk.old_lines, u64(0))

@@ -82,21 +82,15 @@ credential_statuses_load :: proc(
 
     list: [dynamic]Credential_Status
     list.allocator = allocator
-    defer if err != nil {
-        credential_statuses_destroy(list)
-    }
+    defer if err != nil do credential_statuses_destroy(list)
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         row: Credential_Status_Row
         sqlite.scan_row(st, &row, allocator) or_return
         kind, valid := credential_kind_parse(row.kind)
-        if !valid || !credential_provider_id_valid(row.provider_id) {
-            return nil, .Invalid_Row
-        }
+        if !valid || !credential_provider_id_valid(row.provider_id) do return nil, .Invalid_Row
 
         provider_id := string_clone(row.provider_id, allocator)
         append(&list, Credential_Status{provider_id = provider_id, kind = kind})
@@ -126,14 +120,10 @@ credentials_load :: proc(s: ^Store, allocator := context.allocator) -> (credenti
 
     list: [dynamic]Credential
     list.allocator = allocator
-    defer if err != nil {
-        credentials_destroy(list)
-    }
+    defer if err != nil do credentials_destroy(list)
 
     for {
-        if has_row := sqlite.step_row(st) or_return; !has_row {
-            break
-        }
+        if has_row := sqlite.step_row(st) or_return; !has_row do break
 
         credential := credential_read(st, allocator) or_return
         append(&list, credential)
@@ -146,9 +136,7 @@ credential_api_key_upsert :: proc(s: ^Store, provider_id, api_key: string) -> Er
     assert(s != nil, "credential_api_key_upsert needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    if !credential_provider_id_valid(provider_id) || !credential_secret_valid(api_key) {
-        return .Invalid_Credential
-    }
+    if !credential_provider_id_valid(provider_id) || !credential_secret_valid(api_key) do return .Invalid_Credential
 
     return queries.upsert_api_key(&s.queries, {provider_id = provider_id, api_key = api_key})
 }
@@ -157,14 +145,10 @@ credential_oauth_upsert :: proc(s: ^Store, provider_id: string, credentials: OAu
     assert(s != nil, "credential_oauth_upsert needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    if !credential_provider_id_valid(provider_id) || !credential_oauth_valid(credentials) {
-        return .Invalid_Credential
-    }
+    if !credential_provider_id_valid(provider_id) || !credential_oauth_valid(credentials) do return .Invalid_Credential
 
     account_id: Maybe(string)
-    if credentials.account_id != "" {
-        account_id = credentials.account_id
-    }
+    if credentials.account_id != "" do account_id = credentials.account_id
 
     return queries.upsert_oauth(
         &s.queries,
@@ -182,9 +166,7 @@ credential_remove :: proc(s: ^Store, provider_id: string) -> (removed: bool, err
     assert(s != nil, "credential_remove needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    if !credential_provider_id_valid(provider_id) {
-        return false, .Invalid_Credential
-    }
+    if !credential_provider_id_valid(provider_id) do return false, .Invalid_Credential
 
     queries.remove_credential(&s.queries, {provider_id = provider_id}) or_return
     changed := sqlite.changes(s.writer)
@@ -219,17 +201,13 @@ credentials_destroy :: proc(credentials: [dynamic]Credential) {
 @(private)
 credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credential: Credential, err: Error) {
     assert(st != nil, "credential_read needs a statement on a row")
-    defer if err != nil {
-        credential_destroy(&credential, allocator)
-    }
+    defer if err != nil do credential_destroy(&credential, allocator)
 
     row: Credential_Row
     sqlite.scan_row(st, &row, allocator) or_return
     kind, valid := credential_kind_parse(row.kind)
 
-    if !valid || !credential_provider_id_valid(row.provider_id) {
-        return {}, .Invalid_Row
-    }
+    if !valid || !credential_provider_id_valid(row.provider_id) do return {}, .Invalid_Row
 
     credential.provider_id = string_clone(row.provider_id, allocator)
     credential.kind = kind
@@ -278,9 +256,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
         credential.access_token = string_clone(access_token, allocator)
         credential.refresh_token = string_clone(refresh_token, allocator)
         credential.expires_at_ms = expires_at_ms
-        if has_account {
-            credential.account_id = string_clone(account_id, allocator)
-        }
+        if has_account do credential.account_id = string_clone(account_id, allocator)
     }
 
     return credential, nil
@@ -288,9 +264,7 @@ credential_read :: proc(st: ^sqlite.Stmt, allocator: mem.Allocator) -> (credenti
 
 @(private)
 credential_provider_id_valid :: proc(provider_id: string) -> bool {
-    if len(provider_id) == 0 || len(provider_id) > PROVIDER_ID_MAX_BYTES {
-        return false
-    }
+    if len(provider_id) == 0 || len(provider_id) > PROVIDER_ID_MAX_BYTES do return false
 
     for c in transmute([]byte)provider_id {
         switch c {

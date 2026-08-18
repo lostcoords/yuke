@@ -290,9 +290,7 @@ test_iter_next_bounded_post_error_diverges_from_continuous_iteration :: proc(t: 
         c, ok, err := iter_next_bounded(it, 4)
         testing.expect_value(t, ok, expected_ok)
         testing.expect_value(t, err, expected_err)
-        if expected_ok {
-            testing.expect_value(t, cluster_bytes(c, src), expected)
-        }
+        if expected_ok do testing.expect_value(t, cluster_bytes(c, src), expected)
     }
 
     step(&it, family, false, .Grapheme_Too_Long, "", t)
@@ -311,9 +309,7 @@ collect_clusters :: proc(str: string, max_bytes: int, allocator: mem.Allocator) 
     context.allocator = allocator
     for {
         c, ok, _ := iter_next_bounded(&it, max_bytes)
-        if !ok {
-            break
-        }
+        if !ok do break
         append(&result, cluster_bytes(c, str))
     }
     return result[:]

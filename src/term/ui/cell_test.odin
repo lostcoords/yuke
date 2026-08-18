@@ -166,14 +166,10 @@ test_cell_zero_value_glyph_is_not_a_space :: proc(t: ^testing.T) {
 // exerciseGraphemePoolAllocations helper.
 exercise_grapheme_pool :: proc(pool: ^Grapheme_Pool) -> Pool_Error {
     _, err1 := pool_intern(pool, "é")
-    if err1 != .None {
-        return err1
-    }
+    if err1 != .None do return err1
 
     _, err2 := pool_intern(pool, "👨‍🌾")
-    if err2 != .None {
-        return err2
-    }
+    if err2 != .None do return err2
 
     return .None
 }
@@ -204,14 +200,10 @@ test_grapheme_pool_allocation_failures_leave_it_valid :: proc(t: ^testing.T) {
         completed := err == .None
         mem.tracking_allocator_destroy(&track)
 
-        if completed {
-            break
-        }
+        if completed do break
 
         fail_at += 1
         testing.expect(t, fail_at < 10_000) // safety bound; a real bug must not hang the suite
-        if fail_at >= 10_000 {
-            break
-        }
+        if fail_at >= 10_000 do break
     }
 }

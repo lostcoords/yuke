@@ -34,16 +34,12 @@ probe_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
     tag := "none"
-    if p := (^Probe)(user_of(ctx)); p != nil {
-        tag = p.tag
-    }
+    if p := (^Probe)(user_of(ctx)); p != nil do tag = p.tag
 
     obj := qjs.new_object(ctx)
     _ = qjs.set_property(ctx, obj, "tag", qjs.new_string(ctx, tag))
 
-    if !qjs.set_module_export(ctx, m, "probe", obj) {
-        return -1
-    }
+    if !qjs.set_module_export(ctx, m, "probe", obj) do return -1
 
     return 0
 }
@@ -64,9 +60,7 @@ result_of :: proc(t: ^testing.T, h: ^Host) -> string {
     defer qjs.free_value(h.ctx, value)
 
     text, ok := qjs.to_string(h.ctx, value)
-    if !testing.expect(t, ok, "globalThis.result should be readable") {
-        return ""
-    }
+    if !testing.expect(t, ok, "globalThis.result should be readable") do return ""
 
     defer qjs.free_string(h.ctx, text)
 
@@ -154,9 +148,7 @@ test_an_unlisted_module_is_not_installed :: proc(t: ^testing.T) {
         "yuke:fs should be unavailable",
     )
 
-    if testing.expect(t, len(probe.reports) == 1, "the failure should be reported once") {
-        testing.expect(t, strings.contains(probe.reports[0], "yuke:fs"), probe.reports[0])
-    }
+    if testing.expect(t, len(probe.reports) == 1, "the failure should be reported once") do testing.expect(t, strings.contains(probe.reports[0], "yuke:fs"), probe.reports[0])
 }
 
 // Closed module set: unknown specifier is a script error, never a disk lookup.
@@ -230,9 +222,7 @@ test_top_level_await_never_settling_fails :: proc(t: ^testing.T) {
     )
     elapsed := time.tick_diff(started, time.tick_now())
     testing.expect(t, elapsed < 500 * time.Millisecond, "hang path must not wait out the full deadline")
-    if testing.expect(t, len(probe.reports) >= 1, "the unfinished module should be reported") {
-        testing.expect(t, strings.contains(probe.reports[0], "did not finish evaluating"), probe.reports[0])
-    }
+    if testing.expect(t, len(probe.reports) >= 1, "the unfinished module should be reported") do testing.expect(t, strings.contains(probe.reports[0], "did not finish evaluating"), probe.reports[0])
 }
 
 // Rejected host op under TLA rejects the module (eval_module returns false).
@@ -248,9 +238,7 @@ test_top_level_await_fs_rejection :: proc(t: ^testing.T) {
     testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
 
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        base = "/tmp"
-    }
+    if !has do base = "/tmp"
     dir, join_err := os.join_path({base, "yuke-js-tla-reject"}, context.temp_allocator)
     testing.expect(t, join_err == nil, "temp root path joins")
     os.remove_all(dir)
@@ -309,9 +297,7 @@ test_top_level_await_deadline_abandons_without_pending :: proc(t: ^testing.T) {
     testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
 
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        base = "/tmp"
-    }
+    if !has do base = "/tmp"
     dir, join_err := os.join_path({base, "yuke-js-tla-deadline"}, context.temp_allocator)
     testing.expect(t, join_err == nil, "temp root path joins")
     os.remove_all(dir)
@@ -387,9 +373,7 @@ test_top_level_throw_is_reported :: proc(t: ^testing.T) {
         "a top-level throw should fail evaluation",
     )
 
-    if testing.expect(t, len(probe.reports) == 1, "the rejection should be reported once") {
-        testing.expect(t, strings.contains(probe.reports[0], "boom"), probe.reports[0])
-    }
+    if testing.expect(t, len(probe.reports) == 1, "the rejection should be reported once") do testing.expect(t, strings.contains(probe.reports[0], "boom"), probe.reports[0])
 }
 
 @(test)
@@ -442,9 +426,7 @@ test_call_reports_a_throwing_callback :: proc(t: ^testing.T) {
     _, ok := call(&h, fn, qjs.undefined(), nil, "boom")
     testing.expect(t, !ok, "a throwing callback should report failure")
 
-    if testing.expect(t, len(probe.reports) == 1, "the throw should be reported once") {
-        testing.expect(t, strings.contains(probe.reports[0], "from a callback"), probe.reports[0])
-    }
+    if testing.expect(t, len(probe.reports) == 1, "the throw should be reported once") do testing.expect(t, strings.contains(probe.reports[0], "from a callback"), probe.reports[0])
 }
 
 @(test)
@@ -519,9 +501,7 @@ test_top_level_await_fs_read_file :: proc(t: ^testing.T) {
     testing.expect_value(t, offload.pool_init(&pool, loop, 1), offload.Error.None)
 
     base, has := os.lookup_env("TMPDIR", context.temp_allocator)
-    if !has {
-        base = "/tmp"
-    }
+    if !has do base = "/tmp"
     dir, join_err := os.join_path({base, "yuke-js-tla-fs"}, context.temp_allocator)
     testing.expect(t, join_err == nil, "temp root path joins")
     os.remove_all(dir)

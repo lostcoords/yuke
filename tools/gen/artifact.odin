@@ -11,9 +11,7 @@ emit :: proc(data: []byte, path: string, check: bool, d: ^Diags) {
     assert(len(data) > 0, "emit needs encoded bytes")
 
     if !check {
-        if err := os.write_entire_file(path, data); err != nil {
-            diagf(d, Pos{file = path}, "cannot write the artifact")
-        }
+        if err := os.write_entire_file(path, data); err != nil do diagf(d, Pos{file = path}, "cannot write the artifact")
 
         return
     }
@@ -26,9 +24,7 @@ emit :: proc(data: []byte, path: string, check: bool, d: ^Diags) {
         return
     }
 
-    if slice.equal(existing, data) {
-        return
-    }
+    if slice.equal(existing, data) do return
 
     diagf(d, Pos{file = path}, "the committed artifact is stale; regenerate and commit the result")
     report_first_difference(existing, data, path, d)
@@ -41,9 +37,7 @@ report_first_difference :: proc(old_data, new_data: []byte, path: string, d: ^Di
     new_lines := strings.split_lines(string(new_data), context.temp_allocator)
 
     for i in 0 ..< min(len(old_lines), len(new_lines)) {
-        if old_lines[i] == new_lines[i] {
-            continue
-        }
+        if old_lines[i] == new_lines[i] do continue
 
         diagf(d, Pos{file = path, line = i + 1}, "committed: %s", strings.trim_space(old_lines[i]))
         diagf(d, Pos{file = path, line = i + 1}, "generated: %s", strings.trim_space(new_lines[i]))

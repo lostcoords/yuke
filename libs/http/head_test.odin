@@ -145,8 +145,6 @@ test_http_split_host :: proc(t: ^testing.T) {
         testing.expectf(t, ok == c.ok, "host %q ok: got %v want %v", c.host, ok, c.ok)
         testing.expectf(t, bracketed == c.bracketed, "host %q bracketed: got %v", c.host, bracketed)
 
-        if c.ok {
-            testing.expectf(t, name == c.name, "host %q name: got %q want %q", c.host, name, c.name)
-        }
+        if c.ok do testing.expectf(t, name == c.name, "host %q name: got %q want %q", c.host, name, c.name)
     }
 }
