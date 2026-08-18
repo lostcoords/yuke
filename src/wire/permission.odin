@@ -38,7 +38,7 @@ permission_option_kind_to_wire :: proc(k: Permission_Option_Kind) -> string {
 
 // Permission option kind for a wire string; ok is false for an unknown kind.
 permission_option_kind_from_wire :: proc(s: string) -> (Permission_Option_Kind, bool) {
-    return enum_from_wire(permission_option_kind_wire, s)
+    return json.enum_from_wire(permission_option_kind_wire, s)
 }
 
 // Who or what denied a tool call.
@@ -64,7 +64,7 @@ denied_by_to_wire :: proc(d: Denied_By) -> string {
 
 // Denied-by value for a wire string; ok is false for an unknown value.
 denied_by_from_wire :: proc(s: string) -> (Denied_By, bool) {
-    return enum_from_wire(denied_by_wire, s)
+    return json.enum_from_wire(denied_by_wire, s)
 }
 
 // Whether a remembered permission rule allows or denies the matched call.
@@ -90,7 +90,7 @@ rule_action_to_wire :: proc(a: Rule_Action) -> string {
 
 // Rule action for a wire string; ok is false for an unknown value.
 rule_action_from_wire :: proc(s: string) -> (Rule_Action, bool) {
-    return enum_from_wire(rule_action_wire, s)
+    return json.enum_from_wire(rule_action_wire, s)
 }
 
 // One option the daemon proposes for a permission request.
@@ -491,8 +491,8 @@ permission_forget_params_validate :: proc(self: Permission_Forget_Params) -> Val
 }
 
 // Decode a permission option straight from the token stream.
-permission_option_from_reader :: proc(d: ^Decoder) -> (opt: Permission_Option, err: Validation_Error) {
-    dec_object_begin(d) or_return
+permission_option_from_reader :: proc(d: ^json.Decoder) -> (opt: Permission_Option, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -502,27 +502,27 @@ permission_option_from_reader :: proc(d: ^Decoder) -> (opt: Permission_Option, e
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            opt.id = dec_string(d) or_return
+            opt.id = json.dec_string(d) or_return
             seen += {.Id}
 
         case "kind":
-            opt.kind = dec_enum(d, permission_option_kind_wire) or_return
+            opt.kind = json.dec_enum(d, permission_option_kind_wire) or_return
             seen += {.Kind}
 
         case "label":
-            opt.label = dec_string(d) or_return
+            opt.label = json.dec_string(d) or_return
             seen += {.Label}
 
         case "creates":
-            opt.creates = dec_array(d, dec_string) or_return
+            opt.creates = json.dec_array(d, json.dec_string) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -534,9 +534,9 @@ permission_option_from_reader :: proc(d: ^Decoder) -> (opt: Permission_Option, e
 }
 
 // Decode internally-tagged JSON straight from the token stream (any member order).
-permission_decision_from_reader :: proc(d: ^Decoder) -> (dec: Permission_Decision, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+permission_decision_from_reader :: proc(d: ^json.Decoder) -> (dec: Permission_Decision, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "user":
@@ -552,24 +552,24 @@ permission_decision_from_reader :: proc(d: ^Decoder) -> (dec: Permission_Decisio
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "option_id":
-                out.option_id = dec_string(d) or_return
+                out.option_id = json.dec_string(d) or_return
                 seen += {.Oid}
 
             case "kind":
-                out.kind = dec_enum(d, permission_option_kind_wire) or_return
+                out.kind = json.dec_enum(d, permission_option_kind_wire) or_return
                 seen += {.Kind}
 
             case "label":
-                out.label = dec_string(d) or_return
+                out.label = json.dec_string(d) or_return
                 seen += {.Label}
 
             case "resolved_at_ms":
-                out.resolved_at_ms = dec_u64(d) or_return
+                out.resolved_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Res}
 
             case "decided_by":
@@ -580,7 +580,7 @@ permission_decision_from_reader :: proc(d: ^Decoder) -> (dec: Permission_Decisio
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -601,27 +601,27 @@ permission_decision_from_reader :: proc(d: ^Decoder) -> (dec: Permission_Decisio
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "rule_id":
-                out.rule_id = Rule_Id(dec_fixed(d, 16) or_return)
+                out.rule_id = Rule_Id(json.dec_fixed(d, 16) or_return)
                 seen += {.Rid}
 
             case "label":
-                out.label = dec_string(d) or_return
+                out.label = json.dec_string(d) or_return
                 seen += {.Label}
 
             case "resolved_at_ms":
-                out.resolved_at_ms = dec_u64(d) or_return
+                out.resolved_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Res}
 
             case "option_id", "kind", "decided_by":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -636,8 +636,8 @@ permission_decision_from_reader :: proc(d: ^Decoder) -> (dec: Permission_Decisio
 }
 
 // Decode a permission rule straight from the token stream.
-permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err: Validation_Error) {
-    dec_object_begin(d) or_return
+permission_rule_from_reader :: proc(d: ^json.Decoder) -> (rule: Permission_Rule, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -650,31 +650,31 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            rule.id = Rule_Id(dec_fixed(d, 16) or_return)
+            rule.id = Rule_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Id}
 
         case "session_id":
-            rule.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            rule.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
 
         case "tool":
-            rule.tool = dec_string(d) or_return
+            rule.tool = json.dec_string(d) or_return
             seen += {.Tool}
 
         case "label":
-            rule.label = dec_string(d) or_return
+            rule.label = json.dec_string(d) or_return
             seen += {.Label}
 
         case "action":
-            rule.action = dec_enum(d, rule_action_wire) or_return
+            rule.action = json.dec_enum(d, rule_action_wire) or_return
             seen += {.Action}
 
         case "created_at_ms":
-            rule.created_at_ms = dec_u64(d) or_return
+            rule.created_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Created}
 
         case "created_by":
@@ -682,7 +682,7 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
             seen += {.By}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -695,12 +695,12 @@ permission_rule_from_reader :: proc(d: ^Decoder) -> (rule: Permission_Rule, err:
 
 // Decode permission.decide params straight from the token stream.
 permission_decide_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Permission_Decide_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -711,31 +711,31 @@ permission_decide_params_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "message_id":
-            params.message_id = Message_Id(dec_u64(d) or_return)
+            params.message_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Mid}
 
         case "part_id":
-            params.part_id = Part_Id(dec_u64(d) or_return)
+            params.part_id = Part_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Pid}
 
         case "option_id":
-            params.option_id = dec_string(d) or_return
+            params.option_id = json.dec_string(d) or_return
             seen += {.Oid}
 
         case "message":
-            params.message = dec_string(d) or_return
+            params.message = json.dec_string(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -747,20 +747,25 @@ permission_decide_params_from_reader :: proc(
 }
 
 // Decode a permission.rules result straight from the token stream.
-permission_rules_result_from_reader :: proc(d: ^Decoder) -> (result: Permission_Rules_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+permission_rules_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Permission_Rules_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "rules":
-            result.rules = dec_array(d, permission_rule_from_reader) or_return
+            result.rules = json.dec_array(d, permission_rule_from_reader) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -773,12 +778,12 @@ permission_rules_result_from_reader :: proc(d: ^Decoder) -> (result: Permission_
 
 // Decode permission.forget params straight from the token stream.
 permission_forget_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Permission_Forget_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Wid,
@@ -787,20 +792,20 @@ permission_forget_params_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "workspace_id":
-            params.workspace_id = Workspace_Id(dec_fixed(d, 16) or_return)
+            params.workspace_id = Workspace_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Wid}
 
         case "rule_id":
-            params.rule_id = Rule_Id(dec_fixed(d, 16) or_return)
+            params.rule_id = Rule_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Rid}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

@@ -6,7 +6,7 @@ import "core:testing"
 @(test)
 test_notice_parses_global_diagnostic :: proc(t: ^testing.T) {
     input := `{"level":"warn","source":"provider","message":"rate limited"}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     n, derr := notice_from_reader(&d)
@@ -19,7 +19,7 @@ test_notice_parses_global_diagnostic :: proc(t: ^testing.T) {
 @(test)
 test_notice_roundtrip :: proc(t: ^testing.T) {
     input := `{"level":"error","source":"provider","message":"rate limited"}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     n, derr := notice_from_reader(&d)

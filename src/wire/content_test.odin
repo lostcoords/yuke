@@ -6,7 +6,7 @@ import "core:testing"
 @(test)
 test_content_part_text_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"text","text":"hello"}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     part, derr := content_part_from_reader(&d)
@@ -25,7 +25,7 @@ test_content_part_text_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_media_source_blob_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"blob","hash":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","mime":"image/png","bytes":1024}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     src, derr := media_source_from_reader(&d)
@@ -46,7 +46,7 @@ test_media_source_blob_roundtrip :: proc(t: ^testing.T) {
 test_media_source_unknown_ignored_sibling_rejected :: proc(t: ^testing.T) {
     // An unknown key is ignored.
     {
-        d := decoder_init(`{"type":"url","url":"http://x","bogus":1}`, context.temp_allocator)
+        d := json.decoder_init(`{"type":"url","url":"http://x","bogus":1}`, context.temp_allocator)
         defer free_all(context.temp_allocator)
         src, derr := media_source_from_reader(&d)
         testing.expect(t, derr == .None, "unknown key must be ignored")
@@ -55,7 +55,7 @@ test_media_source_unknown_ignored_sibling_rejected :: proc(t: ^testing.T) {
     }
     // A sibling variant's key is rejected.
     {
-        d := decoder_init(`{"type":"url","url":"http://x","mime":"y"}`, context.temp_allocator)
+        d := json.decoder_init(`{"type":"url","url":"http://x","mime":"y"}`, context.temp_allocator)
         defer free_all(context.temp_allocator)
         _, derr := media_source_from_reader(&d)
         testing.expect(t, derr == .Mismatched_Payload, "sibling key must be rejected")

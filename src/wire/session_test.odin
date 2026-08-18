@@ -80,7 +80,7 @@ test_session_scope_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"workspace","workspace_id":"aaaaaaaaaaaaaaaa"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     scope, derr := session_scope_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -98,7 +98,7 @@ test_session_scope_roundtrip :: proc(t: ^testing.T) {
 
 @(test)
 test_session_scope_rejects_sibling :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"all","workspace_id":"aaaaaaaaaaaaaaaa"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"all","workspace_id":"aaaaaaaaaaaaaaaa"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := session_scope_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "sibling field must be rejected")
@@ -110,7 +110,7 @@ test_session_population_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"children","parent_id":"0123456789abcdef"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     pop, derr := session_population_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -133,7 +133,7 @@ test_session_population_roundtrip :: proc(t: ^testing.T) {
     testing.expect(t, session_population_validate(Session_Population(invalid)) == .Invalid_Hex, "non-hex id rejected")
 
     // A sibling arm's field is rejected.
-    v2 := decoder_init(`{"type":"top_level","parent_id":"0123456789abcdef"}`, context.temp_allocator)
+    v2 := json.decoder_init(`{"type":"top_level","parent_id":"0123456789abcdef"}`, context.temp_allocator)
     _, derr2 := session_population_from_reader(&v2)
     testing.expect(t, derr2 == .Mismatched_Payload, "sibling field must be rejected")
 }
@@ -143,14 +143,14 @@ test_session_origin_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    root_v := decoder_init(`{"type":"root"}`, context.temp_allocator)
+    root_v := json.decoder_init(`{"type":"root"}`, context.temp_allocator)
     root, rderr := session_origin_from_reader(&root_v)
     testing.expect(t, rderr == .None, "decode should succeed")
     _, is_root := root.(Session_Origin_Root)
     testing.expect(t, is_root, "should be a root origin")
 
     input := `{"type":"child","parent_id":"0123456789abcdef","parent_message_id":3,"parent_part_id":1}`
-    child_v := decoder_init(input, context.temp_allocator)
+    child_v := json.decoder_init(input, context.temp_allocator)
     child, cderr := session_origin_from_reader(&child_v)
     testing.expect(t, cderr == .None, "decode should succeed")
     ch, is_child := child.(Session_Origin_Child)
@@ -169,7 +169,7 @@ test_session_origin_roundtrip :: proc(t: ^testing.T) {
 
 @(test)
 test_session_origin_rejects_sibling :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"root","parent_id":"0123456789abcdef"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"root","parent_id":"0123456789abcdef"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := session_origin_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "field outside active tag must be rejected")
@@ -180,11 +180,14 @@ test_session_origin_child_rejects_missing_locator :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"type":"child","parent_id":"0123456789abcdef","parent_message_id":3}`, context.temp_allocator)
+    v := json.decoder_init(
+        `{"type":"child","parent_id":"0123456789abcdef","parent_message_id":3}`,
+        context.temp_allocator,
+    )
     _, derr := session_origin_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing parent_part_id must be rejected")
 
-    v2 := decoder_init(`{"type":"root","parent_message_id":3,"parent_part_id":1}`, context.temp_allocator)
+    v2 := json.decoder_init(`{"type":"root","parent_message_id":3,"parent_part_id":1}`, context.temp_allocator)
     _, derr2 := session_origin_from_reader(&v2)
     testing.expect(t, derr2 == .Mismatched_Payload, "child-only locator fields rejected on sibling arm")
 }
@@ -216,7 +219,7 @@ test_session_accepts_null_attribution_for_child :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":1,"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     session, derr := session_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -254,7 +257,7 @@ test_session_agent_roundtrip :: proc(t: ^testing.T) {
     session_emit(&e, item.session)
     out := json.to_string(&e)
 
-    v := decoder_init(out, context.temp_allocator)
+    v := json.decoder_init(out, context.temp_allocator)
     decoded, derr := session_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     agent, ok := decoded.agent.?
@@ -278,7 +281,7 @@ test_session_list_params_defaults :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{}`, context.temp_allocator)
+    v := json.decoder_init(`{}`, context.temp_allocator)
 
     params, derr := session_list_params_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -412,7 +415,7 @@ test_session_list_result_validate :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"revision":0,"items":[],"next_cursor":null,"total":0}`, context.temp_allocator)
+    v := json.decoder_init(`{"revision":0,"items":[],"next_cursor":null,"total":0}`, context.temp_allocator)
     result, derr := session_list_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect(t, session_list_result_validate(result) == .None, "empty page validates")
@@ -437,7 +440,7 @@ test_session_activity_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"state":{"type":"idle"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     activity, derr := session_activity_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -458,7 +461,7 @@ test_activity_state_running_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"running","run_id":1,"started_at_ms":1720000000000}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     state, derr := activity_state_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -480,7 +483,7 @@ test_activity_state_building_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"building","run_id":1,"started_at_ms":1720000000000}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     state, derr := activity_state_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -496,7 +499,7 @@ test_activity_state_building_roundtrip :: proc(t: ^testing.T) {
 
 @(test)
 test_activity_state_rejects_sibling :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"idle","run_id":1}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"idle","run_id":1}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := activity_state_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "field outside active tag must be rejected")
@@ -525,7 +528,7 @@ test_session_list_item_carries_activity_config :: proc(t: ^testing.T) {
     defer json.emitter_destroy(&e)
     session_list_item_emit(&e, item)
 
-    v := decoder_init(json.to_string(&e), context.temp_allocator)
+    v := json.decoder_init(json.to_string(&e), context.temp_allocator)
     decoded, derr := session_list_item_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     cfg, has_config := decoded.activity.config.?
@@ -540,7 +543,7 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     activity, derr := session_activity_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -559,7 +562,7 @@ test_session_activity_config_roundtrip :: proc(t: ^testing.T) {
 
     // `config` trails `pending_compaction`; emitter order is the reverse.
     permuted := `{"state":{"type":"running","run_id":7,"started_at_ms":1},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null,"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"}}`
-    pv := decoder_init(permuted, context.temp_allocator)
+    pv := json.decoder_init(permuted, context.temp_allocator)
 
     reordered, perr := session_activity_from_reader(&pv)
     testing.expect(t, perr == .None, "config-last activity should decode")
@@ -676,7 +679,7 @@ test_activity_state_rejects_hoisted_config :: proc(t: ^testing.T) {
     }
 
     for input in inputs {
-        v := decoder_init(input, context.temp_allocator)
+        v := json.decoder_init(input, context.temp_allocator)
         _, derr := activity_state_from_reader(&v)
         testing.expect(t, derr == .Mismatched_Payload, "config inside an activity arm must be rejected")
     }
@@ -707,7 +710,7 @@ test_create_session_omitted_vs_explicit :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"workspace_path":"/repo","system_prompt":null,"max_rounds":4}`, context.temp_allocator)
+    v := json.decoder_init(`{"workspace_path":"/repo","system_prompt":null,"max_rounds":4}`, context.temp_allocator)
     cs, derr := create_session_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, cs.workspace_path, "/repo")
@@ -717,7 +720,7 @@ test_create_session_omitted_vs_explicit :: proc(t: ^testing.T) {
     testing.expect(t, is_set, "explicit max_rounds is the set arm")
     testing.expect_value(t, set.value, u64(4))
 
-    v2 := decoder_init(`{"workspace_path":"/repo"}`, context.temp_allocator)
+    v2 := json.decoder_init(`{"workspace_path":"/repo"}`, context.temp_allocator)
     omitted, derr2 := create_session_from_reader(&v2)
     testing.expect(t, derr2 == .None, "decode should succeed")
     _, sp_default := omitted.system_prompt.(System_Prompt_Default)
@@ -731,7 +734,7 @@ test_create_session_bounds :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"profile":"review","model":"openai/gpt","reasoning":"high"}`, context.temp_allocator)
+    v := json.decoder_init(`{"profile":"review","model":"openai/gpt","reasoning":"high"}`, context.temp_allocator)
     create, derr := create_session_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect(t, create_session_validate(create) == .None, "bounded overrides validate")
@@ -755,7 +758,7 @@ test_session_patch_bounds :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"model":"openai/gpt","reasoning":"high"}`, context.temp_allocator)
+    v := json.decoder_init(`{"model":"openai/gpt","reasoning":"high"}`, context.temp_allocator)
     patch, derr := session_patch_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect(t, session_patch_validate(patch) == .None, "bounded patch validates")
@@ -771,7 +774,7 @@ test_compact_result_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"status":"queued","run_id":3}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     result, derr := session_compact_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, result.status, Compact_Status.Queued)
@@ -791,7 +794,7 @@ test_session_rejects_missing_created_by :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":1,"updated_at_ms":1,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     _, derr := session_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing created_by must be rejected")
 }
@@ -834,7 +837,7 @@ test_session_rejects_missing_created_at :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"high","config_rev":1,"permission":"normal","max_rounds":null,"title":"child","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"updated_at_ms":1,"created_by":null,"origin":{"type":"child","parent_id":"1111111111111111","parent_message_id":1,"parent_part_id":0}}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     _, derr := session_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing created_at_ms must be rejected")
 }

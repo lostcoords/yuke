@@ -329,7 +329,7 @@ skill_scope_to_wire :: proc(s: Skill_Scope) -> string {
 
 // Skill scope for a wire string; ok is false for an unknown scope.
 skill_scope_from_wire :: proc(s: string) -> (Skill_Scope, bool) {
-    return enum_from_wire(skill_scope_wire, s)
+    return json.enum_from_wire(skill_scope_wire, s)
 }
 
 // Discovered skill metadata. Non-owning.
@@ -403,8 +403,8 @@ workspace_skills_result_validate :: proc(self: Workspace_Skills_Result) -> Valid
 }
 
 // Decode a Workspace straight from the token stream.
-workspace_from_reader :: proc(d: ^Decoder) -> (ws: Workspace, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_from_reader :: proc(d: ^json.Decoder) -> (ws: Workspace, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -414,24 +414,24 @@ workspace_from_reader :: proc(d: ^Decoder) -> (ws: Workspace, err: Validation_Er
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            ws.id = Workspace_Id(dec_fixed(d, 16) or_return)
+            ws.id = Workspace_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Id}
 
         case "root":
-            ws.root = dec_string(d) or_return
+            ws.root = json.dec_string(d) or_return
             seen += {.Root}
 
         case "title":
-            ws.title = dec_string(d) or_return
+            ws.title = json.dec_string(d) or_return
             seen += {.Title}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -443,8 +443,8 @@ workspace_from_reader :: proc(d: ^Decoder) -> (ws: Workspace, err: Validation_Er
 }
 
 // Decode a Git_Info straight from the token stream.
-git_info_from_reader :: proc(d: ^Decoder) -> (git: Git_Info, err: Validation_Error) {
-    dec_object_begin(d) or_return
+git_info_from_reader :: proc(d: ^json.Decoder) -> (git: Git_Info, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Branch,
@@ -453,20 +453,20 @@ git_info_from_reader :: proc(d: ^Decoder) -> (git: Git_Info, err: Validation_Err
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "branch":
-            git.branch = dec_string(d) or_return
+            git.branch = json.dec_string(d) or_return
             seen += {.Branch}
 
         case "dirty":
-            git.dirty = dec_bool(d) or_return
+            git.dirty = json.dec_bool(d) or_return
             seen += {.Dirty}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -478,8 +478,8 @@ git_info_from_reader :: proc(d: ^Decoder) -> (git: Git_Info, err: Validation_Err
 }
 
 // Decode a Dir_Entry straight from the token stream.
-dir_entry_from_reader :: proc(d: ^Decoder) -> (entry: Dir_Entry, err: Validation_Error) {
-    dec_object_begin(d) or_return
+dir_entry_from_reader :: proc(d: ^json.Decoder) -> (entry: Dir_Entry, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Name,
@@ -489,24 +489,24 @@ dir_entry_from_reader :: proc(d: ^Decoder) -> (entry: Dir_Entry, err: Validation
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            entry.name = dec_string(d) or_return
+            entry.name = json.dec_string(d) or_return
             seen += {.Name}
 
         case "path":
-            entry.path = dec_string(d) or_return
+            entry.path = json.dec_string(d) or_return
             seen += {.Path}
 
         case "is_git_repo":
-            entry.is_git_repo = dec_bool(d) or_return
+            entry.is_git_repo = json.dec_bool(d) or_return
             seen += {.Git}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -518,8 +518,8 @@ dir_entry_from_reader :: proc(d: ^Decoder) -> (entry: Dir_Entry, err: Validation
 }
 
 // Decode a Skill_Info straight from the token stream.
-skill_info_from_reader :: proc(d: ^Decoder) -> (info: Skill_Info, err: Validation_Error) {
-    dec_object_begin(d) or_return
+skill_info_from_reader :: proc(d: ^json.Decoder) -> (info: Skill_Info, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Name,
@@ -530,28 +530,28 @@ skill_info_from_reader :: proc(d: ^Decoder) -> (info: Skill_Info, err: Validatio
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            info.name = dec_string(d) or_return
+            info.name = json.dec_string(d) or_return
             seen += {.Name}
 
         case "description":
-            info.description = dec_string(d) or_return
+            info.description = json.dec_string(d) or_return
             seen += {.Desc}
 
         case "scope":
-            info.scope = dec_enum(d, skill_scope_wire) or_return
+            info.scope = json.dec_enum(d, skill_scope_wire) or_return
             seen += {.Scope}
 
         case "argument_hint":
-            info.argument_hint = dec_string(d) or_return
+            info.argument_hint = json.dec_string(d) or_return
             seen += {.Hint}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -564,12 +564,12 @@ skill_info_from_reader :: proc(d: ^Decoder) -> (info: Skill_Info, err: Validatio
 
 // Decode a workspace.describe result straight from the token stream.
 workspace_describe_result_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     result: Workspace_Describe_Result,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Ws,
@@ -580,7 +580,7 @@ workspace_describe_result_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -591,23 +591,23 @@ workspace_describe_result_from_reader :: proc(
         case "git":
             seen += {.Git}
 
-            if !dec_is_null(d) {
+            if !json.dec_is_null(d) {
                 result.git = git_info_from_reader(d) or_return
             }
 
         case "last_modified_ms":
-            result.last_modified_ms = dec_u64(d) or_return
+            result.last_modified_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Mod}
 
         case "last_used_model":
             seen += {.Model}
 
-            if !dec_is_null(d) {
-                result.last_used_model = dec_string(d) or_return
+            if !json.dec_is_null(d) {
+                result.last_used_model = json.dec_string(d) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -619,24 +619,29 @@ workspace_describe_result_from_reader :: proc(
 }
 
 // Decode workspace.browse params straight from the token stream.
-workspace_browse_params_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Browse_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_browse_params_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    params: Workspace_Browse_Params,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "path":
-            params.path = dec_string(d) or_return
+            params.path = json.dec_string(d) or_return
 
         case "limit":
-            params.limit = dec_u64(d) or_return
+            params.limit = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "cursor":
-            params.cursor = dec_string(d) or_return
+            params.cursor = json.dec_string(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -644,8 +649,13 @@ workspace_browse_params_from_reader :: proc(d: ^Decoder) -> (params: Workspace_B
 }
 
 // Decode a workspace.browse result straight from the token stream.
-workspace_browse_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_Browse_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_browse_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Workspace_Browse_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Path,
@@ -656,34 +666,34 @@ workspace_browse_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_B
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "path":
-            result.path = dec_string(d) or_return
+            result.path = json.dec_string(d) or_return
             seen += {.Path}
 
         case "parent":
             seen += {.Parent}
 
-            if !dec_is_null(d) {
-                result.parent = dec_string(d) or_return
+            if !json.dec_is_null(d) {
+                result.parent = json.dec_string(d) or_return
             }
 
         case "entries":
-            result.entries = dec_array(d, dir_entry_from_reader) or_return
+            result.entries = json.dec_array(d, dir_entry_from_reader) or_return
             seen += {.Entries}
 
         case "next_cursor":
             seen += {.Next}
 
-            if !dec_is_null(d) {
-                result.next_cursor = dec_string(d) or_return
+            if !json.dec_is_null(d) {
+                result.next_cursor = json.dec_string(d) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -695,20 +705,20 @@ workspace_browse_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_B
 }
 
 // Decode a workspace reference straight from the token stream.
-workspace_ref_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Ref, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_ref_from_reader :: proc(d: ^json.Decoder) -> (params: Workspace_Ref, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "workspace_id":
-            params.workspace_id = Workspace_Id(dec_fixed(d, 16) or_return)
+            params.workspace_id = Workspace_Id(json.dec_fixed(d, 16) or_return)
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -720,20 +730,25 @@ workspace_ref_from_reader :: proc(d: ^Decoder) -> (params: Workspace_Ref, err: V
 }
 
 // Decode a workspace.remove result straight from the token stream.
-workspace_remove_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_Remove_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_remove_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Workspace_Remove_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "related_job_ids":
-            result.related_job_ids = dec_array(d, _job_id_from_reader) or_return
+            result.related_job_ids = json.dec_array(d, _job_id_from_reader) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -745,27 +760,32 @@ workspace_remove_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_R
 }
 
 @(private)
-_job_id_from_reader :: proc(d: ^Decoder) -> (out: Job_Id, err: Validation_Error) {
-    out = Job_Id(dec_fixed(d, 16) or_return)
+_job_id_from_reader :: proc(d: ^json.Decoder) -> (out: Job_Id, err: json.Decode_Error) {
+    out = Job_Id(json.dec_fixed(d, 16) or_return)
 
     return out, .None
 }
 
 // Decode a workspace.skills result straight from the token stream.
-workspace_skills_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_Skills_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+workspace_skills_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Workspace_Skills_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "skills":
-            result.skills = dec_array(d, skill_info_from_reader) or_return
+            result.skills = json.dec_array(d, skill_info_from_reader) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -778,24 +798,24 @@ workspace_skills_result_from_reader :: proc(d: ^Decoder) -> (result: Workspace_S
 
 // Decode workspace.describe params straight from the token stream.
 workspace_describe_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Workspace_Describe_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "path":
-            params.path = dec_string(d) or_return
+            params.path = json.dec_string(d) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

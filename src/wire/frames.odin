@@ -228,8 +228,8 @@ Server_Frame_Header :: struct {
 // Consume a frame's opening `{`. A non-object root — notably a batch array — is a
 // framing violation rather than a payload mismatch.
 @(private)
-dec_frame_begin :: proc(d: ^Decoder) -> Validation_Error {
-    if dec_object_begin(d) != .None {
+dec_frame_begin :: proc(d: ^json.Decoder) -> json.Decode_Error {
+    if json.dec_object_begin(d) != .None {
         return .Bad_Frame_Type
     }
 
@@ -238,8 +238,8 @@ dec_frame_begin :: proc(d: ^Decoder) -> Validation_Error {
 
 // Read and verify the `jsonrpc` member's value.
 @(private)
-dec_jsonrpc :: proc(d: ^Decoder) -> Validation_Error {
-    s := dec_string(d) or_return
+dec_jsonrpc :: proc(d: ^json.Decoder) -> json.Decode_Error {
+    s := json.dec_string(d) or_return
 
     if s != JSONRPC_VERSION {
         return .Bad_Frame_Type
@@ -250,10 +250,10 @@ dec_jsonrpc :: proc(d: ^Decoder) -> Validation_Error {
 
 // Decode a request straight from the token stream. Resolve `method` with a scan
 // first, so `params` can be typed even when object members arrive in another order.
-request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error) {
+request_from_reader :: proc(d: ^json.Decoder) -> (out: Request, err: json.Decode_Error) {
     dec_frame_begin(d) or_return
-    ms := dec_find_tag(d, "method") or_return
-    method := enum_from_wire_checked(method_name_wire, ms) or_return
+    ms := json.dec_find_tag(d, "method") or_return
+    method := json.enum_from_wire_checked(method_name_wire, ms) or_return
     out.method = method
 
     Field :: enum {
@@ -265,7 +265,7 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -276,12 +276,12 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
 
         case "id":
             if .Id in seen do return {}, .Bad_Frame_Type
-            out.id = Request_Id(dec_raw_scalar(d) or_return)
+            out.id = Request_Id(json.dec_raw_scalar(d) or_return)
             seen += {.Id}
 
         case "method":
             if .Method in seen do return {}, .Bad_Frame_Type
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
             seen += {.Method}
 
         case "params":
@@ -290,7 +290,7 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
             seen += {.Params}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -317,7 +317,7 @@ request_from_reader :: proc(d: ^Decoder) -> (out: Request, err: Validation_Error
 
 // Decode a response once the request method is known from the pending-id map.
 // Exactly one of `result` / `error` must be present.
-response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response, err: Validation_Error) {
+response_from_reader :: proc(method: Method_Name, d: ^json.Decoder) -> (out: Response, err: json.Decode_Error) {
     dec_frame_begin(d) or_return
     id: Request_Id
     result: Response_Result
@@ -332,7 +332,7 @@ response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -343,7 +343,7 @@ response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response
 
         case "id":
             if .Id in seen do return nil, .Bad_Frame_Type
-            id = Request_Id(dec_raw_scalar(d) or_return)
+            id = Request_Id(json.dec_raw_scalar(d) or_return)
             seen += {.Id}
 
         case "result":
@@ -357,7 +357,7 @@ response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response
             seen += {.Err}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -384,10 +384,10 @@ response_from_reader :: proc(method: Method_Name, d: ^Decoder) -> (out: Response
 // (normative), so the typed payload is streamed once the name is known. An unknown
 // name is rejected; a receiver that skips unknown notifications uses
 // `server_frame_header_stream` to route before touching the payload.
-notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Validation_Error) {
+notification_from_reader :: proc(d: ^json.Decoder) -> (out: Notification, err: json.Decode_Error) {
     dec_frame_begin(d) or_return
-    ms := dec_find_tag(d, "method") or_return
-    method := enum_from_wire_checked(broadcast_name_wire, ms) or_return
+    ms := json.dec_find_tag(d, "method") or_return
+    method := json.enum_from_wire_checked(broadcast_name_wire, ms) or_return
     out.method = method
 
     Field :: enum {
@@ -398,7 +398,7 @@ notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Valida
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -409,7 +409,7 @@ notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Valida
 
         case "method":
             if .Method in seen do return {}, .Bad_Frame_Type
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
             seen += {.Method}
 
         case "params":
@@ -418,7 +418,7 @@ notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Valida
             seen += {.Params}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -439,21 +439,21 @@ notification_from_reader :: proc(d: ^Decoder) -> (out: Notification, err: Valida
 // drops an unknown notification untouched.
 //
 // Routes on member keys alone: a normative-order frame stops at `result`/`error`
-// without reading the payload. A payload-before-`id` peer costs one `dec_skip` walk.
+// without reading the payload. A payload-before-`id` peer costs one `json.dec_skip` walk.
 server_frame_header_stream :: proc(
     data: string,
     allocator := context.allocator,
 ) -> (
     out: Server_Frame_Header,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    d := decoder_init(data, allocator)
+    d := json.decoder_init(data, allocator)
     dec_frame_begin(&d) or_return
     has_id := false
     has_jsonrpc := false
     kind: Maybe(Server_Frame_Kind)
     scan: for {
-        k, done := dec_key(&d) or_return
+        k, done := json.dec_key(&d) or_return
         if done do break
 
         // Skip after the exit check, so a routed payload is never walked.
@@ -465,11 +465,11 @@ server_frame_header_stream :: proc(
             has_jsonrpc = true
 
         case "id":
-            out.id = Request_Id(dec_raw_scalar(&d) or_return)
+            out.id = Request_Id(json.dec_raw_scalar(&d) or_return)
             has_id = true
 
         case "method":
-            out.method = dec_string(&d) or_return
+            out.method = json.dec_string(&d) or_return
             kind = .Notification
 
         case "result", "error":
@@ -486,7 +486,7 @@ server_frame_header_stream :: proc(
         }
 
         if skip_value {
-            dec_skip(&d) or_return
+            json.dec_skip(&d) or_return
         }
     }
 

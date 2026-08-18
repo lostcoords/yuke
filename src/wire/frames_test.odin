@@ -7,7 +7,7 @@ import "core:testing"
 @(test)
 test_request_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","id":2,"method":"session.cancel_input","params":{"session_id":"0011223344556677","input_id":7}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     req, derr := request_from_reader(&v)
@@ -44,7 +44,7 @@ test_api_key_params_match_only_the_api_key_method :: proc(t: ^testing.T) {
 @(test)
 test_response_ok_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","id":3,"result":{"type":"queued","input_id":8}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     resp, derr := response_from_reader(.Session_Send_Input, &v)
@@ -62,7 +62,7 @@ test_response_ok_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_response_error_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","id":4,"error":{"code":-31015,"message":"busy"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     resp, derr := response_from_reader(.Session_List, &v)
@@ -82,7 +82,7 @@ test_response_error_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_notification_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","method":"notice","params":{"level":"warn","source":"provider","message":"rate limited"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     n, derr := notification_from_reader(&v)
@@ -131,7 +131,7 @@ test_server_frame_header_dispatch :: proc(t: ^testing.T) {
 @(test)
 test_request_omitted_params_roundtrip :: proc(t: ^testing.T) {
     input := `{"jsonrpc":"2.0","id":1,"method":"catalog.refresh"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     req, derr := request_from_reader(&v)
@@ -157,7 +157,7 @@ test_frames_require_jsonrpc_version :: proc(t: ^testing.T) {
         `{"jsonrpc":"2.00","id":1,"method":"catalog.refresh"}`,
     }
     for input in cases {
-        v := decoder_init(input, context.temp_allocator)
+        v := json.decoder_init(input, context.temp_allocator)
         _, derr := request_from_reader(&v)
         testing.expect(t, derr != .None, "a bad or absent jsonrpc member must be rejected")
     }
@@ -170,12 +170,12 @@ test_frames_reject_batch_array :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     input := `[{"jsonrpc":"2.0","id":1,"method":"catalog.refresh"}]`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     _, derr := request_from_reader(&v)
-    testing.expect_value(t, derr, Validation_Error.Bad_Frame_Type)
+    testing.expect_value(t, derr, json.Decode_Error.Bad_Frame_Type)
 
     h, herr := server_frame_header_stream(input, context.temp_allocator)
-    testing.expect_value(t, herr, Validation_Error.Bad_Frame_Type)
+    testing.expect_value(t, herr, json.Decode_Error.Bad_Frame_Type)
     testing.expect_value(t, h.kind, Server_Frame_Kind.Response)
 }
 
@@ -189,7 +189,7 @@ test_request_id_echoes_verbatim :: proc(t: ^testing.T) {
     for id in ids {
         input := strings.concatenate({`{"jsonrpc":"2.0","id":`, id, `,"result":{}}`}, context.temp_allocator)
 
-        v := decoder_init(input, context.temp_allocator)
+        v := json.decoder_init(input, context.temp_allocator)
         resp, derr := response_from_reader(.Session_Remove, &v)
         testing.expect(t, derr == .None, "every permitted id form must decode")
 
@@ -211,12 +211,12 @@ test_response_requires_exactly_one_outcome :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     both := `{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":-32603,"message":"x"}}`
-    v := decoder_init(both, context.temp_allocator)
+    v := json.decoder_init(both, context.temp_allocator)
     _, derr := response_from_reader(.Session_Remove, &v)
     testing.expect(t, derr != .None, "a response with both result and error must be rejected")
 
     neither := `{"jsonrpc":"2.0","id":1}`
-    v2 := decoder_init(neither, context.temp_allocator)
+    v2 := json.decoder_init(neither, context.temp_allocator)
     _, derr2 := response_from_reader(.Session_Remove, &v2)
     testing.expect(t, derr2 != .None, "a response with neither result nor error must be rejected")
 }
@@ -241,7 +241,7 @@ test_frame_shape_id_presence :: proc(t: ^testing.T) {
 test_request_requires_id :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"jsonrpc":"2.0","method":"catalog.refresh"}`, context.temp_allocator)
+    v := json.decoder_init(`{"jsonrpc":"2.0","method":"catalog.refresh"}`, context.temp_allocator)
     _, derr := request_from_reader(&v)
     testing.expect(t, derr != .None, "an id-less request must be rejected")
 }
@@ -258,14 +258,14 @@ test_frames_reject_duplicate_envelope_members :: proc(t: ^testing.T) {
         `{"jsonrpc":"2.0","id":1,"method":"catalog.refresh","method":"catalog.refresh"}`,
     }
     for input in requests {
-        v := decoder_init(input, context.temp_allocator)
+        v := json.decoder_init(input, context.temp_allocator)
         _, derr := request_from_reader(&v)
-        testing.expect_value(t, derr, Validation_Error.Bad_Frame_Type)
+        testing.expect_value(t, derr, json.Decode_Error.Bad_Frame_Type)
     }
 
-    v := decoder_init(`{"jsonrpc":"2.0","id":1,"result":{},"result":{}}`, context.temp_allocator)
+    v := json.decoder_init(`{"jsonrpc":"2.0","id":1,"result":{},"result":{}}`, context.temp_allocator)
     _, derr := response_from_reader(.Session_Remove, &v)
-    testing.expect_value(t, derr, Validation_Error.Bad_Frame_Type)
+    testing.expect_value(t, derr, json.Decode_Error.Bad_Frame_Type)
 
     notice := `{"level":"warn","source":"provider","message":"rate limited"}`
     notifications := []string {
@@ -283,9 +283,9 @@ test_frames_reject_duplicate_envelope_members :: proc(t: ^testing.T) {
         ),
     }
     for input in notifications {
-        v2 := decoder_init(input, context.temp_allocator)
+        v2 := json.decoder_init(input, context.temp_allocator)
         _, derr2 := notification_from_reader(&v2)
-        testing.expect_value(t, derr2, Validation_Error.Bad_Frame_Type)
+        testing.expect_value(t, derr2, json.Decode_Error.Bad_Frame_Type)
     }
 }
 

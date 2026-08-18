@@ -34,7 +34,7 @@ test_method_name_wire_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_request_params_cancel_input_roundtrip :: proc(t: ^testing.T) {
     input := `{"session_id":"0123456789abcdef","input_id":7}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := request_params_from_reader(.Session_Cancel_Input, &v)
@@ -54,7 +54,7 @@ test_request_params_cancel_input_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_request_params_catalog_refresh_empty :: proc(t: ^testing.T) {
     input := `{}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := request_params_from_reader(.Catalog_Refresh, &v)
@@ -73,7 +73,7 @@ test_request_params_catalog_refresh_empty :: proc(t: ^testing.T) {
 @(test)
 test_response_result_remove_empty :: proc(t: ^testing.T) {
     input := `{}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     result, derr := response_result_from_reader(.Session_Remove, &v)
@@ -91,7 +91,7 @@ test_response_result_remove_empty :: proc(t: ^testing.T) {
 @(test)
 test_response_result_send_input_queued_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"queued","input_id":8}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     result, derr := response_result_from_reader(.Session_Send_Input, &v)

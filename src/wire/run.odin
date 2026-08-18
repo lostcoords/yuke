@@ -25,7 +25,7 @@ run_kind_to_wire :: proc(k: Run_Kind) -> string {
 
 // Run kind for a wire string; ok is false for an unknown kind.
 run_kind_from_wire :: proc(s: string) -> (Run_Kind, bool) {
-    return enum_from_wire(run_kind_wire, s)
+    return json.enum_from_wire(run_kind_wire, s)
 }
 
 // Why a manual compaction did nothing.
@@ -50,7 +50,7 @@ compact_skip_reason_to_wire :: proc(r: Compact_Skip_Reason) -> string {
 
 // Compaction skip reason for a wire string; ok is false for an unknown reason.
 compact_skip_reason_from_wire :: proc(s: string) -> (Compact_Skip_Reason, bool) {
-    return enum_from_wire(compact_skip_reason_wire, s)
+    return json.enum_from_wire(compact_skip_reason_wire, s)
 }
 
 // Why a message stopped.
@@ -95,7 +95,7 @@ stop_reason_to_wire :: proc(r: Stop_Reason) -> string {
 
 // Stop reason for a wire string; ok is false for an unknown value.
 stop_reason_from_wire :: proc(s: string) -> (Stop_Reason, bool) {
-    return enum_from_wire(stop_reason_wire, s)
+    return json.enum_from_wire(stop_reason_wire, s)
 }
 
 // Cancellation timing; an accepted queued run may never start.
@@ -109,8 +109,8 @@ Run_Canceled_Timing :: struct {
 }
 
 // Decode cancellation timing straight from the token stream.
-run_canceled_timing_from_reader :: proc(d: ^Decoder) -> (timing: Run_Canceled_Timing, err: Validation_Error) {
-    dec_object_begin(d) or_return
+run_canceled_timing_from_reader :: proc(d: ^json.Decoder) -> (timing: Run_Canceled_Timing, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Start,
@@ -119,23 +119,23 @@ run_canceled_timing_from_reader :: proc(d: ^Decoder) -> (timing: Run_Canceled_Ti
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "started_at_ms":
             seen += {.Start}
 
-            if !dec_is_null(d) {
-                timing.started_at_ms = dec_u64(d) or_return
+            if !json.dec_is_null(d) {
+                timing.started_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             }
 
         case "ended_at_ms":
-            timing.ended_at_ms = dec_u64(d) or_return
+            timing.ended_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.End}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -173,8 +173,8 @@ Token_Usage :: struct {
 }
 
 // Decode token usage straight from the token stream.
-token_usage_from_reader :: proc(d: ^Decoder) -> (usage: Token_Usage, err: Validation_Error) {
-    dec_object_begin(d) or_return
+token_usage_from_reader :: proc(d: ^json.Decoder) -> (usage: Token_Usage, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Input,
@@ -186,32 +186,32 @@ token_usage_from_reader :: proc(d: ^Decoder) -> (usage: Token_Usage, err: Valida
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "input":
-            usage.input = dec_u64(d) or_return
+            usage.input = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Input}
 
         case "output":
-            usage.output = dec_u64(d) or_return
+            usage.output = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Output}
 
         case "reasoning":
-            usage.reasoning = dec_u64(d) or_return
+            usage.reasoning = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Reasoning}
 
         case "cache_read":
-            usage.cache_read = dec_u64(d) or_return
+            usage.cache_read = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Read}
 
         case "cache_write":
-            usage.cache_write = dec_u64(d) or_return
+            usage.cache_write = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Write}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -278,9 +278,9 @@ Run_Outcome :: union {
 }
 
 // Decode the terminal outcome straight from the token stream (any member order).
-run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+run_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Run_Outcome, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "turn":
@@ -294,23 +294,23 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "finish":
-                finish = dec_enum(d, stop_reason_wire) or_return
+                finish = json.dec_enum(d, stop_reason_wire) or_return
                 seen += {.Finish}
 
             case "rounds":
-                rounds = dec_u64(d) or_return
+                rounds = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Rounds}
 
             case "message_id", "reason", "code", "message":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -324,19 +324,19 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
         message_id: u64
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "message_id":
-                message_id = dec_u64(d) or_return
+                message_id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 have = true
 
             case "finish", "rounds", "reason", "code", "message":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -350,19 +350,19 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
         reason: Compact_Skip_Reason
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "reason":
-                reason = dec_enum(d, compact_skip_reason_wire) or_return
+                reason = json.dec_enum(d, compact_skip_reason_wire) or_return
                 have = true
 
             case "finish", "rounds", "message_id", "code", "message":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -374,7 +374,7 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
 
     case "canceled":
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -382,7 +382,7 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -399,23 +399,23 @@ run_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Run_Outcome, err: Vali
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "code":
-                code = dec_enum(d, run_error_code_wire) or_return
+                code = json.dec_enum(d, run_error_code_wire) or_return
                 seen += {.Code}
 
             case "message":
-                message = dec_string(d) or_return
+                message = json.dec_string(d) or_return
                 seen += {.Message}
 
             case "finish", "rounds", "message_id", "reason":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 

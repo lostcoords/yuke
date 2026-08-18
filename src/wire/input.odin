@@ -41,8 +41,8 @@ skill_ref_clone :: proc(self: Skill_Ref, allocator := context.allocator) -> Skil
 }
 
 // Decode a skill reference straight from the token stream.
-skill_ref_from_reader :: proc(d: ^Decoder) -> (out: Skill_Ref, err: Validation_Error) {
-    dec_object_begin(d) or_return
+skill_ref_from_reader :: proc(d: ^json.Decoder) -> (out: Skill_Ref, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Name,
@@ -51,20 +51,20 @@ skill_ref_from_reader :: proc(d: ^Decoder) -> (out: Skill_Ref, err: Validation_E
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            out.name = dec_string(d) or_return
+            out.name = json.dec_string(d) or_return
             seen += {.Name}
 
         case "arguments":
-            out.arguments = dec_string(d) or_return
+            out.arguments = json.dec_string(d) or_return
             seen += {.Args}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -426,28 +426,28 @@ part_delta_clone :: proc(self: Part_Delta, allocator := context.allocator) -> Pa
 }
 
 // Decode internally-tagged input straight from the token stream (any member order).
-input_from_reader :: proc(d: ^Decoder) -> (input: Input, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+input_from_reader :: proc(d: ^json.Decoder) -> (input: Input, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "content":
         content: []Content_Part
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "content":
-                content = dec_array(d, content_part_from_reader) or_return
+                content = json.dec_array(d, content_part_from_reader) or_return
                 have = true
 
             case "name", "arguments":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -467,23 +467,23 @@ input_from_reader :: proc(d: ^Decoder) -> (input: Input, err: Validation_Error) 
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "name":
-                name = dec_string(d) or_return
+                name = json.dec_string(d) or_return
                 seen += {.Name}
 
             case "arguments":
-                arguments = dec_string(d) or_return
+                arguments = json.dec_string(d) or_return
                 seen += {.Args}
 
             case "content":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -498,8 +498,8 @@ input_from_reader :: proc(d: ^Decoder) -> (input: Input, err: Validation_Error) 
 }
 
 // Decode a Queued_Input straight from the token stream.
-queued_input_from_reader :: proc(d: ^Decoder) -> (item: Queued_Input, err: Validation_Error) {
-    dec_object_begin(d) or_return
+queued_input_from_reader :: proc(d: ^json.Decoder) -> (item: Queued_Input, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -509,24 +509,24 @@ queued_input_from_reader :: proc(d: ^Decoder) -> (item: Queued_Input, err: Valid
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "input_id":
-            item.input_id = Input_Id(dec_u64(d) or_return)
+            item.input_id = Input_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Id}
 
         case "content":
-            item.content = dec_array(d, content_part_from_reader) or_return
+            item.content = json.dec_array(d, content_part_from_reader) or_return
             seen += {.Content}
 
         case "queued_at_ms":
-            item.queued_at_ms = dec_u64(d) or_return
+            item.queued_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Queued}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -539,12 +539,12 @@ queued_input_from_reader :: proc(d: ^Decoder) -> (item: Queued_Input, err: Valid
 
 // Decode session.send_input params straight from the token stream.
 session_send_input_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Session_Send_Input_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -553,12 +553,12 @@ session_send_input_params_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "input":
@@ -566,7 +566,7 @@ session_send_input_params_from_reader :: proc(
             seen += {.Input}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -579,13 +579,13 @@ session_send_input_params_from_reader :: proc(
 
 // Decode internally-tagged send-input result straight from the token stream.
 session_send_input_result_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     result: Session_Send_Input_Result,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "started":
@@ -598,20 +598,20 @@ session_send_input_result_from_reader :: proc(
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "input_id":
-                input_id = dec_u64(d) or_return
+                input_id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Input}
 
             case "run_id":
-                run_id = dec_u64(d) or_return
+                run_id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Run}
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -630,19 +630,19 @@ session_send_input_result_from_reader :: proc(
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "input_id":
-                input_id = dec_u64(d) or_return
+                input_id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Input}
 
             case "run_id":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -658,12 +658,12 @@ session_send_input_result_from_reader :: proc(
 
 // Decode session.cancel_input params straight from the token stream.
 session_cancel_input_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Session_Cancel_Input_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -672,20 +672,20 @@ session_cancel_input_params_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "input_id":
-            params.input_id = Input_Id(dec_u64(d) or_return)
+            params.input_id = Input_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Id}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -698,24 +698,24 @@ session_cancel_input_params_from_reader :: proc(
 
 // Decode a session.cancel_input result straight from the token stream.
 session_cancel_input_result_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     result: Session_Cancel_Input_Result,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "canceled_input":
-            result.canceled_input = Input_Id(dec_u64(d) or_return)
+            result.canceled_input = Input_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -728,12 +728,12 @@ session_cancel_input_result_from_reader :: proc(
 
 // Decode session.cancel_run params straight from the token stream.
 session_cancel_run_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Session_Cancel_Run_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -741,22 +741,22 @@ session_cancel_run_params_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "run_id":
-            params.run_id = Run_Id(dec_u64(d) or_return)
+            params.run_id = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case "clear_queue":
-            params.clear_queue = dec_bool(d) or_return
+            params.clear_queue = json.dec_bool(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -769,12 +769,12 @@ session_cancel_run_params_from_reader :: proc(
 
 // Decode a session.cancel_run result straight from the token stream.
 session_cancel_run_result_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     result: Session_Cancel_Run_Result,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Run,
@@ -784,30 +784,30 @@ session_cancel_run_result_from_reader :: proc(
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "canceled_run":
             seen += {.Run}
 
-            if !dec_is_null(d) {
-                result.canceled_run = Run_Id(dec_u64(d) or_return)
+            if !json.dec_is_null(d) {
+                result.canceled_run = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             }
 
         case "cleared_inputs":
-            result.cleared_inputs = dec_array(d, _input_id_from_reader) or_return
+            result.cleared_inputs = json.dec_array(d, _input_id_from_reader) or_return
             seen += {.Inputs}
 
         case "cleared_compaction":
             seen += {.Compaction}
 
-            if !dec_is_null(d) {
-                result.cleared_compaction = Run_Id(dec_u64(d) or_return)
+            if !json.dec_is_null(d) {
+                result.cleared_compaction = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -819,15 +819,15 @@ session_cancel_run_result_from_reader :: proc(
 }
 
 @(private)
-_input_id_from_reader :: proc(d: ^Decoder) -> (out: Input_Id, err: Validation_Error) {
-    out = Input_Id(dec_u64(d) or_return)
+_input_id_from_reader :: proc(d: ^json.Decoder) -> (out: Input_Id, err: json.Decode_Error) {
+    out = Input_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
     return out, .None
 }
 
 // Decode a Part_Delta straight from the token stream.
-part_delta_from_reader :: proc(d: ^Decoder) -> (pd: Part_Delta, err: Validation_Error) {
-    dec_object_begin(d) or_return
+part_delta_from_reader :: proc(d: ^json.Decoder) -> (pd: Part_Delta, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -839,32 +839,32 @@ part_delta_from_reader :: proc(d: ^Decoder) -> (pd: Part_Delta, err: Validation_
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            pd.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            pd.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "message_id":
-            pd.message_id = Message_Id(dec_u64(d) or_return)
+            pd.message_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Mid}
 
         case "part_id":
-            pd.part_id = Part_Id(dec_u64(d) or_return)
+            pd.part_id = Part_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Pid}
 
         case "delta":
-            pd.delta = dec_string(d) or_return
+            pd.delta = json.dec_string(d) or_return
             seen += {.Delta}
 
         case "offset":
-            pd.offset = dec_u64(d) or_return
+            pd.offset = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Offset}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

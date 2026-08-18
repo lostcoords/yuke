@@ -189,9 +189,17 @@ callee_name :: proc(call: ^ast.Call_Expr) -> string {
         return ""
     }
 
-    ident, is_ident := call.expr.derived.(^ast.Ident)
+    // The codec primitives moved to `libs/json`, so a call is either a bare `ident(`
+    // or a `json.ident(` selector; match on the leaf name either way.
+    #partial switch e in call.expr.derived {
+    case ^ast.Ident:
+        return e.name
 
-    return is_ident ? ident.name : ""
+    case ^ast.Selector_Expr:
+        return e.field != nil ? e.field.name : ""
+    }
+
+    return ""
 }
 
 // Source slice for any node, guarded so a node from another file yields "" rather than a

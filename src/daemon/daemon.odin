@@ -930,7 +930,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     defer virtual.arena_temp_end(temp)
     sa := virtual.arena_allocator(&d.frame_scratch)
 
-    decoder := wire.decoder_init(string(data), sa)
+    decoder := json.decoder_init(string(data), sa)
     req, derr := wire.request_from_reader(&decoder)
     if derr != .None {
         conn_protocol_close(conn)
@@ -938,7 +938,7 @@ handle_text :: proc(conn: ^Conn, data: []byte) {
     }
 
     // One JSON value per frame: trailing bytes after the root are a protocol error.
-    if wire.dec_finish(&decoder) != .None {
+    if json.dec_finish(&decoder) != .None {
         conn_protocol_close(conn)
         return
     }

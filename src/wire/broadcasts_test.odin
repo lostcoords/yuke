@@ -68,7 +68,7 @@ test_run_started_turn_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","seq":1,"run_id":7,"kind":"turn","config_rev":1,"started_at_ms":10}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Run_Started, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -92,7 +92,7 @@ test_run_started_compaction_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","seq":4,"run_id":8,"kind":"compaction","reason":"manual","config_rev":2,"started_at_ms":11}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Run_Started, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -148,7 +148,7 @@ test_run_started_rejects_unknown_reason :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","seq":4,"run_id":8,"kind":"compaction","reason":"whenever","config_rev":2,"started_at_ms":11}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     _, derr := broadcast_data_from_reader(.Run_Started, &v)
     testing.expect(t, derr != .None, "an unknown compaction reason must be rejected")
@@ -159,7 +159,7 @@ test_session_deltas_shed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","count":12}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -206,12 +206,12 @@ test_session_deltas_shed_requires_both_fields :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     {
-        v := decoder_init(`{"session_id":"0123456789abcdef"}`, context.temp_allocator)
+        v := json.decoder_init(`{"session_id":"0123456789abcdef"}`, context.temp_allocator)
         _, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
         testing.expect(t, derr == .Mismatched_Payload, "a missing count must be rejected")
     }
     {
-        v := decoder_init(`{"count":3}`, context.temp_allocator)
+        v := json.decoder_init(`{"count":3}`, context.temp_allocator)
         _, derr := broadcast_data_from_reader(.Session_Deltas_Shed, &v)
         testing.expect(t, derr == .Mismatched_Payload, "a missing session id must be rejected")
     }
@@ -222,7 +222,7 @@ test_run_done_turn_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","seq":2,"run_id":7,"kind":"turn","timing":{"started_at_ms":0,"ended_at_ms":1},"outcome":{"type":"turn","finish":"stop","rounds":3}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Run_Done, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -255,7 +255,7 @@ test_run_done_canceled_null_start_roundtrip :: proc(t: ^testing.T) {
     // A queued run canceled before starting: timing.started_at_ms is null; the
     // outcome arm carries no timing of its own.
     input := `{"session_id":"0123456789abcdef","seq":3,"run_id":7,"kind":"turn","timing":{"started_at_ms":null,"ended_at_ms":100},"outcome":{"type":"canceled"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Run_Done, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -279,7 +279,7 @@ test_session_summary_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -307,7 +307,7 @@ test_session_activity_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"idle"},"queued":0,"context_usage":{"input":5123,"output":200,"reasoning":0,"cache_read":5000,"cache_write":0},"pending_compaction":null}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Activity_Changed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -341,7 +341,7 @@ test_session_activity_changed_config_clone_outlives_source :: proc(t: ^testing.T
     defer mem.dynamic_arena_destroy(&dst_arena)
 
     input := `{"session_id":"0123456789abcdef","activity":{"state":{"type":"running","run_id":7,"started_at_ms":1},"config":{"config_rev":2,"model":"openai/gpt-5.5","reasoning":"high"},"queued":0,"context_usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"pending_compaction":null}}`
-    d := decoder_init(input, src)
+    d := json.decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Session_Activity_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect(t, broadcast_data_validate(data) == .None, "running activity with config must validate")
@@ -370,7 +370,7 @@ test_session_removed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"revision":2,"session_id":"0123456789abcdef"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Session_Removed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -406,7 +406,7 @@ test_message_part_delta_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","message_id":4,"part_id":0,"delta":"hi","offset":3}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Message_Part_Delta, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -431,7 +431,7 @@ test_tool_output_delta_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","message_id":12,"part_id":1,"delta":"hi","offset":3}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Tool_Output_Delta, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -454,7 +454,7 @@ test_config_changed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"session_id":"0123456789abcdef","seq":5,"config":{"config_rev":1,"model":"openai/gpt","reasoning":"low"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Config_Changed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -476,7 +476,7 @@ test_broadcast_notice_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"level":"warn","source":"daemon","message":"rate limited"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Notice, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -499,7 +499,7 @@ test_workspace_removed_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"workspace_id":"aaaaaaaaaaaaaaaa"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     data, derr := broadcast_data_from_reader(.Workspace_Removed, &v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -529,7 +529,7 @@ test_broadcast_clone_outlives_source_delta :: proc(t: ^testing.T) {
 
     // `delta` is a borrowed string in the payload.
     input := `{"session_id":"0123456789abcdef","message_id":4,"part_id":0,"delta":"hi","offset":3}`
-    d := decoder_init(input, src)
+    d := json.decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Message_Part_Delta, &d)
     testing.expect(t, derr == .None, "decode should succeed")
 
@@ -560,7 +560,7 @@ test_broadcast_clone_outlives_source_nested :: proc(t: ^testing.T) {
     defer mem.dynamic_arena_destroy(&dst_arena)
 
     input := `{"revision":4130,"session":{"id":"0123456789abcdef","workspace_id":"aaaaaaaaaaaaaaaa","profile":"default","model":"openai/gpt","reasoning":"low","config_rev":1,"permission":"normal","max_rounds":null,"title":"title","message_count":0,"usage_total":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"created_at_ms":0,"updated_at_ms":0,"created_by":{"name":"yuke-tui","version":"0.1"},"origin":{"type":"root"}}}`
-    d := decoder_init(input, src)
+    d := json.decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Session_Summary_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")
 
@@ -591,7 +591,7 @@ test_tool_state_changed_permission_clone_outlives_source :: proc(t: ^testing.T) 
     defer mem.dynamic_arena_destroy(&dst_arena)
 
     input := `{"session_id":"0123456789abcdef","message_id":4,"part_id":0,"state":{"type":"waiting_permission"},"permission":{"requested_at_ms":7,"options":[{"id":"once","kind":"allow_once","label":"Allow once"}]}}`
-    d := decoder_init(input, src)
+    d := json.decoder_init(input, src)
     data, derr := broadcast_data_from_reader(.Tool_State_Changed, &d)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect(t, broadcast_data_validate(data) == .None, "offered waiting must validate")

@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
@@ -53,21 +54,21 @@ test_error_object_validate :: proc(t: ^testing.T) {
 @(test)
 test_parse_rejects_trailing_bytes :: proc(t: ^testing.T) {
     // A frame is exactly one JSON value; a second value or junk after the root is
-    // rejected rather than silently dropped (dec_finish asserts end-of-input).
+    // rejected rather than silently dropped (json.dec_finish asserts end-of-input).
     defer free_all(context.temp_allocator)
     {
-        d := decoder_init(`{"jsonrpc":"2.0"}{"jsonrpc":"2.0"}`, context.temp_allocator)
-        _ = dec_skip(&d)
-        testing.expect(t, dec_finish(&d) == .Bad_Frame_Type, "trailing value must be rejected")
+        d := json.decoder_init(`{"jsonrpc":"2.0"}{"jsonrpc":"2.0"}`, context.temp_allocator)
+        _ = json.dec_skip(&d)
+        testing.expect(t, json.dec_finish(&d) == .Bad_Frame_Type, "trailing value must be rejected")
     }
     {
-        d := decoder_init(`{"jsonrpc":"2.0"} garbage`, context.temp_allocator)
-        _ = dec_skip(&d)
-        testing.expect(t, dec_finish(&d) == .Bad_Frame_Type, "trailing junk must be rejected")
+        d := json.decoder_init(`{"jsonrpc":"2.0"} garbage`, context.temp_allocator)
+        _ = json.dec_skip(&d)
+        testing.expect(t, json.dec_finish(&d) == .Bad_Frame_Type, "trailing junk must be rejected")
     }
     {
-        d := decoder_init(`{"jsonrpc":"2.0"}`, context.temp_allocator)
-        testing.expect(t, dec_skip(&d) == .None, "a single well-formed value still parses")
-        testing.expect(t, dec_finish(&d) == .None, "single value has no trailing bytes")
+        d := json.decoder_init(`{"jsonrpc":"2.0"}`, context.temp_allocator)
+        testing.expect(t, json.dec_skip(&d) == .None, "a single well-formed value still parses")
+        testing.expect(t, json.dec_finish(&d) == .None, "single value has no trailing bytes")
     }
 }

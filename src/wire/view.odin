@@ -24,8 +24,8 @@ Diff_Hunk :: struct {
 }
 
 // Decode a diff hunk straight from the token stream.
-diff_hunk_from_reader :: proc(d: ^Decoder) -> (hunk: Diff_Hunk, err: Validation_Error) {
-    dec_object_begin(d) or_return
+diff_hunk_from_reader :: proc(d: ^json.Decoder) -> (hunk: Diff_Hunk, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Os,
@@ -37,32 +37,32 @@ diff_hunk_from_reader :: proc(d: ^Decoder) -> (hunk: Diff_Hunk, err: Validation_
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "old_start":
-            hunk.old_start = dec_u64(d) or_return
+            hunk.old_start = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Os}
 
         case "old_lines":
-            hunk.old_lines = dec_u64(d) or_return
+            hunk.old_lines = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Ol}
 
         case "new_start":
-            hunk.new_start = dec_u64(d) or_return
+            hunk.new_start = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Ns}
 
         case "new_lines":
-            hunk.new_lines = dec_u64(d) or_return
+            hunk.new_lines = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Nl}
 
         case "lines":
-            hunk.lines = dec_array(d, dec_string) or_return
+            hunk.lines = json.dec_array(d, json.dec_string) or_return
             seen += {.Lines}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -123,8 +123,8 @@ Diff_File :: struct {
 }
 
 // Decode a diff file straight from the token stream.
-diff_file_from_reader :: proc(d: ^Decoder) -> (file: Diff_File, err: Validation_Error) {
-    dec_object_begin(d) or_return
+diff_file_from_reader :: proc(d: ^json.Decoder) -> (file: Diff_File, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Path,
@@ -133,23 +133,23 @@ diff_file_from_reader :: proc(d: ^Decoder) -> (file: Diff_File, err: Validation_
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "path":
-            file.path = dec_string(d) or_return
+            file.path = json.dec_string(d) or_return
             seen += {.Path}
 
         case "old_path":
-            file.old_path = dec_string(d) or_return
+            file.old_path = json.dec_string(d) or_return
 
         case "hunks":
-            file.hunks = dec_array(d, diff_hunk_from_reader) or_return
+            file.hunks = json.dec_array(d, diff_hunk_from_reader) or_return
             seen += {.Hunks}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -244,9 +244,9 @@ View :: union {
 }
 
 // Decode internally-tagged JSON straight from the token stream (any member order).
-view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+view_from_reader :: proc(d: ^json.Decoder) -> (view: View, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "text":
@@ -259,22 +259,22 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "text":
-                text = dec_string(d) or_return
+                text = json.dec_string(d) or_return
                 seen += {.Text}
 
             case "language":
-                language = dec_string(d) or_return
+                language = json.dec_string(d) or_return
 
             case "files", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -293,19 +293,19 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "text":
-                text = dec_string(d) or_return
+                text = json.dec_string(d) or_return
                 seen += {.Text}
 
             case "language", "files", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -328,19 +328,19 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "files":
-                files = dec_array(d, diff_file_from_reader) or_return
+                files = json.dec_array(d, diff_file_from_reader) or_return
                 seen += {.Files}
 
             case "text", "language", "source", "alt":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -360,7 +360,7 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -369,13 +369,13 @@ view_from_reader :: proc(d: ^Decoder) -> (view: View, err: Validation_Error) {
                 seen += {.Source}
 
             case "alt":
-                alt = dec_string(d) or_return
+                alt = json.dec_string(d) or_return
 
             case "text", "language", "files":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 

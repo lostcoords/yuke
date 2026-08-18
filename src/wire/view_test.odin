@@ -7,7 +7,7 @@ import "core:testing"
 @(test)
 test_view_text_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"text","text":"hello","language":"zig"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     view, derr := view_from_reader(&v)
@@ -29,7 +29,7 @@ test_view_text_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_view_markdown_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"markdown","text":"# Hi"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     view, derr := view_from_reader(&v)
@@ -49,7 +49,7 @@ test_view_diff_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"diff","files":[{"path":"a.txt","hunks":[{"old_start":1,"old_lines":2,"new_start":1,"new_lines":3,"lines":["-a","+b","+c"]}]}]}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     view, derr := view_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -71,7 +71,7 @@ test_view_diff_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_view_image_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"image","source":{"type":"url","url":"http://x/y.png"},"alt":"pic"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     view, derr := view_from_reader(&v)
@@ -95,7 +95,7 @@ test_view_image_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_view_sibling_field_rejected :: proc(t: ^testing.T) {
     // `files` belongs to the diff arm; its presence under `text` is a mismatch.
-    v := decoder_init(`{"type":"text","text":"x","files":[]}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"text","text":"x","files":[]}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := view_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "sibling key must be rejected")

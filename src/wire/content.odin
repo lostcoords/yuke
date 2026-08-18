@@ -50,9 +50,9 @@ Media_Source :: union {
 }
 
 // Decode internally-tagged JSON straight from the token stream (any member order).
-media_source_from_reader :: proc(d: ^Decoder) -> (src: Media_Source, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+media_source_from_reader :: proc(d: ^json.Decoder) -> (src: Media_Source, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "url":
@@ -64,19 +64,19 @@ media_source_from_reader :: proc(d: ^Decoder) -> (src: Media_Source, err: Valida
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "url":
-                url = dec_string(d) or_return
+                url = json.dec_string(d) or_return
                 seen += {.Url}
 
             case "mime", "data", "hash", "bytes":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -96,23 +96,23 @@ media_source_from_reader :: proc(d: ^Decoder) -> (src: Media_Source, err: Valida
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "mime":
-                mime = dec_string(d) or_return
+                mime = json.dec_string(d) or_return
                 seen += {.Mime}
 
             case "data":
-                data = dec_string(d) or_return
+                data = json.dec_string(d) or_return
                 seen += {.Data}
 
             case "url", "hash", "bytes":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -135,27 +135,27 @@ media_source_from_reader :: proc(d: ^Decoder) -> (src: Media_Source, err: Valida
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "hash":
-                hash = dec_fixed(d, 64) or_return
+                hash = json.dec_fixed(d, 64) or_return
                 seen += {.Hash}
 
             case "mime":
-                mime = dec_string(d) or_return
+                mime = json.dec_string(d) or_return
                 seen += {.Mime}
 
             case "bytes":
-                bytes = dec_u64(d) or_return
+                bytes = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Bytes}
 
             case "url", "data":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -328,9 +328,9 @@ Content_Part :: union {
 }
 
 // Decode internally-tagged JSON straight from the token stream (any member order).
-content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+content_part_from_reader :: proc(d: ^json.Decoder) -> (part: Content_Part, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "text":
@@ -342,19 +342,19 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "text":
-                text = dec_string(d) or_return
+                text = json.dec_string(d) or_return
                 seen += {.Text}
 
             case "source", "detail", "format", "filename":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -374,7 +374,7 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -383,13 +383,13 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
                 seen += {.Source}
 
             case "detail":
-                detail = dec_string(d) or_return
+                detail = json.dec_string(d) or_return
 
             case "text", "format", "filename":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -410,7 +410,7 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -419,14 +419,14 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
                 seen += {.Source}
 
             case "format":
-                format = dec_string(d) or_return
+                format = json.dec_string(d) or_return
                 seen += {.Format}
 
             case "text", "detail", "filename":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -446,7 +446,7 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -455,13 +455,13 @@ content_part_from_reader :: proc(d: ^Decoder) -> (part: Content_Part, err: Valid
                 seen += {.Source}
 
             case "filename":
-                filename = dec_string(d) or_return
+                filename = json.dec_string(d) or_return
 
             case "text", "detail", "format":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 

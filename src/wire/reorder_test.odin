@@ -1,4 +1,5 @@
 package wire
+import "libs:json"
 
 // Member order is not significant in JSON (RFC 8259 §4). An open protocol will be
 // spoken by daemons/clients we do not control — a Go map, a JS object, or a Rust
@@ -6,7 +7,7 @@ package wire
 // as `{method,params}` after `id`, or `params` before `method`). The streaming decoder
 // must therefore accept a discriminator, and any field typed by it, in any position. These frames are the
 // same shapes as the round-trip tests, with their members permuted; every one must
-// decode identically. See `dec_find_tag`.
+// decode identically. See `json.dec_find_tag`.
 
 import "core:testing"
 
@@ -17,7 +18,7 @@ test_reorder_union_type_last :: proc(t: ^testing.T) {
 
     // content part: type after its data field
     {
-        v := decoder_init(`{"text":"hello","type":"text"}`, context.temp_allocator)
+        v := json.decoder_init(`{"text":"hello","type":"text"}`, context.temp_allocator)
         part, derr := content_part_from_reader(&v)
         testing.expect(t, derr == .None, "type-last content part should decode")
         ct, ok := part.(Content_Text)
@@ -28,7 +29,7 @@ test_reorder_union_type_last :: proc(t: ^testing.T) {
     // media source: blob with every field ahead of the discriminator
     {
         input := `{"bytes":1024,"mime":"image/png","hash":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","type":"blob"}`
-        v := decoder_init(input, context.temp_allocator)
+        v := json.decoder_init(input, context.temp_allocator)
         src, derr := media_source_from_reader(&v)
         testing.expect(t, derr == .None, "type-last media blob should decode")
         mb, ok := src.(Media_Blob)
@@ -44,7 +45,7 @@ test_reorder_request_params_before_method :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     input := `{"params":{"session_id":"0011223344556677","input_id":7},"method":"session.cancel_input","id":2,"jsonrpc":"2.0"}`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     req, derr := request_from_reader(&v)
     testing.expect(t, derr == .None, "params-before-method request should decode")
     testing.expect_value(t, req.method, Method_Name.Session_Cancel_Input)
@@ -60,7 +61,7 @@ test_reorder_notification_alphabetical :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     input := `{"params":{"level":"warn","source":"provider","message":"rate limited"},"method":"notice","jsonrpc":"2.0"}`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     n, derr := notification_from_reader(&v)
     testing.expect(t, derr == .None, "params-before-method notification should decode")
     testing.expect_value(t, n.method, Broadcast_Name.Notice)
@@ -80,7 +81,7 @@ test_reorder_response_result_before_id :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     input := `{"result":{"input_id":8,"type":"queued"},"id":3,"jsonrpc":"2.0"}`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     resp, derr := response_from_reader(.Session_Send_Input, &v)
     testing.expect(t, derr == .None, "result-before-id response should decode")
     ok, is_ok := resp.(Response_Ok)
@@ -99,7 +100,7 @@ test_reorder_response_error_before_id :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
     input := `{"error":{"message":"busy","code":-31015},"id":4,"jsonrpc":"2.0"}`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     resp, derr := response_from_reader(.Session_List, &v)
     testing.expect(t, derr == .None, "error-before-id response should decode")
     re, is_err := resp.(Response_Error)
@@ -118,11 +119,11 @@ test_reorder_response_error_before_id :: proc(t: ^testing.T) {
 test_reorder_missing_discriminator_still_errors :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"text":"hello"}`, context.temp_allocator)
+    v := json.decoder_init(`{"text":"hello"}`, context.temp_allocator)
     _, derr := content_part_from_reader(&v)
     testing.expect(t, derr != .None, "a union with no discriminator must be rejected")
 
-    v2 := decoder_init(`{"jsonrpc":"2.0","id":2}`, context.temp_allocator)
+    v2 := json.decoder_init(`{"jsonrpc":"2.0","id":2}`, context.temp_allocator)
     _, derr2 := request_from_reader(&v2)
     testing.expect(t, derr2 != .None, "a request with no method must be rejected")
 }

@@ -418,8 +418,8 @@ _field_f64 :: proc(e: ^json.Emitter, name: string, f: f64) {
 }
 
 // Decode a Model_Cost straight from the token stream.
-model_cost_from_reader :: proc(d: ^Decoder) -> (cost: Model_Cost, err: Validation_Error) {
-    dec_object_begin(d) or_return
+model_cost_from_reader :: proc(d: ^json.Decoder) -> (cost: Model_Cost, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         In,
@@ -430,28 +430,28 @@ model_cost_from_reader :: proc(d: ^Decoder) -> (cost: Model_Cost, err: Validatio
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "input":
-            cost.input = dec_f64(d) or_return
+            cost.input = json.dec_f64(d) or_return
             seen += {.In}
 
         case "output":
-            cost.output = dec_f64(d) or_return
+            cost.output = json.dec_f64(d) or_return
             seen += {.Out}
 
         case "cache_read":
-            cost.cache_read = dec_f64(d) or_return
+            cost.cache_read = json.dec_f64(d) or_return
             seen += {.Cr}
 
         case "cache_write":
-            cost.cache_write = dec_f64(d) or_return
+            cost.cache_write = json.dec_f64(d) or_return
             seen += {.Cw}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -463,8 +463,8 @@ model_cost_from_reader :: proc(d: ^Decoder) -> (cost: Model_Cost, err: Validatio
 }
 
 // Decode a Model_Info straight from the token stream.
-model_info_from_reader :: proc(d: ^Decoder) -> (info: Model_Info, err: Validation_Error) {
-    dec_object_begin(d) or_return
+model_info_from_reader :: proc(d: ^json.Decoder) -> (info: Model_Info, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -481,44 +481,44 @@ model_info_from_reader :: proc(d: ^Decoder) -> (info: Model_Info, err: Validatio
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            info.id = dec_string(d) or_return
+            info.id = json.dec_string(d) or_return
             seen += {.Id}
 
         case "provider":
-            info.provider = dec_string(d) or_return
+            info.provider = json.dec_string(d) or_return
             seen += {.Prov}
 
         case "name":
-            info.name = dec_string(d) or_return
+            info.name = json.dec_string(d) or_return
             seen += {.Name}
 
         case "context_window":
-            info.context_window = dec_u64(d) or_return
+            info.context_window = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Ctx}
 
         case "max_output_tokens":
-            info.max_output_tokens = dec_u64(d) or_return
+            info.max_output_tokens = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Max}
 
         case "reasoning_levels":
-            info.reasoning_levels = dec_array(d, dec_string) or_return
+            info.reasoning_levels = json.dec_array(d, json.dec_string) or_return
             seen += {.Levels}
 
         case "default_reasoning":
-            info.default_reasoning = dec_string(d) or_return
+            info.default_reasoning = json.dec_string(d) or_return
             seen += {.Def}
 
         case "supports_vision":
-            info.supports_vision = dec_bool(d) or_return
+            info.supports_vision = json.dec_bool(d) or_return
             seen += {.Vis}
 
         case "supports_tools":
-            info.supports_tools = dec_bool(d) or_return
+            info.supports_tools = json.dec_bool(d) or_return
             seen += {.Tools}
 
         case "cost":
@@ -526,7 +526,7 @@ model_info_from_reader :: proc(d: ^Decoder) -> (info: Model_Info, err: Validatio
             seen += {.Cost}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -538,18 +538,18 @@ model_info_from_reader :: proc(d: ^Decoder) -> (info: Model_Info, err: Validatio
 }
 
 // Decode catalog.list params straight from the token stream.
-catalog_list_params_from_reader :: proc(d: ^Decoder) -> (params: Catalog_List_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+catalog_list_params_from_reader :: proc(d: ^json.Decoder) -> (params: Catalog_List_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "since_rev":
-            params.since_rev = Catalog_Rev(dec_fixed(d, 64) or_return)
+            params.since_rev = Catalog_Rev(json.dec_fixed(d, 64) or_return)
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -557,28 +557,28 @@ catalog_list_params_from_reader :: proc(d: ^Decoder) -> (params: Catalog_List_Pa
 }
 
 // Decode internally-tagged catalog.list result straight from the token stream.
-catalog_list_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_List_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+catalog_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Catalog_List_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "unchanged":
         rev: [64]u8
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "catalog_rev":
-                rev = dec_fixed(d, 64) or_return
+                rev = json.dec_fixed(d, 64) or_return
                 have = true
 
             case "models", "health":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -601,16 +601,16 @@ catalog_list_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_List_Re
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "catalog_rev":
-                rev = dec_fixed(d, 64) or_return
+                rev = json.dec_fixed(d, 64) or_return
                 seen += {.Rev}
 
             case "models":
-                models = dec_array(d, model_info_from_reader) or_return
+                models = json.dec_array(d, model_info_from_reader) or_return
                 seen += {.Models}
 
             case "health":
@@ -618,7 +618,7 @@ catalog_list_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_List_Re
                 seen += {.Health}
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -633,8 +633,13 @@ catalog_list_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_List_Re
 }
 
 // Decode a catalog.refresh result straight from the token stream.
-catalog_refresh_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_Refresh_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+catalog_refresh_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Catalog_Refresh_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Rev,
@@ -643,12 +648,12 @@ catalog_refresh_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_Refr
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "catalog_rev":
-            result.catalog_rev = Catalog_Rev(dec_fixed(d, 64) or_return)
+            result.catalog_rev = Catalog_Rev(json.dec_fixed(d, 64) or_return)
             seen += {.Rev}
 
         case "health":
@@ -656,7 +661,7 @@ catalog_refresh_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_Refr
             seen += {.Health}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -668,8 +673,8 @@ catalog_refresh_result_from_reader :: proc(d: ^Decoder) -> (result: Catalog_Refr
 }
 
 // Decode a Catalog_Health straight from the token stream.
-catalog_health_from_reader :: proc(d: ^Decoder) -> (health: Catalog_Health, err: Validation_Error) {
-    dec_object_begin(d) or_return
+catalog_health_from_reader :: proc(d: ^json.Decoder) -> (health: Catalog_Health, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Skipped,
@@ -678,23 +683,23 @@ catalog_health_from_reader :: proc(d: ^Decoder) -> (health: Catalog_Health, err:
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "skipped":
-            health.skipped = dec_array(d, skipped_provider_from_reader) or_return
+            health.skipped = json.dec_array(d, skipped_provider_from_reader) or_return
             seen += {.Skipped}
 
         case "load_error":
             seen += {.Load}
 
-            if !dec_is_null(d) {
-                health.load_error = dec_string(d) or_return
+            if !json.dec_is_null(d) {
+                health.load_error = json.dec_string(d) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -706,8 +711,8 @@ catalog_health_from_reader :: proc(d: ^Decoder) -> (health: Catalog_Health, err:
 }
 
 // Decode a Skipped_Provider straight from the token stream.
-skipped_provider_from_reader :: proc(d: ^Decoder) -> (item: Skipped_Provider, err: Validation_Error) {
-    dec_object_begin(d) or_return
+skipped_provider_from_reader :: proc(d: ^json.Decoder) -> (item: Skipped_Provider, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Prov,
@@ -716,12 +721,12 @@ skipped_provider_from_reader :: proc(d: ^Decoder) -> (item: Skipped_Provider, er
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "provider":
-            item.provider = dec_string(d) or_return
+            item.provider = json.dec_string(d) or_return
             seen += {.Prov}
 
         case "reason":
@@ -729,7 +734,7 @@ skipped_provider_from_reader :: proc(d: ^Decoder) -> (item: Skipped_Provider, er
             seen += {.Reason}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -741,28 +746,28 @@ skipped_provider_from_reader :: proc(d: ^Decoder) -> (item: Skipped_Provider, er
 }
 
 // Decode internally-tagged skip reason straight from the token stream.
-skip_reason_from_reader :: proc(d: ^Decoder) -> (reason: Skip_Reason, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+skip_reason_from_reader :: proc(d: ^json.Decoder) -> (reason: Skip_Reason, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "missing_credential":
         env: string
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "env":
-                env = dec_string(d) or_return
+                env = json.dec_string(d) or_return
                 have = true
 
             case "message":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -776,19 +781,19 @@ skip_reason_from_reader :: proc(d: ^Decoder) -> (reason: Skip_Reason, err: Valid
         message: string
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "message":
-                message = dec_string(d) or_return
+                message = json.dec_string(d) or_return
                 have = true
 
             case "env":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 

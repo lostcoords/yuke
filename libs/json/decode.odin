@@ -1,28 +1,35 @@
-package wire
+package json
 
 import "core:strconv"
 import "core:strings"
-import "libs:json"
 
-// Streaming decode front end. A frame is decoded token-by-token straight into typed
-// structs; no intermediate `json.Value` tree is built. A multi-MB result, or an
-// ignored broadcast payload, is streamed (or skipped, see `dec_skip`) rather than
-// materialized. Encoders emit discriminators first, while decoders scan and rewind
-// so tagged objects remain valid when members arrive in any JSON object order.
+// Result of a streaming decode primitive. Protocol-level validation (bounds, hex,
+// cross-field) is a separate concern the caller layers on top.
+Decode_Error :: enum {
+    None,
+    Bad_Frame_Type,
+    Invalid_Length,
+    Out_Of_Range,
+    Mismatched_Payload,
+}
+
+// Streaming decode front end. A value is decoded token-by-token straight into typed
+// structs; no intermediate `Value` tree is built. A multi-MB payload, or an ignored
+// one, is streamed (or skipped, see `dec_skip`) rather than materialized. Tagged
+// readers scan and rewind so members remain valid in any object order.
 //
-// Ownership matches the value-tree path: decoded strings are unquoted into the
-// parser's allocator (the caller's frame arena), so the wire types stay non-owning
-// borrows into that arena; `*_clone` deep-copies into a caller allocator.
-Decoder :: json.Parser
+// Decoded strings are unquoted into the parser's allocator (the caller's arena), so
+// results stay non-owning borrows into that arena until deep-copied.
+Decoder :: Parser
 
 // Start decoding `data`. Integers are kept as i64 (`parse_integers`).
 decoder_init :: proc(data: string, allocator := context.allocator) -> Decoder {
-    return json.make_parser_from_string(data, .JSON, true, allocator)
+    return make_parser_from_string(data, .JSON, true, allocator)
 }
 
-// Assert the input held exactly one JSON value: a frame is one value, so trailing
-// bytes after the root are rejected rather than silently dropped.
-dec_finish :: proc(d: ^Decoder) -> Validation_Error {
+// Assert the input held exactly one JSON value: trailing bytes after the root are
+// rejected rather than silently dropped.
+dec_finish :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .EOF {
         return .Bad_Frame_Type
     }
@@ -31,15 +38,15 @@ dec_finish :: proc(d: ^Decoder) -> Validation_Error {
 }
 
 // A JSON string, unquoted into the parser allocator. A non-string is an error.
-dec_string :: proc(d: ^Decoder) -> (string, Validation_Error) {
+dec_string :: proc(d: ^Decoder) -> (string, Decode_Error) {
     tok := d.curr_token
 
     if tok.kind != .String {
         return "", .Mismatched_Payload
     }
 
-    json.advance_token(d)
-    s, err := json.unquote_string(tok, .JSON, d.allocator)
+    advance_token(d)
+    s, err := unquote_string(tok, .JSON, d.allocator)
 
     if err != nil {
         return "", .Mismatched_Payload
@@ -50,12 +57,12 @@ dec_string :: proc(d: ^Decoder) -> (string, Validation_Error) {
 
 // A scalar's verbatim token text, cloned into the parser allocator — quotes and
 // escapes intact. Backs values that must echo byte-identically. A container is an error.
-dec_raw_scalar :: proc(d: ^Decoder) -> (string, Validation_Error) {
+dec_raw_scalar :: proc(d: ^Decoder) -> (string, Decode_Error) {
     tok := d.curr_token
 
     #partial switch tok.kind {
     case .String, .Integer, .Float, .Null, .True, .False:
-        json.advance_token(d)
+        advance_token(d)
         text, err := strings.clone(tok.text, d.allocator)
 
         if err != nil {
@@ -70,15 +77,11 @@ dec_raw_scalar :: proc(d: ^Decoder) -> (string, Validation_Error) {
 
 // `parse_i64` wraps silently and still reports success, so an over-long token is
 // rejected before the parse. 17 digits cannot wrap `i64`.
-@(private)
 MAX_INTEGER_TOKEN_DIGITS :: 16
 
-#assert(MAX_WIRE_INTEGER < 10_000_000_000_000_000)
-#assert(100_000_000_000_000_000 <= max(i64))
-
-// A u64 in JSON's safe integer range. A non-integer, an over-long token, or an
+// A non-negative integer in `[0, max]`. A non-integer, an over-long token, or an
 // over-range value (never a small coercion) is an error.
-dec_u64 :: proc(d: ^Decoder) -> (u64, Validation_Error) {
+dec_u64 :: proc(d: ^Decoder, max: i64) -> (u64, Decode_Error) {
     tok := d.curr_token
 
     if tok.kind != .Integer {
@@ -89,22 +92,16 @@ dec_u64 :: proc(d: ^Decoder) -> (u64, Validation_Error) {
         return 0, .Out_Of_Range
     }
 
-    json.advance_token(d)
+    advance_token(d)
     i, ok := strconv.parse_i64(tok.text)
+    if !ok do return 0, .Out_Of_Range
 
-    if !ok {
-        return 0, .Out_Of_Range
-    }
-
-    if i < 0 || i > MAX_WIRE_INTEGER {
-        return 0, .Out_Of_Range
-    }
-
+    if i < 0 || i > max do return 0, .Out_Of_Range
     return u64(i), .None
 }
 
-// A signed i64 in JSON's safe integer range (used for e.g. cron UTC offsets).
-dec_i64 :: proc(d: ^Decoder) -> (i64, Validation_Error) {
+// A signed integer in `[-max, max]` (used for e.g. cron UTC offsets).
+dec_i64 :: proc(d: ^Decoder, max: i64) -> (i64, Decode_Error) {
     tok := d.curr_token
 
     if tok.kind != .Integer {
@@ -116,14 +113,14 @@ dec_i64 :: proc(d: ^Decoder) -> (i64, Validation_Error) {
         return 0, .Out_Of_Range
     }
 
-    json.advance_token(d)
+    advance_token(d)
     i, ok := strconv.parse_i64(tok.text)
 
     if !ok {
         return 0, .Out_Of_Range
     }
 
-    if i < -MAX_WIRE_INTEGER || i > MAX_WIRE_INTEGER {
+    if i < -max || i > max {
         return 0, .Out_Of_Range
     }
 
@@ -132,7 +129,7 @@ dec_i64 :: proc(d: ^Decoder) -> (i64, Validation_Error) {
 
 // A JSON number as f64 (an integer literal is accepted and widened). A non-number
 // is an error.
-dec_f64 :: proc(d: ^Decoder) -> (f64, Validation_Error) {
+dec_f64 :: proc(d: ^Decoder) -> (f64, Decode_Error) {
     tok := d.curr_token
 
     #partial switch tok.kind {
@@ -141,7 +138,7 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Validation_Error) {
             return 0, .Out_Of_Range
         }
 
-        json.advance_token(d)
+        advance_token(d)
         i, ok := strconv.parse_i64(tok.text)
 
         if !ok {
@@ -151,7 +148,7 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Validation_Error) {
         return f64(i), .None
 
     case .Float:
-        json.advance_token(d)
+        advance_token(d)
         f, ok := strconv.parse_f64(tok.text)
 
         if !ok {
@@ -165,14 +162,14 @@ dec_f64 :: proc(d: ^Decoder) -> (f64, Validation_Error) {
 }
 
 // A boolean. A non-boolean is an error.
-dec_bool :: proc(d: ^Decoder) -> (bool, Validation_Error) {
+dec_bool :: proc(d: ^Decoder) -> (bool, Decode_Error) {
     #partial switch d.curr_token.kind {
     case .True:
-        json.advance_token(d)
+        advance_token(d)
         return true, .None
 
     case .False:
-        json.advance_token(d)
+        advance_token(d)
         return false, .None
     }
 
@@ -182,7 +179,7 @@ dec_bool :: proc(d: ^Decoder) -> (bool, Validation_Error) {
 // If the current value is JSON null, consume it and report true; otherwise leave it.
 dec_is_null :: proc(d: ^Decoder) -> bool {
     if d.curr_token.kind == .Null {
-        json.advance_token(d)
+        advance_token(d)
         return true
     }
 
@@ -190,8 +187,8 @@ dec_is_null :: proc(d: ^Decoder) -> bool {
 }
 
 // A fixed-length string copied verbatim into an [N]u8 buffer. Only length is
-// checked here; content validation (lowercase hex) is deferred to the owner's validate.
-dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Validation_Error) {
+// checked here; content validation is deferred to the owner.
+dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Decode_Error) {
     // Valid fixed ids/hashes are plain ASCII. Copy that overwhelmingly common form
     // directly from the token, avoiding an arena allocation that would immediately
     // be discarded after this fixed-array copy. Escaped strings retain the full JSON
@@ -208,7 +205,7 @@ dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Validation_Error) {
         }
 
         if !escaped {
-            json.advance_token(d)
+            advance_token(d)
             copy(out[:], tok.text[1:N + 1])
             return out, .None
         }
@@ -225,17 +222,39 @@ dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Validation_Error) {
     return out, .None
 }
 
+// A closed enum reverse-lookup over `table` (indexed by enum value). An unknown wire
+// string yields `ok=false`.
+enum_from_wire :: proc(table: [$E]string, s: string) -> (E, bool) {
+    for str, e in table {
+        if str == s {
+            return e, true
+        }
+    }
+
+    return {}, false
+}
+
+// `enum_from_wire`, but an unknown wire string is a payload mismatch.
+enum_from_wire_checked :: proc(table: [$E]string, s: string) -> (out: E, err: Decode_Error) {
+    value, ok := enum_from_wire(table, s)
+
+    if !ok {
+        return {}, .Mismatched_Payload
+    }
+
+    return value, .None
+}
+
 // Decode a closed-enum field via `table`; an unknown wire string is a payload mismatch.
-dec_enum :: proc(d: ^Decoder, table: [$E]string) -> (out: E, err: Validation_Error) {
+dec_enum :: proc(d: ^Decoder, table: [$E]string) -> (out: E, err: Decode_Error) {
     s := dec_string(d) or_return
 
     return enum_from_wire_checked(table, s)
 }
 
 // Skip the current value without materializing it: a scalar advances once, an
-// object/array is walked by nesting depth. No allocation — this is how an unknown
-// broadcast's `data` or a not-yet-routed `result` is passed over.
-dec_skip :: proc(d: ^Decoder) -> Validation_Error {
+// object/array is walked by nesting depth. No allocation.
+dec_skip :: proc(d: ^Decoder) -> Decode_Error {
     #partial switch d.curr_token.kind {
     case .Open_Brace, .Open_Bracket:
         depth := 0
@@ -251,7 +270,7 @@ dec_skip :: proc(d: ^Decoder) -> Validation_Error {
                 return .Mismatched_Payload
             }
 
-            json.advance_token(d)
+            advance_token(d)
 
             if depth == 0 {
                 break
@@ -262,19 +281,19 @@ dec_skip :: proc(d: ^Decoder) -> Validation_Error {
         return .Mismatched_Payload
 
     case:
-        json.advance_token(d)
+        advance_token(d)
     }
 
     return .None
 }
 
 // Consume the opening `{`. A non-object is an error.
-dec_object_begin :: proc(d: ^Decoder) -> Validation_Error {
+dec_object_begin :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .Open_Brace {
         return .Mismatched_Payload
     }
 
-    json.advance_token(d)
+    advance_token(d)
 
     return .None
 }
@@ -282,14 +301,14 @@ dec_object_begin :: proc(d: ^Decoder) -> Validation_Error {
 // Read the next object member key, or `done=true` at the closing `}` (consumed).
 // Consumes the separating comma. On `done=false` the parser sits at the value token.
 // A trailing comma (`{...,}`) is rejected. Call repeatedly in a `for` loop.
-dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Validation_Error) {
+dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Decode_Error) {
     #partial switch d.curr_token.kind {
     case .Close_Brace:
-        json.advance_token(d)
+        advance_token(d)
         return "", true, .None
 
     case .Comma:
-        json.advance_token(d)
+        advance_token(d)
     }
 
     tok := d.curr_token
@@ -298,14 +317,14 @@ dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Validation_Error)
         return "", false, .Mismatched_Payload
     }
 
-    json.advance_token(d)
+    advance_token(d)
 
     if d.curr_token.kind != .Colon {
         return "", false, .Mismatched_Payload
     }
 
-    json.advance_token(d)
-    k, uerr := json.unquote_string(tok, .JSON, d.allocator)
+    advance_token(d)
+    k, uerr := unquote_string(tok, .JSON, d.allocator)
 
     if uerr != nil {
         return "", false, .Mismatched_Payload
@@ -316,7 +335,7 @@ dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Validation_Error)
 
 // Reject the current member: a closed-union sibling key under the wrong tag is a
 // payload mismatch. The value is left unread (the caller returns immediately).
-dec_forbid :: proc(d: ^Decoder) -> Validation_Error {
+dec_forbid :: proc(d: ^Decoder) -> Decode_Error {
     return .Mismatched_Payload
 }
 
@@ -324,7 +343,7 @@ dec_forbid :: proc(d: ^Decoder) -> Validation_Error {
 // Snapshots the parser, scans members skipping values until `wanted` is found,
 // then rewinds so the caller's field loop re-reads from the first member.
 // Caller must sit just past `{` (see `dec_object_begin`).
-dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Validation_Error) {
+dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Decode_Error) {
     saved := d^
     for {
         k, done := dec_key(d) or_return
@@ -345,12 +364,12 @@ dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Validati
 }
 
 // Consume the opening `[`. A non-array is an error.
-dec_array_begin :: proc(d: ^Decoder) -> Validation_Error {
+dec_array_begin :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .Open_Bracket {
         return .Mismatched_Payload
     }
 
-    json.advance_token(d)
+    advance_token(d)
 
     return .None
 }
@@ -358,14 +377,14 @@ dec_array_begin :: proc(d: ^Decoder) -> Validation_Error {
 // Advance to the next array element, or `more=false` at the closing `]` (consumed).
 // Consumes the separating comma. On `more=true` the parser sits at the element value.
 // A trailing comma is rejected.
-dec_elem :: proc(d: ^Decoder) -> (more: bool, err: Validation_Error) {
+dec_elem :: proc(d: ^Decoder) -> (more: bool, err: Decode_Error) {
     #partial switch d.curr_token.kind {
     case .Close_Bracket:
-        json.advance_token(d)
+        advance_token(d)
         return false, .None
 
     case .Comma:
-        json.advance_token(d)
+        advance_token(d)
     }
 
     if d.curr_token.kind == .Close_Bracket {
@@ -376,15 +395,9 @@ dec_elem :: proc(d: ^Decoder) -> (more: bool, err: Validation_Error) {
 }
 
 // Decode a JSON array, reading each element with `read`, into an arena-backed slice.
-// The element reader is one of the scalar readers (`dec_string`, `dec_u64`) or any
-// `*_from_reader`. A non-array is an error.
-dec_array :: proc(
-    d: ^Decoder,
-    read: proc(d: ^Decoder) -> ($T, Validation_Error),
-) -> (
-    out: []T,
-    err: Validation_Error,
-) {
+// The element reader is one of the scalar readers (`dec_string`) or any `*_from_reader`.
+// A non-array is an error.
+dec_array :: proc(d: ^Decoder, read: proc(d: ^Decoder) -> ($T, Decode_Error)) -> (out: []T, err: Decode_Error) {
     dec_array_begin(d) or_return
     arr: [dynamic]T
     // Match `dec_string`'s allocator so decoded elements and strings share one arena.

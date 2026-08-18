@@ -6,7 +6,7 @@ import "core:testing"
 
 @(test)
 test_tool_state_parses_pending :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"pending"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"pending"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     state, derr := tool_state_from_reader(&v)
@@ -17,7 +17,7 @@ test_tool_state_parses_pending :: proc(t: ^testing.T) {
 
 @(test)
 test_tool_state_parses_completed :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"completed","output":"done","duration_ms":42}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"completed","output":"done","duration_ms":42}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     state, derr := tool_state_from_reader(&v)
@@ -33,13 +33,13 @@ test_tool_state_canceled_requires_nullable_duration :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(`{"type":"canceled","duration_ms":null}`)
+    v := json.decoder_init(`{"type":"canceled","duration_ms":null}`)
     state, derr := tool_state_from_reader(&v)
     testing.expect(t, derr == .None, "null duration should decode")
     _, ok := state.(Tool_State_Canceled)
     testing.expect(t, ok, "should be a canceled state")
 
-    v = decoder_init(`{"type":"canceled"}`)
+    v = json.decoder_init(`{"type":"canceled"}`)
     _, derr = tool_state_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "omitted duration must fail")
 }
@@ -51,7 +51,7 @@ test_tool_state_running_output_present_and_absent :: proc(t: ^testing.T) {
 
     // Present in a resync snapshot: output parses and round-trips.
     {
-        v := decoder_init(`{"type":"running","started_at_ms":5,"output":"compiling"}`)
+        v := json.decoder_init(`{"type":"running","started_at_ms":5,"output":"compiling"}`)
         state, derr := tool_state_from_reader(&v)
         testing.expect(t, derr == .None, "decode should succeed")
         running, ok := state.(Tool_State_Running)
@@ -83,7 +83,7 @@ test_user_message_time_has_no_completed_at_ms :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"user","id":1,"content":[{"type":"text","text":"hi"}],"input_id":5,"time":{"created_at_ms":1700000000000}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -100,7 +100,7 @@ test_message_parses_user :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
 
-    v := decoder_init(
+    v := json.decoder_init(
         `{"type":"user","id":1,"content":[{"type":"text","text":"hi"}],"input_id":5,"time":{"created_at_ms":1700000000000}}`,
     )
 
@@ -118,7 +118,7 @@ test_message_assistant_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"assistant","id":2,"run_id":1,"config_rev":0,"agent":"main","content":[{"type":"text","id":0,"text":"hello"}],"finish":"stop","time":{"created_at_ms":1700000000000,"completed_at_ms":null}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -142,7 +142,7 @@ test_message_user_reordered_fields :: proc(t: ^testing.T) {
     // The emitter writes the discriminator first for deterministic streaming output;
     // the decoder accepts it in any member position. The body fields
     // that follow may be in any order.
-    v := decoder_init(
+    v := json.decoder_init(
         `{"type":"user","time":{"created_at_ms":1700000000000},"content":[{"type":"text","text":"hi"}],"id":3,"input_id":7}`,
     )
 
@@ -160,7 +160,7 @@ test_message_parses_compaction :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"compaction","id":4,"run_id":1,"reason":"manual","summary":"summarized","first_kept_id":10,"tokens_before":1000,"tokens_after":500,"time":{"created_at_ms":1700000000000}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -185,7 +185,7 @@ test_compaction_first_kept_id_null :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"compaction","id":4,"run_id":1,"reason":"auto","summary":"s","first_kept_id":null,"tokens_before":10,"tokens_after":5,"time":{"created_at_ms":1}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -207,7 +207,7 @@ test_assistant_part_tool_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"tool","id":0,"call_id":"c1","name":"read","arguments":"{}","state":{"type":"pending"}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     part, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -231,7 +231,7 @@ test_tool_error_state_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"error","error":"boom","duration_ms":7}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     state, derr := tool_state_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -245,14 +245,14 @@ test_tool_error_state_roundtrip :: proc(t: ^testing.T) {
     tool_state_emit(&e, state)
     testing.expect_value(t, json.to_string(&e), input)
 
-    stale := decoder_init(`{"type":"error","message":"boom","duration_ms":7}`)
+    stale := json.decoder_init(`{"type":"error","message":"boom","duration_ms":7}`)
     _, stale_err := tool_state_from_reader(&stale)
     testing.expect(t, stale_err == .Mismatched_Payload, "the schema must not advertise a rejected member")
 }
 
 @(test)
 test_assistant_part_sibling_field_rejected :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"text","id":0,"text":"hi","name":"x"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"text","id":0,"text":"hi","name":"x"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "sibling key must be rejected")
@@ -379,7 +379,7 @@ test_tool_part_waiting_permission_roundtrip :: proc(t: ^testing.T) {
     // `permission` arrives before `state`; emitter order is the reverse.
     input := `{"type":"tool","id":0,"name":"read","arguments":"{}","permission":{"requested_at_ms":1,"options":[{"id":"o1","kind":"allow_once","label":"Allow"}]},"state":{"type":"waiting_permission"}}`
     emitted := `{"type":"tool","id":0,"name":"read","arguments":"{}","state":{"type":"waiting_permission"},"permission":{"requested_at_ms":1,"options":[{"id":"o1","kind":"allow_once","label":"Allow"}]}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     part, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -414,7 +414,7 @@ test_tool_state_rejects_permission_member :: proc(t: ^testing.T) {
         `{"type":"canceled","permission":{"requested_at_ms":1}}`,
     }
     for input in inputs {
-        v := decoder_init(input)
+        v := json.decoder_init(input)
         _, derr := tool_state_from_reader(&v)
         testing.expect(t, derr == .Mismatched_Payload, "state-level permission must be rejected")
     }
@@ -467,7 +467,7 @@ test_reasoning_signature_written_when_empty :: proc(t: ^testing.T) {
 // Rows written before the field existed decode unchanged, with no signature.
 @(test)
 test_reasoning_part_without_signature_decodes :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"reasoning","id":0,"text":"hm"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"reasoning","id":0,"text":"hm"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     part, derr := assistant_part_from_reader(&v)
@@ -484,7 +484,7 @@ test_reasoning_signature_persisted_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"reasoning","id":2,"text":"hm","signature":"ErUBCkYIB"}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     part, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -502,7 +502,7 @@ test_reasoning_signature_persisted_roundtrip :: proc(t: ^testing.T) {
 // `signature` belongs to the reasoning arm alone; the text arm rejects it.
 @(test)
 test_text_part_rejects_signature :: proc(t: ^testing.T) {
-    v := decoder_init(`{"type":"text","id":0,"text":"hi","signature":"ErUBCkYIB"}`, context.temp_allocator)
+    v := json.decoder_init(`{"type":"text","id":0,"text":"hi","signature":"ErUBCkYIB"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := assistant_part_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "signature on a text part must be rejected")
@@ -536,10 +536,10 @@ test_redacted_reasoning_part_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"redacted_reasoning","id":2,"data":"opaque-data"}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     part, derr := assistant_part_from_reader(&v)
-    testing.expect_value(t, derr, Validation_Error.None)
+    testing.expect_value(t, derr, json.Decode_Error.None)
     redacted, ok := part.(Redacted_Reasoning_Part)
     testing.expect(t, ok, "should be redacted reasoning")
 
@@ -570,9 +570,9 @@ test_redacted_reasoning_part_rejects_mismatched_shape :: proc(t: ^testing.T) {
         `{"type":"tool","id":0,"name":"read","arguments":"{}","state":{"type":"pending"},"data":"opaque"}`,
     }
     for input in inputs {
-        v := decoder_init(input)
+        v := json.decoder_init(input)
         _, derr := assistant_part_from_reader(&v)
-        testing.expect_value(t, derr, Validation_Error.Mismatched_Payload)
+        testing.expect_value(t, derr, json.Decode_Error.Mismatched_Payload)
     }
 }
 
@@ -660,7 +660,7 @@ test_assistant_message_without_provenance_decodes :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[],"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := assistant_message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -681,7 +681,7 @@ test_turn_provenance_persisted_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"assistant","id":1,"run_id":1,"config_rev":1,"agent":"main","content":[],"finish":"stop","time":{"created_at_ms":1,"completed_at_ms":2},"provenance":{"protocol":"openai-completions","model":"gpt-5"}}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     msg, derr := assistant_message_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -700,7 +700,7 @@ test_turn_provenance_persisted_roundtrip :: proc(t: ^testing.T) {
 // The protocol set is closed; an unknown name is not silently kept.
 @(test)
 test_turn_provenance_rejects_unknown_protocol :: proc(t: ^testing.T) {
-    v := decoder_init(`{"protocol":"gemini","model":"x"}`, context.temp_allocator)
+    v := json.decoder_init(`{"protocol":"gemini","model":"x"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := turn_provenance_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "unknown protocol must be rejected")
@@ -709,7 +709,7 @@ test_turn_provenance_rejects_unknown_protocol :: proc(t: ^testing.T) {
 // Both members are required once the object is present.
 @(test)
 test_turn_provenance_requires_both_members :: proc(t: ^testing.T) {
-    v := decoder_init(`{"protocol":"anthropic-messages"}`, context.temp_allocator)
+    v := json.decoder_init(`{"protocol":"anthropic-messages"}`, context.temp_allocator)
     defer free_all(context.temp_allocator)
     _, derr := turn_provenance_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "provenance without a model must be rejected")
@@ -726,7 +726,7 @@ test_provenance_rejected_on_sibling_messages :: proc(t: ^testing.T) {
         `{"type":"compaction","id":1,"run_id":1,"reason":"auto","summary":"s","first_kept_id":null,"tokens_before":1,"tokens_after":1,"time":{"created_at_ms":1},"provenance":{"protocol":"anthropic-messages","model":"m"}}`,
     }
     for input in inputs {
-        v := decoder_init(input)
+        v := json.decoder_init(input)
         _, derr := message_from_reader(&v)
         testing.expect(t, derr == .Mismatched_Payload, "provenance on a non-assistant message must be rejected")
     }

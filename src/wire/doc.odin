@@ -47,8 +47,8 @@ The package is layered as:
   - The encoders (`*_emit`) build frames with the shared `json.Emitter` from
     `libs/json`, discriminator first. One encoding serves both the client protocol
     and the daemon's event log, so a stored row re-emitted for a client is byte-identical.
-  - `stream.odin`: the streaming `Decoder` front end. Tagged readers scan for a
-    discriminator and rewind so member order is insignificant; `dec_skip`
+  - `stream.odin`: the streaming `json.Decoder` front end. Tagged readers scan for a
+    discriminator and rewind so member order is insignificant; `json.dec_skip`
     discards unknown fields or unmaterialized payloads without building a tree.
   - `validate.odin`: `Validation_Error` and the `@bounded` / `@fixed` length
     and cross-field checks shared by every `*_validate`.

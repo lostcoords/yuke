@@ -1,4 +1,5 @@
 package store
+import "libs:json"
 
 import "core:mem"
 
@@ -213,7 +214,7 @@ durable_decode :: proc(
     wire.Broadcast_Data,
     Error,
 ) {
-    dec := wire.decoder_init(payload, allocator)
+    dec := json.decoder_init(payload, allocator)
 
     data, derr := wire.broadcast_data_from_reader(name, &dec)
     if derr != .None || wire.broadcast_data_validate(data) != .None {

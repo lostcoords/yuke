@@ -196,8 +196,8 @@ error_object_validate :: proc(self: Error_Object) -> Validation_Error {
 }
 
 // Decode an error object straight from the token stream.
-error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Validation_Error) {
-    dec_object_begin(d) or_return
+error_object_from_reader :: proc(d: ^json.Decoder) -> (out: Error_Object, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Code,
@@ -206,12 +206,12 @@ error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Valida
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "code":
-            n := dec_i64(d) or_return
+            n := json.dec_i64(d, MAX_WIRE_INTEGER) or_return
 
             if n < i64(min(i32)) || n > i64(max(i32)) {
                 return {}, .Out_Of_Range
@@ -227,11 +227,11 @@ error_object_from_reader :: proc(d: ^Decoder) -> (out: Error_Object, err: Valida
             seen += {.Code}
 
         case "message":
-            out.message = dec_string(d) or_return
+            out.message = json.dec_string(d) or_return
             seen += {.Message}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -317,5 +317,5 @@ run_error_code_to_wire :: proc(c: Run_Error_Code) -> string {
 
 // Run error code for a wire string; ok is false for an unknown code.
 run_error_code_from_wire :: proc(s: string) -> (Run_Error_Code, bool) {
-    return enum_from_wire(run_error_code_wire, s)
+    return json.enum_from_wire(run_error_code_wire, s)
 }

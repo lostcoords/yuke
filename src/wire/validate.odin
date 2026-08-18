@@ -57,31 +57,6 @@ enforce_id :: proc(id: [$N]u8) -> Validation_Error {
     return enforce_fixed_lower_hex(N, string(b[:]))
 }
 
-// Reverse lookup over an `[Enum]string` wire table: the enum value whose wire string
-// equals `s`; `ok` is false for an unknown string. The forward direction is a direct
-// index into `table`.
-enum_from_wire :: proc(table: [$E]string, s: string) -> (E, bool) {
-    for str, e in table {
-        if str == s {
-            return e, true
-        }
-    }
-
-    return {}, false
-}
-
-// Reverse lookup for decode paths. Unknown enum strings are malformed payloads, so
-// callers can propagate the result with the same `or_return` form as other readers.
-enum_from_wire_checked :: proc(table: [$E]string, s: string) -> (out: E, err: Validation_Error) {
-    value, ok := enum_from_wire(table, s)
-
-    if !ok {
-        return {}, .Mismatched_Payload
-    }
-
-    return value, .None
-}
-
 // Return whether every byte is an ASCII lowercase hexadecimal digit.
 is_lower_hex :: proc(value: string) -> bool {
     for i in 0 ..< len(value) {

@@ -1,26 +1,27 @@
 package wire
+import "libs:json"
 
 import "core:testing"
 
 @(private = "file")
-u64_of :: proc(text: string) -> (u64, Validation_Error) {
-    d := decoder_init(text, context.temp_allocator)
+u64_of :: proc(text: string) -> (u64, json.Decode_Error) {
+    d := json.decoder_init(text, context.temp_allocator)
 
-    return dec_u64(&d)
+    return json.dec_u64(&d, MAX_WIRE_INTEGER)
 }
 
 @(private = "file")
-i64_of :: proc(text: string) -> (i64, Validation_Error) {
-    d := decoder_init(text, context.temp_allocator)
+i64_of :: proc(text: string) -> (i64, json.Decode_Error) {
+    d := json.decoder_init(text, context.temp_allocator)
 
-    return dec_i64(&d)
+    return json.dec_i64(&d, MAX_WIRE_INTEGER)
 }
 
 @(private = "file")
-f64_of :: proc(text: string) -> (f64, Validation_Error) {
-    d := decoder_init(text, context.temp_allocator)
+f64_of :: proc(text: string) -> (f64, json.Decode_Error) {
+    d := json.decoder_init(text, context.temp_allocator)
 
-    return dec_f64(&d)
+    return json.dec_f64(&d)
 }
 
 // These tokens wrap to small in-range values, so only the length guard rejects them.

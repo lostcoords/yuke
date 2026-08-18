@@ -352,7 +352,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
 
         // Fresh decoder over the whole frame: `response_from_reader` opens the object
         // itself. A success result is typed by the pending method, never the payload.
-        d := wire.decoder_init(string(data), sa)
+        d := json.decoder_init(string(data), sa)
         resp, derr := wire.response_from_reader(req.method, &d)
         if derr != .None {
             log.warnf("client: response decode failed for %v: %v", req.method, derr)
@@ -364,7 +364,7 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             return .Decode_Failed
         }
 
-        if wire.dec_finish(&d) != .None {
+        if json.dec_finish(&d) != .None {
             log.warnf("client: response for %v has trailing data", req.method)
 
             if ok {
@@ -416,14 +416,14 @@ client_handle_text :: proc(c: ^Client, data: []byte) -> Protocol_Error {
             return .None
         }
 
-        d := wire.decoder_init(string(data), sa)
+        d := json.decoder_init(string(data), sa)
         bc, derr := wire.notification_from_reader(&d)
         if derr != .None {
             log.warnf("client: broadcast %v decode failed: %v", header.method, derr)
             return .Decode_Failed
         }
 
-        if wire.dec_finish(&d) != .None {
+        if json.dec_finish(&d) != .None {
             log.warnf("client: broadcast %v has trailing data", header.method)
             return .Decode_Failed
         }

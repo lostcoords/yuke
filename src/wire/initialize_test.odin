@@ -59,7 +59,7 @@ test_initialize_params_rejects_oversized_client_fields :: proc(t: ^testing.T) {
 @(test)
 test_initialize_params_roundtrip :: proc(t: ^testing.T) {
     input := `{"protocol":1,"client":{"name":"yuke-tui","version":"0.0.1"}}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     p, derr := initialize_params_from_reader(&d)
@@ -78,7 +78,7 @@ test_initialize_params_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_initialize_params_from_reader_defaults :: proc(t: ^testing.T) {
     input := `{"client":{"name":"yuke-tui","version":"0.0.1"}}`
-    d := decoder_init(input, context.temp_allocator)
+    d := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     p, derr := initialize_params_from_reader(&d)
@@ -157,7 +157,7 @@ test_initialize_result_agents_roundtrip :: proc(t: ^testing.T) {
     initialize_result_emit(&e, h)
     out := json.to_string(&e)
 
-    v := decoder_init(out)
+    v := json.decoder_init(out)
     decoded, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, len(decoded.agents), 2)
@@ -202,7 +202,7 @@ test_initialize_result_rejects_missing_agents :: proc(t: ^testing.T) {
         "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         "catalog_health":{"skipped":[],"load_error":null}}`
 
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     _, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing agents must be rejected, like profiles")
@@ -225,7 +225,7 @@ test_initialize_result_parses_empty_json :: proc(t: ^testing.T) {
         "catalog_health": { "skipped": [], "load_error": null }
     }`
 
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     h, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -250,7 +250,7 @@ test_initialize_result_capabilities_roundtrip :: proc(t: ^testing.T) {
     initialize_result_emit(&e, h)
     out := json.to_string(&e)
 
-    v := decoder_init(out)
+    v := json.decoder_init(out)
     decoded, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
     testing.expect_value(t, decoded.capabilities, bit_set[Capability]{.Blob_Upload})
@@ -268,7 +268,7 @@ test_initialize_result_ignores_unknown_capability :: proc(t: ^testing.T) {
         "catalog_health":{"skipped":[],"load_error":null},
         "capabilities":["blob_upload","warp_drive"]}`
 
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     h, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "unknown capability token must be ignored")
@@ -288,7 +288,7 @@ test_initialize_result_capabilities_are_idempotent :: proc(t: ^testing.T) {
         "catalog_health":{"skipped":[],"load_error":null},
         "capabilities":["blob_upload","blob_upload"]}`
 
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     h, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "a repeated capability token must decode")
@@ -307,7 +307,7 @@ test_initialize_result_rejects_non_string_capability :: proc(t: ^testing.T) {
         "catalog_health":{"skipped":[],"load_error":null},
         "capabilities":[42]}`
 
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     _, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr != .None, "non-string capability element must be rejected")
@@ -325,7 +325,7 @@ test_initialize_result_ignores_unknown_object_fields :: proc(t: ^testing.T) {
         "catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         "catalog_health":{"skipped":[],"load_error":null}}`
 
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     h, derr := initialize_result_from_reader(&v)
     testing.expect(t, derr == .None, "unknown object fields must be ignored")

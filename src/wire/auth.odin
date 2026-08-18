@@ -29,7 +29,7 @@ auth_flow_to_wire :: proc(flow: Auth_Flow) -> string {
 
 // Auth flow for a wire string; ok is false for an unknown flow.
 auth_flow_from_wire :: proc(value: string) -> (Auth_Flow, bool) {
-    return enum_from_wire(auth_flow_wire, value)
+    return json.enum_from_wire(auth_flow_wire, value)
 }
 
 // Kind of durable provider credential. Values reveal no credential material.
@@ -518,8 +518,8 @@ auth_changed_data_clone :: proc(self: Auth_Changed_Data, allocator := context.al
 }
 
 // Decode a public login summary.
-auth_login_summary_from_reader :: proc(d: ^Decoder) -> (summary: Auth_Login_Summary, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_login_summary_from_reader :: proc(d: ^json.Decoder) -> (summary: Auth_Login_Summary, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Login,
@@ -528,20 +528,20 @@ auth_login_summary_from_reader :: proc(d: ^Decoder) -> (summary: Auth_Login_Summ
 
     seen: bit_set[Field]
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "login_id":
-            summary.login_id = Login_Id(dec_fixed(d, 32) or_return)
+            summary.login_id = Login_Id(json.dec_fixed(d, 32) or_return)
             seen += {.Login}
 
         case "flow":
-            summary.flow = dec_enum(d, auth_flow_wire) or_return
+            summary.flow = json.dec_enum(d, auth_flow_wire) or_return
             seen += {.Flow}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -553,8 +553,8 @@ auth_login_summary_from_reader :: proc(d: ^Decoder) -> (summary: Auth_Login_Summ
 }
 
 // Decode public provider auth state.
-auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_provider_from_reader :: proc(d: ^json.Decoder) -> (provider: Auth_Provider, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Provider,
@@ -566,38 +566,38 @@ auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err:
 
     seen: bit_set[Field]
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "provider_id":
-            provider.provider_id = dec_string(d) or_return
+            provider.provider_id = json.dec_string(d) or_return
             seen += {.Provider}
 
         case "credential_kind":
             seen += {.Credential}
 
-            if !dec_is_null(d) {
-                provider.credential_kind = dec_enum(d, auth_credential_kind_wire) or_return
+            if !json.dec_is_null(d) {
+                provider.credential_kind = json.dec_enum(d, auth_credential_kind_wire) or_return
             }
 
         case "restart_required":
-            provider.restart_required = dec_bool(d) or_return
+            provider.restart_required = json.dec_bool(d) or_return
             seen += {.Restart}
 
         case "login_flows":
-            provider.login_flows = dec_array(d, auth_flow_from_reader) or_return
+            provider.login_flows = json.dec_array(d, auth_flow_from_reader) or_return
             seen += {.Flows}
 
         case "pending_login":
             seen += {.Pending}
 
-            if !dec_is_null(d) {
+            if !json.dec_is_null(d) {
                 provider.pending_login = auth_login_summary_from_reader(d) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -609,8 +609,8 @@ auth_provider_from_reader :: proc(d: ^Decoder) -> (provider: Auth_Provider, err:
 }
 
 // Decode auth.login params.
-auth_login_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Login_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_login_params_from_reader :: proc(d: ^json.Decoder) -> (params: Auth_Login_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Provider,
@@ -619,20 +619,20 @@ auth_login_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Login_Params
 
     seen: bit_set[Field]
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "provider_id":
-            params.provider_id = dec_string(d) or_return
+            params.provider_id = json.dec_string(d) or_return
             seen += {.Provider}
 
         case "flow":
-            params.flow = dec_enum(d, auth_flow_wire) or_return
+            params.flow = json.dec_enum(d, auth_flow_wire) or_return
             seen += {.Flow}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -644,9 +644,9 @@ auth_login_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Login_Params
 }
 
 // Decode an internally-tagged auth.login result.
-auth_login_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Login_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+auth_login_result_from_reader :: proc(d: ^json.Decoder) -> (result: Auth_Login_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "browser":
@@ -659,23 +659,23 @@ auth_login_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Login_Result
 
         seen: bit_set[Field]
         for {
-            field, done := dec_key(d) or_return
+            field, done := json.dec_key(d) or_return
             if done do break
 
             switch field {
             case "login_id":
-                value.login_id = Login_Id(dec_fixed(d, 32) or_return)
+                value.login_id = Login_Id(json.dec_fixed(d, 32) or_return)
                 seen += {.Login}
 
             case "auth_url":
-                value.auth_url = dec_string(d) or_return
+                value.auth_url = json.dec_string(d) or_return
                 seen += {.Url}
 
             case "verification_url", "user_code":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -696,27 +696,27 @@ auth_login_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Login_Result
 
         seen: bit_set[Field]
         for {
-            field, done := dec_key(d) or_return
+            field, done := json.dec_key(d) or_return
             if done do break
 
             switch field {
             case "login_id":
-                value.login_id = Login_Id(dec_fixed(d, 32) or_return)
+                value.login_id = Login_Id(json.dec_fixed(d, 32) or_return)
                 seen += {.Login}
 
             case "verification_url":
-                value.verification_url = dec_string(d) or_return
+                value.verification_url = json.dec_string(d) or_return
                 seen += {.Url}
 
             case "user_code":
-                value.user_code = dec_string(d) or_return
+                value.user_code = json.dec_string(d) or_return
                 seen += {.Code}
 
             case "auth_url":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -732,24 +732,24 @@ auth_login_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Login_Result
 
 // Decode auth.cancel_login params.
 auth_cancel_login_params_from_reader :: proc(
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Auth_Cancel_Login_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "login_id":
-            params.login_id = Login_Id(dec_fixed(d, 32) or_return)
+            params.login_id = Login_Id(json.dec_fixed(d, 32) or_return)
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -761,20 +761,20 @@ auth_cancel_login_params_from_reader :: proc(
 }
 
 // Decode auth.logout params.
-auth_logout_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Logout_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_logout_params_from_reader :: proc(d: ^json.Decoder) -> (params: Auth_Logout_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "provider_id":
-            params.provider_id = dec_string(d) or_return
+            params.provider_id = json.dec_string(d) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -786,8 +786,13 @@ auth_logout_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Logout_Para
 }
 
 // Decode write-only auth.set_api_key params.
-auth_set_api_key_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Set_Api_Key_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_set_api_key_params_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    params: Auth_Set_Api_Key_Params,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Provider,
@@ -796,20 +801,20 @@ auth_set_api_key_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Set_Ap
 
     seen: bit_set[Field]
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "provider_id":
-            params.provider_id = dec_string(d) or_return
+            params.provider_id = json.dec_string(d) or_return
             seen += {.Provider}
 
         case "api_key":
-            params.api_key = dec_string(d) or_return
+            params.api_key = json.dec_string(d) or_return
             seen += {.Key}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -821,20 +826,25 @@ auth_set_api_key_params_from_reader :: proc(d: ^Decoder) -> (params: Auth_Set_Ap
 }
 
 // Decode the secret-free auth.set_api_key result.
-auth_set_api_key_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Set_Api_Key_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_set_api_key_result_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    result: Auth_Set_Api_Key_Result,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "restart_required":
-            result.restart_required = dec_bool(d) or_return
+            result.restart_required = json.dec_bool(d) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -846,20 +856,20 @@ auth_set_api_key_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_Set_Ap
 }
 
 // Decode auth.list result.
-auth_list_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_List_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Auth_List_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "providers":
-            result.providers = dec_array(d, auth_provider_from_reader) or_return
+            result.providers = json.dec_array(d, auth_provider_from_reader) or_return
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -871,20 +881,20 @@ auth_list_result_from_reader :: proc(d: ^Decoder) -> (result: Auth_List_Result, 
 }
 
 // Decode a terminal login outcome.
-auth_login_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Auth_Login_Outcome, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+auth_login_outcome_from_reader :: proc(d: ^json.Decoder) -> (outcome: Auth_Login_Outcome, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "succeeded", "canceled":
         for {
-            field, done := dec_key(d) or_return
+            field, done := json.dec_key(d) or_return
             if done do break
 
             if field == "message" {
                 return nil, .Mismatched_Payload
             }
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
 
         if tag == "succeeded" {
@@ -897,16 +907,16 @@ auth_login_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Auth_Login_Outc
         message := ""
         have := false
         for {
-            field, done := dec_key(d) or_return
+            field, done := json.dec_key(d) or_return
             if done do break
 
             switch field {
             case "message":
-                message = dec_string(d) or_return
+                message = json.dec_string(d) or_return
                 have = true
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -921,8 +931,13 @@ auth_login_outcome_from_reader :: proc(d: ^Decoder) -> (outcome: Auth_Login_Outc
 }
 
 // Decode auth.login_finished payload.
-auth_login_finished_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Login_Finished_Data, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_login_finished_data_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    data: Auth_Login_Finished_Data,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Login,
@@ -932,16 +947,16 @@ auth_login_finished_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Login_F
 
     seen: bit_set[Field]
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
         case "login_id":
-            data.login_id = Login_Id(dec_fixed(d, 32) or_return)
+            data.login_id = Login_Id(json.dec_fixed(d, 32) or_return)
             seen += {.Login}
 
         case "provider_id":
-            data.provider_id = dec_string(d) or_return
+            data.provider_id = json.dec_string(d) or_return
             seen += {.Provider}
 
         case "outcome":
@@ -949,7 +964,7 @@ auth_login_finished_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Login_F
             seen += {.Outcome}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -961,11 +976,11 @@ auth_login_finished_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Login_F
 }
 
 // Decode auth.changed payload.
-auth_changed_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Changed_Data, err: Validation_Error) {
-    dec_object_begin(d) or_return
+auth_changed_data_from_reader :: proc(d: ^json.Decoder) -> (data: Auth_Changed_Data, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        field, done := dec_key(d) or_return
+        field, done := json.dec_key(d) or_return
         if done do break
 
         switch field {
@@ -974,7 +989,7 @@ auth_changed_data_from_reader :: proc(d: ^Decoder) -> (data: Auth_Changed_Data, 
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1005,6 +1020,6 @@ provider_id_validate :: proc(provider_id: Provider_Id) -> Validation_Error {
 }
 
 @(private)
-auth_flow_from_reader :: proc(d: ^Decoder) -> (flow: Auth_Flow, err: Validation_Error) {
-    return dec_enum(d, auth_flow_wire)
+auth_flow_from_reader :: proc(d: ^json.Decoder) -> (flow: Auth_Flow, err: json.Decode_Error) {
+    return json.dec_enum(d, auth_flow_wire)
 }

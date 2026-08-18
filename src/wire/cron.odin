@@ -297,7 +297,7 @@ cron_retain_to_wire :: proc(r: Cron_Retain) -> string {
 
 // Retention policy for a wire string; ok is false for an unknown policy.
 cron_retain_from_wire :: proc(s: string) -> (Cron_Retain, bool) {
-    return enum_from_wire(cron_retain_wire, s)
+    return json.enum_from_wire(cron_retain_wire, s)
 }
 
 // Behavior when a new fire overlaps an active run.
@@ -323,7 +323,7 @@ cron_overlap_to_wire :: proc(o: Cron_Overlap) -> string {
 
 // Overlap policy for a wire string; ok is false for an unknown policy.
 cron_overlap_from_wire :: proc(s: string) -> (Cron_Overlap, bool) {
-    return enum_from_wire(cron_overlap_wire, s)
+    return json.enum_from_wire(cron_overlap_wire, s)
 }
 
 // What to do with a fire missed while offline / behind.
@@ -349,7 +349,7 @@ cron_missed_policy_to_wire :: proc(m: Cron_Missed_Policy) -> string {
 
 // Missed-fire policy for a wire string; ok is false for an unknown policy.
 cron_missed_policy_from_wire :: proc(s: string) -> (Cron_Missed_Policy, bool) {
-    return enum_from_wire(cron_missed_policy_wire, s)
+    return json.enum_from_wire(cron_missed_policy_wire, s)
 }
 
 // Outcome tag for a single cron fire.
@@ -383,7 +383,7 @@ cron_run_outcome_to_wire :: proc(o: Cron_Run_Outcome) -> string {
 
 // Fire outcome for a wire string; ok is false for an unknown outcome.
 cron_run_outcome_from_wire :: proc(s: string) -> (Cron_Run_Outcome, bool) {
-    return enum_from_wire(cron_run_outcome_wire, s)
+    return json.enum_from_wire(cron_run_outcome_wire, s)
 }
 
 Cron_Schedule_Every :: struct {
@@ -628,28 +628,28 @@ cron_job_clone :: proc(self: Cron_Job, allocator := context.allocator) -> Cron_J
 }
 
 // Decode internally-tagged cron schedule straight from the token stream.
-cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+cron_schedule_from_reader :: proc(d: ^json.Decoder) -> (sched: Cron_Schedule, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "every":
         interval_ms: u64
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "interval_ms":
-                interval_ms = dec_u64(d) or_return
+                interval_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 have = true
 
             case "expr", "utc_offset_minutes", "at_ms", "delay_ms":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -670,23 +670,23 @@ cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Va
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "expr":
-                expr = dec_string(d) or_return
+                expr = json.dec_string(d) or_return
                 seen += {.Expr}
 
             case "utc_offset_minutes":
-                utc = dec_i64(d) or_return
+                utc = json.dec_i64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Utc}
 
             case "interval_ms", "at_ms", "delay_ms":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -700,19 +700,19 @@ cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Va
         at_ms: u64
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "at_ms":
-                at_ms = dec_u64(d) or_return
+                at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 have = true
 
             case "interval_ms", "expr", "utc_offset_minutes", "delay_ms":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -726,19 +726,19 @@ cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Va
         delay_ms: u64
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "delay_ms":
-                delay_ms = dec_u64(d) or_return
+                delay_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 have = true
 
             case "interval_ms", "expr", "utc_offset_minutes", "at_ms":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -753,8 +753,8 @@ cron_schedule_from_reader :: proc(d: ^Decoder) -> (sched: Cron_Schedule, err: Va
 }
 
 // Decode a Cron_Job_Spec straight from the token stream.
-cron_job_spec_from_reader :: proc(d: ^Decoder) -> (spec: Cron_Job_Spec, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_job_spec_from_reader :: proc(d: ^json.Decoder) -> (spec: Cron_Job_Spec, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sched,
@@ -768,12 +768,12 @@ cron_job_spec_from_reader :: proc(d: ^Decoder) -> (spec: Cron_Job_Spec, err: Val
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            spec.name = dec_string(d) or_return
+            spec.name = json.dec_string(d) or_return
 
         case "schedule":
             spec.schedule = cron_schedule_from_reader(d) or_return
@@ -784,7 +784,7 @@ cron_job_spec_from_reader :: proc(d: ^Decoder) -> (spec: Cron_Job_Spec, err: Val
             seen += {.Sess}
 
         case "retain":
-            spec.retain = dec_enum(d, cron_retain_wire) or_return
+            spec.retain = json.dec_enum(d, cron_retain_wire) or_return
             seen += {.Retain}
 
         case "input":
@@ -792,19 +792,19 @@ cron_job_spec_from_reader :: proc(d: ^Decoder) -> (spec: Cron_Job_Spec, err: Val
             seen += {.Input}
 
         case "on_missed":
-            spec.on_missed = dec_enum(d, cron_missed_policy_wire) or_return
+            spec.on_missed = json.dec_enum(d, cron_missed_policy_wire) or_return
             seen += {.Missed}
 
         case "overlap":
-            spec.overlap = dec_enum(d, cron_overlap_wire) or_return
+            spec.overlap = json.dec_enum(d, cron_overlap_wire) or_return
             seen += {.Overlap}
 
         case "delete_after_run":
-            spec.delete_after_run = dec_bool(d) or_return
+            spec.delete_after_run = json.dec_bool(d) or_return
             seen += {.Del}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -816,8 +816,8 @@ cron_job_spec_from_reader :: proc(d: ^Decoder) -> (spec: Cron_Job_Spec, err: Val
 }
 
 // Decode a Cron_Job straight from the token stream.
-cron_job_from_reader :: proc(d: ^Decoder) -> (out: Cron_Job, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_job_from_reader :: proc(d: ^json.Decoder) -> (out: Cron_Job, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -834,12 +834,12 @@ cron_job_from_reader :: proc(d: ^Decoder) -> (out: Cron_Job, err: Validation_Err
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            out.id = Job_Id(dec_fixed(d, 16) or_return)
+            out.id = Job_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Id}
 
         case "spec":
@@ -847,51 +847,51 @@ cron_job_from_reader :: proc(d: ^Decoder) -> (out: Cron_Job, err: Validation_Err
             seen += {.Spec}
 
         case "enabled":
-            out.enabled = dec_bool(d) or_return
+            out.enabled = json.dec_bool(d) or_return
             seen += {.Enabled}
 
         case "created_at_ms":
-            out.created_at_ms = dec_u64(d) or_return
+            out.created_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Created}
 
         case "next_run_ms":
             seen += {.Next}
 
-            if !dec_is_null(d) {
-                out.next_run_ms = dec_u64(d) or_return
+            if !json.dec_is_null(d) {
+                out.next_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             }
 
         case "last_run_ms":
             seen += {.Last_Run}
 
-            if !dec_is_null(d) {
-                out.last_run_ms = dec_u64(d) or_return
+            if !json.dec_is_null(d) {
+                out.last_run_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             }
 
         case "last_session_id":
             seen += {.Last_Sess}
 
-            if !dec_is_null(d) {
-                out.last_session_id = Session_Id(dec_fixed(d, 16) or_return)
+            if !json.dec_is_null(d) {
+                out.last_session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             }
 
         case "last_outcome":
             seen += {.Last_Out}
 
-            if !dec_is_null(d) {
-                out.last_outcome = dec_enum(d, cron_run_outcome_wire) or_return
+            if !json.dec_is_null(d) {
+                out.last_outcome = json.dec_enum(d, cron_run_outcome_wire) or_return
             }
 
         case "run_count":
-            out.run_count = dec_u64(d) or_return
+            out.run_count = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Count}
 
         case "dispatch_failures":
-            out.dispatch_failures = dec_u64(d) or_return
+            out.dispatch_failures = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Disp}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -903,15 +903,15 @@ cron_job_from_reader :: proc(d: ^Decoder) -> (out: Cron_Job, err: Validation_Err
 }
 
 // Decode a Cron_Patch straight from the token stream.
-cron_patch_from_reader :: proc(d: ^Decoder) -> (patch: Cron_Patch, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_patch_from_reader :: proc(d: ^json.Decoder) -> (patch: Cron_Patch, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            patch.name = dec_string(d) or_return
+            patch.name = json.dec_string(d) or_return
 
         case "schedule":
             patch.schedule = cron_schedule_from_reader(d) or_return
@@ -920,25 +920,25 @@ cron_patch_from_reader :: proc(d: ^Decoder) -> (patch: Cron_Patch, err: Validati
             patch.session = create_session_from_reader(d) or_return
 
         case "retain":
-            patch.retain = dec_enum(d, cron_retain_wire) or_return
+            patch.retain = json.dec_enum(d, cron_retain_wire) or_return
 
         case "input":
             patch.input = input_from_reader(d) or_return
 
         case "on_missed":
-            patch.on_missed = dec_enum(d, cron_missed_policy_wire) or_return
+            patch.on_missed = json.dec_enum(d, cron_missed_policy_wire) or_return
 
         case "overlap":
-            patch.overlap = dec_enum(d, cron_overlap_wire) or_return
+            patch.overlap = json.dec_enum(d, cron_overlap_wire) or_return
 
         case "delete_after_run":
-            patch.delete_after_run = dec_bool(d) or_return
+            patch.delete_after_run = json.dec_bool(d) or_return
 
         case "enabled":
-            patch.enabled = dec_bool(d) or_return
+            patch.enabled = json.dec_bool(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -946,11 +946,11 @@ cron_patch_from_reader :: proc(d: ^Decoder) -> (patch: Cron_Patch, err: Validati
 }
 
 // Decode cron.create params straight from the token stream.
-cron_create_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Create_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_create_params_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Create_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -959,7 +959,7 @@ cron_create_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Create_Para
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -971,8 +971,8 @@ cron_create_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Create_Para
 }
 
 // Decode cron.patch params straight from the token stream.
-cron_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Patch_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_patch_params_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Patch_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Id,
@@ -981,12 +981,12 @@ cron_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Patch_Params
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "job_id":
-            params.job_id = Job_Id(dec_fixed(d, 16) or_return)
+            params.job_id = Job_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Id}
 
         case "patch":
@@ -994,7 +994,7 @@ cron_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Patch_Params
             seen += {.Patch}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1006,20 +1006,20 @@ cron_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_Patch_Params
 }
 
 // Decode a cron job reference straight from the token stream.
-cron_job_ref_from_reader :: proc(d: ^Decoder) -> (params: Cron_Job_Ref, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_job_ref_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_Job_Ref, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "job_id":
-            params.job_id = Job_Id(dec_fixed(d, 16) or_return)
+            params.job_id = Job_Id(json.dec_fixed(d, 16) or_return)
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1031,21 +1031,21 @@ cron_job_ref_from_reader :: proc(d: ^Decoder) -> (params: Cron_Job_Ref, err: Val
 }
 
 // Decode cron.list params straight from the token stream.
-cron_list_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_List_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_list_params_from_reader :: proc(d: ^json.Decoder) -> (params: Cron_List_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "limit":
-            params.limit = dec_u64(d) or_return
+            params.limit = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
 
         case "cursor":
-            params.cursor = dec_string(d) or_return
+            params.cursor = json.dec_string(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1053,8 +1053,8 @@ cron_list_params_from_reader :: proc(d: ^Decoder) -> (params: Cron_List_Params, 
 }
 
 // Decode a cron.list result straight from the token stream.
-cron_list_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_List_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_list_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_List_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Rev,
@@ -1064,27 +1064,27 @@ cron_list_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_List_Result, 
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "revision":
-            result.revision = Cron_Revision(dec_u64(d) or_return)
+            result.revision = Cron_Revision(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Rev}
 
         case "jobs":
-            result.jobs = dec_array(d, cron_job_from_reader) or_return
+            result.jobs = json.dec_array(d, cron_job_from_reader) or_return
             seen += {.Jobs}
 
         case "next_cursor":
             seen += {.Next}
 
-            if !dec_is_null(d) {
-                result.next_cursor = dec_string(d) or_return
+            if !json.dec_is_null(d) {
+                result.next_cursor = json.dec_string(d) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1096,8 +1096,8 @@ cron_list_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_List_Result, 
 }
 
 // Decode a cron.run_now result straight from the token stream.
-cron_run_now_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_Run_Now_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_run_now_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_Run_Now_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -1106,20 +1106,20 @@ cron_run_now_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_Run_Now_Re
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            result.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            result.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "run_id":
-            result.run_id = Run_Id(dec_u64(d) or_return)
+            result.run_id = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Run}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

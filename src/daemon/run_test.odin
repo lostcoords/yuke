@@ -1,4 +1,5 @@
 package daemon
+import "libs:json"
 
 import "core:fmt"
 import "core:mem/virtual"
@@ -1123,9 +1124,9 @@ test_runs_recover_closes_a_run_the_previous_start_left_open :: proc(t: ^testing.
     if testing.expect_value(t, len(rows), 2) {
         testing.expect_value(t, rows[1].name, wire.Broadcast_Name.Run_Done)
 
-        dec := wire.decoder_init(rows[1].payload, context.temp_allocator)
+        dec := json.decoder_init(rows[1].payload, context.temp_allocator)
         done, derr := wire.broadcast_data_from_reader(.Run_Done, &dec)
-        testing.expect_value(t, derr, wire.Validation_Error.None)
+        testing.expect_value(t, derr, json.Decode_Error.None)
 
         terminal, is_done := done.(wire.Run_Done_Data)
         if testing.expect(t, is_done, "the recovery event is a run terminal") {

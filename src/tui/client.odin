@@ -325,9 +325,9 @@ client_request_params :: proc(
 
     defer qjs.free_string(ctx, text)
 
-    d := wire.decoder_init(text, context.temp_allocator)
+    d := json.decoder_init(text, context.temp_allocator)
     params, decode_err := wire.request_params_from_reader(method, &d)
-    if decode_err != .None || wire.dec_finish(&d) != .None {
+    if decode_err != .None || json.dec_finish(&d) != .None {
         return nil, false
     }
 

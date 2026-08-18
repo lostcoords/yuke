@@ -154,7 +154,7 @@ method_name_to_wire :: proc(m: Method_Name) -> string {
 
 // Parse a method name from its wire string; ok is false for an unknown method.
 method_name_from_wire :: proc(s: string) -> (Method_Name, bool) {
-    return enum_from_wire(method_name_wire, s)
+    return json.enum_from_wire(method_name_wire, s)
 }
 
 // Empty params/result object (`{}`) for methods whose registry entry uses `{}`. One
@@ -690,23 +690,23 @@ default_params :: proc(method: Method_Name) -> Maybe(Request_Params) {
 }
 
 // Read an empty params/result object; extra fields are ignored.
-empty_from_reader :: proc(d: ^Decoder) -> (out: Empty, err: Validation_Error) {
-    dec_object_begin(d) or_return
+empty_from_reader :: proc(d: ^json.Decoder) -> (out: Empty, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     for {
-        _, done := dec_key(d) or_return
+        _, done := json.dec_key(d) or_return
         if done do break
-        dec_skip(d) or_return
+        json.dec_skip(d) or_return
     }
 
     return {}, .None
 }
 
 // Decode a session result straight from the token stream.
-session_result_from_reader :: proc(d: ^Decoder) -> (out: Session_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+session_result_from_reader :: proc(d: ^json.Decoder) -> (out: Session_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -715,7 +715,7 @@ session_result_from_reader :: proc(d: ^Decoder) -> (out: Session_Result, err: Va
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -727,8 +727,8 @@ session_result_from_reader :: proc(d: ^Decoder) -> (out: Session_Result, err: Va
 }
 
 // Decode session.patch params straight from the token stream.
-session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+session_patch_params_from_reader :: proc(d: ^json.Decoder) -> (params: Session_Patch_Params, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Sid,
@@ -737,12 +737,12 @@ session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             seen += {.Sid}
 
         case "patch":
@@ -750,7 +750,7 @@ session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_
             seen += {.Patch}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -762,23 +762,28 @@ session_patch_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Patch_
 }
 
 // Decode session.remove params straight from the token stream.
-session_remove_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Remove_Params, err: Validation_Error) {
-    dec_object_begin(d) or_return
+session_remove_params_from_reader :: proc(
+    d: ^json.Decoder,
+) -> (
+    params: Session_Remove_Params,
+    err: json.Decode_Error,
+) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "session_id":
-            params.session_id = Session_Id(dec_fixed(d, 16) or_return)
+            params.session_id = Session_Id(json.dec_fixed(d, 16) or_return)
             have = true
 
         case "cascade_children":
-            params.cascade_children = dec_bool(d) or_return
+            params.cascade_children = json.dec_bool(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -790,11 +795,11 @@ session_remove_params_from_reader :: proc(d: ^Decoder) -> (params: Session_Remov
 }
 
 // Decode a cron job result straight from the token stream.
-cron_job_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_Job_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+cron_job_result_from_reader :: proc(d: ^json.Decoder) -> (result: Cron_Job_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
@@ -803,7 +808,7 @@ cron_job_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_Job_Result, er
             have = true
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -817,10 +822,10 @@ cron_job_result_from_reader :: proc(d: ^Decoder) -> (result: Cron_Job_Result, er
 // Decode typed request params for `method` straight from the token stream.
 request_params_from_reader :: proc(
     method: Method_Name,
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     params: Request_Params,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
     switch method {
     case .Initialize:
@@ -932,10 +937,10 @@ request_params_from_reader :: proc(
 // Decode the typed result for `method` straight from the token stream.
 response_result_from_reader :: proc(
     method: Method_Name,
-    d: ^Decoder,
+    d: ^json.Decoder,
 ) -> (
     result: Response_Result,
-    err: Validation_Error,
+    err: json.Decode_Error,
 ) {
     switch method {
     case .Initialize:

@@ -600,7 +600,7 @@ provider_protocol_to_wire :: proc(p: Provider_Protocol) -> string {
 
 // Provider protocol for a wire string; ok is false for an unknown protocol.
 provider_protocol_from_wire :: proc(s: string) -> (Provider_Protocol, bool) {
-    return enum_from_wire(provider_protocol_wire, s)
+    return json.enum_from_wire(provider_protocol_wire, s)
 }
 
 // Which provider actually produced one assistant turn. Absent on a turn the daemon
@@ -637,8 +637,8 @@ turn_provenance_clone :: proc(self: Turn_Provenance, allocator := context.alloca
 }
 
 // Decode a turn provenance object straight from the token stream.
-turn_provenance_from_reader :: proc(d: ^Decoder) -> (out: Turn_Provenance, err: Validation_Error) {
-    dec_object_begin(d) or_return
+turn_provenance_from_reader :: proc(d: ^json.Decoder) -> (out: Turn_Provenance, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Protocol,
@@ -647,20 +647,20 @@ turn_provenance_from_reader :: proc(d: ^Decoder) -> (out: Turn_Provenance, err: 
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "protocol":
-            out.protocol = dec_enum(d, provider_protocol_wire) or_return
+            out.protocol = json.dec_enum(d, provider_protocol_wire) or_return
             seen += {.Protocol}
 
         case "model":
-            out.model = dec_string(d) or_return
+            out.model = json.dec_string(d) or_return
             seen += {.Model}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1235,8 +1235,8 @@ _permission_state_string_bytes :: proc(self: Permission_State) -> int {
 }
 
 // Decode creation/completion timestamps straight from the token stream.
-message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Validation_Error) {
-    dec_object_begin(d) or_return
+message_time_from_reader :: proc(d: ^json.Decoder) -> (time: Message_Time, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Created,
@@ -1245,23 +1245,23 @@ message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Valid
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "created_at_ms":
-            time.created_at_ms = dec_u64(d) or_return
+            time.created_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Created}
 
         case "completed_at_ms":
             seen += {.Completed}
 
-            if !dec_is_null(d) {
-                time.completed_at_ms = dec_u64(d) or_return
+            if !json.dec_is_null(d) {
+                time.completed_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1273,23 +1273,23 @@ message_time_from_reader :: proc(d: ^Decoder) -> (time: Message_Time, err: Valid
 }
 
 // Decode a creation timestamp straight from the token stream.
-created_time_from_reader :: proc(d: ^Decoder) -> (time: Created_Time, err: Validation_Error) {
-    dec_object_begin(d) or_return
+created_time_from_reader :: proc(d: ^json.Decoder) -> (time: Created_Time, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
     have := false
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "created_at_ms":
-            time.created_at_ms = dec_u64(d) or_return
+            time.created_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             have = true
 
         case "completed_at_ms":
             return {}, .Mismatched_Payload
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1301,8 +1301,8 @@ created_time_from_reader :: proc(d: ^Decoder) -> (time: Created_Time, err: Valid
 }
 
 // Decode a structured message error straight from the token stream.
-message_error_from_reader :: proc(d: ^Decoder) -> (me: Message_Error, err: Validation_Error) {
-    dec_object_begin(d) or_return
+message_error_from_reader :: proc(d: ^json.Decoder) -> (me: Message_Error, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Type,
@@ -1311,20 +1311,20 @@ message_error_from_reader :: proc(d: ^Decoder) -> (me: Message_Error, err: Valid
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "type":
-            me.type = dec_string(d) or_return
+            me.type = json.dec_string(d) or_return
             seen += {.Type}
 
         case "message":
-            me.message = dec_string(d) or_return
+            me.message = json.dec_string(d) or_return
             seen += {.Message}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1336,8 +1336,8 @@ message_error_from_reader :: proc(d: ^Decoder) -> (me: Message_Error, err: Valid
 }
 
 // Decode a Permission_State straight from the token stream (local-only fold).
-_permission_state_from_reader :: proc(d: ^Decoder) -> (ps: Permission_State, err: Validation_Error) {
-    dec_object_begin(d) or_return
+_permission_state_from_reader :: proc(d: ^json.Decoder) -> (ps: Permission_State, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Req,
@@ -1345,22 +1345,22 @@ _permission_state_from_reader :: proc(d: ^Decoder) -> (ps: Permission_State, err
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "requested_at_ms":
-            ps.requested_at_ms = dec_u64(d) or_return
+            ps.requested_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Req}
 
         case "options":
-            ps.options = dec_array(d, permission_option_from_reader) or_return
+            ps.options = json.dec_array(d, permission_option_from_reader) or_return
 
         case "decision":
             ps.decision = permission_decision_from_reader(d) or_return
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1372,9 +1372,9 @@ _permission_state_from_reader :: proc(d: ^Decoder) -> (ps: Permission_State, err
 }
 
 // Decode internally-tagged assistant part straight from the token stream.
-assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+assistant_part_from_reader :: proc(d: ^json.Decoder) -> (part: Assistant_Part, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "text":
@@ -1388,23 +1388,23 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "id":
-                id = dec_u64(d) or_return
+                id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Id}
 
             case "text":
-                text = dec_string(d) or_return
+                text = json.dec_string(d) or_return
                 seen += {.Text}
 
             case "call_id", "name", "arguments", "input_view", "state", "permission", "signature", "data":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1426,27 +1426,27 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "id":
-                id = dec_u64(d) or_return
+                id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Id}
 
             case "text":
-                text = dec_string(d) or_return
+                text = json.dec_string(d) or_return
                 seen += {.Text}
 
             // Optional: rows written before the field existed carry no signature.
             case "signature":
-                signature = dec_string(d) or_return
+                signature = json.dec_string(d) or_return
 
             case "call_id", "name", "arguments", "input_view", "state", "permission", "data":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1467,23 +1467,23 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "id":
-                id = dec_u64(d) or_return
+                id = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Id}
 
             case "data":
-                data = dec_string(d) or_return
+                data = json.dec_string(d) or_return
                 seen += {.Data}
 
             case "text", "signature", "call_id", "name", "arguments", "input_view", "state", "permission":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1505,27 +1505,27 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "id":
-                tp.id = Part_Id(dec_u64(d) or_return)
+                tp.id = Part_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
                 seen += {.Id}
 
             case "call_id":
-                tp.call_id = dec_string(d) or_return
+                tp.call_id = json.dec_string(d) or_return
 
             case "name":
-                tp.name = dec_string(d) or_return
+                tp.name = json.dec_string(d) or_return
                 seen += {.Name}
 
             case "arguments":
-                tp.arguments = dec_string(d) or_return
+                tp.arguments = json.dec_string(d) or_return
                 seen += {.Args}
 
             case "input_view":
-                tp.input_view = dec_array(d, view_from_reader) or_return
+                tp.input_view = json.dec_array(d, view_from_reader) or_return
 
             case "state":
                 tp.state = tool_state_from_reader(d) or_return
@@ -1538,7 +1538,7 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1553,14 +1553,14 @@ assistant_part_from_reader :: proc(d: ^Decoder) -> (part: Assistant_Part, err: V
 }
 
 // Decode internally-tagged tool state straight from the token stream.
-tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+tool_state_from_reader :: proc(d: ^json.Decoder) -> (state: Tool_State, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "pending":
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -1568,7 +1568,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1576,7 +1576,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
     case "waiting_permission":
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
@@ -1584,7 +1584,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1599,22 +1599,22 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "started_at_ms":
-                st.started_at_ms = dec_u64(d) or_return
+                st.started_at_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Start}
 
             case "output":
-                st.output = dec_string(d) or_return
+                st.output = json.dec_string(d) or_return
 
             case "permission", "error", "view", "duration_ms", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1634,26 +1634,26 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "output":
-                st.output = dec_string(d) or_return
+                st.output = json.dec_string(d) or_return
                 seen += {.Output}
 
             case "view":
-                st.view = dec_array(d, view_from_reader) or_return
+                st.view = json.dec_array(d, view_from_reader) or_return
 
             case "duration_ms":
-                st.duration_ms = dec_u64(d) or_return
+                st.duration_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Dur}
 
             case "permission", "started_at_ms", "error", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1673,26 +1673,26 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "error":
-                st.error = dec_string(d) or_return
+                st.error = json.dec_string(d) or_return
                 seen += {.Msg}
 
             case "view":
-                st.view = dec_array(d, view_from_reader) or_return
+                st.view = json.dec_array(d, view_from_reader) or_return
 
             case "duration_ms":
-                st.duration_ms = dec_u64(d) or_return
+                st.duration_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 seen += {.Dur}
 
             case "permission", "started_at_ms", "output", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1712,23 +1712,23 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 
         seen: bit_set[Field]
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "reason":
-                st.reason = dec_string(d) or_return
+                st.reason = json.dec_string(d) or_return
                 seen += {.Reason}
 
             case "denied_by":
-                st.denied_by = dec_enum(d, denied_by_wire) or_return
+                st.denied_by = json.dec_enum(d, denied_by_wire) or_return
                 seen += {.By}
 
             case "permission", "started_at_ms", "output", "error", "view", "duration_ms":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1742,22 +1742,22 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
         st: Tool_State_Canceled
         have := false
         for {
-            k, kdone := dec_key(d) or_return
+            k, kdone := json.dec_key(d) or_return
             if kdone do break
 
             switch k {
             case "duration_ms":
                 have = true
 
-                if !dec_is_null(d) {
-                    st.duration_ms = dec_u64(d) or_return
+                if !json.dec_is_null(d) {
+                    st.duration_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
                 }
 
             case "permission", "started_at_ms", "output", "error", "view", "reason", "denied_by":
                 return nil, .Mismatched_Payload
 
             case:
-                dec_skip(d) or_return
+                json.dec_skip(d) or_return
             }
         }
 
@@ -1772,7 +1772,7 @@ tool_state_from_reader :: proc(d: ^Decoder) -> (state: Tool_State, err: Validati
 }
 
 // Read the assistant message body (fields after `type` was consumed).
-_assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Validation_Error) {
+_assistant_message_body :: proc(d: ^json.Decoder) -> (msg: Assistant_Message, err: json.Decode_Error) {
     Field :: enum {
         Id,
         Run,
@@ -1784,38 +1784,38 @@ _assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Va
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            msg.id = Message_Id(dec_u64(d) or_return)
+            msg.id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Id}
 
         case "run_id":
-            msg.run_id = Run_Id(dec_u64(d) or_return)
+            msg.run_id = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Run}
 
         case "config_rev":
-            msg.config_rev = Config_Rev(dec_u64(d) or_return)
+            msg.config_rev = Config_Rev(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Cfg}
 
         case "agent":
-            msg.agent = dec_string(d) or_return
+            msg.agent = json.dec_string(d) or_return
             seen += {.Agent}
 
         case "content":
-            msg.content = dec_array(d, assistant_part_from_reader) or_return
+            msg.content = json.dec_array(d, assistant_part_from_reader) or_return
             seen += {.Content}
 
         case "finish":
-            msg.finish = dec_enum(d, stop_reason_wire) or_return
+            msg.finish = json.dec_enum(d, stop_reason_wire) or_return
 
         case "tokens":
             msg.tokens = token_usage_from_reader(d) or_return
 
         case "cost":
-            msg.cost = dec_f64(d) or_return
+            msg.cost = json.dec_f64(d) or_return
 
         case "time":
             msg.time = message_time_from_reader(d) or_return
@@ -1833,7 +1833,7 @@ _assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Va
             return {}, .Mismatched_Payload
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1846,9 +1846,9 @@ _assistant_message_body :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Va
 
 // Decode an assistant message straight from the token stream (any member order).
 // Shared by the Message union and by the resync active-draft path.
-assistant_message_from_reader :: proc(d: ^Decoder) -> (msg: Assistant_Message, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+assistant_message_from_reader :: proc(d: ^json.Decoder) -> (msg: Assistant_Message, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     if tag != "assistant" {
         return {}, .Mismatched_Payload
@@ -1858,7 +1858,7 @@ assistant_message_from_reader :: proc(d: ^Decoder) -> (msg: Assistant_Message, e
 }
 
 // Read the user message body (fields after `type` was consumed).
-_user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_Error) {
+_user_message_body :: proc(d: ^json.Decoder) -> (msg: User_Message, err: json.Decode_Error) {
     Field :: enum {
         Id,
         Content,
@@ -1868,20 +1868,20 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            msg.id = Message_Id(dec_u64(d) or_return)
+            msg.id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Id}
 
         case "content":
-            msg.content = dec_array(d, content_part_from_reader) or_return
+            msg.content = json.dec_array(d, content_part_from_reader) or_return
             seen += {.Content}
 
         case "input_id":
-            msg.input_id = Input_Id(dec_u64(d) or_return)
+            msg.input_id = Input_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Input}
 
         case "skill":
@@ -1907,7 +1907,7 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
             return {}, .Mismatched_Payload
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1919,7 +1919,7 @@ _user_message_body :: proc(d: ^Decoder) -> (msg: User_Message, err: Validation_E
 }
 
 // Read the compaction message body (fields after `type` was consumed).
-_compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: Validation_Error) {
+_compaction_message_body :: proc(d: ^json.Decoder) -> (msg: Compaction_Message, err: json.Decode_Error) {
     Field :: enum {
         Id,
         Run,
@@ -1933,39 +1933,39 @@ _compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: 
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "id":
-            msg.id = Message_Id(dec_u64(d) or_return)
+            msg.id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Id}
 
         case "run_id":
-            msg.run_id = Run_Id(dec_u64(d) or_return)
+            msg.run_id = Run_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Run}
 
         case "reason":
-            msg.reason = dec_enum(d, compaction_reason_wire) or_return
+            msg.reason = json.dec_enum(d, compaction_reason_wire) or_return
             seen += {.Reason}
 
         case "summary":
-            msg.summary = dec_string(d) or_return
+            msg.summary = json.dec_string(d) or_return
             seen += {.Summary}
 
         case "first_kept_id":
             seen += {.Fk}
 
-            if !dec_is_null(d) {
-                msg.first_kept_id = Message_Id(dec_u64(d) or_return)
+            if !json.dec_is_null(d) {
+                msg.first_kept_id = Message_Id(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             }
 
         case "tokens_before":
-            msg.tokens_before = dec_u64(d) or_return
+            msg.tokens_before = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Tb}
 
         case "tokens_after":
-            msg.tokens_after = dec_u64(d) or_return
+            msg.tokens_after = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Ta}
 
         case "time":
@@ -1976,7 +1976,7 @@ _compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: 
             return {}, .Mismatched_Payload
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -1988,9 +1988,9 @@ _compaction_message_body :: proc(d: ^Decoder) -> (msg: Compaction_Message, err: 
 }
 
 // Decode internally-tagged transcript message straight from the token stream.
-message_from_reader :: proc(d: ^Decoder) -> (msg: Message, err: Validation_Error) {
-    dec_object_begin(d) or_return
-    tag := dec_find_tag(d, "type") or_return
+message_from_reader :: proc(d: ^json.Decoder) -> (msg: Message, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
+    tag := json.dec_find_tag(d, "type") or_return
 
     switch tag {
     case "user":

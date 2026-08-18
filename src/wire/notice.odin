@@ -30,7 +30,7 @@ notice_level_to_wire :: proc(l: Notice_Level) -> string {
 
 // Notice level for a wire string; ok is false for an unknown level.
 notice_level_from_wire :: proc(s: string) -> (Notice_Level, bool) {
-    return enum_from_wire(notice_level_wire, s)
+    return json.enum_from_wire(notice_level_wire, s)
 }
 
 // Daemon diagnostic notice broadcast to all connections. Non-owning.
@@ -48,8 +48,8 @@ Notice :: struct {
 }
 
 // Decode a notice straight from the token stream.
-notice_from_reader :: proc(d: ^Decoder) -> (n: Notice, err: Validation_Error) {
-    dec_object_begin(d) or_return
+notice_from_reader :: proc(d: ^json.Decoder) -> (n: Notice, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Level,
@@ -59,24 +59,24 @@ notice_from_reader :: proc(d: ^Decoder) -> (n: Notice, err: Validation_Error) {
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "level":
-            n.level = dec_enum(d, notice_level_wire) or_return
+            n.level = json.dec_enum(d, notice_level_wire) or_return
             seen += {.Level}
 
         case "source":
-            n.source = dec_string(d) or_return
+            n.source = json.dec_string(d) or_return
             seen += {.Source}
 
         case "message":
-            n.message = dec_string(d) or_return
+            n.message = json.dec_string(d) or_return
             seen += {.Message}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

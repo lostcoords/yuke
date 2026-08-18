@@ -1113,9 +1113,9 @@ test_daemon_round_trips_provider_turn_members :: proc(t: ^testing.T) {
         testing.expect(t, strings.contains(rows[0].payload, `"data":"opaque-data"`), "the log keeps redacted data")
         testing.expect(t, strings.contains(rows[0].payload, `"provenance":`), "the log keeps the provenance")
 
-        dec := wire.decoder_init(rows[0].payload, context.temp_allocator)
+        dec := json.decoder_init(rows[0].payload, context.temp_allocator)
         data, cerr := wire.broadcast_data_from_reader(.Message_Committed, &dec)
-        testing.expect_value(t, cerr, wire.Validation_Error.None)
+        testing.expect_value(t, cerr, json.Decode_Error.None)
 
         e: json.Emitter
         json.emitter_init(&e, context.temp_allocator)

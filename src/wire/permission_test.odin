@@ -7,7 +7,7 @@ import "core:testing"
 @(test)
 test_permission_decision_user_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"user","option_id":"opt-1","kind":"allow_once","label":"Allow once","resolved_at_ms":1700000000000,"decided_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     dec, derr := permission_decision_from_reader(&v)
@@ -29,7 +29,7 @@ test_permission_decision_user_roundtrip :: proc(t: ^testing.T) {
 test_permission_decision_rule_decode :: proc(t: ^testing.T) {
     // Discriminator normalized to `type` (Zig used `by`); values are unchanged.
     input := `{"type":"rule","rule_id":"0123456789abcdef","label":"allow git status","resolved_at_ms":1700000000000}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     dec, derr := permission_decision_from_reader(&v)
@@ -47,7 +47,7 @@ test_permission_decision_rule_decode :: proc(t: ^testing.T) {
 test_permission_decision_rejects_sibling_field :: proc(t: ^testing.T) {
     // A user-arm field under the `rule` tag is a payload mismatch.
     input := `{"type":"rule","rule_id":"0123456789abcdef","label":"x","resolved_at_ms":1,"option_id":"opt-1"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     _, derr := permission_decision_from_reader(&v)
@@ -57,7 +57,7 @@ test_permission_decision_rejects_sibling_field :: proc(t: ^testing.T) {
 @(test)
 test_permission_rule_roundtrip :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     rule, derr := permission_rule_from_reader(&v)
@@ -77,7 +77,7 @@ test_permission_rule_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_permission_decide_params_roundtrip :: proc(t: ^testing.T) {
     input := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := permission_decide_params_from_reader(&v)
@@ -97,7 +97,7 @@ test_permission_decide_params_roundtrip :: proc(t: ^testing.T) {
 test_permission_decide_params_message_roundtrip :: proc(t: ^testing.T) {
     // Message present roundtrips.
     with_msg := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1","message":"use ripgrep instead"}`
-    v := decoder_init(with_msg, context.temp_allocator)
+    v := json.decoder_init(with_msg, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := permission_decide_params_from_reader(&v)
@@ -115,7 +115,7 @@ test_permission_decide_params_message_roundtrip :: proc(t: ^testing.T) {
 
     // Message absent still roundtrips with nil.
     no_msg := `{"session_id":"0123456789abcdef","message_id":42,"part_id":3,"option_id":"opt-1"}`
-    v2 := decoder_init(no_msg, context.temp_allocator)
+    v2 := json.decoder_init(no_msg, context.temp_allocator)
     p2, derr2 := permission_decide_params_from_reader(&v2)
     testing.expect(t, derr2 == .None, "decode should succeed")
     _, has2 := p2.message.?
@@ -147,7 +147,7 @@ test_permission_decide_params_rejects_oversized_message :: proc(t: ^testing.T) {
 test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
     // Deny roundtrips.
     deny := `{"id":"0123456789abcdef","tool":"bash","label":"deny bash","action":"deny","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v := decoder_init(deny, context.temp_allocator)
+    v := json.decoder_init(deny, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     rule, derr := permission_rule_from_reader(&v)
@@ -163,7 +163,7 @@ test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
 
     // Allow roundtrips.
     allow := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v2 := decoder_init(allow, context.temp_allocator)
+    v2 := json.decoder_init(allow, context.temp_allocator)
     r2, derr2 := permission_rule_from_reader(&v2)
     testing.expect(t, derr2 == .None, "decode should succeed")
     testing.expect_value(t, r2.action, Rule_Action.Allow)
@@ -178,7 +178,7 @@ test_permission_rule_action_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_permission_rule_rejects_missing_action :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","tool":"bash","label":"allow bash","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     _, derr := permission_rule_from_reader(&v)
@@ -188,7 +188,7 @@ test_permission_rule_rejects_missing_action :: proc(t: ^testing.T) {
 @(test)
 test_permission_rule_rejects_unknown_action :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","tool":"bash","label":"x","action":"maybe","created_at_ms":1,"created_by":{"name":"yuke-tui","version":"1.0.0"}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     _, derr := permission_rule_from_reader(&v)
@@ -198,7 +198,7 @@ test_permission_rule_rejects_unknown_action :: proc(t: ^testing.T) {
 @(test)
 test_permission_option_kind_reject_always_roundtrip :: proc(t: ^testing.T) {
     input := `{"id":"opt-9","kind":"reject_always","label":"Never allow","creates":["bash(rm *)"]}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     opt, derr := permission_option_from_reader(&v)
@@ -221,7 +221,7 @@ test_permission_rules_result_roundtrip :: proc(t: ^testing.T) {
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
     input := `{"rules":[{"id":"0123456789abcdef","tool":"bash","label":"allow bash","action":"allow","created_at_ms":1700000000000,"created_by":{"name":"yuke-tui","version":"1.0.0"}}]}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     result, derr := permission_rules_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")

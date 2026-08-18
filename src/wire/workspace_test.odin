@@ -6,7 +6,7 @@ import "core:testing"
 @(test)
 test_workspace_roundtrip :: proc(t: ^testing.T) {
     input := `{"id":"0123456789abcdef","root":"/repo","title":"repo"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     ws, derr := workspace_from_reader(&v)
@@ -27,7 +27,7 @@ test_workspace_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_workspace_describe_result_roundtrip :: proc(t: ^testing.T) {
     input := `{"workspace":{"id":"0123456789abcdef","root":"/r","title":"r"},"git":{"branch":"main","dirty":false},"last_modified_ms":1,"last_used_model":"gpt-4"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     result, derr := workspace_describe_result_from_reader(&v)
@@ -51,7 +51,7 @@ test_workspace_describe_result_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_workspace_describe_result_null_git_and_model :: proc(t: ^testing.T) {
     input := `{"workspace":{"id":"0123456789abcdef","root":"/r","title":"r"},"git":null,"last_modified_ms":1,"last_used_model":null}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     result, derr := workspace_describe_result_from_reader(&v)
@@ -72,7 +72,7 @@ test_workspace_describe_result_null_git_and_model :: proc(t: ^testing.T) {
 @(test)
 test_workspace_browse_params_roundtrip :: proc(t: ^testing.T) {
     input := `{"path":"/home","limit":50,"cursor":"abc"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := workspace_browse_params_from_reader(&v)
@@ -103,7 +103,7 @@ test_workspace_browse_result_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"path":"/home","parent":"/","entries":[{"name":"src","path":"/home/src","is_git_repo":true}],"next_cursor":"xyz"}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     result, derr := workspace_browse_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -132,7 +132,7 @@ test_workspace_browse_result_null_next_cursor :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"path":"/r","parent":null,"entries":[],"next_cursor":null}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     result, derr := workspace_browse_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -156,7 +156,7 @@ test_workspace_remove_result_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"related_job_ids":["0123456789abcdef","fedcba9876543210"]}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     result, derr := workspace_remove_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -178,7 +178,7 @@ test_skill_list_result_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"skills":[{"name":"deploy","description":"Deploy the app","scope":"project","argument_hint":"env"}]}`
-    v := decoder_init(input)
+    v := json.decoder_init(input)
 
     result, derr := workspace_skills_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -198,7 +198,7 @@ test_skill_list_result_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_workspace_ref_roundtrip :: proc(t: ^testing.T) {
     input := `{"workspace_id":"0123456789abcdef"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     params, derr := workspace_ref_from_reader(&v)
@@ -220,7 +220,7 @@ test_workspace_browse_result_rejects_missing_next_cursor :: proc(t: ^testing.T) 
     input := `{"path":"/home","parent":"/","entries":[{"name":"src","path":"/home/src","is_git_repo":true}]}`
     context.allocator = context.temp_allocator
     defer free_all(context.temp_allocator)
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     _, derr := workspace_browse_result_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "missing next_cursor must be rejected")
 }

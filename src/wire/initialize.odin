@@ -22,8 +22,8 @@ client_validate :: proc(self: Client) -> Validation_Error {
 }
 
 // Decode the client identity object straight from the token stream.
-client_from_reader :: proc(d: ^Decoder) -> (out: Client, err: Validation_Error) {
-    dec_object_begin(d) or_return
+client_from_reader :: proc(d: ^json.Decoder) -> (out: Client, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Name,
@@ -32,20 +32,20 @@ client_from_reader :: proc(d: ^Decoder) -> (out: Client, err: Validation_Error) 
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "name":
-            out.name = dec_string(d) or_return
+            out.name = json.dec_string(d) or_return
             seen += {.Name}
 
         case "version":
-            out.version = dec_string(d) or_return
+            out.version = json.dec_string(d) or_return
             seen += {.Version}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -95,7 +95,7 @@ initialize_params_validate :: proc(self: Initialize_Params) -> Validation_Error 
 }
 
 // Decode straight from the token stream. `protocol` defaults when absent.
-initialize_params_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Params, err: Validation_Error) {
+initialize_params_from_reader :: proc(d: ^json.Decoder) -> (out: Initialize_Params, err: json.Decode_Error) {
     out.protocol = PROTOCOL_VERSION
 
     Field :: enum {
@@ -103,21 +103,21 @@ initialize_params_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Params, e
     }
 
     seen: bit_set[Field]
-    dec_object_begin(d) or_return
+    json.dec_object_begin(d) or_return
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "protocol":
-            out.protocol = u32(dec_u64(d) or_return)
+            out.protocol = u32(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
 
         case "client":
             out.client = client_from_reader(d) or_return
             seen += {.Client}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -308,8 +308,8 @@ initialize_result_validate :: proc(self: Initialize_Result) -> Validation_Error 
 }
 
 // Decode a Daemon_Info straight from the token stream.
-daemon_info_from_reader :: proc(d: ^Decoder) -> (info: Daemon_Info, err: Validation_Error) {
-    dec_object_begin(d) or_return
+daemon_info_from_reader :: proc(d: ^json.Decoder) -> (info: Daemon_Info, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Ver,
@@ -318,20 +318,20 @@ daemon_info_from_reader :: proc(d: ^Decoder) -> (info: Daemon_Info, err: Validat
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "version":
-            info.version = dec_string(d) or_return
+            info.version = json.dec_string(d) or_return
             seen += {.Ver}
 
         case "server_now_ms":
-            info.server_now_ms = dec_u64(d) or_return
+            info.server_now_ms = json.dec_u64(d, MAX_WIRE_INTEGER) or_return
             seen += {.Now}
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 
@@ -343,8 +343,8 @@ daemon_info_from_reader :: proc(d: ^Decoder) -> (info: Daemon_Info, err: Validat
 }
 
 // Decode an Initialize_Result straight from the token stream.
-initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, err: Validation_Error) {
-    dec_object_begin(d) or_return
+initialize_result_from_reader :: proc(d: ^json.Decoder) -> (out: Initialize_Result, err: json.Decode_Error) {
+    json.dec_object_begin(d) or_return
 
     Field :: enum {
         Proto,
@@ -360,12 +360,12 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
 
     seen: bit_set[Field]
     for {
-        k, done := dec_key(d) or_return
+        k, done := json.dec_key(d) or_return
         if done do break
 
         switch k {
         case "protocol":
-            out.protocol = u32(dec_u64(d) or_return)
+            out.protocol = u32(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Proto}
 
         case "daemon":
@@ -373,27 +373,27 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
             seen += {.Daemon}
 
         case "workspaces":
-            out.workspaces = dec_array(d, workspace_from_reader) or_return
+            out.workspaces = json.dec_array(d, workspace_from_reader) or_return
             seen += {.Ws}
 
         case "profiles":
-            out.profiles = dec_array(d, dec_string) or_return
+            out.profiles = json.dec_array(d, json.dec_string) or_return
             seen += {.Profiles}
 
         case "agents":
-            out.agents = dec_array(d, dec_string) or_return
+            out.agents = json.dec_array(d, json.dec_string) or_return
             seen += {.Agents}
 
         case "session_revision":
-            out.session_revision = Session_Revision(dec_u64(d) or_return)
+            out.session_revision = Session_Revision(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Srev}
 
         case "cron_revision":
-            out.cron_revision = Cron_Revision(dec_u64(d) or_return)
+            out.cron_revision = Cron_Revision(json.dec_u64(d, MAX_WIRE_INTEGER) or_return)
             seen += {.Crev}
 
         case "catalog_rev":
-            out.catalog_rev = Catalog_Rev(dec_fixed(d, 64) or_return)
+            out.catalog_rev = Catalog_Rev(json.dec_fixed(d, 64) or_return)
             seen += {.Catrev}
 
         case "catalog_health":
@@ -401,21 +401,21 @@ initialize_result_from_reader :: proc(d: ^Decoder) -> (out: Initialize_Result, e
             seen += {.Health}
 
         case "capabilities":
-            dec_array_begin(d) or_return
+            json.dec_array_begin(d) or_return
             for {
-                more := dec_elem(d) or_return
+                more := json.dec_elem(d) or_return
                 if !more do break
-                s := dec_string(d) or_return
+                s := json.dec_string(d) or_return
 
                 // Tolerant lookup: an unrecognized token is a newer daemon's
                 // capability this build doesn't know yet — skip it, don't reject.
-                if cap, ok := enum_from_wire(capability_wire, s); ok {
+                if cap, ok := json.enum_from_wire(capability_wire, s); ok {
                     out.capabilities += {cap}
                 }
             }
 
         case:
-            dec_skip(d) or_return
+            json.dec_skip(d) or_return
         }
     }
 

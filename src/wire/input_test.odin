@@ -9,7 +9,7 @@ test_input_content_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     src := `{"type":"content","content":[{"type":"text","text":"hello"}]}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
 
     input, derr := input_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -27,7 +27,7 @@ test_input_content_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_input_skill_roundtrip :: proc(t: ^testing.T) {
     src := `{"type":"skill","name":"commit","arguments":"--all"}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     input, derr := input_from_reader(&v)
@@ -49,7 +49,7 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
     // Started carries the `type` discriminator first.
     {
         src := `{"type":"started","input_id":1,"run_id":2}`
-        v := decoder_init(src, context.temp_allocator)
+        v := json.decoder_init(src, context.temp_allocator)
         defer free_all(context.temp_allocator)
 
         result, derr := session_send_input_result_from_reader(&v)
@@ -68,7 +68,7 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
     // Queued omits run_id.
     {
         src := `{"type":"queued","input_id":3}`
-        v := decoder_init(src, context.temp_allocator)
+        v := json.decoder_init(src, context.temp_allocator)
         defer free_all(context.temp_allocator)
 
         result, derr := session_send_input_result_from_reader(&v)
@@ -85,7 +85,7 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
     }
     // A sibling variant's run_id under `queued` is rejected.
     {
-        v := decoder_init(`{"type":"queued","input_id":3,"run_id":4}`, context.temp_allocator)
+        v := json.decoder_init(`{"type":"queued","input_id":3,"run_id":4}`, context.temp_allocator)
         defer free_all(context.temp_allocator)
         _, derr := session_send_input_result_from_reader(&v)
         testing.expect(t, derr == .Mismatched_Payload, "sibling key must be rejected")
@@ -95,7 +95,7 @@ test_send_input_result_started_queued :: proc(t: ^testing.T) {
 @(test)
 test_part_delta_roundtrip :: proc(t: ^testing.T) {
     src := `{"session_id":"0123456789abcdef","message_id":3,"part_id":0,"delta":"hello","offset":0}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     pd, derr := part_delta_from_reader(&v)
@@ -114,7 +114,7 @@ test_part_delta_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_cancel_input_result_roundtrip :: proc(t: ^testing.T) {
     src := `{"canceled_input":7}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     result, derr := session_cancel_input_result_from_reader(&v)
@@ -134,7 +134,7 @@ test_cancel_run_result_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     src := `{"canceled_run":2,"cleared_inputs":[3,4],"cleared_compaction":5}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
 
     result, derr := session_cancel_run_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -157,7 +157,7 @@ test_cancel_run_result_writes_absent_as_null :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     src := `{"canceled_run":null,"cleared_inputs":[],"cleared_compaction":null}`
-    v := decoder_init(src, context.temp_allocator)
+    v := json.decoder_init(src, context.temp_allocator)
 
     result, derr := session_cancel_run_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -177,12 +177,12 @@ test_cancel_run_rejects_wrong_presence :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     // run_id is optional, not nullable.
-    v := decoder_init(`{"session_id":"0123456789abcdef","run_id":null}`)
+    v := json.decoder_init(`{"session_id":"0123456789abcdef","run_id":null}`)
     _, derr := session_cancel_run_params_from_reader(&v)
     testing.expect(t, derr != .None, "explicit null run_id must fail")
 
     // Both absent results are required members whose value may be null.
-    v = decoder_init(`{"cleared_inputs":[]}`)
+    v = json.decoder_init(`{"cleared_inputs":[]}`)
     _, derr = session_cancel_run_result_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "omitted nullable result members must fail")
 }

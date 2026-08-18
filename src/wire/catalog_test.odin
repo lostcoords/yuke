@@ -10,7 +10,7 @@ test_catalog_health_parses_null_load_error :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"skipped":[],"load_error":null}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     health, derr := catalog_health_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -28,7 +28,7 @@ test_catalog_health_parses_null_load_error :: proc(t: ^testing.T) {
 @(test)
 test_skip_reason_missing_credential_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"missing_credential","env":"ANTHROPIC_API_KEY"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     reason, derr := skip_reason_from_reader(&v)
@@ -47,7 +47,7 @@ test_skip_reason_missing_credential_roundtrip :: proc(t: ^testing.T) {
 @(test)
 test_skip_reason_invalid_config_roundtrip :: proc(t: ^testing.T) {
     input := `{"type":"invalid_config","message":"bad provider config"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
     defer free_all(context.temp_allocator)
 
     reason, derr := skip_reason_from_reader(&v)
@@ -83,7 +83,7 @@ test_catalog_list_result_unchanged_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"unchanged","catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     result, derr := catalog_list_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -106,7 +106,7 @@ test_catalog_list_result_full_roundtrip :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"full","catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","models":[{"id":"claude","provider":"anthropic","name":"Claude","context_window":200000,"max_output_tokens":8192,"reasoning_levels":["low","high"],"default_reasoning":"low","supports_vision":true,"supports_tools":true,"cost":{"input":3,"output":15,"cache_read":0.3,"cache_write":3.75}}],"health":{"skipped":[],"load_error":null}}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     result, derr := catalog_list_result_from_reader(&v)
     testing.expect(t, derr == .None, "decode should succeed")
@@ -132,7 +132,7 @@ test_catalog_list_result_unchanged_rejects_sibling :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
     input := `{"type":"unchanged","catalog_rev":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","models":[]}`
-    v := decoder_init(input, context.temp_allocator)
+    v := json.decoder_init(input, context.temp_allocator)
 
     _, derr := catalog_list_result_from_reader(&v)
     testing.expect(t, derr == .Mismatched_Payload, "sibling field must be rejected")
