@@ -44,7 +44,7 @@ request_encode :: proc(self: Request, allocator := context.allocator) -> (e: jso
     }
     request_emit(&e, self)
 
-    return e, !json.emitter_failed(&e)
+    return e, !e.failed
 }
 
 // Verify the id shape and params bounds.
@@ -119,7 +119,7 @@ response_encode :: proc(self: Response, allocator := context.allocator) -> (e: j
     json.emitter_init(&e, allocator)
     response_emit(&e, self)
 
-    return e, !json.emitter_failed(&e)
+    return e, !e.failed
 }
 
 // Verify the id shape and result/error bounds.
@@ -171,7 +171,7 @@ notification_encode :: proc(self: Notification, allocator := context.allocator) 
     json.emitter_init(&e, allocator)
     notification_emit(&e, self)
 
-    return e, !json.emitter_failed(&e)
+    return e, !e.failed
 }
 
 // Write a notification whose `params` are already encoded. The durable path logs the

@@ -3,6 +3,10 @@ package json
 import "core:strconv"
 import "core:strings"
 
+// `parse_i64` wraps silently and still reports success, so an over-long token is
+// rejected before the parse. 17 digits cannot wrap `i64`.
+MAX_INTEGER_TOKEN_DIGITS :: 16
+
 // Result of a streaming decode primitive. Protocol-level validation (bounds, hex,
 // cross-field) is a separate concern the caller layers on top.
 Decode_Error :: enum {
@@ -13,13 +17,9 @@ Decode_Error :: enum {
     Mismatched_Payload,
 }
 
-// Streaming decode front end. A value is decoded token-by-token straight into typed
-// structs; no intermediate `Value` tree is built. A multi-MB payload, or an ignored
-// one, is streamed (or skipped, see `dec_skip`) rather than materialized. Tagged
-// readers scan and rewind so members remain valid in any object order.
-//
-// Decoded strings are unquoted into the parser's allocator (the caller's arena), so
-// results stay non-owning borrows into that arena until deep-copied.
+// Streaming decode front end: values are decoded token-by-token into typed structs, no
+// intermediate `Value` tree. Decoded strings are non-owning borrows into the parser's
+// allocator (the caller's arena) until deep-copied.
 Decoder :: Parser
 
 // Start decoding `data`. Integers are kept as i64 (`parse_integers`).
@@ -31,7 +31,6 @@ decoder_init :: proc(data: string, allocator := context.allocator) -> Decoder {
 // rejected rather than silently dropped.
 dec_finish :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .EOF do return .Bad_Frame_Type
-
     return .None
 }
 
@@ -43,7 +42,6 @@ dec_string :: proc(d: ^Decoder) -> (string, Decode_Error) {
 
     advance_token(d)
     s, err := unquote_string(tok, .JSON, d.allocator)
-
     if err != nil do return "", .Mismatched_Payload
 
     return s, .None
@@ -58,7 +56,6 @@ dec_raw_scalar :: proc(d: ^Decoder) -> (string, Decode_Error) {
     case .String, .Integer, .Float, .Null, .True, .False:
         advance_token(d)
         text, err := strings.clone(tok.text, d.allocator)
-
         if err != nil do return "", .Mismatched_Payload
 
         return text, .None
@@ -66,10 +63,6 @@ dec_raw_scalar :: proc(d: ^Decoder) -> (string, Decode_Error) {
 
     return "", .Mismatched_Payload
 }
-
-// `parse_i64` wraps silently and still reports success, so an over-long token is
-// rejected before the parse. 17 digits cannot wrap `i64`.
-MAX_INTEGER_TOKEN_DIGITS :: 16
 
 // A non-negative integer in `[0, max]`. A non-integer, an over-long token, or an
 // over-range value (never a small coercion) is an error.
@@ -163,10 +156,8 @@ dec_is_null :: proc(d: ^Decoder) -> bool {
 // A fixed-length string copied verbatim into an [N]u8 buffer. Only length is
 // checked here; content validation is deferred to the owner.
 dec_fixed :: proc(d: ^Decoder, $N: int) -> (out: [N]u8, err: Decode_Error) {
-    // Valid fixed ids/hashes are plain ASCII. Copy that overwhelmingly common form
-    // directly from the token, avoiding an arena allocation that would immediately
-    // be discarded after this fixed-array copy. Escaped strings retain the full JSON
-    // semantics through the normal unquote path below.
+    // Fixed ids/hashes are plain ASCII: copy unescaped bytes straight from the token,
+    // skipping an arena allocation. Escaped strings fall through to the unquote path.
     tok := d.curr_token
 
     if tok.kind == .String && len(tok.text) == N + 2 && tok.text[0] == '"' && tok.text[N + 1] == '"' {
@@ -209,14 +200,12 @@ enum_from_wire_checked :: proc(table: [$E]string, s: string) -> (out: E, err: De
     value, ok := enum_from_wire(table, s)
 
     if !ok do return {}, .Mismatched_Payload
-
     return value, .None
 }
 
 // Decode a closed-enum field via `table`; an unknown wire string is a payload mismatch.
 dec_enum :: proc(d: ^Decoder, table: [$E]string) -> (out: E, err: Decode_Error) {
     s := dec_string(d) or_return
-
     return enum_from_wire_checked(table, s)
 }
 
@@ -239,7 +228,6 @@ dec_skip :: proc(d: ^Decoder) -> Decode_Error {
             }
 
             advance_token(d)
-
             if depth == 0 do break
         }
 
@@ -258,7 +246,6 @@ dec_object_begin :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .Open_Brace do return .Mismatched_Payload
 
     advance_token(d)
-
     return .None
 }
 
@@ -287,7 +274,6 @@ dec_key :: proc(d: ^Decoder) -> (key: string, done: bool, err: Decode_Error) {
     k, uerr := unquote_string(tok, .JSON, d.allocator)
 
     if uerr != nil do return "", false, .Mismatched_Payload
-
     return k, false, .None
 }
 
@@ -297,10 +283,8 @@ dec_forbid :: proc(d: ^Decoder) -> Decode_Error {
     return .Mismatched_Payload
 }
 
-// Locate an internally-tagged object's discriminator in any member position.
-// Snapshots the parser, scans members skipping values until `wanted` is found,
-// then rewinds so the caller's field loop re-reads from the first member.
-// Caller must sit just past `{` (see `dec_object_begin`).
+// Find an internally-tagged object's discriminator in any member position, then rewind so
+// the caller's field loop re-reads from the first member. Caller sits just past `{`.
 dec_find_tag :: proc(d: ^Decoder, wanted: string) -> (tag: string, err: Decode_Error) {
     saved := d^
     for {
@@ -326,7 +310,6 @@ dec_array_begin :: proc(d: ^Decoder) -> Decode_Error {
     if d.curr_token.kind != .Open_Bracket do return .Mismatched_Payload
 
     advance_token(d)
-
     return .None
 }
 
@@ -344,7 +327,6 @@ dec_elem :: proc(d: ^Decoder) -> (more: bool, err: Decode_Error) {
     }
 
     if d.curr_token.kind == .Close_Bracket do return false, .Mismatched_Payload
-
     return true, .None
 }
 

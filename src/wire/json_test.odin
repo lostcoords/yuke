@@ -22,7 +22,7 @@ test_emitter_latches_a_truncated_write :: proc(t: ^testing.T) {
     json.field_string(&e, "text", string(long[:]))
     json.object_end(&e)
 
-    testing.expect(t, !json.emitter_failed(&e), "a buffer that grows emits the whole value")
+    testing.expect(t, !e.failed, "a buffer that grows emits the whole value")
     testing.expect_value(t, len(json.to_string(&e)), len(long) + len(`{"text":""}`))
 
     backing: [64]byte
@@ -33,13 +33,13 @@ test_emitter_latches_a_truncated_write :: proc(t: ^testing.T) {
     json.emitter_init(&capped, mem.arena_allocator(&arena))
     defer json.emitter_destroy(&capped)
 
-    testing.expect(t, !json.emitter_failed(&capped), "a fresh emitter is healthy")
+    testing.expect(t, !capped.failed, "a fresh emitter is healthy")
 
     json.object_begin(&capped)
     json.field_string(&capped, "text", string(long[:]))
     json.object_end(&capped)
 
-    testing.expect(t, json.emitter_failed(&capped), "a buffer that cannot grow latches the failure")
+    testing.expect(t, capped.failed, "a buffer that cannot grow latches the failure")
     testing.expect(t, len(json.to_string(&capped)) <= len(backing), "the latched text is the truncated prefix")
 }
 
@@ -66,5 +66,5 @@ test_notification_raw_params_match_a_direct_emit :: proc(t: ^testing.T) {
     notification_emit(&direct, notification_build(.Session_Deltas_Shed, data))
 
     testing.expect_value(t, json.to_string(&spliced), json.to_string(&direct))
-    testing.expect(t, !json.emitter_failed(&spliced), "the splice is healthy")
+    testing.expect(t, !spliced.failed, "the splice is healthy")
 }

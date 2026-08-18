@@ -9,9 +9,7 @@ import "core:unicode/utf8"
 lookup :: proc(o: Object, name: string) -> Value {
     v, found := o[name]
     if !found do return nil
-
     if _, is_null := v.(Null); is_null do return nil
-
     return v
 }
 

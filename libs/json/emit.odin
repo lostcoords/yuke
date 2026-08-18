@@ -32,7 +32,7 @@ field_required_null_string :: proc(e: ^Emitter, name: string, m: Maybe(string)) 
 // Encode back end. Builds JSON into a growable buffer with the discriminator
 // written first, one open container tracked per nesting level. A write the buffer
 // could not grow for latches `failed`: the text is then truncated, so a caller that
-// ships or persists it must consult `emitter_failed` first.
+// ships or persists it must consult `failed` first.
 Emitter :: struct {
     sb:     strings.Builder,
     depth:  int,
@@ -65,19 +65,10 @@ emitter_secret_init :: proc(e: ^Emitter, capacity: int, allocator := context.all
     e.sb = sb
 }
 
-// Whether any write was truncated by a failed buffer growth. The accumulated text is
-// then incomplete JSON and must not be sent or stored.
-emitter_failed :: proc(e: ^Emitter) -> bool {
-    assert(e != nil, "the health check needs an emitter")
-
-    return e.failed
-}
-
 // Append `s` verbatim, latching `failed` when the buffer could not take all of it.
 @(private)
 _put :: proc(e: ^Emitter, s: string) {
     n := strings.write_string(&e.sb, s)
-
     if n != len(s) do e.failed = true
 }
 
@@ -85,14 +76,11 @@ _put :: proc(e: ^Emitter, s: string) {
 @(private)
 _put_byte :: proc(e: ^Emitter, c: byte) {
     n := strings.write_byte(&e.sb, c)
-
     if n != 1 do e.failed = true
 }
 
 // Release the emitter's buffer, explicitly wiping it when it carried a secret.
 emitter_destroy :: proc(e: ^Emitter) {
-    assert(e != nil, "emitter cleanup needs storage")
-
     if e.secret && cap(e.sb.buf) > 0 do crypto.zero_explicit(raw_data(e.sb.buf), cap(e.sb.buf))
     strings.builder_destroy(&e.sb)
     e^ = {}
@@ -232,10 +220,14 @@ field_string_opt :: proc(e: ^Emitter, name: string, m: Maybe(string)) {
     if v, ok := m.?; ok do field_string(e, name, v)
 }
 
+// Write a `name: u64` object field only when the value is present.
+field_u64_opt :: proc(e: ^Emitter, name: string, m: Maybe(u64)) {
+    if v, ok := m.?; ok do field_u64(e, name, v)
+}
+
 // Write a JSON string value; a failed builder growth latches `failed`.
 @(private)
 _write_json_string :: proc(e: ^Emitter, s: string) {
     _, err := write_string(strings.to_writer(&e.sb), s)
-
     if err != .None do e.failed = true
 }

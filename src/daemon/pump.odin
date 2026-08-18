@@ -73,7 +73,7 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
 
         wire.broadcast_data_emit(&payload, stamped)
 
-        if json.emitter_failed(&payload) {
+        if payload.failed {
             log.errorf("daemon: durable broadcast %v could not be encoded", name)
 
             return .Encode_Failed
@@ -108,7 +108,7 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
 pump_frame_check :: proc(e: ^json.Emitter, name: wire.Broadcast_Name) -> Pump_Error {
     assert(e != nil, "a frame check needs the emitter that built it")
 
-    if json.emitter_failed(e) {
+    if e.failed {
         log.errorf("daemon: broadcast %v could not be encoded", name)
 
         return .Encode_Failed
