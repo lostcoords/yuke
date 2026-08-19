@@ -41,6 +41,9 @@ host_resolve :: proc(user: rawptr, name: string, allocator: mem.Allocator) -> (s
     case "yuke:ui":
         return UI_JS, false, true
 
+    case "yuke:ext":
+        return EXT_JS, false, true
+
     case "yuke:defaults":
         return DEFAULTS_JS, false, true
 

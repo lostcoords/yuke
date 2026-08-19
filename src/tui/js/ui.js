@@ -1,6 +1,5 @@
-// yuke:ui — the widget kit built on yuke:core. Retained widgets in the lite-xl model:
-// List and (later) Window are classes you subclass or patch; ui.select will be a swappable
-// method on the exported `ui` object. Editor policy stays in yuke:core; presentation lives here.
+// yuke:ui — the widget kit built on yuke:core. List/Pager/Window are classes you subclass or
+// patch; `ui` exports the pickers. Editor policy stays in yuke:core; presentation lives here.
 import { term } from "yuke:term";
 import { text, fill, clip, wrap, root, strokeOf, style } from "yuke:core";
 
@@ -12,6 +11,9 @@ Object.assign(style.groups, {
   UITitle: { fg: "accent", bold: true },
   UIItem: { fg: "fg" },
   UIItemSel: { fg: "fg", bg: "sel" },
+  UIPrompt: { fg: "accent", bold: true },
+  UIQuery: { fg: "fg" },
+  UIComposer: { fg: "fg" },
   UIDim: { fg: "muted" },
   UIDimSel: { fg: "muted", bg: "sel" },
   // Transcript: assistant text is plain; a user turn gets a full-width tinted band so the two
@@ -33,8 +35,8 @@ const TX_GUTTER = 2;
 // char, so a shifted letter (G, our "bottom") is recovered from the raw event instead.
 const MOD_SHIFT = 1;
 
-// The base letter of a shifted char event, or "" if not one. Kitty sets the Shift modifier;
-// a legacy terminal just uppercases the char — either way, distinguishes G from g after strokeOf folds them together.
+// The base letter of a shifted char event, or "" if not one — recovers G from g after strokeOf
+// folds their case together, whether the terminal reports Shift or just uppercases the char.
 function shiftedChar(ev) {
   if (ev.code !== "char" || !ev.char) return "";
   if (ev.char !== ev.char.toLowerCase()) return ev.char.toLowerCase();
@@ -73,10 +75,8 @@ function navAction(ev, gPending) {
   return "";
 }
 
-// A scrollable, selectable list rendered into a caller-assigned rect. Items are opaque
-// values; `format(item, i)` maps each to a display row and `key(item)` gives a stable
-// identity, so the selection follows its item across a re-sorted `items` rather than sliding
-// onto whatever now sits at the old index (lite-xl selects by identity, not ordinal).
+// A scrollable, selectable list rendered into a caller-assigned rect. Items are opaque; `key(item)`
+// gives a stable identity so the selection follows its item across a re-sorted `items`, not the index.
 //
 // opts: { items, format, key, isSelectable, onMove, group, selGroup, dimGroup, dimSelGroup }
 // format returns a string, or { text, right?, group?, selGroup?, rightGroup?, rightSelGroup? }.
@@ -164,7 +164,7 @@ export class List {
     this.move(dir < 0 ? -this.items.length : this.items.length);
   }
 
-  // Bring the selected row into view, then clamp — lite-xl's scroll_to_make_visible.
+  // Bring the selected row into view, then clamp.
   _scrollToVisible(h) {
     const i = this._selIndex();
     if (i >= 0 && h > 0) {
@@ -254,11 +254,9 @@ function normalizeCell(cell) {
   return { text: cell.text != null ? String(cell.text) : "", ...cell };
 }
 
-// A vertical pager over pre-wrapped visual rows. Rows are a derived projection of some source at
-// the current width; the owner rebuilds them and calls setRows. Scroll is a row offset; `stuck`
-// follows the tail (chat behavior), and a re-wrap re-anchors on the top row's `key` so the view
-// does not jump. A row is { text, group?, key?, bg?, marker?, markerGroup?, indent? }: bg fills
-// the row, marker paints at the left edge, and text is drawn indented past it — all optional.
+// A vertical pager over pre-wrapped visual rows (set via setRows). `stuck` follows the tail, and a
+// re-wrap re-anchors on the top row's `key` so the view does not jump.
+// A row is { text, group?, key?, bg?, marker?, markerGroup?, indent? }, all but text optional.
 export class Pager {
   constructor() {
     this.rows = [];
@@ -359,10 +357,8 @@ export class Pager {
   }
 }
 
-// Renders an ordered message list into a Pager. Messages mirror a subset of the wire shapes:
-// { type:"user"|"assistant", id, rev, content:[{ type:"text", text }] }. Text parts wrap to the
-// content width; wrapped rows are cached per message keyed by (rev, width) so a streaming delta
-// re-wraps only its own message. Non-text parts are not rendered yet.
+// Renders a message list into a Pager. Message: { type:"user"|"assistant", id, rev, content }.
+// Text parts wrap to width, cached per message by (rev, width) so a delta re-wraps only its own.
 export class Transcript {
   constructor() {
     this.messages = [];
@@ -431,6 +427,68 @@ export class Transcript {
   }
 }
 
+// A single-line message input. Enter submits (clears, calls onSubmit(text)), Backspace deletes;
+// unhandled keys return false so the owner can route them (e.g. scrolling a transcript).
+export class Composer {
+  constructor(opts = {}) {
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.text = "";
+    this.prompt = opts.prompt != null ? opts.prompt : "› ";
+    this.placeholder = opts.placeholder || "";
+    this.onSubmit = opts.onSubmit || null;
+  }
+
+  get name() {
+    return "composer";
+  }
+
+  submit() {
+    const t = this.text.trim();
+    if (t === "") return;
+
+    this.text = "";
+    if (this.onSubmit) this.onSubmit(t);
+  }
+
+  onKey(ev) {
+    const s = strokeOf(ev);
+
+    if (s === "enter") {
+      this.submit();
+      return true;
+    }
+
+    if (s === "backspace") {
+      this.text = this.text.slice(0, -1);
+      return true;
+    }
+
+    // A printable char (any modifier past Shift means a shortcut, not text) extends the message.
+    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0) {
+      this.text += ev.char;
+      return true;
+    }
+
+    return false;
+  }
+
+  draw(_focused) {
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return;
+
+    fill(x, y, w, h, "UIComposer");
+    const empty = this.text === "";
+    text(x, y, clip(this.prompt + (empty ? this.placeholder : this.text), w), empty ? "UIDim" : "UIComposer");
+  }
+
+  cursor() {
+    const { x, y, w } = this.rect;
+    const col = Math.min(w - 1, term.measure(this.prompt + this.text));
+
+    return { x: x + Math.max(0, col), y, visible: true };
+  }
+}
+
 // Border glyph sets, keyed by name. Extend by adding an entry (each is 8 corner/edge glyphs).
 export const borders = {
   single: { tl: "┌", t: "─", tr: "┐", r: "│", br: "┘", b: "─", bl: "└", l: "│" },
@@ -438,10 +496,8 @@ export const borders = {
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
 
-// A floating, bordered, titled window centered over the screen — a layer for the overlay
-// stack. It owns its rect, paints panel + border + title/footer, and exposes the interior
-// through winText/winFill, which clip to the inner rect (the host clips only to the terminal).
-// Subclass and override drawContent(win) to fill it, or set a `content` with its own draw(win).
+// A floating, bordered, titled window centered over the screen — an overlay-stack layer. It exposes
+// the interior via winText/winFill (clipped); override drawContent(win) or set a `content`.
 //
 // opts: { name, title, footer, title_pos, footer_pos, border, width, height, modal,
 //         panelGroup, borderGroup, titleGroup, footerGroup }
@@ -592,9 +648,8 @@ export class Window {
   }
 }
 
-// The content of a picker window: a List plus accept/cancel/validate and an optional
-// per-instance keymap. Named default actions (accept/cancel/next/prev/top/bottom/close) can
-// be rebound or disabled through `keymap`. onAccept receives the original item, not a row.
+// The content of a picker window: a List plus accept/cancel/validate and an optional per-instance
+// keymap over the default actions (accept/cancel/next/prev/top/bottom/close). onAccept gets the item.
 export class PickerContent {
   constructor(items, opts) {
     this.opts = opts;
@@ -707,18 +762,212 @@ export class PickerContent {
   }
 }
 
-// The widget kit's public surface. `select` is a swappable method (a plugin may replace
-// ui.select wholesale, e.g. to add fuzzy matching) as long as it honors { format, onAccept,
-// onCancel }. Items are opaque; `format(item)` is display-only; onAccept gets the item.
+// --- fuzzy matching -----------------------------------------------------------------------
+// Score `query` against `text`, case-insensitive, requiring `query` as a subsequence; null when it
+// does not match. Rewards consecutive runs and word-boundary matches, penalizes an unmatched prefix.
+const FUZZY_SEP = "/\\_-. :";
+
+export function fuzzyMatch(text, query) {
+  if (query === "") return 0;
+
+  let ti = 0;
+  let qi = 0;
+  let score = 0;
+  let run = 0; // consecutive matches
+  let first = -1; // index of the first matched char
+  while (ti < text.length && qi < query.length) {
+    const c = text[ti];
+    const q = query[qi];
+    if (c.toLowerCase() === q.toLowerCase()) {
+      if (first < 0) first = ti;
+
+      let bonus = run * 5;
+      if (fuzzyBoundary(text, ti)) bonus += 10;
+      if (c === q) bonus += 1;
+      score += bonus;
+      run += 1;
+      qi += 1;
+    } else {
+      run = 0;
+    }
+    ti += 1;
+  }
+
+  if (qi < query.length) return null;
+
+  return score - first;
+}
+
+// A word boundary in `text` at index i: the start, just after a separator, or a camelCase hump.
+function fuzzyBoundary(text, i) {
+  if (i === 0) return true;
+
+  const prev = text[i - 1];
+  if (FUZZY_SEP.indexOf(prev) >= 0) return true;
+
+  const c = text[i];
+  return c >= "A" && c <= "Z" && !(prev >= "A" && prev <= "Z");
+}
+
+// Rank `items` by fuzzy score of `query` against textOf(item), dropping non-matches. Ties break by
+// shorter text then lexicographically. An empty query keeps the input order.
+export function fuzzyRank(items, query, textOf) {
+  if (query === "") return items.slice();
+
+  const scored = [];
+  for (const it of items) {
+    const t = textOf(it);
+    const s = fuzzyMatch(t, query);
+    if (s != null) scored.push({ it, s, t });
+  }
+
+  scored.sort((x, y) => y.s - x.s || x.t.length - y.t.length || (x.t < y.t ? -1 : x.t > y.t ? 1 : 0));
+
+  return scored.map((e) => e.it);
+}
+
+// --- fuzzy picker -------------------------------------------------------------------------
+// A finder: a query line above a ranked results list. Static `items` are fuzzy-ranked by
+// filterText(item); a `suggest(query)` source recomputes candidates itself. Window content.
 //
-// opts: { title, footer, title_pos, footer_pos, border, width, height, format, key,
-//         isSelectable, onMove, onAccept, onCancel, validate, keymap, needsTick, *Group }
-// Returns { win, content, close }.
+// opts: { items?, suggest?, format, key, filterText, isSelectable, onAccept, onCancel, validate }
+const PICKER_PROMPT = "› ";
+
+export class Picker {
+  constructor(opts) {
+    this.opts = opts;
+    this.win = null;
+    this.query = "";
+    this.source = opts.items || [];
+    this.suggest = opts.suggest || null;
+    this.textOf = opts.filterText || String;
+
+    this.list = new List({
+      items: [],
+      format: opts.format,
+      key: opts.key,
+      isSelectable: opts.isSelectable,
+      group: opts.itemGroup,
+      selGroup: opts.selGroup,
+    });
+
+    this.onAccept = opts.onAccept || null;
+    this.onCancel = opts.onCancel || null;
+    this.refilter();
+  }
+
+  // Replace the static item pool (a live source calls this as data arrives), keeping the query.
+  setSource(items) {
+    this.source = items || [];
+    this.refilter();
+  }
+
+  // Recompute the visible list for the current query. Clearing the selection first lets setItems
+  // land on the first selectable row — the best match, since fuzzyRank sorts best-first.
+  refilter() {
+    const items = this.suggest ? this.suggest(this.query) || [] : fuzzyRank(this.source, this.query, this.textOf);
+    this.list.selectedKey = null;
+    this.list.setItems(items);
+  }
+
+  selected() {
+    return this.list.selected();
+  }
+
+  draw(win) {
+    const { x, y, w, h } = win.inner;
+    if (w <= 0 || h <= 0) return;
+
+    text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
+    const pw = term.measure(PICKER_PROMPT);
+    if (pw < w) text(x + pw, y, clip(this.query, w - pw), "UIQuery");
+
+    if (h > 1) this.list.draw({ x, y: y + 1, w, h: h - 1 });
+  }
+
+  cursor(win) {
+    const { x, y, w } = win.inner;
+    const col = Math.min(w - 1, term.measure(PICKER_PROMPT + this.query));
+    return { x: x + Math.max(0, col), y, visible: true };
+  }
+
+  accept() {
+    const it = this.list.selected();
+    if (it == null) return;
+    if (this.opts.validate && !this.opts.validate(it)) return;
+
+    root.popOverlay(this.win);
+    if (this.onAccept) this.onAccept(it);
+  }
+
+  cancel() {
+    root.popOverlay(this.win);
+    if (this.onCancel) this.onCancel();
+  }
+
+  onKey(ev) {
+    const s = strokeOf(ev);
+
+    if (s === "enter") {
+      this.accept();
+      return true;
+    }
+
+    if (s === "esc") {
+      this.cancel();
+      return true;
+    }
+
+    if (s === "up" || s === "ctrl+p") {
+      this.list.move(-1);
+      return true;
+    }
+
+    if (s === "down" || s === "ctrl+n") {
+      this.list.move(1);
+      return true;
+    }
+
+    if (s === "backspace") {
+      if (this.query !== "") {
+        this.query = this.query.slice(0, -1);
+        this.refilter();
+      }
+      return true;
+    }
+
+    // A printable char (any modifier past Shift means a shortcut, not text) extends the query.
+    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0) {
+      this.query += ev.char;
+      this.refilter();
+    }
+
+    return true; // modal: consume every key
+  }
+}
+
+// The widget kit's public surface. `select` is the list picker (navigate a set); `pick` is the
+// fuzzy finder (type to filter). Both return { win, content, close }.
+//
+// select opts: { title, footer, title_pos, footer_pos, border, width, height, format, key,
+//                isSelectable, onMove, onAccept, onCancel, validate, keymap, needsTick, *Group }
+// pick opts:   { …window keys…, items?, suggest?, format, key, filterText, isSelectable,
+//                onAccept, onCancel, validate }
 export const ui = {
   select(items, opts = {}) {
     const content = new PickerContent(items || [], opts);
     // Window reads only the presentation keys it knows; the picker keys (format, onAccept, …)
     // ride along on opts harmlessly.
+    const win = new Window({ ...opts, content });
+    content.win = win;
+
+    root.pushOverlay(win);
+
+    return { win, content, close: () => root.popOverlay(win) };
+  },
+
+  pick(opts = {}) {
+    const content = new Picker(opts);
     const win = new Window({ ...opts, content });
     content.win = win;
 

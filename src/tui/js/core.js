@@ -1,14 +1,10 @@
-// yuke:core — the client's editor core, imported by the bundled default UI and by the user's
-// ~/.config/yuke/yuke.js. Every extension point is a method on a mutable exported object or a
-// class prototype: ES imported bindings are read-only, so plugins extend by mutating these
-// objects (command.perform = wrap(command.perform)) and prototypes (View.prototype.draw = …),
-// never by reassigning an imported name.
+// yuke:core — the client's editor core, imported by the default UI and the user's yuke.js. Every
+// extension point is a mutable exported object or class prototype; plugins extend by mutating them.
 import { term } from "yuke:term";
 
 // --- config -------------------------------------------------------------------------------
-// Plain mutable tunables. Plugins namespace under config.plugins.<name>; false means disabled.
-// Product settings (daemon target, …) go through defineConfig for parity with yuked.js, or by
-// mutating config.daemon before the start event — connection reads them at dial time.
+// Plain mutable tunables. Plugins namespace under config.plugins.<name>; product settings go
+// through defineConfig or by mutating config.daemon before start — connection reads them at dial.
 export const config = {
   plugins: Object.create(null),
   daemon: {
@@ -20,9 +16,8 @@ export const config = {
   },
 };
 
-// Declarative entry for ~/.config/yuke/yuke.js — same name as yuked.js, client schema (nested
-// under daemon). Merges into config and returns the input so `export default defineConfig({…})`
-// works. Unknown keys throw; a broken user file is non-fatal at the host.
+// Declarative entry for yuke.js: merges into config and returns the input so `export default
+// defineConfig({…})` works. Unknown keys throw; a broken user file is non-fatal at the host.
 export function defineConfig(partial) {
   if (partial == null || typeof partial !== "object" || Array.isArray(partial)) {
     throw new TypeError("defineConfig expects a config object");
@@ -103,7 +98,7 @@ function applyDaemonConfig(d) {
   Object.assign(config.daemon, patch);
 }
 
-// --- style: Neovim-like highlight groups over a palette -----------------------------------
+// --- style: highlight groups over a palette -----------------------------------------------
 // A group is a style ({ fg?, bg?, bold?, … } over palette names) or a { link } to another
 // group. Themes mutate `palette`/`groups` then call style.invalidate() to drop the cache.
 export const style = {
@@ -278,17 +273,27 @@ function wrapParagraph(para, width, out) {
 }
 
 // --- commands -----------------------------------------------------------------------------
-// A command is { predicate, perform }. The predicate answers "available now?" and may inject
-// arguments: it returns a boolean, or an array [available, ...args] whose tail becomes the
-// perform arguments. A string predicate is sugar for "the active view's name equals this".
+// A command is { predicate, perform }. The predicate returns a boolean, or [available, ...args]
+// whose tail becomes perform's arguments. A string predicate matches the active view's name.
 export const command = {
   map: Object.create(null),
 
+  // Register commands under one predicate. The disposer removes exactly the names it added (while
+  // they still point here), so a plugin's commands vanish on unload.
   add(predicate, map) {
     const pred = normalizePredicate(predicate);
+    const added = [];
     for (const name in map) {
-      this.map[name] = { predicate: pred, perform: map[name] };
+      const entry = { predicate: pred, perform: map[name] };
+      this.map[name] = entry;
+      added.push([name, entry]);
     }
+
+    return () => {
+      for (const [name, entry] of added) {
+        if (this.map[name] === entry) delete this.map[name];
+      }
+    };
   },
 
   // Run `name` if its predicate allows. Returns whether it performed.
@@ -323,7 +328,10 @@ export const keymap = {
   prefixes: Object.create(null), // first stroke of any chord -> true
   pending: null, // armed prefix awaiting its completion stroke
 
+  // Bind strokes to handlers. The disposer splices out exactly the handlers it added (by identity)
+  // and rebuilds the prefix set, so a plugin's binds vanish without disturbing others.
   add(bindings, overwrite) {
+    const added = [];
     for (const seq in bindings) {
       const key = normalizeSeq(seq);
       const value = bindings[seq];
@@ -334,9 +342,35 @@ export const keymap = {
         this.map[key] = list.concat(this.map[key]);
       }
 
+      for (const h of list) added.push([key, h]);
+    }
+
+    this._rebuildPrefixes();
+
+    return () => {
+      for (const [key, h] of added) {
+        const cur = this.map[key];
+        if (!cur) continue;
+
+        const i = cur.indexOf(h);
+        if (i >= 0) cur.splice(i, 1);
+        if (cur.length === 0) delete this.map[key];
+      }
+
+      this._rebuildPrefixes();
+    };
+  },
+
+  // Recompute the first-stroke-of-a-chord set from the live bindings, so a removed chord leaves no
+  // stale prefix. Clearing a now-unbacked armed prefix stops it from swallowing the next key.
+  _rebuildPrefixes() {
+    this.prefixes = Object.create(null);
+    for (const key in this.map) {
       const sp = key.indexOf(" ");
       if (sp > 0) this.prefixes[key.slice(0, sp)] = true;
     }
+
+    if (this.pending && !this.prefixes[this.pending]) this.pending = null;
   },
 
   // Try the bound commands for this key event; returns whether one handled it. A pending prefix
@@ -399,15 +433,8 @@ const MOD_ALT = 2;
 const MOD_CTRL = 4;
 const MOD_SUPER = 8;
 
-// Canonical stroke for a key event: modifier names + the key token, "+"-joined and lowercased.
-// The token is the case-folded character for a char key (stable across Kitty/legacy per
-// js.odin) or the code name for a named key ("enter", "up", "f1"). Shift is dropped for
-// char keys — the char is already folded and legacy terminals do not report Shift — but kept
-// for named keys (so "shift+tab" works where the terminal reports it). Punctuation that needs
-// exact shift state should bind a function that calls term.keyMatches.
-// The one place the canonical stroke ordering lives: modifiers (ctrl, alt, super, shift) then
-// the key token, "+"-joined. Both the event side (strokeOf) and the binding side
-// (normalizeStroke) route through it so a bound stroke and its event can never disagree.
+// The one place canonical stroke ordering lives: modifiers (ctrl, alt, super, shift) then the key
+// token, "+"-joined. Both strokeOf and normalizeStroke route through it so they cannot disagree.
 function joinStroke(mods, token) {
   const parts = [];
   if (mods.ctrl) parts.push("ctrl");
@@ -444,9 +471,69 @@ function normalizeStroke(stroke) {
   return joinStroke(mods, token);
 }
 
+// --- events -------------------------------------------------------------------------------
+// A small synchronous event bus. `emit` isolates a throwing listener via onError; `bail` runs
+// until a listener returns a non-nullish, non-false value and returns it. `on` returns a disposer.
+export class Emitter {
+  constructor() {
+    this._hooks = Object.create(null); // name -> handler[]
+    this.onError = null; // (err, name) => void; null swallows, keeping observation non-fatal
+  }
+
+  on(name, fn, opts) {
+    const list = this._hooks[name] || (this._hooks[name] = []);
+    if (opts && opts.prepend) list.unshift(fn);
+    else list.push(fn);
+
+    return () => {
+      const i = list.indexOf(fn);
+      if (i >= 0) list.splice(i, 1);
+    };
+  }
+
+  once(name, fn) {
+    const off = this.on(name, (...args) => {
+      off();
+      return fn(...args);
+    });
+    return off;
+  }
+
+  // Every listener runs; a throw is caught so a broken observer cannot fault the producer. The
+  // list is copied first so subscribe/unsubscribe during dispatch is safe.
+  emit(name, ...args) {
+    const list = this._hooks[name];
+    if (!list) return;
+
+    for (const fn of list.slice()) {
+      try {
+        fn(...args);
+      } catch (e) {
+        if (this.onError) this.onError(e, name);
+      }
+    }
+  }
+
+  // Run listeners until one claims the event (returns a non-nullish, non-false value); return
+  // that value or undefined. Control-flow dispatch, so a throw propagates rather than hides.
+  bail(name, ...args) {
+    const list = this._hooks[name];
+    if (!list) return undefined;
+
+    for (const fn of list.slice()) {
+      const r = fn(...args);
+      if (r != null && r !== false) return r;
+    }
+    return undefined;
+  }
+}
+
+// The app-wide bus. RootView.onEvent emits host events here (start, resize, key, mouse, tick,
+// session, input_closed), so a plugin observes via events.on("start", …) without touching the router.
+export const events = new Emitter();
+
 // --- views --------------------------------------------------------------------------------
-// A View owns a rectangle and a small override surface. Plugins subclass it or patch its
-// prototype. v1 hosts a single active view (no splits yet); term.width/height is the rect.
+// A View owns a rectangle and a small override surface. Plugins subclass it or patch its prototype.
 export class View {
   constructor() {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -487,47 +574,195 @@ export class View {
   }
 }
 
-// --- focus ---------------------------------------------------------------------------------
-// A flat set of focusable panes with a current one; directional movement is geometric over each
-// pane's `rect`, cycling is by registration order. A view holds one and routes keys to `current`.
-export class Focus {
+// --- layout: the node tree ----------------------------------------------------------------
+// The base layer is a binary tree of Nodes: a leaf holds a view, a split arranges two children as
+// "row" (a|b) or "col" (a over b) with `ratio` the fraction given to `a`. RootView owns the tree.
+export class Node {
+  constructor(view) {
+    this.type = "leaf";
+    this.parent = null;
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.view = view || null;
+
+    // Split-only, unused while a leaf.
+    this.kind = null; // "row" | "col"
+    this.a = null;
+    this.b = null;
+    this.ratio = 0.5;
+  }
+
+  // A fresh split of two nodes.
+  static branch(kind, a, b, ratio) {
+    const n = new Node(null);
+    n.becomeSplit(kind, a, b, ratio);
+
+    return n;
+  }
+
+  // Turn this node into a split of `a` and `b`, wiring their parent pointers. Splits a leaf in
+  // place, keeping the node's identity in its own parent.
+  becomeSplit(kind, a, b, ratio) {
+    this.type = "split";
+    this.kind = kind;
+    this.view = null;
+    this.ratio = ratio == null ? 0.5 : ratio;
+    this.a = a;
+    this.b = b;
+    a.parent = this;
+    b.parent = this;
+  }
+
+  // The leaves in left-to-right / top-to-bottom order.
+  leaves(out) {
+    out = out || [];
+    if (this.type === "leaf") {
+      out.push(this);
+    } else {
+      this.a.leaves(out);
+      this.b.leaves(out);
+    }
+
+    return out;
+  }
+
+  // Assign rects top-down; a split reserves one cell for the divider between its children.
+  layout(rect) {
+    this.rect = rect;
+
+    if (this.type === "leaf") {
+      if (this.view) this.view.rect = rect;
+      return;
+    }
+
+    if (this.kind === "row") {
+      const total = Math.max(0, rect.w - 1);
+      const aw = clampChildSize(Math.round(total * this.ratio), total);
+      this.a.layout({ x: rect.x, y: rect.y, w: aw, h: rect.h });
+      this.b.layout({ x: rect.x + aw + 1, y: rect.y, w: total - aw, h: rect.h });
+    } else {
+      const total = Math.max(0, rect.h - 1);
+      const ah = clampChildSize(Math.round(total * this.ratio), total);
+      this.a.layout({ x: rect.x, y: rect.y, w: rect.w, h: ah });
+      this.b.layout({ x: rect.x, y: rect.y + ah + 1, w: rect.w, h: total - ah });
+    }
+  }
+
+  // Paint the subtree; a split draws its divider between the children. `activeLeaf` is threaded so
+  // a leaf's view can render its focused state.
+  draw(activeLeaf) {
+    if (this.type === "leaf") {
+      const v = this.view;
+      if (!v) return;
+
+      if (v.update) v.update();
+      v.draw(this === activeLeaf);
+      return;
+    }
+
+    this.a.draw(activeLeaf);
+    this.b.draw(activeLeaf);
+
+    if (this.kind === "row") {
+      const x = this.a.rect.x + this.a.rect.w;
+      for (let y = this.rect.y; y < this.rect.y + this.rect.h; y++) text(x, y, "│", "YukeRule");
+    } else if (this.rect.w > 0) {
+      const y = this.a.rect.y + this.a.rect.h;
+      text(this.rect.x, y, "─".repeat(this.rect.w), "YukeRule");
+    }
+  }
+}
+
+// Keep each child at least one cell when the space allows, so a divider never orphans a
+// zero-width pane.
+function clampChildSize(size, total) {
+  if (total <= 1) return total;
+
+  return Math.max(1, Math.min(size, total - 1));
+}
+
+// RootView owns the frame: a base node tree (tiled panes) under a z-ordered overlay stack. Paint
+// is back-to-front; input front-to-back, a modal overlay (default) stopping it before the tree.
+export class RootView {
   constructor() {
-    this.panes = [];
-    this.current = null;
+    this.root_node = null; // base layer: the tile tree
+    this.activeLeaf = null; // the focused leaf
+    this.overlays = []; // z-order; last === top === focused
+    this.services = []; // background concerns (e.g. the daemon connection): tick + start, no paint
+    this._started = false; // the start event has fired
   }
 
-  add(pane) {
-    this.panes.push(pane);
-    if (this.current == null) this.current = pane;
-    return pane;
+  // The focused leaf's view, or null. Named `active` so a command predicate can match the focused
+  // view's name.
+  get active() {
+    return this.activeLeaf ? this.activeLeaf.view : null;
   }
 
-  set(pane) {
-    if (this.panes.indexOf(pane) >= 0) this.current = pane;
+  // Replace the base layer with `node`; focus its first leaf. Detaching its parent keeps the "root
+  // has no parent" invariant, so close()'s root guard holds for a reused subtree.
+  setRoot(node) {
+    this.root_node = node;
+    if (node) node.parent = null;
+    this.activeLeaf = node ? node.leaves()[0] : null;
   }
 
-  cycle(step) {
-    if (this.panes.length === 0) return;
-    let i = this.panes.indexOf(this.current);
-    if (i < 0) i = 0;
-    this.current = this.panes[(i + step + this.panes.length) % this.panes.length];
+  // Convenience: a single-leaf base holding `view`.
+  setActive(view) {
+    this.setRoot(view ? new Node(view) : null);
   }
 
-  // Move to the nearest pane whose center lies in direction d ("h"|"j"|"k"|"l"), scoring by
-  // distance along that axis plus a penalty for cross-axis offset so aligned panes win.
-  dir(d) {
-    const cur = this.current;
-    if (!cur || !cur.rect) return;
+  // Focus a leaf that is in the tree.
+  focusLeaf(leaf) {
+    if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this.activeLeaf = leaf;
+  }
 
-    const cx = cur.rect.x + cur.rect.w / 2;
-    const cy = cur.rect.y + cur.rect.h / 2;
+  // Split the active leaf in place: its view moves into the kept child and `view` into the new
+  // leaf, which becomes active. Returns the new leaf.
+  split(kind, view) {
+    const leaf = this.activeLeaf;
+    if (!leaf) return null;
+
+    const add = new Node(view);
+    leaf.becomeSplit(kind, new Node(leaf.view), add);
+    this.activeLeaf = add;
+
+    return add;
+  }
+
+  // Close the active leaf, absorbing its parent into the sibling in place. The lone root leaf has
+  // no parent and cannot close. Focus moves into the absorbed subtree's first leaf.
+  close() {
+    const leaf = this.activeLeaf;
+    const p = leaf && leaf.parent;
+    if (!p) return;
+
+    const sib = p.a === leaf ? p.b : p.a;
+    p.type = sib.type;
+    p.view = sib.view;
+    p.kind = sib.kind;
+    p.ratio = sib.ratio;
+    p.a = sib.a;
+    p.b = sib.b;
+    if (p.a) p.a.parent = p;
+    if (p.b) p.b.parent = p;
+
+    this.activeLeaf = p.leaves()[0];
+  }
+
+  // Move focus to the nearest leaf in direction d ("h"|"j"|"k"|"l"), scoring by distance along
+  // that axis plus a cross-axis penalty so aligned panes win.
+  focusDir(d) {
+    if (!this.activeLeaf) return;
+
+    const cur = this.activeLeaf.rect;
+    const cx = cur.x + cur.w / 2;
+    const cy = cur.y + cur.h / 2;
     let best = null;
     let bestScore = Infinity;
-    for (const p of this.panes) {
-      if (p === cur || !p.rect) continue;
+    for (const leaf of this.root_node.leaves()) {
+      if (leaf === this.activeLeaf) continue;
 
-      const dx = p.rect.x + p.rect.w / 2 - cx;
-      const dy = p.rect.y + p.rect.h / 2 - cy;
+      const dx = leaf.rect.x + leaf.rect.w / 2 - cx;
+      const dy = leaf.rect.y + leaf.rect.h / 2 - cy;
       const along = d === "h" ? -dx : d === "l" ? dx : d === "k" ? -dy : dy;
       if (along <= 0) continue;
 
@@ -535,34 +770,27 @@ export class Focus {
       const score = along + cross * 2;
       if (score < bestScore) {
         bestScore = score;
-        best = p;
+        best = leaf;
       }
     }
-    if (best) this.current = best;
-  }
-}
 
-// RootView owns the frame, the base view, and a z-ordered overlay stack. Layers paint
-// back-to-front (base first, overlays on top); input dispatches front-to-back (top overlay
-// first). The top overlay is the focused layer; a modal one (the default) stops input from
-// reaching the base. Ticks walk base, overlays, and background services (any needsTick), so a
-// base spinner keeps advancing under a floating window and services stay alive with no paint.
-// Cursor stays focused-only.
-export class RootView {
-  constructor() {
-    this.active = null; // base view
-    this.overlays = []; // z-order; last === top === focused
-    this.services = []; // background concerns (e.g. the daemon connection): tick + start, no paint
-    this._started = false; // the start event has fired
+    if (best) this.activeLeaf = best;
   }
 
-  setActive(view) {
-    this.active = view;
+  // Cycle focus through the leaves in tree order.
+  focusCycle(step) {
+    if (!this.root_node) return;
+
+    const leaves = this.root_node.leaves();
+    if (leaves.length === 0) return;
+
+    let i = leaves.indexOf(this.activeLeaf);
+    if (i < 0) i = 0;
+    this.activeLeaf = leaves[(i + step + leaves.length) % leaves.length];
   }
 
-  // Register a background service: an object with optional onStart()/needsTick()/tick(). It never
-  // paints; it rides the tick loop so a concern like the daemon connection runs under any view.
-  // Added after start, it starts at once.
+  // Register a background service (optional onStart()/needsTick()/tick()). It never paints; it
+  // rides the tick loop so a concern like the daemon connection runs under any view.
   addService(svc) {
     this.services.push(svc);
     if (this._started && svc.onStart) svc.onStart();
@@ -599,27 +827,23 @@ export class RootView {
     this.draw();
   }
 
-  // Walk everything that can tick: base view, overlays, and background services. Paint has its
-  // own explicit walk in draw(); this one is for tick arming and advance only.
+  // Walk everything that can tick: every leaf view, overlays, and background services. Paint has
+  // its own explicit walk in draw(); this one is for tick arming and advance only.
   _forEachTickable(fn) {
-    if (this.active) fn(this.active);
+    if (this.root_node) for (const leaf of this.root_node.leaves()) if (leaf.view) fn(leaf.view);
     for (const layer of this.overlays) fn(layer);
     for (const svc of this.services) fn(svc);
   }
 
   draw() {
-    if (!this.active && this.overlays.length === 0) return;
+    if (!this.root_node && this.overlays.length === 0) return;
 
     term.beginFrame();
 
-    if (this.active) {
-      const r = this.active.rect;
-      r.x = 0;
-      r.y = 0;
-      r.w = term.width;
-      r.h = term.height;
-      this.active.update();
-      this.active.draw();
+    if (this.root_node) {
+      fill(0, 0, term.width, term.height, "Normal");
+      this.root_node.layout({ x: 0, y: 0, w: term.width, h: term.height });
+      this.root_node.draw(this.activeLeaf);
     }
 
     for (const layer of this.overlays) {
@@ -661,6 +885,9 @@ export class RootView {
   }
 
   onEvent(ev) {
+    // Observers see every host event first; consumption still runs through the router below.
+    events.emit(ev.type, ev);
+
     if (ev.type === "input_closed") {
       term.setNeedsTick(false);
       term.quit();
@@ -696,7 +923,13 @@ export class RootView {
     if (ev.type === "key") {
       // Releases are reported too; acting on both would run every shortcut twice.
       if (ev.event === "release") return;
-      if (!consumedByOverlay("onKey") && !keymap.onKey(ev) && this.active) this.active.onKey(ev);
+
+      // The focused view gets first crack (so a text input can hold space, ":", "-"), except while
+      // a chord is armed — the keymap must see the completion stroke. Unconsumed keys fall through.
+      if (!consumedByOverlay("onKey")) {
+        const viewTakes = !keymap.pending && this.active && this.active.onKey && this.active.onKey(ev);
+        if (!viewTakes) keymap.onKey(ev);
+      }
     } else if (ev.type === "mouse") {
       if (!consumedByOverlay("onMouse") && this.active) this.active.onMouse(ev);
     }

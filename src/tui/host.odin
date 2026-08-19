@@ -3,7 +3,7 @@ package tui
 /*
 Client host: QuickJS + yuke:term + double-buffered ui paint.
 
-Draw model (lite-xl / rxi):
+Draw model:
   beginFrame → fill/text/cursor → endFrame
 endFrame runs ui.flush_diff: only cells that differ from the previous frame are
 written to the terminal.
@@ -34,6 +34,8 @@ APP_JS :: #load("js/app.js", string)
 CORE_JS :: #load("js/core.js", string)
 
 UI_JS :: #load("js/ui.js", string)
+
+EXT_JS :: #load("js/ext.js", string)
 
 DEFAULTS_JS :: #load("js/defaults.js", string)
 
@@ -88,7 +90,7 @@ Host :: struct {
     width:            u16,
     height:           u16,
 
-    // Demand-driven anim ticks (lite-xl-style deadline, not a permanent FPS loop).
+    // Demand-driven anim ticks: a deadline, not a permanent FPS loop.
     needs_tick:       bool,
     tick_period:      time.Duration,
     tick_op:          ^nbio.Operation,

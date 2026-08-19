@@ -1,9 +1,9 @@
-// yuke:defaults — bundled default UI: a split shell (sidebar | main) with local daemon
-// connect, command palette, ":" line, and a stub workspace explorer. A user's yuke.js layers
-// on top (keymaps, prototype patches, view swaps). Session list / transcript / composer are
+// yuke:defaults — bundled default UI: a sidebar | chat split shell with local daemon connect,
+// command palette, ":" line, and a stub explorer. A user's yuke.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, View, Focus, root, quit, config } from "yuke:core";
-import { ui, List } from "yuke:ui";
+import { command, keymap, style, clip, fill, text, strokeOf, Node, root, quit, config } from "yuke:core";
+import { plugins } from "yuke:ext";
+import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
@@ -16,37 +16,12 @@ style.invalidate();
 // Stub explorer root until workspace.browse is wired.
 const EXPLORER_ROOT = "/Users/xyaman/Work";
 
-// Minimum sidebar width in cells; shrinks on very narrow terminals.
-const SIDEBAR_MIN = 18;
-const SIDEBAR_MAX = 36;
-const SIDEBAR_FRAC = 0.3;
-
-function paintRuleV(x, y, h, group) {
-  if (h <= 0) return;
-  for (let row = 0; row < h; row++) {
-    text(x, y + row, "│", group);
-  }
-}
-
-// Sidebar width for the current terminal; main gets the rest past a one-cell rule.
-function layout(w, h) {
-  if (w < 2) {
-    return { sidebarW: w, mainX: w, mainW: 0, h: h };
-  }
-
-  let sidebarW = Math.floor(w * SIDEBAR_FRAC);
-  if (sidebarW < SIDEBAR_MIN) sidebarW = Math.min(SIDEBAR_MIN, w - 1);
-  if (sidebarW > SIDEBAR_MAX) sidebarW = SIDEBAR_MAX;
-  if (sidebarW >= w) sidebarW = w - 1;
-
-  const mainX = sidebarW + 1;
-  const mainW = Math.max(0, w - mainX);
-  return { sidebarW, mainX, mainW, h };
-}
+// The session sidebar's share of the width in the default row split.
+const SIDEBAR_RATIO = 0.28;
 
 // --- panes ----------------------------------------------------------------------------------
-// Panes are focus targets: each owns its rect, draw(focused), and onKey(ev) (returns whether it
-// consumed the key). AppView composes them; a `Focus` routes keys to the current one.
+// A pane is a node-leaf view: it owns its rect, draws with draw(focused), and handles onKey(ev)
+// (returning whether it consumed the key). The node tree assigns rects and routes focus.
 
 function sessionTitle(s) {
   const t = (s.title || "").trim();
@@ -80,8 +55,9 @@ class SessionList {
     return "sessions";
   }
 
-  // Load on the ready edge, clear on the drop edge; retry a failed load while still ready.
-  syncConnection() {
+  // A leaf's view is updated before it draws each frame: load on the ready edge, clear on the drop
+  // edge, and retry a failed load while still ready.
+  update() {
     const ready = client.connectionState() === "ready";
     if (ready && !this.wasReady) {
       this.wasReady = true;
@@ -247,57 +223,61 @@ class MainPane {
   }
 }
 
-// --- app shell ----------------------------------------------------------------------------
-// The one root view: a two-pane shell (sidebar | main) owning layout, focus, and session-load.
-// Panes are focus targets in a `Focus`; keys route to the focused pane, focus:* moves between them.
-class AppView extends View {
-  constructor() {
-    super();
-    this.sidebar = new SessionList();
-    this.main = new MainPane();
-    this.focus = new Focus();
-    this.focus.add(this.sidebar);
-    this.focus.add(this.main);
+// The chat pane: a transcript above a composer, sharing one leaf. Data-agnostic — setMessages()
+// feeds the transcript, the composer calls onSubmit(text); unconsumed keys scroll the transcript.
+class ChatView {
+  constructor(opts = {}) {
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.transcript = new Transcript();
+    this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
   }
 
   get name() {
-    return "app";
+    return "chat";
   }
 
-  // Session load-on-connect / clear-on-drop, re-checked on every repaint.
-  update() {
-    this.sidebar.syncConnection();
+  setMessages(messages) {
+    this.transcript.setMessages(messages);
   }
 
   onKey(ev) {
-    const pane = this.focus.current;
-    return pane && pane.onKey ? pane.onKey(ev) : false;
+    return this.composer.onKey(ev) || this.transcript.onKey(ev);
   }
 
-  draw() {
-    const w = term.width;
-    const h = term.height;
-    fill(0, 0, w, h, "Normal");
+  draw(focused) {
+    const { x, y, w, h } = this.rect;
+    this.composer.rect = { x, y: y + Math.max(0, h - 1), w, h: h > 0 ? 1 : 0 };
     if (w <= 0 || h <= 0) return;
 
-    const { sidebarW, mainX, mainW } = layout(w, h);
-    this.sidebar.rect = { x: 0, y: 0, w: sidebarW, h: h };
-    this.main.rect = { x: mainX, y: 0, w: mainW, h: h };
+    if (h > 2) this.transcript.draw({ x, y, w, h: h - 2 });
+    if (h >= 2) text(x, y + h - 2, "─".repeat(w), "YukeRule");
+    this.composer.draw(focused);
+  }
 
-    this.sidebar.draw(this.focus.current === this.sidebar);
-    if (mainX < w) {
-      paintRuleV(mainX - 1, 0, h, "YukeRule");
-      this.main.draw(this.focus.current === this.main);
-    }
+  cursor() {
+    return this.composer.cursor();
   }
 }
 
-const app = new AppView();
+// --- default layout -----------------------------------------------------------------------
+// The stock layout: the session sidebar beside the chat pane, a row split in the node tree. A
+// user's yuke.js can rebuild `workspace` before it is installed.
+const sidebar = new SessionList();
+
+// Echo the submitted text as a local user message, until a session controller replaces it.
+const chatMessages = [];
+const chat = new ChatView({
+  onSubmit: (text) => {
+    chatMessages.push({ type: "user", id: "local-" + chatMessages.length, rev: 0, content: [{ type: "text", text }] });
+    chat.setMessages(chatMessages);
+  },
+});
+
+const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
 // --- explorer -----------------------------------------------------------------------------
-// A directory navigator over the daemon's workspace.browse shape. The data is stubbed here
-// (a fake tree) until the daemon bridge lands; swapping `browse` for the real RPC is the only
-// change. Entries are directories only (name, path, is_git_repo), paginated with a cursor.
+// A directory navigator over the daemon's workspace.browse shape, stubbed here until the bridge
+// lands. Entries are directories only (name, path, is_git_repo), paginated with a cursor.
 const FS = {
   "/Users/xyaman": { parent: "/Users", dirs: [["Work", false], ["Documents", false]] },
   "/Users/xyaman/Work": {
@@ -401,15 +381,37 @@ function openPalette() {
     .filter((name) => commandAvailable(command.map[name]))
     .map((name) => ({ name: name, hint: keyHint(name) }));
 
-  return ui.select(cmds, {
+  return ui.pick({
     title: "commands",
-    footer: "j/k · ↵ run · esc close",
+    footer: "type to filter · ↵ run · esc close",
     border: "rounded",
     width: 0.5,
     height: 0.5,
+    items: cmds,
     key: (c) => c.name,
+    filterText: (c) => c.name,
     format: (c) => ({ text: c.name, right: c.hint }),
     onAccept: (c) => command.perform(c.name),
+  });
+}
+
+// A session finder: fuzzy-search the sidebar's loaded sessions by title; accept marks and selects.
+function openSessionFinder() {
+  return ui.pick({
+    title: "sessions",
+    footer: "type to filter · ↵ select · esc close",
+    border: "rounded",
+    width: 0.6,
+    height: 0.5,
+    items: sidebar.list.items,
+    key: (r) => r.id,
+    filterText: (r) => r.title,
+    format: (r) => ({ text: r.title, right: activityMark(r.activity) }),
+    onAccept: (r) => {
+      sidebar.activeId = r.id;
+      sidebar.list.selectedKey = r.id;
+      root.invalidate();
+    },
   });
 }
 
@@ -521,11 +523,8 @@ function openCommandLine() {
 }
 
 // --- daemon connection --------------------------------------------------------------------
-// Owns the local daemon lifecycle. Target and retry policy come from config.daemon (set by
-// defaults or defineConfig in yuke.js before start). The host has no setTimeout and does not
-// push post-ready close into JS, so while auto-connect is on (or a session is live) this service
-// ticks: ready → slow drop poll; offline → countdown + reconnect. autoConnect: false skips
-// initial dial and auto-retry; :connect (app:connect) dials once manually.
+// Owns the local daemon lifecycle from config.daemon. The host has no setTimeout, so this service
+// ticks: ready polls for drops, offline counts down and reconnects (autoConnect: false dials manually).
 const READY_POLL_MS = 1000;
 const RETRY_POLL_MS = 500;
 
@@ -607,48 +606,50 @@ function connectionLabel() {
 }
 
 // --- commands + keymaps -------------------------------------------------------------------
-command.add(null, {
-  "app:quit": () => quit(),
-  "ui:palette": () => openPalette(),
-  "app:connect": () => connection.attempt(),
-  "app:explorer": () => openExplorer(EXPLORER_ROOT),
+// The stock commands and keybinds ship as a plugin, loading/unloading through the kernel like any
+// extension. app:* act globally; focus:*/window:* drive the node tree.
+plugins.use({
+  name: "app-keys",
+  apply(ctx) {
+    ctx.command(null, {
+      "app:quit": () => quit(),
+      "ui:palette": () => openPalette(),
+      "ui:sessions": () => openSessionFinder(),
+      "app:connect": () => connection.attempt(),
+      "app:explorer": () => openExplorer(EXPLORER_ROOT),
+      "focus:left": () => root.focusDir("h"),
+      "focus:down": () => root.focusDir("j"),
+      "focus:up": () => root.focusDir("k"),
+      "focus:right": () => root.focusDir("l"),
+      "focus:next": () => root.focusCycle(1),
+      "focus:prev": () => root.focusCycle(-1),
+      "window:split-right": () => root.split("row", new MainPane()),
+      "window:split-down": () => root.split("col", new MainPane()),
+      "window:close": () => root.close(),
+    });
+
+    ctx.keymap({
+      "-": "app:explorer",
+      " ": "ui:palette",
+      "ctrl+p": "ui:sessions",
+      ":": () => {
+        openCommandLine();
+        return true;
+      },
+      "ctrl+w h": "focus:left",
+      "ctrl+w j": "focus:down",
+      "ctrl+w k": "focus:up",
+      "ctrl+w l": "focus:right",
+      "ctrl+w w": "focus:next",
+      "ctrl+w v": "window:split-right",
+      "ctrl+w s": "window:split-down",
+      "ctrl+w c": "window:close",
+    });
+  },
 });
 
-// Focus commands act on the active view's `focus` (a Focus), injected by the predicate — so one
-// binding moves focus in whatever view is active, and a user can rebind it to any stroke.
-command.add(
-  () => (root.active && root.active.focus ? [true, root.active.focus] : [false]),
-  {
-    "focus:left": (f) => moveFocus(f, "dir", "h"),
-    "focus:down": (f) => moveFocus(f, "dir", "j"),
-    "focus:up": (f) => moveFocus(f, "dir", "k"),
-    "focus:right": (f) => moveFocus(f, "dir", "l"),
-    "focus:next": (f) => moveFocus(f, "cycle", 1),
-    "focus:prev": (f) => moveFocus(f, "cycle", -1),
-  },
-);
-
-function moveFocus(focus, method, arg) {
-  focus[method](arg);
-  root.invalidate();
-}
-
-keymap.add({
-  "-": "app:explorer",
-  " ": "ui:palette",
-  ":": () => {
-    openCommandLine();
-    return true;
-  },
-  "ctrl+w h": "focus:left",
-  "ctrl+w j": "focus:down",
-  "ctrl+w k": "focus:up",
-  "ctrl+w l": "focus:right",
-  "ctrl+w w": "focus:next",
-});
-
-root.setActive(app);
+root.setRoot(workspace);
 root.addService(connection);
 
-// Exported so a user's yuke.js can reference the stock views (swap, subclass, or patch).
-export { app, AppView, SessionList, MainPane, openExplorer, openPalette, openCommandLine, connection };
+// Exported so a user's yuke.js can reference the stock views and layout (swap, subclass, patch).
+export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };

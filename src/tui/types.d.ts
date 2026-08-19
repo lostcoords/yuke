@@ -185,6 +185,25 @@ declare module "yuke:core" {
   export function clip(s: string, max: number): string;
   export function wrap(s: string, width: number): string[];
 
+  // A teardown handle: calling it reverts one registration. Idempotent.
+  export type Disposable = () => void;
+
+  export interface EmitterOptions {
+    prepend?: boolean;
+  }
+
+  // A synchronous event bus. `on` returns a disposer; `emit` isolates a throwing listener via
+  // `onError`; `bail` runs until a listener returns a non-nullish, non-false value.
+  export class Emitter {
+    constructor();
+    onError: ((err: unknown, name: string) => void) | null;
+    on(name: string, fn: (...args: any[]) => any, opts?: EmitterOptions): Disposable;
+    once(name: string, fn: (...args: any[]) => any): Disposable;
+    emit(name: string, ...args: any[]): void;
+    bail(name: string, ...args: any[]): any;
+  }
+  export const events: Emitter;
+
   export type CommandPredicateResult = boolean | [boolean, ...unknown[]];
   export type CommandPredicate =
     | null
@@ -199,7 +218,7 @@ declare module "yuke:core" {
 
   export interface CommandApi {
     map: Record<string, CommandEntry>;
-    add(predicate: CommandPredicate, map: Record<string, CommandPerform>): void;
+    add(predicate: CommandPredicate, map: Record<string, CommandPerform>): Disposable;
     perform(name: string, ...args: unknown[]): boolean;
   }
   export const command: CommandApi;
@@ -211,7 +230,7 @@ declare module "yuke:core" {
     map: Record<string, Array<string | KeymapHandler>>;
     prefixes: Record<string, boolean>;
     pending: string | null;
-    add(bindings: Record<string, KeymapBinding>, overwrite?: boolean): void;
+    add(bindings: Record<string, KeymapBinding>, overwrite?: boolean): Disposable;
     onKey(ev: KeyEvent): boolean;
   }
   export const keymap: KeymapApi;
@@ -252,7 +271,7 @@ declare module "yuke:core" {
     constructor();
     get name(): string;
     update(): void;
-    draw(): void;
+    draw(focused?: boolean): void;
     onKey(ev: KeyEvent): boolean;
     onMouse(ev: MouseEvent): boolean;
     tick(): void;
@@ -266,32 +285,54 @@ declare module "yuke:core" {
     tick?(): void;
   }
 
-  // A focus target: a pane with a rect, key handling, and rect-aware drawing.
+  // A pane: a rect, focus-aware drawing, and optional key/tick/cursor hooks. A node leaf holds one.
   export interface Pane {
     rect: Rect;
     name?: string;
+    update?(): void;
     onKey?(ev: KeyEvent): boolean;
-    draw(focused: boolean): void;
+    draw(focused?: boolean): void;
+    needsTick?(): TickRequest | null;
+    tick?(): void;
+    cursor?(): CursorRequest | null;
   }
 
   export type FocusDir = "h" | "j" | "k" | "l";
+  export type NodeKind = "row" | "col";
 
-  export class Focus {
-    panes: Pane[];
-    current: Pane | null;
-    constructor();
-    add(pane: Pane): Pane;
-    set(pane: Pane): void;
-    cycle(step: number): void;
-    dir(d: FocusDir): void;
+  // The base layer's binary layout tree: a leaf holds one view; a split arranges two children as a
+  // "row" (a | b) or "col" (a over b), with `ratio` the fraction given to child `a`.
+  export class Node {
+    type: "leaf" | "split";
+    parent: Node | null;
+    rect: Rect;
+    view: Pane | null;
+    kind: NodeKind | null;
+    a: Node | null;
+    b: Node | null;
+    ratio: number;
+    constructor(view?: Pane | null);
+    static branch(kind: NodeKind, a: Node, b: Node, ratio?: number): Node;
+    becomeSplit(kind: NodeKind, a: Node, b: Node, ratio?: number): void;
+    leaves(out?: Node[]): Node[];
+    layout(rect: Rect): void;
+    draw(activeLeaf: Node | null): void;
   }
 
   export class RootView {
-    active: View | null;
+    root_node: Node | null;
+    activeLeaf: Node | null;
     overlays: Layer[];
     services: Service[];
     constructor();
-    setActive(view: View | null): void;
+    get active(): Pane | null;
+    setRoot(node: Node | null): void;
+    setActive(view: Pane | null): void;
+    focusLeaf(leaf: Node): void;
+    split(kind: NodeKind, view: Pane): Node | null;
+    close(): void;
+    focusDir(d: FocusDir): void;
+    focusCycle(step: number): void;
     addService(svc: Service): Service;
     get focused(): Layer | null;
     pushOverlay(layer: Layer): Layer;
@@ -305,6 +346,85 @@ declare module "yuke:core" {
 
   export const root: RootView;
   export function quit(): void;
+}
+
+declare module "yuke:ext" {
+  import type { CommandPredicate, CommandPerform, Disposable, EmitterOptions, KeymapBinding } from "yuke:core";
+
+  // A scope owns revertible effects and reverts them LIFO on dispose. effect(fn) runs fn now and
+  // collects the disposer it returns; child scopes dispose with the parent.
+  export class Scope {
+    name: string;
+    alive: boolean;
+    constructor(name?: string);
+    effect(fn: () => (Disposable | void)): Disposable;
+    child(name?: string): Scope;
+    dispose(): void;
+  }
+
+  export const rootScope: Scope;
+
+  export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
+
+  export interface AdviceOptions {
+    owner?: string;
+    name?: string;
+    order?: number;
+  }
+
+  export interface AdviceInfo {
+    prop: string;
+    owner: string;
+    name: string;
+    where: AdviceWhere;
+    order: number;
+  }
+
+  // Safe, named, removable monkeypatching. Re-adding the same owner+name replaces in place; the
+  // pristine method is restored once nothing advises it. `list` answers "what is patched?".
+  export interface AdviceApi {
+    advise(obj: any, prop: string, where: AdviceWhere, fn: (...args: any[]) => any, opts?: AdviceOptions): Disposable;
+    list(obj: any, prop?: string): AdviceInfo[];
+  }
+  export const advice: AdviceApi;
+
+  export interface ServicesApi {
+    provide(name: string, value: unknown): Disposable;
+    get(name: string): unknown;
+  }
+  export const services: ServicesApi;
+
+  // The register-through-me surface a plugin receives. Every registration is an effect on the
+  // plugin's scope, so unload is a total revert.
+  export class Context {
+    scope: Scope;
+    id: string;
+    constructor(scope: Scope, id: string);
+    effect(fn: () => (Disposable | void)): Disposable;
+    on(name: string, fn: (...args: any[]) => any, opts?: EmitterOptions): Disposable;
+    once(name: string, fn: (...args: any[]) => any): Disposable;
+    command(predicate: CommandPredicate, map: Record<string, CommandPerform>): Disposable;
+    keymap(bindings: Record<string, KeymapBinding>, overwrite?: boolean): Disposable;
+    advise(obj: any, prop: string, where: AdviceWhere, fn: (...args: any[]) => any, opts?: AdviceOptions): Disposable;
+    provide(name: string, value: unknown): Disposable;
+    use(name: string): unknown;
+  }
+
+  // A plugin is a function apply(ctx, config) or an object { name, apply }.
+  export type PluginFn = (ctx: Context, config?: unknown) => (Disposable | void);
+  export interface PluginObject {
+    name: string;
+    apply(ctx: Context, config?: unknown): Disposable | void;
+  }
+  export type Plugin = PluginFn | PluginObject;
+
+  export interface PluginsApi {
+    use(plugin: Plugin, config?: unknown): Disposable;
+    get(name: string): Scope | undefined;
+    dispose(name: string): void;
+    names(): string[];
+  }
+  export const plugins: PluginsApi;
 }
 
 declare module "yuke:client" {
@@ -645,6 +765,28 @@ declare module "yuke:ui" {
     onKey(ev: KeyEvent): boolean;
   }
 
+  export interface ComposerOptions {
+    prompt?: string;
+    placeholder?: string;
+    onSubmit?: (text: string) => void;
+  }
+
+  // A single-line message input. Owns its rect; Enter submits (clears + onSubmit), typing edits;
+  // unhandled keys return false so the owner can route them.
+  export class Composer {
+    rect: Rect;
+    text: string;
+    prompt: string;
+    placeholder: string;
+    onSubmit: ((text: string) => void) | null;
+    constructor(opts?: ComposerOptions);
+    get name(): string;
+    submit(): void;
+    onKey(ev: KeyEvent): boolean;
+    draw(focused?: boolean): void;
+    cursor(): CursorRequest | null;
+  }
+
   export interface BorderSet {
     tl: string;
     t: string;
@@ -760,8 +902,50 @@ declare module "yuke:ui" {
     close(): void;
   }
 
+  // Fuzzy scoring: `query` as a case-insensitive subsequence of `text`; higher is better, null on
+  // no match. `fuzzyRank` filters and orders items by score (ties: shorter then lexicographic).
+  export function fuzzyMatch(text: string, query: string): number | null;
+  export function fuzzyRank<T>(items: T[], query: string, textOf: (item: T) => string): T[];
+
+  export interface PickOptions<T = unknown>
+    extends WindowOptions,
+      Pick<ListOptions<T>, "format" | "key" | "isSelectable" | "selGroup"> {
+    items?: T[];
+    suggest?: (query: string) => T[];
+    filterText?: (item: T) => string;
+    itemGroup?: string;
+    onAccept?: (item: T) => void;
+    onCancel?: () => void;
+    validate?: (item: T) => boolean;
+  }
+
+  export class Picker<T = unknown> implements WindowContent {
+    opts: PickOptions<T>;
+    win: Window | null;
+    query: string;
+    list: List<T>;
+    onAccept: ((item: T) => void) | null;
+    onCancel: (() => void) | null;
+    constructor(opts: PickOptions<T>);
+    setSource(items: T[]): void;
+    refilter(): void;
+    selected(): T | null;
+    draw(win: Window): void;
+    cursor(win: Window): CursorRequest | null;
+    accept(): void;
+    cancel(): void;
+    onKey(ev: KeyEvent): boolean;
+  }
+
+  export interface PickResult<T = unknown> {
+    win: Window;
+    content: Picker<T>;
+    close(): void;
+  }
+
   export interface UiApi {
     select<T = unknown>(items: T[], opts?: PickerOptions<T>): SelectResult<T>;
+    pick<T = unknown>(opts?: PickOptions<T>): PickResult<T>;
   }
 
   export const ui: UiApi;
@@ -769,8 +953,8 @@ declare module "yuke:ui" {
 
 declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
-  import type { Focus, Pane, Rect, Service, View } from "yuke:core";
-  import type { List } from "yuke:ui";
+  import type { CursorRequest, Node, Pane, Rect, Service } from "yuke:core";
+  import type { Composer, List, Transcript, TranscriptMessage } from "yuke:ui";
   import type { SessionActivity } from "yuke:client";
 
   export interface SessionRow {
@@ -786,7 +970,7 @@ declare module "yuke:defaults" {
     loaded: boolean;
     loading: boolean;
     get name(): "sessions";
-    syncConnection(): void;
+    update(): void;
     refresh(): void;
     clear(): void;
     current(): SessionRow | null;
@@ -801,19 +985,32 @@ declare module "yuke:defaults" {
     draw(focused: boolean): void;
   }
 
-  export class AppView extends View {
-    sidebar: SessionList;
-    main: MainPane;
-    focus: Focus;
-    get name(): "app";
-    onKey(ev: KeyEvent): boolean;
-    draw(): void;
+  export interface ChatViewOptions {
+    onSubmit?: (text: string) => void;
   }
 
-  export const app: AppView;
+  // The chat pane: a Transcript above a Composer in one leaf. setMessages() feeds the transcript;
+  // the composer calls onSubmit(text). Data-agnostic — the session wiring is external.
+  export class ChatView implements Pane {
+    rect: Rect;
+    transcript: Transcript;
+    composer: Composer;
+    constructor(opts?: ChatViewOptions);
+    get name(): "chat";
+    setMessages(messages: TranscriptMessage[]): void;
+    onKey(ev: KeyEvent): boolean;
+    draw(focused?: boolean): void;
+    cursor(): CursorRequest | null;
+  }
+
+  // The stock layout: the session sidebar beside the chat pane, a row split in the node tree.
+  export const workspace: Node;
+  export const sidebar: SessionList;
+  export const chat: ChatView;
 
   export function openExplorer(startPath: string): unknown;
   export function openPalette(): unknown;
+  export function openSessionFinder(): unknown;
   export function openCommandLine(): unknown;
 
   export const connection: Service & {
