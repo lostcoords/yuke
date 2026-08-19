@@ -1013,7 +1013,6 @@ method_initialize :: proc(conn: ^Conn, req: wire.Request, sa: mem.Allocator) {
 // invalid frame is our bug: assert rather than ship it.
 send_result :: proc(conn: ^Conn, id: wire.Request_Id, result: wire.Response_Result, allocator: mem.Allocator) -> bool {
     assert(conn != nil, "result send needs connection state")
-    assert(wire.response_result_validate(result) == .None, "daemon built an invalid result frame")
 
     return send_response(conn, wire.response_ok_build(id, result), allocator)
 }

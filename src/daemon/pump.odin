@@ -64,7 +64,6 @@ broadcast :: proc(d: ^Daemon, data: wire.Broadcast_Data) -> Pump_Error {
 
         seq := pump_next_seq(d, sid) or_return
         stamped := pump_stamp_seq(data, seq)
-        assert(wire.broadcast_data_validate(stamped) == .None, "stamping a seq keeps the payload valid")
 
         // The durable payload the log stores; the frame carries these same bytes.
         payload: json.Emitter

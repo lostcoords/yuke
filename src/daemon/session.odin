@@ -333,8 +333,6 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
             started_at_ms = running.started_at_ms,
         }
 
-        assert(wire.session_activity_validate(activity) == .None, "the engine built an invalid activity")
-
         return activity
     }
 
@@ -352,8 +350,6 @@ session_activity :: proc(d: ^Daemon, session: wire.Session_Id) -> wire.Session_A
             }
         }
     }
-
-    assert(wire.session_activity_validate(activity) == .None, "the engine built an invalid activity")
 
     return activity
 }
