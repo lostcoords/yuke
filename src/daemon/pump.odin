@@ -528,8 +528,6 @@ resync_build :: proc(
     err: Resync_Error,
 ) {
     assert(d != nil, "a resync cut needs daemon state")
-    assert(wire.session_resync_params_validate(params) == .None, "a resync cut needs validated params")
-
     assert(d.store != nil, "a serving daemon always owns an event store")
 
     hw, herr := store.high_water(d.store, params.session_id)

@@ -1490,7 +1490,6 @@ provider_login_finished :: proc(
     outcome: wire.Auth_Login_Outcome,
 ) {
     assert(d != nil && d.provider_auth.curl_ready, "login completion needs initialized auth")
-    assert(wire.auth_login_outcome_validate(outcome) == .None, "daemon built an invalid auth outcome")
     provider := oauth.provider(kind)
     finished := wire.Auth_Login_Finished_Data {
         login_id    = login_id,

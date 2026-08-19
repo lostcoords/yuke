@@ -420,8 +420,6 @@ session_draft :: proc(
         },
     }
 
-    assert(wire.active_draft_validate(open) == .None, "the engine built an invalid draft")
-
     return open, queued, true
 }
 

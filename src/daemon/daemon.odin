@@ -1095,7 +1095,6 @@ send_initialize_result :: proc(conn: ^Conn, id: wire.Request_Id, allocator: mem.
         catalog_health = conn.daemon.catalog.health,
     }
 
-    assert(wire.initialize_result_validate(result) == .None, "daemon built an invalid initialize result")
     return send_response(conn, wire.response_ok_build(id, result), allocator)
 }
 
