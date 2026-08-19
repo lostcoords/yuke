@@ -1,7 +1,6 @@
 package store
 
 import "core:mem"
-import "core:strings"
 import "core:unicode/utf8"
 
 import model_catalog "src:daemon/catalog"
@@ -14,7 +13,6 @@ import "libs:bindings/sqlite"
 CATALOG_PROVIDERS_MAX :: 256
 CATALOG_MODELS_MAX :: wire.LIMITS.max_catalog_models
 CATALOG_CREDENTIAL_ENV_MAX :: 32
-CATALOG_ETAG_MAX_BYTES :: 4096
 
 @(private)
 CATALOG_PROVIDERS_LOAD_SQL :: `SELECT
@@ -123,21 +121,13 @@ Catalog_Model_Level_Row :: struct {
     total:           u64,
 }
 
-// Replace one provider's snapshot atomically, models and all; other providers are untouched
-// if validation or the transaction fails.
+// Replace one provider's snapshot atomically. Row shape is the schema's to refuse; only
+// the catalog's size bound is decided here.
 catalog_imported_replace :: proc(s: ^Store, item: model_catalog.Provider, feed_etag: string) -> (err: Error) {
     assert(s != nil, "catalog_imported_replace needs a store")
     assert(s.writer != nil, "an open store always holds its writer")
 
-    if !catalog_provider_valid(item, feed_etag) || len(item.models) > CATALOG_MODELS_MAX do return .Invalid_Catalog
-
-    for model, index in item.models {
-        if !catalog_model_valid(model) || model.info.provider != item.id do return .Invalid_Catalog
-
-        for previous in item.models[:index] {
-            if previous.info.id == model.info.id do return .Invalid_Catalog
-        }
-    }
+    if len(item.models) > CATALOG_MODELS_MAX do return .Invalid_Catalog
 
     sqlite.txn_begin(s.writer, .Immediate) or_return
 
@@ -153,7 +143,7 @@ catalog_imported_replace :: proc(s: ^Store, item: model_catalog.Provider, feed_e
 
     catalog_provider_insert(s, item, feed_etag) or_return
     for model in item.models {
-        catalog_model_insert(s, model) or_return
+        catalog_model_insert(s, item.id, model) or_return
     }
     sqlite.txn_commit(s.writer) or_return
 
@@ -171,7 +161,6 @@ catalog_feed_etag_clear :: proc(s: ^Store) -> Error {
 @(private)
 catalog_provider_insert :: proc(s: ^Store, item: model_catalog.Provider, feed_etag: string) -> Error {
     assert(s != nil, "catalog provider insert needs a store")
-    assert(catalog_provider_valid(item, feed_etag), "catalog provider insert needs validated input")
 
     params := queries.Insert_Catalog_Provider_Params {
         provider_id   = item.id,
@@ -195,13 +184,12 @@ catalog_provider_insert :: proc(s: ^Store, item: model_catalog.Provider, feed_et
 }
 
 @(private)
-catalog_model_insert :: proc(s: ^Store, model: model_catalog.Model) -> Error {
+catalog_model_insert :: proc(s: ^Store, provider_id: wire.Provider_Id, model: model_catalog.Model) -> Error {
     assert(s != nil, "catalog model insert needs a store")
-    assert(catalog_model_valid(model), "catalog model insert needs validated input")
 
     params := queries.Insert_Catalog_Model_Params {
         public_model_id      = model.info.id,
-        provider_id          = model.info.provider,
+        provider_id          = provider_id,
         upstream_id          = model.upstream_id,
         name                 = model.info.name,
         context_window       = model.info.context_window,
@@ -262,8 +250,6 @@ catalog_load :: proc(s: ^Store, allocator := context.allocator) -> (catalog: Cat
         }
     }
 
-    if !catalog_loaded_valid(loaded) do return {}, .Invalid_Row
-
     return loaded, nil
 }
 
@@ -319,7 +305,7 @@ catalog_provider_from_row :: proc(
         name = row.name,
         endpoint = {base_url = row.base_url, protocol = protocol},
     }
-    if !catalog_provider_valid(borrowed, etag) do return item, .Invalid_Row
+    if !catalog_provider_row_valid(borrowed, etag) do return item, .Invalid_Row
 
     item.models.allocator = allocator
     item.endpoint.protocol = protocol
@@ -440,8 +426,7 @@ catalog_model_from_row :: proc(
         max_tokens_field = max_tokens_field,
     }
 
-    // Levels arrive later, so `catalog_loaded_valid` makes the level check.
-    if !catalog_model_shape_valid(borrowed) do return {}, .Invalid_Row
+    if !catalog_model_row_valid(borrowed) do return {}, .Invalid_Row
 
     return model_catalog.model_clone(borrowed, provider_id, allocator), nil
 }
@@ -460,7 +445,7 @@ catalog_model_levels_load :: proc(s: ^Store, catalog: ^Catalog) -> Error {
         row: Catalog_Model_Level_Row
         sqlite.scan_row(st, &row, catalog.allocator) or_return
 
-        if !catalog_bounded_string_valid(row.level, 32) do return .Invalid_Row
+        if !utf8.valid_string(row.level) do return .Invalid_Row
 
         levels, found := catalog_model_levels_find(catalog, row.public_model_id)
         if !found ||
@@ -488,119 +473,28 @@ catalog_loaded_model_finalize :: proc(model: ^model_catalog.Model, allocator: me
     return nil
 }
 
+// What a stored row must satisfy that no CHECK can express: UTF-8, which SQLite never
+// enforces on TEXT, and the endpoint URL grammar.
 @(private)
-catalog_provider_valid :: proc(item: model_catalog.Provider, feed_etag: string) -> bool {
-    if wire.provider_id_validate(item.id) != .None ||
-       wire.provider_id_validate(item.source_id) != .None ||
-       !catalog_bounded_string_valid(item.name, 128) ||
-       !catalog_bounded_string_valid(item.endpoint.base_url, 4096) ||
-       provider.endpoint_validate(item.endpoint) != .None ||
-       len(item.credential_env) > CATALOG_CREDENTIAL_ENV_MAX {
-        return false
-    }
-
-    if feed_etag != "" && !catalog_bounded_string_valid(feed_etag, CATALOG_ETAG_MAX_BYTES) do return false
-
-    for name, i in item.credential_env {
-        if !model_catalog.env_name_valid(name) do return false
-
-        for previous in item.credential_env[:i] {
-            if previous == name do return false
-        }
-    }
-
-    return true
-}
-
-// Everything but the reasoning levels, which their own rows supply later.
-@(private)
-catalog_model_shape_valid :: proc(model: model_catalog.Model) -> bool {
+catalog_provider_row_valid :: proc(item: model_catalog.Provider, feed_etag: string) -> bool {
     return(
-        wire.provider_id_validate(model.info.provider) == .None &&
-        catalog_public_model_id_valid(model.info.id, model.info.provider) &&
-        catalog_bounded_string_valid(model.info.name, 128) &&
-        catalog_bounded_string_valid(model.upstream_id, 128) &&
-        model.info.context_window > 0 &&
-        model.info.context_window <= wire.MAX_WIRE_INTEGER &&
-        model.info.max_output_tokens > 0 &&
-        model.info.max_output_tokens <= wire.MAX_WIRE_INTEGER &&
-        catalog_bounded_string_valid(model.endpoint.base_url, 4096) &&
-        provider.endpoint_validate(model.endpoint) == .None &&
-        model_catalog.reasoning_shape_compatible(model) &&
-        catalog_budget_valid(model) \
+        utf8.valid_string(item.name) &&
+        utf8.valid_string(item.endpoint.base_url) &&
+        utf8.valid_string(feed_etag) &&
+        provider.endpoint_validate(item.endpoint) == .None \
     )
 }
 
+// The model twin of `catalog_provider_row_valid`.
 @(private)
-catalog_model_valid :: proc(model: model_catalog.Model) -> bool {
+catalog_model_row_valid :: proc(model: model_catalog.Model) -> bool {
     return(
-        wire.model_info_validate(model.info) == .None &&
-        catalog_model_shape_valid(model) &&
-        catalog_reasoning_levels_valid(model.info.reasoning_levels, model.info.default_reasoning) \
+        utf8.valid_string(string(model.info.id)) &&
+        utf8.valid_string(model.info.name) &&
+        utf8.valid_string(model.upstream_id) &&
+        utf8.valid_string(model.endpoint.base_url) &&
+        provider.endpoint_validate(model.endpoint) == .None \
     )
-}
-
-@(private)
-catalog_budget_valid :: proc(model: model_catalog.Model) -> bool {
-    minimum, has_minimum := model.reasoning_budget_min.?
-    maximum, has_maximum := model.reasoning_budget_max.?
-
-    if has_minimum && (minimum < -1 || minimum > wire.MAX_WIRE_INTEGER) do return false
-
-    if has_maximum && maximum > u64(wire.MAX_WIRE_INTEGER) do return false
-
-    return !has_minimum || !has_maximum || minimum <= i64(maximum)
-}
-
-@(private)
-catalog_reasoning_levels_valid :: proc(levels: []string, default: string) -> bool {
-    if len(levels) > wire.LIMITS.max_reasoning_levels || default != model_catalog.default_reasoning_level(levels) do return false
-
-    for level, i in levels {
-        if !catalog_bounded_string_valid(level, 32) do return false
-
-        for previous in levels[:i] {
-            if previous == level do return false
-        }
-    }
-
-    return true
-}
-
-@(private)
-catalog_public_model_id_valid :: proc(id: wire.Model_Id, provider_id: wire.Provider_Id) -> bool {
-    if !catalog_bounded_string_valid(id, 128) ||
-       len(id) <= len(provider_id) + 1 ||
-       !strings.has_prefix(id, provider_id) ||
-       id[len(provider_id)] != '/' {
-        return false
-    }
-
-    return utf8.valid_string(id[len(provider_id) + 1:])
-}
-
-@(private)
-catalog_loaded_valid :: proc(catalog: Catalog) -> bool {
-    if len(catalog.providers) > CATALOG_PROVIDERS_MAX do return false
-
-    total := 0
-
-    for item, i in catalog.providers {
-        if !catalog_provider_valid(item, catalog.feed_etag) do return false
-
-        for previous in catalog.providers[:i] {
-            if previous.id == item.id do return false
-        }
-
-        total += len(item.models)
-        if total > CATALOG_MODELS_MAX do return false
-
-        for model in item.models {
-            if model.info.provider != item.id || !catalog_model_valid(model) do return false
-        }
-    }
-
-    return true
 }
 
 @(private)
@@ -635,7 +529,6 @@ catalog_ordinal_fill :: proc(
     allocator: mem.Allocator,
 ) -> Error {
     assert(slot != nil, "ordinal fill needs a slot")
-    assert(ordinal >= 0 && u64(ordinal) < total, "ordinal fill stays within its total")
 
     if ordinal == 0 {
         if slot^ != nil do return .Invalid_Row
@@ -647,11 +540,4 @@ catalog_ordinal_fill :: proc(
     slot^[ordinal] = string_clone(value, allocator)
 
     return nil
-}
-
-@(private)
-catalog_bounded_string_valid :: proc(value: string, max_bytes: int) -> bool {
-    assert(max_bytes > 0, "a catalog string bound is positive")
-
-    return len(value) > 0 && len(value) <= max_bytes && utf8.valid_string(value)
 }

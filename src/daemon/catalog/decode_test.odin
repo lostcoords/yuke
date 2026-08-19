@@ -1,6 +1,7 @@
 package catalog
 
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 import "src:provider"
@@ -74,6 +75,31 @@ test_reasoning_shape_must_match_the_protocol :: proc(t: ^testing.T) {
 
     responses.reasoning_replay = .Reasoning_Details
     testing.expect(t, !reasoning_shape_compatible(responses), "replay is an OpenAI-chat field")
+}
+
+// A skipped provider is walked, not parsed: a malformed token in one is refused, while a
+// structural fault in a subtree nobody selected leaves the selected provider alone.
+@(test)
+test_skipped_provider_faults_are_scoped_to_their_subtree :: proc(t: ^testing.T) {
+    selections := [?]Selection{{provider_id = "openai", source_id = "openai"}}
+
+    good := `"openai":{"id":"openai","env":["OPENAI_API_KEY"],"npm":"@ai-sdk/openai",
+        "name":"OpenAI","models":{}}`
+
+    // A token the tokenizer refuses inside a skipped subtree fails the whole feed.
+    broken := strings.concatenate({`{"ignored":{"a":@},`, good, `}`}, context.temp_allocator)
+    _, broken_err := decode(transmute([]byte)broken, selections[:])
+    testing.expect_value(t, broken_err, Error.Invalid_Json)
+
+    // A missing colon tokenizes cleanly and stays inside the subtree that is skipped.
+    sloppy := strings.concatenate({`{"ignored":{"a" "b"},`, good, `}`}, context.temp_allocator)
+    result, err := decode(transmute([]byte)sloppy, selections[:])
+    testing.expect_value(t, err, Error.None)
+    if err != .None do return
+    defer result_destroy(&result)
+
+    testing.expect_value(t, len(result.providers), 1)
+    testing.expect_value(t, len(result.issues), 0)
 }
 
 @(test)

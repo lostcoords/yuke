@@ -48,9 +48,6 @@ decode :: proc(data: []byte, selections: []Selection, allocator := context.alloc
 
     if len(data) > FEED_MAX_BYTES do return result, .Response_Too_Large
 
-    syntax := json.make_parser(data, .JSON, true, mem.nil_allocator())
-    if !json.validate_value(&syntax) || syntax.curr_token.kind != .EOF do return result, .Invalid_Json
-
     scratch: virtual.Arena
     _ = virtual.arena_init_growing(&scratch)
     defer virtual.arena_destroy(&scratch)
@@ -191,7 +188,7 @@ skip_value :: proc(parser: ^json.Parser) -> Error {
             case .Close_Brace, .Close_Bracket:
                 depth -= 1
 
-            case .EOF:
+            case .Invalid, .EOF:
                 return .Invalid_Json
             }
             json.advance_token(parser)
@@ -199,7 +196,7 @@ skip_value :: proc(parser: ^json.Parser) -> Error {
             if depth == 0 do return .None
         }
 
-    case .EOF:
+    case .Invalid, .EOF:
         return .Invalid_Json
 
     case:
@@ -393,6 +390,8 @@ model_normalize :: proc(
     out.max_tokens_field = max_tokens_field_resolve(npm, endpoint.protocol)
 
     if wire.model_info_validate(out.info) != .None do return .Filtered
+
+    if !reasoning_shape_compatible(out^) do return .Filtered
 
     return .None
 }

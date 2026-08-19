@@ -38,13 +38,8 @@ Provider_Error :: enum {
     Invalid,
 }
 
-// A row stores the request builder's own value rather than a second vocabulary that has to
-// be translated on the way out, which is how `max_tokens_field` has always worked.
-#assert(len(provider.Openai_Thinking_Format) == 9)
-#assert(len(provider.Openai_Reasoning_Replay) == 4)
-#assert(len(provider.Openai_Max_Tokens_Field) == 2)
-
-// Persisted names for the closed enums the store keeps on a model row.
+// Persisted names for the closed enums the store keeps on a model row. A row stores the
+// request builder's own value rather than a second vocabulary translated on the way out.
 @(rodata)
 reasoning_replay_string := [provider.Openai_Reasoning_Replay]string {
     .None              = "none",

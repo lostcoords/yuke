@@ -162,9 +162,9 @@ test_catalog_replace_is_transactional :: proc(t: ^testing.T) {
     // A model the schema refuses aborts the whole replacement, so the old snapshot stands
     // rather than being deleted and half-rewritten.
     broken := test_catalog_provider(t, "openai", "gpt-6")
-    broken.models[0].endpoint.base_url = "https://api.openai.com/v1\x00truncated"
+    broken.models[0].anthropic_adaptive = true
 
-    testing.expect_value(t, catalog_imported_replace(s, broken, ""), Store_Error.Invalid_Catalog)
+    testing.expect_value(t, catalog_imported_replace(s, broken, ""), sqlite.Result.Constraint)
 
     catalog, load_err := catalog_load(s)
     testing.expect_value(t, load_err, nil)
@@ -176,26 +176,69 @@ test_catalog_replace_is_transactional :: proc(t: ^testing.T) {
     }
 }
 
+// Row shape belongs to the schema, not to a screen in Odin.
 @(test)
-test_catalog_input_is_validated_before_replacement :: proc(t: ^testing.T) {
+test_catalog_replace_defers_row_shape_to_the_schema :: proc(t: ^testing.T) {
     s, err := open_memory()
     testing.expect_value(t, err, nil)
     defer close(s)
 
-    // The default level is derived, never authored: one that disagrees with the level set
-    // is refused before a single row is written.
-    item := test_catalog_provider(t, "openai", "gpt-5")
-    item.models[0].info.default_reasoning = "wrong"
-    testing.expect_value(t, catalog_imported_replace(s, item, ""), Store_Error.Invalid_Catalog)
+    // A public id that does not open with its provider id fails the prefix check.
+    prefix := test_catalog_provider(t, "openai", "gpt-5")
+    prefix.models[0].info.id = wire.Model_Id("xai/gpt-5")
+    testing.expect_value(t, catalog_imported_replace(s, prefix, ""), sqlite.Result.Constraint)
 
-    // A model naming another provider cannot ride in on this provider's snapshot.
-    mismatched := test_catalog_provider(t, "openai", "gpt-5")
-    mismatched.models[0].info.provider = "xai"
-    testing.expect_value(t, catalog_imported_replace(s, mismatched, ""), Store_Error.Invalid_Catalog)
+    // Two models sharing a public id collide on the primary key.
+    duplicate := test_catalog_provider(t, "openai", "gpt-5", "gpt-5")
+    testing.expect_value(t, catalog_imported_replace(s, duplicate, ""), sqlite.Result.Constraint)
 
     count, count_err := sqlite.query_one_i64(s.writer, "SELECT count(*) FROM catalog_providers")
     testing.expect_value(t, count_err, sqlite.Result.Ok)
     testing.expect_value(t, count, i64(0))
+}
+
+// A model is written under the snapshot's own provider, so a stale `info.provider` moves
+// nothing.
+@(test)
+test_catalog_model_is_written_under_its_snapshot_provider :: proc(t: ^testing.T) {
+    s, err := open_memory()
+    testing.expect_value(t, err, nil)
+    defer close(s)
+
+    item := test_catalog_provider(t, "openai", "gpt-5")
+    item.models[0].info.provider = "xai"
+    testing.expect_value(t, catalog_imported_replace(s, item, ""), nil)
+
+    catalog, load_err := catalog_load(s)
+    testing.expect_value(t, load_err, nil)
+    defer catalog_destroy(&catalog)
+
+    if testing.expect_value(t, len(catalog.providers), 1) &&
+       testing.expect_value(t, len(catalog.providers[0].models), 1) {
+        testing.expect_value(t, catalog.providers[0].models[0].info.provider, "openai")
+    }
+}
+
+// `default_reasoning` is derived on load and never persisted, so an authored value cannot
+// survive to disagree with the level set.
+@(test)
+test_catalog_default_reasoning_is_derived_not_stored :: proc(t: ^testing.T) {
+    s, err := open_memory()
+    testing.expect_value(t, err, nil)
+    defer close(s)
+
+    item := test_catalog_provider(t, "openai", "gpt-5")
+    item.models[0].info.default_reasoning = "wrong"
+    testing.expect_value(t, catalog_imported_replace(s, item, ""), nil)
+
+    catalog, load_err := catalog_load(s)
+    testing.expect_value(t, load_err, nil)
+    defer catalog_destroy(&catalog)
+
+    if testing.expect_value(t, len(catalog.providers), 1) &&
+       testing.expect_value(t, len(catalog.providers[0].models), 1) {
+        testing.expect_value(t, catalog.providers[0].models[0].info.default_reasoning, "medium")
+    }
 }
 
 @(test)
@@ -297,20 +340,21 @@ test_catalog_load_rejects_corrupt_rows_without_leaking_prefix :: proc(t: ^testin
     testing.expect_value(t, len(track.bad_free_array), 0)
 }
 
+// The URL grammar is the row rule no CHECK expresses, so it is checked while the columns
+// are still borrowed, before anything is cloned.
 @(test)
 test_catalog_load_validates_borrowed_text_before_cloning :: proc(t: ^testing.T) {
     s, err := open_memory()
     testing.expect_value(t, err, nil)
     defer close(s)
 
-    testing.expect_value(t, sqlite.exec(s.writer, "PRAGMA ignore_check_constraints = ON"), sqlite.Result.Ok)
     testing.expect_value(
         t,
         sqlite.exec(
             s.writer,
             `INSERT INTO catalog_providers(provider_id, models_dev_id, name, base_url, protocol)
-             VALUES (printf('%1000s', 'x'), 'openai', 'Corrupt',
-                     'https://example.test/v1', 'openai-responses')`,
+             VALUES ('openai', 'openai', 'Corrupt',
+                     'https://example.test/v1/', 'openai-responses')`,
         ),
         sqlite.Result.Ok,
     )

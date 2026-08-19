@@ -65,7 +65,9 @@ CREATE TABLE catalog_provider_env (
     ordinal     INTEGER NOT NULL CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 31),
     name        TEXT NOT NULL CHECK (
         typeof(name) = 'text' AND
-        length(CAST(name AS BLOB)) BETWEEN 1 AND 128
+        length(CAST(name AS BLOB)) BETWEEN 1 AND 128 AND
+        name GLOB '[A-Za-z_]*' AND
+        name NOT GLOB '*[^A-Za-z0-9_]*'
     ),
 
     PRIMARY KEY (provider_id, ordinal),
@@ -125,10 +127,21 @@ CREATE TABLE catalog_models (
     CHECK (reasoning_budget_min IS NULL OR reasoning_budget_max IS NULL OR reasoning_budget_min <= reasoning_budget_max),
     CHECK (typeof(supports_vision) = 'integer' AND supports_vision IN (0, 1)),
     CHECK (typeof(supports_tools)  = 'integer' AND supports_tools  IN (0, 1)),
-    CHECK (typeof(cost_input)       = 'real' AND cost_input       >= 0),
-    CHECK (typeof(cost_output)      = 'real' AND cost_output      >= 0),
-    CHECK (typeof(cost_cache_read)  = 'real' AND cost_cache_read  >= 0),
-    CHECK (typeof(cost_cache_write) = 'real' AND cost_cache_write >= 0)
+    CHECK (typeof(cost_input)       = 'real' AND cost_input       BETWEEN 0 AND 1.7976931348623157e308),
+    CHECK (typeof(cost_output)      = 'real' AND cost_output      BETWEEN 0 AND 1.7976931348623157e308),
+    CHECK (typeof(cost_cache_read)  = 'real' AND cost_cache_read  BETWEEN 0 AND 1.7976931348623157e308),
+    CHECK (typeof(cost_cache_write) = 'real' AND cost_cache_write BETWEEN 0 AND 1.7976931348623157e308),
+
+    -- Provider ids admit no GLOB metacharacter, so the pattern is a literal prefix.
+    CHECK (public_model_id GLOB (provider_id || '/?*')),
+
+    -- Each protocol admits only its own reasoning fields.
+    CHECK (
+        (protocol = 'anthropic-messages' AND thinking_format = 'none' AND reasoning_replay = 'none') OR
+        (protocol = 'openai-completions' AND anthropic_adaptive = 0) OR
+        (protocol = 'openai-responses'   AND thinking_format = 'none' AND reasoning_replay = 'none'
+                                         AND anthropic_adaptive = 0)
+    )
 ) WITHOUT ROWID;
 
 -- Ordered user-facing reasoning controls for a model. The deterministic default is
