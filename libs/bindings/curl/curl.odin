@@ -2,7 +2,6 @@ package curl
 
 import "base:runtime"
 import "core:nbio"
-import "core:strings"
 import "core:sync"
 import "core:time"
 
@@ -33,7 +32,10 @@ TICK_MAX :: 10 * time.Millisecond
 // One request header, name and value unjoined. Declared here rather than borrowed
 // from `libs:http` so a binding depends on nothing but its C library.
 Header :: struct {
+    // Empty not allowed
     name:  string,
+
+    // Empty is permitted: RFC 9110
     value: string,
 }
 
@@ -211,15 +213,11 @@ Client :: struct {
 @(private)
 global_init_once: sync.Once
 
-// Outcome of the one `curl_global_init`, latched for every later `client_init`.
-// Allocation and TLS-backend startup can fail there, which is an operating
-// error and not ours to assert on.
+// Outcome of the one `curl_global_init`, reused by every later `client_init`.
 @(private)
 global_init_code: Code
 
-// Initialized exactly once per process and never cleaned up: `curl_global_cleanup`
-// would tear the library down under a second client living in the same process,
-// which is exactly what a test binary has.
+// One-time process init; never cleaned up so a second client in the same process keeps working.
 @(private)
 global_init :: proc() {
     global_init_code = c_global_init(GLOBAL_DEFAULT)
@@ -499,8 +497,8 @@ transfer_release :: proc(transfer: ^Transfer) {
     // Release has no error channel and the handle is destroyed either way; a refused
     // removal is libcurl's code to report, not ours to assert on.
     _ = c_multi_remove_handle(c.multi, transfer.easy)
-
     c_easy_cleanup(transfer.easy)
+
     c.in_curl = false
     transfer.easy = nil
 
@@ -596,7 +594,7 @@ field_value_valid :: proc(value: string) -> bool {
 }
 
 // Joins `headers` into a curl list, freeing the partial list on failure. Empty
-// values are rejected: libcurl reads `Name:` as "suppress", `Name;` as "empty".
+// values are accepted. (RFC 9110).
 @(private)
 build_headers :: proc(headers: []Header) -> (out: ^Slist, err: Error) {
     line: [HEADER_LINE_MAX]byte
@@ -605,19 +603,26 @@ build_headers :: proc(headers: []Header) -> (out: ^Slist, err: Error) {
     list: ^Slist
     defer if err != .None do c_slist_free_all(list)
 
-    for header, i in headers {
-        for previous in headers[:i] {
-            assert(!strings.equal_fold(header.name, previous.name), "a request must not repeat a header name")
-        }
-
+    for header in headers {
         if !field_name_valid(header.name) || !field_value_valid(header.value) do return nil, .Invalid_Request
 
-        // `": "` and the nul terminator.
-        if len(header.value) == 0 || len(header.name) + len(header.value) + 3 > len(line) do return nil, .Invalid_Request
+        // Empty values use `;` so libcurl sees `Name;` ("send empty value")
+        // rather than `Name:` ("suppress this header").
+        at: int
+        if len(header.value) == 0 {
+            // `;` and the nul terminator. (+2)
+            if len(header.name) + 2 > len(line) do return nil, .Invalid_Request
 
-        at := copy(line[:], header.name)
-        at += copy(line[at:], ": ")
-        at += copy(line[at:], header.value)
+            at = copy(line[:], header.name)
+            at += copy(line[at:], ";")
+        } else {
+            // `: ` and the nul terminator. (+3)
+            if len(header.name) + len(header.value) + 3 > len(line) do return nil, .Invalid_Request
+
+            at = copy(line[:], header.name)
+            at += copy(line[at:], ": ")
+            at += copy(line[at:], header.value)
+        }
         line[at] = 0
 
         // A failed append leaves the previous list intact and still owned here.

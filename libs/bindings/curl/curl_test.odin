@@ -770,7 +770,6 @@ test_curl_rejects_unsendable_headers :: proc(t: ^testing.T) {
     cases := [?][]Header {
         {{name = "authorization", value = "Bearer x\r\nx-injected: yes"}},
         {{name = "x bad name", value = "yes"}},
-        {{name = "accept", value = ""}},
         {{name = "authorization", value = long}},
     }
 
@@ -788,6 +787,33 @@ test_curl_rejects_unsendable_headers :: proc(t: ^testing.T) {
     }
 
     client_destroy(&c)
+}
+
+// Empty values must reach the wire as `Name:` rather than be silently dropped
+// by libcurl. The wrapper writes `Name;` so curl's slist parser treats it as
+// "send this header with an empty value" instead of "suppress this header".
+@(test)
+test_curl_build_headers_accepts_empty_values :: proc(t: ^testing.T) {
+    headers := []Header {
+        {name = "accept", value = ""},
+        {name = "authorization", value = "Bearer x"},
+    }
+    list, err := build_headers(headers)
+    defer c_slist_free_all(list)
+
+    testing.expect_value(t, err, Error.None)
+    testing.expect_value(t, list != nil, true)
+
+    expected := []string{"accept;", "authorization: Bearer x"}
+    i := 0
+    node := list
+    for node != nil {
+        testing.expect_value(t, i < len(expected), true)
+        testing.expect_value(t, string(node.data), expected[i])
+        node = node.next
+        i += 1
+    }
+    testing.expect_value(t, i, len(expected))
 }
 
 // `field_name_valid` and `field_value_valid` are copies of the `libs:http` originals,
