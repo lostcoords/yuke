@@ -40,18 +40,34 @@ test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Post_Field_Size), 60)
     testing.expect_value(t, int(Option.Connect_Timeout), 78)
     testing.expect_value(t, int(Option.Http_Get), 80)
+    testing.expect_value(t, int(Multi_Option.Socket_Function), 20001)
+    testing.expect_value(t, int(Multi_Option.Timer_Function), 20004)
     testing.expect_value(t, int(Option.No_Signal), 99)
     testing.expect_value(t, int(Option.Pipe_Wait), 237)
     testing.expect_value(t, int(Option.Connect_Only), 141)
     testing.expect_value(t, int(Option.Http_Version), 84)
     testing.expect_value(t, int(Option.Ca_Info), 10065)
     testing.expect_value(t, HTTP_VERSION_1_1, 2)
+    testing.expect_value(t, int(Sock_Family.Inet), int(SOCK_FAMILY_INET))
+    testing.expect_value(t, int(Sock_Family.Inet6), int(SOCK_FAMILY_INET6))
+    testing.expect_value(t, int(Sock_Type.Stream), int(SOCK_TYPE_STREAM))
+    testing.expect_value(t, int(Sock_Type.Dgram), int(SOCK_TYPE_DGRAM))
+    testing.expect_value(t, int(Socket_Purpose.Connect), 0)
+    testing.expect_value(t, GLOBAL_DEFAULT, c.long(3))
     testing.expect_value(t, int(Info.Active_Socket), 5242924)
     testing.expect_value(t, int(Info.Response_Code), 2097154)
     testing.expect_value(t, int(Code.Write_Error), 23)
     testing.expect_value(t, int(Code.Aborted_By_Callback), 42)
     testing.expect_value(t, int(Multi_Code.Call_Multi_Perform), -1)
     testing.expect_value(t, int(Msg_Kind.Done), 1)
+    testing.expect_value(t, int(Poll.None), 0)
+    testing.expect_value(t, int(Poll.In), 1)
+    testing.expect_value(t, int(Poll.Out), 2)
+    testing.expect_value(t, int(Poll.In_Out), 3)
+    testing.expect_value(t, int(Poll.Remove), 4)
+    testing.expect_value(t, transmute(c.int)Cselect_Bits{.In}, 0x01)
+    testing.expect_value(t, transmute(c.int)Cselect_Bits{.Out}, 0x02)
+    testing.expect_value(t, transmute(c.int)Cselect_Bits{.Err}, 0x04)
 }
 
 @(test)
@@ -732,6 +748,140 @@ test_curl_starts_a_transfer_from_on_done :: proc(t: ^testing.T) {
     fixture_teardown(t, &f)
 }
 
+Immediate_Growth_Obs :: struct {
+    client:       ^Client,
+    transfers:    [3]Transfer,
+    calls:        int,
+    codes:        [3]Code,
+    start_errors: [2]Error,
+    done:         bool,
+}
+
+immediate_growth_on_done :: proc(user: rawptr, result: Result) {
+    o := (^Immediate_Growth_Obs)(user)
+    assert(o.calls < len(o.codes), "immediate completion callback overflowed its observation")
+
+    o.codes[o.calls] = result.code
+    o.calls += 1
+
+    if o.calls == 1 {
+        for i in 1 ..< len(o.transfers) {
+            o.start_errors[i - 1] = transfer_start(
+                &o.transfers[i],
+                o.client,
+                Request{url = "bad://host/", method = .Get},
+                Callbacks{on_done = immediate_growth_on_done},
+                o,
+            )
+        }
+    }
+
+    if o.calls == len(o.transfers) do o.done = true
+}
+
+// An On_Done callback may reserve the completion scratch while its current batch
+// is being dispatched. Starting two transfers here forces that growth from one
+// slot to at least two without invalidating the batch being walked.
+@(test)
+test_curl_completion_dispatch_survives_scratch_growth :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    o := Immediate_Growth_Obs {
+        client = &c,
+    }
+    err := transfer_start(
+        &o.transfers[0],
+        &c,
+        Request{url = "bad://host/", method = .Get},
+        Callbacks{on_done = immediate_growth_on_done},
+        &o,
+    )
+    testing.expect_value(t, err, Error.None)
+    if !o.done do ts.nbio_run_until(t, &o.done, "immediate curl completions")
+
+    testing.expect_value(t, o.calls, len(o.transfers))
+    for code in o.codes {
+        testing.expect_value(t, code, Code.Unsupported_Protocol)
+    }
+
+    for start_error in o.start_errors {
+        testing.expect_value(t, start_error, Error.None)
+    }
+
+    testing.expect(t, cap(c.completed) >= 2, "the callback must grow the completion scratch")
+    testing.expect_value(t, len(c.live), 0)
+    client_destroy(&c)
+}
+
+Immediate_Chain_Obs :: struct {
+    client:      ^Client,
+    transfer:    Transfer,
+    calls:       int,
+    target:      int,
+    start_error: Error,
+    wrong_code:  bool,
+    done:        bool,
+}
+
+immediate_chain_on_done :: proc(user: rawptr, result: Result) {
+    o := (^Immediate_Chain_Obs)(user)
+    assert(o.calls < o.target, "immediate completion chain exceeded its target")
+
+    o.calls += 1
+    if result.code != .Unsupported_Protocol do o.wrong_code = true
+
+    if o.calls == o.target {
+        o.done = true
+        return
+    }
+
+    o.start_error = transfer_start(
+        &o.transfer,
+        o.client,
+        Request{url = "bad://host/", method = .Get},
+        Callbacks{on_done = immediate_chain_on_done},
+        o,
+    )
+    if o.start_error != .None do o.done = true
+}
+
+// Immediate failures can be retried from On_Done without recursive pump frames.
+// A long chain keeps constant stack depth while exercising the same Transfer.
+@(test)
+test_curl_immediate_completion_chain_is_iterative :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    o := Immediate_Chain_Obs {
+        client = &c,
+        target = 10_000,
+    }
+    err := transfer_start(
+        &o.transfer,
+        &c,
+        Request{url = "bad://host/", method = .Get},
+        Callbacks{on_done = immediate_chain_on_done},
+        &o,
+    )
+    testing.expect_value(t, err, Error.None)
+    if !o.done do ts.nbio_run_until(t, &o.done, "immediate curl completion chain")
+
+    testing.expect_value(t, o.calls, o.target)
+    testing.expect_value(t, o.start_error, Error.None)
+    testing.expect(t, !o.wrong_code, "every malformed transfer must report the same curl code")
+    testing.expect_value(t, len(c.live), 0)
+    client_destroy(&c)
+}
+
 // A refused connection is an operating error, not a crash: it comes back through
 // the ordinary done path with curl's own code, no HTTP status, and the reason
 // text libcurl wrote into the transfer's error buffer.
@@ -1099,8 +1249,7 @@ test_connect_only_dies_on_multi_remove :: proc(t: ^testing.T) {
 
 // A parked connect-only handle asks nothing of the pump: curl reports no timeout and
 // no running transfer, and `curl_easy_send`/`curl_easy_recv` work with no
-// `curl_multi_perform` in between. `client_period` maps that `-1` to `TICK_MAX`, so
-// such a handle must stay out of the live set or it arms a 10ms timer forever.
+// `curl_multi_socket_action` in between.
 @(test)
 test_connect_only_parked_asks_nothing_of_the_pump :: proc(t: ^testing.T) {
     p, ok := connect_only_pair(t)
@@ -1141,6 +1290,23 @@ dial_on_connect :: proc(user: rawptr, result: Result) {
     o.calls += 1
     o.code = result.code
     o.done = true
+}
+
+// A request rejected before setup still lands in Closed, matching the error
+// contract and making unconditional cleanup safe.
+@(test)
+test_socket_rejected_request_is_closed :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    o: Dial_Obs
+    testing.expect_value(t, socket_connect(&o.socket, loop, {}, dial_on_connect, &o), Error.Invalid_Request)
+    testing.expect_value(t, o.socket.state, Socket_State.Closed)
+    testing.expect_value(t, o.calls, 0)
+
+    socket_destroy(&o.socket)
+    testing.expect_value(t, o.socket.state, Socket_State.Closed)
 }
 
 // The whole point of the connect-only socket: it dials on the loop, then carries raw
@@ -1252,6 +1418,8 @@ test_socket_destroy_during_dial_is_silent :: proc(t: ^testing.T) {
 
     socket_destroy(&o.socket)
     testing.expect_value(t, o.socket.state, Socket_State.Closed)
+    socket_destroy(&o.socket)
+    testing.expect_value(t, o.socket.state, Socket_State.Closed)
 
     // Nothing is left to run; any stray callback would have to come from the loop.
     for _ in 0 ..< 20 {
@@ -1259,4 +1427,36 @@ test_socket_destroy_during_dial_is_silent :: proc(t: ^testing.T) {
     }
 
     testing.expect_value(t, o.calls, 0)
+}
+
+// Connect_Timeout covers the TLS handshake as well as DNS and TCP. A peer that
+// accepts and never speaks TLS must therefore still complete with a timeout.
+@(test)
+test_socket_tls_handshake_stall_times_out :: proc(t: ^testing.T) {
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    listener, lerr := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+    testing.expect_value(t, lerr, nil)
+    defer net.close(listener)
+
+    endpoint, eerr := net.bound_endpoint(listener)
+    testing.expect_value(t, eerr, nil)
+
+    o: Dial_Obs
+    url := fmt.ctprintf("https://127.0.0.1:%d/", endpoint.port)
+    testing.expect_value(
+        t,
+        socket_connect(&o.socket, loop, {url = url, connect_timeout = time.Second}, dial_on_connect, &o),
+        Error.None,
+    )
+    defer socket_destroy(&o.socket)
+
+    nbio.run_until(&o.done)
+
+    testing.expect_value(t, o.calls, 1)
+    testing.expect_value(t, o.code, Code.Operation_Timedout)
+    testing.expect_value(t, o.socket.state, Socket_State.Failed)
+    testing.expect(t, o.socket.timer_op == nil, "a failed dial must leave no timer armed")
 }

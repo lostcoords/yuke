@@ -529,6 +529,73 @@ when ODIN_OS == .Windows {
 // `CURL_SOCKET_BAD`: what `Active_Socket` reports once a handle has no connection.
 SOCKET_BAD :: Socket_Handle(~uintptr(0)) when ODIN_OS == .Windows else Socket_Handle(-1)
 
+// `CURL_SOCKET_TIMEOUT`: pass to `socket_action` when curl's timer fires.
+SOCKET_TIMEOUT :: SOCKET_BAD
+
+// `CURL_POLL_*` from `CURLMOPT_SOCKETFUNCTION`. Exclusive: curl sends exactly one.
+Poll :: enum c.int {
+    None   = 0,
+    In     = 1,
+    Out    = 2,
+    In_Out = 3,
+    Remove = 4,
+}
+
+// `CURL_CSELECT_*` for `curl_multi_socket_action`. A mask: IN and OUT can both be set.
+Cselect :: enum {
+    In,
+    Out,
+    Err,
+}
+Cselect_Bits :: bit_set[Cselect;c.int]
+
+// `CURLMoption`. Same type-tag encoding as `Option`.
+Multi_Option :: enum c.int {
+    Socket_Function = OPTTYPE_FUNCTIONPOINT + 1,
+    Socket_Data     = OPTTYPE_OBJECTPOINT + 2,
+    Timer_Function  = OPTTYPE_FUNCTIONPOINT + 4,
+    Timer_Data      = OPTTYPE_OBJECTPOINT + 5,
+}
+
+// `curl_socket_callback`.
+Socket_Callback :: #type proc "c" (easy: ^Easy, fd: Socket_Handle, what: Poll, user: rawptr, socketp: rawptr) -> c.int
+
+// `curl_multi_timer_callback`. `timeout_ms` is -1 to drop the timer, 0 to run soon.
+Timer_Callback :: #type proc "c" (multi: ^Multi, timeout_ms: c.long, user: rawptr) -> c.int
+
+// `AF_*` as curl writes them on `curl_sockaddr.family`.
+Sock_Family :: enum c.int {
+    Inet  = SOCK_FAMILY_INET,
+    Inet6 = SOCK_FAMILY_INET6,
+}
+
+// `SOCK_*` as curl writes them on `curl_sockaddr.socktype`.
+Sock_Type :: enum c.int {
+    Stream = SOCK_TYPE_STREAM,
+    Dgram  = SOCK_TYPE_DGRAM,
+}
+
+// `CURLSOCKTYPE_*` for `Option.Open_Socket_Function`.
+Socket_Purpose :: enum c.int {
+    Connect = 0,
+    Accept  = 1,
+}
+
+// `curl_sockaddr` as passed to `Option.Open_Socket_Function`. Only family/socktype
+// are read; the trailing `sockaddr` is unused.
+Curl_Sockaddr :: struct {
+    family:   Sock_Family,
+    socktype: Sock_Type,
+    protocol: c.int,
+    addrlen:  c.uint,
+}
+
+// `curl_opensocket_callback`.
+Open_Socket_Callback :: #type proc "c" (user: rawptr, purpose: Socket_Purpose, addr: ^Curl_Sockaddr) -> Socket_Handle
+
+// `curl_closesocket_callback`.
+Close_Socket_Callback :: #type proc "c" (user: rawptr, fd: Socket_Handle) -> c.int
+
 // Message kind from `multi_info_read` (`CURLMSG`).
 Msg_Kind :: enum c.int {
     None = 0,
@@ -564,15 +631,15 @@ WRITEFUNC_ERROR :: c.size_t(0xFFFFFFFF)
 @(private)
 LONG_MAX :: int(max(c.long))
 
-// `CURL_HTTP_VERSION_1_1`, the only `Http_Version` value this package sets.
+// `CURL_HTTP_VERSION_1_1`.
 HTTP_VERSION_1_1 :: 2
 
 // Minimum size of the buffer handed to `Option.Error_Buffer` (`CURL_ERROR_SIZE`).
 ERROR_SIZE :: 256
 
-// `CURL_GLOBAL_DEFAULT` = `CURL_GLOBAL_SSL | CURL_GLOBAL_WIN32`.
+// `CURL_GLOBAL_DEFAULT` (`CURL_GLOBAL_SSL | CURL_GLOBAL_WIN32`).
 @(private)
-GLOBAL_DEFAULT :: 1 | 2
+GLOBAL_DEFAULT :: c.long(3)
 
 // foreign import itself cannot be @(private); the c_* decls below are.
 when ODIN_OS == .Windows {
@@ -622,6 +689,10 @@ foreign lib {
     c_multi_remove_handle :: proc(multi: ^Multi, easy: ^Easy) -> Multi_Code ---
     @(link_name = "curl_multi_perform")
     c_multi_perform :: proc(multi: ^Multi, running_handles: ^c.int) -> Multi_Code ---
+    @(link_name = "curl_multi_socket_action")
+    c_multi_socket_action :: proc(multi: ^Multi, s: Socket_Handle, ev_bitmask: c.int, running_handles: ^c.int) -> Multi_Code ---
+    @(link_name = "curl_multi_setopt")
+    c_multi_setopt :: proc(multi: ^Multi, option: Multi_Option, #c_vararg args: ..any) -> Multi_Code ---
     @(link_name = "curl_multi_timeout")
     c_multi_timeout :: proc(multi: ^Multi, milliseconds: ^c.long) -> Multi_Code ---
     @(link_name = "curl_multi_info_read")
@@ -669,6 +740,37 @@ setopt_write_cb :: proc(easy: ^Easy, option: Option, value: Write_Callback) -> C
     assert(value != nil, "setopt_write_cb needs a callback")
 
     return c_easy_setopt(easy, option, rawptr(value))
+}
+
+@(private)
+setopt_open_socket_cb :: proc(easy: ^Easy, value: Open_Socket_Callback) -> Code {
+    assert(easy != nil, "setopt_open_socket_cb needs an easy handle")
+    assert(value != nil, "setopt_open_socket_cb needs a callback")
+
+    return c_easy_setopt(easy, .Open_Socket_Function, rawptr(value))
+}
+
+@(private)
+setopt_close_socket_cb :: proc(easy: ^Easy, value: Close_Socket_Callback) -> Code {
+    assert(easy != nil, "setopt_close_socket_cb needs an easy handle")
+    assert(value != nil, "setopt_close_socket_cb needs a callback")
+
+    return c_easy_setopt(easy, .Close_Socket_Function, rawptr(value))
+}
+
+@(private)
+multi_setopt_ptr :: proc(multi: ^Multi, option: Multi_Option, value: rawptr) -> Multi_Code {
+    assert(multi != nil, "multi_setopt_ptr needs a multi handle")
+
+    return c_multi_setopt(multi, option, value)
+}
+
+@(private)
+multi_socket_action :: proc(multi: ^Multi, fd: Socket_Handle, mask: Cselect_Bits) -> Multi_Code {
+    assert(multi != nil, "multi_socket_action needs a multi handle")
+
+    running: c.int
+    return c_multi_socket_action(multi, fd, transmute(c.int)mask, &running)
 }
 
 // Reads a `long`-typed transfer info value.

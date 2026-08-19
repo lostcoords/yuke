@@ -2,25 +2,34 @@
 package curl is a minimal Odin binding to libcurl plus a streaming driver that
 runs libcurl's multi interface on a `core:nbio` event loop.
 
-Three layers, one package:
+Layers:
 
-  - `c.odin`: the raw FFI. `@(private)` `c_*` procedures, the `CURLcode` and
-    `CURLMcode` enums, the subset of `CURLoption` this driver sets, and the
-    typed `setopt_long` / `setopt_str` / `setopt_ptr` / `setopt_write_cb`
-    wrappers. `curl_easy_setopt` is variadic and therefore type-unsafe, so the
-    wrappers are its only callers; importers see none of this.
+  - `c.odin`: FFI, codes, options, and the typed setopt wrappers. `curl_easy_setopt`
+    is variadic; the wrappers are its only callers.
 
-  - `socket.odin`: `Socket`, a `Connect_Only` connection. libcurl performs the TCP
-    and TLS handshake on its own multi handle, then hands over raw
-    `socket_send`/`socket_recv`. The handle stays added to that multi for the
-    socket's whole life — removing it destroys the connection — but a connected
-    socket needs no pumping at all, so the dial's timer is dropped once it lands and
-    an idle socket costs nothing on the loop.
+  - `drive.odin`: one evented Drive for both `Client` and `Socket`. Curl's
+    `drive_on_socket`/`drive_on_timer` name the fds and the timeout; Drive arms
+    `nbio.poll`/`nbio.timeout` and calls `socket_action`. Each owner reads
+    `CURLMSG_DONE` from `after_pump`.
 
-  - `curl.odin`: `Client` and `Transfer`. A `Client` owns the multi handle and
-    one re-armed `nbio.timeout` that calls `curl_multi_perform` and drains
-    `curl_multi_info_read`. The timer is armed when the first transfer starts
-    and disarmed when the last one ends, so an idle client costs nothing.
+  - `socket.odin`: `Socket`, a `Connect_Only` connection. libcurl does TCP and TLS,
+    then `socket_send`/`socket_recv`. The easy handle stays on the multi for the
+    socket's life — removing it destroys the connection. After the dial, Drive
+    drops watches and curl's timer; an idle socket costs nothing. Curl's connect
+    timeout covers DNS, TCP, and the TLS handshake.
+
+  - `curl.odin`: `Client` and `Transfer`. Same Drive. An idle client costs nothing
+    on the loop.
+
+`drive_close_socket` must `net.close` the fd before it returns. `nbio.close` only
+queues a close until the next tick; that hung a TLS write-resume (`thread.join`
+on a server still in recv) and can race a still-armed poll. Disarm watches first.
+
+`socket_destroy` is idempotent: a second call is a no-op. A failed
+`socket_connect` leaves the socket Closed, so destroy is a no-op there too.
+
+Pump on the loop thread. `drive_kick` is the start/cancel entry; it defers if a
+pump is already running so `On_Done` can start the next transfer.
 
 Threading: everything runs on the loop thread. Easy handles are never shared,
 never touched from another thread, and the write and header callbacks fire
@@ -39,7 +48,7 @@ owner. This package never frees the struct. It only creates the easy handle and
 header list at `transfer_start` and releases them at `On_Done` or
 `transfer_cancel`. After that the same struct may be started again.
 
-Addresses are pinned: libcurl and the pump timer hold the `Client` and each live
+Addresses are pinned: libcurl and Drive hold the `Client` and each live
 `Transfer` by address, so neither may be moved, copied, or reallocated while
 live. A caller embedding a `Transfer` in its own struct must keep that struct
 in place.

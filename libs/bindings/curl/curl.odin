@@ -1,6 +1,5 @@
 package curl
 
-import "base:runtime"
 import "core:nbio"
 import "core:sync"
 import "core:time"
@@ -18,12 +17,6 @@ DEFAULT_LOW_SPEED_TIME :: 120 * time.Second
 // Hard ceiling on one request-header line (name, `": "`, value, NUL).
 // An oversized header is rejected as `Invalid_Request`.
 HEADER_LINE_MAX :: 8192
-
-@(private)
-TICK_MIN :: 1 * time.Millisecond
-
-@(private)
-TICK_MAX :: 10 * time.Millisecond
 
 // One request header, name and value unjoined. Declared here rather than borrowed
 // from `libs:http` so a binding depends on nothing but its C library.
@@ -56,8 +49,8 @@ Error :: enum {
     Setup_Failed,
 }
 
-// Lifecycle of one transfer: Created -> Running -> Done (curl ended it) or
-// Canceled (caller's own action). Both terminal states are final.
+// Lifecycle of one run: Created -> Running -> Done (curl ended it) or Canceled
+// (caller's own action). A terminal Transfer may be started again.
 Transfer_State :: enum {
     Created,
     Running,
@@ -173,39 +166,23 @@ Completion :: struct {
 }
 
 // Drives libcurl's multi handle on one nbio event loop. Every callback it makes
-// runs on that loop's thread. Its address is captured by the pump timer and by
-// every transfer it owns, so it must never be moved or copied after `client_init`.
+// runs on that loop's thread. Address-pinned after `client_init`: the drive and
+// every live transfer hold it by address.
 Client :: struct {
-    // @private
-    loop:       ^nbio.Event_Loop,
-
-    // @private
-    multi:      ^Multi,
-
-    // @private
-    // The re-armed pump timer; nil exactly when no transfer is live.
-    timer_op:   ^nbio.Operation,
-
-    // True inside a libcurl C call (perform, info_read, handle teardown).
-    // Callbacks may run; mutating the multi handle is undefined.
-    in_libcurl: bool,
+    using drive: Drive,
 
     // @private
     // True while On_Done is running. client_destroy must not free `completed`
     // under that loop.
-    in_on_done: bool,
+    in_on_done:  bool,
 
     // @private
     // Transfers currently added to the multi handle.
-    live:       [dynamic]^Transfer,
+    live:        [dynamic]^Transfer,
 
     // @private
     // Reused per-tick scratch for transfers curl reported as finished.
-    completed:  [dynamic]Completion,
-
-    // @private
-    // Context restored inside curl's C callbacks, captured at `client_init`.
-    ctx:        runtime.Context,
+    completed:   [dynamic]Completion,
 }
 
 // libcurl's global state is refcounted process-wide.
@@ -232,14 +209,8 @@ client_init :: proc(c: ^Client, loop: ^nbio.Event_Loop, allocator := context.all
     sync.once_do(&global_init_once, global_init)
     if global_init_code != .Ok do return .Setup_Failed
 
-    multi := c_multi_init()
-    if multi == nil do return .Setup_Failed
-
-    c^ = Client {
-        loop  = loop,
-        multi = multi,
-        ctx   = context,
-    }
+    c^ = {}
+    if drive_init(&c.drive, loop, allocator, c, client_after_pump) != .None do return .Setup_Failed
 
     // Both registers stay empty until `transfer_start` reserves them.
     c.live.allocator = allocator
@@ -257,10 +228,7 @@ client_destroy :: proc(c: ^Client) {
     assert(len(c.live) == 0, "client_destroy with live transfers")
     assert(c.timer_op == nil, "client_destroy with an armed pump timer")
 
-    // Teardown has no error channel, and a refused cleanup leaks the multi handle
-    // at most. libcurl codes are classified, never asserted on, so this one is dropped.
-    _ = c_multi_cleanup(c.multi)
-
+    drive_destroy(&c.drive)
     delete(c.live)
     delete(c.completed)
     c^ = {}
@@ -272,83 +240,15 @@ client_busy :: proc(c: ^Client) -> bool {
     return len(c.live) > 0
 }
 
-// Arms the pump timer exactly when a transfer is live and disarms it otherwise, so an
-// idle client costs nothing on the loop.
 @(private)
-client_sync_timer :: proc(c: ^Client) {
-    assert(c != nil, "client_sync_timer needs a client")
-    assert(!c.in_libcurl, "the pump timer must not be changed inside a curl callback")
-
-    // The tick that completed the last transfer already cleared `timer_op`; only
-    // a disarm from outside the pump has one left to remove.
-    if len(c.live) == 0 && c.timer_op != nil {
-        nbio.remove(c.timer_op)
-        c.timer_op = nil
-    } else if len(c.live) > 0 && c.timer_op == nil {
-        c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
-    }
-
-    assert((c.timer_op != nil) == (len(c.live) > 0), "pump timer state disagrees with the live-transfer count")
-}
-
-// Delay until the next pump, clamped into the poll window. A negative timeout means
-// curl has nothing scheduled, which for a live transfer still means "look again soon".
-@(private)
-multi_period :: proc(multi: ^Multi) -> time.Duration {
-    assert(multi != nil, "multi_period needs a multi handle")
-
-    ms, code := multi_timeout_ms(multi)
-    if code != .Ok || ms < 0 do return TICK_MAX
-    return clamp(time.Duration(ms) * time.Millisecond, TICK_MIN, TICK_MAX)
-}
-
-// Advance every handle on `multi` until it stops asking to be called again.
-@(private)
-multi_perform_all :: proc(multi: ^Multi) {
-    assert(multi != nil, "multi_perform_all needs a multi handle")
-
-    for {
-        _, code := multi_perform(multi)
-        if code == .Call_Multi_Perform do continue
-
-        assert(code == .Ok, "curl_multi_perform failed on a handle this package owns")
-        break
-    }
-}
-
-// The failure reason curl left behind, preferring its own buffer over the generic text
-// for the code. Borrows `errbuf`, so it is valid for the call only.
-@(private)
-curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
-    assert(errbuf != nil, "curl_message needs an error buffer")
-
-    if errbuf[0] != 0 do return string(cstring(&errbuf[0]))
-    return string(c_easy_strerror(code))
-}
-
-@(private)
-client_on_tick :: proc(op: ^nbio.Operation, c: ^Client) {
-    assert(c != nil, "the pump tick needs a client")
-    assert(c.timer_op == op, "the pump tick fired for an operation the client does not own")
-    assert(!c.in_libcurl, "the pump tick re-entered the curl region")
-
-    c.timer_op = nil
-    client_pump(c)
-    client_sync_timer(c)
-}
-
-// One timer tick: curl makes progress, then we complete whoever it reports done.
-@(private)
-client_pump :: proc(c: ^Client) {
-    assert(c != nil, "client_pump needs a client")
-    assert(!c.in_libcurl, "client_pump re-entered the curl region")
-    assert(len(c.live) > 0, "client_pump ran with no live transfers")
+client_after_pump :: proc(d: ^Drive, owner: rawptr) {
+    c := (^Client)(owner)
+    assert(c != nil, "client_after_pump needs a client")
+    assert(&c.drive == d, "client_after_pump received the wrong drive")
+    assert(!d.in_libcurl, "client_after_pump entered from inside curl")
 
     clear(&c.completed)
-    c.in_libcurl = true
-
-    multi_perform_all(c.multi)
-
+    d.in_libcurl = true
     for {
         msg, _ := multi_info_read(c.multi)
         if msg == nil do break
@@ -360,25 +260,33 @@ client_pump :: proc(c: ^Client) {
 
         append(&c.completed, Completion{transfer = transfer, code = msg.data.result})
     }
+    d.in_libcurl = false
 
-    c.in_libcurl = false
-
-    // Completions run outside curl: On_Done may start or cancel transfers, and
-    // both mutate the multi handle.
     c.in_on_done = true
     defer c.in_on_done = false
 
-    // On_Done may transfer_start, which reserve()s this array. A realloc would
-    // move it under the loop.
-    reserved := cap(c.completed)
-
-    for done in c.completed {
-        // An earlier On_Done may already have canceled this one.
+    count := len(c.completed)
+    for i in 0 ..< count {
+        done := c.completed[i]
         if done.transfer.state != .Running do continue
+
         transfer_complete(done.transfer, done.code)
     }
 
-    assert(cap(c.completed) == reserved, "the completion scratch was reallocated during dispatch")
+    if len(c.live) == 0 {
+        d.timer_ms = -1
+        d.timer_set = true
+    }
+}
+
+// The failure reason curl left behind, preferring its own buffer over the generic text
+// for the code. Borrows `errbuf`, so it is valid for the call only.
+@(private)
+curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
+    assert(errbuf != nil, "curl_message needs an error buffer")
+
+    if errbuf[0] != 0 do return string(cstring(&errbuf[0]))
+    return string(c_easy_strerror(code))
 }
 
 @(private)
@@ -449,7 +357,7 @@ transfer_start :: proc(transfer: ^Transfer, c: ^Client, req: Request, cbs: Callb
     append(&c.live, transfer)
 
     transfer.state = .Running
-    client_sync_timer(c)
+    drive_kick(&c.drive)
 
     return .None
 }
@@ -464,7 +372,7 @@ transfer_cancel :: proc(transfer: ^Transfer) {
     c := transfer.client
     transfer.state = .Canceled
     transfer_release(transfer)
-    client_sync_timer(c)
+    drive_apply(&c.drive)
 }
 
 // Drops a handle that was never added to the multi, leaving the transfer as if
@@ -671,6 +579,7 @@ easy_configure :: proc(transfer: ^Transfer, req: Request) -> Code {
     // touched — the system trust store is the only trust decision this makes.
     // ACCEPT_ENCODING is likewise unset, so responses arrive identity-coded.
 
+    drive_bind_easy(e, &transfer.client.drive) or_return
     setopt_write_cb(e, .Write_Function, on_write) or_return
     setopt_ptr(e, .Write_Data, transfer) or_return
     setopt_write_cb(e, .Header_Function, on_header) or_return

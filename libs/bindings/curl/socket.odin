@@ -37,60 +37,50 @@ Socket_Request :: struct {
 // A socket libcurl dialed with `Connect_Only`: it performs the TCP and, for `https`,
 // the TLS handshake, then hands over raw `socket_send`/`socket_recv` on the established
 // channel. Caller-allocated and address-pinned from `socket_connect` until
-// `socket_destroy`, because the pump timer holds it by address.
+// `socket_destroy`.
 //
 // It carries its own multi handle rather than sharing a `Client`'s. Removing the easy
 // handle from a multi destroys a connect-only connection, so the handle must stay added
-// for the socket's whole life — and a connected socket needs no pumping at all, so the
-// timer is dropped once the dial lands and an idle socket costs nothing on the loop.
+// for the socket's whole life. Drive pumps the dial; once connected the watches and
+// curl's timer drop and an idle socket costs nothing on the loop.
 Socket :: struct {
-    // @private
-    // Borrowed loop the dial's pump timer runs on; never run here.
-    loop:       ^nbio.Event_Loop,
+    using drive: Drive,
 
     // @private
-    // This socket's own multi handle, holding `easy` until `socket_destroy`.
-    multi:      ^Multi,
+    easy:        ^Easy,
 
     // @private
-    easy:       ^Easy,
+    cb:          On_Connect,
 
     // @private
-    // The dial's pump timer. Nil once the dial has landed, which is what keeps a
-    // connected socket free.
-    timer_op:   ^nbio.Operation,
-
-    // @private
-    cb:         On_Connect,
-
-    // @private
-    user:       rawptr,
-
-    // @private
-    // Set across every curl call region, so a callback cannot re-enter one.
-    in_libcurl: bool,
+    user:        rawptr,
 
     // @private
     // `Option.Error_Buffer` storage; curl writes a NUL-terminated reason here.
-    errbuf:     [ERROR_SIZE]byte,
+    errbuf:      [ERROR_SIZE]byte,
 
     // Lifecycle, readable by callers that keep one across loop ticks.
-    state:      Socket_State,
+    state:       Socket_State,
 }
 
 // Begins dialing `req` on `loop`. On `.None` exactly one `On_Connect` follows unless
-// `socket_destroy` intervenes; on any other result nothing was registered and no
-// callback ever fires.
+// `socket_destroy` intervenes; on any other result the socket is Closed and no
+// callback ever fires. `socket_destroy` is then a no-op.
 socket_connect :: proc(
     s: ^Socket,
     loop: ^nbio.Event_Loop,
     req: Socket_Request,
     cb: On_Connect,
     user: rawptr = nil,
-) -> Error {
+) -> (
+    err: Error,
+) {
     assert(s != nil, "socket_connect needs a socket")
     assert(loop != nil, "socket_connect needs an event loop")
     assert(s.state == .Created || s.state == .Closed, "socket_connect on a socket that is already dialing")
+
+    s^ = {}
+    s.state = .Closed
 
     if len(req.url) == 0 do return .Invalid_Request
 
@@ -98,32 +88,23 @@ socket_connect :: proc(
 
     if global_init_code != .Ok do return .Setup_Failed
 
-    s^ = {}
-    s.loop = loop
     s.cb = cb
     s.user = user
 
-    s.multi = c_multi_init()
-    if s.multi == nil do return .Setup_Failed
+    if drive_init(&s.drive, loop, context.allocator, s, socket_after_pump) != .None do return .Setup_Failed
+    defer if err != .None do socket_release(s)
 
     s.easy = c_easy_init()
-    if s.easy == nil {
-        socket_release(s)
-        return .Setup_Failed
-    }
+    if s.easy == nil do return .Setup_Failed
 
     if code := socket_configure(s, req); code != .Ok {
-        socket_release(s)
         return .Out_Of_Memory if code == .Out_Of_Memory else .Setup_Failed
     }
 
-    if c_multi_add_handle(s.multi, s.easy) != .Ok {
-        socket_release(s)
-        return .Setup_Failed
-    }
+    if c_multi_add_handle(s.multi, s.easy) != .Ok do return .Setup_Failed
 
     s.state = .Connecting
-    s.timer_op = nbio.timeout_poly(multi_period(s.multi), s, socket_on_tick, loop)
+    drive_kick(&s.drive)
 
     return .None
 }
@@ -173,15 +154,11 @@ socket_recv :: proc(s: ^Socket, buf: []byte) -> (received: int, code: Code) {
 
 // Closes the connection and releases everything the socket owns. Final and silent: a
 // dial still in flight is abandoned and its `On_Connect` never fires, mirroring
-// `nbio.remove`. Safe on a socket that never connected.
+// `nbio.remove`. Safe on a socket that never connected, and on a second call.
 socket_destroy :: proc(s: ^Socket) {
     assert(s != nil, "socket_destroy needs a socket")
     assert(!s.in_libcurl, "socket_destroy must not run inside a curl callback")
-
-    if s.timer_op != nil {
-        nbio.remove(s.timer_op)
-        s.timer_op = nil
-    }
+    if s.state == .Closed do return
 
     socket_release(s)
     s.state = .Closed
@@ -195,16 +172,15 @@ socket_release :: proc(s: ^Socket) {
     assert(!s.in_libcurl, "socket_release must not run inside a curl callback")
 
     if s.easy != nil {
+        s.in_libcurl = true
         if s.multi != nil do _ = c_multi_remove_handle(s.multi, s.easy)
 
         c_easy_cleanup(s.easy)
+        s.in_libcurl = false
         s.easy = nil
     }
 
-    if s.multi != nil {
-        _ = c_multi_cleanup(s.multi)
-        s.multi = nil
-    }
+    drive_destroy(&s.drive)
 }
 
 @(private)
@@ -213,6 +189,7 @@ socket_configure :: proc(s: ^Socket, req: Socket_Request) -> Code {
 
     e := s.easy
 
+    drive_bind_easy(e, &s.drive) or_return
     setopt_str(e, .Url, req.url) or_return
     setopt_ptr(e, .Error_Buffer, &s.errbuf[0]) or_return
 
@@ -228,51 +205,54 @@ socket_configure :: proc(s: ^Socket, req: Socket_Request) -> Code {
     // is unsafe in a process with worker threads.
     setopt_long(e, .No_Signal, 1) or_return
 
-    setopt_long(e, .Connect_Timeout, seconds_ceil(req.connect_timeout, DEFAULT_CONNECT_TIMEOUT)) or_return
+    bound := seconds_ceil(req.connect_timeout, DEFAULT_CONNECT_TIMEOUT)
+    setopt_long(e, .Connect_Timeout, bound) or_return
 
     if len(req.ca_file) > 0 do setopt_str(e, .Ca_Info, req.ca_file) or_return
 
     return .Ok
 }
 
-// Advances the dial. Re-arms itself until curl reports the handle done, then stops for
-// good: from that point the socket is driven by readiness, not by this timer.
 @(private)
-socket_on_tick :: proc(op: ^nbio.Operation, s: ^Socket) {
-    assert(s != nil, "the dial tick needs a socket")
-    assert(s.timer_op == op, "the dial tick fired for an operation the socket does not own")
-    assert(s.state == .Connecting, "the dial tick fired outside a dial")
-    assert(!s.in_libcurl, "the dial tick re-entered the curl region")
-
-    s.timer_op = nil
-    s.in_libcurl = true
-
-    multi_perform_all(s.multi)
+socket_after_pump :: proc(d: ^Drive, owner: rawptr) {
+    s := (^Socket)(owner)
+    assert(s != nil, "socket_after_pump needs a socket")
+    assert(&s.drive == d, "socket_after_pump received the wrong drive")
+    assert(!d.in_libcurl, "socket_after_pump entered from inside curl")
+    if s.state != .Connecting do return
 
     done := false
     result: Code
 
+    d.in_libcurl = true
     for {
         msg, _ := multi_info_read(s.multi)
         if msg == nil do break
-
         if msg.kind != .Done do continue
 
         assert(msg.easy == s.easy, "multi_info_read reported a handle the socket does not own")
         done = true
         result = msg.data.result
     }
+    d.in_libcurl = false
 
-    s.in_libcurl = false
+    if !done do return
 
-    // Everything below leaves the curl region first: `On_Connect` may destroy the
-    // socket, and libcurl forbids touching the multi handle from inside a callback.
-    if !done {
-        s.timer_op = nbio.timeout_poly(multi_period(s.multi), s, socket_on_tick, s.loop)
-        return
-    }
+    socket_finish(s, result)
+}
+
+@(private)
+socket_finish :: proc(s: ^Socket, result: Code) {
+    assert(s != nil, "socket_finish needs a socket")
+    assert(!s.in_libcurl, "socket_finish must not run inside a curl callback")
+    if s.state != .Connecting do return
 
     s.state = .Connected if result == .Ok else .Failed
+
+    // Drop watches and curl's timer so the caller can poll the fd itself. The
+    // easy handle stays on the multi until `socket_destroy`; `drive_close_socket`
+    // must not run here.
+    drive_clear_io(&s.drive)
 
     if s.cb != nil do s.cb(s.user, Result{code = result, message = curl_message(&s.errbuf, result), status = 0})
 }
