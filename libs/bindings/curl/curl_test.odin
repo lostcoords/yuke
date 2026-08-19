@@ -35,6 +35,8 @@ test_curl_option_values_match_curl_h :: proc(t: ^testing.T) {
     testing.expect_value(t, int(Option.Timeout), 13)
     testing.expect_value(t, int(Option.Post), 47)
     testing.expect_value(t, int(Option.Follow_Location), 52)
+    testing.expect_value(t, int(Option.No_Body), 44)
+    testing.expect_value(t, int(Option.Custom_Request), 10036)
     testing.expect_value(t, int(Option.Post_Field_Size), 60)
     testing.expect_value(t, int(Option.Connect_Timeout), 78)
     testing.expect_value(t, int(Option.Http_Get), 80)
@@ -75,26 +77,31 @@ test_curl_parses_status_lines :: proc(t: ^testing.T) {
 // test can prove chunks reach `On_Body` before the response has finished
 // arriving. The front door only supplies the accept and the request parse.
 Fake :: struct {
-    front:    http_server.Server,
-    parts:    []string,
+    front:      http_server.Server,
+    parts:      []string,
 
     // Delay inserted before every piece after the first.
-    gap:      time.Duration,
-    next:     int,
-    socket:   net.TCP_Socket,
-    loop:     ^nbio.Event_Loop,
-    taken:    bool,
-    closed:   bool,
+    gap:        time.Duration,
+    next:       int,
+    socket:     net.TCP_Socket,
+    loop:       ^nbio.Event_Loop,
+    taken:      bool,
+    closed:     bool,
 
     // Request body received before the canned response goes out.
-    body:     [64]byte,
-    body_len: int,
+    body:       [64]byte,
+    body_len:   int,
+
+    // Request-line method the front door parsed.
+    method:     [16]byte,
+    method_len: int,
 }
 
 fake_on_request :: proc(c: ^http_server.Conn, req: http_server.Request) {
     f := (^Fake)(c.server.user_data)
     f.socket, f.loop, _ = http_server.hijack(c)
     f.taken = true
+    f.method_len = copy(f.method[:], req.head.method)
 
     f.body_len = copy(f.body[:], req.trailing)
     remaining := min(int(req.content_length) - f.body_len, len(f.body) - f.body_len)
@@ -335,7 +342,7 @@ run_transfer :: proc(t: ^testing.T, o: ^Obs, c: ^Client, f: ^Fake, method: Metho
         url     = fmt.ctprintf("http://127.0.0.1:%d/v1/messages", port),
         headers = headers,
         method  = method,
-        body    = REQUEST_BODY[:] if method == .Post else nil,
+        body    = REQUEST_BODY[:] if method_carries_body(method) else nil,
     }
 
     o.client = c
@@ -365,7 +372,7 @@ run_fixture :: proc(t: ^testing.T, o: ^Obs, parts: []string, gap: time.Duration,
     c: Client
     testing.expect_value(t, client_init(&c, loop), Error.None)
 
-    run_transfer(t, o, &c, &f)
+    run_transfer(t, o, &c, &f, method)
 
     testing.expect_value(t, len(c.live), 0)
     testing.expect(t, c.timer_op == nil, "an idle client must disarm its pump timer")
@@ -574,6 +581,74 @@ test_curl_runs_two_sequential_transfers :: proc(t: ^testing.T) {
     testing.expect_value(t, obs_body(&b), "beta")
     testing.expect_value(t, len(c.live), 0)
     testing.expect(t, c.timer_op == nil, "an idle client must disarm its pump timer")
+
+    client_destroy(&c)
+}
+
+// Each method lands on the wire as its own verb. Body methods send the fixture
+// body; the others send none. HEAD does not deliver a response body.
+@(test)
+test_curl_sends_each_method :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    options := http_server.Options {
+        host = "127.0.0.1",
+        port = 0,
+    }
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    Case :: struct {
+        method: Method,
+        wire:   string,
+    }
+
+    cases := [?]Case {
+        {.Get, "GET"},
+        {.Head, "HEAD"},
+        {.Post, "POST"},
+        {.Put, "PUT"},
+        {.Patch, "PATCH"},
+        {.Delete, "DELETE"},
+    }
+    for tc in cases {
+        f := Fake {
+            parts = []string{"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n\r\nbody"},
+        }
+        testing.expect_value(
+            t,
+            http_server.listen(&f.front, loop, options, fake_on_request, &f),
+            http_server.Error.None,
+        )
+
+        o: Obs
+        run_transfer(t, &o, &c, &f, tc.method)
+
+        testing.expect_value(t, string(f.method[:f.method_len]), tc.wire)
+
+        if method_carries_body(tc.method) {
+            testing.expect_value(t, string(f.body[:f.body_len]), string(REQUEST_BODY[:]))
+        } else {
+            testing.expect_value(t, f.body_len, 0)
+        }
+
+        testing.expect_value(t, o.done_count, 1)
+        testing.expect_value(t, o.done_code, Code.Ok)
+        testing.expect_value(t, o.done_status, 200)
+
+        if tc.method == .Head {
+            testing.expect_value(t, o.body_len, 0)
+        } else {
+            testing.expect_value(t, obs_body(&o), "body")
+        }
+
+        fixture_teardown(t, &f)
+    }
 
     client_destroy(&c)
 }
@@ -789,15 +864,40 @@ test_curl_rejects_unsendable_headers :: proc(t: ^testing.T) {
     client_destroy(&c)
 }
 
+// A body on GET, HEAD, or DELETE is rejected before any handle joins the multi.
+@(test)
+test_curl_rejects_a_body_on_a_bodyless_method :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    nbio.acquire_thread_event_loop()
+    defer nbio.release_thread_event_loop()
+    loop := nbio.current_thread_event_loop()
+
+    c: Client
+    testing.expect_value(t, client_init(&c, loop), Error.None)
+
+    for method in ([?]Method{.Get, .Head, .Delete}) {
+        o: Obs
+        o.client = &c
+        request := Request {
+            url    = "http://127.0.0.1:1/v1/messages",
+            method = method,
+            body   = REQUEST_BODY[:],
+        }
+        testing.expect_value(t, transfer_start(&o.transfer, &c, request, obs_callbacks(), &o), Error.Invalid_Request)
+        testing.expect_value(t, len(c.live), 0)
+        testing.expect_value(t, o.done_count, 0)
+    }
+
+    client_destroy(&c)
+}
+
 // Empty values must reach the wire as `Name:` rather than be silently dropped
 // by libcurl. The wrapper writes `Name;` so curl's slist parser treats it as
 // "send this header with an empty value" instead of "suppress this header".
 @(test)
 test_curl_build_headers_accepts_empty_values :: proc(t: ^testing.T) {
-    headers := []Header {
-        {name = "accept", value = ""},
-        {name = "authorization", value = "Bearer x"},
-    }
+    headers := []Header{{name = "accept", value = ""}, {name = "authorization", value = "Bearer x"}}
     list, err := build_headers(headers)
     defer c_slist_free_all(list)
 

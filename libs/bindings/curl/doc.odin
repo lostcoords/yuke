@@ -30,13 +30,18 @@ cross-thread ownership.
 Borrowing: `On_Body` chunks and `On_Header` lines borrow libcurl's own buffer
 and are valid for the call only; `Result.message` borrows the transfer's error
 buffer the same way. Copy anything that must outlive the callback. In the other
-direction every request field — URL, header lines, and the POST body (via
+direction every request field — URL, header lines, and the request body (via
 `Option.Copy_Post_Fields`) — is copied by libcurl during `transfer_start`, so the
 caller may release the request and its body once `transfer_start` returns.
 
+Ownership: the caller allocates each `Transfer` and keeps it for the life of the
+owner. This package never frees the struct. It only creates the easy handle and
+header list at `transfer_start` and releases them at `On_Done` or
+`transfer_cancel`. After that the same struct may be started again.
+
 Addresses are pinned: libcurl and the pump timer hold the `Client` and each live
-`Transfer` by address, so neither may be moved, copied, or reallocated once
-started. A caller embedding a `Transfer` in its own struct must keep that struct
+`Transfer` by address, so neither may be moved, copied, or reallocated while
+live. A caller embedding a `Transfer` in its own struct must keep that struct
 in place.
 
 Cancellation has exactly two forms. `On_Body` returning false aborts from inside

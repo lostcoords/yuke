@@ -357,7 +357,7 @@ turn_on_status :: proc(user: rawptr, status: int) {
     turn := (^Turn)(user)
     assert(turn != nil, "curl status needs a provider turn")
     assert(turn.state == .Running, "curl status reached a non-running provider turn")
-    assert(turn.client.curl_client.in_curl, "curl status must run inside curl")
+    assert(turn.client.curl_client.in_libcurl, "curl status must run inside curl")
 
     turn.status = status
     turn.retry_after = nil
@@ -377,7 +377,7 @@ turn_on_header :: proc(user: rawptr, line: []byte) {
     turn := (^Turn)(user)
     assert(turn != nil, "curl header needs a provider turn")
     assert(turn.state == .Running, "curl header reached a non-running provider turn")
-    assert(turn.client.curl_client.in_curl, "curl header must run inside curl")
+    assert(turn.client.curl_client.in_libcurl, "curl header must run inside curl")
 
     name, value, ok := turn_header_split(line)
     if !ok do return
@@ -395,7 +395,7 @@ turn_on_body :: proc(user: rawptr, chunk: []byte) -> bool {
     turn := (^Turn)(user)
     assert(turn != nil, "curl body needs a provider turn")
     assert(turn.state == .Running, "curl body reached a non-running provider turn")
-    assert(turn.client.curl_client.in_curl, "curl body must run inside curl")
+    assert(turn.client.curl_client.in_libcurl, "curl body must run inside curl")
     assert(turn.callback_error == .None, "curl must stop after the callback latched an error")
 
     if turn.unsupported_content_encoding {
@@ -496,7 +496,7 @@ turn_on_curl_done :: proc(user: rawptr, result: curl.Result) {
     turn := (^Turn)(user)
     assert(turn != nil, "curl completion needs a provider turn")
     assert(turn.state == .Running, "curl completed a non-running provider turn")
-    assert(!turn.client.curl_client.in_curl, "provider completion must be outside curl")
+    assert(!turn.client.curl_client.in_libcurl, "provider completion must be outside curl")
     assert(turn.transfer.state == .Done, "curl completion callback must follow curl teardown")
 
     err := turn.callback_error
@@ -562,7 +562,7 @@ turn_on_dispatch :: proc(op: ^nbio.Operation, turn: ^Turn) {
     assert(turn.dispatch_op == op, "event dispatch fired for an operation the turn does not own")
     assert(turn.state == .Running || turn.state == .Completing, "event dispatch needs a live turn")
     assert(!turn.dispatching, "event dispatch re-entered itself")
-    assert(!turn.client.curl_client.in_curl, "user events must dispatch outside curl")
+    assert(!turn.client.curl_client.in_libcurl, "user events must dispatch outside curl")
 
     turn.dispatch_op = nil
     turn.dispatching = true

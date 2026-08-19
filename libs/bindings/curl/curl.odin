@@ -15,13 +15,9 @@ DEFAULT_LOW_SPEED_LIMIT :: 1
 // Together with the limit this is an idle-gap timeout, not a total-time cap.
 DEFAULT_LOW_SPEED_TIME :: 120 * time.Second
 
-// Hard ceiling on one request-header line (name, `": "`, value, NUL), sized for bearer
-// credentials. An oversized header is rejected as `Invalid_Request`, never truncated.
+// Hard ceiling on one request-header line (name, `": "`, value, NUL).
+// An oversized header is rejected as `Invalid_Request`.
 HEADER_LINE_MAX :: 8192
-
-// Poll cadence for the multi handle, clamping `multi_timeout`. The ceiling is
-// the worst-case chunk latency; the floor keeps a "call me now" answer from
-// spinning the loop.
 
 @(private)
 TICK_MIN :: 1 * time.Millisecond
@@ -39,11 +35,14 @@ Header :: struct {
     value: string,
 }
 
-// Request method. Closed: this transport posts JSON bodies and fetches with GET,
-// nothing else.
+// Request method. Closed set of the everyday REST verbs.
 Method :: enum {
     Get,
+    Head,
     Post,
+    Put,
+    Patch,
+    Delete,
 }
 
 // Why a transfer could not be started, or a client could not be created. Failures
@@ -75,10 +74,10 @@ Request :: struct {
     // Request headers, joined into curl's own list.
     headers:         []Header,
 
-    // Request body for `.Post`.
+    // Request body for `.Post`, `.Put`, and `.Patch`. Empty for the others.
     body:            []byte,
 
-    // Whether the request carries a body at all.
+    // Request method. `.Post`, `.Put`, and `.Patch` may carry `body`.
     method:          Method,
 
     // Time allowed for connect only, rounded up to whole seconds.
@@ -131,10 +130,10 @@ Callbacks :: struct {
     on_done:   On_Done,
 }
 
-// One HTTP request/streaming response. Caller-allocated; `transfer_start` takes over
-// the contents and `transfer_cancel` or `On_Done` releases them. libcurl holds this
-// struct's address from `transfer_start` until it is released, so a live transfer must
-// never be moved, copied, or reallocated.
+// One HTTP request/streaming response. Caller-allocated and caller-owned: this
+// package never frees the struct. It only creates the easy handle and header list
+// at `transfer_start` and releases them at `On_Done` or `transfer_cancel`. After
+// that the same struct may be started again. Do not move it while `.Running`.
 Transfer :: struct {
     // @private
     // Client this transfer was started on; nil before the first `transfer_start`.
@@ -178,35 +177,35 @@ Completion :: struct {
 // every transfer it owns, so it must never be moved or copied after `client_init`.
 Client :: struct {
     // @private
-    loop:        ^nbio.Event_Loop,
+    loop:       ^nbio.Event_Loop,
 
     // @private
-    multi:       ^Multi,
+    multi:      ^Multi,
 
     // @private
     // The re-armed pump timer; nil exactly when no transfer is live.
-    timer_op:    ^nbio.Operation,
+    timer_op:   ^nbio.Operation,
 
-    // True inside every curl call region; adding or removing a handle there is
-    // undefined behaviour, so the mutating entry points assert `!in_curl`.
-    in_curl:     bool,
+    // True inside a libcurl C call (perform, info_read, handle teardown).
+    // Callbacks may run; mutating the multi handle is undefined.
+    in_libcurl: bool,
 
     // @private
-    // Set while `On_Done` callbacks are being dispatched, so `client_destroy`
-    // cannot free the scratch below out from under the dispatch loop.
-    dispatching: bool,
+    // True while On_Done is running. client_destroy must not free `completed`
+    // under that loop.
+    in_on_done: bool,
 
     // @private
     // Transfers currently added to the multi handle.
-    live:        [dynamic]^Transfer,
+    live:       [dynamic]^Transfer,
 
     // @private
     // Reused per-tick scratch for transfers curl reported as finished.
-    completed:   [dynamic]Completion,
+    completed:  [dynamic]Completion,
 
     // @private
     // Context restored inside curl's C callbacks, captured at `client_init`.
-    ctx:         runtime.Context,
+    ctx:        runtime.Context,
 }
 
 // libcurl's global state is refcounted process-wide.
@@ -253,8 +252,8 @@ client_init :: proc(c: ^Client, loop: ^nbio.Event_Loop, allocator := context.all
 client_destroy :: proc(c: ^Client) {
     assert(c != nil, "client_destroy needs a client")
     assert(c.multi != nil, "client_destroy on an uninitialized client")
-    assert(!c.in_curl, "client_destroy must not run inside a curl callback")
-    assert(!c.dispatching, "client_destroy must not run inside On_Done")
+    assert(!c.in_libcurl, "client_destroy must not run inside a curl callback")
+    assert(!c.in_on_done, "client_destroy must not run inside On_Done")
     assert(len(c.live) == 0, "client_destroy with live transfers")
     assert(c.timer_op == nil, "client_destroy with an armed pump timer")
 
@@ -278,16 +277,16 @@ client_busy :: proc(c: ^Client) -> bool {
 @(private)
 client_sync_timer :: proc(c: ^Client) {
     assert(c != nil, "client_sync_timer needs a client")
-    assert(!c.in_curl, "the pump timer must not be changed inside a curl callback")
+    assert(!c.in_libcurl, "the pump timer must not be changed inside a curl callback")
 
-    if len(c.live) == 0 {
-        // The tick that completed the last transfer already cleared `timer_op`; only
-        // a disarm from outside the pump has one left to remove.
-        if c.timer_op != nil {
-            nbio.remove(c.timer_op)
-            c.timer_op = nil
-        }
-    } else if c.timer_op == nil do c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
+    // The tick that completed the last transfer already cleared `timer_op`; only
+    // a disarm from outside the pump has one left to remove.
+    if len(c.live) == 0 && c.timer_op != nil {
+        nbio.remove(c.timer_op)
+        c.timer_op = nil
+    } else if len(c.live) > 0 && c.timer_op == nil {
+        c.timer_op = nbio.timeout_poly(multi_period(c.multi), c, client_on_tick, c.loop)
+    }
 
     assert((c.timer_op != nil) == (len(c.live) > 0), "pump timer state disagrees with the live-transfer count")
 }
@@ -300,7 +299,6 @@ multi_period :: proc(multi: ^Multi) -> time.Duration {
 
     ms, code := multi_timeout_ms(multi)
     if code != .Ok || ms < 0 do return TICK_MAX
-
     return clamp(time.Duration(ms) * time.Millisecond, TICK_MIN, TICK_MAX)
 }
 
@@ -325,7 +323,6 @@ curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
     assert(errbuf != nil, "curl_message needs an error buffer")
 
     if errbuf[0] != 0 do return string(cstring(&errbuf[0]))
-
     return string(c_easy_strerror(code))
 }
 
@@ -333,54 +330,51 @@ curl_message :: proc(errbuf: ^[ERROR_SIZE]byte, code: Code) -> string {
 client_on_tick :: proc(op: ^nbio.Operation, c: ^Client) {
     assert(c != nil, "the pump tick needs a client")
     assert(c.timer_op == op, "the pump tick fired for an operation the client does not own")
-    assert(!c.in_curl, "the pump tick re-entered the curl region")
+    assert(!c.in_libcurl, "the pump tick re-entered the curl region")
 
     c.timer_op = nil
     client_pump(c)
     client_sync_timer(c)
 }
 
-// Advances every live transfer, then completes the ones curl reported as finished.
+// One timer tick: curl makes progress, then we complete whoever it reports done.
 @(private)
 client_pump :: proc(c: ^Client) {
     assert(c != nil, "client_pump needs a client")
-    assert(!c.in_curl, "client_pump re-entered the curl region")
+    assert(!c.in_libcurl, "client_pump re-entered the curl region")
     assert(len(c.live) > 0, "client_pump ran with no live transfers")
 
     clear(&c.completed)
-    c.in_curl = true
+    c.in_libcurl = true
 
     multi_perform_all(c.multi)
 
     for {
         msg, _ := multi_info_read(c.multi)
         if msg == nil do break
-
         if msg.kind != .Done do continue
 
         transfer := client_find(c, msg.easy)
         assert(transfer != nil, "multi_info_read reported an easy handle no transfer owns")
         assert(len(c.completed) < cap(c.completed), "the completion scratch was not reserved for every live transfer")
+
         append(&c.completed, Completion{transfer = transfer, code = msg.data.result})
     }
 
-    c.in_curl = false
+    c.in_libcurl = false
 
-    // Everything below leaves the curl region first: `multi_remove_handle` from
-    // inside a curl callback is undefined behaviour, and `On_Done` may start or
-    // cancel transfers.
-    c.dispatching = true
-    defer c.dispatching = false
+    // Completions run outside curl: On_Done may start or cancel transfers, and
+    // both mutate the multi handle.
+    c.in_on_done = true
+    defer c.in_on_done = false
 
-    // A `transfer_start` from inside `On_Done` reserves this scratch again, so the
-    // loop is only safe while its backing array cannot move: capacity is
-    // monotone and already covers every transfer ever live at once.
+    // On_Done may transfer_start, which reserve()s this array. A realloc would
+    // move it under the loop.
     reserved := cap(c.completed)
 
     for done in c.completed {
-        // An earlier `On_Done` may have canceled this transfer already.
+        // An earlier On_Done may already have canceled this one.
         if done.transfer.state != .Running do continue
-
         transfer_complete(done.transfer, done.code)
     }
 
@@ -399,22 +393,35 @@ client_find :: proc(c: ^Client, easy: ^Easy) -> ^Transfer {
     return nil
 }
 
-// Starts `req` on `c`. On `.None` the transfer is live and exactly one `On_Done`
-// follows unless `transfer_cancel` intervenes; on any other result nothing was
-// registered and no callback ever fires.
+// True for methods that send `Request.body`. The others reject a non-empty body.
+@(private)
+method_carries_body :: proc(method: Method) -> (carries: bool) {
+    switch method {
+    case .Post, .Put, .Patch:
+        carries = true
+
+    case .Get, .Head, .Delete:
+        carries = false
+    }
+
+    return
+}
+
+// Starts `request` on `client`. `.None` means success: the transfer is live until `On_Done`.
+// The caller owns `transfer`; this does not allocate or free it.
 transfer_start :: proc(transfer: ^Transfer, c: ^Client, req: Request, cbs: Callbacks, user: rawptr) -> (err: Error) {
     assert(transfer != nil, "transfer_start needs a transfer")
     assert(c != nil, "transfer_start needs a client")
     assert(c.multi != nil, "transfer_start needs an initialized client")
     // Adding a handle from inside a curl callback is as illegal as removing one.
-    assert(!c.in_curl, "transfer_start must not run inside a curl callback")
+    assert(!c.in_libcurl, "transfer_start must not run inside a curl callback")
     assert(transfer.state != .Running, "transfer_start on a transfer that is already running")
-    assert(req.method == .Post || len(req.body) == 0, "a GET carries no body")
 
     if len(req.url) == 0 do return .Invalid_Request
+    if !method_carries_body(req.method) && len(req.body) > 0 do return .Invalid_Request
+    if len(req.body) > LONG_MAX do return .Invalid_Request
 
     headers := build_headers(req.headers) or_return
-
     easy := c_easy_init()
     if easy == nil {
         c_slist_free_all(headers)
@@ -447,15 +454,11 @@ transfer_start :: proc(transfer: ^Transfer, c: ^Client, req: Request, cbs: Callb
     return .None
 }
 
-// Ends a running transfer immediately: the handle leaves the multi, is destroyed, and
-// no callback fires. Terminal by the caller's own action, mirroring `nbio.remove`.
-// Calling this from inside any curl callback is a programmer error — libcurl
-// forbids `multi_remove_handle` there, so `On_Body` returning false is the only
-// in-callback way to stop a transfer.
+// Ends a running transfer immediately. No `On_Done`. Must not run inside a callback.
 transfer_cancel :: proc(transfer: ^Transfer) {
     assert(transfer != nil, "transfer_cancel needs a transfer")
     assert(transfer.client != nil, "transfer_cancel on a transfer that was never started")
-    assert(!transfer.client.in_curl, "transfer_cancel must not run inside a curl callback")
+    assert(!transfer.client.in_libcurl, "transfer_cancel must not run inside a curl callback")
     assert(transfer.state == .Running, "transfer_cancel on a transfer that is not running")
 
     c := transfer.client
@@ -473,9 +476,7 @@ transfer_abandon :: proc(transfer: ^Transfer) {
     assert(transfer.state == .Created, "transfer_abandon on a registered transfer")
 
     c_easy_cleanup(transfer.easy)
-
     if transfer.headers != nil do c_slist_free_all(transfer.headers)
-
     transfer^ = {}
 }
 
@@ -484,7 +485,7 @@ transfer_abandon :: proc(transfer: ^Transfer) {
 transfer_release :: proc(transfer: ^Transfer) {
     assert(transfer != nil, "transfer_release needs a transfer")
     assert(transfer.client != nil, "transfer_release needs a started transfer")
-    assert(!transfer.client.in_curl, "transfer_release must not run inside a curl callback")
+    assert(!transfer.client.in_libcurl, "transfer_release must not run inside a curl callback")
     assert(transfer.easy != nil, "transfer_release on a transfer that owns no handle")
     assert(transfer.state == .Done || transfer.state == .Canceled, "transfer_release on a transfer that is still live")
 
@@ -492,14 +493,14 @@ transfer_release :: proc(transfer: ^Transfer) {
 
     // Defence in depth: `on_write` / `on_header` assert `.Running`, so a stray
     // callback here would abort instead of touching a half-freed handle.
-    c.in_curl = true
+    c.in_libcurl = true
 
     // Release has no error channel and the handle is destroyed either way; a refused
     // removal is libcurl's code to report, not ours to assert on.
     _ = c_multi_remove_handle(c.multi, transfer.easy)
     c_easy_cleanup(transfer.easy)
 
-    c.in_curl = false
+    c.in_libcurl = false
     transfer.easy = nil
 
     if transfer.headers != nil {
@@ -524,7 +525,7 @@ transfer_release :: proc(transfer: ^Transfer) {
 transfer_complete :: proc(transfer: ^Transfer, code: Code) {
     assert(transfer != nil, "transfer_complete needs a transfer")
     assert(transfer.client != nil, "transfer_complete needs a started transfer")
-    assert(!transfer.client.in_curl, "transfer_complete must not run inside a curl callback")
+    assert(!transfer.client.in_libcurl, "transfer_complete must not run inside a curl callback")
     assert(transfer.state == .Running, "transfer_complete on a transfer that is not running")
 
     status, info_code := getinfo_long(transfer.easy, .Response_Code)
@@ -553,20 +554,6 @@ transfer_message :: proc(transfer: ^Transfer, code: Code) -> string {
     return curl_message(&transfer.errbuf, code)
 }
 
-// Whether `c` is an RFC 9110 token byte.
-@(private)
-token_byte :: proc(c: byte) -> bool {
-    switch c {
-    case '0' ..= '9', 'A' ..= 'Z', 'a' ..= 'z':
-        return true
-
-    case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
-        return true
-    }
-
-    return false
-}
-
 // Whether `name` is a valid field name. Rejecting a colon here is what stops a
 // caller from smuggling a second header into one name.
 @(private)
@@ -574,7 +561,14 @@ field_name_valid :: proc(name: string) -> bool {
     if len(name) == 0 do return false
 
     for i in 0 ..< len(name) {
-        if !token_byte(name[i]) do return false
+        c := name[i]
+        switch c {
+        case '0' ..= '9', 'A' ..= 'Z', 'a' ..= 'z':
+        case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+        // RFC 9110 §5.6.2 token byte; everything else is rejected.
+        case:
+            return false
+        }
     }
 
     return true
@@ -688,23 +682,45 @@ easy_configure :: proc(transfer: ^Transfer, req: Request) -> Code {
     case .Get:
         setopt_long(e, .Http_Get, 1) or_return
 
+    case .Head:
+        setopt_long(e, .No_Body, 1) or_return
+
     case .Post:
         setopt_long(e, .Post, 1) or_return
+        set_request_body(e, req.body) or_return
 
-        // A C long on Windows, and must precede the copy or libcurl looks for a
-        // nul terminator instead of this count.
-        assert(len(req.body) <= LONG_MAX, "request body does not fit Option.Post_Field_Size")
-        setopt_long(e, .Post_Field_Size, len(req.body)) or_return
+    case .Put:
+        // Body first: `Copy_Post_Fields` implies POST, then the verb overrides it.
+        set_request_body(e, req.body) or_return
+        setopt_str(e, .Custom_Request, "PUT") or_return
 
-        // Non-nil even when empty, or libcurl reads the body through `Option.Read_Function`.
-        body := rawptr(&EMPTY_BODY[0]) if len(req.body) == 0 else rawptr(raw_data(req.body))
-        setopt_ptr(e, .Copy_Post_Fields, body) or_return
+    case .Patch:
+        set_request_body(e, req.body) or_return
+        setopt_str(e, .Custom_Request, "PATCH") or_return
+
+    case .Delete:
+        setopt_str(e, .Custom_Request, "DELETE") or_return
     }
 
     return .Ok
 }
 
-// Stand-in target for a zero-length POST body.
+// Copies `body` into libcurl. Empty still needs a non-nil pointer or libcurl
+// reads through `Option.Read_Function`.
+@(private)
+set_request_body :: proc(easy: ^Easy, body: []byte) -> Code {
+    assert(easy != nil, "set_request_body needs an easy handle")
+
+    // A C long on Windows, and must precede the copy or libcurl looks for a
+    // nul terminator instead of this count.
+    assert(len(body) <= LONG_MAX, "request body does not fit Option.Post_Field_Size")
+    setopt_long(easy, .Post_Field_Size, len(body)) or_return
+
+    ptr := rawptr(&EMPTY_BODY[0]) if len(body) == 0 else rawptr(raw_data(body))
+    return setopt_ptr(easy, .Copy_Post_Fields, ptr)
+}
+
+// Stand-in target for a zero-length request body.
 @(private)
 @(rodata)
 EMPTY_BODY := [1]byte{0}
@@ -723,7 +739,7 @@ on_write :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) -
     transfer := (^Transfer)(user)
     context = transfer.client.ctx
 
-    assert(transfer.client.in_curl, "a curl callback ran outside a curl call region")
+    assert(transfer.client.in_libcurl, "a curl callback ran outside a curl call region")
     assert(transfer.state == .Running, "a body chunk arrived for a transfer that is not running")
 
     n := size * nitems
@@ -741,7 +757,7 @@ on_header :: proc "c" (buffer: [^]byte, size: uint, nitems: uint, user: rawptr) 
     transfer := (^Transfer)(user)
     context = transfer.client.ctx
 
-    assert(transfer.client.in_curl, "a curl callback ran outside a curl call region")
+    assert(transfer.client.in_libcurl, "a curl callback ran outside a curl call region")
     assert(transfer.state == .Running, "a header line arrived for a transfer that is not running")
 
     n := size * nitems

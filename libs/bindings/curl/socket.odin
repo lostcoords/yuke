@@ -46,36 +46,36 @@ Socket_Request :: struct {
 Socket :: struct {
     // @private
     // Borrowed loop the dial's pump timer runs on; never run here.
-    loop:     ^nbio.Event_Loop,
+    loop:       ^nbio.Event_Loop,
 
     // @private
     // This socket's own multi handle, holding `easy` until `socket_destroy`.
-    multi:    ^Multi,
+    multi:      ^Multi,
 
     // @private
-    easy:     ^Easy,
+    easy:       ^Easy,
 
     // @private
     // The dial's pump timer. Nil once the dial has landed, which is what keeps a
     // connected socket free.
-    timer_op: ^nbio.Operation,
+    timer_op:   ^nbio.Operation,
 
     // @private
-    cb:       On_Connect,
+    cb:         On_Connect,
 
     // @private
-    user:     rawptr,
+    user:       rawptr,
 
     // @private
     // Set across every curl call region, so a callback cannot re-enter one.
-    in_curl:  bool,
+    in_libcurl: bool,
 
     // @private
     // `Option.Error_Buffer` storage; curl writes a NUL-terminated reason here.
-    errbuf:   [ERROR_SIZE]byte,
+    errbuf:     [ERROR_SIZE]byte,
 
     // Lifecycle, readable by callers that keep one across loop ticks.
-    state:    Socket_State,
+    state:      Socket_State,
 }
 
 // Begins dialing `req` on `loop`. On `.None` exactly one `On_Connect` follows unless
@@ -176,7 +176,7 @@ socket_recv :: proc(s: ^Socket, buf: []byte) -> (received: int, code: Code) {
 // `nbio.remove`. Safe on a socket that never connected.
 socket_destroy :: proc(s: ^Socket) {
     assert(s != nil, "socket_destroy needs a socket")
-    assert(!s.in_curl, "socket_destroy must not run inside a curl callback")
+    assert(!s.in_libcurl, "socket_destroy must not run inside a curl callback")
 
     if s.timer_op != nil {
         nbio.remove(s.timer_op)
@@ -192,7 +192,7 @@ socket_destroy :: proc(s: ^Socket) {
 @(private)
 socket_release :: proc(s: ^Socket) {
     assert(s != nil, "socket_release needs a socket")
-    assert(!s.in_curl, "socket_release must not run inside a curl callback")
+    assert(!s.in_libcurl, "socket_release must not run inside a curl callback")
 
     if s.easy != nil {
         if s.multi != nil do _ = c_multi_remove_handle(s.multi, s.easy)
@@ -242,10 +242,10 @@ socket_on_tick :: proc(op: ^nbio.Operation, s: ^Socket) {
     assert(s != nil, "the dial tick needs a socket")
     assert(s.timer_op == op, "the dial tick fired for an operation the socket does not own")
     assert(s.state == .Connecting, "the dial tick fired outside a dial")
-    assert(!s.in_curl, "the dial tick re-entered the curl region")
+    assert(!s.in_libcurl, "the dial tick re-entered the curl region")
 
     s.timer_op = nil
-    s.in_curl = true
+    s.in_libcurl = true
 
     multi_perform_all(s.multi)
 
@@ -263,7 +263,7 @@ socket_on_tick :: proc(op: ^nbio.Operation, s: ^Socket) {
         result = msg.data.result
     }
 
-    s.in_curl = false
+    s.in_libcurl = false
 
     // Everything below leaves the curl region first: `On_Connect` may destroy the
     // socket, and libcurl forbids touching the multi handle from inside a callback.
