@@ -70,8 +70,8 @@ export function sessionClose() {
   native.sessionClose();
 }
 
-// The open session's change counter, or -1 when none is open. Poll this; pull a snapshot only
-// when it moves.
+// The open session's change counter, or -1 when none is open. Poll this; re-read the outline only
+// when it moves. (Unused by the default UI, which reacts to the "session" event instead.)
 export function sessionRev() {
   return native.sessionRev();
 }
@@ -83,7 +83,13 @@ export function sessionResync() {
   });
 }
 
-// The folded transcript for the open session, or null when none is open.
-export function sessionSnapshot() {
-  return JSON.parse(native.sessionSnapshot());
+// The transcript outline (message ids + roles + the draft, no body text), or null when none is open.
+// The virtualized transcript keeps this as its row index and pulls text on demand with sessionText.
+export function sessionOutline() {
+  return JSON.parse(native.sessionOutline());
+}
+
+// The concatenated text of one message by id (committed or the streaming draft), "" when absent.
+export function sessionText(id) {
+  return native.sessionText(id);
 }

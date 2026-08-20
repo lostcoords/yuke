@@ -77,9 +77,6 @@ function navAction(ev, gPending) {
 
 // A scrollable, selectable list rendered into a caller-assigned rect. Items are opaque; `key(item)`
 // gives a stable identity so the selection follows its item across a re-sorted `items`, not the index.
-//
-// opts: { items, format, key, isSelectable, onMove, group, selGroup, dimGroup, dimSelGroup }
-// format returns a string, or { text, right?, group?, selGroup?, rightGroup?, rightSelGroup? }.
 export class List {
   constructor(opts = {}) {
     this.format = opts.format || ((it) => ({ text: String(it) }));
@@ -254,20 +251,24 @@ function normalizeCell(cell) {
   return { text: cell.text != null ? String(cell.text) : "", ...cell };
 }
 
-// A vertical pager over pre-wrapped visual rows (set via setRows). `stuck` follows the tail, and a
-// re-wrap re-anchors on the top row's `key` so the view does not jump.
-// A row is { text, group?, key?, bg?, marker?, markerGroup?, indent? }, all but text optional.
+// A vertical pager over a row source — { rowCount(width), rows(width, top, height) } — so the source
+// can virtualize (only visible rows pulled per draw). `stuck` follows the tail; a row is { text, … }.
 export class Pager {
   constructor() {
-    this.rows = [];
+    this.source = staticRowSource([]);
     this.scroll = 0;
     this.stuck = true; // follow the bottom
     this._h = 0; // last drawn height
+    this._w = 0; // last drawn width
     this._gPending = false; // a g awaiting its pair (gg = top)
   }
 
+  _total() {
+    return this.source.rowCount(this._w);
+  }
+
   _maxScroll() {
-    return Math.max(0, this.rows.length - this._h);
+    return Math.max(0, this._total() - this._h);
   }
 
   atBottom() {
@@ -289,31 +290,35 @@ export class Pager {
     this.stuck = this.atBottom();
   }
 
-  // Replace the rows. Following the tail snaps to bottom; otherwise keep the top row's `key` in
-  // place across the re-wrap, landing on the first row that carries it.
+  // Swap the row source. Following the tail snaps to bottom on the next draw; otherwise the row
+  // offset is kept, so content above the viewport stays put across a re-layout below it.
+  setSource(source) {
+    this.source = source || staticRowSource([]);
+  }
+
+  // A fixed array of rows, for callers that already have them all (e.g. the fuzzy pickers).
   setRows(rows) {
-    const anchor = this.stuck || !this.rows[this.scroll] ? null : this.rows[this.scroll].key;
-    this.rows = rows;
+    this.setSource(staticRowSource(rows));
+    this._clamp();
+  }
 
-    if (this.stuck) {
-      this.toBottom();
-      return;
-    }
-
-    if (anchor != null) {
-      const i = rows.findIndex((r) => r.key === anchor);
-      if (i >= 0) this.scroll = i;
-    }
+  // Keep the scroll offset in range as the row count changes (a draft discarded, a resize shrinking
+  // the wrap). Landing on the tail re-sticks, so a shrink that reaches the bottom resumes following.
+  _clamp() {
     this.scroll = Math.min(Math.max(0, this.scroll), this._maxScroll());
+    if (this.stuck) this.scroll = this._maxScroll();
+    else if (this.atBottom()) this.stuck = true;
   }
 
   draw(rect) {
     const { x, y, w, h } = rect;
     this._h = h;
-    if (this.stuck) this.scroll = this._maxScroll();
+    this._w = w;
+    this._clamp();
 
-    for (let row = 0; row < h; row++) {
-      const r = this.rows[this.scroll + row];
+    const rows = this.source.rows(w, this.scroll, h);
+    for (let row = 0; row < h && row < rows.length; row++) {
+      const r = rows[row];
       if (!r) break;
 
       const sy = y + row;
@@ -357,68 +362,122 @@ export class Pager {
   }
 }
 
-// Renders a message list into a Pager. Message: { type:"user"|"assistant", id, rev, content }.
-// Text parts wrap to width, cached per message by (rev, width) so a delta re-wraps only its own.
+// A fixed-array row source (width-independent), for the pickers and tests.
+function staticRowSource(list) {
+  return {
+    rowCount() {
+      return list.length;
+    },
+    rows(_w, top, height) {
+      return list.slice(top, top + height);
+    },
+  };
+}
+
+// Wrap one message's text into transcript rows: a role band + gutter marker, wrapped body, and a
+// trailing separator. `text` is the message body (text parts joined); "" renders one blank row.
+function wrapMessage(m, text, width) {
+  const user = m.type === "user";
+  const contentW = Math.max(1, width - TX_GUTTER);
+  const group = user ? "TxUser" : "TxText";
+  const bg = user ? "TxUser" : null;
+  const key = m.id;
+
+  const body = text ? wrap(text, contentW) : [""];
+  const rows = body.map((line, i) => ({ text: line, group, bg, indent: TX_GUTTER, marker: user && i === 0 ? "⟩" : null, markerGroup: "TxUserMarker", key }));
+  rows.push({ text: "", key }); // separator, no band
+
+  return rows;
+}
+
+// A virtualized transcript (the Pager's row source): holds only descriptors ({id, type}) + a
+// wrapped-row cache, pulling text on demand via textOf(id). Only the draft re-wraps per delta.
 export class Transcript {
-  constructor() {
-    this.messages = [];
+  constructor(opts = {}) {
+    this.textOf = opts.textOf || (() => "");
     this.pager = new Pager();
+    this.pager.setSource(this);
+    this._messages = []; // committed descriptors, oldest-first
+    this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
-    this._cache = new WeakMap(); // msg -> { rev, width, rows }; keeps view cache off the data
+    this._rows = new Map(); // id -> { w, rows } wrapped-row cache
   }
 
-  setMessages(messages) {
-    this.messages = messages || [];
-    this._relayout();
+  // Replace the outline. Rare (commit/resync/truncate); clears the wrap cache wholesale, since a
+  // re-commit or seal can change a message's content under a stable id.
+  setOutline(messages, active) {
+    this._messages = messages || [];
+    this._active = active || null;
+    this._rows.clear();
   }
 
-  // A streaming delta bumped a message's rev; rebuild on the next layout.
-  touch() {
-    this._relayout();
+  // A streaming delta on draft `id`: adopt it as the active descriptor if new, and drop its cached
+  // rows so only the growing draft re-wraps. The draft's role is always assistant.
+  setActive(id) {
+    if (!this._active || this._active.id !== id) this._active = { id, type: "assistant" };
+    this._rows.delete(id);
   }
 
-  _relayout() {
-    if (this._width > 0) this._layout(this._width);
+  _invalidate(width) {
+    if (width === this._width) return;
+
+    this._width = width;
+    this._rows.clear();
   }
 
-  // Wrapped rows for one message, cached by (rev, width). The key is baked in so _layout can
-  // push the cached rows straight into the flat array with no per-row allocation.
-  _messageRows(msg, width) {
-    const hit = this._cache.get(msg);
-    if (hit && hit.rev === msg.rev && hit.width === width) return hit.rows;
+  _rowsOf(m, width) {
+    const c = this._rows.get(m.id);
+    if (c && c.w === width) return c.rows;
 
-    const user = msg.type === "user";
-    const contentW = Math.max(1, width - TX_GUTTER);
-    const group = user ? "TxUser" : "TxText";
-    const bg = user ? "TxUser" : null;
-    const key = msg.id;
+    const rows = wrapMessage(m, this.textOf(m.id), width);
+    this._rows.set(m.id, { w: width, rows });
 
-    const body = [];
-    for (const part of msg.content || []) {
-      if (part.type !== "text") continue;
-      for (const line of wrap(part.text, contentW)) body.push(line);
-    }
-    if (body.length === 0) body.push("");
-
-    const rows = body.map((line, i) => ({ text: line, group, bg, indent: TX_GUTTER, marker: user && i === 0 ? "⟩" : null, markerGroup: "TxUserMarker", key }));
-    rows.push({ text: "", key }); // separator, no band
-
-    this._cache.set(msg, { rev: msg.rev, width, rows });
     return rows;
   }
 
-  _layout(width) {
-    this._width = width;
-    const rows = [];
-    for (const msg of this.messages) {
-      const mr = this._messageRows(msg, width);
-      for (let i = 0; i < mr.length; i++) rows.push(mr[i]);
+  // The message at visual position `i` in the committed window then the draft (no array alloc).
+  _at(i) {
+    return i < this._messages.length ? this._messages[i] : i === this._messages.length ? this._active : null;
+  }
+
+  // --- Pager row source ---
+  rowCount(width) {
+    if (width <= 0) return 0;
+    this._invalidate(width);
+
+    let n = 0;
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      n += this._rowsOf(m, width).length;
     }
-    this.pager.setRows(rows);
+
+    return n;
+  }
+
+  rows(width, top, height) {
+    if (width <= 0 || height <= 0) return [];
+    this._invalidate(width);
+
+    const out = [];
+    let base = 0;
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) break;
+
+      const rows = this._rowsOf(m, width);
+      for (let k = 0; k < rows.length; k++) {
+        const abs = base + k;
+        if (abs >= top && abs < top + height) out.push(rows[k]);
+      }
+      base += rows.length;
+      if (base >= top + height) break;
+    }
+
+    return out;
   }
 
   draw(rect) {
-    if (rect.w !== this._width) this._layout(rect.w);
     this.pager.draw(rect);
   }
 
@@ -532,11 +591,6 @@ export const borders = {
 
 // A floating, bordered, titled window centered over the screen — an overlay-stack layer. It exposes
 // the interior via winText/winFill (clipped); override drawContent(win) or set a `content`.
-//
-// opts: { name, title, footer, title_pos, footer_pos, border, width, height, modal,
-//         panelGroup, borderGroup, titleGroup, footerGroup }
-// border is a name in `borders`, a custom 8-glyph set, or "none"/null for a borderless panel.
-// width/height are cells, a ratio in (0,1], or a function(max) => cells; default 60%.
 export class Window {
   constructor(opts = {}) {
     this.opts = opts;
@@ -863,8 +917,6 @@ export function fuzzyRank(items, query, textOf) {
 // --- fuzzy picker -------------------------------------------------------------------------
 // A finder: a query line above a ranked results list. Static `items` are fuzzy-ranked by
 // filterText(item); a `suggest(query)` source recomputes candidates itself. Window content.
-//
-// opts: { items?, suggest?, format, key, filterText, isSelectable, onAccept, onCancel, validate }
 const PICKER_PROMPT = "› ";
 
 export class Picker {
@@ -982,11 +1034,6 @@ export class Picker {
 
 // The widget kit's public surface. `select` is the list picker (navigate a set); `pick` is the
 // fuzzy finder (type to filter). Both return { win, content, close }.
-//
-// select opts: { title, footer, title_pos, footer_pos, border, width, height, format, key,
-//                isSelectable, onMove, onAccept, onCancel, validate, keymap, needsTick, *Group }
-// pick opts:   { …window keys…, items?, suggest?, format, key, filterText, isSelectable,
-//                onAccept, onCancel, validate }
 export const ui = {
   select(items, opts = {}) {
     const content = new PickerContent(items || [], opts);

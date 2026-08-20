@@ -2,13 +2,15 @@ package tui
 
 /*
 Open-session controller: folds live broadcasts for the UI's one open session into a native
-`client.Session_Replica`. `yuke:client` drives open → resync → fold → close and reads snapshots.
+`client.Session_Replica`. `yuke:client` drives open → resync → fold → close and reads the outline
+plus each message's text on demand.
 */
 
 import "base:runtime"
 import "core:c"
 import "core:mem"
 import "core:mem/virtual"
+import "core:strings"
 import "libs:json"
 
 import qjs "libs:bindings/quickjs"
@@ -50,6 +52,22 @@ open_session_teardown :: proc(h: ^Host) {
     h.open_session.rev += 1
 }
 
+// Whether a broadcast changes only the streaming draft (UI re-wraps just it) vs. the transcript's
+// structure. A commit or truncation also folds to .Changed, so classify by broadcast, not "draft open".
+@(private = "file")
+session_broadcast_is_draft_delta :: proc(bc: wire.Notification) -> bool {
+    #partial switch _ in bc.params {
+    case wire.Message_Started_Data,
+         wire.Message_Part_Added_Data,
+         wire.Message_Part_Delta_Data,
+         wire.Tool_State_Changed_Data,
+         wire.Tool_Output_Delta_Data:
+        return true
+    }
+
+    return false
+}
+
 // Fold one broadcast for the open session. Dropped unless a session is open and synced; a gap
 // or fold error demands a fresh resync. A visible change or a gap bumps `rev` and repaints.
 client_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
@@ -72,9 +90,21 @@ client_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
     case .Gap:
         session_mark_needs_resync(h)
 
-    case .Changed, .Committed, .Discarded:
+    case .Changed:
         h.open_session.rev += 1
-        host_dispatch_event(h, "session")
+        info, has := client.replica_active_info(&h.open_session.replica)
+        if session_broadcast_is_draft_delta(bc) && has {
+            // Only the streaming draft changed: JS re-wraps just it, by the active message id.
+            host_dispatch_session(h, "active", u64(info.message_id))
+        } else {
+            // A structural change that folds to .Changed (e.g. transcript.truncated): reload.
+            host_dispatch_session(h, "reload")
+        }
+
+    case .Committed, .Discarded:
+        // A structural change (commit/discard): JS re-pulls the outline.
+        h.open_session.rev += 1
+        host_dispatch_session(h, "reload")
     }
 }
 
@@ -84,7 +114,36 @@ session_mark_needs_resync :: proc(h: ^Host) {
 
     h.open_session.sync = .Needs_Resync
     h.open_session.rev += 1
-    host_dispatch_event(h, "session")
+    host_dispatch_session(h, "reload")
+}
+
+// Subscribe the daemon connection to the open session's broadcasts, or clear the set when none is
+// open — broadcasts are subscription-gated. Sent before resync (cut taken subscribed); no-op if down.
+session_subscribe :: proc(h: ^Host) {
+    assert(h != nil, "subscribe needs a host")
+
+    if !h.daemon.live do return
+
+    one: [1]wire.Session_Id
+    sessions: []wire.Session_Id
+    if h.open_session.live {
+        one[0] = h.open_session.replica.session_id
+        sessions = one[:]
+    }
+
+    _, _ = client.client_send_request(
+        &h.daemon.client,
+        .Subscription_Set,
+        wire.Subscription_Set_Params{sessions = sessions},
+        client_on_subscription_complete,
+    )
+}
+
+// Best-effort: a failed subscribe just leaves the replica folding nothing until the next open.
+client_on_subscription_complete :: proc(c: ^client.Client, outcome: client.Request_Outcome, user_data: rawptr) {
+    _ = c
+    _ = outcome
+    _ = user_data
 }
 
 // --- native session functions (yuke:client-native) ---
@@ -111,6 +170,8 @@ client_js_session_open :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.
     h.open_session.sync = .Needs_Resync
     h.open_session.rev += 1
 
+    session_subscribe(h) // before the JS-side resync, so the daemon takes its cut subscribed
+
     return qjs.undefined()
 }
 
@@ -131,12 +192,13 @@ client_js_session_close :: proc "c" (
     if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
     open_session_teardown(h)
+    session_subscribe(h) // no session open now: clears the subscription set
 
     return qjs.undefined()
 }
 
-// The open session's change counter, or -1 when none is open. Cheap to poll; pull a snapshot
-// only when it moves.
+// The open session's change counter, or -1 when none is open. Cheap to poll; re-read the outline
+// only when it moves. (Unused by the default UI, which reacts to the "session" event instead.)
 @(private = "file")
 client_js_session_rev :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
@@ -150,9 +212,9 @@ client_js_session_rev :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.i
     return qjs.new_i64(i64(h.open_session.rev))
 }
 
-// The folded transcript as a JSON string, or "null" when no session is open.
+// The transcript outline (ids + roles, no text) as a JSON string, or "null" when no session is open.
 @(private = "file")
-client_js_session_snapshot :: proc "c" (
+client_js_session_outline :: proc "c" (
     ctx: ^qjs.Context,
     this: qjs.Value,
     argc: c.int,
@@ -166,12 +228,34 @@ client_js_session_snapshot :: proc "c" (
     h := host_from_ctx(ctx)
     if h == nil || !h.open_session.live do return qjs.new_string(ctx, "null")
 
-    // Reset once `new_string` has copied the bytes into a QuickJS string. The host's shared temp
-    // allocator is not reset per frame, so a polled snapshot must not accrue there.
     temp := virtual.arena_temp_begin(&h.snapshot_scratch)
     defer virtual.arena_temp_end(temp)
 
-    return qjs.new_string(ctx, session_snapshot_json(h, virtual.arena_allocator(&h.snapshot_scratch)))
+    return qjs.new_string(ctx, session_outline_json(h, virtual.arena_allocator(&h.snapshot_scratch)))
+}
+
+// The concatenated text of one message (committed or the draft), by id. Empty string when the id is
+// absent or has no text. A plain string, not JSON — JS wraps it on demand.
+@(private = "file")
+client_js_session_text :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+    _ = this
+
+    h := host_from_ctx(ctx)
+    if h == nil || !h.open_session.live do return qjs.new_string(ctx, "")
+
+    if argc < 1 do return qjs.throw_type_error(ctx, "sessionText(id)")
+
+    id, ok := qjs.to_i64(ctx, argv[0])
+    if !ok do return qjs.exception()
+
+    temp := virtual.arena_temp_begin(&h.snapshot_scratch)
+    defer virtual.arena_temp_end(temp)
+
+    text, found := session_message_text(h, u64(id), virtual.arena_allocator(&h.snapshot_scratch))
+    if !found do return qjs.new_string(ctx, "")
+
+    return qjs.new_string(ctx, text)
 }
 
 // Resync the open session: send `session.resync` and install its ordered response as the cut.
@@ -265,7 +349,7 @@ client_on_session_resync_complete :: proc(c: ^client.Client, outcome: client.Req
             h.open_session.sync = .Synced
             h.open_session.rev += 1
             client_promise_resolve(job, qjs.undefined(), true)
-            host_dispatch_event(h, "session")
+            host_dispatch_session(h, "reload")
 
         case wire.Response_Error:
             resync_fail(h, job, "resync_rejected", targeting)
@@ -287,7 +371,7 @@ resync_fail :: proc(h: ^Host, job: ^Client_Promise, reason: string, targeting: b
 
     client_promise_reject(job, reason, true)
 
-    if targeting do host_dispatch_event(h, "session")
+    if targeting do host_dispatch_session(h, "reload")
 }
 
 @(private = "file")
@@ -328,9 +412,10 @@ session_native_install :: proc(ctx: ^qjs.Context, native: qjs.Value) {
     _ = qjs.set_property(
         ctx,
         native,
-        "sessionSnapshot",
-        qjs.new_function(ctx, client_js_session_snapshot, "sessionSnapshot", 0),
+        "sessionOutline",
+        qjs.new_function(ctx, client_js_session_outline, "sessionOutline", 0),
     )
+    _ = qjs.set_property(ctx, native, "sessionText", qjs.new_function(ctx, client_js_session_text, "sessionText", 1))
 }
 
 // Parse a JS value into a session id: a 16-char lowercase-hex string held as its bytes.
@@ -369,112 +454,129 @@ sync_state_wire :: proc(s: Sync_State) -> string {
     unreachable()
 }
 
-// --- snapshot serialization ---
+// --- virtualized transcript: outline + on-demand text ---
 
 @(private = "file")
-Snapshot_Part :: struct {
+Outline_Message :: struct {
+    id:   u64 `json:"id"`,
     type: string `json:"type"`,
-    text: string `json:"text"`,
 }
 
+// The transcript structure without any body text: message ids and roles, plus the streaming draft.
+// JS keeps this as its row index and pulls a message's text with sessionText only when it wraps it.
 @(private = "file")
-Snapshot_Message :: struct {
-    type:    string `json:"type"`,
-    id:      u64 `json:"id"`,
-    content: []Snapshot_Part `json:"content"`,
+Outline :: struct {
+    sync:     string `json:"sync"`,
+    rev:      u64 `json:"rev"`,
+    has_more: bool `json:"hasMore"`,
+    messages: []Outline_Message `json:"messages"`,
+    active:   Maybe(Outline_Message) `json:"active"`,
 }
 
-// The open-session view. `active` is the streaming draft, or null when no draft is open.
+// The role of a committed message, or ok=false for a compaction divider (no transcript text).
 @(private = "file")
-Snapshot :: struct {
-    session_id: string `json:"sessionId"`,
-    sync:       string `json:"sync"`,
-    rev:        u64 `json:"rev"`,
-    has_more:   bool `json:"hasMore"`,
-    messages:   []Snapshot_Message `json:"messages"`,
-    active:     Maybe(Snapshot_Message) `json:"active"`,
-}
-
-// Fold the open session into one JSON snapshot. Allocated in `allocator` (caller frees); borrowed
-// replica strings are valid for this call and copied by `json.marshal`.
-@(private = "file")
-session_snapshot_json :: proc(h: ^Host, allocator: mem.Allocator) -> string {
-    assert(h != nil && h.open_session.live, "snapshot needs an open session")
-
-    open := &h.open_session
-    sid := ([16]u8)(open.replica.session_id)
-
-    msgs := make([dynamic]Snapshot_Message, 0, len(open.replica.messages), allocator)
-    for owned in open.replica.messages {
-        if m, ok := snapshot_message_from_wire(owned.message, allocator); ok do append(&msgs, m)
-    }
-
-    snap := Snapshot {
-        session_id = string(sid[:]),
-        sync       = sync_state_wire(open.sync),
-        rev        = open.rev,
-        has_more   = open.replica.has_more,
-        messages   = msgs[:],
-    }
-
-    if info, has := client.replica_active_info(&open.replica); has {
-        parts := make([dynamic]Snapshot_Part, 0, info.part_count, allocator)
-
-        for i in 0 ..< info.part_count {
-            pid := wire.Part_Id(u64(i))
-
-            kind, kok := client.replica_part_kind(&open.replica, pid)
-            if !kok do continue
-
-            #partial switch kind {
-            case .Text, .Reasoning:
-                if txt, tok := client.replica_part_text(&open.replica, pid); tok do append(&parts, Snapshot_Part{type = kind == .Reasoning ? "reasoning" : "text", text = txt})
-            }
-        }
-
-        snap.active = Snapshot_Message {
-            type    = "assistant",
-            id      = u64(info.message_id),
-            content = parts[:],
-        }
-    }
-
-    bytes, err := json.marshal(snap, {}, allocator)
-    if err != nil do return "null"
-
-    return string(bytes)
-}
-
-// Build a folded message from a committed wire message, extracting text-bearing parts. A
-// compaction divider carries no transcript text and is skipped (`ok` false).
-@(private = "file")
-snapshot_message_from_wire :: proc(msg: wire.Message, allocator := context.allocator) -> (Snapshot_Message, bool) {
+message_role_wire :: proc(msg: wire.Message) -> (string, bool) {
     switch v in msg {
     case wire.User_Message:
-        parts := make([dynamic]Snapshot_Part, 0, len(v.content), allocator)
-        for part in v.content {
-            if t, ok := part.(wire.Content_Text); ok do append(&parts, Snapshot_Part{type = "text", text = t.text})
-        }
-
-        return {type = "user", id = u64(v.id), content = parts[:]}, true
+        return "user", true
 
     case wire.Assistant_Message:
-        parts := make([dynamic]Snapshot_Part, 0, len(v.content), allocator)
-        for part in v.content {
-            #partial switch p in part {
-            case wire.Text_Part:
-                append(&parts, Snapshot_Part{type = "text", text = p.text})
-
-            case wire.Reasoning_Part:
-                append(&parts, Snapshot_Part{type = "reasoning", text = p.text})
-            }
-        }
-
-        return {type = "assistant", id = u64(v.id), content = parts[:]}, true
+        return "assistant", true
 
     case wire.Compaction_Message:
         return {}, false
     }
 
     return {}, false
+}
+
+@(private = "file")
+session_outline_json :: proc(h: ^Host, allocator: mem.Allocator) -> string {
+    assert(h != nil && h.open_session.live, "outline needs an open session")
+
+    open := &h.open_session
+
+    msgs := make([dynamic]Outline_Message, 0, len(open.replica.messages), allocator)
+    for owned in open.replica.messages {
+        if role, ok := message_role_wire(owned.message); ok do append(&msgs, Outline_Message{id = u64(wire.message_id(owned.message)), type = role})
+    }
+
+    outline := Outline {
+        sync     = sync_state_wire(open.sync),
+        rev      = open.rev,
+        has_more = open.replica.has_more,
+        messages = msgs[:],
+    }
+
+    if info, has := client.replica_active_info(&open.replica); has {
+        outline.active = Outline_Message {
+            id   = u64(info.message_id),
+            type = "assistant",
+        }
+    }
+
+    bytes, err := json.marshal(outline, {}, allocator)
+    if err != nil do return "null"
+
+    return string(bytes)
+}
+
+// Concatenate the text-bearing parts of the message with id `id` (a committed message or the open
+// draft), text parts only — reasoning/tool parts are dropped, matching what the transcript renders.
+@(private = "file")
+session_message_text :: proc(h: ^Host, id: u64, allocator: mem.Allocator) -> (string, bool) {
+    assert(h != nil && h.open_session.live, "message text needs an open session")
+
+    open := &h.open_session
+
+    if info, has := client.replica_active_info(&open.replica); has && u64(info.message_id) == id {
+        b := strings.builder_make(allocator)
+        first := true
+
+        for i in 0 ..< info.part_count {
+            pid := wire.Part_Id(u64(i))
+
+            kind, kok := client.replica_part_kind(&open.replica, pid)
+            if !kok || kind != .Text do continue
+
+            txt, tok := client.replica_part_text(&open.replica, pid)
+            if !tok do continue
+
+            if !first do strings.write_byte(&b, '\n')
+            strings.write_string(&b, txt)
+            first = false
+        }
+
+        return strings.to_string(b), true
+    }
+
+    msg, ok := client.replica_committed_by_id(&open.replica, wire.Message_Id(id))
+    if !ok do return {}, false
+
+    b := strings.builder_make(allocator)
+    first := true
+
+    #partial switch v in msg {
+    case wire.User_Message:
+        for part in v.content {
+            t, is_text := part.(wire.Content_Text)
+            if !is_text do continue
+
+            if !first do strings.write_byte(&b, '\n')
+            strings.write_string(&b, t.text)
+            first = false
+        }
+
+    case wire.Assistant_Message:
+        for part in v.content {
+            p, is_text := part.(wire.Text_Part)
+            if !is_text do continue
+
+            if !first do strings.write_byte(&b, '\n')
+            strings.write_string(&b, p.text)
+            first = false
+        }
+    }
+
+    return strings.to_string(b), true
 }

@@ -105,8 +105,8 @@ Host :: struct {
     // the connection closes and before `js` is released.
     open_session:     Open_Session,
 
-    // Reset per snapshot build; retains its block across polls so a repaint accrues no heap
-    // churn. Not the shared temp allocator, which this host never resets per frame.
+    // Reset per outline/text accessor call; retains its block across calls so a repaint accrues no
+    // heap churn. Not the shared temp allocator, which this host never resets per frame.
     snapshot_scratch: virtual.Arena,
 
     // One in-flight remote (relay) connect attempt, or nil. Owns the control-plane fetch state
@@ -183,19 +183,15 @@ host_init :: proc(
 
     defer delete(root, allocator)
 
-    // The config directory holds `yuke.js` and its plugins; empty when none resolves, which
-    // leaves only the baked modules loadable. Not canonicalized against the filesystem: it is
-    // the exact string the user-module names are built from, so containment stays a byte-prefix
-    // test rather than depending on the directory existing yet.
+    // The config directory holds `yuke.js` and its plugins; empty when none resolves. It is the
+    // exact string user-module names are built from, so containment stays a byte-prefix test.
     h.config_root = paths.config_dir(allocator)
     h.data_root = paths.data_dir(allocator)
 
     modules := [5]js.Module{js.fs_module(), js.exec_module(), js.diff_module(), term_module(), client_module()}
 
-    // 16 MiB rather than the shared default: a TUI's scripts are widgets and keymaps, and
-    // anything approaching this is a runaway. The deadline is deliberately the shared one —
-    // work that legitimately runs that long is intentional, and a freeze past it is a bug
-    // the user is watching happen.
+    // 16 MiB rather than the shared default: a TUI's scripts are widgets and keymaps, so anything
+    // approaching this is a runaway. The deadline stays the shared one — a freeze past it is a bug.
     options := js.Options {
         modules      = modules[:],
         base         = root,
@@ -242,11 +238,8 @@ host_destroy :: proc(h: ^Host) {
 
     daemon_connection_destroy(h)
 
-    // Before anything releases the context: draining runs every outstanding `yuke:fs`
-    // completion on this loop, and each one settles a promise that lives in it. Freeing
-    // first would settle into freed memory. Every teardown path reaches here, including the
-    // error branches in `main`, which is exactly when a read is most likely still in
-    // flight.
+    // Drain before releasing the context: each outstanding `yuke:fs` completion settles a promise
+    // that lives in this loop, so freeing first would settle into freed memory. Every teardown hits this.
     if h.has_pool {
         if derr := offload.pool_drain(&h.pool); derr != nil do assert(derr == nil, "the fs pool did not drain")
 
@@ -489,13 +482,15 @@ host_start :: proc(h: ^Host) {
     host_dispatch(h, obj)
 }
 
-// Dispatch a type-only event `{type}` to onEvent (repaints, like a tick). Never call from inside a
-// native call, to avoid re-entering a draw.
-host_dispatch_event :: proc(h: ^Host, type: string) {
+// Dispatch a `{type:"session", kind, id}` event to onEvent (repaints, like a tick): "active" carries
+// the changed draft's id, "reload" is structural. Never call from inside a native call (re-entrant draw).
+host_dispatch_session :: proc(h: ^Host, kind: string, id: u64 = 0) {
     if h.done || h.js.ctx == nil do return
 
     obj := qjs.new_object(h.js.ctx)
-    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, type))
+    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "session"))
+    _ = qjs.set_property(h.js.ctx, obj, "kind", qjs.new_string(h.js.ctx, kind))
+    _ = qjs.set_property(h.js.ctx, obj, "id", qjs.new_i64(i64(id)))
     defer qjs.free_value(h.js.ctx, obj)
 
     host_dispatch(h, obj)

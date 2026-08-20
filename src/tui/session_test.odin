@@ -131,16 +131,16 @@ test_session_open_and_close_lifecycle :: proc(t: ^testing.T) {
     defer open_session_teardown(&h)
 
     source := `
-        import { sessionOpen, sessionClose, sessionRev, sessionSnapshot } from "yuke:client";
+        import { sessionOpen, sessionClose, sessionRev, sessionOutline } from "yuke:client";
         const before = sessionRev();
         sessionOpen("0123456789abcdef");
-        const snap = sessionSnapshot();
-        const opened = [sessionRev() >= 0, snap.sessionId, snap.sync, snap.messages.length, snap.active];
+        const o = sessionOutline();
+        const opened = [sessionRev() >= 0, o.sync, o.messages.length, o.active];
         sessionClose();
-        globalThis.result = JSON.stringify([before, opened, sessionRev(), sessionSnapshot()]);
+        globalThis.result = JSON.stringify([before, opened, sessionRev(), sessionOutline()]);
     `
     testing.expect(t, js.eval_module(&h.js, "test:session-lifecycle", source, context.allocator))
-    testing.expect_value(t, session_test_result(t, &h), `[-1,[true,"0123456789abcdef","needs_resync",0,null],-1,null]`)
+    testing.expect_value(t, session_test_result(t, &h), `[-1,[true,"needs_resync",0,null],-1,null]`)
 }
 
 @(test)
@@ -217,19 +217,19 @@ test_synced_fold_updates_snapshot_and_rev :: proc(t: ^testing.T) {
     testing.expect(t, h.open_session.rev > rev_before, "folding visible change bumps rev")
 
     source := `
-        import { sessionSnapshot } from "yuke:client";
-        const s = sessionSnapshot();
+        import { sessionOutline, sessionText } from "yuke:client";
+        const o = sessionOutline();
         globalThis.result = [
-          s.sync,
-          s.messages.length,
-          s.messages[0].type,
-          s.messages[0].content[0].text,
-          s.active.type,
-          s.active.content.map((p) => p.type + ":" + p.text).join(","),
+          o.sync,
+          o.messages.length,
+          o.messages[0].type,
+          sessionText(o.messages[0].id),
+          o.active.type,
+          sessionText(o.active.id),
         ].join("|");
     `
     testing.expect(t, js.eval_module(&h.js, "test:session-fold", source, context.allocator))
-    testing.expect_value(t, session_test_result(t, &h), "synced|1|user|hello|assistant|text:Hi")
+    testing.expect_value(t, session_test_result(t, &h), "synced|1|user|hello|assistant|Hi")
 }
 
 @(test)

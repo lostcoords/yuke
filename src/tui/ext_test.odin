@@ -412,8 +412,8 @@ test_composer :: proc(t: ^testing.T) {
     testing.expect_value(t, ext_test_result(t, &h), "ok")
 }
 
-// The chat transcript over a session snapshot: adaptSnapshot flattens committed + active messages
-// (id stringified, non-text parts dropped), the layout wraps to width, and the Pager scrolls.
+// The virtualized transcript: descriptors + on-demand text via textOf, wrapping to width and
+// returning only the visible rows; setActive re-wraps just the draft; the Pager scrolls.
 @(test)
 test_transcript_snapshot_scroll :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
@@ -433,42 +433,70 @@ test_transcript_snapshot_scroll :: proc(t: ^testing.T) {
 
     source := `
         import { Transcript, Pager } from "yuke:ui";
-        import { adaptSnapshot, ChatView } from "yuke:defaults";
+        import { ChatView } from "yuke:defaults";
 
         const fail = [];
         const check = (name, cond) => { if (!cond) fail.push(name); };
 
-        // adaptSnapshot: committed messages then the active draft; ids stringified; reasoning dropped.
-        const snap = {
-          sessionId: "0123456789abcdef", sync: "synced", rev: 5, hasMore: false,
-          messages: [
-            { type: "user", id: 1, content: [{ type: "text", text: "the quick brown fox jumps over the lazy dog" }, { type: "reasoning", text: "hidden" }] },
-            { type: "assistant", id: 2, content: [{ type: "text", text: "ok" }] },
-          ],
-          active: { type: "assistant", id: 3, content: [{ type: "text", text: "streaming reply in progress here" }] },
+        // Descriptors + a text provider; the transcript pulls text on demand and wraps to width.
+        const textMap = {
+          1: "the quick brown fox jumps over the lazy dog",
+          2: "ok",
+          3: "streaming reply in progress here",
         };
-        const msgs = adaptSnapshot(snap);
-        check("count", msgs.length === 3);
-        check("ids", msgs.map((m) => m.id).join(",") === "1,2,3");
-        check("id-type", typeof msgs[0].id === "string");
-        check("reasoning-dropped", msgs[0].content.length === 1 && msgs[0].content[0].type === "text");
-        check("rev", msgs[0].rev === 0 && msgs[2].rev === 5);
-        check("empty-null", adaptSnapshot(null).length === 0);
+        const tx = new Transcript({ textOf: (id) => textMap[id] || "" });
+        tx.setOutline([{ id: 1, type: "user" }, { id: 2, type: "assistant" }], { id: 3, type: "assistant" });
 
-        // Layout wraps to a narrow width: rows exceed message count, the user's first row carries the
-        // gutter marker and the tinted band.
-        const tx = new Transcript();
-        tx.setMessages(msgs);
-        tx._layout(12);
-        const rows = tx.pager.rows;
-        check("wrapped", rows.length >= 8);
-        check("marker", rows[0].marker === "⟩" && rows[0].bg === "TxUser");
+        // Row count at a narrow width exceeds the message count (wrapping), and rows() returns only
+        // the visible window: the first row is the user message's gutter marker + tinted band.
+        const total = tx.rowCount(12);
+        check("wrapped", total >= 8);
+        const head = tx.rows(12, 0, 3);
+        check("head", head.length === 3 && head[0].marker === "⟩" && head[0].bg === "TxUser");
+        check("window", tx.rows(12, 2, 4).length === 4);
 
-        // Pager scroll: stuck follows the tail, then top/bottom/step (clamped) and vim keys.
+        // setActive re-wraps only the draft: shrinking it drops the total, committed rows cached.
+        textMap[3] = "short";
+        tx.setActive(3);
+        check("active-rewrap", tx.rowCount(12) < total);
+
+        // A draft that starts mid-session (no active in the last outline) still appears via setActive.
+        const tx2 = new Transcript({ textOf: (id) => (id === 9 ? "streaming draft" : "") });
+        tx2.setOutline([{ id: 1, type: "user" }], null);
+        const base = tx2.rowCount(12);
+        tx2.setActive(9);
+        check("draft-appears", tx2.rowCount(12) > base);
+
+        // setOutline clears the wrap cache: a message sealed with content different from its streamed
+        // draft shows the sealed text, not the stale draft (committed content can change under an id).
+        const store = { 5: "partial" };
+        const tx3 = new Transcript({ textOf: (id) => store[id] || "" });
+        tx3.setOutline([], { id: 5, type: "assistant" });
+        check("draft-partial", tx3.rows(40, 0, 10).some((r) => r.text.indexOf("partial") >= 0));
+        store[5] = "sealed text";
+        tx3.setOutline([{ id: 5, type: "assistant" }], null);
+        const sealed = tx3.rows(40, 0, 10);
+        check("seal-fresh", sealed.some((r) => r.text.indexOf("sealed") >= 0) && !sealed.some((r) => r.text.indexOf("partial") >= 0));
+
+        // Pager clamps an unstuck scroll when the source shrinks (draft discarded / resize), instead
+        // of leaving scroll past the end and painting a blank pane; landing on the tail re-sticks.
+        const src = { n: 20, rowCount() { return this.n; }, rows() { return []; } };
+        const pg = new Pager();
+        pg.setSource(src);
+        pg._w = 1;
+        pg._h = 5;
+        pg.toTop();
+        pg.scrollBy(10);
+        check("pager-scrolled", pg.scroll === 10 && pg.stuck === false);
+        src.n = 6;
+        pg._clamp();
+        check("pager-clamp", pg.scroll === 1 && pg.stuck === true);
+
+        // Pager static rows (the pickers' path): stuck to the tail, top/bottom/step, vim keys.
         const p = new Pager();
-        p.setRows(Array.from({ length: 20 }, (_, i) => ({ text: "row" + i, key: i })));
+        const rows = Array.from({ length: 20 }, (_, i) => ({ text: "row" + i, key: i }));
         p._h = 5;
-        p.setRows(p.rows);
+        p.setRows(rows);
         check("stuck", p.scroll === 15 && p.atBottom());
         p.toTop();
         check("top", p.scroll === 0 && p.stuck === false);
@@ -489,10 +517,10 @@ test_transcript_snapshot_scroll :: proc(t: ^testing.T) {
 
         // ChatView routing: the composer owns typing; only non-text keys scroll the transcript, so
         // typing "j" inserts (never scrolls) while page_up scrolls without disturbing the draft.
-        const chat = new ChatView();
-        chat.setMessages(msgs);
-        chat.transcript._layout(40);
+        const chat = new ChatView({ textOf: () => "x ".repeat(40) });
+        chat.setOutline([{ id: 1, type: "assistant" }, { id: 2, type: "assistant" }], null);
         chat.transcript.pager._h = 3;
+        chat.transcript.pager._w = 20;
         chat.transcript.pager.toBottom();
         const atBottom = chat.transcript.pager.scroll;
         check("type-to-composer", chat.onKey({ code: "char", char: "j", mods: 0 }) === true && chat.composer.text === "j" && chat.transcript.pager.scroll === atBottom);

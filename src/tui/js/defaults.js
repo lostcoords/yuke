@@ -228,12 +228,12 @@ class MainPane {
   }
 }
 
-// The chat pane: a transcript above a composer, sharing one leaf. Data-agnostic — setMessages()
-// feeds the transcript, the composer calls onSubmit(text); unconsumed keys scroll the transcript.
+// The chat pane: a transcript above a composer in one leaf. setOutline() feeds the transcript (text
+// via textOf), the composer calls onSubmit(text); unconsumed keys scroll the transcript.
 class ChatView {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript();
+    this.transcript = new Transcript({ textOf: opts.textOf });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
   }
 
@@ -241,8 +241,12 @@ class ChatView {
     return "chat";
   }
 
-  setMessages(messages) {
-    this.transcript.setMessages(messages);
+  setOutline(messages, active) {
+    this.transcript.setOutline(messages, active);
+  }
+
+  setActive(id) {
+    this.transcript.setActive(id);
   }
 
   onKey(ev) {
@@ -264,48 +268,42 @@ class ChatView {
   }
 }
 
-// Adapt a client `sessionSnapshot()` into Transcript messages: committed messages then the
-// streaming `active` draft appended. Committed messages are immutable, so their rev is constant;
-// `active` re-wraps as it streams, so it carries the session-wide rev.
-function adaptSnapshot(snap) {
-  if (!snap || !snap.messages) return [];
-
-  const out = snap.messages.map((m) => adaptMessage(m, 0));
-  if (snap.active) out.push(adaptMessage(snap.active, snap.rev));
-
-  return out;
-}
-
-// One snapshot message → a Transcript message: id stringified, non-text parts dropped (the
-// widget renders only text today).
-function adaptMessage(m, rev) {
-  const content = [];
-  for (const p of m.content || []) if (p.type === "text") content.push({ type: "text", text: p.text });
-
-  return { type: m.type, id: String(m.id), rev, content };
-}
-
 // --- default layout -----------------------------------------------------------------------
 // The stock layout: the session sidebar beside the chat pane, a row split in the node tree. A
 // user's yuke.js can rebuild `workspace` before it is installed.
-const chat = new ChatView();
+const chat = new ChatView({ textOf: (id) => client.sessionText(id) });
 
-// Drive the one open session into the chat pane: open + resync, then refresh the transcript on
-// every "session" event (resync completion and each folded broadcast). Read-only for now — the
-// composer does not submit yet.
+// Drive the one open session into the chat pane: open + resync, then react to each "session" event.
+// The transcript holds only the outline and pulls text on demand. Read-only — the composer can't submit.
 const chatSession = {
+  sessionId: null, // the last-opened session, re-opened on reconnect
+
   open(id) {
+    this.sessionId = id;
     client.sessionOpen(id);
     client.sessionResync().catch(() => {}); // the "session" event refreshes; a reject retries on reopen
-    this.refresh();
+    this.reload();
   },
 
-  refresh() {
-    chat.setMessages(adaptSnapshot(client.sessionSnapshot()));
+  // Structural change (open/commit/resync): re-pull the outline.
+  reload() {
+    const o = client.sessionOutline();
+    chat.setOutline(o ? o.messages : [], o ? o.active : null);
+    root.invalidate();
+  },
+
+  // Draft delta: re-wrap only the streaming message `id`.
+  active(id) {
+    chat.setActive(id);
     root.invalidate();
   },
 };
-events.on("session", () => chatSession.refresh());
+events.on("session", (ev) => (ev && ev.kind === "active" ? chatSession.active(ev.id) : chatSession.reload()));
+
+// A reconnect drops the native replica + subscription; re-open the last session so streaming resumes.
+events.on("daemon:ready", () => {
+  if (chatSession.sessionId && client.sessionRev() < 0) chatSession.open(chatSession.sessionId);
+});
 
 const sidebar = new SessionList({ onOpen: (id) => chatSession.open(id) });
 
@@ -583,6 +581,7 @@ const connection = {
     try {
       client.connect(opts).then(
         () => {
+          events.emit("daemon:ready");
           root.invalidate();
         },
         () => {
@@ -698,4 +697,4 @@ events.on("start", () => {
 });
 
 // Exported so a user's yuke.js can reference the stock views and layout (swap, subclass, patch).
-export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection, adaptSnapshot };
+export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };

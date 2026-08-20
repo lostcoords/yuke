@@ -108,6 +108,14 @@ declare module "yuke:term" {
     reason: string;
   }
 
+  // Out-of-band open-session change dispatched by the host: "active" (only draft `id` changed) or
+  // "reload" (structural). Delivered through onEvent like the terminal events.
+  export interface SessionEvent {
+    type: "session";
+    kind: "active" | "reload";
+    id: number;
+  }
+
   export type TermEvent =
     | StartEvent
     | KeyEvent
@@ -115,7 +123,8 @@ declare module "yuke:term" {
     | PasteEvent
     | MouseEvent
     | TickEvent
-    | InputClosedEvent;
+    | InputClosedEvent
+    | SessionEvent;
 
   export interface Term {
     width: number;
@@ -639,24 +648,19 @@ declare module "yuke:client" {
 
   export type SessionSync = "needs_resync" | "resyncing" | "synced";
 
-  export interface TranscriptPart {
-    type: "text" | "reasoning";
-    text: string;
-  }
-
-  export interface TranscriptMessage {
-    type: "user" | "assistant";
+  // A message descriptor without body text — id + role. The virtualized transcript keeps these as
+  // its row index and pulls each message's text on demand with sessionText.
+  export interface OutlineMessage {
     id: number;
-    content: TranscriptPart[];
+    type: "user" | "assistant";
   }
 
-  export interface SessionSnapshot {
-    sessionId: string;
+  export interface SessionOutline {
     sync: SessionSync;
     rev: number;
     hasMore: boolean;
-    messages: TranscriptMessage[];
-    active: TranscriptMessage | null;
+    messages: OutlineMessage[];
+    active: OutlineMessage | null;
   }
 
   export function connect(options: ConnectOptions): Promise<void>;
@@ -667,7 +671,8 @@ declare module "yuke:client" {
   export function sessionClose(): void;
   export function sessionRev(): number;
   export function sessionResync(): Promise<void>;
-  export function sessionSnapshot(): SessionSnapshot | null;
+  export function sessionOutline(): SessionOutline | null;
+  export function sessionText(id: number): string;
 }
 
 declare module "yuke:ui" {
@@ -730,8 +735,13 @@ declare module "yuke:ui" {
     key?: unknown;
   }
 
+  // A source of rows for the Pager: total count and a visible slice, so it can virtualize.
+  export interface RowSource {
+    rowCount(width: number): number;
+    rows(width: number, top: number, height: number): PagerRow[];
+  }
+
   export class Pager {
-    rows: PagerRow[];
     scroll: number;
     stuck: boolean;
     constructor();
@@ -739,29 +749,29 @@ declare module "yuke:ui" {
     toBottom(): void;
     toTop(): void;
     scrollBy(delta: number): void;
+    setSource(source: RowSource): void;
     setRows(rows: PagerRow[]): void;
     draw(rect: Rect): void;
     onKey(ev: KeyEvent): boolean;
   }
 
-  export interface TranscriptPart {
-    type: string;
-    text?: string;
-  }
-
+  // A committed-or-draft message descriptor: id + role, no body text (pulled on demand via textOf).
   export interface TranscriptMessage {
+    id: number;
     type: "user" | "assistant";
-    id: string;
-    rev: number;
-    content: TranscriptPart[];
   }
 
-  export class Transcript {
-    messages: TranscriptMessage[];
+  export interface TranscriptOptions {
+    textOf?: (id: number) => string;
+  }
+
+  export class Transcript implements RowSource {
     pager: Pager;
-    constructor();
-    setMessages(messages: TranscriptMessage[]): void;
-    touch(): void;
+    constructor(opts?: TranscriptOptions);
+    setOutline(messages: TranscriptMessage[], active: TranscriptMessage | null): void;
+    setActive(id: number): void;
+    rowCount(width: number): number;
+    rows(width: number, top: number, height: number): PagerRow[];
     draw(rect: Rect): void;
     onKey(ev: KeyEvent): boolean;
   }
@@ -957,7 +967,7 @@ declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
   import type { CursorRequest, Node, Pane, Rect, Service } from "yuke:core";
   import type { Composer, List, Transcript, TranscriptMessage } from "yuke:ui";
-  import type { SessionActivity, SessionSnapshot } from "yuke:client";
+  import type { SessionActivity } from "yuke:client";
 
   export interface SessionRow {
     id: string;
@@ -995,17 +1005,19 @@ declare module "yuke:defaults" {
 
   export interface ChatViewOptions {
     onSubmit?: (text: string) => void;
+    textOf?: (id: number) => string;
   }
 
-  // The chat pane: a Transcript above a Composer in one leaf. setMessages() feeds the transcript;
-  // the composer calls onSubmit(text). Data-agnostic — the session wiring is external.
+  // The chat pane: a Transcript above a Composer in one leaf. setOutline() feeds the transcript
+  // (which pulls text via textOf); the composer calls onSubmit(text). The session wiring is external.
   export class ChatView implements Pane {
     rect: Rect;
     transcript: Transcript;
     composer: Composer;
     constructor(opts?: ChatViewOptions);
     get name(): "chat";
-    setMessages(messages: TranscriptMessage[]): void;
+    setOutline(messages: TranscriptMessage[], active: TranscriptMessage | null): void;
+    setActive(id: number): void;
     onKey(ev: KeyEvent): boolean;
     draw(focused?: boolean): void;
     cursor(): CursorRequest | null;
@@ -1015,9 +1027,6 @@ declare module "yuke:defaults" {
   export const workspace: Node;
   export const sidebar: SessionList;
   export const chat: ChatView;
-
-  // Adapt a client sessionSnapshot into Transcript messages (committed then the streaming draft).
-  export function adaptSnapshot(snap: SessionSnapshot | null): TranscriptMessage[];
 
   export function openExplorer(startPath: string): unknown;
   export function openPalette(): unknown;

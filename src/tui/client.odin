@@ -353,8 +353,11 @@ client_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
     h := (^Host)(c.user_data)
     assert(&h.daemon.client == c && h.daemon.live, "close callback crossed connections")
 
-    // The live stream is gone; drop the replica so a reconnect re-opens from a fresh resync.
+    // The live stream is gone; drop the replica so a reconnect re-opens from a fresh resync, and
+    // clear the transcript (its data is gone) rather than leaving a stale zombie on screen.
+    was_open := h.open_session.live
     open_session_teardown(h)
+    if was_open do host_dispatch_session(h, "reload")
 
     if h.daemon.connect_job != nil {
         job := h.daemon.connect_job
