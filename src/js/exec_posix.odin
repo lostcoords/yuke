@@ -2,7 +2,6 @@
 package js
 
 import "core:c"
-import "core:os"
 import "core:strings"
 import "core:sys/posix"
 
@@ -24,9 +23,9 @@ EXEC_SHELL :: "/bin/sh"
 // Spawn the shell in its own process group with both pipes attached and stdin on /dev/null.
 // Nothing here is contained: a shell command can leave any directory we pin, so a check would
 // buy the appearance of safety rather than safety. An embedder gates the caller instead.
-exec_spawn :: proc(job: ^Exec_Job, stdout_w: ^os.File, stderr_w: ^os.File) -> (Exec_Process, bool) {
+exec_spawn :: proc(job: ^Exec_Job, stdout_w: posix.FD, stderr_w: posix.FD) -> (Exec_Process, bool) {
     assert(job != nil, "a spawn needs job state")
-    assert(stdout_w != nil && stderr_w != nil, "a spawn needs both pipes")
+    assert(stdout_w >= 0 && stderr_w >= 0, "a spawn needs both pipes")
 
     command, command_err := strings.clone_to_cstring(job.command, job.allocator)
     if command_err != nil do return {}, false
@@ -62,9 +61,9 @@ exec_spawn :: proc(job: ^Exec_Job, stdout_w: ^os.File, stderr_w: ^os.File) -> (E
     // A command must not read the daemon's stdin, so it gets /dev/null rather than a copy.
     if posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", {}, {}) != .NONE do return {}, false
 
-    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stdout_w)), 1) != .NONE do return {}, false
+    if posix_spawn_file_actions_adddup2(&actions, stdout_w, 1) != .NONE do return {}, false
 
-    if posix_spawn_file_actions_adddup2(&actions, posix.FD(os.fd(stderr_w)), 2) != .NONE do return {}, false
+    if posix_spawn_file_actions_adddup2(&actions, stderr_w, 2) != .NONE do return {}, false
 
     process: Exec_Process
     if posix.posix_spawn(&process.pid, EXEC_SHELL, &actions, &attr, raw_data(args[:]), posix.environ) != .NONE do return {}, false
@@ -77,27 +76,6 @@ exec_signal_group :: proc(process: Exec_Process, sig: posix.Signal) {
 
     // The child leads its own group, so its pid is the group id.
     _ = posix.killpg(process.pid, sig)
-}
-
-// `blocking` false polls, and reports `exited` false while the command still runs.
-exec_reap :: proc(process: Exec_Process, blocking: bool) -> (code: int, exited: bool) {
-    assert(process.pid > 0, "reaping a command needs a live process")
-
-    status: c.int
-    flags: posix.Wait_Flags
-
-    if !blocking do flags += {.NOHANG}
-
-    reaped := posix.waitpid(process.pid, &status, flags)
-    if reaped != process.pid do return 0, false
-
-    if posix.WIFEXITED(status) do return int(posix.WEXITSTATUS(status)), true
-
-    // Killed by a signal. The shell's own convention is what a caller already reads for a
-    // command its shell terminated.
-    if posix.WIFSIGNALED(status) do return 128 + int(posix.WTERMSIG(status)), true
-
-    return 0, true
 }
 
 // `posix_spawnattr_t` and `posix_spawn_file_actions_t` are opaque with an implementation-

@@ -78,6 +78,10 @@ Host :: struct {
     base:            string,
     pool:            ^offload.Pool,
     exec_pool:       ^offload.Pool,
+    // Loop that owns every host op; `yuke:exec` arms its pipe polls and timers on it.
+    loop:            ^nbio.Event_Loop,
+    // Loop-driven exec state: the process-global child reaper and its live commands.
+    exec:            Exec_Host_State,
     user:            rawptr,
     report:          Report,
     on_drain:        On_Drain,
@@ -121,6 +125,7 @@ init :: proc(h: ^Host, options: Options) -> Error {
     if options.pool != nil {
         h.pool = options.pool
         h.exec_pool = options.exec_pool if options.exec_pool != nil else options.pool
+        h.loop = options.pool.loop
     }
 
     if options.base != "" {
@@ -162,6 +167,9 @@ destroy :: proc(h: ^Host) {
     assert(h != nil, "destroy needs host storage")
     assert(h.pending == 0, "a host operation outlived the context that owns its promise")
 
+    // After every command settled: the reaper's poll is disarmed and its map empty.
+    exec_teardown(h)
+
     if h.ctx != nil {
         qjs.context_free(h.ctx)
         h.ctx = nil
@@ -196,6 +204,10 @@ ops_close :: proc(h: ^Host) {
 
     h.ops_open = false
     sync.atomic_store(&h.cancelled, true)
+
+    // Loop-driven commands are not offload work a pool drain can join; kill them here so the
+    // reaper settles each as it exits.
+    exec_cancel_all(h)
 }
 
 // Worker side of `ops_close`.

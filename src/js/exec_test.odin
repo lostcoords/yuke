@@ -6,6 +6,7 @@ import "core:nbio"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:time"
 
@@ -14,6 +15,9 @@ import "libs:testsupport"
 @(test)
 test_exec_reports_both_streams_and_the_code :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
 
     // A shell line, not an argument vector: the redirection below is the point of that choice.
     source := `
@@ -32,6 +36,9 @@ test_exec_reports_both_streams_and_the_code :: proc(t: ^testing.T) {
 test_exec_stops_at_its_deadline :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
+
     source := `
         import { exec } from "yuke:exec"
         globalThis.result = "pending"
@@ -48,6 +55,9 @@ test_exec_stops_at_its_deadline :: proc(t: ^testing.T) {
 test_exec_stops_a_command_that_never_goes_quiet :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
+
     source := `
         import { exec } from "yuke:exec"
         globalThis.result = "pending"
@@ -63,6 +73,9 @@ test_exec_stops_a_command_that_never_goes_quiet :: proc(t: ^testing.T) {
 @(test)
 test_exec_does_not_block_a_file_read :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
 
     source := `
         import * as fs from "yuke:fs"
@@ -81,6 +94,9 @@ test_exec_does_not_block_a_file_read :: proc(t: ^testing.T) {
 @(test)
 test_exec_stops_when_operations_close :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -110,6 +126,9 @@ test_exec_stops_when_operations_close :: proc(t: ^testing.T) {
 @(test)
 test_exec_kills_the_whole_process_tree :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -149,6 +168,9 @@ test_exec_kills_the_whole_process_tree :: proc(t: ^testing.T) {
 @(test)
 test_exec_terminates_before_it_kills :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&sigchld_singleton_lock)
+    defer sync.unlock(&sigchld_singleton_lock)
 
     source := `
         import { exec } from "yuke:exec"

@@ -86,6 +86,9 @@ cancel_trigger :: proc(h: ^Host, scope: ^Run_Scope, signal: qjs.Value) {
         exception := qjs.get_exception(h.ctx)
         qjs.free_value(h.ctx, exception)
     }
+
+    // Loop-driven commands no longer poll the scope; push the kill to the ones this run owns.
+    exec_cancel_scope(h, scope)
 }
 
 cancelled_scope :: proc(scope: ^Run_Scope) -> bool {

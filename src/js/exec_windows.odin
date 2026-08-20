@@ -16,6 +16,19 @@ EXEC_MODULE :: "yuke:exec"
 @(rodata)
 EXEC_EXPORTS := []string{"exec"}
 
+// No loop-driven exec on Windows, so the host carries no exec state and the shared
+// cancel/shutdown hooks are no-ops.
+Exec_Host_State :: struct {}
+
+@(private = "package")
+exec_cancel_all :: proc(h: ^Host) {}
+
+@(private = "package")
+exec_cancel_scope :: proc(h: ^Host, scope: ^Run_Scope) {}
+
+@(private = "package")
+exec_teardown :: proc(h: ^Host) {}
+
 exec_module :: proc() -> Module {
     return {name = EXEC_MODULE, init = exec_module_init, exports = EXEC_EXPORTS}
 }

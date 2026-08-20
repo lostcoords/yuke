@@ -6,6 +6,7 @@ import "core:nbio"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 
 import qjs "libs:bindings/quickjs"
@@ -335,6 +336,9 @@ js_run :: proc(t: ^testing.T, name: string, source: string, files: []Js_Fixture)
 @(test)
 test_js_installs_the_shared_host_modules :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&exec_host_lock)
+    defer sync.unlock(&exec_host_lock)
 
     files := []Js_Fixture{{"note.txt", "installed"}}
 

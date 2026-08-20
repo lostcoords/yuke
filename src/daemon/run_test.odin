@@ -8,6 +8,7 @@ import "core:net"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:time"
 
@@ -18,6 +19,11 @@ import "src:client"
 import "src:daemon/catalog"
 import "src:daemon/store"
 import "src:provider"
+
+// yuke:exec installs the one process-global SIGCHLD reaper, so the exec-using daemon tests
+// (here and in script_test) must not spin their hosts up concurrently under the parallel runner.
+@(private)
+exec_host_lock: sync.Mutex
 import "src:wire"
 
 // A turn that committed no message: the draft is announced, retracted, and the terminal
@@ -1396,6 +1402,9 @@ test_session_run_fails_a_call_to_an_unregistered_tool :: proc(t: ^testing.T) {
 test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
+    sync.lock(&exec_host_lock)
+    defer sync.unlock(&exec_host_lock)
+
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
 
@@ -1477,6 +1486,9 @@ test_session_run_executes_a_tool_and_commits_its_output :: proc(t: ^testing.T) {
 @(test)
 test_session_run_exec_defaults_cwd_to_the_workspace :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&exec_host_lock)
+    defer sync.unlock(&exec_host_lock)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
@@ -2017,6 +2029,9 @@ test_session_cancel_run_during_a_tool_call :: proc(t: ^testing.T) {
 test_session_cancel_run_stops_tool_host_operations :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
 
+    sync.lock(&exec_host_lock)
+    defer sync.unlock(&exec_host_lock)
+
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()
 
@@ -2078,6 +2093,9 @@ test_session_cancel_run_stops_tool_host_operations :: proc(t: ^testing.T) {
 @(test)
 test_session_completed_run_stops_unawaited_tool_host_operations :: proc(t: ^testing.T) {
     defer free_all(context.temp_allocator)
+
+    sync.lock(&exec_host_lock)
+    defer sync.unlock(&exec_host_lock)
 
     nbio.acquire_thread_event_loop()
     defer nbio.release_thread_event_loop()

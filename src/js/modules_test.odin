@@ -50,6 +50,11 @@ fixture_start :: proc(t: ^testing.T, f: ^Fixture, name: string) {
 @(private)
 fixture_stop :: proc(t: ^testing.T, f: ^Fixture) {
     ops_close(&f.host)
+
+    // Loop-driven exec commands settle on the loop, not by joining a worker pool; tick until
+    // every host op has drained before tearing the host down (destroy asserts pending == 0).
+    testsupport.nbio_run_until(t, &f.host, proc(h: ^Host) -> bool {return h.pending == 0}, "host ops drain")
+
     testing.expect_value(t, offload.pool_drain(&f.pool), nil)
     testing.expect_value(t, offload.pool_drain(&f.exec), nil)
     offload.pool_destroy(&f.pool)
