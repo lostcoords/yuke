@@ -17,12 +17,138 @@ style.invalidate();
 // The session sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
 
+// Local conn key. Remotes are `remote:<device_id>`. Empty `devices()` means no relay.
+const LOCAL = "local";
+
+const IDLE_ACTIVITY = {
+  state: { type: "idle" },
+  queued: 0,
+  context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 },
+  pending_compaction: null,
+};
+
+// Per-connection inbox. Folds ungated index events; not a replica.
+class DeviceFeed {
+  constructor(connKey) {
+    this.connKey = connKey;
+    this.name = connKey === LOCAL ? "local" : "";
+    this.items = new Map();
+    this.workspaces = new Map();
+    this.pending = [];
+    this.loaded = false;
+  }
+
+  learnWorkspaces(list) {
+    if (!list) return;
+    for (const ws of list) if (ws && ws.id) this.workspaces.set(ws.id, ws);
+  }
+
+  seed(listResult) {
+    this.items.clear();
+    const items = listResult && listResult.items ? listResult.items : [];
+    for (const it of items) if (it && it.session) this.items.set(it.session.id, it);
+    this.loaded = true;
+    const pending = this.pending;
+    this.pending = [];
+    for (const ev of pending) this._apply(ev);
+  }
+
+  fold(ev) {
+    if (!this.loaded) {
+      this.pending.push(ev);
+      return;
+    }
+    this._apply(ev);
+  }
+
+  _apply(ev) {
+    const p = ev && ev.params ? ev.params : {};
+    switch (ev && ev.method) {
+      case "session.summary_changed":
+        this._upsert(p.session);
+        break;
+      case "session.activity_changed": {
+        const existing = this.items.get(p.session_id);
+        if (existing) this.items.set(p.session_id, { session: existing.session, activity: p.activity });
+        break;
+      }
+      case "session.removed":
+        this.items.delete(p.session_id);
+        break;
+      case "workspace.created":
+        if (p.workspace && p.workspace.id) this.workspaces.set(p.workspace.id, p.workspace);
+        break;
+      case "workspace.removed":
+        this.workspaces.delete(p.workspace_id);
+        break;
+    }
+  }
+
+  _upsert(session) {
+    if (!session || !session.id) return;
+    const existing = this.items.get(session.id);
+    this.items.set(session.id, { session, activity: existing ? existing.activity : IDLE_ACTIVITY });
+  }
+
+  clear() {
+    this.items.clear();
+    this.workspaces.clear();
+    this.pending = [];
+    this.loaded = false;
+  }
+
+  rows() {
+    const out = [];
+    for (const it of this.items.values()) {
+      out.push({
+        connKey: this.connKey,
+        id: it.session.id,
+        title: sessionTitle(it.session),
+        activity: it.activity,
+        session: it.session,
+        deviceName: this.name,
+      });
+    }
+    return out;
+  }
+}
+
+const feeds = new Map();
+
+function feedOf(connKey) {
+  let f = feeds.get(connKey);
+  if (!f) {
+    f = new DeviceFeed(connKey);
+    feeds.set(connKey, f);
+  }
+  return f;
+}
+
+function mergedRows() {
+  const all = [];
+  for (const f of feeds.values()) {
+    for (const row of f.rows()) all.push(row);
+  }
+  all.sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
+  return all;
+}
+
+function rowKey(row) {
+  return row.connKey + "\0" + row.id;
+}
+
+function rowLabel(row) {
+  if (feeds.size <= 1 && row.connKey === LOCAL) return row.title;
+  const name = row.deviceName || (row.connKey === LOCAL ? "local" : row.connKey.slice("remote:".length, "remote:".length + 7));
+  return name + " · " + row.title;
+}
+
 // --- panes ----------------------------------------------------------------------------------
 // A pane is a node-leaf view: it owns its rect, draws with draw(focused), and handles onKey(ev)
 // (returning whether it consumed the key). The node tree assigns rects and routes focus.
 
 function sessionTitle(s) {
-  const t = (s.title || "").trim();
+  const t = (s && s.title ? s.title : "").trim();
   return t !== "" ? t : "untitled";
 }
 
@@ -33,65 +159,29 @@ function activityMark(activity) {
   return type === "idle" ? "" : "●";
 }
 
-// The sidebar pane: the session.list rows, a cursor, and the active (opened) id. Loads on connect,
-// clears on drop; Enter only marks a row active for now — opening it is a later package.
+// Sidebar: merged DeviceFeed rows, newest-first. Enter opens that pair in the focused chat.
 class SessionList {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
 
     // A List owns selection identity, scroll, and nav; we paint the rows ourselves (chrome + a
     // focus-only cursor), so it renders via ensureVisible, not draw().
-    this.list = new List({ key: (r) => r.id });
+    this.list = new List({ key: rowKey });
 
-    this.onOpen = opts.onOpen || null; // (id) => void, called when a row is opened
-    this.activeId = null;
-    this.loaded = false;
-    this.loading = false;
-    this.wasReady = false;
+    this.onOpen = opts.onOpen || null;
+    this.active = null;
   }
 
   get name() {
     return "sessions";
   }
 
-  // A leaf's view is updated before it draws each frame: load on the ready edge, clear on the drop
-  // edge, and retry a failed load while still ready.
+  get activeId() {
+    return this.active ? this.active.sessionId : null;
+  }
+
   update() {
-    const ready = client.connectionState() === "ready";
-    if (ready && !this.wasReady) {
-      this.wasReady = true;
-      this.refresh();
-    } else if (!ready && this.wasReady) {
-      this.wasReady = false;
-      this.clear();
-      root.invalidate();
-    } else if (ready && !this.loaded && !this.loading) {
-      this.refresh();
-    }
-  }
-
-  refresh() {
-    if (client.connectionState() !== "ready" || this.loading) return;
-
-    this.loading = true;
-    client.sessionList().then(
-      (res) => {
-        this.loading = false;
-        this.loaded = true;
-        this.list.setItems(res.items.map((it) => ({ id: it.session.id, title: sessionTitle(it.session), activity: it.activity })));
-        root.invalidate();
-      },
-      () => {
-        this.loading = false;
-        root.invalidate();
-      },
-    );
-  }
-
-  clear() {
-    this.list.setItems([]);
-    this.activeId = null;
-    this.loaded = false;
+    this.list.setItems(mergedRows());
   }
 
   current() {
@@ -104,8 +194,8 @@ class SessionList {
     if (strokeOf(ev) === "enter") {
       const row = this.list.selected();
       if (row) {
-        this.activeId = row.id;
-        if (this.onOpen) this.onOpen(row.id);
+        this.active = { connKey: row.connKey, sessionId: row.id };
+        if (this.onOpen) this.onOpen(row.connKey, row.id);
       }
       return true;
     }
@@ -127,7 +217,7 @@ class SessionList {
     }
 
     if (row < y + h) {
-      text(x + pad, row, clip("local · " + connectionLabel(), iw), "YukeStatus");
+      text(x + pad, row, clip(connectionLabel(), iw), "YukeStatus");
       row++;
     }
 
@@ -148,15 +238,18 @@ class SessionList {
   _drawRows(x, top, w, h, focused) {
     if (h <= 0 || w <= 0) return;
 
-    const st = client.connectionState();
-    if (st !== "ready") {
-      text(x, top, clip(st === "connecting" || st === "closing" ? "…" : "not connected", w), "YukeEmpty");
+    const conns = client.connections();
+    const ready = conns.some((c) => c.state === "ready");
+    const busy = conns.some((c) => c.state === "connecting" || c.state === "closing");
+    if (!ready) {
+      text(x, top, clip(busy ? "…" : "not connected", w), "YukeEmpty");
       return;
     }
 
     const rows = this.list.items;
     if (rows.length === 0) {
-      text(x, top, clip(this.loading ? "loading…" : "no sessions", w), "YukeEmpty");
+      const loading = [...feeds.values()].some((f) => !f.loaded);
+      text(x, top, clip(loading ? "loading…" : "no sessions", w), "YukeEmpty");
       return;
     }
 
@@ -167,15 +260,15 @@ class SessionList {
       const idx = first + i;
       const rowY = top + i;
       const data = rows[idx];
-      const isCursor = data.id === this.list.selectedKey && focused;
-      const isActive = data.id === this.activeId;
+      const isCursor = rowKey(data) === this.list.selectedKey && focused;
+      const isActive = this.active && this.active.connKey === data.connKey && this.active.sessionId === data.id;
 
       if (isCursor) fill(x, rowY, w, 1, "YukeSessionSel");
 
       const mark = activityMark(data.activity);
       const markW = mark ? 2 : 0;
       const prefix = isActive ? "▸ " : "  ";
-      text(x, rowY, clip(prefix + data.title, Math.max(0, w - markW)), isCursor ? "YukeSessionSel" : "YukeSession");
+      text(x, rowY, clip(prefix + rowLabel(data), Math.max(0, w - markW)), isCursor ? "YukeSessionSel" : "YukeSession");
       if (mark) {
         text(x + w - 1, rowY, mark, isCursor ? "YukeSessionMetaSel" : "YukeSessionMeta");
       }
@@ -203,7 +296,7 @@ class MainPane {
 
     const pad = mw >= 4 ? 1 : 0;
     const iw = Math.max(0, mw - pad * 2);
-    const st = client.connectionState();
+    const st = client.connectionState(LOCAL);
 
     let msg;
     if (st !== "ready") {
@@ -269,19 +362,28 @@ class ChatView {
 // The stock layout: the session sidebar beside the chat pane, a row split in the node tree. A
 // user's yuke.js can rebuild `workspace` before it is installed.
 const chat = new ChatView({
-  textOf: (id) => client.sessionText(id),
+  textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
 });
 
-// Drive the one open session into the chat pane: open + resync, then react to each "session" event.
-// The transcript holds only the outline and pulls text on demand; sends fold back through the event.
+// Drive one mounted pair into the chat pane: open + resync, then react to each "session" event
+// for that pair. The transcript holds only the outline and pulls text on demand.
 const chatSession = {
-  sessionId: null, // the last-opened session, re-opened on reconnect
+  connKey: LOCAL,
+  sessionId: null, // the last-opened pair, re-opened on reconnect of that key
 
-  open(id) {
+  open(connKey, id) {
+    if (id == null) {
+      id = connKey;
+      connKey = LOCAL;
+    }
+    if (this.sessionId && (this.connKey !== connKey || this.sessionId !== id)) {
+      client.sessionClose(this.connKey, this.sessionId);
+    }
+    this.connKey = connKey;
     this.sessionId = id;
-    client.sessionOpen(id);
-    client.sessionResync().catch(() => {}); // the "session" event refreshes; a reject retries on reopen
+    client.sessionOpen(this.connKey, id);
+    client.sessionResync(this.connKey, id).catch(() => {}); // the "session" event refreshes; a reject retries on reopen
     this.reload();
   },
 
@@ -291,7 +393,7 @@ const chatSession = {
   send(text) {
     if (!this.sessionId) return false;
 
-    client.sessionSendInput(this.sessionId, text).catch(() => {
+    client.sessionSendInput(this.connKey, this.sessionId, text).catch(() => {
       if (chat.composer.text === "") chat.composer.text = text;
       root.invalidate();
     });
@@ -304,12 +406,12 @@ const chatSession = {
   interrupt() {
     if (!this.sessionId) return;
 
-    client.sessionCancelRun(this.sessionId, true).catch(() => {});
+    client.sessionCancelRun(this.connKey, this.sessionId, true).catch(() => {});
   },
 
   // Structural change (open/commit/resync): re-pull the outline.
   reload() {
-    const o = client.sessionOutline();
+    const o = this.sessionId ? client.sessionOutline(this.connKey, this.sessionId) : null;
     chat.setOutline(o ? o.messages : [], o ? o.active : null);
     root.invalidate();
   },
@@ -320,14 +422,55 @@ const chatSession = {
     root.invalidate();
   },
 };
-events.on("session", (ev) => (ev && ev.kind === "active" ? chatSession.active(ev.id) : chatSession.reload()));
-
-// A reconnect drops the native replica + subscription; re-open the last session so streaming resumes.
-events.on("daemon:ready", () => {
-  if (chatSession.sessionId && client.sessionRev() < 0) chatSession.open(chatSession.sessionId);
+events.on("session", (ev) => {
+  if (!ev || ev.connKey !== chatSession.connKey || ev.sessionId !== chatSession.sessionId) return;
+  if (ev.kind === "active") chatSession.active(ev.id);
+  else chatSession.reload();
 });
 
-const sidebar = new SessionList({ onOpen: (id) => chatSession.open(id) });
+events.on("index", (ev) => {
+  if (!ev || !ev.connKey) return;
+  const f = feeds.get(ev.connKey);
+  if (!f) return;
+  f.fold(ev);
+  root.invalidate();
+});
+
+events.on("conn", (ev) => {
+  if (!ev || !ev.key) return;
+  if (ev.kind === "ready") {
+    const f = feedOf(ev.key);
+    const info = client.connections().find((c) => c.key === ev.key);
+    f.name = (info && info.name) || (ev.key === LOCAL ? "local" : f.name);
+    if (!f.name && ev.key.indexOf("remote:") === 0) {
+      const id = ev.key.slice("remote:".length);
+      const d = connection.roster.find((x) => x.device_id === id);
+      f.name = (d && d.name) || id.slice(0, 7);
+    }
+    f.learnWorkspaces(ev.workspaces);
+    client.sessionList(ev.key).then(
+      (res) => {
+        f.seed(res);
+        root.invalidate();
+      },
+      () => root.invalidate(),
+    );
+    if (ev.key === LOCAL) events.emit("daemon:ready");
+    if (chatSession.connKey === ev.key && chatSession.sessionId && client.sessionRev(ev.key, chatSession.sessionId) < 0) {
+      chatSession.open(ev.key, chatSession.sessionId);
+    }
+    root.invalidate();
+    return;
+  }
+  if (ev.kind === "close") {
+    const f = feeds.get(ev.key);
+    if (f) f.clear();
+    feeds.delete(ev.key);
+    root.invalidate();
+  }
+});
+
+const sidebar = new SessionList({ onOpen: (connKey, id) => chatSession.open(connKey, id) });
 
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
@@ -373,7 +516,7 @@ function openExplorer(startPath) {
   });
 
   function go(path) {
-    client.workspaceBrowse(path != null ? { path } : {}).then(
+    client.workspaceBrowse(LOCAL, path != null ? { path } : {}).then(
       (res) => {
         state.path = res.path;
         state.parent = res.parent;
@@ -457,13 +600,13 @@ function openSessionFinder() {
     width: 0.6,
     height: 0.5,
     items: sidebar.list.items,
-    key: (r) => r.id,
-    filterText: (r) => r.title,
-    format: (r) => ({ text: r.title, right: activityMark(r.activity) }),
+    key: rowKey,
+    filterText: (r) => rowLabel(r),
+    format: (r) => ({ text: rowLabel(r), right: activityMark(r.activity) }),
     onAccept: (r) => {
-      sidebar.activeId = r.id;
-      sidebar.list.selectedKey = r.id;
-      chatSession.open(r.id);
+      sidebar.active = { connKey: r.connKey, sessionId: r.id };
+      sidebar.list.selectedKey = rowKey(r);
+      chatSession.open(r.connKey, r.id);
     },
   });
 }
@@ -572,13 +715,22 @@ function openCommandLine() {
 }
 
 // --- daemon connection --------------------------------------------------------------------
-// Owns the local daemon lifecycle from config.daemon. The host has no setTimeout, so this service
-// ticks: ready polls for drops, offline counts down and reconnects (autoConnect: false dials manually).
+// Local from config.daemon; remotes only when `devices()` returns reachable others.
 const READY_POLL_MS = 1000;
 const RETRY_POLL_MS = 500;
 
+const NO_RETRY = {
+  device_not_found: true,
+  device_ambiguous: true,
+  not_enrolled: true,
+  identity_unreadable: true,
+};
+
 const connection = {
   nextRetryAt: 0,
+  remoteRetryAt: Object.create(null),
+  roster: [],
+  rosterTried: false,
 
   onStart() {
     if (config.daemon.autoConnect === false) return;
@@ -586,7 +738,14 @@ const connection = {
   },
 
   attempt() {
-    if (client.connectionState() !== "disconnected") return;
+    this.dialLocal();
+    this.loadRoster();
+    this.dialRemotes();
+    root.invalidate();
+  },
+
+  dialLocal() {
+    if (client.connectionState(LOCAL) !== "disconnected") return;
 
     this.nextRetryAt = 0;
     const d = config.daemon;
@@ -595,10 +754,7 @@ const connection = {
 
     try {
       client.connect(opts).then(
-        () => {
-          events.emit("daemon:ready");
-          root.invalidate();
-        },
+        () => root.invalidate(),
         () => {
           this.scheduleRetry();
           root.invalidate();
@@ -607,8 +763,48 @@ const connection = {
     } catch (_e) {
       this.scheduleRetry();
     }
+  },
 
-    root.invalidate();
+  loadRoster() {
+    if (this.rosterTried) return;
+    this.rosterTried = true;
+    client.devices().then(
+      (devs) => {
+        this.roster = devs || [];
+        this.dialRemotes();
+        root.invalidate();
+      },
+      () => {
+        this.roster = [];
+      },
+    );
+  },
+
+  dialRemotes() {
+    if (config.daemon.autoConnect === false) return;
+    const now = Date.now();
+    for (const d of this.roster) {
+      if (!d || d.is_self || !d.static_public_key) continue;
+      const key = "remote:" + d.device_id;
+      const st = client.connectionState(key);
+      if (st !== "disconnected") continue;
+      if (!d.online && !this.remoteRetryAt[key]) continue;
+      if (this.remoteRetryAt[key] && now < this.remoteRetryAt[key]) continue;
+      this.remoteRetryAt[key] = 0;
+      try {
+        client.connect({ remote: true, device: d.device_id }).then(
+          () => root.invalidate(),
+          (err) => {
+            const code = err && err.code;
+            if (NO_RETRY[code]) return;
+            this.remoteRetryAt[key] = Date.now() + config.daemon.retryMs;
+            root.invalidate();
+          },
+        );
+      } catch (_e) {
+        // already connecting
+      }
+    }
   },
 
   scheduleRetry() {
@@ -616,9 +812,8 @@ const connection = {
     this.nextRetryAt = Date.now() + config.daemon.retryMs;
   },
 
-  // Ready always polls (drop → UI). Offline polls when auto-reconnect is on or a countdown is live.
   needsTick() {
-    const st = client.connectionState();
+    const st = client.connectionState(LOCAL);
     if (st === "ready") return { periodMs: READY_POLL_MS };
     if (st === "connecting" || st === "closing") return { periodMs: RETRY_POLL_MS };
     if (config.daemon.autoConnect !== false || this.nextRetryAt > 0) {
@@ -627,32 +822,35 @@ const connection = {
     return null;
   },
 
-  // Auto path only: arm a retry if none is pending, else dial when due. Manual mode never retries.
   tick() {
-    if (client.connectionState() !== "disconnected") return;
     if (config.daemon.autoConnect === false) return;
-
-    if (this.nextRetryAt === 0) {
-      this.nextRetryAt = Date.now() + config.daemon.retryMs;
-    } else if (Date.now() >= this.nextRetryAt) {
-      this.attempt();
+    if (client.connectionState(LOCAL) === "disconnected") {
+      if (this.nextRetryAt === 0) this.scheduleRetry();
+      else if (Date.now() >= this.nextRetryAt) this.dialLocal();
     }
+    this.dialRemotes();
   },
 };
 
-// Sidebar/main status: connected / connecting / offline with a retry countdown.
+// Sidebar status: local-only copy when that is the whole world; a count once remotes exist.
 function connectionLabel() {
-  const st = client.connectionState();
-  if (st === "ready") return "connected";
-  if (st === "connecting") return "connecting…";
-  if (st === "closing") return "disconnecting…";
+  const list = client.connections();
+  const ready = list.filter((c) => c.state === "ready");
+  if (ready.length > 1) return ready.length + " connected";
+  if (ready.length === 1) {
+    return ready[0].key === LOCAL ? "local · connected" : (ready[0].name || ready[0].key) + " · connected";
+  }
+
+  const st = client.connectionState(LOCAL);
+  if (st === "connecting") return "local · connecting…";
+  if (st === "closing") return "local · disconnecting…";
 
   if (connection.nextRetryAt > 0) {
     const secs = Math.max(0, Math.ceil((connection.nextRetryAt - Date.now()) / 1000));
-    return "daemon off · retry " + secs + "s";
+    return "local · off · retry " + secs + "s";
   }
 
-  return "daemon off";
+  return "local · off";
 }
 
 // --- commands + keymaps -------------------------------------------------------------------
@@ -720,4 +918,4 @@ events.on("start", () => {
 });
 
 // Exported so a user's yuke.js can reference the stock views and layout (swap, subclass, patch).
-export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
+export { workspace, sidebar, chat, ChatView, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };

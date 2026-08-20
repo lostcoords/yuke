@@ -619,7 +619,7 @@ export class Emitter {
 }
 
 // The app-wide bus. RootView.onEvent emits host events here (start, resize, key, mouse, tick,
-// session, input_closed), so a plugin observes via events.on("start", …) without touching the router.
+// session, conn, index, input_closed), so a plugin observes via events.on("start", …) without touching the router.
 export const events = new Emitter();
 
 // --- views --------------------------------------------------------------------------------

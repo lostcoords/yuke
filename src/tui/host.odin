@@ -20,11 +20,13 @@ import "core:time"
 import "core:unicode/utf8"
 import "libs:bindings/curl"
 import qjs "libs:bindings/quickjs"
+import "libs:json"
 import "libs:offload"
 import "src:js"
 import "src:paths"
 import "src:term"
 import "src:term/ui"
+import "src:wire"
 
 // The baked default entry the host evaluates, plus the core and default-UI modules it imports.
 // Served to the loader by `host_resolve` so the client's own `import "yuke:core"` resolves in
@@ -97,22 +99,30 @@ Host :: struct {
     tick_period:      time.Duration,
     tick_op:          ^nbio.Operation,
 
-    // One daemon connection shared by the client script tier. Its request completions own
-    // QuickJS promise functions, so it must be closed before `js` is released.
-    daemon:           Daemon_Connection,
+    // Live daemon connections, keyed (`local` / `remote:<device_id>`). Each `Conn` is heap-allocated
+    // so `client.Client` stays address-pinned for the transport. Request completions own QuickJS
+    // promises, so every slot is closed before `js` is released.
+    conns:            [dynamic]^Conn,
 
-    // The one session the UI has open, folding live broadcasts into a replica. Torn down when
-    // the connection closes and before `js` is released.
-    open_session:     Open_Session,
+    // Mounted transcripts, keyed by (conn_key, session_id). Torn down with their connection
+    // and before `js` is released.
+    entries:          [dynamic]Open_Entry,
 
     // Reset per outline/text accessor call; retains its block across calls so a repaint accrues no
     // heap churn. Not the shared temp allocator, which this host never resets per frame.
     snapshot_scratch: virtual.Arena,
 
-    // One in-flight remote (relay) connect attempt, or nil. Owns the control-plane fetch state
-    // until it hands a live transport to `daemon`; canceled before `js` is released so its
-    // promise settles while the context is alive.
-    remote:           ^Remote_Connect,
+    // In-flight remote (relay) connect attempts. Each owns its ticket fetch until it hands a
+    // live transport to a Conn; canceled before `js` is released so promises settle while the
+    // context is alive.
+    remotes:          [dynamic]^Remote_Connect,
+
+    // Shared account roster: one GET, then ticket POSTs. Waiters are `devices()` promises and
+    // remotes that need a pin.
+    roster:           Roster_Cache,
+
+    // Client session identity, loaded once for roster + remote connects.
+    ident:            Identity_Cache,
 
     // Control-plane HTTP client for remote connects (roster + connect tickets), created on the
     // first remote connect and reused. `client_destroy` may not run in a curl callback, so it
@@ -228,15 +238,15 @@ host_destroy :: proc(h: ^Host) {
     h.needs_tick = false
     h.done = true
 
-    // Settle any in-flight remote connect while the context is still alive, then drop the
-    // control-plane client (idle now that its transfer is canceled).
-    remote_connect_cancel(h)
+    // Settle in-flight remote connects and roster waiters while the context is still alive,
+    // then drop the control-plane client (idle now that its transfers are canceled).
+    remote_connect_cancel_all(h)
     if h.cloud_curl_ready {
         curl.client_destroy(&h.cloud_curl)
         h.cloud_curl_ready = false
     }
 
-    daemon_connection_destroy(h)
+    conns_destroy(h)
 
     // Drain before releasing the context: each outstanding `yuke:fs` completion settles a promise
     // that lives in this loop, so freeing first would settle into freed memory. Every teardown hits this.
@@ -482,18 +492,122 @@ host_start :: proc(h: ^Host) {
     host_dispatch(h, obj)
 }
 
-// Dispatch a `{type:"session", kind, id}` event to onEvent (repaints, like a tick): "active" carries
-// the changed draft's id, "reload" is structural. Never call from inside a native call (re-entrant draw).
-host_dispatch_session :: proc(h: ^Host, kind: string, id: u64 = 0) {
+// Dispatch a `{type:"session", kind, connKey, sessionId, id}` event to onEvent (repaints, like a
+// tick): "active" carries the changed draft's `id`, "reload" is structural. Never call from inside
+// a native call (re-entrant draw).
+host_dispatch_session :: proc(h: ^Host, kind: string, conn_key: string, session_id: wire.Session_Id, id: u64 = 0) {
     if h.done || h.js.ctx == nil do return
 
+    sid := ([16]u8)(session_id)
     obj := qjs.new_object(h.js.ctx)
     _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "session"))
     _ = qjs.set_property(h.js.ctx, obj, "kind", qjs.new_string(h.js.ctx, kind))
+    _ = qjs.set_property(h.js.ctx, obj, "connKey", qjs.new_string(h.js.ctx, conn_key))
+    _ = qjs.set_property(h.js.ctx, obj, "sessionId", qjs.new_string(h.js.ctx, string(sid[:])))
     _ = qjs.set_property(h.js.ctx, obj, "id", qjs.new_i64(i64(id)))
     defer qjs.free_value(h.js.ctx, obj)
 
     host_dispatch(h, obj)
+}
+
+// Ungated index broadcast: `{type:"index", connKey, method, params}` with `params` the wire JSON
+// object. Encode failure skips the event rather than dispatching truncated JSON.
+host_dispatch_index :: proc(h: ^Host, conn_key: string, method: wire.Broadcast_Name, params: wire.Broadcast_Data) {
+    if h.done || h.js.ctx == nil do return
+
+    e: json.Emitter
+    json.emitter_init(&e, h.allocator)
+    defer json.emitter_destroy(&e)
+    wire.broadcast_data_emit(&e, params)
+    if e.failed do return
+
+    parsed, ok := host_parse_json(h, json.to_string(&e))
+    if !ok do return
+
+    obj := qjs.new_object(h.js.ctx)
+    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "index"))
+    _ = qjs.set_property(h.js.ctx, obj, "connKey", qjs.new_string(h.js.ctx, conn_key))
+    _ = qjs.set_property(h.js.ctx, obj, "method", qjs.new_string(h.js.ctx, wire.broadcast_name_to_wire(method)))
+    _ = qjs.set_property(h.js.ctx, obj, "params", parsed)
+    defer qjs.free_value(h.js.ctx, obj)
+
+    host_dispatch(h, obj)
+}
+
+// `{type:"conn", kind:"ready", key, workspaces}` — `workspaces` is hello's snapshot as wire JSON.
+host_dispatch_conn_ready :: proc(h: ^Host, key: string, workspaces: []wire.Workspace) {
+    if h.done || h.js.ctx == nil do return
+
+    e: json.Emitter
+    json.emitter_init(&e, h.allocator)
+    defer json.emitter_destroy(&e)
+    json.array_begin(&e)
+    for ws in workspaces {
+        json.elem(&e)
+        wire.workspace_emit(&e, ws)
+    }
+    json.array_end(&e)
+    list: qjs.Value
+    if e.failed {
+        list = qjs.new_array(h.js.ctx)
+    } else if parsed, ok := host_parse_json(h, json.to_string(&e)); ok {
+        list = parsed
+    } else {
+        list = qjs.new_array(h.js.ctx)
+    }
+
+    obj := host_conn_event(h, "ready", key)
+    _ = qjs.set_property(h.js.ctx, obj, "workspaces", list)
+    defer qjs.free_value(h.js.ctx, obj)
+
+    host_dispatch(h, obj)
+}
+
+// `{type:"conn", kind:"close", key, code}` — `code` is the WebSocket close code.
+host_dispatch_conn_close :: proc(h: ^Host, key: string, code: u16) {
+    if h.done || h.js.ctx == nil do return
+
+    obj := host_conn_event(h, "close", key)
+    _ = qjs.set_property(h.js.ctx, obj, "code", qjs.new_i64(i64(code)))
+    defer qjs.free_value(h.js.ctx, obj)
+
+    host_dispatch(h, obj)
+}
+
+// `{type:"conn", kind:"error", key, code}` — `code` is a protocol error wire string.
+host_dispatch_conn_error :: proc(h: ^Host, key: string, reason: string) {
+    if h.done || h.js.ctx == nil do return
+
+    obj := host_conn_event(h, "error", key)
+    _ = qjs.set_property(h.js.ctx, obj, "code", qjs.new_string(h.js.ctx, reason))
+    defer qjs.free_value(h.js.ctx, obj)
+
+    host_dispatch(h, obj)
+}
+
+@(private = "file")
+host_conn_event :: proc(h: ^Host, kind, key: string) -> qjs.Value {
+    obj := qjs.new_object(h.js.ctx)
+    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "conn"))
+    _ = qjs.set_property(h.js.ctx, obj, "kind", qjs.new_string(h.js.ctx, kind))
+    _ = qjs.set_property(h.js.ctx, obj, "key", qjs.new_string(h.js.ctx, key))
+
+    return obj
+}
+
+// Parse `text` into a JS value. False on malformed JSON; the exception is cleared.
+@(private = "file")
+host_parse_json :: proc(h: ^Host, text: string) -> (qjs.Value, bool) {
+    v := qjs.parse_json(h.js.ctx, text, h.allocator)
+    if qjs.is_exception(v) {
+        qjs.free_value(h.js.ctx, v)
+        exc := qjs.get_exception(h.js.ctx)
+        qjs.free_value(h.js.ctx, exc)
+
+        return qjs.undefined(), false
+    }
+
+    return v, true
 }
 
 // --- yuke:term module ---

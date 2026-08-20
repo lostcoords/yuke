@@ -213,6 +213,40 @@ test_defaults_registers_stock_keys :: proc(t: ^testing.T) {
     testing.expect_value(t, ext_test_result(t, &h), "true:true:true:true:true:true:true:true:true:true:true:true")
 }
 
+@(test)
+test_device_feed_folds_index_events :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    h: Host
+    h.allocator = context.allocator
+    modules := [2]js.Module{term_module(), client_module()}
+    ok := js.init(&h.js, {modules = modules[:], user = &h, resolve = host_resolve, allocator = context.allocator})
+    if !testing.expect_value(t, ok, js.Error.None) do return
+
+    defer js.destroy(&h.js)
+    h.done = true
+
+    source := `
+        import { DeviceFeed } from "yuke:defaults";
+        const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
+        const f = new DeviceFeed("local");
+        f.fold({ method: "session.activity_changed", params: { session_id: "aaaaaaaaaaaaaaaa", activity: { state: { type: "running" } } } });
+        f.seed({ items: [{ session: { id: "aaaaaaaaaaaaaaaa", title: "one", updated_at_ms: 2, workspace_id: "w1" }, activity: idle }] });
+        f.learnWorkspaces([{ id: "w1", root: "/x", title: "proj" }]);
+        const running = f.rows()[0].activity.state.type;
+        f.fold({ method: "session.summary_changed", params: { session: { id: "aaaaaaaaaaaaaaaa", title: "renamed", updated_at_ms: 3, workspace_id: "w1" } } });
+        const kept = f.rows()[0].activity.state.type;
+        const title = f.rows()[0].title;
+        f.fold({ method: "session.summary_changed", params: { session: { id: "bbbbbbbbbbbbbbbb", title: "fresh", updated_at_ms: 4 } } });
+        f.fold({ method: "session.removed", params: { session_id: "bbbbbbbbbbbbbbbb" } });
+        const gone = f.rows().every((r) => r.id !== "bbbbbbbbbbbbbbbb");
+        const ws = f.workspaces.get("w1").title;
+        globalThis.result = [running, kept, title, gone, ws].join(":");
+    `
+    testing.expect(t, js.eval_module(&h.js, "test:device-feed", source, context.allocator))
+    testing.expect_value(t, ext_test_result(t, &h), "running:running:renamed:true:proj")
+}
+
 // The node-tree layout engine: branch/leaves order, row/col geometry with a one-cell divider,
 // split, close collapsing a parent onto its sibling, and geometric focus movement.
 @(test)

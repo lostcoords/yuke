@@ -21,8 +21,32 @@ function clientError(reason) {
   return reason instanceof ClientError ? reason : new ClientError(reason);
 }
 
-function request(method, params) {
-  return native.request(method, params).then(
+export function connect(options) {
+  return native.connect(options).catch((reason) => {
+    throw clientError(reason);
+  });
+}
+
+export function disconnect(connKey) {
+  native.disconnect(connKey);
+}
+
+export function connectionState(connKey) {
+  return native.state(connKey);
+}
+
+export function connections() {
+  return native.connections();
+}
+
+export function devices() {
+  return native.devices().catch((reason) => {
+    throw clientError(reason);
+  });
+}
+
+function request(connKey, method, params) {
+  return native.request(connKey, method, params).then(
     (text) => {
       const response = JSON.parse(text);
       if (response.error) {
@@ -37,22 +61,8 @@ function request(method, params) {
   );
 }
 
-export function connect(options) {
-  return native.connect(options).catch((reason) => {
-    throw clientError(reason);
-  });
-}
-
-export function disconnect() {
-  native.disconnect();
-}
-
-export function connectionState() {
-  return native.state();
-}
-
-export function sessionList(params = {}) {
-  return request("session.list", {
+export function sessionList(connKey, params = {}) {
+  return request(connKey, "session.list", {
     scope: { type: "all" },
     population: { type: "top_level" },
     view: "active_recent",
@@ -60,44 +70,42 @@ export function sessionList(params = {}) {
   });
 }
 
-// Track `id` as the one open session, dropping any prior one. It needs a resync before folding.
-export function sessionOpen(id) {
-  native.sessionOpen(id);
+// Mount a replica for `(connKey, sessionId)`. Idempotent if already open. Needs a resync before folding.
+export function sessionOpen(connKey, sessionId) {
+  native.sessionOpen(connKey, sessionId);
 }
 
-// Stop tracking the open session and free its replica.
-export function sessionClose() {
-  native.sessionClose();
+// Drop the replica for `(connKey, sessionId)`.
+export function sessionClose(connKey, sessionId) {
+  native.sessionClose(connKey, sessionId);
 }
 
-// The open session's change counter, or -1 when none is open. Poll this; re-read the outline only
-// when it moves. (Unused by the default UI, which reacts to the "session" event instead.)
-export function sessionRev() {
-  return native.sessionRev();
+// Change counter for that pair, or -1 when it is not mounted.
+export function sessionRev(connKey, sessionId) {
+  return native.sessionRev(connKey, sessionId);
 }
 
-// Resync the open session, installing the ordered cut so broadcasts resume folding.
-export function sessionResync() {
-  return native.sessionResync().catch((reason) => {
+// Install the ordered cut so broadcasts resume folding for that pair.
+export function sessionResync(connKey, sessionId) {
+  return native.sessionResync(connKey, sessionId).catch((reason) => {
     throw clientError(reason);
   });
 }
 
-// The transcript outline (message ids + roles + the draft, no body text), or null when none is open.
-// The virtualized transcript keeps this as its row index and pulls text on demand with sessionText.
-export function sessionOutline() {
-  return JSON.parse(native.sessionOutline());
+// The transcript outline (message ids + roles + the draft, no body text), or null when not mounted.
+export function sessionOutline(connKey, sessionId) {
+  return JSON.parse(native.sessionOutline(connKey, sessionId));
 }
 
-// The concatenated text of one message by id (committed or the streaming draft), "" when absent.
-export function sessionText(id) {
-  return native.sessionText(id);
+// Concatenated text of one message (committed or the streaming draft), "" when absent.
+export function sessionText(connKey, sessionId, messageId) {
+  return native.sessionText(connKey, sessionId, messageId);
 }
 
 // Send `text` as a user message into `id`. The daemon commits it and streams the reply as broadcasts
 // the replica folds, so nothing is inserted optimistically. Result: { type:"started"|"queued", … }.
-export function sessionSendInput(id, text) {
-  return request("session.send_input", {
+export function sessionSendInput(connKey, id, text) {
+  return request(connKey, "session.send_input", {
     session_id: id,
     input: { type: "content", content: [{ type: "text", text }] },
   });
@@ -105,8 +113,8 @@ export function sessionSendInput(id, text) {
 
 // Interrupt the open session's active run; clearQueue also drops every queued input (a hard stop).
 // Result: { canceled_run, cleared_inputs, cleared_compaction }.
-export function sessionCancelRun(id, clearQueue = false) {
-  return request("session.cancel_run", {
+export function sessionCancelRun(connKey, id, clearQueue = false) {
+  return request(connKey, "session.cancel_run", {
     session_id: id,
     ...(clearQueue ? { clear_queue: true } : {}),
   });
@@ -115,6 +123,6 @@ export function sessionCancelRun(id, clearQueue = false) {
 // Immediate subdirectories of `params.path` (the daemon's default root when omitted), one page.
 // Result: { path, parent, entries:[{ name, path, is_git_repo }], next_cursor }; parent is null at
 // the filesystem root and next_cursor is null on the final page.
-export function workspaceBrowse(params = {}) {
-  return request("workspace.browse", params);
+export function workspaceBrowse(connKey, params = {}) {
+  return request(connKey, "workspace.browse", params);
 }

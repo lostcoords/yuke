@@ -109,11 +109,44 @@ declare module "yuke:term" {
   }
 
   // Out-of-band open-session change dispatched by the host: "active" (only draft `id` changed) or
-  // "reload" (structural). Delivered through onEvent like the terminal events.
+  // "reload" (structural). `connKey` + `sessionId` name the mounted pair.
   export interface SessionEvent {
     type: "session";
     kind: "active" | "reload";
+    connKey: string;
+    sessionId: string;
     id: number;
+  }
+
+  export interface WorkspaceInfo {
+    id: string;
+    root: string;
+    title: string;
+  }
+
+  // Connection lifecycle. `ready` carries hello.workspaces; `code` is a WebSocket close code
+  // on close and a protocol error string on error.
+  export interface ConnEvent {
+    type: "conn";
+    kind: "ready" | "close" | "error";
+    key: string;
+    code?: string | number;
+    workspaces?: WorkspaceInfo[];
+  }
+
+  export type IndexMethod =
+    | "session.summary_changed"
+    | "session.activity_changed"
+    | "session.removed"
+    | "workspace.created"
+    | "workspace.removed";
+
+  // Ungated inbox/workspace broadcast. `params` is the wire JSON object for `method`.
+  export interface IndexEvent {
+    type: "index";
+    connKey: string;
+    method: IndexMethod;
+    params: Record<string, unknown>;
   }
 
   export type TermEvent =
@@ -124,7 +157,9 @@ declare module "yuke:term" {
     | MouseEvent
     | TickEvent
     | InputClosedEvent
-    | SessionEvent;
+    | SessionEvent
+    | ConnEvent
+    | IndexEvent;
 
   export interface Term {
     width: number;
@@ -683,16 +718,33 @@ declare module "yuke:client" {
     active: OutlineMessage | null;
   }
 
-  export function connect(options: ConnectOptions): Promise<void>;
-  export function disconnect(): void;
-  export function connectionState(): ConnectionState;
-  export function sessionList(params?: SessionListParams): Promise<SessionListResult>;
-  export function sessionOpen(id: string): void;
-  export function sessionClose(): void;
-  export function sessionRev(): number;
-  export function sessionResync(): Promise<void>;
-  export function sessionOutline(): SessionOutline | null;
-  export function sessionText(id: number): string;
+  export interface ConnectionInfo {
+    key: string;
+    state: ConnectionState;
+    name: string;
+    deviceId: string;
+  }
+
+  export interface Device {
+    device_id: string;
+    name: string;
+    static_public_key: string;
+    online: boolean;
+    is_self: boolean;
+  }
+
+  export function connect(options: ConnectOptions): Promise<string>;
+  export function disconnect(connKey: string): void;
+  export function connectionState(connKey: string): ConnectionState;
+  export function connections(): ConnectionInfo[];
+  export function devices(): Promise<Device[]>;
+  export function sessionList(connKey: string, params?: SessionListParams): Promise<SessionListResult>;
+  export function sessionOpen(connKey: string, sessionId: string): void;
+  export function sessionClose(connKey: string, sessionId: string): void;
+  export function sessionRev(connKey: string, sessionId: string): number;
+  export function sessionResync(connKey: string, sessionId: string): Promise<void>;
+  export function sessionOutline(connKey: string, sessionId: string): SessionOutline | null;
+  export function sessionText(connKey: string, sessionId: string, messageId: number): string;
 
   // Result of session.send_input: "started" runs immediately (with a run_id), "queued" waits behind
   // the active turn. input_id is the daemon-minted id for the enqueued input.
@@ -702,7 +754,7 @@ declare module "yuke:client" {
     run_id?: number;
   }
 
-  export function sessionSendInput(id: string, text: string): Promise<SessionSendInputResult>;
+  export function sessionSendInput(connKey: string, id: string, text: string): Promise<SessionSendInputResult>;
 
   // Result of session.cancel_run: the canceled run (null if none was active), the queued input ids
   // dropped by clearQueue, and a compaction run canceled alongside (null if none).
@@ -712,7 +764,7 @@ declare module "yuke:client" {
     cleared_compaction: number | null;
   }
 
-  export function sessionCancelRun(id: string, clearQueue?: boolean): Promise<SessionCancelRunResult>;
+  export function sessionCancelRun(connKey: string, id: string, clearQueue?: boolean): Promise<SessionCancelRunResult>;
 
   export interface WorkspaceBrowseParams {
     path?: string;
@@ -733,7 +785,7 @@ declare module "yuke:client" {
     next_cursor: string | null;
   }
 
-  export function workspaceBrowse(params?: WorkspaceBrowseParams): Promise<WorkspaceBrowseResult>;
+  export function workspaceBrowse(connKey: string, params?: WorkspaceBrowseParams): Promise<WorkspaceBrowseResult>;
 }
 
 declare module "yuke:ui" {
@@ -1039,30 +1091,45 @@ declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
   import type { CursorRequest, Node, Pane, Rect, Service } from "yuke:core";
   import type { Composer, List, Transcript, TranscriptMessage } from "yuke:ui";
-  import type { SessionActivity } from "yuke:client";
+  import type { Device, Session, SessionActivity, SessionListItem, SessionListResult } from "yuke:client";
 
   export interface SessionRow {
+    connKey: string;
     id: string;
     title: string;
     activity: SessionActivity;
+    session: Session;
+    deviceName: string;
   }
 
   export interface SessionListOptions {
-    onOpen?: (id: string) => void;
+    onOpen?: (connKey: string, id: string) => void;
+  }
+
+  export class DeviceFeed {
+    connKey: string;
+    name: string;
+    items: Map<string, SessionListItem>;
+    workspaces: Map<string, { id: string; root: string; title: string }>;
+    pending: unknown[];
+    loaded: boolean;
+    constructor(connKey: string);
+    learnWorkspaces(list: Array<{ id: string; root?: string; title?: string }> | null | undefined): void;
+    seed(listResult: SessionListResult | null | undefined): void;
+    fold(ev: { method?: string; params?: Record<string, unknown> }): void;
+    clear(): void;
+    rows(): SessionRow[];
   }
 
   export class SessionList implements Pane {
     rect: Rect;
     list: List<SessionRow>;
-    onOpen: ((id: string) => void) | null;
-    activeId: string | null;
-    loaded: boolean;
-    loading: boolean;
+    onOpen: ((connKey: string, id: string) => void) | null;
+    active: { connKey: string; sessionId: string } | null;
+    readonly activeId: string | null;
     constructor(opts?: SessionListOptions);
     get name(): "sessions";
     update(): void;
-    refresh(): void;
-    clear(): void;
     current(): SessionRow | null;
     onKey(ev: KeyEvent): boolean;
     draw(focused: boolean): void;
@@ -1107,6 +1174,7 @@ declare module "yuke:defaults" {
 
   export const connection: Service & {
     nextRetryAt: number;
+    roster: Device[];
     attempt(): void;
     scheduleRetry(): void;
   };

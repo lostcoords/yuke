@@ -8,6 +8,7 @@ user scripts.
 
 import "base:runtime"
 import "core:c"
+import "core:mem"
 import "core:nbio"
 import "core:strings"
 import "core:time"
@@ -24,9 +25,11 @@ CLIENT_NATIVE_MODULE :: "yuke:client-native"
 @(rodata)
 CLIENT_NATIVE_EXPORTS := []string{"native"}
 
-// Slightly beyond the WebSocket close timeout; an opening transport is canceled directly.
-CLIENT_SHUTDOWN_TIMEOUT :: 6 * time.Second
+// Bound for the deferred transport-close callback after we abort. Quit does not wait out the
+// WebSocket close handshake (5s).
+CLIENT_SHUTDOWN_TIMEOUT :: 250 * time.Millisecond
 
+// JS `connect` options. Local uses host/port/token; remote uses `device` (roster id, name fallback).
 Client_Connect_Options :: struct {
     host:   string `json:"host"`,
     port:   int `json:"port"`,
@@ -36,30 +39,57 @@ Client_Connect_Options :: struct {
     device: string `json:"device"`,
 }
 
+// One JS Promise held across an async native op. `pending` on the JS host tracks these.
 Client_Promise :: struct {
     host:    ^Host,
     resolve: qjs.Value,
     reject:  qjs.Value,
 }
 
-Daemon_Connection :: struct {
+// The local daemon's connection key. A process has at most one of these.
+CONN_LOCAL :: "local"
+
+// Prefix for a relay connection key (`remote:` + the roster device id).
+CONN_REMOTE_PREFIX :: "remote:"
+
+// One daemon connection. Heap-allocated and address-pinned: the transport holds `client` by
+// pointer, so these must not live in a relocating array body.
+Conn :: struct {
+    // Lookup identity: `local` or `remote:<device_id>`. Owned.
+    key:         string,
+
+    // Protocol driver. Address-pinned; the transport holds this field by pointer.
     client:      client.Client,
+
+    // True after a successful `client_open`, including once `.Closed`. False if open never ran.
     live:        bool,
+
+    // In-flight connect promise; nil after ready, error, or close.
     connect_job: ^Client_Promise,
+
+    // Roster device id; empty for an unenrolled local. Owned.
+    device_id:   string,
+
+    // Enrolled display name, or empty. Owned.
+    name:        string,
 }
 
+// The private `yuke:client-native` module; `js/client.js` is the typed surface.
 client_module :: proc() -> js.Module {
     return {name = CLIENT_NATIVE_MODULE, init = client_module_init, exports = CLIENT_NATIVE_EXPORTS}
 }
 
+// Installs `native.{connect,disconnect,request,state,connections,devices}` plus the session natives.
 client_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int {
     context = runtime.default_context()
 
     native := qjs.new_object(ctx)
     _ = qjs.set_property(ctx, native, "connect", qjs.new_function(ctx, client_js_connect, "connect", 1))
-    _ = qjs.set_property(ctx, native, "disconnect", qjs.new_function(ctx, client_js_disconnect, "disconnect", 0))
-    _ = qjs.set_property(ctx, native, "request", qjs.new_function(ctx, client_js_request, "request", 2))
-    _ = qjs.set_property(ctx, native, "state", qjs.new_function(ctx, client_js_state, "state", 0))
+    _ = qjs.set_property(ctx, native, "disconnect", qjs.new_function(ctx, client_js_disconnect, "disconnect", 1))
+    _ = qjs.set_property(ctx, native, "request", qjs.new_function(ctx, client_js_request, "request", 3))
+    _ = qjs.set_property(ctx, native, "state", qjs.new_function(ctx, client_js_state, "state", 1))
+    _ = qjs.set_property(ctx, native, "connections", qjs.new_function(ctx, client_js_connections, "connections", 0))
+    _ = qjs.set_property(ctx, native, "devices", qjs.new_function(ctx, client_js_devices, "devices", 0))
     session_native_install(ctx, native)
 
     if !qjs.set_module_export(ctx, m, "native", native) do return -1
@@ -67,7 +97,8 @@ client_module_init :: proc "c" (ctx: ^qjs.Context, m: ^qjs.Module_Def) -> c.int 
     return 0
 }
 
-// Operational failures reject; malformed arguments throw synchronously.
+// `native.connect(opts)` → Promise<connKey>. Throws on bad args or a live duplicate key;
+// rejects on transport / enrollment failure. Resolves with the key on `client_on_ready`.
 @(private = "file")
 client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
@@ -78,19 +109,21 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
 
     if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
 
-    if h.drive == nil || h.drive.loop == nil do return qjs.throw_type_error(ctx, "yuke:client has no drive")
-
     if argc < 1 || !qjs.is_object(argv[0]) do return qjs.throw_type_error(ctx, "connect expects an options object")
-
-    if h.daemon.live && h.daemon.client.state == .Closed {
-        client.client_destroy(&h.daemon.client)
-        h.daemon = {}
-    }
-
-    if h.remote != nil || h.daemon.live do return qjs.throw_type_error(ctx, "a daemon connection already exists")
 
     options, options_ok := client_connect_options(ctx, argv[0])
     if !options_ok do return qjs.throw_type_error(ctx, "connect options are invalid")
+
+    key := conn_key_of(options)
+    conn_reap_closed(h, key)
+
+    if conn_by_key(h, key) != nil do return qjs.throw_type_error(ctx, "a connection for this key already exists")
+
+    if options.remote && remote_by_device(h, options.device) != nil {
+        return qjs.throw_type_error(ctx, "a connection for this key already exists")
+    }
+
+    if h.drive == nil || h.drive.loop == nil do return qjs.throw_type_error(ctx, "yuke:client has no drive")
 
     job, promise := client_promise_new(h)
     if job == nil {
@@ -121,6 +154,13 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         h.allocator,
     )
 
+    conn, slot_ok := conn_slot_new(h, key)
+    if !slot_ok {
+        transport->destroy()
+        client_promise_reject(job, "out_of_memory", false)
+        return promise
+    }
+
     callbacks := client.Client_Callbacks {
         on_ready     = client_on_ready,
         on_broadcast = client_on_broadcast,
@@ -128,41 +168,51 @@ client_js_connect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         on_error     = client_on_error,
     }
 
-    open_err := client.client_open(&h.daemon.client, transport, "yuke", "0.1.0", callbacks, h, h.allocator)
+    open_err := client.client_open(&conn.client, transport, "yuke", "0.1.0", callbacks, h, h.allocator)
     if open_err != .None {
+        conn_remove(h, conn)
         client_promise_reject(job, client_protocol_error_wire(open_err), false)
         return promise
     }
 
-    h.daemon.live = true
-    h.daemon.connect_job = job
+    conn.live = true
+    conn.connect_job = job
 
     return promise
 }
 
+// `native.disconnect(connKey)`. Throws if the key is missing from argv. No-op if that slot is
+// absent, already closed, or closing. Cancels an in-flight remote fetch for the same key.
 @(private = "file")
 client_js_disconnect :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
     _ = this
-    _ = argc
-    _ = argv
 
     h := host_from_ctx(ctx)
     if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
 
+    if argc < 1 || !qjs.is_string(argv[0]) do return qjs.throw_type_error(ctx, "disconnect expects a connection key")
+
+    key, key_ok := qjs.to_string(ctx, argv[0])
+    if !key_ok do return qjs.exception()
+
+    defer qjs.free_string(ctx, key)
+
     // Cancel a remote connect still fetching its roster/ticket; its promise rejects.
-    if h.remote != nil {
-        remote_connect_cancel(h)
+    if remote_connect_cancel_key(h, key) do return qjs.undefined()
+
+    conn := conn_by_key(h, key)
+    if conn == nil || !conn.live || conn.client.state == .Closed || conn.client.state == .Closing {
         return qjs.undefined()
     }
 
-    if !h.daemon.live || h.daemon.client.state == .Closed || h.daemon.client.state == .Closing do return qjs.undefined()
-
-    client.client_close(&h.daemon.client)
+    client.client_close(&conn.client)
 
     return qjs.undefined()
 }
 
+// `native.request(connKey, method, params)` → Promise<JSON response>. Throws on bad args or a
+// blocked method (`initialize`, `auth.set_api_key`). A missing/dead slot rejects `not_ready`.
 @(private = "file")
 client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
@@ -173,9 +223,16 @@ client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
 
     if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
 
-    if argc < 2 || !qjs.is_string(argv[0]) || !qjs.is_object(argv[1]) do return qjs.throw_type_error(ctx, "request expects a method and params object")
+    if argc < 3 || !qjs.is_string(argv[0]) || !qjs.is_string(argv[1]) || !qjs.is_object(argv[2]) {
+        return qjs.throw_type_error(ctx, "request expects a connection key, method, and params object")
+    }
 
-    method_text, method_ok := qjs.to_string(ctx, argv[0])
+    key, key_ok := qjs.to_string(ctx, argv[0])
+    if !key_ok do return qjs.exception()
+
+    defer qjs.free_string(ctx, key)
+
+    method_text, method_ok := qjs.to_string(ctx, argv[1])
     if !method_ok do return qjs.exception()
 
     defer qjs.free_string(ctx, method_text)
@@ -183,7 +240,7 @@ client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
     method, known := wire.method_name_from_wire(method_text)
     if !known || method == .Initialize || method == .Auth_Set_Api_Key do return qjs.throw_type_error(ctx, "request method is not available")
 
-    params, params_ok := client_request_params(ctx, method, argv[1])
+    params, params_ok := client_request_params(ctx, method, argv[2])
     if !params_ok do return qjs.throw_type_error(ctx, "request params failed wire validation")
 
     job, promise := client_promise_new(h)
@@ -193,31 +250,116 @@ client_js_request :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, 
         return qjs.throw_type_error(ctx, "out of memory")
     }
 
-    _, send_err := client.client_send_request(&h.daemon.client, method, params, client_on_request_complete, job)
+    conn := conn_by_key(h, key)
+    if conn == nil || !conn.live {
+        client_promise_reject(job, "not_ready", false)
+        return promise
+    }
+
+    _, send_err := client.client_send_request(&conn.client, method, params, client_on_request_complete, job)
     if send_err != .None do client_promise_reject(job, client_protocol_error_wire(send_err), false)
 
     return promise
 }
 
+// `native.state(connKey)` → `"connecting"|"ready"|"closing"|"disconnected"`. Throws without a
+// key. An in-flight remote fetch for that key reports connecting before a slot exists.
 @(private = "file")
 client_js_state :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+    _ = this
+
+    h := host_from_ctx(ctx)
+    if h == nil do return qjs.new_string(ctx, "disconnected")
+
+    if argc < 1 || !qjs.is_string(argv[0]) do return qjs.throw_type_error(ctx, "state expects a connection key")
+
+    key, key_ok := qjs.to_string(ctx, argv[0])
+    if !key_ok do return qjs.exception()
+
+    defer qjs.free_string(ctx, key)
+
+    // A remote connect reports "connecting" through its whole roster/ticket/dial phase, before
+    // a daemon client exists.
+    if remote_by_key(h, key) != nil do return qjs.new_string(ctx, "connecting")
+
+    conn := conn_by_key(h, key)
+    if conn == nil || !conn.live do return qjs.new_string(ctx, "disconnected")
+
+    return qjs.new_string(ctx, client_state_wire(conn.client.state))
+}
+
+// `native.connections()` → `[{key, state}, …]`. Live slots plus an in-flight remote fetch.
+// `set_property` / `set_index` consume the values; do not free them.
+@(private = "file")
+client_js_connections :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
     context = runtime.default_context()
     _ = this
     _ = argc
     _ = argv
 
     h := host_from_ctx(ctx)
-    if h == nil do return qjs.new_string(ctx, "disconnected")
+    arr := qjs.new_array(ctx)
+    if h == nil do return arr
 
-    // A remote connect reports "connecting" through its whole roster/ticket/dial phase, before
-    // a daemon client exists.
-    if h.remote != nil do return qjs.new_string(ctx, "connecting")
+    i := u32(0)
+    for conn in h.conns {
+        if !conn.live do continue
 
-    if !h.daemon.live do return qjs.new_string(ctx, "disconnected")
+        obj := client_connection_info(ctx, conn.key, client_state_wire(conn.client.state), conn.name, conn.device_id)
+        _ = qjs.set_index(ctx, arr, i, obj)
+        i += 1
+    }
 
-    return qjs.new_string(ctx, client_state_wire(h.daemon.client.state))
+    for rc in h.remotes {
+        key := conn_key_remote(rc.device_id if rc.device_id != "" else rc.device, context.temp_allocator)
+        obj := client_connection_info(ctx, key, "connecting", rc.name, rc.device_id)
+        _ = qjs.set_index(ctx, arr, i, obj)
+        i += 1
+    }
+
+    return arr
 }
 
+// `native.devices()` → Promise<Device[]>. Empty when not enrolled. Shares the one roster GET
+// with in-flight remote connects.
+@(private = "file")
+client_js_devices :: proc "c" (ctx: ^qjs.Context, this: qjs.Value, argc: c.int, argv: [^]qjs.Value) -> qjs.Value {
+    context = runtime.default_context()
+    _ = this
+    _ = argc
+    _ = argv
+
+    h := host_from_ctx(ctx)
+    if h == nil do return qjs.throw_type_error(ctx, "yuke:client has no host")
+
+    if h.done do return qjs.throw_type_error(ctx, "yuke:client host is shutting down")
+
+    job, promise := client_promise_new(h)
+    if job == nil {
+        if qjs.is_exception(promise) do return promise
+
+        return qjs.throw_type_error(ctx, "out of memory")
+    }
+
+    roster_devices(h, job, false)
+
+    return promise
+}
+
+@(private = "file")
+client_connection_info :: proc(ctx: ^qjs.Context, key, state, name, device_id: string) -> qjs.Value {
+    obj := qjs.new_object(ctx)
+    _ = qjs.set_property(ctx, obj, "key", qjs.new_string(ctx, key))
+    _ = qjs.set_property(ctx, obj, "state", qjs.new_string(ctx, state))
+    _ = qjs.set_property(ctx, obj, "name", qjs.new_string(ctx, name))
+    _ = qjs.set_property(ctx, obj, "deviceId", qjs.new_string(ctx, device_id))
+
+    return obj
+}
+
+// Decode connect options from a JS object. Remote requires a non-empty device name; local
+// defaults host to 127.0.0.1 and requires a valid port. Strings live on the temp allocator.
 @(private = "file")
 client_connect_options :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (options: Client_Connect_Options, ok: bool) {
     encoded := qjs.json_stringify(ctx, value)
@@ -232,7 +374,7 @@ client_connect_options :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (options:
 
     if json.unmarshal(transmute([]byte)text, &options, .JSON, context.temp_allocator) != nil do return {}, false
 
-    // A remote connect selects the daemon by device name; host/port are unused.
+    // A remote connect selects the daemon by roster device id (name is a fallback).
     if options.remote {
         if options.device == "" do return {}, false
 
@@ -246,6 +388,8 @@ client_connect_options :: proc(ctx: ^qjs.Context, value: qjs.Value) -> (options:
     return options, true
 }
 
+// Decode and wire-validate RPC params for `method` from a JS object. Borrowed from the temp
+// allocator for the duration of the send.
 @(private = "file")
 client_request_params :: proc(
     ctx: ^qjs.Context,
@@ -274,6 +418,8 @@ client_request_params :: proc(
     return params, true
 }
 
+// Allocate a JS Promise and bump `h.js.pending`. The job owns the resolve/reject functions
+// until settle. On `new_promise` failure the job is freed and `promise` is the exception.
 @(private)
 client_promise_new :: proc(h: ^Host) -> (job: ^Client_Promise, promise: qjs.Value) {
     assert(h != nil && h.js.ctx != nil, "a client promise needs a live host")
@@ -297,11 +443,13 @@ client_promise_new :: proc(h: ^Host) -> (job: ^Client_Promise, promise: qjs.Valu
     return job, promise
 }
 
+// Fulfill `job` with `value` (consumed). `drain` runs microtasks after settle.
 @(private)
 client_promise_resolve :: proc(job: ^Client_Promise, value: qjs.Value, drain: bool) {
     client_promise_settle(job, value, true, drain)
 }
 
+// Reject `job` with `reason` as a JS string. `drain` runs microtasks after settle.
 @(private)
 client_promise_reject :: proc(job: ^Client_Promise, reason: string, drain: bool) {
     assert(job != nil && job.host != nil, "client promise rejection needs a job")
@@ -310,6 +458,8 @@ client_promise_reject :: proc(job: ^Client_Promise, reason: string, drain: bool)
     client_promise_settle(job, value, false, drain)
 }
 
+// Call resolve or reject, drop `pending`, free the job. `value` is consumed. Must not run
+// after the JS context is gone.
 @(private = "file")
 client_promise_settle :: proc(job: ^Client_Promise, value: qjs.Value, success: bool, run_jobs: bool) {
     assert(job != nil && job.host != nil, "client promise settlement needs a job")
@@ -333,60 +483,70 @@ client_promise_settle :: proc(job: ^Client_Promise, value: qjs.Value, success: b
     if run_jobs do js.drain(&h.js)
 }
 
+// Initialize accepted: dispatch `{type:"conn", kind:"ready", key, workspaces}` from hello, then
+// resolve the slot's connect promise with its key. JS must not list workspaces a second time.
 client_on_ready :: proc(c: ^client.Client, hello: wire.Initialize_Result) {
     assert(c != nil && c.user_data != nil, "ready callback lost its host")
-    _ = hello
 
     h := (^Host)(c.user_data)
-    assert(&h.daemon.client == c && h.daemon.live, "ready callback crossed connections")
-    assert(h.daemon.connect_job != nil, "ready callback lost its connect promise")
+    conn := conn_by_client(h, c)
+    assert(conn != nil && conn.live, "ready callback crossed connections")
+    assert(conn.connect_job != nil, "ready callback lost its connect promise")
 
-    job := h.daemon.connect_job
-    h.daemon.connect_job = nil
-    client_promise_resolve(job, qjs.undefined(), true)
+    job := conn.connect_job
+    conn.connect_job = nil
+    session_subscribe_conn(h, conn)
+    host_dispatch_conn_ready(h, conn.key, hello.workspaces)
+    client_promise_resolve(job, qjs.new_string(h.js.ctx, conn.key), true)
 }
 
+// Terminal close for one slot. Drops only this connection's replicas, then `{type:"conn",
+// kind:"close"}`. A pending connect job on this slot rejects `connection_closed`.
 client_on_close :: proc(c: ^client.Client, code: client.Close_Code) {
     assert(c != nil && c.user_data != nil, "close callback lost its host")
-    _ = code
 
     h := (^Host)(c.user_data)
-    assert(&h.daemon.client == c && h.daemon.live, "close callback crossed connections")
+    conn := conn_by_client(h, c)
+    assert(conn != nil && conn.live, "close callback crossed connections")
 
-    // The live stream is gone; drop the replica so a reconnect re-opens from a fresh resync, and
-    // clear the transcript (its data is gone) rather than leaving a stale zombie on screen.
-    was_open := h.open_session.live
-    open_session_teardown(h)
-    if was_open do host_dispatch_session(h, "reload")
+    entries_drop_conn(h, conn.key)
+    host_dispatch_conn_close(h, conn.key, u16(code))
 
-    if h.daemon.connect_job != nil {
-        job := h.daemon.connect_job
-        h.daemon.connect_job = nil
+    if conn.connect_job != nil {
+        job := conn.connect_job
+        conn.connect_job = nil
         client_promise_reject(job, "connection_closed", true)
     }
 }
 
+// Protocol/transport error on one slot. `{type:"conn", kind:"error"}` then rejects a still-pending
+// connect job; the close callback follows if the driver goes terminal.
 client_on_error :: proc(c: ^client.Client, err: client.Protocol_Error) {
     assert(c != nil && c.user_data != nil, "error callback lost its host")
     assert(err != .None, "client error callback needs an error")
 
     h := (^Host)(c.user_data)
-    assert(&h.daemon.client == c && h.daemon.live, "error callback crossed connections")
+    conn := conn_by_client(h, c)
+    assert(conn != nil && conn.live, "error callback crossed connections")
 
-    if h.daemon.connect_job != nil {
-        job := h.daemon.connect_job
-        h.daemon.connect_job = nil
+    host_dispatch_conn_error(h, conn.key, client_protocol_error_wire(err))
+
+    if conn.connect_job != nil {
+        job := conn.connect_job
+        conn.connect_job = nil
         client_promise_reject(job, client_protocol_error_wire(err), true)
     }
 }
 
+// Settle one RPC: encode the wire response as JSON for JS, or reject with a protocol code.
 client_on_request_complete :: proc(c: ^client.Client, outcome: client.Request_Outcome, user_data: rawptr) {
     assert(c != nil && c.user_data != nil, "request completion lost its host")
     assert(user_data != nil, "request completion lost its promise")
 
     h := (^Host)(c.user_data)
     job := (^Client_Promise)(user_data)
-    assert(&h.daemon.client == c && h.daemon.live, "request completion crossed connections")
+    conn := conn_by_client(h, c)
+    assert(conn != nil && conn.live, "request completion crossed connections")
     assert(job.host == h, "request completion crossed hosts")
 
     switch result in outcome {
@@ -406,30 +566,173 @@ client_on_request_complete :: proc(c: ^client.Client, outcome: client.Request_Ou
     }
 }
 
-daemon_connection_destroy :: proc(h: ^Host) {
-    assert(h != nil, "daemon connection destroy needs a host")
+// Host teardown: abort every live slot, wait up to `CLIENT_SHUTDOWN_TIMEOUT` for the
+// terminal callback, then destroy. Drops replicas first. Asserts every connect job settled.
+conns_destroy :: proc(h: ^Host) {
+    assert(h != nil, "conns destroy needs a host")
 
-    // A clean close frees this via `on_close`; do it up front too, for a connection that never
-    // reached `.Closed`.
     open_session_teardown(h)
-
-    if !h.daemon.live do return
 
     deadline := time.time_add(time.now(), CLIENT_SHUTDOWN_TIMEOUT)
 
-    if h.daemon.client.state != .Closing && h.daemon.client.state != .Closed do client.client_close(&h.daemon.client)
+    for conn in h.conns {
+        if !conn.live do continue
+        if conn.client.state == .Closed do continue
+        if conn.client.state == .Connecting {
+            client.client_close(&conn.client)
+            continue
+        }
 
-    for h.daemon.client.state != .Closed && time.now()._nsec < deadline._nsec {
-        if nbio.tick(50 * time.Millisecond) != nil do break
+        // Abort even if already Closing — a graceful close waits ~5s for the peer.
+        conn.client.state = .Closing
+        conn.client.transport->abort(.Canceled)
     }
 
-    assert(h.daemon.client.state == .Closed, "daemon connection did not finish bounded shutdown")
-    assert(h.daemon.connect_job == nil, "daemon shutdown did not settle connect")
+    for time.now()._nsec < deadline._nsec {
+        if !conns_any_open(h) do break
+        _ = nbio.tick(10 * time.Millisecond)
+    }
 
-    client.client_destroy(&h.daemon.client)
-    h.daemon = {}
+    for conn in h.conns {
+        if !conn.live do continue
+
+        assert(conn.client.state == .Closed, "daemon connection did not finish bounded shutdown")
+        assert(conn.connect_job == nil, "daemon shutdown did not settle connect")
+        client.client_destroy(&conn.client)
+        conn.live = false
+    }
+
+    for conn in h.conns {
+        conn_free(h, conn)
+    }
+
+    delete(h.conns)
+    h.conns = {}
 }
 
+// The lookup key for a connect: local is fixed; a remote is `remote:` plus the device id (or
+// the lookup string until the roster resolves it).
+conn_key_of :: proc(options: Client_Connect_Options) -> string {
+    if options.remote do return conn_key_remote(options.device, context.temp_allocator)
+
+    return CONN_LOCAL
+}
+
+// `"remote:" + device`. Caller owns the result.
+conn_key_remote :: proc(device: string, allocator: mem.Allocator) -> string {
+    return strings.concatenate({CONN_REMOTE_PREFIX, device}, allocator)
+}
+
+// True when `key` is the relay slot for `device` (`remote:` + name).
+conn_key_is_remote_device :: proc(key, device: string) -> bool {
+    return strings.has_prefix(key, CONN_REMOTE_PREFIX) && key[len(CONN_REMOTE_PREFIX):] == device
+}
+
+// Linear find by key. Nil if absent (including a closed slot already reaped).
+conn_by_key :: proc(h: ^Host, key: string) -> ^Conn {
+    assert(h != nil, "conn_by_key needs a host")
+
+    for conn in h.conns {
+        if conn.key == key do return conn
+    }
+
+    return nil
+}
+
+// Linear find by `client` pointer — callbacks look up their slot this way.
+conn_by_client :: proc(h: ^Host, c: ^client.Client) -> ^Conn {
+    assert(h != nil && c != nil, "conn_by_client needs a host and client")
+
+    for conn in h.conns {
+        if &conn.client == c do return conn
+    }
+
+    return nil
+}
+
+// If `key` has a `.Closed` slot, destroy it so a reconnect can reuse the key. No-op if the
+// slot is still live.
+conn_reap_closed :: proc(h: ^Host, key: string) {
+    assert(h != nil, "conn_reap_closed needs a host")
+
+    for conn, i in h.conns {
+        if conn.key != key do continue
+        if conn.client.state != .Closed do return
+
+        assert(conn.connect_job == nil, "a closed connection settled its connect job")
+        if conn.live do client.client_destroy(&conn.client)
+
+        conn_free(h, conn)
+        unordered_remove(&h.conns, i)
+
+        return
+    }
+}
+
+// Allocate a pinned slot with `key`. The caller opens the client; on open failure it must
+// `conn_remove`. False on alloc failure (no slot is retained).
+conn_slot_new :: proc(h: ^Host, key: string) -> (^Conn, bool) {
+    assert(h != nil && key != "", "conn_slot_new needs a host and key")
+
+    conn := new(Conn, h.allocator)
+    conn.key = strings.clone(key, h.allocator)
+    if _, aerr := append(&h.conns, conn); aerr != nil {
+        conn_free(h, conn)
+        return nil, false
+    }
+
+    return conn, true
+}
+
+conn_free :: proc(h: ^Host, conn: ^Conn) {
+    assert(h != nil && conn != nil, "conn_free needs a host and slot")
+
+    delete(conn.key, h.allocator)
+    delete(conn.device_id, h.allocator)
+    delete(conn.name, h.allocator)
+    free(conn, h.allocator)
+}
+
+// Drop a slot that never reached `client_open` (open failed). Does not `client_destroy`.
+conn_remove :: proc(h: ^Host, conn: ^Conn) {
+    assert(h != nil && conn != nil, "conn_remove needs a host and slot")
+
+    for existing, i in h.conns {
+        if existing != conn do continue
+
+        conn_free(h, conn)
+        unordered_remove(&h.conns, i)
+
+        return
+    }
+
+    assert(false, "conn_remove on a slot the host does not own")
+}
+
+// Drop slots that were never `client_open`'d — tests that fake a live client without a transport.
+conns_free_unopened :: proc(h: ^Host) {
+    assert(h != nil, "conns_free_unopened needs a host")
+
+    for conn in h.conns {
+        assert(!conn.live || conn.client.transport.open == nil, "conns_free_unopened on a real transport")
+        conn_free(h, conn)
+    }
+
+    delete(h.conns)
+    h.conns = {}
+}
+
+// True if any live slot is still short of `.Closed` — used to wait out shutdown.
+@(private = "file")
+conns_any_open :: proc(h: ^Host) -> bool {
+    for conn in h.conns {
+        if conn.live && conn.client.state != .Closed do return true
+    }
+
+    return false
+}
+
+// Map a protocol state to the JS `ConnectionState` strings.
 @(private = "file")
 client_state_wire :: proc(state: client.Protocol_State) -> string {
     switch state {
@@ -449,6 +752,7 @@ client_state_wire :: proc(state: client.Protocol_State) -> string {
     unreachable()
 }
 
+// Map a protocol error to the JS `ClientError.code` strings. `.None` is a caller bug.
 @(private)
 client_protocol_error_wire :: proc(err: client.Protocol_Error) -> string {
     switch err {
