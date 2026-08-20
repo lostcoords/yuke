@@ -93,3 +93,10 @@ export function sessionOutline() {
 export function sessionText(id) {
   return native.sessionText(id);
 }
+
+// Immediate subdirectories of `params.path` (the daemon's default root when omitted), one page.
+// Result: { path, parent, entries:[{ name, path, is_git_repo }], next_cursor }; parent is null at
+// the filesystem root and next_cursor is null on the final page.
+export function workspaceBrowse(params = {}) {
+  return request("workspace.browse", params);
+}

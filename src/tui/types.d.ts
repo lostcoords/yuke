@@ -247,6 +247,8 @@ declare module "yuke:core" {
 
   export function strokeOf(ev: KeyEvent): string;
 
+  export function isTextKey(ev: KeyEvent): boolean;
+
   export interface Rect {
     x: number;
     y: number;
@@ -673,6 +675,27 @@ declare module "yuke:client" {
   export function sessionResync(): Promise<void>;
   export function sessionOutline(): SessionOutline | null;
   export function sessionText(id: number): string;
+
+  export interface WorkspaceBrowseParams {
+    path?: string;
+    limit?: number;
+    cursor?: string;
+  }
+
+  export interface DirEntry {
+    name: string;
+    path: string;
+    is_git_repo: boolean;
+  }
+
+  export interface WorkspaceBrowseResult {
+    path: string;
+    parent: string | null;
+    entries: DirEntry[];
+    next_cursor: string | null;
+  }
+
+  export function workspaceBrowse(params?: WorkspaceBrowseParams): Promise<WorkspaceBrowseResult>;
 }
 
 declare module "yuke:ui" {
@@ -919,6 +942,9 @@ declare module "yuke:ui" {
   export function fuzzyMatch(text: string, query: string): number | null;
   export function fuzzyRank<T>(items: T[], query: string, textOf: (item: T) => string): T[];
 
+  // A picker keymap value: a handler run with the Picker as its second arg, or false to swallow.
+  export type PickKeymapBinding<T = unknown> = false | ((ev: KeyEvent, content: Picker<T>) => void);
+
   export interface PickOptions<T = unknown>
     extends WindowOptions,
       Pick<ListOptions<T>, "format" | "key" | "isSelectable" | "selGroup"> {
@@ -929,6 +955,8 @@ declare module "yuke:ui" {
     onAccept?: (item: T) => void;
     onCancel?: () => void;
     validate?: (item: T) => boolean;
+    keymap?: Record<string, PickKeymapBinding<T>>;
+    closeOnAccept?: boolean;
   }
 
   export class Picker<T = unknown> implements WindowContent {
@@ -938,6 +966,8 @@ declare module "yuke:ui" {
     list: List<T>;
     onAccept: ((item: T) => void) | null;
     onCancel: (() => void) | null;
+    keymap: Record<string, PickKeymapBinding<T>> | null;
+    closeOnAccept: boolean;
     constructor(opts: PickOptions<T>);
     setSource(items: T[]): void;
     refilter(): void;
@@ -1028,7 +1058,7 @@ declare module "yuke:defaults" {
   export const sidebar: SessionList;
   export const chat: ChatView;
 
-  export function openExplorer(startPath: string): unknown;
+  export function openExplorer(startPath?: string): unknown;
   export function openPalette(): unknown;
   export function openSessionFinder(): unknown;
   export function openCommandLine(): unknown;

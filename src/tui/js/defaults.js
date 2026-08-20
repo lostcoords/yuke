@@ -1,7 +1,7 @@
 // yuke:defaults — bundled default UI: a sidebar | chat split shell with local daemon connect,
 // command palette, ":" line, and a stub explorer. A user's yuke.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, Node, root, quit, config, events } from "yuke:core";
+import { command, keymap, style, clip, fill, text, strokeOf, isTextKey, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
@@ -13,9 +13,6 @@ Object.assign(style.groups, {
   YukeCmdlineErr: { fg: 203, bold: true },
 });
 style.invalidate();
-
-// Stub explorer root until workspace.browse is wired.
-const EXPLORER_ROOT = "/Users/xyaman/Work";
 
 // The session sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
@@ -310,82 +307,79 @@ const sidebar = new SessionList({ onOpen: (id) => chatSession.open(id) });
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
 // --- explorer -----------------------------------------------------------------------------
-// A directory navigator over the daemon's workspace.browse shape, stubbed here until the bridge
-// lands. Entries are directories only (name, path, is_git_repo), paginated with a cursor.
-const FS = {
-  "/Users/xyaman": { parent: "/Users", dirs: [["Work", false], ["Documents", false]] },
-  "/Users/xyaman/Work": {
-    parent: "/Users/xyaman",
-    dirs: [["yuke-odin", true], ["other-app", true], ["monorepo", false], ["scratch", false]],
-  },
-  "/Users/xyaman/Work/yuke-odin": {
-    parent: "/Users/xyaman/Work",
-    dirs: [["src", false], ["libs", false], ["docs", false], ["tools", false]],
-  },
-  "/Users/xyaman/Work/monorepo": {
-    parent: "/Users/xyaman/Work",
-    dirs: [["app-web", true], ["app-api", true], ["shared", false]],
-  },
-};
-
-function browse(path) {
-  const node = FS[path] || { parent: path.replace(/\/[^/]*$/, "") || "/", dirs: [] };
-  return Promise.resolve({
-    path: path,
-    parent: node.parent,
-    entries: node.dirs.map(([name, git]) => ({ name: name, path: path + "/" + name, is_git_repo: git })),
-    next_cursor: null,
-  });
-}
-
-// Open a floating directory navigator rooted at `startPath`. Enter descends (or, on a repo,
-// would open it); "-" goes to the parent; Esc closes. A ".." row appears when a parent exists.
+// A floating directory navigator over the daemon's live workspace.browse, fuzzy-filtered as you
+// type (the query ranks the current directory's entries). Enter/→ descends; ← goes to the parent;
+// Esc closes. A ".." row and the daemon's own path both survive an empty query. `startPath` omitted
+// roots at the daemon's default (home). The listing is one page — a directory with more entries
+// shows a trailing non-selectable notice rather than silently truncating; cursor paging is future.
 function openExplorer(startPath) {
-  const state = { path: startPath, parent: null };
+  const state = { path: startPath || "", parent: null };
 
-  const picker = ui.select([], {
-    title: () => state.path,
-    footer: "j/k · ↵ enter · - up · esc close",
+  const picker = ui.pick({
+    title: () => state.path || "…",
+    footer: "type to filter · ↵/→ enter · ← up · esc close",
     border: "rounded",
     width: 0.6,
     height: 0.6,
     key: (e) => e.key,
-    format: (e) =>
-      e.up
-        ? { text: "..", group: "UIDim" }
-        : { text: e.name + "/", right: e.is_git_repo ? "git" : "" },
-    onAccept: (e) => go(e.up ? e.dest : e.path),
+    // Match on the entry name; the ".." and notice rows carry no name, so they drop out the moment
+    // a query is typed (fuzzyRank keeps them only on an empty query) and navigation resumes on clear.
+    filterText: (e) => e.name || "",
+    isSelectable: (e) => !e.notice,
+    format: (e) => {
+      if (e.notice) return { text: e.text, group: "UIDim" };
+      if (e.up) return { text: "..", group: "UIDim" };
+      return { text: e.name + "/", right: e.is_git_repo ? "git" : "" };
+    },
+    onAccept: (e) => {
+      if (e.notice) return;
+      go(e.up ? e.dest : e.path);
+    },
     closeOnAccept: false,
     keymap: {
-      "-": () => {
+      left: () => {
         if (state.parent != null) go(state.parent);
+      },
+      right: (_ev, p) => {
+        const e = p.selected();
+        if (e && !e.up && !e.notice) go(e.path);
       },
     },
   });
 
   function go(path) {
-    browse(path).then((res) => {
-      state.path = res.path;
-      state.parent = res.parent;
+    client.workspaceBrowse(path != null ? { path } : {}).then(
+      (res) => {
+        state.path = res.path;
+        state.parent = res.parent;
 
-      const rows = [];
-      if (res.parent != null) rows.push({ key: "..", up: true, dest: res.parent });
-      for (const e of res.entries) {
-        rows.push({ key: e.path, name: e.name, path: e.path, is_git_repo: e.is_git_repo });
-      }
+        const rows = [];
+        if (res.parent != null) rows.push({ key: "..", up: true, dest: res.parent });
+        for (const e of res.entries) {
+          rows.push({ key: e.path, name: e.name, path: e.path, is_git_repo: e.is_git_repo });
+        }
 
-      picker.content.setItems(rows);
-      root.invalidate();
-    });
+        if (res.next_cursor != null) rows.push({ key: "\x00more", notice: true, text: "… more entries not shown" });
+
+        picker.content.query = ""; // a fresh level starts unfiltered
+        picker.content.setSource(rows);
+        root.invalidate();
+      },
+      () => {
+        picker.content.query = "";
+        picker.content.setSource([{ key: "\x00err", notice: true, text: "cannot browse — daemon offline?" }]);
+        root.invalidate();
+      },
+    );
   }
 
-  go(startPath);
+  go(state.path || null);
   return picker;
 }
 
 // --- command palette ----------------------------------------------------------------------
 // A picker over the command registry: lists the commands available in the current context and
-// runs the chosen one. Built entirely on ui.select — the same primitive as the explorer.
+// runs the chosen one. Built on ui.pick — the same fuzzy finder as the explorer and session finder.
 
 // Best-effort availability: run the predicate with no args, treating a throw as available so a
 // command with an argument-injecting predicate is still listed.
@@ -543,7 +537,7 @@ class CommandLine {
     }
 
     // A printable char extends the word; any modifier past Shift means a shortcut, not text.
-    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~1) === 0) {
+    if (isTextKey(ev)) {
       this.text += ev.char;
       this.error = "";
     }
@@ -651,7 +645,7 @@ plugins.use({
       "ui:palette": () => openPalette(),
       "ui:sessions": () => openSessionFinder(),
       "app:connect": () => connection.attempt(),
-      "app:explorer": () => openExplorer(EXPLORER_ROOT),
+      "app:explorer": () => openExplorer(),
       "focus:left": () => root.focusDir("h"),
       "focus:down": () => root.focusDir("j"),
       "focus:up": () => root.focusDir("k"),

@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit built on yuke:core. List/Pager/Window are classes you subclass or
 // patch; `ui` exports the pickers. Editor policy stays in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, wrap, root, strokeOf, style } from "yuke:core";
+import { text, fill, clip, wrap, root, strokeOf, isTextKey, style } from "yuke:core";
 
 // The kit seeds its own highlight groups over the core palette — presentation lives with the
 // widgets, not in core. A theme overrides these by mutating style.groups then invalidating.
@@ -549,7 +549,7 @@ export class Composer {
     }
 
     // A printable char (any modifier past Shift means a shortcut, not text) extends the message.
-    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0) {
+    if (isTextKey(ev)) {
       this.text += ev.char;
       return true;
     }
@@ -939,6 +939,10 @@ export class Picker {
 
     this.onAccept = opts.onAccept || null;
     this.onCancel = opts.onCancel || null;
+    // Stay open after accept (a navigator that descends) vs dismiss (a chooser); an optional
+    // per-instance keymap binds non-text strokes (arrows) to actions the query would otherwise eat.
+    this.closeOnAccept = opts.closeOnAccept !== false;
+    this.keymap = opts.keymap || null;
     this.refilter();
   }
 
@@ -982,7 +986,7 @@ export class Picker {
     if (it == null) return;
     if (this.opts.validate && !this.opts.validate(it)) return;
 
-    root.popOverlay(this.win);
+    if (this.closeOnAccept) root.popOverlay(this.win);
     if (this.onAccept) this.onAccept(it);
   }
 
@@ -993,6 +997,17 @@ export class Picker {
 
   onKey(ev) {
     const s = strokeOf(ev);
+
+    // Per-instance keymap wins: a function runs, false disables the stroke (consumed, no effect).
+    // Checked before text input so a bound arrow drives navigation without landing in the query.
+    if (this.keymap) {
+      const bound = this.keymap[s];
+      if (bound === false) return true;
+      if (typeof bound === "function") {
+        bound(ev, this);
+        return true;
+      }
+    }
 
     if (s === "enter") {
       this.accept();
@@ -1023,7 +1038,7 @@ export class Picker {
     }
 
     // A printable char (any modifier past Shift means a shortcut, not text) extends the query.
-    if (ev.code === "char" && ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0) {
+    if (isTextKey(ev)) {
       this.query += ev.char;
       this.refilter();
     }
