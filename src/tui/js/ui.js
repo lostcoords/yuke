@@ -427,6 +427,16 @@ export class Transcript {
   }
 }
 
+// Delete the word before the end of `s` (readline werase): drop trailing spaces, then the run of
+// non-space chars. The composer is append-only, so this always acts at the end.
+function deleteWordBack(s) {
+  let i = s.length;
+  while (i > 0 && s[i - 1] === " ") i--;
+  while (i > 0 && s[i - 1] !== " ") i--;
+
+  return s.slice(0, i);
+}
+
 // A single-line message input. Enter submits (clears, calls onSubmit(text)), Backspace deletes;
 // unhandled keys return false so the owner can route them (e.g. scrolling a transcript).
 export class Composer {
@@ -436,6 +446,7 @@ export class Composer {
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
+    this.mode = "insert"; // "insert" types; the opt-in vim layer flips to "normal"
   }
 
   get name() {
@@ -451,6 +462,9 @@ export class Composer {
   }
 
   onKey(ev) {
+    // Normal mode disables text input: keys fall through to the keymap and the transcript.
+    if (this.mode !== "insert") return false;
+
     const s = strokeOf(ev);
 
     if (s === "enter") {
@@ -460,6 +474,18 @@ export class Composer {
 
     if (s === "backspace") {
       this.text = this.text.slice(0, -1);
+      return true;
+    }
+
+    // Readline editing: ctrl+w erases the previous word, ctrl+u clears the line. Consuming these
+    // keeps them from reaching the keymap, so ctrl+w means word-erase while typing (not windows).
+    if (s === "ctrl+w") {
+      this.text = deleteWordBack(this.text);
+      return true;
+    }
+
+    if (s === "ctrl+u") {
+      this.text = "";
       return true;
     }
 
@@ -477,11 +503,19 @@ export class Composer {
     if (w <= 0 || h <= 0) return;
 
     fill(x, y, w, h, "UIComposer");
+
+    if (this.mode !== "insert") {
+      text(x, y, clip("-- " + this.mode.toUpperCase() + " --", w), "UIDim");
+      return;
+    }
+
     const empty = this.text === "";
     text(x, y, clip(this.prompt + (empty ? this.placeholder : this.text), w), empty ? "UIDim" : "UIComposer");
   }
 
   cursor() {
+    if (this.mode !== "insert") return null; // no caret while input is disabled
+
     const { x, y, w } = this.rect;
     const col = Math.min(w - 1, term.measure(this.prompt + this.text));
 

@@ -41,6 +41,8 @@ DEFAULTS_JS :: #load("js/defaults.js", string)
 
 CLIENT_JS :: #load("js/client.js", string)
 
+VIM_JS :: #load("js/vim.js", string)
+
 // The user config entry, evaluated on top of the baked UI when present.
 USER_ENTRY :: "yuke.js"
 
@@ -487,13 +489,13 @@ host_start :: proc(h: ^Host) {
     host_dispatch(h, obj)
 }
 
-// Repaint after an out-of-band open-session change (a folded broadcast or installed resync). Like
-// a tick, any dispatched event redraws. Never called from a native call, to avoid re-entering a draw.
-host_dispatch_session :: proc(h: ^Host) {
+// Dispatch a type-only event `{type}` to onEvent (repaints, like a tick). Never call from inside a
+// native call, to avoid re-entering a draw.
+host_dispatch_event :: proc(h: ^Host, type: string) {
     if h.done || h.js.ctx == nil do return
 
     obj := qjs.new_object(h.js.ctx)
-    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, "session"))
+    _ = qjs.set_property(h.js.ctx, obj, "type", qjs.new_string(h.js.ctx, type))
     defer qjs.free_value(h.js.ctx, obj)
 
     host_dispatch(h, obj)

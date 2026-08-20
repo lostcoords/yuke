@@ -197,12 +197,17 @@ test_defaults_registers_stock_keys :: proc(t: ^testing.T) {
         globalThis.result = [
           !!command.map["app:quit"],
           !!command.map["focus:left"],
-          !!keymap.map[" "],
+          keymap.map["ctrl+p"] && keymap.map["ctrl+p"][0] === "ui:palette",
+          keymap.map["ctrl+k h"] && keymap.map["ctrl+k h"][0] === "focus:left",
+          keymap.map["ctrl+k left"] && keymap.map["ctrl+k left"][0] === "focus:left",
+          !keymap.map["ctrl+w h"],
+          !keymap.map[" "],
+          !keymap.map[":"],
           plugins.names().indexOf("app-keys") >= 0,
         ].join(":");
     `
     testing.expect(t, js.eval_module(&h.js, "test:defaults-keys", source, context.allocator))
-    testing.expect_value(t, ext_test_result(t, &h), "true:true:true:true")
+    testing.expect_value(t, ext_test_result(t, &h), "true:true:true:true:true:true:true:true:true")
 }
 
 // The node-tree layout engine: branch/leaves order, row/col geometry with a one-cell divider,
@@ -387,6 +392,12 @@ test_composer :: proc(t: ^testing.T) {
         check("backspace", c.onKey({ code: "backspace", mods: 0 }) === true && c.text === "h");
         check("passthrough", c.onKey({ code: "up", mods: 0 }) === false);
 
+        // Readline editing: ctrl+w (mods bit 4 = ctrl) erases the last word, ctrl+u clears the line.
+        c.text = "foo bar baz";
+        check("ctrl-w-werase", c.onKey({ code: "char", char: "w", mods: 4 }) === true && c.text === "foo bar ");
+        check("ctrl-u-clear", c.onKey({ code: "char", char: "u", mods: 4 }) === true && c.text === "");
+        c.text = "h"; // restore for the enter check below
+
         c.onKey(ch("!"));
         check("enter", c.onKey({ code: "enter", mods: 0 }) === true && submitted === "h!" && c.text === "");
 
@@ -398,5 +409,159 @@ test_composer :: proc(t: ^testing.T) {
     `
 
     testing.expect(t, js.eval_module(&h.js, "test:composer", source, context.allocator))
+    testing.expect_value(t, ext_test_result(t, &h), "ok")
+}
+
+// The chat transcript over a session snapshot: adaptSnapshot flattens committed + active messages
+// (id stringified, non-text parts dropped), the layout wraps to width, and the Pager scrolls.
+@(test)
+test_transcript_snapshot_scroll :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    h: Host
+    h.allocator = context.allocator
+    // core imports yuke:term; defaults imports yuke:client.
+    modules := [2]js.Module{term_module(), client_module()}
+    ok := js.init(&h.js, {modules = modules[:], user = &h, resolve = host_resolve, allocator = context.allocator})
+    if !testing.expect_value(t, ok, js.Error.None) do return
+
+    defer js.destroy(&h.js)
+
+    // The default connection service requests ticks at load; mark the host done so term.setNeedsTick
+    // short-circuits instead of arming a timer with no event loop wired here.
+    h.done = true
+
+    source := `
+        import { Transcript, Pager } from "yuke:ui";
+        import { adaptSnapshot, ChatView } from "yuke:defaults";
+
+        const fail = [];
+        const check = (name, cond) => { if (!cond) fail.push(name); };
+
+        // adaptSnapshot: committed messages then the active draft; ids stringified; reasoning dropped.
+        const snap = {
+          sessionId: "0123456789abcdef", sync: "synced", rev: 5, hasMore: false,
+          messages: [
+            { type: "user", id: 1, content: [{ type: "text", text: "the quick brown fox jumps over the lazy dog" }, { type: "reasoning", text: "hidden" }] },
+            { type: "assistant", id: 2, content: [{ type: "text", text: "ok" }] },
+          ],
+          active: { type: "assistant", id: 3, content: [{ type: "text", text: "streaming reply in progress here" }] },
+        };
+        const msgs = adaptSnapshot(snap);
+        check("count", msgs.length === 3);
+        check("ids", msgs.map((m) => m.id).join(",") === "1,2,3");
+        check("id-type", typeof msgs[0].id === "string");
+        check("reasoning-dropped", msgs[0].content.length === 1 && msgs[0].content[0].type === "text");
+        check("rev", msgs[0].rev === 0 && msgs[2].rev === 5);
+        check("empty-null", adaptSnapshot(null).length === 0);
+
+        // Layout wraps to a narrow width: rows exceed message count, the user's first row carries the
+        // gutter marker and the tinted band.
+        const tx = new Transcript();
+        tx.setMessages(msgs);
+        tx._layout(12);
+        const rows = tx.pager.rows;
+        check("wrapped", rows.length >= 8);
+        check("marker", rows[0].marker === "⟩" && rows[0].bg === "TxUser");
+
+        // Pager scroll: stuck follows the tail, then top/bottom/step (clamped) and vim keys.
+        const p = new Pager();
+        p.setRows(Array.from({ length: 20 }, (_, i) => ({ text: "row" + i, key: i })));
+        p._h = 5;
+        p.setRows(p.rows);
+        check("stuck", p.scroll === 15 && p.atBottom());
+        p.toTop();
+        check("top", p.scroll === 0 && p.stuck === false);
+        p.scrollBy(3);
+        check("step", p.scroll === 3);
+        p.scrollBy(-9);
+        check("clamp", p.scroll === 0);
+
+        const key = (char) => ({ type: "key", code: "char", char, mods: 0 });
+        p.toBottom();
+        p.onKey(key("k"));
+        check("k-up", p.scroll === 14);
+        p.onKey(key("g"));
+        p.onKey(key("g"));
+        check("gg-top", p.scroll === 0);
+        p.onKey(key("G"));
+        check("G-bottom", p.scroll === 15 && p.stuck === true);
+
+        // ChatView routing: the composer owns typing; only non-text keys scroll the transcript, so
+        // typing "j" inserts (never scrolls) while page_up scrolls without disturbing the draft.
+        const chat = new ChatView();
+        chat.setMessages(msgs);
+        chat.transcript._layout(40);
+        chat.transcript.pager._h = 3;
+        chat.transcript.pager.toBottom();
+        const atBottom = chat.transcript.pager.scroll;
+        check("type-to-composer", chat.onKey({ code: "char", char: "j", mods: 0 }) === true && chat.composer.text === "j" && chat.transcript.pager.scroll === atBottom);
+        check("pageup-scrolls", chat.onKey({ code: "page_up", mods: 0 }) === true && chat.transcript.pager.scroll < atBottom && chat.composer.text === "j");
+
+        globalThis.result = fail.length ? fail.join(",") : "ok";
+    `
+
+    testing.expect(t, js.eval_module(&h.js, "test:transcript-scroll", source, context.allocator))
+    testing.expect_value(t, ext_test_result(t, &h), "ok")
+}
+
+// The opt-in vim layer: loading the plugin flips the focused chat composer to normal (input
+// disabled), binds :/i/a, and reverts everything on unload so the composer types again.
+@(test)
+test_vim_mode_toggle :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    h: Host
+    h.allocator = context.allocator
+    modules := [2]js.Module{term_module(), client_module()}
+    ok := js.init(&h.js, {modules = modules[:], user = &h, resolve = host_resolve, allocator = context.allocator})
+    if !testing.expect_value(t, ok, js.Error.None) do return
+
+    defer js.destroy(&h.js)
+
+    h.done = true
+
+    source := `
+        import { ChatView } from "yuke:defaults";
+        import { root, command, keymap } from "yuke:core";
+        import { plugins } from "yuke:ext";
+        import { vim } from "yuke:vim";
+
+        const fail = [];
+        const check = (name, cond) => { if (!cond) fail.push(name); };
+
+        root.draw = () => {}; // headless: mode changes call root.invalidate(), skip painting
+
+        const chat = new ChatView();
+        root.setActive(chat);
+
+        // Default: insert mode, composer types.
+        check("insert-default", chat.composer.mode === "insert");
+        chat.composer.onKey({ code: "char", char: "x", mods: 0 });
+        check("types-in-insert", chat.composer.text === "x");
+
+        // Load vim: the focused chat flips to normal, text input is disabled, keys are bound.
+        plugins.use(vim);
+        check("normal-on-load", chat.composer.mode === "normal");
+        check("normal-ignores-text", chat.composer.onKey({ code: "char", char: "y", mods: 0 }) === false && chat.composer.text === "x");
+        check("colon-bound", keymap.map[":"] && keymap.map[":"][0] === "vim:cmdline");
+        check("i-bound", keymap.map["i"] && keymap.map["i"][0] === "vim:insert");
+        check("ctrl-w-window", keymap.map["ctrl+w h"] && keymap.map["ctrl+w h"][0] === "focus:left");
+
+        // i -> insert, esc -> normal (predicate: a chat is focused).
+        command.perform("vim:insert");
+        check("i-enters-insert", chat.composer.mode === "insert");
+        command.perform("vim:normal");
+        check("esc-enters-normal", chat.composer.mode === "normal");
+
+        // Unload reverts: composer types again and the vim keys are gone.
+        plugins.dispose("vim");
+        check("unload-insert", chat.composer.mode === "insert");
+        check("keys-reverted", !keymap.map[":"] && !keymap.map["i"] && !keymap.map["a"] && !keymap.map["ctrl+w h"]);
+
+        globalThis.result = fail.length ? fail.join(",") : "ok";
+    `
+
+    testing.expect(t, js.eval_module(&h.js, "test:vim-toggle", source, context.allocator))
     testing.expect_value(t, ext_test_result(t, &h), "ok")
 }

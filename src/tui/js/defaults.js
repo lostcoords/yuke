@@ -1,10 +1,11 @@
 // yuke:defaults — bundled default UI: a sidebar | chat split shell with local daemon connect,
 // command palette, ":" line, and a stub explorer. A user's yuke.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, Node, root, quit, config } from "yuke:core";
+import { command, keymap, style, clip, fill, text, strokeOf, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
+import { vim } from "yuke:vim";
 
 // The ":" command line: prompt links to Normal, an unmatched word shows in red.
 Object.assign(style.groups, {
@@ -38,13 +39,14 @@ function activityMark(activity) {
 // The sidebar pane: the session.list rows, a cursor, and the active (opened) id. Loads on connect,
 // clears on drop; Enter only marks a row active for now — opening it is a later package.
 class SessionList {
-  constructor() {
+  constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
 
     // A List owns selection identity, scroll, and nav; we paint the rows ourselves (chrome + a
     // focus-only cursor), so it renders via ensureVisible, not draw().
     this.list = new List({ key: (r) => r.id });
 
+    this.onOpen = opts.onOpen || null; // (id) => void, called when a row is opened
     this.activeId = null;
     this.loaded = false;
     this.loading = false;
@@ -104,7 +106,10 @@ class SessionList {
 
     if (strokeOf(ev) === "enter") {
       const row = this.list.selected();
-      if (row) this.activeId = row.id;
+      if (row) {
+        this.activeId = row.id;
+        if (this.onOpen) this.onOpen(row.id);
+      }
       return true;
     }
 
@@ -138,7 +143,7 @@ class SessionList {
     this._drawRows(x + pad, row, iw, Math.max(0, footerY - row), focused);
 
     if (footerY >= y) {
-      text(x + pad, footerY, clip("j/k move · ↵ open · ^w h/l pane", iw), "YukeFooter");
+      text(x + pad, footerY, clip("j/k move · ↵ open · ^k h/l pane", iw), "YukeFooter");
     }
   }
 
@@ -218,7 +223,7 @@ class MainPane {
     }
 
     if (h > 0) {
-      text(x + pad, y + h - 1, clip("space palette · : command", iw), "YukeFooter");
+      text(x + pad, y + h - 1, clip("^p palette · ^k h/l pane", iw), "YukeFooter");
     }
   }
 }
@@ -259,19 +264,50 @@ class ChatView {
   }
 }
 
+// Adapt a client `sessionSnapshot()` into Transcript messages: committed messages then the
+// streaming `active` draft appended. Committed messages are immutable, so their rev is constant;
+// `active` re-wraps as it streams, so it carries the session-wide rev.
+function adaptSnapshot(snap) {
+  if (!snap || !snap.messages) return [];
+
+  const out = snap.messages.map((m) => adaptMessage(m, 0));
+  if (snap.active) out.push(adaptMessage(snap.active, snap.rev));
+
+  return out;
+}
+
+// One snapshot message → a Transcript message: id stringified, non-text parts dropped (the
+// widget renders only text today).
+function adaptMessage(m, rev) {
+  const content = [];
+  for (const p of m.content || []) if (p.type === "text") content.push({ type: "text", text: p.text });
+
+  return { type: m.type, id: String(m.id), rev, content };
+}
+
 // --- default layout -----------------------------------------------------------------------
 // The stock layout: the session sidebar beside the chat pane, a row split in the node tree. A
 // user's yuke.js can rebuild `workspace` before it is installed.
-const sidebar = new SessionList();
+const chat = new ChatView();
 
-// Echo the submitted text as a local user message, until a session controller replaces it.
-const chatMessages = [];
-const chat = new ChatView({
-  onSubmit: (text) => {
-    chatMessages.push({ type: "user", id: "local-" + chatMessages.length, rev: 0, content: [{ type: "text", text }] });
-    chat.setMessages(chatMessages);
+// Drive the one open session into the chat pane: open + resync, then refresh the transcript on
+// every "session" event (resync completion and each folded broadcast). Read-only for now — the
+// composer does not submit yet.
+const chatSession = {
+  open(id) {
+    client.sessionOpen(id);
+    client.sessionResync().catch(() => {}); // the "session" event refreshes; a reject retries on reopen
+    this.refresh();
   },
-});
+
+  refresh() {
+    chat.setMessages(adaptSnapshot(client.sessionSnapshot()));
+    root.invalidate();
+  },
+};
+events.on("session", () => chatSession.refresh());
+
+const sidebar = new SessionList({ onOpen: (id) => chatSession.open(id) });
 
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
@@ -410,7 +446,7 @@ function openSessionFinder() {
     onAccept: (r) => {
       sidebar.activeId = r.id;
       sidebar.list.selectedKey = r.id;
-      root.invalidate();
+      chatSession.open(r.id);
     },
   });
 }
@@ -626,24 +662,28 @@ plugins.use({
       "window:split-right": () => root.split("row", new MainPane()),
       "window:split-down": () => root.split("col", new MainPane()),
       "window:close": () => root.close(),
+      "ui:cmdline": () => openCommandLine(),
+      "vim:toggle": () => (plugins.get("vim") ? plugins.dispose("vim") : plugins.use(vim)),
     });
 
+    // Global commands live on ctrl strokes so they never collide with typing into the composer;
+    // bare keys stay text. Window nav is a ctrl+k prefix (works in every mode, even mid-typing),
+    // leaving ctrl+w free for the composer's word-erase. The ":" line belongs to the vim layer.
     ctx.keymap({
-      "-": "app:explorer",
-      " ": "ui:palette",
-      "ctrl+p": "ui:sessions",
-      ":": () => {
-        openCommandLine();
-        return true;
-      },
-      "ctrl+w h": "focus:left",
-      "ctrl+w j": "focus:down",
-      "ctrl+w k": "focus:up",
-      "ctrl+w l": "focus:right",
-      "ctrl+w w": "focus:next",
-      "ctrl+w v": "window:split-right",
-      "ctrl+w s": "window:split-down",
-      "ctrl+w c": "window:close",
+      "ctrl+p": "ui:palette",
+      "ctrl+f": "ui:sessions",
+      "ctrl+k h": "focus:left",
+      "ctrl+k j": "focus:down",
+      "ctrl+k k": "focus:up",
+      "ctrl+k l": "focus:right",
+      "ctrl+k left": "focus:left",
+      "ctrl+k down": "focus:down",
+      "ctrl+k up": "focus:up",
+      "ctrl+k right": "focus:right",
+      "ctrl+k w": "focus:next",
+      "ctrl+k v": "window:split-right",
+      "ctrl+k s": "window:split-down",
+      "ctrl+k c": "window:close",
     });
   },
 });
@@ -651,5 +691,11 @@ plugins.use({
 root.setRoot(workspace);
 root.addService(connection);
 
+// Load vim at startup when the user opted in via yuke.js. Read at "start" so a yuke.js that sets
+// config.vim (it loads after this module) is honored; :vim / vim:toggle flips it at runtime.
+events.on("start", () => {
+  if (config.vim && !plugins.get("vim")) plugins.use(vim);
+});
+
 // Exported so a user's yuke.js can reference the stock views and layout (swap, subclass, patch).
-export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
+export { workspace, sidebar, chat, ChatView, SessionList, MainPane, openExplorer, openPalette, openSessionFinder, openCommandLine, connection, adaptSnapshot };

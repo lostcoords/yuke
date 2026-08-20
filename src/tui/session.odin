@@ -74,7 +74,7 @@ client_on_broadcast :: proc(c: ^client.Client, bc: wire.Notification) {
 
     case .Changed, .Committed, .Discarded:
         h.open_session.rev += 1
-        host_dispatch_session(h)
+        host_dispatch_event(h, "session")
     }
 }
 
@@ -84,7 +84,7 @@ session_mark_needs_resync :: proc(h: ^Host) {
 
     h.open_session.sync = .Needs_Resync
     h.open_session.rev += 1
-    host_dispatch_session(h)
+    host_dispatch_event(h, "session")
 }
 
 // --- native session functions (yuke:client-native) ---
@@ -265,7 +265,7 @@ client_on_session_resync_complete :: proc(c: ^client.Client, outcome: client.Req
             h.open_session.sync = .Synced
             h.open_session.rev += 1
             client_promise_resolve(job, qjs.undefined(), true)
-            host_dispatch_session(h)
+            host_dispatch_event(h, "session")
 
         case wire.Response_Error:
             resync_fail(h, job, "resync_rejected", targeting)
@@ -287,7 +287,7 @@ resync_fail :: proc(h: ^Host, job: ^Client_Promise, reason: string, targeting: b
 
     client_promise_reject(job, reason, true)
 
-    if targeting do host_dispatch_session(h)
+    if targeting do host_dispatch_event(h, "session")
 }
 
 @(private = "file")

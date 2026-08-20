@@ -152,6 +152,7 @@ declare module "yuke:core" {
   export interface Config {
     plugins: Record<string, unknown>;
     daemon: DaemonConfig;
+    vim?: boolean;
     [key: string]: unknown;
   }
   export const config: Config;
@@ -779,6 +780,7 @@ declare module "yuke:ui" {
     prompt: string;
     placeholder: string;
     onSubmit: ((text: string) => void) | null;
+    mode: "insert" | "normal";
     constructor(opts?: ComposerOptions);
     get name(): string;
     submit(): void;
@@ -955,7 +957,7 @@ declare module "yuke:defaults" {
   import type { KeyEvent } from "yuke:term";
   import type { CursorRequest, Node, Pane, Rect, Service } from "yuke:core";
   import type { Composer, List, Transcript, TranscriptMessage } from "yuke:ui";
-  import type { SessionActivity } from "yuke:client";
+  import type { SessionActivity, SessionSnapshot } from "yuke:client";
 
   export interface SessionRow {
     id: string;
@@ -963,12 +965,18 @@ declare module "yuke:defaults" {
     activity: SessionActivity;
   }
 
+  export interface SessionListOptions {
+    onOpen?: (id: string) => void;
+  }
+
   export class SessionList implements Pane {
     rect: Rect;
     list: List<SessionRow>;
+    onOpen: ((id: string) => void) | null;
     activeId: string | null;
     loaded: boolean;
     loading: boolean;
+    constructor(opts?: SessionListOptions);
     get name(): "sessions";
     update(): void;
     refresh(): void;
@@ -1008,6 +1016,9 @@ declare module "yuke:defaults" {
   export const sidebar: SessionList;
   export const chat: ChatView;
 
+  // Adapt a client sessionSnapshot into Transcript messages (committed then the streaming draft).
+  export function adaptSnapshot(snap: SessionSnapshot | null): TranscriptMessage[];
+
   export function openExplorer(startPath: string): unknown;
   export function openPalette(): unknown;
   export function openSessionFinder(): unknown;
@@ -1018,6 +1029,19 @@ declare module "yuke:defaults" {
     attempt(): void;
     scheduleRetry(): void;
   };
+}
+
+declare module "yuke:vim" {
+  import type { PluginObject } from "yuke:ext";
+
+  // The service `yuke:vim` provides; reach it with `ctx.use("vim")`.
+  export interface VimApi {
+    mode(): "insert" | "normal" | null;
+    isNormal(): boolean;
+  }
+
+  // The opt-in modal-editing plugin. Load with `plugins.use(vim)` or the `vim:toggle` command.
+  export const vim: PluginObject;
 }
 
 declare var onEvent: import("yuke:term").EventHandler | undefined;
