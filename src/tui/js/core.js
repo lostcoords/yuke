@@ -36,6 +36,16 @@ export function defineConfig(partial) {
   return partial;
 }
 
+// Per-field validators for config.daemon: each returns true when valid, else the error message.
+// The rule and its message stay paired, so adding a tunable is one row that can't drift.
+const DAEMON_FIELDS = {
+  host: (v) => (typeof v === "string" && v !== "") || "daemon.host must be a non-empty string",
+  port: (v) => (Number.isInteger(v) && v >= 1 && v <= 65535) || "daemon.port must be an integer 1..65535",
+  autoConnect: (v) => typeof v === "boolean" || "daemon.autoConnect must be a boolean",
+  retryMs: (v) => (Number.isInteger(v) && v >= 1) || "daemon.retryMs must be a positive integer",
+  token: (v) => typeof v === "string" || "daemon.token must be a string",
+};
+
 // Validate the whole partial first, then assign once — a throw must not leave config half-applied
 // (yuke.js failures are non-fatal, so a partial dial target would silently stick).
 function applyDaemonConfig(d) {
@@ -43,56 +53,15 @@ function applyDaemonConfig(d) {
     throw new TypeError("defineConfig.daemon expects an object");
   }
 
-  for (const key of Object.keys(d)) {
-    switch (key) {
-      case "host":
-      case "port":
-      case "autoConnect":
-      case "retryMs":
-      case "token":
-        break;
-      default:
-        throw new TypeError("defineConfig.daemon: unknown key " + key);
-    }
-  }
-
   const patch = {};
+  for (const key of Object.keys(d)) {
+    const check = DAEMON_FIELDS[key];
+    if (!check) throw new TypeError("defineConfig.daemon: unknown key " + key);
+    if (d[key] === undefined) continue;
 
-  if (d.host !== undefined) {
-    if (typeof d.host !== "string" || d.host === "") {
-      throw new TypeError("daemon.host must be a non-empty string");
-    }
-    patch.host = d.host;
-  }
-
-  if (d.port !== undefined) {
-    const p = d.port;
-    if (typeof p !== "number" || !Number.isFinite(p) || p !== (p | 0) || p < 1 || p > 65535) {
-      throw new TypeError("daemon.port must be an integer 1..65535");
-    }
-    patch.port = p;
-  }
-
-  if (d.autoConnect !== undefined) {
-    if (typeof d.autoConnect !== "boolean") {
-      throw new TypeError("daemon.autoConnect must be a boolean");
-    }
-    patch.autoConnect = d.autoConnect;
-  }
-
-  if (d.retryMs !== undefined) {
-    const ms = d.retryMs;
-    if (typeof ms !== "number" || !Number.isFinite(ms) || ms !== (ms | 0) || ms < 1) {
-      throw new TypeError("daemon.retryMs must be a positive integer");
-    }
-    patch.retryMs = ms;
-  }
-
-  if (d.token !== undefined) {
-    if (typeof d.token !== "string") {
-      throw new TypeError("daemon.token must be a string");
-    }
-    patch.token = d.token;
+    const ok = check(d[key]);
+    if (ok !== true) throw new TypeError(ok);
+    patch[key] = d[key];
   }
 
   Object.assign(config.daemon, patch);
@@ -458,6 +427,12 @@ export function strokeOf(ev) {
   if (!token) return "";
 
   return joinStroke({ ctrl: !!(m & MOD_CTRL), alt: !!(m & MOD_ALT), super: !!(m & MOD_SUPER), shift }, token);
+}
+
+// A key event that inserts literal text rather than a shortcut: a char with no modifier past
+// Shift. Text inputs (composer, pickers, the ":" line) gate character insertion on this.
+export function isTextKey(ev) {
+  return ev.code === "char" && !!ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0;
 }
 
 function normalizeStroke(stroke) {
