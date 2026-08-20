@@ -694,6 +694,16 @@ declare module "yuke:client" {
   export function sessionOutline(): SessionOutline | null;
   export function sessionText(id: number): string;
 
+  // Result of session.send_input: "started" runs immediately (with a run_id), "queued" waits behind
+  // the active turn. input_id is the daemon-minted id for the enqueued input.
+  export interface SessionSendInputResult {
+    type: "started" | "queued";
+    input_id: number;
+    run_id?: number;
+  }
+
+  export function sessionSendInput(id: string, text: string): Promise<SessionSendInputResult>;
+
   export interface WorkspaceBrowseParams {
     path?: string;
     limit?: number;
@@ -820,7 +830,7 @@ declare module "yuke:ui" {
   export interface ComposerOptions {
     prompt?: string;
     placeholder?: string;
-    onSubmit?: (text: string) => void;
+    onSubmit?: (text: string) => boolean | void;
   }
 
   // A single-line message input. Owns its rect; Enter submits (clears + onSubmit), typing edits;
@@ -832,7 +842,7 @@ declare module "yuke:ui" {
     set text(s: string);
     prompt: string;
     placeholder: string;
-    onSubmit: ((text: string) => void) | null;
+    onSubmit: ((text: string) => boolean | void) | null;
     mode: "insert" | "normal";
     constructor(opts?: ComposerOptions);
     get name(): string;
@@ -1056,7 +1066,7 @@ declare module "yuke:defaults" {
   }
 
   export interface ChatViewOptions {
-    onSubmit?: (text: string) => void;
+    onSubmit?: (text: string) => boolean | void;
     textOf?: (id: number) => string;
   }
 

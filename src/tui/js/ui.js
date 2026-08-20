@@ -514,8 +514,10 @@ export class Composer {
     const t = this.input.text.trim();
     if (t === "") return;
 
+    // The owner may reject synchronously (returns false, e.g. no open session) — keep the text
+    // rather than blank it; any other return accepts and the line clears.
+    if (this.onSubmit && this.onSubmit(t) === false) return;
     this.input.setText("");
-    if (this.onSubmit) this.onSubmit(t);
   }
 
   onKey(ev) {

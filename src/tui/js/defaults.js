@@ -268,10 +268,13 @@ class ChatView {
 // --- default layout -----------------------------------------------------------------------
 // The stock layout: the session sidebar beside the chat pane, a row split in the node tree. A
 // user's yuke.js can rebuild `workspace` before it is installed.
-const chat = new ChatView({ textOf: (id) => client.sessionText(id) });
+const chat = new ChatView({
+  textOf: (id) => client.sessionText(id),
+  onSubmit: (text) => chatSession.send(text),
+});
 
 // Drive the one open session into the chat pane: open + resync, then react to each "session" event.
-// The transcript holds only the outline and pulls text on demand. Read-only — the composer can't submit.
+// The transcript holds only the outline and pulls text on demand; sends fold back through the event.
 const chatSession = {
   sessionId: null, // the last-opened session, re-opened on reconnect
 
@@ -280,6 +283,20 @@ const chatSession = {
     client.sessionOpen(id);
     client.sessionResync().catch(() => {}); // the "session" event refreshes; a reject retries on reopen
     this.reload();
+  },
+
+  // Send composer text into the open session. Returns false with no session so the composer keeps the
+  // text; the message appears via the "session" fold, not optimistically. A failed request restores
+  // the text only if the user has not typed a new one.
+  send(text) {
+    if (!this.sessionId) return false;
+
+    client.sessionSendInput(this.sessionId, text).catch(() => {
+      if (chat.composer.text === "") chat.composer.text = text;
+      root.invalidate();
+    });
+
+    return true;
   },
 
   // Structural change (open/commit/resync): re-pull the outline.

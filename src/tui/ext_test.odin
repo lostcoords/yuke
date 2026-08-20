@@ -405,6 +405,12 @@ test_composer :: proc(t: ^testing.T) {
         c.onKey({ code: "enter", mods: 0 });
         check("empty-submit", submitted === null);
 
+        // A rejecting onSubmit (returns false, e.g. no open session) keeps the text; the line does
+        // not clear. Any other return accepts and clears.
+        const r = new Composer({ onSubmit: () => false });
+        r.text = "keep me";
+        check("reject-keeps", r.onKey({ code: "enter", mods: 0 }) === true && r.text === "keep me");
+
         globalThis.result = fail.length ? fail.join(",") : "ok";
     `
 

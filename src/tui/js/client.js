@@ -94,6 +94,15 @@ export function sessionText(id) {
   return native.sessionText(id);
 }
 
+// Send `text` as a user message into `id`. The daemon commits it and streams the reply as broadcasts
+// the replica folds, so nothing is inserted optimistically. Result: { type:"started"|"queued", … }.
+export function sessionSendInput(id, text) {
+  return request("session.send_input", {
+    session_id: id,
+    input: { type: "content", content: [{ type: "text", text }] },
+  });
+}
+
 // Immediate subdirectories of `params.path` (the daemon's default root when omitted), one page.
 // Result: { path, parent, entries:[{ name, path, is_git_repo }], next_cursor }; parent is null at
 // the filesystem root and next_cursor is null on the final page.
