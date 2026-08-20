@@ -704,6 +704,16 @@ declare module "yuke:client" {
 
   export function sessionSendInput(id: string, text: string): Promise<SessionSendInputResult>;
 
+  // Result of session.cancel_run: the canceled run (null if none was active), the queued input ids
+  // dropped by clearQueue, and a compaction run canceled alongside (null if none).
+  export interface SessionCancelRunResult {
+    canceled_run: number | null;
+    cleared_inputs: number[];
+    cleared_compaction: number | null;
+  }
+
+  export function sessionCancelRun(id: string, clearQueue?: boolean): Promise<SessionCancelRunResult>;
+
   export interface WorkspaceBrowseParams {
     path?: string;
     limit?: number;

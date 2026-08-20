@@ -200,6 +200,9 @@ test_defaults_registers_stock_keys :: proc(t: ^testing.T) {
           keymap.map["ctrl+p"] && keymap.map["ctrl+p"][0] === "ui:palette",
           keymap.map["ctrl+k h"] && keymap.map["ctrl+k h"][0] === "focus:left",
           keymap.map["ctrl+k left"] && keymap.map["ctrl+k left"][0] === "focus:left",
+          keymap.map["ctrl+c"] && keymap.map["ctrl+c"][0] === "session:interrupt",
+          keymap.map["ctrl+q"] && keymap.map["ctrl+q"][0] === "app:quit",
+          !!command.map["session:interrupt"],
           !keymap.map["ctrl+w h"],
           !keymap.map[" "],
           !keymap.map[":"],
@@ -207,7 +210,7 @@ test_defaults_registers_stock_keys :: proc(t: ^testing.T) {
         ].join(":");
     `
     testing.expect(t, js.eval_module(&h.js, "test:defaults-keys", source, context.allocator))
-    testing.expect_value(t, ext_test_result(t, &h), "true:true:true:true:true:true:true:true:true")
+    testing.expect_value(t, ext_test_result(t, &h), "true:true:true:true:true:true:true:true:true:true:true:true")
 }
 
 // The node-tree layout engine: branch/leaves order, row/col geometry with a one-cell divider,

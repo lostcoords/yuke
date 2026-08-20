@@ -103,6 +103,15 @@ export function sessionSendInput(id, text) {
   });
 }
 
+// Interrupt the open session's active run; clearQueue also drops every queued input (a hard stop).
+// Result: { canceled_run, cleared_inputs, cleared_compaction }.
+export function sessionCancelRun(id, clearQueue = false) {
+  return request("session.cancel_run", {
+    session_id: id,
+    ...(clearQueue ? { clear_queue: true } : {}),
+  });
+}
+
 // Immediate subdirectories of `params.path` (the daemon's default root when omitted), one page.
 // Result: { path, parent, entries:[{ name, path, is_git_repo }], next_cursor }; parent is null at
 // the filesystem root and next_cursor is null on the final page.

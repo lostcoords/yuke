@@ -299,6 +299,14 @@ const chatSession = {
     return true;
   },
 
+  // Hard stop: interrupt the active run and flush every queued input. Fire-and-forget — the daemon's
+  // broadcasts fold the canceled state back.
+  interrupt() {
+    if (!this.sessionId) return;
+
+    client.sessionCancelRun(this.sessionId, true).catch(() => {});
+  },
+
   // Structural change (open/commit/resync): re-pull the outline.
   reload() {
     const o = client.sessionOutline();
@@ -653,6 +661,12 @@ function connectionLabel() {
 plugins.use({
   name: "app-keys",
   apply(ctx) {
+    // Interrupt is available only with a session open, so it lists in the palette and the ctrl+c
+    // binding fires only then.
+    ctx.command(() => chatSession.sessionId != null, {
+      "session:interrupt": () => chatSession.interrupt(),
+    });
+
     ctx.command(null, {
       "app:quit": () => quit(),
       "ui:palette": () => openPalette(),
@@ -678,6 +692,8 @@ plugins.use({
     ctx.keymap({
       "ctrl+p": "ui:palette",
       "ctrl+f": "ui:sessions",
+      "ctrl+c": "session:interrupt",
+      "ctrl+q": "app:quit",
       "ctrl+k h": "focus:left",
       "ctrl+k j": "focus:down",
       "ctrl+k k": "focus:up",
