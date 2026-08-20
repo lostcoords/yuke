@@ -184,6 +184,10 @@ task_prepare :: proc() -> string {
         contents := wrapper_render(exe, name, log, has_name)
         defer delete(contents)
 
+        // cmd's `>>` redirect opens the log without creating its parent; a missing directory prints
+        // "The system cannot find the path specified." and the daemon line never runs.
+        service_ensure_log_dir()
+
         service_write(wrapper, contents)
 
         command = service_xml_escape(wrapper)

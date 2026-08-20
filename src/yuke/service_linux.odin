@@ -107,6 +107,7 @@ service_install :: proc(force: bool) {
     unit := unit_render()
     defer delete(unit)
 
+    service_ensure_log_dir()
     service_write(path, unit)
 
     run_tool_checked({"systemctl", "--user", "daemon-reload"}, "systemctl daemon-reload")

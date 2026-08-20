@@ -139,6 +139,17 @@ service_log_path :: proc(allocator := context.allocator) -> string {
     return path if err == nil else ""
 }
 
+// Create the log file's parent dir: systemd and launchd open the log before forking the daemon, so
+// a missing directory aborts the start (209/STDOUT). No log path means no redirect line, so no-op.
+service_ensure_log_dir :: proc() {
+    log := service_log_path()
+    if log == "" do return
+
+    defer delete(log)
+
+    service_make_parent_dirs(log)
+}
+
 // Ensure the parent directory of `path` exists, exiting on failure.
 service_make_parent_dirs :: proc(path: string) {
     // filepath.dir slices `path`; it is not an allocation and must not be freed.

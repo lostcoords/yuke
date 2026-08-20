@@ -124,6 +124,7 @@ service_install :: proc(force: bool) {
     plist := plist_render()
     defer delete(plist)
 
+    service_ensure_log_dir()
     service_write(path, plist)
 
     run_tool({"launchctl", "enable", target})
