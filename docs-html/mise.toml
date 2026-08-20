@@ -1,0 +1,5 @@
+# Local, untracked mise config for the throwaway docs-html tools.
+# It layers `uv` on top of the repo's root .mise.toml (Odin) only while your
+# working directory is inside docs-html — the committed project config is untouched.
+[tools]
+uv = "latest"

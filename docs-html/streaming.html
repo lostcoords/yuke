@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>streaming a turn</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">provider/turn.odin · libs/http/sse · libs/bindings/curl</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">Streaming a turn</h1>
+  <p class="mt-3.5 max-w-2xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">A <em>turn</em> is one single-attempt provider request. Raw bytes arrive from libcurl, a generic SSE framer cuts them into <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">event:</code>/<code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">data:</code> events, a per-provider decoder turns each event's JSON into <strong>neutral</strong> <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">Stream_Event</code>s, and a deferred dispatch delivers them to the engine <em>outside</em> the curl region. Two per-turn arenas draw the only lifetime boundaries that matter.</p>
+</header>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The pipeline, in order</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Ten stages carry a byte from the socket to the engine. The whole path lives in <code class="font-mono text-[0.9em]">src/provider/</code> plus two libraries: <code class="font-mono text-[0.9em]">libs/bindings/curl</code> is the byte source, <code class="font-mono text-[0.9em]">libs/http/sse</code> is the framer. (The daemon's WebSocket transport in <code class="font-mono text-[0.9em]">src/client/transport.odin</code> is a different thing entirely — it is <em>not</em> on this path.)</p>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <ol class="divide-y divide-stone-200 dark:divide-stone-800 text-sm">
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">1</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">libcurl write callback</strong> — <code class="font-mono text-[0.9em]">on_write</code> hands the body chunk to the sink. <span class="font-mono text-xs text-stone-400">curl.odin:775</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">2</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">body sink &amp; gating</strong> — <code class="font-mono text-[0.9em]">turn_on_body</code> checks status/encoding/budget, then feeds the framer. <span class="font-mono text-xs text-stone-400">turn.odin:419</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">3</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">SSE framing</strong> — <code class="font-mono text-[0.9em]">feed</code> → <code class="font-mono text-[0.9em]">end_line</code> assemble whole events across chunk boundaries. <span class="font-mono text-xs text-stone-400">sse.odin:90</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">4</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">per-event callback</strong> — <code class="font-mono text-[0.9em]">turn_on_sse_event</code> opens a scratch scope, decodes, commits. <span class="font-mono text-xs text-stone-400">turn.odin:479</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">5</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">protocol dispatch</strong> — <code class="font-mono text-[0.9em]">decoder_decode</code> routes to the active provider arm. <span class="font-mono text-xs text-stone-400">decoder.odin:47</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">6</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">provider decode</strong> — <code class="font-mono text-[0.9em]">anthropic_decoder_decode</code> / <code class="font-mono text-[0.9em]">openai_chat_decoder_decode</code> / <code class="font-mono text-[0.9em]">openai_responses_decoder_decode</code>.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">7</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">JSON parse</strong> — <code class="font-mono text-[0.9em]">decode_json_object</code> parses one <code class="font-mono text-[0.9em]">data:</code> payload into a scratch tree. <span class="font-mono text-xs text-stone-400">decode.odin:18</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">8</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">atomic commit</strong> — <code class="font-mono text-[0.9em]">turn_commit</code> makes produced events visible, arms a dispatch. <span class="font-mono text-xs text-stone-400">turn.odin:504</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">9</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">deferred delivery</strong> — <code class="font-mono text-[0.9em]">turn_on_dispatch</code> hands events to the engine, out of the curl region. <span class="font-mono text-xs text-stone-400">turn.odin:600</span></span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">10</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">termination</strong> — curl EOF → <code class="font-mono text-[0.9em]">turn_on_curl_done</code> → <code class="font-mono text-[0.9em]">turn_finalize</code>, exactly one <code class="font-mono text-[0.9em]">on_done</code>. <span class="font-mono text-xs text-stone-400">turn.odin:527</span></span></li>
+  </ol>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Bytes in, and the body sink</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">libcurl calls <code class="font-mono text-[0.9em]">on_write</code> from inside its own transfer. It sets an <code class="font-mono text-[0.9em]">in_curl</code> flag and forwards the chunk; returning the error sentinel is the only way to abort a transfer from a callback.</p>
+
+<div class="src" data-file="libs/bindings/curl/curl.odin" data-decl="on_write"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">turn_on_body</code> is the sink. Before a single byte reaches the framer it gates on content-encoding, on a non-2xx status (which is buffered as a bounded error prefix instead of streamed), and on the aggregate response budget. Only a healthy body reaches <code class="font-mono text-[0.9em]">feed</code>.</p>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_on_body"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Framing event: / data:</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The framer is a small incremental parser. Its <code class="font-mono text-[0.9em]">Parser</code> owns two reusable buffers — <code class="font-mono text-[0.9em]">line</code> (the current physical line) and <code class="font-mono text-[0.9em]">data</code> (the joined payload). A tail with no line end is stashed in <code class="font-mono text-[0.9em]">line</code> and resumed on the next <code class="font-mono text-[0.9em]">feed</code>; a CRLF split across two chunks is stitched by <code class="font-mono text-[0.9em]">last_was_cr</code>, and a BOM split across chunks by <code class="font-mono text-[0.9em]">consume_bom</code>.</p>
+
+<div class="src" data-file="libs/http/sse/sse.odin" data-decl="Parser"></div>
+<div class="src" data-file="libs/http/sse/sse.odin" data-decl="feed"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">A blank line dispatches the event, but only if a <code class="font-mono text-[0.9em]">data:</code> field was seen. <code class="font-mono text-[0.9em]">end_line</code> parses each field and keeps <strong>only</strong> <code class="font-mono text-[0.9em]">data</code> — <code class="font-mono text-[0.9em]">event:</code> and <code class="font-mono text-[0.9em]">id:</code> are read and dropped. Multiple <code class="font-mono text-[0.9em]">data:</code> lines join with a newline.</p>
+
+<div class="src" data-file="libs/http/sse/sse.odin" data-decl="end_line"></div>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Bounded, never asserting</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Line and event caps are 1&nbsp;MiB each; overflow returns <code class="font-mono text-[0.9em]">.Line_Too_Long</code> / <code class="font-mono text-[0.9em]">.Event_Too_Large</code>, which <code class="font-mono text-[0.9em]">turn_on_body</code> maps to <code class="font-mono text-[0.9em]">.Response_Too_Large</code>. Peer bytes degrade; they don't crash the daemon.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Not a general SSE parser</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Dropping <code class="font-mono text-[0.9em]">event:</code>/<code class="font-mono text-[0.9em]">id:</code> is safe here because all three providers put everything in <code class="font-mono text-[0.9em]">data:</code> — but it means this generic-looking <code class="font-mono text-[0.9em]">libs/http/sse</code> is really tuned to those three protocols.</p>
+  </div>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">One event, decoded</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Every framed event lands in <code class="font-mono text-[0.9em]">turn_on_sse_event</code>. It wraps the decode in an <code class="font-mono text-[0.9em]">arena_temp_begin</code>/<code class="font-mono text-[0.9em]">arena_temp_end</code> scratch scope — so the whole JSON tree is rewound after the event — then commits whatever neutral events were produced.</p>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_on_sse_event"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">decoder_decode</code> is a thin union dispatch over the active provider decoder.</p>
+
+<div class="src" data-file="src/provider/decoder.odin" data-decl="decoder_decode"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The Anthropic decoder is the exemplar: a true event-typed protocol with an explicit block lifecycle (<code class="font-mono text-[0.9em]">message_start</code> → <code class="font-mono text-[0.9em]">content_block_start</code> → <code class="font-mono text-[0.9em]">content_block_delta</code> → <code class="font-mono text-[0.9em]">content_block_stop</code> → <code class="font-mono text-[0.9em]">message_stop</code>) and strict index ordering. It parses the payload with <code class="font-mono text-[0.9em]">decode_json_object</code> then <code class="font-mono text-[0.9em]">defer json.destroy_value</code>.</p>
+
+<div class="src" data-file="src/provider/decode.odin" data-decl="decode_json_object"></div>
+<div class="src" data-file="src/provider/anthropic.odin" data-decl="anthropic_decoder_decode"></div>
+
+<p class="max-w-3xl text-sm text-stone-500 -mt-2 mb-6">The two OpenAI decoders solve a harder problem: they must <em>synthesize</em> block structure the wire never sends. Chat (<code class="font-mono text-[0.9em]">openai_chat_decoder_decode</code>) opens a block on the first <code class="font-mono text-[0.9em]">choices[].delta</code> and closes-then-reopens when the kind flips; Responses (<code class="font-mono text-[0.9em]">openai_responses_decoder_decode</code>) is event-typed like Anthropic but with a <code class="font-mono text-[0.9em]">response.*</code> vocabulary and no <code class="font-mono text-[0.9em]">[DONE]</code>.</p>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The neutral event model</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">All three providers converge on one block-structured stream: <code class="font-mono text-[0.9em]">Stream_Block_Started</code> → deltas → <code class="font-mono text-[0.9em]">Stream_Block_Stopped</code> → <code class="font-mono text-[0.9em]">Stream_Done</code>. The engine only ever sees this — never a provider's wire shape.</p>
+
+<div class="src" data-file="src/provider/stream.odin" data-decl="Stream_Event"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Commit, then deliver out of the curl region</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">User callbacks must never fire while we are inside libcurl's stack. So decoding only <em>appends</em> to the turn's event queue; <code class="font-mono text-[0.9em]">turn_commit</code> makes the batch atomically visible (rolling back to <code class="font-mono text-[0.9em]">before</code> if the decode failed, so nothing partial escapes) and arms a zero-delay nbio timeout. <code class="font-mono text-[0.9em]">turn_on_dispatch</code> then drains the queue to the engine on a clean stack.</p>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_commit"></div>
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_schedule_dispatch"></div>
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_on_dispatch"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">How a turn ends</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">A turn walks <code class="font-mono text-[0.9em]">Created → Running → Completing → Done</code> (or <code class="font-mono text-[0.9em]">Canceled</code>). Termination has two sources: a protocol terminator decoded mid-stream (Anthropic <code class="font-mono text-[0.9em]">message_stop</code>, Chat <code class="font-mono text-[0.9em]">[DONE]</code>, Responses <code class="font-mono text-[0.9em]">response.completed</code>), or curl EOF. On EOF, <code class="font-mono text-[0.9em]">decoder_finish</code> decides whether a stream that stopped early is complete or truncated — and that verdict differs per provider.</p>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="Turn_State"></div>
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_on_curl_done"></div>
+<div class="src" data-file="src/provider/decoder.odin" data-decl="decoder_finish"></div>
+<div class="src" data-file="src/provider/turn.odin" data-decl="turn_finalize"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Two arenas draw every lifetime</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The whole memory model is two OS-backed virtual arenas on the <code class="font-mono text-[0.9em]">Turn</code>. There is no per-object freeing anywhere on this path — decoders are written to never free.</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">retained — turn lifetime</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The SSE parser buffers, the decoder's retained strings and tool-arg buffers, the event queue, the error-body prefix. Anything that must outlive an event is <code class="font-mono text-[0.9em]">strings.clone</code>d in here. Freed in bulk at <code class="font-mono text-[0.9em]">turn_cleanup</code>.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">scratch — one event</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The JSON value tree for a single event. Watermark-rewound after every <code class="font-mono text-[0.9em]">turn_on_sse_event</code>, so pages are reused. An assert forbids it from aliasing the turn allocator — a clone that forgot to switch arenas would trip it.</p>
+  </div>
+</div>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="Turn"></div>
+
+<p class="max-w-3xl text-sm text-stone-500 -mt-2 mb-6">Emitted <code class="font-mono text-[0.9em]">Stream_Event</code> strings borrow <code class="font-mono text-[0.9em]">retained</code> and are valid only until the turn completes or cancels — the engine must clone anything it persists.</p>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Where the weight is (for the rework)</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The path is correct, but a few spots carry most of the incidental complexity — the places to look first if the goal is "simpler for what it does".</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Two tool-emission timings</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Anthropic emits tool start/stop inline at <code class="font-mono text-[0.9em]">content_block_stop</code>; both OpenAI decoders buffer every tool call and replay them only at the terminal. So "block order" is real for one provider and synthetic for the others — a subtle contract wrinkle for the engine.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Responses has three arg sources</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">openai_responses_finalize_tool</code> picks arguments from the done item, else accumulated deltas, else <code class="font-mono text-[0.9em]">{}</code>. The delta-accumulation path may be dead if the <code class="font-mono text-[0.9em]">.done</code> item always carries full arguments — worth confirming against real payloads before the rework keeps it.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">The Completing / dispatch handshake</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The <code class="font-mono text-[0.9em]">Completing</code> state plus deferred dispatch is the most stateful piece here. It exists only to keep callbacks out of the curl region and after cancellation-safe borrows — justified by the <code class="font-mono text-[0.9em]">in_curl</code> invariant, but the part most likely to read as over-engineered.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Reasoning-signature dance</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Responses can synthesize a start/stop pair for an encrypted-only reasoning block that never streamed text (<code class="font-mono text-[0.9em]">capture_signature</code>, <code class="font-mono text-[0.9em]">finalize_reasoning</code>). Legitimate, but the most intricate branch in the file.</p>
+  </div>
+</div>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; code read live from the working tree. Ask the code guide to re-derive this page if a declaration moves.
+</footer>
+</main>
+</body>
+</html>

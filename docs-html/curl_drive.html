@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>curl Drive</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">libs/bindings/curl/drive.odin</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">How the curl Drive works</h1>
+  <p class="mt-3.5 max-w-3xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">Drive is the one adapter between libcurl’s socket-action API and <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">core:nbio</code>. Curl decides which sockets and timeout matter. Drive records those requests, translates them into nbio operations, and calls curl again only when something is ready. <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">Client</code> and connect-only <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">Socket</code> share this exact mechanism.</p>
+</header>
+
+<div class="flex flex-wrap gap-2 text-xs font-mono">
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#simpler">why simpler</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#event-cycle">event cycle</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#sockets">socket ownership</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#completion">completion</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#lifecycles">lifecycles</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#walkthrough">one GET</a>
+</div>
+
+<h2 id="simpler" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Two separate improvements</h2>
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-amber-300/70 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Why it is fast</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The old driver called <code class="font-mono text-[0.9em]">curl_multi_perform</code> every 1–10&nbsp;ms. Every response paid timer quantization even when its fd was already ready. The socket-action driver waits on the actual read/write fd or curl’s actual deadline. The local benchmark moved from about 44 requests/s to roughly 4,300 requests/s.</p>
+  </div>
+  <div class="rounded-xl border border-sky-300/70 dark:border-sky-700/50 bg-sky-50/60 dark:bg-sky-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Why it is simpler now</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The evented design necessarily has more concepts than periodic polling, but each fact now has one representation: one socket registry, one curl connect timeout, one explicit owner pointer, and one iterative pump. The simplification is fewer correlated states and fewer ways for them to disagree—not merely fewer source lines.</p>
+  </div>
+</div>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead><tr class="bg-stone-100 dark:bg-stone-900 text-stone-500"><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider">Concern</th><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider">Before this cleanup</th><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider">Now</th></tr></thead>
+    <tbody class="divide-y divide-stone-200 dark:divide-stone-800">
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Socket state</td><td class="py-3 px-4 text-stone-500"><code class="font-mono text-[0.9em]">watches[]</code> plus <code class="font-mono text-[0.9em]">opened[]</code>, joined by fd</td><td class="py-3 px-4 text-stone-500">One <code class="font-mono text-[0.9em]">watches[]</code>; each entry has <code class="font-mono text-[0.9em]">owned</code></td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Owner lookup</td><td class="py-3 px-4 text-stone-500">Drive had to be the first field; callback cast <code class="font-mono text-[0.9em]">^Drive</code> to its owner</td><td class="py-3 px-4 text-stone-500">Drive stores an explicit <code class="font-mono text-[0.9em]">owner</code> pointer</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Immediate retry</td><td class="py-3 px-4 text-stone-500">End of pump recursively called <code class="font-mono text-[0.9em]">drive_kick</code></td><td class="py-3 px-4 text-stone-500"><code class="font-mono text-[0.9em]">drive_pump</code> continues its own loop</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Completion scratch</td><td class="py-3 px-4 text-stone-500">Dispatch assumed callbacks would not grow its allocation</td><td class="py-3 px-4 text-stone-500">Snapshot the count; reload each item by index</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Connect deadline</td><td class="py-3 px-4 text-stone-500">Curl connect timeout + total timeout + independent nbio deadline</td><td class="py-3 px-4 text-stone-500">Curl connect timeout alone covers DNS, TCP, and TLS</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Platform constants</td><td class="py-3 px-4 text-stone-500">IPv6 family guessed as Windows-or-Linux</td><td class="py-3 px-4 text-stone-500">Read from Odin’s Unix/Windows platform definitions</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="mental-model" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The mental model</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Libcurl owns the HTTP/TLS state machine. nbio owns waiting. Drive owns only the translation between them. Owner-specific code deals with completion after curl returns.</p>
+
+<div class="mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 overflow-x-auto">
+  <div class="font-mono text-[12px] leading-[1.7] text-stone-600 dark:text-stone-300 whitespace-pre">                         owner
+            ┌───────────────────────────────┐
+            │ Client                        │
+            │   many Transfer easy handles  │
+            │   client_after_pump → On_Done │
+            └──────────────┬────────────────┘
+                           │ explicit owner pointer
+                           │
+┌──────────────┐     ┌─────▼──────────────────────────┐     ┌──────────────────┐
+│ core:nbio    │     │ Drive                          │     │ libcurl multi    │
+│              │     │   watches[{fd,want,ops,owned}] │     │                  │
+│ poll Receive │◄────┤   timer_op                     ├────►│ HTTP / TLS state │
+│ poll Send    │     │   pumping / need_kick          │     │ socket interest  │
+│ timeout      │────►│   owner / after_pump           │◄────┤ timer requests   │
+└──────────────┘     └─────▲──────────────────────────┘     └──────────────────┘
+                           │
+                           │ explicit owner pointer
+            ┌──────────────┴────────────────┐
+            │ Socket                        │
+            │   one Connect_Only easy       │
+            │   socket_after_pump → Connect │
+            └───────────────────────────────┘
+</div>
+</div>
+
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="Drive"></div>
+<div class="src" data-file="libs/bindings/curl/curl.odin" data-decl="Client"></div>
+<div class="src" data-file="libs/bindings/curl/socket.odin" data-decl="Socket"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Drive is still embedded because both owners expose its loop and multi internally, but correctness no longer depends on field offset zero. <code class="font-mono text-[0.9em]">drive_init</code> receives both <code class="font-mono text-[0.9em]">owner</code> and <code class="font-mono text-[0.9em]">after_pump</code>; the owner callback asserts that the pair matches.</p>
+
+<h2 id="event-cycle" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">One event cycle</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Curl invokes its socket and timer callbacks while <code class="font-mono text-[0.9em]">multi_socket_action</code> is running. Those callbacks record desired state only. Once curl returns, Drive may dispatch completions and then reconcile nbio operations.</p>
+
+<div class="mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 overflow-x-auto">
+  <div class="font-mono text-[12px] leading-[1.75] text-stone-600 dark:text-stone-300 whitespace-pre">transfer_start / ready fd / curl timeout
+                  │
+                  ▼
+         drive_kick or drive_pump
+                  │
+                  ▼
+       ┌─ iterative pump loop ─────────────────────────────┐
+       │ in_libcurl = true                                 │
+       │ multi_socket_action(fd, mask)                     │
+       │   ├─ drive_on_socket → record Watch.want          │
+       │   ├─ drive_on_timer  → record timer_ms            │
+       │   └─ open/close socket callbacks update registry  │
+       │ in_libcurl = false                                │
+       │ after_pump(owner) → drain Msg.Done                │
+       │                                                   │
+       │ need_kick? ─ yes ─► fd = SOCKET_TIMEOUT ──────────┤
+       │     │        continue immediately; no timer churn │
+       │     no                                            │
+       │     ▼                                             │
+       │ drive_apply → arm/disarm nbio polls and timer     │
+       └─────┬─────────────────────────────────────────────┘
+             │
+             ▼
+       event loop sleeps
+             │
+     fd or timeout becomes ready
+             └──────────────────────────► next pump
+</div>
+</div>
+
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_kick"></div>
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_pump"></div>
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_apply"></div>
+
+<div class="rounded-xl border border-amber-300/70 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-4 my-4">
+  <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">drive_apply is the commit-and-wait point</h4>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed max-w-3xl">Curl's socket and timer callbacks only record desired state. This branch asks whether that state is final enough to install in nbio:</p>
+  <pre class="mt-3 rounded-lg border border-amber-200/80 dark:border-amber-800/50 bg-white/70 dark:bg-stone-950/40 p-3 overflow-x-auto font-mono text-[12px] leading-relaxed text-stone-700 dark:text-stone-300">if !d.need_kick {
+    drive_apply(d)
+    return
+}</pre>
+  <div class="grid md:grid-cols-2 gap-3 mt-3">
+    <div class="rounded-lg border border-stone-200 dark:border-stone-800 bg-white/70 dark:bg-stone-950/30 p-3">
+      <div class="font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400 mb-1">need_kick == false</div>
+      <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">No more synchronous work was added. <code class="font-mono text-[0.9em]">drive_apply</code> commits the latest wishes by arming or disarming nbio polls and the timer, then the pump returns so the event loop can sleep.</p>
+    </div>
+    <div class="rounded-lg border border-stone-200 dark:border-stone-800 bg-white/70 dark:bg-stone-950/30 p-3">
+      <div class="font-mono text-xs font-semibold text-sky-700 dark:text-sky-400 mb-1">need_kick == true</div>
+      <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">An <code class="font-mono text-[0.9em]">On_Done</code> callback started more work. The pump skips the intermediate nbio state and immediately calls curl again with <code class="font-mono text-[0.9em]">SOCKET_TIMEOUT</code>.</p>
+    </div>
+  </div>
+  <p class="mt-3 text-sm text-stone-600 dark:text-stone-400 leading-relaxed max-w-3xl">For example, curl may first request timer A, then a newly added transfer may replace it with timer B. Applying between those passes would arm A only to remove it immediately. The loop applies the final state once. Multiple starts in one pass collapse into one kick because the next socket action processes the whole multi handle; if that pass starts still more work, it sets <code class="font-mono text-[0.9em]">need_kick</code> again. The 10,000-immediate-failure regression exercises this iterative path without growing the stack.</p>
+</div>
+
+<h2 id="sockets" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">One socket registry</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">A <code class="font-mono text-[0.9em]">Watch</code> now answers both questions: “what does curl want us to poll?” and “who closes this socket?” The fd is the identity; <code class="font-mono text-[0.9em]">owned</code> is the lifetime rule.</p>
+
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="Watch"></div>
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_watch_set"></div>
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_open_socket"></div>
+<div class="src" data-file="libs/bindings/curl/drive.odin" data-decl="drive_close_socket"></div>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5"><code class="font-mono text-[0.9em]">owned = true</code></h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">drive_open_socket</code> created it through <code class="font-mono text-[0.9em]">nbio.create_socket</code>. A curl <code class="font-mono text-[0.9em]">Poll.Remove</code> removes interest, not ownership: cached connections remain in the registry with no poll operations. The close callback or final destroy closes them synchronously.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5"><code class="font-mono text-[0.9em]">owned = false</code></h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Curl exposed an fd we did not create, such as resolver work. Drive wraps and associates it with nbio. Association failure is returned to curl instead of being ignored. When curl removes interest, the registry entry can disappear; if curl later invokes its replacement close callback, that callback still closes the raw fd.</p>
+  </div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">drive_close_socket</code> uses <code class="font-mono text-[0.9em]">net.close</code>, not <code class="font-mono text-[0.9em]">nbio.close</code>. Libcurl’s callback replaces <code class="font-mono text-[0.9em]">close(2)</code>, so the descriptor must be closed before the callback returns. Any armed poll is removed first.</p>
+
+<h2 id="completion" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Completion is a two-phase operation</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">client_after_pump</code> first drains curl’s message queue into reusable scratch, then invokes application callbacks. Separating those phases keeps user code outside libcurl. The subtle part is that <code class="font-mono text-[0.9em]">On_Done</code> may start more transfers and grow the same scratch allocation.</p>
+
+<div class="mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 overflow-x-auto">
+  <div class="font-mono text-[12px] leading-[1.75] text-stone-600 dark:text-stone-300 whitespace-pre">curl message queue
+       │ drain while in_libcurl
+       ▼
+completed = [A, B, C]       count = 3
+       │
+       ├─ index 0: complete A → On_Done(A)
+       │                         └─ transfer_start(D, E)
+       │                              └─ reserve may move completed storage
+       │
+       ├─ index 1: reload completed[1] from the current allocation
+       │            B may already be canceled → skip unless Running
+       │
+       └─ index 2: reload completed[2], complete C
+
+new curl work sets need_kick → iterative pump continues
+</div>
+</div>
+
+<div class="src" data-file="libs/bindings/curl/curl.odin" data-decl="client_after_pump"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The fixed <code class="font-mono text-[0.9em]">count</code> says which completions belong to this batch. Indexing reloads from the dynamic array after any reallocation. Checking <code class="font-mono text-[0.9em]">Transfer.state</code> handles another legal callback action: an earlier completion may cancel a later transfer before its queued message is dispatched.</p>
+
+<h2 id="owners" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Client and Socket share Drive, not policy</h2>
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead><tr class="bg-stone-100 dark:bg-stone-900 text-stone-500"><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider"></th><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider">Client</th><th class="py-2.5 px-4 text-left font-semibold text-[11px] uppercase tracking-wider">Socket</th></tr></thead>
+    <tbody class="divide-y divide-stone-200 dark:divide-stone-800">
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Multi contents</td><td class="py-3 px-4 text-stone-500">Many live Transfer easy handles</td><td class="py-3 px-4 text-stone-500">One Connect_Only easy</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Completion</td><td class="py-3 px-4 text-stone-500"><code class="font-mono text-[0.9em]">On_Done</code> for every transfer</td><td class="py-3 px-4 text-stone-500">One <code class="font-mono text-[0.9em]">On_Connect</code></td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">After success</td><td class="py-3 px-4 text-stone-500">Easy is removed; multi may retain the connection cache</td><td class="py-3 px-4 text-stone-500">Easy remains attached or Connect_Only would close</td></tr>
+      <tr><td class="py-3 px-4 font-medium text-stone-800 dark:text-stone-200">Idle loop cost</td><td class="py-3 px-4 text-stone-500">No armed polls or timer when no transfer is live</td><td class="py-3 px-4 text-stone-500"><code class="font-mono text-[0.9em]">drive_clear_io</code>; caller polls the connected fd</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="src" data-file="libs/bindings/curl/socket.odin" data-decl="socket_configure"></div>
+<div class="src" data-file="libs/bindings/curl/socket.odin" data-decl="socket_finish"></div>
+
+<div class="rounded-xl border border-sky-300/70 dark:border-sky-700/50 bg-sky-50/60 dark:bg-sky-950/20 p-4 my-4">
+  <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Why Socket no longer has a second deadline</h4>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed max-w-3xl"><a class="font-mono text-sky-700 dark:text-sky-400 hover:underline" href="https://curl.se/libcurl/c/CURLOPT_CONNECTTIMEOUT.html">CURLOPT_CONNECTTIMEOUT</a> covers name resolution and every protocol handshake until the remote connection is established—including TLS. Therefore <code class="font-mono text-[0.9em]">deadline_op</code> and <code class="font-mono text-[0.9em]">CURLOPT_TIMEOUT</code> duplicated the same bound. Keeping only the connect timeout also matters after success: a connect-only socket can legitimately live for hours, so it must not inherit a total-transfer deadline. The TLS-silent-peer regression still completes with <code class="font-mono text-[0.9em]">Operation_Timedout</code>.</p>
+</div>
+
+<h2 id="lifecycles" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Lifecycles and pinned addresses</h2>
+<div class="mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 overflow-x-auto">
+  <div class="font-mono text-[12px] leading-[1.8] text-stone-600 dark:text-stone-300 whitespace-pre">Transfer
+  Created ── transfer_start ──► Running ── curl done ──► Done
+                                  │                       │
+                                  └─ transfer_cancel ─► Canceled
+                                                          │
+                         Done or Canceled ── start again ──┘
+
+Socket
+  Created or Closed ── socket_connect ──► Connecting
+                                             │
+                                  ┌──────────┴──────────┐
+                                  ▼                     ▼
+                              Connected              Failed
+                                  │                     │
+                                  └── socket_destroy ───┴──► Closed
+</div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Explicit owner pointers remove the offset-zero trick, but they do not remove address pinning. Curl stores <code class="font-mono text-[0.9em]">^Drive</code> as callback data and nbio stores it in pending operations. A Client or Socket cannot move after initialization. Each running Transfer is also pinned because write/header callbacks retain <code class="font-mono text-[0.9em]">^Transfer</code>.</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5"><code class="font-mono text-[0.9em]">in_libcurl</code></h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Guards regions that may call back or touch multi state: socket action, message drain, handle release, and cleanup. Starting, canceling, or destroying from a curl data callback is a programmer error.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5"><code class="font-mono text-[0.9em]">pumping</code></h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Covers the entire iterative pump, including owner completion callbacks. <code class="font-mono text-[0.9em]">On_Done</code> is outside libcurl, so it may start another transfer; <code class="font-mono text-[0.9em]">pumping</code> converts that start into <code class="font-mono text-[0.9em]">need_kick</code>.</p>
+  </div>
+</div>
+
+<h2 id="walkthrough" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Walkthrough: one GET</h2>
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <ol class="divide-y divide-stone-200 dark:divide-stone-800 text-sm">
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">1</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Start</strong> — validate the request, create/configure the easy handle, reserve live/completion storage, add the easy to the multi, mark Running, and kick Drive.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">2</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Connect</strong> — curl resolves the host, asks the open callback for an nbio socket, begins a nonblocking connect, and requests send readiness plus a connect timeout.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">3</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Wait</strong> — Drive applies <code class="font-mono text-[0.9em]">nbio.poll(.Send)</code> and the timer. The thread sleeps; there is no periodic curl tick.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">4</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Write/read</strong> — readiness calls back into <code class="font-mono text-[0.9em]">multi_socket_action</code>. Curl advances TCP/TLS, writes the request, and changes interest to receive. Header/body callbacks borrow curl’s buffer for each call.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">5</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Complete</strong> — curl queues <code class="font-mono text-[0.9em]">Msg.Done</code>. Client drains it after the socket action, reads status/error data, removes and cleans the easy, then calls <code class="font-mono text-[0.9em]">On_Done</code>.</span></li>
+    <li class="flex gap-3 px-4 py-2.5"><span class="font-mono text-amber-600 dark:text-amber-400 tabular-nums">6</span><span class="text-stone-600 dark:text-stone-400"><strong class="text-stone-800 dark:text-stone-200">Idle or retry</strong> — if <code class="font-mono text-[0.9em]">On_Done</code> started work, continue the pump immediately. Otherwise reconcile to no armed operations. A cached owned connection may remain in the registry for reuse without costing an event-loop wakeup.</span></li>
+  </ol>
+</div>
+
+<div class="src" data-file="libs/bindings/curl/curl.odin" data-decl="transfer_start"></div>
+
+<h2 id="evidence" class="scroll-mt-20 mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Evidence</h2>
+<div class="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4"><div class="font-mono text-2xl font-semibold text-stone-900 dark:text-stone-50">4,298/s</div><div class="text-xs text-stone-500 mt-1">2,000 sequential loopback requests</div></div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4"><div class="font-mono text-2xl font-semibold text-stone-900 dark:text-stone-50">4,229/s</div><div class="text-xs text-stone-500 mt-1">2,000 requests, window 64</div></div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4"><div class="font-mono text-2xl font-semibold text-stone-900 dark:text-stone-50">3.0</div><div class="text-xs text-stone-500 mt-1">event-loop ticks per delayed request</div></div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4"><div class="font-mono text-2xl font-semibold text-stone-900 dark:text-stone-50">10,000</div><div class="text-xs text-stone-500 mt-1">immediate retry chain, constant stack</div></div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The curl package has focused tests for streaming, cancellation, all supported HTTP methods, connection reuse, connect-only send/receive, TLS-handshake timeout, completion scratch growth, and immediate reentrant starts. Platform type checks cover Darwin, Windows, FreeBSD, OpenBSD, and NetBSD in addition to the Linux test run.</p>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; code blocks are live from <code class="font-mono text-[0.9em]">libs/bindings/curl/</code>. Benchmark values are a recorded local run, not live statistics.
+</footer>
+</main>
+</body>
+</html>

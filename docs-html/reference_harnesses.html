@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reference harnesses</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">external · opencode · codex-rs · deepseek-harness · pi</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">How other harnesses stream</h1>
+  <p class="mt-3.5 max-w-2xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">Four other agent harnesses solve the same problem the <a href="streaming.html" class="underline decoration-amber-400/50 hover:decoration-amber-400">streaming</a> path solves: provider SSE in, a normalized event stream out, tool calls dispatched, next turn. Their source was read directly (not docs). They agree on more than they disagree — and where they agree lines up almost exactly with the two spots our own path flagged as over-complex.</p>
+</header>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The four at a glance</h2>
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-x-auto">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="text-left font-mono text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-200 dark:border-stone-800">
+        <th class="px-4 py-2 font-medium">Project</th>
+        <th class="px-4 py-2 font-medium">Stack</th>
+        <th class="px-4 py-2 font-medium">SSE</th>
+        <th class="px-4 py-2 font-medium">Tool-call args</th>
+        <th class="px-4 py-2 font-medium">Normalized event model</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-stone-200 dark:divide-stone-800 align-top">
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">opencode</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">TS / Bun / Effect</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">both: AI SDK (default) + hand-rolled native</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">raw string, parsed once at block-stop</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">LLMEvent</code> union</td>
+      </tr>
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">codex-rs</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">Rust / tokio</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">hand-rolled (<code class="font-mono text-[0.9em]">eventsource-stream</code>)</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">server reassembles — no accumulation</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">ResponseEvent</code> enum</td>
+      </tr>
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">deepseek-harness</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">TS / cordis DI</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">hand-rolled (<code class="font-mono text-[0.9em]">eventsource-parser</code>)</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">raw string, parsed once at execution</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">StreamChunk</code> + assembler</td>
+      </tr>
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">pi</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">TS monorepo</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">mixed: SDK (OpenAI) + hand-rolled (Anthropic)</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">partial JSON re-parsed every delta</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">Block</code> / <code class="font-mono text-[0.9em]">Message</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Where all four agree</h2>
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">One normalized event union is the seam</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Every project converges the providers onto a single internal event type with explicit <code class="font-mono text-[0.9em]">start</code>/<code class="font-mono text-[0.9em]">delta</code>/<code class="font-mono text-[0.9em]">end</code> framing — <code class="font-mono text-[0.9em]">LLMEvent</code>, <code class="font-mono text-[0.9em]">ResponseEvent</code>, <code class="font-mono text-[0.9em]">StreamChunk</code>, <code class="font-mono text-[0.9em]">Block</code>. Nothing downstream ever sees a provider's wire shape. We already have this: <code class="font-mono text-[0.9em]">Stream_Event</code>.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Tool args stay a raw string until finalize</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Three of four accumulate argument fragments as a plain string and parse it exactly <strong>once</strong> — at block-stop (opencode) or at execution (deepseek); codex doesn't accumulate at all. Empty string becomes <code class="font-mono text-[0.9em]">{}</code>. No streaming JSON parser in the hot path.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">A stream that ends early is an error</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">deepseek throws <code class="font-mono text-[0.9em]">STREAM_CLOSED</code> without <code class="font-mono text-[0.9em]">[DONE]</code>; codex emits <code class="font-mono text-[0.9em]">"stream closed before response.completed"</code>. Truncation is a hard failure, not a soft flush — the same stance our <code class="font-mono text-[0.9em]">decoder_finish</code> already takes for Anthropic.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Malformed events degrade, never crash</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">codex skips an unparseable <code class="font-mono text-[0.9em]">data:</code> line with a <code class="font-mono text-[0.9em]">trace!</code> and continues; opencode marks spec-required fields optional so proxy quirks don't fail the decode. Matches our "never assert on peer input, return a validation error" rule.</p>
+  </div>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Where they diverge</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Two real forks in the road, both decisions we have to make in the rework.</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">SDK vs hand-rolled SSE</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">pi is pragmatic — it uses the OpenAI SDK's stream where it's clean and drops to raw <code class="font-mono text-[0.9em]">ReadableStream</code> parsing for Anthropic where the SDK is in the way. opencode is mid-migration from AI-SDK to its own native parsers and pays for maintaining both. codex and deepseek hand-roll over a small framing crate. For an Odin daemon there is no SDK to lean on — hand-rolled is the only option, which makes opencode's <em>native</em> design the closest reference.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">When do tool-call args get parsed?</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">codex targets the Responses API and lets the <strong>server</strong> reassemble arguments — the finished <code class="font-mono text-[0.9em]">FunctionCall</code> arrives whole in <code class="font-mono text-[0.9em]">output_item.done</code>, so it deletes delta-stitching entirely. pi does the opposite: it re-parses partial JSON on every delta so a TUI can render half-typed arguments live. deepseek/opencode sit in the middle: accumulate raw, parse once. The live-render tax is only worth paying if a client actually shows streaming args.</p>
+  </div>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">What this says for our rework</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Read against the two complexity call-outs on the <a href="streaming.html" class="underline decoration-amber-400/50 hover:decoration-amber-400">streaming</a> and <a href="json_codecs.html" class="underline decoration-amber-400/50 hover:decoration-amber-400">json codecs</a> pages, the external designs point at four concrete moves.</p>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <ol class="divide-y divide-stone-200 dark:divide-stone-800 text-sm">
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Keep <code class="font-mono">Stream_Event</code> as the seam — it's the thing everyone else built.</span><br><span class="text-stone-600 dark:text-stone-400">The one design decision all four validate. The rework is about the machinery <em>around</em> it, not the model itself.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Collapse the three tool-arg sources to one.</span><br><span class="text-stone-600 dark:text-stone-400">codex confirms the suspicion in the "three arg sources" call-out: for the Responses API the <code class="font-mono">.done</code> item carries full arguments, so <code class="font-mono">openai_responses_finalize_tool</code>'s delta-accumulation path is likely dead. Prefer the done-item args; keep a raw-string accumulator only for Chat Completions, which genuinely fragments them.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Separate the pump from the decode.</span><br><span class="text-stone-600 dark:text-stone-400">Both codex (a spawned task feeding an mpsc <code class="font-mono">ResponseStream</code>) and opencode (<code class="font-mono">framing → protocol.step → executor</code>) split transport from a pure <code class="font-mono">(state, event) → [state, events]</code> decoder. That is exactly what the <code class="font-mono">Completing</code>/deferred-dispatch handshake in <code class="font-mono">turn.odin</code> is straining to do by hand — a cleaner split would make it a pure function plus a delivery queue.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Shallow-envelope decode instead of parser rewind.</span><br><span class="text-stone-600 dark:text-stone-400">codex decodes a flat header, switches on <code class="font-mono">type</code>, then strictly decodes the specific payload — unknown event names fall through, strict typing stays where it matters. That is a direct answer to the <code class="font-mono">dec_find_tag</code> "snapshot-and-rewind the whole parser to find the discriminator" complexity in the wire codec.</span></li>
+  </ol>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Per project — the one idea to steal</h2>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">opencode</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2"><code class="font-mono text-[0.85em]">anomalyco/opencode</code> · <code class="font-mono text-[0.85em]">packages/llm/</code></p>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The <code class="font-mono text-[0.9em]">Framing</code> / <code class="font-mono text-[0.9em]">Protocol</code> / <code class="font-mono text-[0.9em]">Route</code> three-layer split, and one generic <code class="font-mono text-[0.9em]">tool-stream</code> util keyed by <code class="font-mono text-[0.9em]">number | string</code> that handles all four provider grammars. Ignore the Effect ceremony and the transitional dual-runtime.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">codex-rs</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2"><code class="font-mono text-[0.85em]">openai/codex</code> · <code class="font-mono text-[0.85em]">codex-api/src/sse/</code></p>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">String-dispatch envelope over a giant tagged enum, plus "history is the only accumulator — the next request is a pure projection of it," so tool outputs are never hand-threaded into the next call.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">deepseek-harness</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2"><code class="font-mono text-[0.85em]">deepseek-ai/deepseek-harness</code></p>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">A named seam at every boundary: <code class="font-mono text-[0.9em]">adapter → translate → BlockAssembler → loop</code>. The assembler is straggler-tolerant — first close wins, deltas after a block-end are ignored — a good defensive invariant.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">pi</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2"><code class="font-mono text-[0.85em]">earendil-works/pi</code> · <code class="font-mono text-[0.85em]">packages/ai/</code></p>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The pragmatic SDK-where-clean, raw-where-not split — and a tolerant <code class="font-mono text-[0.9em]">parseStreamingJson</code> that always returns a valid object mid-token. Only worth it if a client renders streaming tool args.</p>
+  </div>
+</div>
+
+<p class="max-w-3xl text-sm text-stone-500 mt-2 mb-6">Briefs assembled from a direct read of each repo's source. Line numbers there drift faster than ours — treat the paths as entry points, not citations.</p>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>. This page is external comparison, not repo source — the <a href="streaming.html" class="underline decoration-amber-400/40">streaming</a> and <a href="json_codecs.html" class="underline decoration-amber-400/40">json codecs</a> pages read live from the working tree.
+</footer>
+</main>
+</body>
+</html>

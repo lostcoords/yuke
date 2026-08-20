@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yuke-odin · docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">yuke-odin · docs-html/</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">Maps of the codebase, read live</h1>
+  <p class="mt-3.5 max-w-2xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">An Odin implementation of the yuke wire protocol — strict codec, daemon front door, SQLite event store, pump, and the client replica. These pages are focused walkthroughs of one slice each; the code blocks are read from the working tree on every load, so a renamed declaration shows up red instead of going stale.</p>
+</header>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">By the numbers</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Live counts from <code class="font-mono text-[0.9em]">cloc --vcs=git</code>; the dashboard reads them on each load (15&nbsp;s cache).</p>
+
+<div id="stats-kpis"></div>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <div class="px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-200 dark:border-stone-800">Top files by code</div>
+  <div id="stats-files"></div>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Pages</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Each page is one slice of the codebase. The list is discovered from the directory — anything new you (or the code guide) drop here shows up automatically. Delete the file to retire a page; the link goes with it.</p>
+
+<div data-pages-list class="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">How to use</h2>
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Browse</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Open a page from the list above. Each code block names a file and a declaration; the page fetches the source live and renders it syntax-highlighted.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Ask ✦</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The <strong>✦ ask</strong> button (bottom-right) opens a sidebar that is a real <code class="font-mono text-[0.9em]">yuked</code> session — the model reads the source tree, cites <code class="font-mono text-[0.9em]">path:line</code>, and writes new pages back here on save.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Regenerate</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Pages are disposable. When a page drifts from the code, the cleanest fix is to ask the code guide to rewrite it from the current source — not to hand-patch it.</p>
+  </div>
+</div>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; code and stats read live from the working tree. Hot reload picks up file changes in your open tab.
+</footer>
+</main>
+</body>
+</html>

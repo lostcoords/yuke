@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the provider rework</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+<style>
+  /* Page-local animation + diagram styling. Tailwind covers the rest. */
+  .pulse-cell { animation: pulse-bg 1.1s ease-out; }
+  @keyframes pulse-bg { 0% { background-color: rgb(245 158 11 / 0.35); } 100% { background-color: transparent; } }
+  .arena-brick { transition: all .25s ease; }
+  .stage-node { transition: all .2s ease; }
+  .stage-node.on { transform: scale(1.04); }
+  [data-collapsible] { display: none; }
+  [data-collapsible].open { display: block; }
+  .mono { font-variant-ligatures: none; }
+  .flow-line { stroke-dasharray: 5 5; animation: dash 20s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -400; } }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">src/provider · libs/http/sse · docs/provider-refactor-notes.md</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">The provider rework, end to end</h1>
+  <p class="mt-3.5 max-w-3xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">One page to understand the whole provider surface before we change it: how a streamed answer decodes (<strong>SSE</strong>), exactly <strong>who owns which bytes and for how long</strong> (the two-arena lifetime), why the <strong>request builders</strong> are the real weight, and what <a href="reference_harnesses.html" class="underline decoration-amber-400/50 hover:decoration-amber-400">other harnesses</a> — opencode, crush, pi — do at the same seams. The diagrams are live: step them, feed them bytes, toggle the markers.</p>
+</header>
+
+<!-- ============================ CONTENTS ============================ -->
+<div class="flex flex-wrap gap-2 text-xs font-mono mb-4">
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#map">the map</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#sse">sse, live</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#memory">memory lifetime</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#decode">the decoder</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#request">the request side</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#cache">anthropic cache</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#harnesses">harnesses</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#seam">push vs materialize</a>
+  <a class="rounded-md border border-stone-200 dark:border-stone-800 px-2.5 py-1.5 hover:border-amber-500 hover:text-amber-700 dark:hover:text-amber-400" href="#plan">where to start</a>
+</div>
+
+<!-- ============================ THE MAP ============================ -->
+<h2 id="map" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The map — two halves, one seam</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Everything in <code class="font-mono text-[0.9em]">src/provider</code> is a translation between one neutral shape and three provider dialects. The <strong>request</strong> half maps our <code class="font-mono text-[0.9em]">wire.Message</code> transcript <em>out</em> to a provider's JSON body; the <strong>response</strong> half maps a provider's streamed events <em>in</em> to a neutral <code class="font-mono text-[0.9em]">Stream_Event</code>. The seam in the middle is the whole point: nothing downstream of the decoder ever sees a provider's wire shape, and nothing upstream of the builder speaks a dialect.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 overflow-x-auto">
+  <svg viewBox="0 0 900 260" class="w-full min-w-[720px]" font-family="ui-monospace, monospace">
+    <defs>
+      <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" class="fill-stone-400"/></marker>
+      <marker id="arrA" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" class="fill-amber-500"/></marker>
+    </defs>
+    <!-- neutral core -->
+    <rect x="360" y="20" width="180" height="220" rx="10" class="fill-amber-500/10 stroke-amber-500/50" stroke-width="1.5"/>
+    <text x="450" y="44" text-anchor="middle" class="fill-amber-700 dark:fill-amber-400" font-size="12" font-weight="700">NEUTRAL CORE</text>
+    <text x="450" y="92" text-anchor="middle" class="fill-stone-700 dark:fill-stone-200" font-size="12">wire.Message</text>
+    <text x="450" y="112" text-anchor="middle" class="fill-stone-400" font-size="10">(the transcript)</text>
+    <text x="450" y="168" text-anchor="middle" class="fill-stone-700 dark:fill-stone-200" font-size="12">Stream_Event</text>
+    <text x="450" y="188" text-anchor="middle" class="fill-stone-400" font-size="10">(the answer)</text>
+    <line x1="380" y1="130" x2="520" y2="130" class="stroke-stone-300 dark:stroke-stone-700" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <!-- request half (out, top) -->
+    <text x="180" y="40" text-anchor="middle" class="fill-stone-400" font-size="10" font-weight="700">REQUEST · out</text>
+    <rect x="60" y="60" width="240" height="52" rx="8" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/>
+    <text x="180" y="82" text-anchor="middle" class="fill-stone-700 dark:fill-stone-200" font-size="11.5">*_request.odin  ×3</text>
+    <text x="180" y="99" text-anchor="middle" class="fill-stone-400" font-size="10">anthropic · chat · responses</text>
+    <line x1="300" y1="86" x2="358" y2="100" class="stroke-stone-400" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- response half (in, bottom) -->
+    <text x="180" y="150" text-anchor="middle" class="fill-stone-400" font-size="10" font-weight="700">RESPONSE · in</text>
+    <rect x="60" y="165" width="240" height="52" rx="8" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/>
+    <text x="180" y="187" text-anchor="middle" class="fill-stone-700 dark:fill-stone-200" font-size="11.5">Provider_Decoder  ×3</text>
+    <text x="180" y="204" text-anchor="middle" class="fill-stone-400" font-size="10">sse.Parser → decode</text>
+    <line x1="358" y1="180" x2="300" y2="192" class="stroke-amber-500" stroke-width="1.5" marker-end="url(#arrA)"/>
+
+    <!-- provider cloud -->
+    <rect x="600" y="90" width="240" height="80" rx="10" class="fill-stone-100 dark:fill-stone-800/50 stroke-stone-300 dark:stroke-stone-700"/>
+    <text x="720" y="122" text-anchor="middle" class="fill-stone-600 dark:fill-stone-300" font-size="12">Provider HTTPS</text>
+    <text x="720" y="142" text-anchor="middle" class="fill-stone-400" font-size="10">Anthropic / OpenAI / compat</text>
+    <line x1="540" y1="86" x2="598" y2="110" class="stroke-stone-400 flow-line" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="598" y1="150" x2="540" y2="174" class="stroke-amber-500 flow-line" stroke-width="1.5" marker-end="url(#arrA)"/>
+    <text x="576" y="82" text-anchor="middle" class="fill-stone-400" font-size="9">POST body</text>
+    <text x="576" y="196" text-anchor="middle" class="fill-amber-600 dark:fill-amber-400" font-size="9">SSE stream</text>
+  </svg>
+</div>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-3 my-4 text-sm">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-1">response side · today</div>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed">Settled. A generic framer + a per-provider decoder onto <code class="font-mono text-[0.9em]">Stream_Event</code>. Raw tool-args, deferred parse, graceful degradation — already matches the field.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">request side · the weight</div>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed"><strong>1,766 LOC</strong> across three forward-only builders that each re-walk the transcript. This is where the rework earns its lines — and what unblocks tail-caching.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-1">the seam · keep it</div>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">Stream_Event</code> is the one design every reference harness independently arrived at. The rework is the machinery around the seam, never the seam.</p>
+  </div>
+</div>
+
+<!-- ============================ SSE LIVE ============================ -->
+<h2 id="sse" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">SSE framing, live</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The framer (<code class="font-mono text-[0.9em]">libs/http/sse/sse.odin</code>) is a small incremental parser. It knows nothing about any provider — it only cuts a raw byte stream into completed <code class="font-mono text-[0.9em]">data:</code> payloads. The hard part is that TCP does not respect message boundaries: a chunk can end <em>mid-line</em>, split a <code class="font-mono text-[0.9em]">\r\n</code>, or split the leading BOM. Feed it below in whatever chunk sizes you like and watch the two buffers stitch events back together across the cuts.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden" id="sse-demo">
+  <div class="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-stone-200 dark:border-stone-800 bg-stone-100 dark:bg-stone-900/60 font-mono text-xs">
+    <button data-sse="feed" class="rounded-md bg-amber-500 px-3 py-1.5 font-semibold text-white hover:brightness-105">feed next chunk ▸</button>
+    <button data-sse="auto" class="rounded-md border border-stone-300 dark:border-stone-700 px-3 py-1.5 hover:border-amber-500">▶ auto</button>
+    <button data-sse="reset" class="rounded-md border border-stone-300 dark:border-stone-700 px-3 py-1.5 hover:border-amber-500">reset</button>
+    <label class="flex items-center gap-2 text-stone-500 ml-2">chunk size
+      <input data-sse="size" type="range" min="1" max="60" value="7" class="accent-amber-500">
+      <span data-sse="sizeval" class="tabular-nums w-6 text-stone-700 dark:text-stone-300">7</span> B
+    </label>
+    <span data-sse="progress" class="ml-auto text-stone-400 tabular-nums"></span>
+  </div>
+  <div class="grid md:grid-cols-2 gap-0">
+    <div class="border-b md:border-b-0 md:border-r border-stone-200 dark:border-stone-800 p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">raw bytes from the socket</div>
+      <pre data-sse="raw" class="m-0 h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[11.5px] leading-relaxed text-stone-500"></pre>
+    </div>
+    <div class="p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">parser state</div>
+      <div class="space-y-2 font-mono text-[12px]">
+        <div><span class="text-stone-400 w-24 inline-block">line buffer</span> <span data-sse="line" class="rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 text-sky-700 dark:text-sky-300"></span></div>
+        <div><span class="text-stone-400 w-24 inline-block">data buffer</span> <span data-sse="data" class="rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-all"></span></div>
+        <div class="flex gap-4 text-[11px] pt-1">
+          <span><span class="text-stone-400">has_data</span> <span data-sse="hasdata" class="font-semibold"></span></span>
+          <span><span class="text-stone-400">last_was_cr</span> <span data-sse="cr" class="font-semibold"></span></span>
+        </div>
+      </div>
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mt-4 mb-2">events dispatched → decoder</div>
+      <div data-sse="events" class="space-y-1 h-28 overflow-auto"></div>
+    </div>
+  </div>
+</div>
+<p class="max-w-3xl text-sm text-stone-500 -mt-1 mb-4">The JS parser mirrors <code class="font-mono">sse.odin</code> exactly: a blank line dispatches only if a <code class="font-mono">data:</code> line was seen; <code class="font-mono">event:</code>/<code class="font-mono">id:</code> are parsed and dropped; multiple <code class="font-mono">data:</code> lines join with <code class="font-mono">\n</code>; a <code class="font-mono">\r</code> at a chunk tail sets <code class="font-mono">last_was_cr</code> so the next chunk's leading <code class="font-mono">\n</code> is swallowed as one CRLF.</p>
+
+<div class="src" data-file="libs/http/sse/sse.odin" data-decl="end_line"></div>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Bounded, never asserting</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">1 MiB per line and per event. Overflow returns <code class="font-mono text-[0.9em]">.Line_Too_Long</code>/<code class="font-mono text-[0.9em]">.Event_Too_Large</code>, which the turn maps to <code class="font-mono text-[0.9em]">.Response_Too_Large</code>. Peer bytes degrade; they never crash the daemon — the decode boundary is error-return, not assertion.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Generic-looking, tuned to three</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Dropping every field but <code class="font-mono text-[0.9em]">data:</code> is safe only because all three providers put the whole JSON object on one <code class="font-mono text-[0.9em]">data:</code> line. It reads generic; it is really a three-protocol framer.</p>
+  </div>
+</div>
+
+<!-- ============================ MEMORY ============================ -->
+<h2 id="memory" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Memory lifetime — the two arenas</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">This is the part worth getting exactly right, because every <code class="font-mono text-[0.9em]">Stream_Event</code> string is a <strong>borrow</strong>. A <code class="font-mono text-[0.9em]">Turn</code> owns two OS-backed virtual arenas and nothing else frees anything on this path — no decoder ever calls <code class="font-mono text-[0.9em]">free</code>. Three tiers of ownership, and one hard rule: <em>scratch must never alias retained</em>.</p>
+
+<div class="grid md:grid-cols-3 gap-3 my-5">
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">tier 1 · retained</div>
+    <div class="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-1">turn lifetime</div>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">SSE buffers, every <code class="font-mono text-[0.85em]">strings.clone</code>d delta / signature / tool-arg byte, the event queue, the error prefix. Grows all turn; freed in one <code class="font-mono text-[0.85em]">arena_destroy</code> at cleanup.</p>
+  </div>
+  <div class="rounded-xl border border-sky-300/60 dark:border-sky-700/40 bg-sky-50/40 dark:bg-sky-950/20 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-sky-700 dark:text-sky-400 mb-1">tier 2 · scratch</div>
+    <div class="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-1">one event</div>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The parsed JSON tree for a single event. A <code class="font-mono text-[0.85em]">arena_temp</code> watermark is taken before decode and rewound after — pages are reused, never re-malloc'd. 8&nbsp;MiB reserve so one event fits one block.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/40 dark:bg-amber-950/20 p-4">
+    <div class="font-mono text-[11px] uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-1">tier 3 · the borrow</div>
+    <div class="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-1">until on_done</div>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Emitted event strings point <em>into</em> retained. Valid only until the turn completes or cancels. The engine must <strong>clone anything it persists</strong> — the arena vanishes at <code class="font-mono text-[0.85em]">on_done</code>.</p>
+  </div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Step a stream through below. Watch <span class="text-emerald-700 dark:text-emerald-400 font-semibold">retained</span> accumulate cloned strings that never shrink, while <span class="text-sky-700 dark:text-sky-400 font-semibold">scratch</span> balloons with a JSON tree each event and snaps back to its watermark. The arrows are the borrows an emitted event holds into retained.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden" id="mem-demo">
+  <div class="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-stone-200 dark:border-stone-800 bg-stone-100 dark:bg-stone-900/60 font-mono text-xs">
+    <button data-mem="step" class="rounded-md bg-amber-500 px-3 py-1.5 font-semibold text-white hover:brightness-105">next event ▸</button>
+    <button data-mem="reset" class="rounded-md border border-stone-300 dark:border-stone-700 px-3 py-1.5 hover:border-amber-500">reset</button>
+    <span data-mem="label" class="ml-2 text-stone-500"></span>
+    <span data-mem="done" class="ml-auto text-emerald-600 dark:text-emerald-400 font-semibold hidden">✓ on_done — both arenas freed</span>
+  </div>
+  <div class="grid md:grid-cols-2 gap-0">
+    <div class="border-b md:border-b-0 md:border-r border-stone-200 dark:border-stone-800 p-4">
+      <div class="flex items-baseline justify-between mb-2">
+        <span class="font-mono text-[11px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400">retained · grows, never frees</span>
+        <span data-mem="rbytes" class="font-mono text-[11px] text-stone-400 tabular-nums"></span>
+      </div>
+      <div data-mem="retained" class="flex flex-col gap-1 min-h-[13rem]"></div>
+    </div>
+    <div class="p-4">
+      <div class="flex items-baseline justify-between mb-2">
+        <span class="font-mono text-[11px] uppercase tracking-wider text-sky-700 dark:text-sky-400">scratch · watermark rewind</span>
+        <span data-mem="sbytes" class="font-mono text-[11px] text-stone-400 tabular-nums"></span>
+      </div>
+      <div data-mem="scratch" class="flex flex-col gap-1 min-h-[13rem]"></div>
+    </div>
+  </div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The alias ban is asserted right at the decode boundary — a clone that forgot to switch to the retained allocator would trip it before it could corrupt anything, because the next watermark rewind would free a string the decoder still holds.</p>
+
+<div class="src" data-file="src/provider/anthropic.odin" data-decl="anthropic_decoder_decode"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">And the whole thing is declared on one struct. Two arenas, an SSE parser, the decoder union, the event queue — the entire lifetime story of a turn is these fields.</p>
+
+<div class="src" data-file="src/provider/turn.odin" data-decl="Turn"></div>
+
+<div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-900/40 p-4 my-4">
+  <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Why events are queued, not fired inline</h4>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Curl calls the body sink from inside its own stack (<code class="font-mono text-[0.9em]">in_libcurl</code>). Firing a user callback there would re-enter curl illegally. So decode only <em>appends</em> to the queue; a zero-delay <code class="font-mono text-[0.9em]">nbio.timeout_poly(0, …)</code> drains it on a clean stack in <code class="font-mono text-[0.9em]">turn_on_dispatch</code>. The <code class="font-mono text-[0.9em]">Completing</code> state and the <code class="font-mono text-[0.9em]">dispatching</code> flag exist only to make cancellation safe while a borrowed event is on the user's stack. It is the most stateful piece on the path — and the one every reference harness solves by <em>separating the pump from the pure decoder</em>.</p>
+</div>
+
+<!-- ============================ DECODER ============================ -->
+<h2 id="decode" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The decoder — provider events → neutral blocks</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Each framed <code class="font-mono text-[0.9em]">data:</code> payload routes through a <code class="font-mono text-[0.9em]">Provider_Decoder</code> union arm and becomes zero-or-more neutral events. All three providers converge on one block-structured stream. Hover a provider event on the left to see the neutral event it produces.</p>
+
+<div class="my-5 grid md:grid-cols-2 gap-3" id="neutral-demo">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+    <div class="px-4 py-2 border-b border-stone-200 dark:border-stone-800 font-mono text-[11px] uppercase tracking-wider text-stone-400">Anthropic wire event</div>
+    <div class="divide-y divide-stone-200 dark:divide-stone-800 font-mono text-[12px]"></div>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/30 dark:bg-amber-950/10 overflow-hidden">
+    <div class="px-4 py-2 border-b border-amber-200 dark:border-amber-800/50 font-mono text-[11px] uppercase tracking-wider text-amber-600 dark:text-amber-400">neutral Stream_Event</div>
+    <div data-neutral="out" class="p-4 font-mono text-[12px] min-h-[12rem] flex items-center justify-center text-stone-400 text-center leading-relaxed"></div>
+  </div>
+</div>
+
+<div class="src" data-file="src/provider/stream.odin" data-decl="Stream_Event"></div>
+
+<p class="max-w-3xl text-sm text-stone-500 -mt-2 mb-4">The Anthropic arm is the exemplar — a true event-typed protocol with an explicit block lifecycle and strict index ordering. The two OpenAI arms solve a harder problem: they must <em>synthesize</em> block structure the wire never sends (Chat opens a block on the first <code class="font-mono">delta</code> and flips on kind change; Responses has a <code class="font-mono">response.*</code> vocabulary and no <code class="font-mono">[DONE]</code>).</p>
+
+<!-- ============================ REQUEST SIDE ============================ -->
+<h2 id="request" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The request side — where the rework lives</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The three builders each walk <code class="font-mono text-[0.9em]">request.messages</code> once, forward-only, emitting literal JSON fragments (<code class="font-mono text-[0.9em]">write_raw(",\"system\":")</code>) with manual bookkeeping — <code class="font-mono text-[0.9em]">message_count</code>, <code class="font-mono text-[0.9em]">block_count</code>, hand-placed separators. The mapping logic (role-coalesce, tool reorder, empty-skip, thinking-replay gating) is <strong>duplicated three times</strong>.</p>
+
+<div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-900/40 p-4 my-4">
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><strong class="text-stone-800 dark:text-stone-200">The key observation.</strong> The request body is <em>fully buffered</em> into a <code class="font-mono text-[0.9em]">strings.Builder</code> before send. So forward-only writing buys <strong>no runtime benefit</strong> (unlike the response decoder, which genuinely streams) — it only inflates LOC and structurally <em>blocks</em> tail-caching. To mark "the last content block of the last message" with <code class="font-mono text-[0.9em]">cache_control</code>, you must know which block is last <em>before</em> you close it — which a forward-only writer cannot.</p>
+</div>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden" id="ir-demo">
+  <div class="flex flex-wrap items-center gap-1 px-4 py-2.5 border-b border-stone-200 dark:border-stone-800 bg-stone-100 dark:bg-stone-900/60 font-mono text-xs">
+    <span class="text-stone-400 mr-1">approach:</span>
+    <button data-ir="fwd" class="rounded-md px-3 py-1.5 font-semibold bg-amber-500 text-white">forward-only (today)</button>
+    <button data-ir="ir" class="rounded-md px-3 py-1.5 font-semibold border border-stone-300 dark:border-stone-700 hover:border-amber-500">block IR (proposed)</button>
+  </div>
+  <div class="p-4">
+    <div data-ir="body" class="grid md:grid-cols-[1fr_1.1fr] gap-4"></div>
+  </div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The rework materializes a normalized <strong>block IR</strong> — <code class="font-mono text-[0.9em]">[]Message</code> of <code class="font-mono text-[0.9em]">[]Block</code> (text / thinking / redacted / tool_use / tool_result / image) — once from <code class="font-mono text-[0.9em]">wire.Message</code>, then hands it to a thin per-provider serializer. The <em>shared</em> pass (the LOC win) is the mapping; the <em>per-provider</em> part (relocated, not deleted) is the serializer, because the dialects genuinely differ. It lives in the scratch arena, bulk-freed by watermark rewind — no new arena type.</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-3 my-4 text-sm">
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-stone-900 dark:text-stone-100 mb-1">Random access unblocks the tail</h4>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.85em]">blocks[last].cache_control = …</code> — trivial once the IR exists. The whole reason for the rewrite.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-stone-900 dark:text-stone-100 mb-1">One mapping, not three</h4>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed">Role-coalesce, tool reorder, empty-skip, replay gating collapse to a single pass feeding three small serializers.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-stone-900 dark:text-stone-100 mb-1">Multimedia falls out free</h4>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed">An image/media <code class="font-mono text-[0.85em]">Block</code> arm is trivial once blocks are materialized — de-risks the planned multimedia work.</p>
+  </div>
+</div>
+<p class="max-w-3xl text-sm text-stone-500 -mt-1 mb-4"><strong>Don't oversell a 3→1 collapse.</strong> The mapping complexity relocates into the IR + serializer; it does not vanish. The honest win is: one shared builder + three <em>small</em> serializers, meaningfully fewer than 1,766 LOC, and every serializer gets random access.</p>
+
+<div class="src" data-file="src/provider/request.odin" data-decl="Request"></div>
+
+<!-- ============================ ANTHROPIC CACHE ============================ -->
+<h2 id="cache" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Anthropic prompt caching — the payoff</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Today the system prompt is a bare JSON string and there is no <code class="font-mono text-[0.9em]">cache_control</code> anywhere, so every Anthropic turn re-pays full input price. Two breakpoints fix that. Toggle them below and step through turns — cached reads bill at 0.1×, only the growing delta is written.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden" id="cache-demo">
+  <div class="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-stone-200 dark:border-stone-800 bg-stone-100 dark:bg-stone-900/60 font-mono text-xs">
+    <label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" data-cache="prefix" class="accent-amber-500"> stable prefix <span class="text-stone-400">(tools+system)</span></label>
+    <label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" data-cache="tail" class="accent-amber-500"> moving tail <span class="text-stone-400">(last block)</span></label>
+    <button data-cache="turn" class="rounded-md bg-amber-500 px-3 py-1.5 font-semibold text-white hover:brightness-105 ml-1">send turn ▸</button>
+    <button data-cache="reset" class="rounded-md border border-stone-300 dark:border-stone-700 px-3 py-1.5 hover:border-amber-500">reset</button>
+    <span data-cache="turnno" class="ml-auto text-stone-400"></span>
+  </div>
+  <div class="grid md:grid-cols-[1.3fr_1fr] gap-0">
+    <div class="border-b md:border-b-0 md:border-r border-stone-200 dark:border-stone-800 p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">request prompt (top → bottom)</div>
+      <div data-cache="stack" class="flex flex-col gap-1 font-mono text-[11.5px]"></div>
+      <div class="mt-3 flex gap-4 text-[11px] font-mono">
+        <span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-400/70"></span>cache read 0.1×</span>
+        <span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm bg-amber-400/70"></span>cache write 1.25×</span>
+        <span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm bg-rose-400/70"></span>full price 1×</span>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">billed input, this turn</div>
+      <div data-cache="bill" class="font-mono text-sm space-y-1"></div>
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mt-4 mb-2">cumulative cost vs uncached</div>
+      <div data-cache="cum" class="font-mono text-sm"></div>
+      <div data-cache="bar" class="mt-2 space-y-1.5"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid md:grid-cols-2 gap-3 my-4 text-sm">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-stone-900 dark:text-stone-100 mb-1">Stable prefix — do first, ~3 lines</h4>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed">Switch <code class="font-mono text-[0.85em]">system</code> from a bare string to block-array form with one <code class="font-mono text-[0.85em]">cache_control:{type:ephemeral}</code>. Tools precede system in Anthropic's hierarchy, so <strong>one marker caches tools+system</strong>. No IR needed — ships before the rewrite.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-stone-900 dark:text-stone-100 mb-1">Moving tail — the reason for the IR</h4>
+    <p class="text-stone-600 dark:text-stone-400 leading-relaxed">Mark the last content block of the last message so growing history caches incrementally. Trivial once the IR exists (<code class="font-mono text-[0.85em]">blocks[last].cache_control</code>); ugly with a forward-only writer (a deferred-close hack).</p>
+  </div>
+</div>
+<p class="max-w-3xl text-sm text-stone-500 -mt-1 mb-4"><strong>Open gate:</strong> does the <code class="font-mono">minimax</code> compat endpoint accept <code class="font-mono">cache_control</code> blocks, or 400/ignore? Real <code class="font-mono">api.anthropic.com</code> is safe. Gate enablement on catalog cache pricing or an Anthropic allowlist; default off for compat. No auth edge cases — Anthropic is always <code class="font-mono">Api_Key</code>.</p>
+
+<!-- ============================ HARNESSES ============================ -->
+<h2 id="harnesses" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">How the field solves it — opencode · crush · pi · fx</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Four other harnesses at the same seams: SSE decode, request build, tool-arg accumulation, prompt caching, model tiers. Three are TS; <strong>Vercel's <code class="font-mono text-[0.9em]">fx</code> is native Zig with a hand-rolled SSE decoder and its own request builder</strong> — the closest structural analog to this codebase, and the one that most directly validates the §1 direction. Click a row to expand what each does and the one idea worth stealing. <span class="text-stone-500" data-research="status">Facts below are read directly from each repo's current source.</span></p>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-x-auto" id="harness-table">
+  <!-- filled by script, then refined from research -->
+</div>
+
+<div class="grid md:grid-cols-2 gap-3 my-5">
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Where they converge — copy this</h4>
+    <ul class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed space-y-1.5 list-disc pl-4">
+      <li><strong>Anthropic cache breakpoints on a stable prefix + a moving tail.</strong> opencode and pi both mark last-tool + last-system + latest-user-message; native <code class="font-mono text-[0.85em]">fx</code> marks system + one movable breakpoint index and leaves the volatile tail uncached. Three independent implementations, one shape — the exact §1 target. The refinement: mark the <em>latest user message</em>, not just any last block, so every intra-turn tool round-trip reuses the prefix.</li>
+      <li><strong>A small/utility model + a hidden title agent.</strong> opencode's <code class="font-mono text-[0.85em]">small_model</code> + auto-resolver + first-message <code class="font-mono text-[0.85em]">title</code> agent is our §3/§4, already validated in production.</li>
+      <li><strong>Raw tool-args, parsed late.</strong> Three of four (all but pi) keep args a raw string and parse once. We already do this.</li>
+    </ul>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/40 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Where we'd lead — or diverge</h4>
+    <ul class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed space-y-1.5 list-disc pl-4">
+      <li><strong>Ordered fallback lists per tier.</strong> None of the three has one — crush's tiers resolve to a single model, opencode/pi have no ladder. Our §4 "each tier is a fallback list" would put us ahead on resilience.</li>
+      <li><strong>Breakpoint budget cap.</strong> opencode hard-caps at 4 breakpoints and sheds message-tail hints first. If we add manual hints later, steal that invalidation-order budget.</li>
+      <li><strong>Per-delta arg parse is optional.</strong> Only pi pays it, only for live-rendered args. Our defer-to-block-stop stance is the right default; revisit only if a client renders streaming tool input.</li>
+    </ul>
+  </div>
+</div>
+<p class="max-w-3xl text-sm text-stone-500 mt-3 mb-4">Facts assembled from a direct read of each repo plus web research; paths are entry points, not citations — external line numbers drift faster than ours. See <a href="reference_harnesses.html" class="underline decoration-amber-400/50">reference harnesses</a> for the streaming-only comparison that also covers codex and deepseek.</p>
+
+<!-- ============================ SEAM ============================ -->
+<h2 id="seam" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Push vs materialize — shaping the seam</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">fx surfaces one real fork the other harnesses also take a side on: <strong>how does a decoded part reach the engine?</strong> There are three shapes. fx <em>pushes</em> — the decoder calls a consumer function the instant it decodes. yuke <em>materializes</em> — the decoder produces a neutral <code class="font-mono text-[0.9em]">Stream_Event</code> value and a later tick delivers it. codex/opencode go one step further: a <em>pure</em> decoder plus an external pump. Toggle them — the shaded band is the region where the decoder runs; watch where <span class="text-rose-600 dark:text-rose-400 font-semibold">user code</span> ends up relative to it.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden" id="seam-demo">
+  <div class="flex flex-wrap items-center gap-1 px-4 py-2.5 border-b border-stone-200 dark:border-stone-800 bg-stone-100 dark:bg-stone-900/60 font-mono text-xs">
+    <button data-seam="push" class="rounded-md px-3 py-1.5 font-semibold border border-stone-300 dark:border-stone-700 hover:border-amber-500">callback-push · fx</button>
+    <button data-seam="mat" class="rounded-md px-3 py-1.5 font-semibold bg-amber-500 text-white">materialize · yuke today</button>
+    <button data-seam="pure" class="rounded-md px-3 py-1.5 font-semibold border border-stone-300 dark:border-stone-700 hover:border-amber-500">pure decoder + pump · refinement</button>
+    <span data-seam="verdict" class="ml-auto font-semibold"></span>
+  </div>
+  <div class="grid md:grid-cols-[1fr_1.15fr] gap-0">
+    <div class="border-b md:border-b-0 md:border-r border-stone-200 dark:border-stone-800 p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">data flow · one part, socket → engine</div>
+      <div data-seam="flow" class="space-y-1.5"></div>
+    </div>
+    <div class="p-4">
+      <div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">what it costs & buys</div>
+      <div data-seam="notes" class="space-y-1.5 text-sm"></div>
+    </div>
+  </div>
+</div>
+
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-x-auto">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="text-left font-mono text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-200 dark:border-stone-800">
+        <th class="px-4 py-2 font-medium"></th>
+        <th class="px-4 py-2 font-medium">callback-push (fx)</th>
+        <th class="px-4 py-2 font-medium">materialize (yuke)</th>
+        <th class="px-4 py-2 font-medium">pure + pump</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-stone-200 dark:divide-stone-800 align-top text-stone-600 dark:text-stone-400">
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">user code inside curl?</td><td class="px-4 py-2.5 text-rose-600 dark:text-rose-400">yes — illegal here</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">no</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">no</td></tr>
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">decoder testable alone</td><td class="px-4 py-2.5">needs a consumer</td><td class="px-4 py-2.5">mostly (owns queue+arena)</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">pure fn — trivially</td></tr>
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">allocation per part</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">none</td><td class="px-4 py-2.5">one arena bump (bulk-freed)</td><td class="px-4 py-2.5">one arena bump</td></tr>
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">delivery latency</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">immediate</td><td class="px-4 py-2.5">one nbio tick</td><td class="px-4 py-2.5">one nbio tick</td></tr>
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">cancel-safe borrows</td><td class="px-4 py-2.5">deep-stack, implicit</td><td class="px-4 py-2.5"><code class="font-mono text-[0.85em]">dispatching</code> flag</td><td class="px-4 py-2.5">pump owns the borrow window</td></tr>
+      <tr><td class="px-4 py-2.5 font-medium text-stone-700 dark:text-stone-300">stateful machinery</td><td class="px-4 py-2.5 text-emerald-600 dark:text-emerald-400">least</td><td class="px-4 py-2.5"><code class="font-mono text-[0.85em]">Completing</code> + dispatch on Turn</td><td class="px-4 py-2.5">same, but isolated in the pump</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/40 dark:bg-amber-950/20 p-4 my-5">
+  <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">The call — and what the launch window is actually for</h4>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2"><strong>Keep the materialized <code class="font-mono text-[0.9em]">Stream_Event</code> seam.</strong> Callback-push is not a simplification for this codebase — it's a regression. Decode is pinned inside libcurl's non-reentrant write callback, and the queue-plus-tick is exactly the mechanism that lifts user code out of it. Every hand-rolled reference agrees: codex steps a decoder into an mpsc channel, opencode splits <code class="font-mono text-[0.85em]">framing → protocol.step → executor</code>, and even fx only pushes because its transport isn't a non-reentrant callback. The seam is a value for a reason.</p>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2">The one worthwhile evolution is the <strong>pure decoder + pump</strong> (column 3): make each arm a pure <code class="font-mono text-[0.85em]">(state, event) → [events]</code> and move the <code class="font-mono text-[0.85em]">Completing</code>/dispatch handshake into one small explicit driver. Same wire behavior, a decoder that tests without any I/O, and the most-stateful-piece-on-the-path stops being threaded through <code class="font-mono text-[0.9em]">Turn</code>. But it's a refactor of a <em>currently-correct, tested</em> path — lower leverage than §1, and fully internal, so it's reversible <em>after</em> launch.</p>
+  <p class="text-sm text-stone-700 dark:text-stone-300 leading-relaxed"><strong>What the pre-release window is genuinely for is the wire surface, not this seam.</strong> The response seam and the request bodies are both internal / provider-facing — changeable any week. The decisions that are <em>hard to make compatibly after 1.0</em> are the <span class="text-amber-700 dark:text-amber-400">wire-protocol additions</span>: §3's <code class="font-mono text-[0.9em]">llm.complete</code> method and §4's <code class="font-mono text-[0.9em]">tier</code> enum in <code class="font-mono text-[0.9em]">src/wire</code>. If those want to ship in 1.0, decide them now — spend the window there, and on §1's stable-prefix cache — not on reshaping a seam that already works.</p>
+</div>
+
+<!-- ============================ PLAN ============================ -->
+<h2 id="plan" class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Where to start — the dependency graph</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Five slices from <code class="font-mono text-[0.9em]">docs/provider-refactor-notes.md</code>. They overlap — the linked ones must be done together. Click a node for its scope, cost, and what it unblocks.</p>
+
+<div class="my-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 overflow-x-auto" id="plan-demo">
+  <svg viewBox="0 0 900 300" class="w-full min-w-[720px]" font-family="ui-monospace, monospace" id="plan-svg">
+    <defs>
+      <marker id="parr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" class="fill-amber-500"/></marker>
+    </defs>
+    <!-- edges drawn first -->
+    <g stroke-width="1.6" fill="none" class="stroke-amber-500/60">
+      <line x1="230" y1="80" x2="230" y2="150" marker-end="url(#parr)"/><!-- cache->ir? actually cache first then ir -->
+      <line x1="300" y1="185" x2="470" y2="120" marker-end="url(#parr)"/><!-- ir->complete -->
+      <line x1="300" y1="195" x2="470" y2="230" marker-end="url(#parr)"/><!-- ir->multimedia -->
+      <line x1="600" y1="120" x2="600" y2="70" marker-end="url(#parr)"/><!-- complete->tiers? tiers feeds complete -->
+    </g>
+    <!-- nodes: data-node used by JS -->
+    <g class="plan-node cursor-pointer" data-node="cache"><rect x="150" y="30" width="160" height="52" rx="9" class="fill-white dark:fill-stone-900 stroke-amber-500"/><text x="230" y="52" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">§1a stable prefix</text><text x="230" y="69" text-anchor="middle" font-size="9.5" class="fill-stone-400">~3 lines · do first</text></g>
+    <g class="plan-node cursor-pointer" data-node="ir"><rect x="150" y="155" width="160" height="52" rx="9" class="fill-amber-500/10 stroke-amber-500" stroke-width="2"/><text x="230" y="177" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">§1 block IR</text><text x="230" y="194" text-anchor="middle" font-size="9.5" class="fill-stone-400">the foundation</text></g>
+    <g class="plan-node cursor-pointer" data-node="complete"><rect x="470" y="90" width="160" height="52" rx="9" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/><text x="550" y="112" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">§3 complete</text><text x="550" y="129" text-anchor="middle" font-size="9.5" class="fill-stone-400">+ llm.complete · titles</text></g>
+    <g class="plan-node cursor-pointer" data-node="tiers"><rect x="700" y="30" width="160" height="52" rx="9" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/><text x="780" y="52" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">§4 tiers</text><text x="780" y="69" text-anchor="middle" font-size="9.5" class="fill-stone-400">large/medium/small</text></g>
+    <g class="plan-node cursor-pointer" data-node="multimedia"><rect x="470" y="205" width="160" height="52" rx="9" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/><text x="550" y="227" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">multimedia</text><text x="550" y="244" text-anchor="middle" font-size="9.5" class="fill-stone-400">image blocks</text></g>
+    <g class="plan-node cursor-pointer" data-node="sse"><rect x="700" y="205" width="160" height="52" rx="9" class="fill-white dark:fill-stone-900 stroke-stone-300 dark:stroke-stone-700"/><text x="780" y="227" text-anchor="middle" font-size="11.5" class="fill-stone-800 dark:fill-stone-100" font-weight="700">§2 SSE align</text><text x="780" y="244" text-anchor="middle" font-size="9.5" class="fill-stone-400">small · mostly done</text></g>
+  </svg>
+  <div data-node="detail" class="mt-3 rounded-lg border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-900/50 p-4 text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Click a node above.</div>
+</div>
+
+<div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/40 dark:bg-amber-950/20 p-4 my-4">
+  <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">The recommended entry</h4>
+  <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Land <strong>§1a stable-prefix caching</strong> first as a standalone ~3-line win (immediate cache benefit, no architecture change), then do <strong>§1 block IR</strong> as the foundation — it is the 1,766-LOC weight, unblocks the moving tail, multimedia, <em>and</em> §3 <code class="font-mono text-[0.9em]">complete</code>, which the notes say to build <em>with</em> §1 since both touch the same builder. §2/§4 follow. The response side you just stepped through is comparatively settled.</p>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Open questions before committing</h2>
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-hidden">
+  <ol class="divide-y divide-stone-200 dark:divide-stone-800 text-sm">
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Concurrent transfers?</span> <span class="text-stone-600 dark:text-stone-400">Does the one shared <code class="font-mono">provider.Client</code> permit a utility <code class="font-mono">complete</code> call alongside a live session turn? A curl-multi should — but this gates §3.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">minimax + cache_control?</span> <span class="text-stone-600 dark:text-stone-400">Accept, 400, or silently ignore? Gates §1 default-on for compat endpoints.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Tier config home.</span> <span class="text-stone-600 dark:text-stone-400">Daemon-config authoritative (catalog + credentials live there), client <code class="font-mono">applyConfig()</code> as selector — confirm the sync/validation path.</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">Utility-call accounting.</span> <span class="text-stone-600 dark:text-stone-400">Are title/complete tokens counted in session usage, tracked separately, or ignored?</span></li>
+    <li class="px-4 py-3"><span class="text-stone-800 dark:text-stone-200 font-semibold">FTS text extraction.</span> <span class="text-stone-600 dark:text-stone-400">Which parts contribute (text + reasoning? tool results?) and how to bound very large payloads.</span></li>
+  </ol>
+</div>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; the <code class="font-mono">.src</code> blocks read live from the working tree, so a renamed declaration shows red. Interactive diagrams are page-local models faithful to the cited source. Design notes: <code class="font-mono">docs/provider-refactor-notes.md</code>.
+</footer>
+</main>
+
+<script>
+// ============================================================================
+//  Page-local interactive models. Faithful to the cited Odin source, but small.
+// ============================================================================
+document.addEventListener("DOMContentLoaded", function () {
+
+  // ---------------------------------------------------------------- SSE demo
+  (function () {
+    var root = document.getElementById("sse-demo");
+    if (!root) return;
+    var FIXTURE =
+      "event: message_start\n" +
+      "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":25}}}\n" +
+      "\n" +
+      "event: content_block_start\n" +
+      "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n" +
+      "\n" +
+      "event: content_block_delta\n" +
+      "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\r\n" +
+      "\r\n" +
+      "event: content_block_delta\n" +
+      "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" there\"}}\n" +
+      "\n" +
+      "event: content_block_stop\n" +
+      "data: {\"type\":\"content_block_stop\",\"index\":0}\n" +
+      "\n" +
+      "event: message_delta\n" +
+      "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n" +
+      "\n" +
+      "event: message_stop\n" +
+      "data: {\"type\":\"message_stop\"}\n\n";
+
+    var q = function (n) { return root.querySelector('[data-sse="' + n + '"]'); };
+    var P, pos, timer;
+
+    // Faithful mini-parser: mirrors end_line() — keep only `data`, join with \n,
+    // dispatch on blank line iff has_data, CRLF via last_was_cr.
+    function newParser() { return { line: "", data: "", has_data: false, last_was_cr: false }; }
+    function endLine(p, emit) {
+      if (p.line.length === 0) {
+        if (!p.has_data) return;
+        emit(p.data); p.data = ""; p.has_data = false; return;
+      }
+      if (p.line[0] === ":") { p.line = ""; return; }
+      var c = p.line.indexOf(":"), name, value;
+      if (c >= 0) { name = p.line.slice(0, c); value = p.line.slice(c + 1); }
+      else { name = p.line; value = ""; }
+      if (value[0] === " ") value = value.slice(1);
+      if (name === "data") { if (p.has_data) p.data += "\n"; p.data += value; p.has_data = true; }
+      p.line = "";
+    }
+    function feed(p, chunk, emit) {
+      var i = 0;
+      while (i < chunk.length) {
+        if (p.last_was_cr) { p.last_was_cr = false; if (chunk[i] === "\n") { i++; continue; } }
+        var nl = -1;
+        for (var j = i; j < chunk.length; j++) { if (chunk[j] === "\n" || chunk[j] === "\r") { nl = j; break; } }
+        if (nl < 0) { p.line += chunk.slice(i); break; }
+        p.line += chunk.slice(i, nl);
+        p.last_was_cr = chunk[nl] === "\r";
+        endLine(p, emit);
+        i = nl + 1;
+      }
+    }
+
+    function vis(s) { return s.replace(/\r/g, "␍").replace(/\n/g, "␊"); }
+    function reset() {
+      clearInterval(timer); timer = null;
+      P = newParser(); pos = 0;
+      q("raw").textContent = FIXTURE;
+      q("events").innerHTML = "";
+      paint(true);
+    }
+    function paint(fresh) {
+      var consumed = FIXTURE.slice(0, pos), rest = FIXTURE.slice(pos);
+      q("raw").innerHTML = '<span class="text-stone-300 dark:text-stone-600 line-through">' +
+        esc(consumed) + '</span><span class="text-stone-700 dark:text-stone-200">' + esc(rest) + '</span>';
+      q("line").textContent = vis(P.line) || "∅";
+      q("data").textContent = P.data ? vis(P.data) : "∅";
+      q("hasdata").innerHTML = P.has_data ? '<span class="text-emerald-600 dark:text-emerald-400">true</span>' : '<span class="text-stone-400">false</span>';
+      q("cr").innerHTML = P.last_was_cr ? '<span class="text-rose-600 dark:text-rose-400">true</span>' : '<span class="text-stone-400">false</span>';
+      q("progress").textContent = Math.min(pos, FIXTURE.length) + "/" + FIXTURE.length + " B";
+    }
+    function esc(s) { return s.replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; }); }
+    function step() {
+      if (pos >= FIXTURE.length) { clearInterval(timer); timer = null; return; }
+      var size = +q("size").value;
+      var chunk = FIXTURE.slice(pos, pos + size);
+      pos += chunk.length;
+      feed(P, chunk, function (data) {
+        var el = document.createElement("div");
+        el.className = "pulse-cell rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 px-2 py-1 font-mono text-[10.5px] text-emerald-800 dark:text-emerald-300 break-all";
+        var t = "?"; try { t = JSON.parse(data).type; } catch (e) {}
+        el.innerHTML = '<span class="font-semibold">' + esc(t) + '</span> <span class="text-emerald-500/70">' + esc(data.slice(0, 46)) + (data.length > 46 ? "…" : "") + '</span>';
+        q("events").appendChild(el); q("events").scrollTop = q("events").scrollHeight;
+      });
+      paint();
+    }
+    q("feed").addEventListener("click", step);
+    q("reset").addEventListener("click", reset);
+    q("size").addEventListener("input", function () { q("sizeval").textContent = q("size").value; });
+    q("auto").addEventListener("click", function () {
+      if (timer) { clearInterval(timer); timer = null; this.textContent = "▶ auto"; return; }
+      this.textContent = "⏸ pause";
+      var btn = this;
+      timer = setInterval(function () { step(); if (pos >= FIXTURE.length) { clearInterval(timer); timer = null; btn.textContent = "▶ auto"; } }, 260);
+    });
+    reset();
+  })();
+
+  // ------------------------------------------------------------- memory demo
+  (function () {
+    var root = document.getElementById("mem-demo");
+    if (!root) return;
+    var q = function (n) { return root.querySelector('[data-mem="' + n + '"]'); };
+    // Each event: what it clones into retained, and the JSON tree size in scratch.
+    var EVENTS = [
+      { label: "message_start", tree: 3, clones: [] },
+      { label: "content_block_start · text", tree: 4, clones: [] },
+      { label: "content_block_delta \"Hi\"", tree: 5, clones: [{ t: "delta \"Hi\"", n: 2 }] },
+      { label: "content_block_delta \" there\"", tree: 6, clones: [{ t: "delta \" there\"", n: 6 }] },
+      { label: "content_block_stop", tree: 3, clones: [] },
+      { label: "message_delta · usage", tree: 5, clones: [] },
+      { label: "message_stop → Stream_Done", tree: 2, clones: [] }
+    ];
+    var idx, retained;
+    function reset() {
+      idx = 0; retained = [
+        { t: "sse.Parser buffers", n: 4, base: true },
+        { t: "events: [dynamic]", n: 2, base: true }
+      ];
+      q("done").classList.add("hidden");
+      q("label").textContent = "ready — 7 events queued";
+      q("step").disabled = false; q("step").classList.remove("opacity-40");
+      paintRetained(); paintScratch(0, "");
+    }
+    function unit(n) { return (n).toFixed(0) + " KiB"; }
+    function paintRetained(pulseFrom) {
+      var host = q("retained"); host.innerHTML = "";
+      var total = 0;
+      retained.forEach(function (b, i) {
+        total += b.n;
+        var el = document.createElement("div");
+        var pulse = (pulseFrom != null && i >= pulseFrom) ? " pulse-cell" : "";
+        el.className = "arena-brick rounded px-2 py-1 font-mono text-[11px] border" + pulse + " " +
+          (b.base ? "bg-stone-100 dark:bg-stone-800/60 border-stone-200 dark:border-stone-700 text-stone-500"
+                  : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/50 text-emerald-800 dark:text-emerald-300");
+        el.style.minHeight = (14 + b.n * 3) + "px";
+        el.textContent = b.t + "  ·  " + unit(b.n);
+        host.appendChild(el);
+      });
+      q("rbytes").textContent = unit(total) + " live";
+    }
+    function paintScratch(n, label, rewound) {
+      var host = q("scratch"); host.innerHTML = "";
+      if (n > 0) {
+        var wm = document.createElement("div");
+        wm.className = "text-[10px] font-mono text-sky-500 border-b border-dashed border-sky-300 dark:border-sky-700 pb-0.5 mb-1";
+        wm.textContent = "◄ watermark (taken before decode)";
+        host.appendChild(wm);
+        var el = document.createElement("div");
+        el.className = "arena-brick rounded px-2 py-1 font-mono text-[11px] border bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/50 text-sky-800 dark:text-sky-300";
+        el.style.minHeight = (14 + n * 6) + "px";
+        el.textContent = "JSON tree · " + label + "  ·  " + unit(n);
+        host.appendChild(el);
+      } else if (rewound) {
+        var r = document.createElement("div");
+        r.className = "text-[11px] font-mono text-sky-500 italic pt-2";
+        r.textContent = "↺ rewound to watermark — pages reused, no free()";
+        host.appendChild(r);
+        q("sbytes").textContent = "0 KiB · reset";
+        return;
+      }
+      q("sbytes").textContent = n > 0 ? unit(n) + " (rewinds after)" : "0 KiB";
+    }
+    q("step").addEventListener("click", function () {
+      if (idx >= EVENTS.length) return;
+      var ev = EVENTS[idx];
+      // 1. scratch fills with the JSON tree for this event
+      paintScratch(ev.tree, ev.label.split(" ")[0]);
+      q("label").textContent = "event " + (idx + 1) + "/7 · " + ev.label;
+      // 2. decoder clones retained strings (if any)
+      var from = retained.length;
+      ev.clones.forEach(function (c) { retained.push({ t: c.t, n: c.n }); });
+      setTimeout(function () {
+        paintRetained(ev.clones.length ? from : null);
+        // 3. scratch rewinds after the event
+        setTimeout(function () { paintScratch(0, "", true); }, 380);
+      }, 260);
+      idx++;
+      if (idx >= EVENTS.length) {
+        q("step").disabled = true; q("step").classList.add("opacity-40");
+        setTimeout(function () { q("done").classList.remove("hidden"); }, 900);
+      }
+    });
+    q("reset").addEventListener("click", reset);
+    reset();
+  })();
+
+  // ------------------------------------------------------------ neutral demo
+  (function () {
+    var root = document.getElementById("neutral-demo");
+    if (!root) return;
+    var rows = [
+      { w: "message_start", d: "usage.input_tokens folded", out: "(no event)\n— prompt usage buffered\nuntil Stream_Done", k: "state" },
+      { w: "content_block_start · text", d: "index 0, empty text", out: "Stream_Block_Started{\n  block_id: 0,\n  kind: .Text\n}", k: "ev" },
+      { w: "content_block_delta · text_delta", d: "\"Hi\"", out: "Stream_Text_Delta{\n  block_id: 0,\n  text: \"Hi\"  ← cloned\n}", k: "ev" },
+      { w: "content_block_delta · input_json_delta", d: "tool args fragment", out: "(no event)\n— raw bytes appended to\ntool.arguments, parsed at stop", k: "state" },
+      { w: "content_block_stop", d: "close block 0", out: "Stream_Block_Stopped{\n  block_id: 0,\n  result: Stream_Text_Block{}\n}", k: "ev" },
+      { w: "message_delta", d: "stop_reason + output_tokens", out: "(no event)\n— reason + usage folded", k: "state" },
+      { w: "message_stop", d: "terminal", out: "Stream_Done{\n  reason: .End_Turn,\n  usage: {…}\n}", k: "ev" }
+    ];
+    var left = root.querySelector(".divide-y"), out = root.querySelector('[data-neutral="out"]');
+    out.textContent = "hover a wire event →";
+    rows.forEach(function (r, i) {
+      var el = document.createElement("div");
+      el.className = "px-4 py-2 cursor-default hover:bg-amber-50 dark:hover:bg-amber-950/20";
+      el.innerHTML = '<div class="text-stone-800 dark:text-stone-200">' + r.w + '</div>' +
+        '<div class="text-[10.5px] text-stone-400">' + r.d + '</div>';
+      el.addEventListener("mouseenter", function () {
+        var isEv = r.k === "ev";
+        out.className = "p-4 font-mono text-[12px] min-h-[12rem] whitespace-pre leading-relaxed " +
+          (isEv ? "text-amber-800 dark:text-amber-300" : "text-stone-400 italic");
+        out.textContent = r.out;
+      });
+      left.appendChild(el);
+    });
+  })();
+
+  // ----------------------------------------------------------------- IR demo
+  (function () {
+    var root = document.getElementById("ir-demo");
+    if (!root) return;
+    var body = root.querySelector('[data-ir="body"]');
+    var fwd = root.querySelector('[data-ir="fwd"]'), ir = root.querySelector('[data-ir="ir"]');
+    function pre(txt, cls) { return '<pre class="m-0 overflow-x-auto rounded-lg border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950 p-3 font-mono text-[11.5px] leading-relaxed ' + (cls || "") + '">' + txt + '</pre>'; }
+    var FWD =
+      '<div>' +
+      '<div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">×3 builders, each forward-only</div>' +
+      pre(
+'<span class="text-rose-500">write_raw</span>(w, `,"messages":[`)\n' +
+'m := Message_Writer{writer=w}   <span class="text-stone-400">// manual</span>\n' +
+'for msg in request.messages {\n' +
+'  <span class="text-stone-400">// role-coalesce, separators,</span>\n' +
+'  <span class="text-stone-400">// empty-skip, replay gating…</span>\n' +
+'  <span class="text-stone-400">// duplicated per provider</span>\n' +
+'  m.message_count += 1\n' +
+'  m.block_count   += 1\n' +
+'}\n' +
+'<span class="text-rose-500">write_raw</span>(w, `]}`)') +
+      '</div>' +
+      '<div>' +
+      '<div class="font-mono text-[11px] uppercase tracking-wider text-rose-500 mb-2">✗ can\'t mark the last block</div>' +
+      '<p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2">By the time the writer has emitted a block it is already flushed to the buffer. To attach <code class="font-mono text-[0.85em]">cache_control</code> to the <em>last</em> content block you\'d have to know it\'s last <strong>before</strong> closing it — impossible single-pass.</p>' +
+      '<div class="rounded-lg border border-rose-300/50 dark:border-rose-800/40 bg-rose-50/50 dark:bg-rose-950/20 p-3 text-sm text-stone-600 dark:text-stone-400"><strong>1,766 LOC</strong> · 613 + 703 + 450 across the three <code class="font-mono text-[0.85em]">*_request.odin</code>. Same mapping, written thrice.</div>' +
+      '</div>';
+    var IR =
+      '<div>' +
+      '<div class="font-mono text-[11px] uppercase tracking-wider text-stone-400 mb-2">1 shared IR + ×3 thin serializers</div>' +
+      pre(
+'<span class="text-stone-400">// built once, in scratch arena</span>\n' +
+'ir := <span class="text-sky-600 dark:text-sky-400">build_ir</span>(request.messages)\n' +
+'<span class="text-stone-400">// []Message of []Block:</span>\n' +
+'<span class="text-stone-400">//  text·thinking·redacted</span>\n' +
+'<span class="text-stone-400">//  tool_use·tool_result·image</span>\n\n' +
+'last := &ir[len-1].blocks[bl-1]\n' +
+'last.<span class="text-emerald-600 dark:text-emerald-400">cache_control</span> = .Ephemeral\n\n' +
+'<span class="text-sky-600 dark:text-sky-400">anthropic_serialize</span>(w, ir)') +
+      '</div>' +
+      '<div>' +
+      '<div class="font-mono text-[11px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-2">✓ random access</div>' +
+      '<p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed mb-2">The IR is materialized, so any block is addressable. Marking the moving tail is one line. The mapping runs <strong>once</strong> and feeds three small dialect serializers (content-blocks vs <code class="font-mono text-[0.85em]">tool_calls</code> vs <code class="font-mono text-[0.85em]">items</code>).</p>' +
+      '<div class="rounded-lg border border-emerald-300/50 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 text-sm text-stone-600 dark:text-stone-400">Lives in the <strong>scratch arena</strong>, bulk-freed by watermark rewind. No per-block free, no new arena type. Deletes the <code class="font-mono text-[0.85em]">message_count</code>/<code class="font-mono text-[0.85em]">block_count</code> bookkeeping.</div>' +
+      '</div>';
+    function show(which) {
+      var on = "rounded-md px-3 py-1.5 font-semibold bg-amber-500 text-white";
+      var off = "rounded-md px-3 py-1.5 font-semibold border border-stone-300 dark:border-stone-700 hover:border-amber-500";
+      fwd.className = which === "fwd" ? on : off;
+      ir.className = which === "ir" ? on : off;
+      body.innerHTML = which === "fwd" ? FWD : IR;
+    }
+    fwd.addEventListener("click", function () { show("fwd"); });
+    ir.addEventListener("click", function () { show("ir"); });
+    show("fwd");
+  })();
+
+  // -------------------------------------------------------------- cache demo
+  (function () {
+    var root = document.getElementById("cache-demo");
+    if (!root) return;
+    var q = function (n) { return root.querySelector('[data-cache="' + n + '"]'); };
+    // Prompt segments, in Anthropic hierarchy order (top cached first).
+    // sizes in "tokens" (arbitrary units for the model).
+    var TOOLS = 800, SYSTEM = 1200, HISTORY_BASE = 400, TURN_GROWTH = 300;
+    var turn, cumCached, cumUncached;
+    function reset() { turn = 0; cumCached = 0; cumUncached = 0; render(); }
+    function render() {
+      var prefix = q("prefix").checked, tail = q("tail").checked;
+      var history = HISTORY_BASE + turn * TURN_GROWTH;
+      var stack = q("stack"); stack.innerHTML = "";
+      // Determine per-segment billing class for THIS turn.
+      // prefix marker caches tools+system after turn 1. tail caches history-minus-last-delta.
+      var segs = [];
+      var firstSend = turn <= 1;
+      // tools + system
+      var prefixState = !prefix ? "full" : (firstSend ? "write" : "read");
+      segs.push({ name: "tools", n: TOOLS, s: prefixState });
+      segs.push({ name: "system", n: SYSTEM, s: prefixState });
+      // history: with tail marker, everything but the newest delta is a read after first send
+      if (tail && turn > 1) {
+        segs.push({ name: "history (prior)", n: history - TURN_GROWTH, s: "read" });
+        segs.push({ name: "history (new delta)", n: TURN_GROWTH, s: "write" });
+      } else if (tail && turn === 1) {
+        segs.push({ name: "history", n: history, s: "write" });
+      } else {
+        segs.push({ name: "history", n: history, s: "full" });
+      }
+      var COL = { read: "bg-emerald-400/70", write: "bg-amber-400/70", full: "bg-rose-400/70" };
+      var TXT = { read: "cache read", write: "cache write", full: "full price" };
+      var billed = 0;
+      segs.forEach(function (sg) {
+        var mult = sg.s === "read" ? 0.1 : sg.s === "write" ? 1.25 : 1.0;
+        billed += sg.n * mult;
+        var el = document.createElement("div");
+        el.className = "flex items-center gap-2 rounded px-2 py-1 border border-stone-200 dark:border-stone-800";
+        el.innerHTML = '<span class="inline-block w-3 h-3 rounded-sm ' + COL[sg.s] + '"></span>' +
+          '<span class="text-stone-700 dark:text-stone-200 w-36">' + sg.name + '</span>' +
+          '<span class="text-stone-400 tabular-nums">' + sg.n + ' tok</span>' +
+          '<span class="ml-auto text-[10px] ' + (sg.s === "read" ? "text-emerald-600 dark:text-emerald-400" : sg.s === "write" ? "text-amber-600 dark:text-amber-400" : "text-rose-500") + '">' + TXT[sg.s] + ' ×' + mult + '</span>';
+        stack.appendChild(el);
+      });
+      var uncached = TOOLS + SYSTEM + history; // ×1 everything, every turn
+      // billing panel
+      q("bill").innerHTML =
+        '<div class="flex justify-between"><span class="text-stone-500">effective input</span><span class="tabular-nums font-semibold">' + Math.round(billed) + ' tok</span></div>' +
+        '<div class="flex justify-between"><span class="text-stone-500">if uncached</span><span class="tabular-nums text-stone-400">' + uncached + ' tok</span></div>' +
+        '<div class="flex justify-between text-emerald-600 dark:text-emerald-400"><span>saved this turn</span><span class="tabular-nums font-semibold">' + Math.max(0, Math.round(uncached - billed)) + ' tok</span></div>';
+      q("turnno").textContent = turn === 0 ? "no turns yet" : "turn " + turn;
+      // cumulative bars
+      var pctCached = cumUncached ? Math.round(cumCached / cumUncached * 100) : 100;
+      q("cum").innerHTML = turn === 0 ? '<span class="text-stone-400">send a turn to accumulate…</span>' :
+        '<span class="tabular-nums font-semibold">' + Math.round(cumCached) + '</span> <span class="text-stone-400">vs</span> <span class="tabular-nums text-stone-400">' + Math.round(cumUncached) + '</span> tok  ·  <span class="text-emerald-600 dark:text-emerald-400 font-semibold">' + pctCached + '%</span>';
+      var bar = q("bar"); bar.innerHTML = "";
+      if (turn > 0) {
+        bar.appendChild(mkbar("with caching", cumCached, cumUncached, "bg-emerald-400/70"));
+        bar.appendChild(mkbar("uncached", cumUncached, cumUncached, "bg-rose-400/60"));
+      }
+    }
+    function mkbar(label, val, max, col) {
+      var w = max ? Math.round(val / max * 100) : 0;
+      var wrap = document.createElement("div");
+      wrap.innerHTML = '<div class="flex justify-between text-[10px] text-stone-400 mb-0.5"><span>' + label + '</span><span class="tabular-nums">' + Math.round(val) + '</span></div>' +
+        '<div class="h-2.5 rounded bg-stone-100 dark:bg-stone-800 overflow-hidden"><div class="h-full ' + col + '" style="width:' + w + '%"></div></div>';
+      return wrap;
+    }
+    q("turn").addEventListener("click", function () {
+      turn++;
+      // recompute this turn's billed + uncached and accumulate
+      var prefix = q("prefix").checked, tail = q("tail").checked;
+      var history = HISTORY_BASE + turn * TURN_GROWTH;
+      var firstSend = turn <= 1;
+      var billed = 0;
+      var prefixMult = !prefix ? 1.0 : (firstSend ? 1.25 : 0.1);
+      billed += (TOOLS + SYSTEM) * prefixMult;
+      if (tail && turn > 1) billed += (history - TURN_GROWTH) * 0.1 + TURN_GROWTH * 1.25;
+      else if (tail && turn === 1) billed += history * 1.25;
+      else billed += history * 1.0;
+      cumCached += billed;
+      cumUncached += TOOLS + SYSTEM + history;
+      render();
+    });
+    q("reset").addEventListener("click", reset);
+    q("prefix").addEventListener("change", render);
+    q("tail").addEventListener("change", render);
+    reset();
+  })();
+
+  // ----------------------------------------------------------------- plan demo
+  (function () {
+    var root = document.getElementById("plan-demo");
+    if (!root) return;
+    var detail = root.querySelector('[data-node="detail"]');
+    var D = {
+      cache: "<strong>§1a stable-prefix cache.</strong> Switch Anthropic <code class='font-mono'>system</code> to block-array form with one <code class='font-mono'>cache_control:{ephemeral}</code>. Tools precede system, so one marker caches both. ~3 lines + test-expect updates. <span class='text-emerald-600 dark:text-emerald-400'>Ship first — no architecture change, immediate benefit.</span>",
+      ir: "<strong>§1 block IR — the foundation.</strong> Rewrite the three builders around a normalized <code class='font-mono'>[]Message</code> of <code class='font-mono'>[]Block</code> in the scratch arena + thin per-provider serializers. Deletes forward-writer bookkeeping, de-duplicates three mapping passes. <span class='text-amber-600 dark:text-amber-400'>Unblocks the moving tail, multimedia, and §3.</span> The 1,766-LOC weight.",
+      complete: "<strong>§3 complete + llm.complete + auto-titles.</strong> A one-shot 'one prompt, one answer' primitive (sibling to <code class='font-mono'>run</code>, must not call <code class='font-mono'>session</code>) → a wire method → JS host API → auto-title on first message. Builds the minimal <code class='font-mono'>Request</code> through the <b>same §1 builder</b>, so do it <em>with</em> §1. Gated by: does the shared client permit a concurrent transfer?",
+      tiers: "<strong>§4 tiers — large/medium/small.</strong> Named tiers, each a <em>fallback list</em> (litellm/OpenRouter pattern), resolved daemon-side against catalog + credentials. Failover only on infra errors, reusing the existing <code class='font-mono'>retry_backoff</code>. <code class='font-mono'>complete</code>/titles default to <code class='font-mono'>small</code>. Feeds §3.",
+      multimedia: "<strong>Multimedia (free side-benefit).</strong> An image/media <code class='font-mono'>Block</code> arm is trivial once the IR materializes blocks (<code class='font-mono'>anthropic_write_image_block</code> + <code class='font-mono'>Media_Source</code> are already half-built). Falls out of §1.",
+      sse: "<strong>§2 SSE align — small, mostly done.</strong> The response side already keeps tool-args raw and defers parse (Anthropic), degrades on bad frames, and keeps signatures off the neutral union. Remaining: confirm the OpenAI arms follow the same raw-args discipline, and the future <code class='font-mono'>Tool_Output_Delta</code> accumulator. Lowest leverage right now."
+    };
+    root.querySelectorAll(".plan-node").forEach(function (g) {
+      g.addEventListener("click", function () {
+        root.querySelectorAll(".plan-node rect").forEach(function (r) { r.setAttribute("stroke-width", r.getAttribute("data-em") === "1" ? "2" : "1"); });
+        var rect = g.querySelector("rect"); rect.setAttribute("stroke-width", "3");
+        detail.innerHTML = D[g.getAttribute("data-node")];
+      });
+    });
+    root.querySelector('.plan-node[data-node="ir"] rect').setAttribute("data-em", "1");
+  })();
+
+  // ----------------------------------------------------------------- seam demo
+  (function () {
+    var root = document.getElementById("seam-demo");
+    if (!root) return;
+    var q = function (n) { return root.querySelector('[data-seam="' + n + '"]'); };
+    // A flow step: {label, zone} where zone ∈ transport|boundary|clean|user
+    var MODELS = {
+      push: {
+        verdict: '<span class="text-rose-600 dark:text-rose-400">✗ regression for a curl daemon</span>',
+        flow: [
+          { t: "socket bytes", z: "transport" },
+          { t: "SSE decode", z: "transport" },
+          { t: "on_tool_input_chunk()  ← USER CODE", z: "user-in" }
+        ],
+        band: "everything runs in one stack — the decode/transport stack",
+        notes: [
+          ["good", "No intermediate value: least allocation, lowest latency — push the instant it decodes."],
+          ["bad", "User code fires <em>inside</em> the decode stack. For yuke that stack is <code class='font-mono text-[0.85em]'>in_libcurl</code> — re-entering curl from its own write callback is illegal."],
+          ["bad", "Cancellation mid-callback is deep-stack; borrow lifetimes are implicit."],
+          ["meh", "The decoder can't be tested without wiring a consumer."],
+          ["note", "fx gets away with it only because its transport is not a non-reentrant callback like libcurl's."]
+        ]
+      },
+      mat: {
+        verdict: '<span class="text-emerald-600 dark:text-emerald-400">✓ correct today</span>',
+        flow: [
+          { t: "socket bytes", z: "transport" },
+          { t: "SSE decode", z: "transport" },
+          { t: "append Stream_Event → turn.events", z: "transport" },
+          { t: "— nbio tick (zero-delay timeout) —", z: "boundary" },
+          { t: "drain queue", z: "clean" },
+          { t: "on_event()  ← USER CODE", z: "user-out" }
+        ],
+        band: "decode + enqueue in curl; delivery on a later, clean stack",
+        notes: [
+          ["good", "Decode only <em>appends</em> a neutral value; no user code ever runs inside curl."],
+          ["good", "The zero-delay <code class='font-mono text-[0.85em]'>nbio.timeout_poly(0,…)</code> is the boundary that keeps user code out of curl — nbio guarantees it's never synchronous."],
+          ["good", "Strings borrow <code class='font-mono text-[0.85em]'>retained</code>; the <code class='font-mono text-[0.85em]'>dispatching</code> flag makes cancel safe while a borrow is on the user stack; <code class='font-mono text-[0.85em]'>Completing</code> bridges EOF."],
+          ["meh", "Costs one arena bump per event (bulk-freed) + one tick of latency."],
+          ["meh", "The <code class='font-mono text-[0.85em]'>Completing</code>/dispatch handshake is the most stateful piece on the path."]
+        ]
+      },
+      pure: {
+        verdict: '<span class="text-amber-600 dark:text-amber-400">◇ the available refinement · post-launch</span>',
+        flow: [
+          { t: "socket bytes", z: "transport" },
+          { t: "decode = pure (state, event) → [events]", z: "transport" },
+          { t: "— pump owns the queue + tick —", z: "boundary" },
+          { t: "pump drains", z: "clean" },
+          { t: "on_event()  ← USER CODE", z: "user-out" }
+        ],
+        band: "same boundary as today — but the decoder is a pure function",
+        notes: [
+          ["good", "The decoder becomes a pure <code class='font-mono text-[0.85em]'>(state, event) → [events]</code>: no arena, no queue, no dispatch. Tests with zero I/O."],
+          ["good", "The <code class='font-mono text-[0.85em]'>Completing</code>/dispatch machinery lives in one small explicit pump instead of being threaded through <code class='font-mono text-[0.85em]'>Turn</code>."],
+          ["good", "Exactly the shape codex (mpsc step) and opencode (framing→protocol.step→executor) both landed on."],
+          ["meh", "Identical wire behavior to today — this is a code-shape win, not a behavior change."],
+          ["note", "It refactors a currently-correct, tested path, so it's lower-leverage than §1 and safe to defer past launch."]
+        ]
+      }
+    };
+    var ZONE = {
+      transport: "border-stone-300 dark:border-stone-600 bg-stone-100 dark:bg-stone-800/60 text-stone-600 dark:text-stone-300",
+      "user-in": "border-rose-400 dark:border-rose-600 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-semibold",
+      "user-out": "border-rose-400 dark:border-rose-600 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-semibold",
+      clean: "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300",
+      boundary: "border-dashed border-amber-400 dark:border-amber-600 bg-amber-50/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 italic"
+    };
+    var NOTE = {
+      good: '<span class="text-emerald-600 dark:text-emerald-400 font-semibold">+</span>',
+      bad: '<span class="text-rose-600 dark:text-rose-400 font-semibold">−</span>',
+      meh: '<span class="text-amber-600 dark:text-amber-400 font-semibold">~</span>',
+      note: '<span class="text-stone-400 font-semibold">·</span>'
+    };
+    function show(key) {
+      var on = "rounded-md px-3 py-1.5 font-semibold bg-amber-500 text-white";
+      var off = "rounded-md px-3 py-1.5 font-semibold border border-stone-300 dark:border-stone-700 hover:border-amber-500";
+      ["push", "mat", "pure"].forEach(function (k) { q(k).className = k === key ? on : off; });
+      var m = MODELS[key];
+      q("verdict").innerHTML = m.verdict;
+      // flow: mark the transport band visually
+      var inBand = false, html = "";
+      m.flow.forEach(function (s, i) {
+        if (s.z === "boundary") {
+          html += '<div class="text-center text-[10.5px] font-mono py-1 ' + ZONE.boundary.split(" ").filter(function(c){return c.indexOf("text-")===0||c.indexOf("italic")===0;}).join(" ") + '">' + s.t + '</div>';
+        } else {
+          html += '<div class="pulse-cell rounded-lg border px-3 py-2 font-mono text-[11.5px] ' + ZONE[s.z] + '">' + s.t + '</div>';
+        }
+        if (i < m.flow.length - 1) html += '<div class="text-center text-stone-300 dark:text-stone-600 text-[10px] leading-none">↓</div>';
+      });
+      q("flow").innerHTML = '<div class="text-[10px] font-mono text-stone-400 mb-1">' + m.band + '</div>' + html;
+      q("notes").innerHTML = m.notes.map(function (n) {
+        return '<div class="flex gap-2 leading-relaxed"><span class="mt-0.5">' + NOTE[n[0]] + '</span><span class="text-stone-600 dark:text-stone-400">' + n[1] + '</span></div>';
+      }).join("");
+    }
+    q("push").addEventListener("click", function () { show("push"); });
+    q("mat").addEventListener("click", function () { show("mat"); });
+    q("pure").addEventListener("click", function () { show("pure"); });
+    show("mat");
+  })();
+
+  // -------------------------------------------------------- harness table
+  (function () {
+    var host = document.getElementById("harness-table");
+    if (!host) return;
+    // Source-grounded facts (direct repo reads + web research, 2026-08).
+    window.__harnessData = [
+      { id: "opencode", name: "opencode", repo: "anomalyco/opencode · packages/llm", stack: "TS · Bun · Effect",
+        sse: "hand-rolled native protocols (packages/llm, zero AI-SDK deps); legacy AI-SDK tree still shipped",
+        args: "raw string, parsed once at block-stop",
+        model: "per-protocol decoder → neutral event",
+        cache: "★ auto ON: 3 breakpoints (last tool · last system · last-user-msg), cap 4, 5m/1h TTL",
+        tiers: "model + small_model split; auto small-resolver (nano|flash|lite|mini|haiku|…); no fallback list",
+        steal: "The <code class='font-mono text-[0.85em]'>applyCachePolicy</code> two-stage cache design is the direct model for our §1 — policy decides <em>where</em> (last tool / last system / latest-user-message, so every intra-turn tool round-trip hits the cached prefix), protocol lowers <em>how</em> and hard-caps at 4 breakpoints in tools→system→messages invalidation order. Plus a hidden <code class='font-mono text-[0.85em]'>title</code> agent that fires after the first user message on the small model — exactly our §3 auto-title." },
+      { id: "crush", name: "crush", repo: "charmbracelet/crush → charm.land/fantasy", stack: "Go",
+        sse: "vendored SDKs (anthropic-sdk-go · openai-go/v3 · genai) via fantasy — no hand-rolled SSE",
+        args: "raw string; Anthropic SDK-reassembled, OpenAI client-accumulated map; parsed late",
+        model: "fantasy.StreamPart (iter.Seq)",
+        cache: "Anthropic-only cache_control ephemeral (tools·text·images·tool_result·tool_use); OpenAI none",
+        tiers: "two named tiers large/small; NO cross-provider fallback list (RecentModels is picker MRU)",
+        steal: "Confirms the notes: crush has <strong>no hand-rolled SSE to study</strong> — it delegates everything to <code class='font-mono text-[0.85em]'>charm.land/fantasy</code>, a Vercel-AI-SDK-style layer whose neutral <code class='font-mono text-[0.85em]'>StreamPart</code> iterator is the seam. Its clean two-value <code class='font-mono text-[0.85em]'>large/small</code> enum is the simplest tier UX in the field — but it has no fallback chain, so our <em>ordered fallback list</em> per tier would put us ahead on resilience." },
+      { id: "pi", name: "pi", repo: "earendil-works/pi · packages/ai", stack: "TS monorepo",
+        sse: "per-API adapters: OpenAI = SDK stream; Anthropic = SDK as HTTP client but hand-rolled SSE decode",
+        args: "★ re-parsed EVERY delta via tolerant parseStreamingJson (always returns a valid object)",
+        model: "Message union + AssistantMessageEvent stream",
+        cache: "Anthropic cache_control on system · last tool · last user msg; CacheRetention none/short/long→1h",
+        tiers: "NO large/medium/small ladder; glob model patterns + :thinkingLevel suffix",
+        steal: "The one harness that re-parses partial tool-args on <em>every</em> delta — <code class='font-mono text-[0.85em]'>parseStreamingJson</code> layers JSON.parse → repair → partial-json → <code class='font-mono text-[0.85em]'>{}</code>, so a TUI can render half-typed arguments live. Only worth the tax if a client actually shows streaming args; our decoder deliberately defers the parse to block-stop instead. Its Anthropic breakpoints (system · last tool · last user msg) independently match opencode's." },
+      { id: "fx", name: "fx  ⟵ closest analog", repo: "vercel-labs/fx · Zig · single binary", stack: "Zig · zero deps",
+        sse: "★ hand-rolled Zig decoder (consumeSseStream, 32 MiB line cap); event vocab = AI-SDK v5 stream parts; anomaly state machine",
+        args: "accumulated per-delta as raw ArrayList(u8); validated once at close → ToolArgumentIntegrity valid|malformed_json",
+        model: "stream_provider.Provider vtable (callback-push, not an event union)",
+        cache: "★ emits own Anthropic breakpoints via Gateway providerOptions: system always + one moving cache_breakpoint_idx, volatile tail uncached",
+        tiers: "no large/small config; routing delegated to Vercel AI Gateway; modelTierRank only ranks the picker",
+        steal: "The <strong>closest structural analog to yuke</strong> — native, zero-dep, hand-rolled SSE, its own request builder (<code class='font-mono text-[0.85em]'>gateway_json.zig</code>), bounded caps, and a split retry/delivery model (<code class='font-mono text-[0.85em]'>DeliveryCertainty</code>). It independently arrives at <em>exactly our §1 moving-tail design</em>: system/static prefix always cached, one movable breakpoint index at the tail, the volatile runtime tail left uncached — strong validation that the block-IR + tail marker is the right target. And it tags tool args <code class='font-mono text-[0.85em]'>malformed_json</code> at close rather than mid-stream, matching our defer-parse posture. One divergence worth noting: fx pushes decoded parts through <em>callbacks</em> (<code class='font-mono text-[0.85em]'>on_tool_input_chunk</code>) rather than a neutral <code class='font-mono text-[0.85em]'>Stream_Event</code> union — a spot where our materialized-event seam is arguably cleaner to reason about and to defer out of the curl region." }
+    ];
+    window.__renderHarness = function () {
+      var data = window.__harnessData;
+      var head = '<table class="w-full text-sm border-collapse"><thead>' +
+        '<tr class="text-left font-mono text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-200 dark:border-stone-800">' +
+        '<th class="px-4 py-2 font-medium">Project</th><th class="px-4 py-2 font-medium">SSE</th>' +
+        '<th class="px-4 py-2 font-medium">Tool-args</th><th class="px-4 py-2 font-medium">Caching</th>' +
+        '<th class="px-4 py-2 font-medium">Tiers</th></tr></thead><tbody class="divide-y divide-stone-200 dark:divide-stone-800 align-top">';
+      var rows = data.map(function (h, i) {
+        var main = '<tr class="cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-950/10" data-row="' + i + '">' +
+          '<td class="px-4 py-2.5"><div class="font-mono text-[0.9em] text-stone-800 dark:text-stone-200">' + h.name + '</div><div class="text-[10px] text-stone-400">' + h.stack + '</div></td>' +
+          '<td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">' + h.sse + '</td>' +
+          '<td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">' + h.args + '</td>' +
+          '<td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">' + h.cache + '</td>' +
+          '<td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">' + h.tiers + '</td></tr>';
+        var det = '<tr data-collapsible id="hrow-' + i + '"><td colspan="5" class="px-4 py-3 bg-stone-50 dark:bg-stone-900/50">' +
+          '<div class="text-[11px] font-mono text-stone-400 mb-1">' + h.repo + ' · neutral model: <span class="text-stone-600 dark:text-stone-300">' + h.model + '</span></div>' +
+          '<div class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><span class="font-semibold text-stone-800 dark:text-stone-200">Steal:</span> ' + h.steal + '</div>' +
+          '</td></tr>';
+        return main + det;
+      }).join("");
+      host.innerHTML = head + rows + '</tbody></table>';
+      host.querySelectorAll('[data-row]').forEach(function (tr) {
+        tr.addEventListener("click", function () {
+          document.getElementById("hrow-" + tr.dataset.row).classList.toggle("open");
+        });
+      });
+    };
+    window.__renderHarness();
+  })();
+
+});
+</script>
+</body>
+</html>

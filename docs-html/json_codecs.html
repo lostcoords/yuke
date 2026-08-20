@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>json codecs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">libs/json · src/wire · src/provider · src/daemon/catalog</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">One JSON library, three boundaries</h1>
+  <p class="mt-3.5 max-w-2xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">"Turn a struct into JSON and back" is needed at <strong>three</strong> trust boundaries in this codebase — the internal wire protocol, the LLM provider APIs, and the models.dev catalog feed. It used to be implemented three times over, with three encoders, three escapers, and three opinions about numbers. That duplication has been folded into <code class="font-mono text-[0.9em]">libs/json</code>: one string escaper, one number-writer family, one streaming decoder, one re-exported tree parser. What is left at each boundary is not a separate codec but a thin adapter — a different <em>strategy</em> for driving the shared primitives, chosen to fit that boundary's trust and lifetime. This page walks the shared library, then each of the three layers, then what genuinely still differs.</p>
+</header>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Three layers at a glance</h2>
+<div class="scroll mt-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 overflow-x-auto">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="text-left font-mono text-[11px] uppercase tracking-wider text-stone-500 border-b border-stone-200 dark:border-stone-800">
+        <th class="px-4 py-2 font-medium">Layer</th>
+        <th class="px-4 py-2 font-medium">Trust</th>
+        <th class="px-4 py-2 font-medium">Encode</th>
+        <th class="px-4 py-2 font-medium">Decode</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-stone-200 dark:divide-stone-800">
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">wire</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">internal RPC</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">json.Emitter</code> (depth + comma stack)</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">json</code> streaming token decoder → typed structs</td>
+      </tr>
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">provider</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">LLM APIs</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">json.write_*</code> punctuation over <code class="font-mono text-[0.9em]">io.Writer</code></td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400"><code class="font-mono text-[0.9em]">json</code> tree parse (re-exported core) + local readers</td>
+      </tr>
+      <tr>
+        <td class="px-4 py-2.5 font-mono text-[0.9em] text-stone-800 dark:text-stone-200">catalog</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">models.dev feed</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">— (decode only)</td>
+        <td class="px-4 py-2.5 text-stone-600 dark:text-stone-400">hybrid: streaming top-level scan + subtree parse</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p class="max-w-3xl text-sm text-stone-500 mt-3 mb-6">Every layer imports <code class="font-mono text-[0.9em]">libs:json</code> and nothing else for JSON. Neither encoder uses <code class="font-mono text-[0.9em]">json.marshal</code>. The provider and catalog decoders lean on the <code class="font-mono text-[0.9em]">core:encoding/json</code> tree parser — re-exported through <code class="font-mono text-[0.9em]">libs/json/std.odin</code>, so it too is reached only as <code class="font-mono text-[0.9em]">json.*</code>.</p>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">libs/json — the shared module</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">libs/json</code> is the codebase's single JSON package. It bundles yuke's own encoders (<code class="font-mono text-[0.9em]">write_string</code>, <code class="font-mono text-[0.9em]">write_u64</code>, <code class="font-mono text-[0.9em]">write_f64</code>, <code class="font-mono text-[0.9em]">write_raw</code>), the stateful <code class="font-mono text-[0.9em]">Emitter</code>, the streaming token <code class="font-mono text-[0.9em]">Decoder</code>, and a small family of typed object <code class="font-mono text-[0.9em]">read_*</code> readers — and re-exports in <code class="font-mono text-[0.9em]">std.odin</code> the slice of <code class="font-mono text-[0.9em]">core:encoding/json</code> the codebase uses so callers never import it directly.</p>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The one string escaper writes bytes as raw UTF-8, replacing invalid input with U+FFFD rather than erroring — so a malformed byte in an argument can never break the frame. Both the wire <code class="font-mono text-[0.9em]">Emitter</code> and the provider writers escape through it; there is exactly one copy.</p>
+
+<div class="src" data-file="libs/json/escape.odin" data-decl="write_string"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The tree readers report <code class="font-mono text-[0.9em]">(value, present, valid)</code>: a missing or null member is absent but valid; a present member of the wrong type or out of range is invalid. Provider and catalog both read their parsed trees through this one family.</p>
+
+<div class="src" data-file="libs/json/read.odin" data-decl="read_string"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">wire — the stateful emitter</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">Emitter</code> is a <code class="font-mono text-[0.9em]">strings.Builder</code> plus a <code class="font-mono text-[0.9em]">depth</code> and a <code class="font-mono text-[0.9em]">first[32]bool</code> stack that tracks whether the next member needs a leading comma. Containers push/pop depth; <code class="font-mono text-[0.9em]">_sep</code> emits the comma unless it's the first member of the current container.</p>
+
+<div class="src" data-file="libs/json/emit.odin" data-decl="Emitter"></div>
+<div class="src" data-file="libs/json/emit.odin" data-decl="object_begin"></div>
+<div class="src" data-file="libs/json/emit.odin" data-decl="_sep"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">There is no error return. A builder that can't grow <strong>latches</strong> <code class="font-mono text-[0.9em]">e.failed</code> inside <code class="font-mono text-[0.9em]">_put</code>; every caller must check <code class="font-mono text-[0.9em]">emitter_failed</code> before shipping the bytes. A wire encoder reads clean:</p>
+
+<div class="src" data-file="src/wire/common.odin" data-decl="error_object_emit"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">wire — the streaming token decoder</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Decoding never builds a value tree. <code class="font-mono text-[0.9em]">Decoder</code> is a thin alias over the re-exported <code class="font-mono text-[0.9em]">json.Parser</code>, and each type decodes token-by-token straight into its typed struct. Strings unquote into the parser allocator; numbers get explicit digit-length and range guards because <code class="font-mono text-[0.9em]">parse_i64</code> silently wraps.</p>
+
+<div class="src" data-file="libs/json/decode.odin" data-decl="Decoder"></div>
+<div class="src" data-file="libs/json/decode.odin" data-decl="dec_u64"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The streaming decoder returns a small <code class="font-mono text-[0.9em]">Decode_Error</code>; the wire layer maps that onto its own protocol validation. Validation is uniform: a local <code class="font-mono text-[0.9em]">Field</code> enum plus a <code class="font-mono text-[0.9em]">seen: bit_set[Field]</code>, checked against the required set at the end; unknown enum strings and unknown discriminators return <code class="font-mono text-[0.9em]">Validation_Error</code>, propagated with <code class="font-mono text-[0.9em]">or_return</code>.</p>
+
+<div class="src" data-file="src/wire/validate.odin" data-decl="Validation_Error"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Closed unions are the intricate part. <code class="font-mono text-[0.9em]">dec_find_tag</code> <strong>snapshots the entire parser</strong>, scans ahead for the discriminator key skipping values, then <strong>rewinds</strong> so the field loop can re-read members in any order. Each arm then re-implements the same boilerplate by hand — a <code class="font-mono text-[0.9em]">Field</code> enum, a <code class="font-mono text-[0.9em]">seen</code> set, and explicit rejection of sibling keys that belong to other arms.</p>
+
+<div class="src" data-file="libs/json/decode.odin" data-decl="dec_find_tag"></div>
+<div class="src" data-file="src/wire/content.odin" data-decl="media_source_from_reader"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">provider — punctuation by hand, tree on the way back</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The provider encoder is thinner and blunter: request builders write braces and commas as literal strings over an <code class="font-mono text-[0.9em]">io.Writer</code>, calling the shared <code class="font-mono text-[0.9em]">json.write_raw</code> / <code class="font-mono text-[0.9em]">json.write_string</code> / <code class="font-mono text-[0.9em]">json.write_u64</code> for the values. There is no depth/comma machinery — the writer is stateless. The primitives return an <code class="font-mono text-[0.9em]">io.Error</code>, but a request builder writes into a growing <code class="font-mono text-[0.9em]">strings.Builder</code> and ignores them: that buffer is in-memory and effectively infallible, so a body build fails at validation and tool-argument parsing, not at the punctuation writes.</p>
+
+<div class="src" data-file="src/provider/anthropic_request.odin" data-decl="anthropic_request_body"></div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Decoding, by contrast, parses a full value tree with the re-exported <code class="font-mono text-[0.9em]">json</code> parser. <code class="font-mono text-[0.9em]">decode_json_object</code> requires a single root object and trailing EOF, returning <code class="font-mono text-[0.9em]">.Parse_Error</code> otherwise — peer input is error-returned, never asserted; field access is permissive tree reads — missing and null both read as absent, and malformed usage counters collapse to zero rather than erroring.</p>
+
+<div class="src" data-file="src/provider/decode.odin" data-decl="decode_json_object"></div>
+<div class="src" data-file="src/provider/decode.odin" data-decl="decode_optional_string"></div>
+<div class="src" data-file="src/provider/decode.odin" data-decl="decode_usage_u64"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">catalog — hybrid scan</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The catalog feed is large and mostly unwanted, so <code class="font-mono text-[0.9em]">decode</code> does two passes: a zero-alloc <code class="font-mono text-[0.9em]">json.validate_value</code> syntax check with a nil allocator, then a manual top-level walk that <code class="font-mono text-[0.9em]">skip_value</code>s unwanted providers and only <code class="font-mono text-[0.9em]">json.parse_value</code>s the selected subtrees. Those subtrees are read with the shared <code class="font-mono text-[0.9em]">json.read_*</code> readers.</p>
+
+<div class="src" data-file="src/daemon/catalog/decode.odin" data-decl="decode"></div>
+<div class="src" data-file="src/daemon/catalog/decode.odin" data-decl="decode_object_key"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Three memory models, still</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Shared primitives did not collapse the lifetimes. Each boundary still owns its decoded bytes differently, because each has a different consumer and a different deadline.</p>
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">wire — borrow into the frame arena</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Unquoted strings live in the parser allocator; decoded structs are non-owning borrows valid only while that arena lives. Ownership leaves only through explicit <code class="font-mono text-[0.9em]">*_clone</code> deep copies. <code class="font-mono text-[0.9em]">dec_fixed</code> and <code class="font-mono text-[0.9em]">dec_skip</code> allocate nothing.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">provider — scratch tree vs turn arena</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The parsed tree lives in a per-event <code class="font-mono text-[0.9em]">scratch</code> arena, rewound to an <code class="font-mono text-[0.9em]">Arena_Temp</code> watermark after each event so its pages are reused. Anything kept past the event is cloned into the separate turn (<code class="font-mono text-[0.9em]">retained</code>) arena, which the scratch never aliases.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">catalog — growing arena, owned output</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">A <code class="font-mono text-[0.9em]">virtual.Arena</code> backs the scratch objects and selection slices; everything kept in the <code class="font-mono text-[0.9em]">Result</code> is cloned into the caller's allocator and released by <code class="font-mono text-[0.9em]">result_destroy</code>.</p>
+  </div>
+</div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">What the library folded away — and what still differs</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The consolidation into <code class="font-mono text-[0.9em]">libs/json</code> retired the duplication that used to sit across these three layers. What remains distinct is genuine — a per-boundary strategy, not a re-solved primitive.</p>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">One string / number writer</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">There were two escapers and two float encoders; now the wire <code class="font-mono text-[0.9em]">Emitter</code> and the provider writers both go through <code class="font-mono text-[0.9em]">write_string</code> / <code class="font-mono text-[0.9em]">write_u64</code> / <code class="font-mono text-[0.9em]">write_f64</code>. Same job, one copy.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">One tree reader family</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">Provider and catalog no longer each re-express missing/null/typed access. Both read parsed trees through the shared <code class="font-mono text-[0.9em]">json.read_*</code> readers returning <code class="font-mono text-[0.9em]">(value, present, valid)</code>.</p>
+  </div>
+  <div class="rounded-xl border border-emerald-300/60 dark:border-emerald-700/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">One json import</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">std.odin</code> re-exports the <code class="font-mono text-[0.9em]">core:encoding/json</code> surface as compile-time aliases, so every caller imports only <code class="font-mono text-[0.9em]">libs:json</code> — and a symbol can be swapped for a local implementation in one place.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Stream vs. tree decode</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">wire decodes token-by-token straight into typed structs and never materializes a tree; provider and catalog parse to a <code class="font-mono text-[0.9em]">json.Value</code> tree and read it. Two decode strategies, chosen by trust and payload size.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Rewind-to-find-tag</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">dec_find_tag</code> snapshots and rewinds the whole parser to tolerate any member order — a streaming-decode cost the tree layers don't pay, since a tree collapses each closed union to a few lookups.</p>
+  </div>
+  <div class="rounded-xl border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Latched vs. error-returning encode</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">The wire <code class="font-mono text-[0.9em]">Emitter</code> latches <code class="font-mono text-[0.9em]">failed</code> and is checked once at the end; the shared <code class="font-mono text-[0.9em]">write_*</code> primitives return an <code class="font-mono text-[0.9em]">io.Error</code> instead — which the in-memory request builder discards. Two error conventions over one buffer.</p>
+  </div>
+</div>
+
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed mt-2">The wire decoder is the one at the untrusted RPC boundary, and its tests define exactly which encodings are rejected — that strictness is why it streams into typed structs by hand rather than reading a permissive tree, and any further consolidation onto a tree would have to preserve it.</p>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; code read live from the working tree. Ask the code guide to re-derive this page if a declaration moves.
+</footer>
+</main>
+</body>
+</html>

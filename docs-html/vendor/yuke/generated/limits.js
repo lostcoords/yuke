@@ -1,0 +1,73 @@
+// Generated from schema/wire.json by scripts/generate.ts. Do not edit.
+// Protocol bounds and constants.
+export const PROTOCOL_VERSION = 1;
+export const LIMITS = {
+    dead_connection_ms: 90000,
+    default_cron_list_page_size: 25,
+    default_page_size: 50,
+    default_session_list_page_size: 25,
+    default_workspace_browse_page_size: 100,
+    max_activity_retry_message_bytes: 1024,
+    max_agents: 256,
+    max_api_key_bytes: 65536,
+    max_auth_flows: 8,
+    max_auth_providers: 64,
+    max_auth_url_bytes: 4096,
+    max_auth_user_code_bytes: 128,
+    max_blob_bytes: 67108864,
+    max_catalog_models: 4096,
+    max_cron_jobs: 1024,
+    max_cron_list_cursor_bytes: 256,
+    max_cron_list_page_size: 100,
+    max_error_message_bytes: 4096,
+    max_frame_bytes: 8388608,
+    max_inline_media_base64_bytes: 349528,
+    max_inline_media_bytes: 262144,
+    max_input_parts: 256,
+    max_message_parts: 1024,
+    max_message_string_bytes: 1048576,
+    max_page_size: 500,
+    max_permission_creates: 32,
+    max_permission_options: 32,
+    max_permission_reject_message_bytes: 4096,
+    max_permission_rules: 4096,
+    max_profiles: 256,
+    max_queued_inputs: 128,
+    max_reasoning_levels: 32,
+    max_session_list_cursor_bytes: 256,
+    max_session_list_page_size: 100,
+    max_skills: 1024,
+    max_skipped_providers: 256,
+    max_snapshot_configs: 501,
+    max_subscriptions: 64,
+    max_tool_output_stream_bytes: 1048576,
+    max_view_bytes: 1048576,
+    max_view_items: 1024,
+    max_views_per_tool: 64,
+    max_workspace_browse_cursor_bytes: 256,
+    max_workspace_browse_page_size: 500,
+    max_workspaces: 1024,
+    ping_interval_ms: 30000,
+};
+export const CONSTANTS = {
+    MAX_CRON_REVISION: 9007199254740991,
+    MAX_INTEGER_TOKEN_DIGITS: 16,
+    MAX_REQUEST_ID: 9007199254740991,
+    MAX_REQUEST_ID_BYTES: 64,
+    MAX_SESSION_REVISION: 9007199254740991,
+    MAX_WIRE_INTEGER: 9007199254740991,
+    PROTOCOL_VERSION: 1,
+};
+export const STRING_CONSTANTS = {
+    JSONRPC_VERSION: "2.0",
+};
+/** WebSocket close codes the daemon uses. */
+export const CLOSE_CODES = {
+    internal_error: 1011,
+    message_too_big: 1009,
+    protocol_error: 1002,
+    send_queue_overflow: 1013,
+    shutting_down: 1012,
+    unsupported_protocol: 4000,
+};
+//# sourceMappingURL=limits.js.map

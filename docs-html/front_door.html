@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>front door</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="app.js" defer></script>
+</head>
+<body class="bg-stone-50 text-stone-700 dark:bg-stone-950 dark:text-stone-300 antialiased">
+
+<nav class="top sticky top-0 z-20 border-b border-stone-200 dark:border-stone-800 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur">
+  <div class="mx-auto max-w-5xl flex flex-wrap gap-1 px-6 py-3">
+    <div class="nav-links flex flex-wrap gap-1"></div>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-5xl px-6 pb-32">
+<header class="pt-14 pb-8">
+  <div class="font-mono text-xs uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400 mb-3">front_door.odin · bearer.odin</div>
+  <h1 class="text-4xl font-semibold tracking-tight text-stone-900 dark:text-stone-50 leading-tight">The front door</h1>
+  <p class="mt-3.5 max-w-2xl text-[15px] leading-relaxed text-stone-500 dark:text-stone-400">One HTTP port serves <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">/ws</code>, <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">/blob/&lt;sha256&gt;</code> and <code class="rounded bg-stone-200/70 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[0.85em] text-stone-800 dark:text-stone-200">/identity</code>. Every request runs the same middleware pipeline before any route body: mark-private → admit → authenticate. Admission by Origin/Host happens <em>before</em> the bearer check, and a credential must arrive through exactly one channel.</p>
+</header>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The router</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">Routes and the middleware chain are wired once at start. The router is typed on <code class="font-mono text-[0.9em]">Daemon</code>, so every handler receives the owned world as context.</p>
+
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="router_init"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Admission runs before auth</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The pipeline admits a request by Origin/Host <strong>first</strong>. Only an admitted request reaches the bearer check — so an unapproved origin never gets a chance to guess a token.</p>
+
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="middleware_admit"></div>
+<p class="max-w-3xl text-sm text-stone-500 -mt-2 mb-6">Origin matching lives in <code class="font-mono text-[0.9em]">origin_allowed</code>; the official client origin is a constant (<code class="font-mono text-[0.9em]">OFFICIAL_ORIGIN</code>).</p>
+
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="middleware_auth"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">Authenticating a request</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed">The bearer credential arrives through exactly one of the <code class="font-mono text-[0.9em]">Authorization</code> header or a <code class="font-mono text-[0.9em]">?token=</code> query parameter — never both. <code class="font-mono text-[0.9em]">authenticate</code> resolves the outcome as an <code class="font-mono text-[0.9em]">Auth_Result</code>.</p>
+
+<div class="src" data-file="src/daemon/bearer.odin" data-decl="authenticate"></div>
+
+<div class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 my-4">
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Bounded token parsing</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">bearer_token</code> rejects anything outside <code class="font-mono text-[0.9em]">MIN_AUTH_TOKEN_BYTES</code>…<code class="font-mono text-[0.9em]">MAX_AUTH_TOKEN_BYTES</code> before it ever compares — malformed input degrades, it never asserts.</p>
+  </div>
+  <div class="rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4">
+    <h4 class="font-semibold text-sm text-stone-900 dark:text-stone-100 mb-1.5">Constant-time compare</h4>
+    <p class="text-sm text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">secret_equal</code> compares presented vs expected without an early-out, so a wrong token can't be timed byte by byte.</p>
+  </div>
+</div>
+
+<div class="src" data-file="src/daemon/bearer.odin" data-decl="bearer_token"></div>
+<div class="src" data-file="src/daemon/bearer.odin" data-decl="secret_equal"></div>
+
+<h2 class="mt-14 mb-3.5 pt-4 border-t border-stone-200 dark:border-stone-800 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-400">The routes</h2>
+<p class="max-w-3xl text-stone-600 dark:text-stone-400 leading-relaxed"><code class="font-mono text-[0.9em]">/ws</code> upgrades into the transport layer; <code class="font-mono text-[0.9em]">/identity</code> answers the daemon's public identity (with CORS preflight); <code class="font-mono text-[0.9em]">/blob/&lt;sha256&gt;</code> gets and puts content-addressed blobs.</p>
+
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="route_ws"></div>
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="route_identity"></div>
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="route_blob_get"></div>
+<div class="src" data-file="src/daemon/front_door.odin" data-decl="route_blob_put"></div>
+
+<footer class="mt-20 border-t border-stone-200 dark:border-stone-800 pt-5 text-sm text-stone-400">
+  Served by <code class="font-mono text-[0.9em]">docs-html/serve.py</code>; code read live from the working tree. The rest of the map is built on demand — ask the code guide to add a page.
+</footer>
+</main>
+</body>
+</html>
