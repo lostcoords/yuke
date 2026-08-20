@@ -412,6 +412,79 @@ test_composer :: proc(t: ^testing.T) {
     testing.expect_value(t, ext_test_result(t, &h), "ok")
 }
 
+// The shared edit buffer: mid-line insert/delete, caret movement, word-erase and kill-to-start act
+// at the caret, onChange fires on text change only, and movement/deletion step by grapheme cluster.
+@(test)
+test_text_input :: proc(t: ^testing.T) {
+    defer free_all(context.temp_allocator)
+
+    h: Host
+    if !ext_test_host_init(t, &h) do return
+
+    defer js.destroy(&h.js)
+
+    source := `
+        import { TextInput } from "yuke:core";
+
+        const fail = [];
+        const check = (name, cond) => { if (!cond) fail.push(name); };
+        const ch = (x) => ({ code: "char", char: x, mods: 0 });
+        const key = (code) => ({ code, mods: 0 });
+        const ctrl = (x) => ({ code: "char", char: x, mods: 4 });
+
+        const t = new TextInput();
+        t.onKey(ch("a")); t.onKey(ch("b")); t.onKey(ch("c"));
+        check("type", t.text === "abc" && t.caret === 3);
+
+        t.onKey(key("left")); t.onKey(key("left"));
+        check("left", t.caret === 1);
+        t.onKey(ch("X"));
+        check("insert-mid", t.text === "aXbc" && t.caret === 2);
+        t.onKey(key("backspace"));
+        check("bksp-mid", t.text === "abc" && t.caret === 1);
+        t.onKey(key("delete"));
+        check("del-fwd", t.text === "ac" && t.caret === 1);
+
+        t.onKey(key("home"));  check("home", t.caret === 0);
+        t.onKey(key("end"));   check("end", t.caret === 2);
+        t.onKey(ctrl("a"));    check("ctrl-a", t.caret === 0);
+        t.onKey(ctrl("e"));    check("ctrl-e", t.caret === 2);
+
+        // Word-erase and kill-to-start act on the span before the caret, not the whole tail.
+        t.setText("foo bar baz");
+        t.onKey(key("left")); t.onKey(key("left")); t.onKey(key("left"));
+        check("caret-mid", t.caret === 8);
+        t.onKey(ctrl("w"));
+        check("ctrl-w-mid", t.text === "foo baz" && t.caret === 4);
+        t.onKey(ctrl("u"));
+        check("ctrl-u-kill", t.text === "baz" && t.caret === 0);
+
+        // onChange fires on edits, not bare caret moves; setText is silent.
+        let changes = 0;
+        const u = new TextInput({ onChange: () => changes++ });
+        u.onKey(ch("x"));
+        u.onKey(key("left")); u.onKey(key("right"));
+        check("onchange-edit-only", changes === 1);
+        u.setText("hello");
+        check("settext-silent", changes === 1 && u.caret === 5);
+
+        // An astral cluster (a surrogate pair) is one step and deletes whole.
+        const g = new TextInput();
+        g.setText("a😀b");
+        g.onKey(key("left"));
+        check("astral-step", g.caret === 3);
+        g.onKey(key("left"));
+        check("astral-step2", g.caret === 1);
+        g.onKey(key("delete"));
+        check("astral-del", g.text === "ab" && g.caret === 1);
+
+        globalThis.result = fail.length ? fail.join(",") : "ok";
+    `
+
+    testing.expect(t, js.eval_module(&h.js, "test:text-input", source, context.allocator))
+    testing.expect_value(t, ext_test_result(t, &h), "ok")
+}
+
 // The virtualized transcript: descriptors + on-demand text via textOf, wrapping to width and
 // returning only the visible rows; setActive re-wraps just the draft; the Pager scrolls.
 @(test)

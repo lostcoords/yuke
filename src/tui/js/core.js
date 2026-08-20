@@ -446,6 +446,121 @@ function normalizeStroke(stroke) {
   return joinStroke(mods, token);
 }
 
+// --- text input ---------------------------------------------------------------------------
+// The word-erase (readline werase) cut point in `s` before `caret`: skip trailing spaces, then the
+// run of non-spaces. The span from the cut point up to `caret` is what Ctrl+W removes.
+function deleteWordBack(s, caret) {
+  let i = caret;
+  while (i > 0 && s[i - 1] === " ") i--;
+  while (i > 0 && s[i - 1] !== " ") i--;
+
+  return i;
+}
+
+// A single-line edit buffer (text + caret, a code-unit offset on a grapheme boundary) owning the
+// readline editing/movement keymap; fires onChange on text change. Owners keep their own reactions.
+export class TextInput {
+  constructor(opts = {}) {
+    this.text = "";
+    this.caret = 0;
+    this.onChange = opts.onChange || null;
+  }
+
+  // Replace the whole buffer, parking the caret at the end. The owner's text/query setter and any
+  // reset route through here; deliberately silent (no onChange) so the owner drives its reaction.
+  setText(s) {
+    this.text = String(s);
+    this.caret = this.text.length;
+  }
+
+  // The text left of the caret — the owner measures prompt + this for the cursor column.
+  beforeCaret() {
+    return this.text.slice(0, this.caret);
+  }
+
+  // The grapheme boundary just before `caret`, so movement and deletion step by whole clusters
+  // (a wide or combined glyph is never split).
+  _prev(caret) {
+    const gs = term.graphemes(this.text);
+    let p = 0;
+    for (let k = 0; k < gs.length; k += 3) {
+      if (gs[k] >= caret) break;
+      p = gs[k];
+    }
+    return p;
+  }
+
+  // The grapheme boundary just after `caret`.
+  _next(caret) {
+    const gs = term.graphemes(this.text);
+    for (let k = 0; k < gs.length; k += 3) {
+      const end = gs[k] + gs[k + 1];
+      if (end > caret) return end;
+    }
+    return this.text.length;
+  }
+
+  // Replace [from, to) with `ins`, leaving the caret after it. The one text-mutation path, so
+  // onChange fires exactly once per edit.
+  _splice(from, to, ins) {
+    this.text = this.text.slice(0, from) + ins + this.text.slice(to);
+    this.caret = from + ins.length;
+    if (this.onChange) this.onChange();
+  }
+
+  onKey(ev) {
+    const s = strokeOf(ev);
+
+    switch (s) {
+      case "left":
+        this.caret = this._prev(this.caret);
+        return true;
+      case "right":
+        this.caret = this._next(this.caret);
+        return true;
+      case "home":
+      case "ctrl+a":
+        this.caret = 0;
+        return true;
+      case "end":
+      case "ctrl+e":
+        this.caret = this.text.length;
+        return true;
+      case "backspace": {
+        const p = this._prev(this.caret);
+        if (p !== this.caret) this._splice(p, this.caret, "");
+        return true;
+      }
+      case "delete": {
+        const n = this._next(this.caret);
+        if (n !== this.caret) this._splice(this.caret, n, "");
+        return true;
+      }
+      case "ctrl+w": {
+        const p = deleteWordBack(this.text, this.caret);
+        if (p !== this.caret) this._splice(p, this.caret, "");
+        return true;
+      }
+      case "ctrl+u":
+        if (this.caret > 0) this._splice(0, this.caret, "");
+        return true;
+    }
+
+    if (isTextKey(ev)) {
+      this._splice(this.caret, this.caret, ev.char);
+      return true;
+    }
+
+    return false;
+  }
+}
+
+// The cursor column for a single-line input: the display width of prompt + the text left of the
+// caret, clamped to the last cell. `w` is the field width, `prompt` the fixed lead.
+export function caretCol(w, prompt, before) {
+  return Math.min(w - 1, term.measure(prompt + before));
+}
+
 // --- events -------------------------------------------------------------------------------
 // A small synchronous event bus. `emit` isolates a throwing listener via onError; `bail` runs
 // until a listener returns a non-nullish, non-false value and returns it. `on` returns a disposer.

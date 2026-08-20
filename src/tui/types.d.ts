@@ -249,6 +249,24 @@ declare module "yuke:core" {
 
   export function isTextKey(ev: KeyEvent): boolean;
 
+  export interface TextInputOptions {
+    onChange?: (() => void) | null;
+  }
+
+  // A single-line edit buffer: text plus a caret (code-unit offset on a grapheme boundary). Owns the
+  // readline editing/movement keymap and fires onChange on text change; owners drive their reactions.
+  export class TextInput {
+    text: string;
+    caret: number;
+    onChange: (() => void) | null;
+    constructor(opts?: TextInputOptions);
+    setText(s: string): void;
+    beforeCaret(): string;
+    onKey(ev: KeyEvent): boolean;
+  }
+
+  export function caretCol(w: number, prompt: string, before: string): number;
+
   export interface Rect {
     x: number;
     y: number;
@@ -700,7 +718,7 @@ declare module "yuke:client" {
 
 declare module "yuke:ui" {
   import type { KeyEvent, MouseEvent } from "yuke:term";
-  import type { CursorRequest, Layer, Rect, TickRequest } from "yuke:core";
+  import type { CursorRequest, Layer, Rect, TextInput, TickRequest } from "yuke:core";
 
   export interface ListCell {
     text: string;
@@ -809,7 +827,9 @@ declare module "yuke:ui" {
   // unhandled keys return false so the owner can route them.
   export class Composer {
     rect: Rect;
-    text: string;
+    input: TextInput;
+    get text(): string;
+    set text(s: string);
     prompt: string;
     placeholder: string;
     onSubmit: ((text: string) => void) | null;
@@ -962,7 +982,9 @@ declare module "yuke:ui" {
   export class Picker<T = unknown> implements WindowContent {
     opts: PickOptions<T>;
     win: Window | null;
-    query: string;
+    input: TextInput;
+    get query(): string;
+    set query(s: string);
     list: List<T>;
     onAccept: ((item: T) => void) | null;
     onCancel: (() => void) | null;

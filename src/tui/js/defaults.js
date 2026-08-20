@@ -1,7 +1,7 @@
 // yuke:defaults — bundled default UI: a sidebar | chat split shell with local daemon connect,
 // command palette, ":" line, and a stub explorer. A user's yuke.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, isTextKey, Node, root, quit, config, events } from "yuke:core";
+import { command, keymap, style, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
@@ -474,7 +474,7 @@ function resolveCommand(word) {
 // keystroke while open; Esc — or Backspace past the prompt — cancels.
 class CommandLine {
   constructor() {
-    this.text = "";
+    this.input = new TextInput({ onChange: () => (this.error = "") });
     this.error = "";
   }
 
@@ -490,17 +490,17 @@ class CommandLine {
     const y = h - 1;
     const err = this.error !== "";
     fill(0, y, w, 1, "Normal");
-    text(0, y, clip(err ? this.error : ":" + this.text, w), err ? "YukeCmdlineErr" : "YukeCmdline");
+    text(0, y, clip(err ? this.error : ":" + this.input.text, w), err ? "YukeCmdlineErr" : "YukeCmdline");
   }
 
   cursor() {
     if (this.error) return null;
 
-    return { x: Math.min(term.width - 1, 1 + this.text.length), y: term.height - 1, visible: true };
+    return { x: caretCol(term.width, ":", this.input.beforeCaret()), y: term.height - 1, visible: true };
   }
 
   submit() {
-    const word = this.text.trim();
+    const word = this.input.text.trim();
     if (word === "") {
       root.popOverlay(this);
       return;
@@ -529,18 +529,14 @@ class CommandLine {
       return true;
     }
 
-    if (s === "backspace") {
-      if (this.text === "") root.popOverlay(this);
-      else this.text = this.text.slice(0, -1);
-      this.error = "";
+    // Backspace past the empty prompt closes the line; otherwise editing (and its onChange, which
+    // clears the error) goes to the shared buffer.
+    if (s === "backspace" && this.input.text === "") {
+      root.popOverlay(this);
       return true;
     }
 
-    // A printable char extends the word; any modifier past Shift means a shortcut, not text.
-    if (isTextKey(ev)) {
-      this.text += ev.char;
-      this.error = "";
-    }
+    this.input.onKey(ev);
 
     return true; // modal: consume every key
   }

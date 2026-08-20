@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit built on yuke:core. List/Pager/Window are classes you subclass or
 // patch; `ui` exports the pickers. Editor policy stays in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, wrap, root, strokeOf, isTextKey, style } from "yuke:core";
+import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, style } from "yuke:core";
 
 // The kit seeds its own highlight groups over the core palette — presentation lives with the
 // widgets, not in core. A theme overrides these by mutating style.groups then invalidating.
@@ -486,22 +486,12 @@ export class Transcript {
   }
 }
 
-// Delete the word before the end of `s` (readline werase): drop trailing spaces, then the run of
-// non-space chars. The composer is append-only, so this always acts at the end.
-function deleteWordBack(s) {
-  let i = s.length;
-  while (i > 0 && s[i - 1] === " ") i--;
-  while (i > 0 && s[i - 1] !== " ") i--;
-
-  return s.slice(0, i);
-}
-
-// A single-line message input. Enter submits (clears, calls onSubmit(text)), Backspace deletes;
-// unhandled keys return false so the owner can route them (e.g. scrolling a transcript).
+// A single-line message input. Enter submits; editing lives in the shared TextInput. Unhandled keys
+// return false so the owner can route them, and normal mode disables input so bare keys fall through.
 export class Composer {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.text = "";
+    this.input = new TextInput();
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
@@ -512,49 +502,33 @@ export class Composer {
     return "composer";
   }
 
+  get text() {
+    return this.input.text;
+  }
+
+  set text(s) {
+    this.input.setText(s);
+  }
+
   submit() {
-    const t = this.text.trim();
+    const t = this.input.text.trim();
     if (t === "") return;
 
-    this.text = "";
+    this.input.setText("");
     if (this.onSubmit) this.onSubmit(t);
   }
 
   onKey(ev) {
-    // Normal mode disables text input: keys fall through to the keymap and the transcript.
+    // Normal mode disables text input: keys fall through to the keymap and the transcript, so
+    // ctrl+w stays a window command there (it is word-erase only while typing).
     if (this.mode !== "insert") return false;
 
-    const s = strokeOf(ev);
-
-    if (s === "enter") {
+    if (strokeOf(ev) === "enter") {
       this.submit();
       return true;
     }
 
-    if (s === "backspace") {
-      this.text = this.text.slice(0, -1);
-      return true;
-    }
-
-    // Readline editing: ctrl+w erases the previous word, ctrl+u clears the line. Consuming these
-    // keeps them from reaching the keymap, so ctrl+w means word-erase while typing (not windows).
-    if (s === "ctrl+w") {
-      this.text = deleteWordBack(this.text);
-      return true;
-    }
-
-    if (s === "ctrl+u") {
-      this.text = "";
-      return true;
-    }
-
-    // A printable char (any modifier past Shift means a shortcut, not text) extends the message.
-    if (isTextKey(ev)) {
-      this.text += ev.char;
-      return true;
-    }
-
-    return false;
+    return this.input.onKey(ev);
   }
 
   draw(_focused) {
@@ -576,7 +550,7 @@ export class Composer {
     if (this.mode !== "insert") return null; // no caret while input is disabled
 
     const { x, y, w } = this.rect;
-    const col = Math.min(w - 1, term.measure(this.prompt + this.text));
+    const col = caretCol(w, this.prompt, this.input.beforeCaret());
 
     return { x: x + Math.max(0, col), y, visible: true };
   }
@@ -923,7 +897,7 @@ export class Picker {
   constructor(opts) {
     this.opts = opts;
     this.win = null;
-    this.query = "";
+    this.input = new TextInput({ onChange: () => this.refilter() });
     this.source = opts.items || [];
     this.suggest = opts.suggest || null;
     this.textOf = opts.filterText || String;
@@ -944,6 +918,14 @@ export class Picker {
     this.closeOnAccept = opts.closeOnAccept !== false;
     this.keymap = opts.keymap || null;
     this.refilter();
+  }
+
+  get query() {
+    return this.input.text;
+  }
+
+  set query(s) {
+    this.input.setText(s);
   }
 
   // Replace the static item pool (a live source calls this as data arrives), keeping the query.
@@ -977,7 +959,7 @@ export class Picker {
 
   cursor(win) {
     const { x, y, w } = win.inner;
-    const col = Math.min(w - 1, term.measure(PICKER_PROMPT + this.query));
+    const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
     return { x: x + Math.max(0, col), y, visible: true };
   }
 
@@ -1029,19 +1011,9 @@ export class Picker {
       return true;
     }
 
-    if (s === "backspace") {
-      if (this.query !== "") {
-        this.query = this.query.slice(0, -1);
-        this.refilter();
-      }
-      return true;
-    }
-
-    // A printable char (any modifier past Shift means a shortcut, not text) extends the query.
-    if (isTextKey(ev)) {
-      this.query += ev.char;
-      this.refilter();
-    }
+    // Editing and caret movement go to the shared buffer; its onChange refilters. Left/right land
+    // here as caret moves unless a per-instance keymap (e.g. the explorer) claimed them above.
+    this.input.onKey(ev);
 
     return true; // modal: consume every key
   }
