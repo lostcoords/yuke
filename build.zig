@@ -62,6 +62,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_wire_tests = b.addRunArtifact(wire_tests);
 
+    // The domain package: the shared session-projection fold. Imports wire.
+    const domain = b.addModule("domain", .{
+        .root_source_file = b.path("src/domain/domain.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    domain.addImport("wire", wire);
+    const domain_tests = b.addTest(.{
+        .root_module = domain,
+    });
+    const run_domain_tests = b.addRunArtifact(domain_tests);
+
     const wiregen = b.createModule(.{
         .root_source_file = b.path("tools/wiregen/gen.zig"),
         .target = target,
@@ -80,6 +92,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
+    test_step.dependOn(&run_domain_tests.step);
 
     // Regenerate schema/wire.json in place from the Zig wire types.
     const write_schema = b.addUpdateSourceFiles();
