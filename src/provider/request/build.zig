@@ -1,0 +1,167 @@
+//! Fold a transcript into the neutral block IR.
+//! All serializers share the role, tool, and reasoning rules.
+
+const std = @import("std");
+const wire = @import("wire");
+const ir = @import("ir.zig");
+
+const Block = ir.Block;
+
+/// A bad transcript degrades the turn; the daemon never crashes on stored data.
+pub const Error = error{ OutOfMemory, InvalidTranscript };
+
+/// Build the block IR in `gpa`. Blocks borrow transcript strings.
+pub fn build(gpa: std.mem.Allocator, messages: []const wire.message.Message, options: ir.Options) Error!ir.RequestIr {
+    var blocks: std.ArrayList(Block) = .empty;
+    errdefer blocks.deinit(gpa);
+
+    for (messages) |message| switch (message) {
+        .user => |user| for (user.content) |part| {
+            if (part == .text and part.text.text.len == 0) continue; // Skip empty text, like assistant text.
+            try blocks.append(gpa, .{ .role = .user, .value = userValue(part) });
+        },
+        .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options),
+        .compaction => |compaction| if (compaction.summary.len != 0) {
+            try blocks.append(gpa, .{ .role = .user, .value = .{ .text = compaction.summary } });
+        },
+    };
+
+    return .{ .blocks = try blocks.toOwnedSlice(gpa) };
+}
+
+fn userValue(part: wire.content.ContentPart) Block.Value {
+    return switch (part) {
+        .text => |t| .{ .text = t.text },
+        .image => |t| .{ .image = .{ .source = t.source } },
+        .audio => |t| .{ .audio = .{ .source = t.source } },
+        .file => |t| .{ .file = .{ .source = t.source } },
+    };
+}
+
+fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), msg: wire.message.AssistantMessage, options: ir.Options) Error!void {
+    const replay = if (options.target) |target| provenanceMatches(msg.provenance, target) else false;
+
+    for (msg.content) |part| switch (part) {
+        .text => |t| if (t.text.len != 0) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .text = t.text } }),
+        .reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .reasoning = .{ .text = t.text, .signature = t.signature } } }),
+        .redacted_reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .redacted_reasoning = t.data } }),
+        .tool => |t| {
+            const call_id = t.call_id orelse return error.InvalidTranscript;
+            try blocks.append(gpa, .{ .role = .assistant, .value = .{ .tool_use = .{
+                .call_id = call_id,
+                .name = t.name,
+                .arguments = if (t.arguments.len == 0) "{}" else t.arguments,
+            } } });
+        },
+    };
+
+    // A tool result follows the assistant blocks, one per tool call.
+    for (msg.content) |part| switch (part) {
+        .tool => |t| {
+            const call_id = t.call_id orelse return error.InvalidTranscript;
+            const result = try terminalToolResult(t.state);
+            try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = .{
+                .call_id = call_id,
+                .content = result.content,
+                .is_error = result.is_error,
+            } } });
+        },
+        else => {},
+    };
+}
+
+fn provenanceMatches(actual: ?wire.message.TurnProvenance, target: wire.message.TurnProvenance) bool {
+    const p = actual orelse return false;
+    return p.protocol == target.protocol and std.mem.eql(u8, p.model, target.model);
+}
+
+const ToolOutcome = struct { content: []const u8, is_error: bool };
+
+fn terminalToolResult(state: wire.tool.ToolState) Error!ToolOutcome {
+    return switch (state) {
+        .completed => |c| .{ .content = c.output, .is_error = false },
+        .@"error" => |e| .{ .content = e.@"error", .is_error = true },
+        .denied => |d| .{ .content = d.reason, .is_error = true },
+        .canceled => .{ .content = "", .is_error = true },
+        // A committed transcript should hold only terminal tools.
+        .pending, .waiting_permission, .running => error.InvalidTranscript,
+    };
+}
+
+const testing = std.testing;
+
+test "user text and image fold to user blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const parts = [_]wire.content.ContentPart{
+        .{ .text = .{ .text = "hi" } },
+        .{ .image = .{ .source = .{ .url = .{ .url = "http://x/y.png" } }, .detail = "high" } },
+    };
+    const messages = [_]wire.message.Message{.{ .user = .{
+        .id = 1,
+        .content = &parts,
+        .input_id = 2,
+        .time = .{ .created_at_ms = 0 },
+    } }};
+
+    const result = try build(arena.allocator(), &messages, .{});
+    try testing.expectEqual(@as(usize, 2), result.blocks.len);
+    try testing.expectEqual(ir.Role.user, result.blocks[0].role);
+    try testing.expectEqualStrings("hi", result.blocks[0].value.text);
+    try testing.expect(result.blocks[1].value == .image);
+}
+
+test "assistant tool call yields a tool_use then a tool_result" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const content = [_]wire.message.AssistantPart{
+        .{ .text = .{ .id = 1, .text = "let me check" } },
+        .{ .tool = .{ .id = 2, .call_id = "call_1", .name = "run", .arguments = "{\"c\":1}", .state = .{ .completed = .{ .output = "ok", .duration_ms = 3 } } } },
+    };
+    const messages = [_]wire.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 1,
+        .agent = "main",
+        .content = &content,
+        .time = .{ .created_at_ms = 0 },
+    } }};
+
+    const result = try build(arena.allocator(), &messages, .{});
+    try testing.expectEqual(@as(usize, 3), result.blocks.len);
+    try testing.expectEqualStrings("let me check", result.blocks[0].value.text);
+    try testing.expectEqual(ir.Role.assistant, result.blocks[1].role);
+    try testing.expectEqualStrings("call_1", result.blocks[1].value.tool_use.call_id);
+    try testing.expectEqual(ir.Role.user, result.blocks[2].role);
+    const tr = result.blocks[2].value.tool_result;
+    try testing.expectEqualStrings("ok", tr.content);
+    try testing.expect(!tr.is_error);
+}
+
+test "reasoning replays only when the provenance matches the target" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const content = [_]wire.message.AssistantPart{
+        .{ .reasoning = .{ .id = 1, .text = "ponder", .signature = "sig" } },
+        .{ .text = .{ .id = 2, .text = "answer" } },
+    };
+    const messages = [_]wire.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 1,
+        .agent = "main",
+        .content = &content,
+        .time = .{ .created_at_ms = 0 },
+        .provenance = .{ .protocol = .@"anthropic-messages", .model = "claude" },
+    } }};
+
+    const dropped = try build(arena.allocator(), &messages, .{});
+    try testing.expectEqual(@as(usize, 1), dropped.blocks.len); // A null target drops reasoning.
+
+    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .@"anthropic-messages", .model = "claude" } });
+    try testing.expectEqual(@as(usize, 2), kept.blocks.len);
+    try testing.expectEqualStrings("ponder", kept.blocks[0].value.reasoning.text);
+
+    const mismatch = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .@"anthropic-messages", .model = "other" } });
+    try testing.expectEqual(@as(usize, 1), mismatch.blocks.len);
+}
