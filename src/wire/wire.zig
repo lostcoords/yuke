@@ -23,6 +23,8 @@ pub const tool = @import("tool.zig");
 pub const view = @import("view.zig");
 pub const rpc = @import("rpc.zig");
 pub const registry = @import("registry.zig");
+pub const clone = @import("clone.zig");
+pub const dupe = clone.dupe;
 
 test {
     @import("std").testing.refAllDecls(@This());
