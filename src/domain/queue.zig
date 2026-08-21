@@ -105,7 +105,9 @@ pub const Queue = struct {
 const testing = std.testing;
 const zero_session: ids.SessionId = @splat(0);
 
-fn queued(input_id: ids.InputId, text: []const u8) input.InputQueuedData {
+// `text` is comptime so the content literal promotes to a static const. A runtime
+// value would make `&.{...}` a dangling pointer to this frame.
+fn queued(input_id: ids.InputId, comptime text: []const u8) input.InputQueuedData {
     return .{
         .session_id = zero_session,
         .input = .{
