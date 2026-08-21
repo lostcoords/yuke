@@ -74,6 +74,43 @@ pub fn build(b: *std.Build) void {
     });
     const run_domain_tests = b.addRunArtifact(domain_tests);
 
+    // The provider package: request serializers + streaming SSE decoders. Imports wire.
+    const provider = b.addModule("provider", .{
+        .root_source_file = b.path("src/provider/provider.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    provider.addImport("wire", wire);
+    const provider_tests = b.addTest(.{
+        .root_module = provider,
+    });
+    const run_provider_tests = b.addRunArtifact(provider_tests);
+
+    // The daemon database: the shared SQLite stores (catalog today). Imports sql + provider.
+    const database = b.addModule("database", .{
+        .root_source_file = b.path("src/database/database.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    database.addImport("sql", sql);
+    database.addImport("provider", provider);
+    database.addImport("wire", wire); // the generated queries import wire
+    database.addImport("zqlite", zqlite.module("zqlite"));
+    const database_tests = b.addTest(.{
+        .root_module = database,
+    });
+    const run_database_tests = b.addRunArtifact(database_tests);
+
+    // Fail the build if the committed queries drift from the SQL sources.
+    const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
+    database_sqlgen_check.addArgs(&.{
+        "--migrations",  "src/database/migrations",
+        "--queries",     "src/database/queries",
+        "--queries-out", "src/database/queries_gen.zig",
+        "--check",
+    });
+    database_sqlgen_check.setCwd(b.path("."));
+
     const wiregen = b.createModule(.{
         .root_source_file = b.path("tools/wiregen/gen.zig"),
         .target = target,
@@ -93,6 +130,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
     test_step.dependOn(&run_domain_tests.step);
+    test_step.dependOn(&run_provider_tests.step);
+    test_step.dependOn(&run_database_tests.step);
+    test_step.dependOn(&database_sqlgen_check.step);
 
     // Regenerate schema/wire.json in place from the Zig wire types.
     const write_schema = b.addUpdateSourceFiles();
