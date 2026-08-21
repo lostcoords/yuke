@@ -16,6 +16,7 @@ git config core.hooksPath .githooks
 ```sh
 zig build test          # build and run the wire tests
 zig build gen-schema    # regenerate schema/wire.json from the Zig types
+zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 ```
 
 ## License
