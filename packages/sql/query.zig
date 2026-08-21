@@ -620,12 +620,18 @@ fn bindValue(comptime T: type, statement: zqlite.Stmt, index: usize, value: T) !
 
 const ByteStorage = enum { text, blob };
 
+// SQLITE_TRANSIENT (-1 as a fn pointer) trips Zig's arm64 alignment check; a data pointer is
+// ABI-identical and SQLite only compares the sentinel, never calls it.
+const sqlite_transient: ?*const anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+extern fn sqlite3_bind_text(?*c.sqlite3_stmt, c_int, [*c]const u8, c_int, ?*const anyopaque) c_int;
+extern fn sqlite3_bind_blob(?*c.sqlite3_stmt, c_int, ?*const anyopaque, c_int, ?*const anyopaque) c_int;
+
 fn bindBytes(statement: zqlite.Stmt, index: usize, bytes: []const u8, storage: ByteStorage) !void {
     const len = std.math.cast(c_int, bytes.len) orelse return error.TooBig;
     const sqlite_index: c_int = @intCast(index + 1);
     const rc = switch (storage) {
-        .text => c.sqlite3_bind_text(statement.stmt, sqlite_index, bytes.ptr, len, c.SQLITE_TRANSIENT),
-        .blob => c.sqlite3_bind_blob(statement.stmt, sqlite_index, bytes.ptr, len, c.SQLITE_TRANSIENT),
+        .text => sqlite3_bind_text(statement.stmt, sqlite_index, bytes.ptr, len, sqlite_transient),
+        .blob => sqlite3_bind_blob(statement.stmt, sqlite_index, bytes.ptr, len, sqlite_transient),
     };
     if (rc != c.SQLITE_OK) return sqliteErrorFromCode(rc);
 }
