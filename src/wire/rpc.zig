@@ -1,0 +1,454 @@
+//! RPC request, response, and notification envelopes.
+
+const std = @import("std");
+const auth = @import("auth.zig");
+const catalog = @import("catalog.zig");
+const cron = @import("cron.zig");
+const enums = @import("enums.zig");
+const ids = @import("ids.zig");
+const initialize = @import("initialize.zig");
+const input = @import("input.zig");
+const message = @import("message.zig");
+const misc = @import("misc.zig");
+const permission = @import("permission.zig");
+const run = @import("run.zig");
+const session = @import("session.zig");
+const subscription = @import("subscription.zig");
+const tool = @import("tool.zig");
+const workspace = @import("workspace.zig");
+
+/// Client request parameter envelope.
+pub const RequestParams = union(enum) {
+    initialize_params: initialize.InitializeParams,
+    session_list_params: session.SessionListParams,
+    create_session: misc.CreateSession,
+    session_patch_params: session.SessionPatchParams,
+    session_remove_params: session.SessionRemoveParams,
+    session_fork_params: session.SessionForkParams,
+    session_compact_params: session.SessionCompactParams,
+    session_rewind_params: session.SessionRewindParams,
+    session_send_input_params: session.SessionSendInputParams,
+    session_cancel_input_params: session.SessionCancelInputParams,
+    session_cancel_run_params: session.SessionCancelRunParams,
+    session_resync_params: session.SessionResyncParams,
+    session_history_params: session.SessionHistoryParams,
+    permission_decide_params: permission.PermissionDecideParams,
+    session_config_params: session.SessionConfigParams,
+    subscription_set_params: subscription.SubscriptionSetParams,
+    catalog_list_params: catalog.CatalogListParams,
+    empty: misc.Empty,
+    auth_set_api_key_params: auth.AuthSetApiKeyParams,
+    auth_login_params: auth.AuthLoginParams,
+    auth_cancel_login_params: auth.AuthCancelLoginParams,
+    auth_logout_params: auth.AuthLogoutParams,
+    workspace_describe_params: workspace.WorkspaceDescribeParams,
+    workspace_browse_params: workspace.WorkspaceBrowseParams,
+    workspace_ref: workspace.WorkspaceRef,
+    permission_forget_params: permission.PermissionForgetParams,
+    cron_create_params: cron.CronCreateParams,
+    cron_patch_params: cron.CronPatchParams,
+    cron_job_ref: cron.CronJobRef,
+    cron_list_params: cron.CronListParams,
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        switch (self) {
+            inline else => |payload| try jw.write(payload),
+        }
+    }
+};
+
+/// Server response result envelope.
+pub const ResponseResult = union(enum) {
+    initialize_result: misc.InitializeResult,
+    session_list_result: session.SessionListResult,
+    session_result: session.SessionResult,
+    empty: misc.Empty,
+    session_compact_result: session.SessionCompactResult,
+    session_send_input_result: session.SessionSendInputResult,
+    session_cancel_input_result: session.SessionCancelInputResult,
+    session_cancel_run_result: session.SessionCancelRunResult,
+    session_resync_result: session.SessionResyncResult,
+    session_history_result: session.SessionHistoryResult,
+    session_config_result: session.SessionConfigResult,
+    catalog_list_result: catalog.CatalogListResult,
+    catalog_refresh_result: catalog.CatalogRefreshResult,
+    auth_list_result: auth.AuthListResult,
+    auth_set_api_key_result: auth.AuthSetApiKeyResult,
+    auth_login_result: auth.AuthLoginResult,
+    workspace_describe_result: workspace.WorkspaceDescribeResult,
+    workspace_browse_result: workspace.WorkspaceBrowseResult,
+    workspace_remove_result: workspace.WorkspaceRemoveResult,
+    workspace_skills_result: workspace.WorkspaceSkillsResult,
+    permission_rules_result: permission.PermissionRulesResult,
+    cron_job_result: cron.CronJobResult,
+    cron_list_result: cron.CronListResult,
+    cron_run_now_result: cron.CronRunNowResult,
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        switch (self) {
+            inline else => |payload| try jw.write(payload),
+        }
+    }
+};
+
+/// Server broadcast data envelope.
+pub const BroadcastData = union(enum) {
+    session_summary_changed_data: session.SessionSummaryChangedData,
+    session_activity_changed_data: session.SessionActivityChangedData,
+    session_removed_data: session.SessionRemovedData,
+    workspace_created_data: workspace.WorkspaceCreatedData,
+    workspace_removed_data: workspace.WorkspaceRemovedData,
+    permission_rules_changed_data: permission.PermissionRulesChangedData,
+    catalog_changed_data: catalog.CatalogChangedData,
+    auth_login_finished_data: auth.AuthLoginFinishedData,
+    auth_changed_data: auth.AuthChangedData,
+    cron_created_data: cron.CronCreatedData,
+    cron_updated_data: cron.CronUpdatedData,
+    cron_removed_data: cron.CronRemovedData,
+    notice: misc.Notice,
+    message_committed_data: message.MessageCommittedData,
+    run_started_data: run.RunStartedData,
+    run_done_data: run.RunDoneData,
+    config_changed_data: misc.ConfigChangedData,
+    transcript_truncated_data: misc.TranscriptTruncatedData,
+    message_started_data: message.MessageStartedData,
+    message_discarded_data: message.MessageDiscardedData,
+    message_part_added_data: message.MessagePartAddedData,
+    message_part_delta_data: message.MessagePartDeltaData,
+    tool_state_changed_data: tool.ToolStateChangedData,
+    tool_output_delta_data: message.ToolOutputDeltaData,
+    input_queued_data: input.InputQueuedData,
+    input_canceled_data: input.InputCanceledData,
+    session_deltas_shed_data: session.SessionDeltasShedData,
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        switch (self) {
+            inline else => |payload| try jw.write(payload),
+        }
+    }
+};
+
+/// RPC method routing specification.
+pub const MethodSpec = struct {
+    name: enums.MethodName,
+    params: type,
+    result: type,
+    params_optional: bool,
+};
+
+/// RPC method routing table.
+pub const methods = [_]MethodSpec{
+    .{ .name = .initialize, .params = initialize.InitializeParams, .result = misc.InitializeResult, .params_optional = false },
+    .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
+    .{ .name = .@"session.create", .params = misc.CreateSession, .result = session.SessionResult, .params_optional = true },
+    .{ .name = .@"session.patch", .params = session.SessionPatchParams, .result = session.SessionResult, .params_optional = false },
+    .{ .name = .@"session.remove", .params = session.SessionRemoveParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"session.fork", .params = session.SessionForkParams, .result = session.SessionResult, .params_optional = false },
+    .{ .name = .@"session.compact", .params = session.SessionCompactParams, .result = session.SessionCompactResult, .params_optional = false },
+    .{ .name = .@"session.rewind", .params = session.SessionRewindParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"session.send_input", .params = session.SessionSendInputParams, .result = session.SessionSendInputResult, .params_optional = false },
+    .{ .name = .@"session.cancel_input", .params = session.SessionCancelInputParams, .result = session.SessionCancelInputResult, .params_optional = false },
+    .{ .name = .@"session.cancel_run", .params = session.SessionCancelRunParams, .result = session.SessionCancelRunResult, .params_optional = false },
+    .{ .name = .@"session.resync", .params = session.SessionResyncParams, .result = session.SessionResyncResult, .params_optional = false },
+    .{ .name = .@"session.history", .params = session.SessionHistoryParams, .result = session.SessionHistoryResult, .params_optional = false },
+    .{ .name = .@"permission.decide", .params = permission.PermissionDecideParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"session.config", .params = session.SessionConfigParams, .result = session.SessionConfigResult, .params_optional = false },
+    .{ .name = .@"subscription.set", .params = subscription.SubscriptionSetParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"catalog.list", .params = catalog.CatalogListParams, .result = catalog.CatalogListResult, .params_optional = true },
+    .{ .name = .@"catalog.refresh", .params = misc.Empty, .result = catalog.CatalogRefreshResult, .params_optional = true },
+    .{ .name = .@"auth.list", .params = misc.Empty, .result = auth.AuthListResult, .params_optional = true },
+    .{ .name = .@"auth.set_api_key", .params = auth.AuthSetApiKeyParams, .result = auth.AuthSetApiKeyResult, .params_optional = false },
+    .{ .name = .@"auth.login", .params = auth.AuthLoginParams, .result = auth.AuthLoginResult, .params_optional = false },
+    .{ .name = .@"auth.cancel_login", .params = auth.AuthCancelLoginParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"auth.logout", .params = auth.AuthLogoutParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"workspace.describe", .params = workspace.WorkspaceDescribeParams, .result = workspace.WorkspaceDescribeResult, .params_optional = false },
+    .{ .name = .@"workspace.browse", .params = workspace.WorkspaceBrowseParams, .result = workspace.WorkspaceBrowseResult, .params_optional = true },
+    .{ .name = .@"workspace.remove", .params = workspace.WorkspaceRef, .result = workspace.WorkspaceRemoveResult, .params_optional = false },
+    .{ .name = .@"workspace.skills", .params = workspace.WorkspaceRef, .result = workspace.WorkspaceSkillsResult, .params_optional = false },
+    .{ .name = .@"permission.rules", .params = workspace.WorkspaceRef, .result = permission.PermissionRulesResult, .params_optional = false },
+    .{ .name = .@"permission.forget", .params = permission.PermissionForgetParams, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"cron.create", .params = cron.CronCreateParams, .result = cron.CronJobResult, .params_optional = false },
+    .{ .name = .@"cron.patch", .params = cron.CronPatchParams, .result = cron.CronJobResult, .params_optional = false },
+    .{ .name = .@"cron.remove", .params = cron.CronJobRef, .result = misc.Empty, .params_optional = false },
+    .{ .name = .@"cron.list", .params = cron.CronListParams, .result = cron.CronListResult, .params_optional = true },
+    .{ .name = .@"cron.run_now", .params = cron.CronJobRef, .result = cron.CronRunNowResult, .params_optional = false },
+};
+
+/// Broadcast routing specification.
+pub const BroadcastSpec = struct {
+    name: enums.BroadcastName,
+    data: type,
+};
+
+/// Broadcast routing table.
+pub const broadcasts = [_]BroadcastSpec{
+    .{ .name = .@"session.summary_changed", .data = session.SessionSummaryChangedData },
+    .{ .name = .@"session.activity_changed", .data = session.SessionActivityChangedData },
+    .{ .name = .@"session.removed", .data = session.SessionRemovedData },
+    .{ .name = .@"workspace.created", .data = workspace.WorkspaceCreatedData },
+    .{ .name = .@"workspace.removed", .data = workspace.WorkspaceRemovedData },
+    .{ .name = .@"permission.rules_changed", .data = permission.PermissionRulesChangedData },
+    .{ .name = .@"catalog.changed", .data = catalog.CatalogChangedData },
+    .{ .name = .@"auth.login_finished", .data = auth.AuthLoginFinishedData },
+    .{ .name = .@"auth.changed", .data = auth.AuthChangedData },
+    .{ .name = .@"cron.created", .data = cron.CronCreatedData },
+    .{ .name = .@"cron.updated", .data = cron.CronUpdatedData },
+    .{ .name = .@"cron.removed", .data = cron.CronRemovedData },
+    .{ .name = .notice, .data = misc.Notice },
+    .{ .name = .@"message.committed", .data = message.MessageCommittedData },
+    .{ .name = .@"run.started", .data = run.RunStartedData },
+    .{ .name = .@"run.done", .data = run.RunDoneData },
+    .{ .name = .@"config.changed", .data = misc.ConfigChangedData },
+    .{ .name = .@"transcript.truncated", .data = misc.TranscriptTruncatedData },
+    .{ .name = .@"message.started", .data = message.MessageStartedData },
+    .{ .name = .@"message.discarded", .data = message.MessageDiscardedData },
+    .{ .name = .@"message.part_added", .data = message.MessagePartAddedData },
+    .{ .name = .@"message.part_delta", .data = message.MessagePartDeltaData },
+    .{ .name = .@"tool.state_changed", .data = tool.ToolStateChangedData },
+    .{ .name = .@"tool.output_delta", .data = message.ToolOutputDeltaData },
+    .{ .name = .@"input.queued", .data = input.InputQueuedData },
+    .{ .name = .@"input.canceled", .data = input.InputCanceledData },
+    .{ .name = .@"session.deltas_shed", .data = session.SessionDeltasShedData },
+};
+
+fn requestParamsFromValue(a: std.mem.Allocator, method: enums.MethodName, pv: std.json.Value, optional_pv: std.json.Value, o: std.json.ParseOptions) !RequestParams {
+    inline for (methods) |spec| {
+        if (method == spec.name) {
+            const value = if (spec.params_optional) optional_pv else pv;
+            inline for (@typeInfo(RequestParams).@"union".fields) |field| {
+                if (field.type == spec.params)
+                    return @unionInit(RequestParams, field.name, try std.json.parseFromValueLeaky(spec.params, a, value, o));
+            }
+            return error.InvalidEnumTag;
+        }
+    }
+    return error.InvalidEnumTag;
+}
+
+fn broadcastDataFromValue(a: std.mem.Allocator, method: enums.BroadcastName, v: std.json.Value, o: std.json.ParseOptions) !BroadcastData {
+    inline for (broadcasts) |spec| {
+        if (method == spec.name) {
+            inline for (@typeInfo(BroadcastData).@"union".fields) |field| {
+                if (field.type == spec.data)
+                    return @unionInit(BroadcastData, field.name, try std.json.parseFromValueLeaky(spec.data, a, v, o));
+            }
+            return error.InvalidEnumTag;
+        }
+    }
+    return error.InvalidEnumTag;
+}
+
+fn resultFromTable(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
+    inline for (methods) |spec| {
+        if (method == spec.name) {
+            inline for (@typeInfo(ResponseResult).@"union".fields) |field| {
+                if (field.type == spec.result)
+                    return @unionInit(ResponseResult, field.name, try std.json.parseFromValueLeaky(spec.result, a, v, o));
+            }
+            return error.InvalidEnumTag;
+        }
+    }
+    return error.InvalidEnumTag;
+}
+
+/// RPC response envelope.
+pub const Response = union(enum) {
+    ok: ResponseOk,
+    err: ResponseError,
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        switch (self) {
+            inline else => |payload| try jw.write(payload),
+        }
+    }
+};
+
+/// RPC request envelope.
+pub const Request = struct {
+    id: ids.RequestId,
+    method: enums.MethodName,
+    params: RequestParams,
+
+    /// Decode a tagged wire union from JSON.
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        const v = try std.json.Value.jsonParse(a, s, o);
+        return jsonParseFromValue(a, v, o);
+    }
+
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        const obj = switch (v) {
+            .object => |obj| obj,
+            else => return error.UnexpectedToken,
+        };
+        const id_value = obj.get("id") orelse return error.MissingField;
+        const id = switch (id_value) {
+            .string => |id| id,
+            else => return error.UnexpectedToken,
+        };
+        const method_value = obj.get("method") orelse return error.MissingField;
+        const method_string = switch (method_value) {
+            .string => |method| method,
+            else => return error.UnexpectedToken,
+        };
+        const method = std.meta.stringToEnum(enums.MethodName, method_string) orelse return error.InvalidEnumTag;
+        const pv = obj.get("params") orelse std.json.Value{ .object = .empty };
+        const optional_pv = switch (pv) {
+            .null => std.json.Value{ .object = .empty },
+            else => pv,
+        };
+        var arm_opts = o;
+        arm_opts.ignore_unknown_fields = true;
+
+        const params = try requestParamsFromValue(a, method, pv, optional_pv, arm_opts);
+
+        return .{ .id = id, .method = method, .params = params };
+    }
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        try jw.beginObject();
+        try jw.objectField("id");
+        try jw.write(self.id);
+        try jw.objectField("method");
+        try jw.write(@tagName(self.method));
+        try jw.objectField("params");
+        try jw.write(self.params);
+        try jw.endObject();
+    }
+};
+
+/// Successful RPC response envelope.
+pub const ResponseOk = struct {
+    id: ids.RequestId,
+    result: ResponseResult,
+};
+
+/// Failed RPC response envelope.
+pub const ResponseError = struct {
+    id: ids.RequestId,
+    @"error": misc.ErrorObject,
+};
+
+/// RPC notification envelope.
+pub const Notification = struct {
+    method: enums.BroadcastName,
+    params: BroadcastData,
+
+    /// Decode a tagged wire union from JSON.
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        const v = try std.json.Value.jsonParse(a, s, o);
+        return jsonParseFromValue(a, v, o);
+    }
+
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        const obj = switch (v) {
+            .object => |obj| obj,
+            else => return error.UnexpectedToken,
+        };
+        const method_value = obj.get("method") orelse return error.MissingField;
+        const method_string = switch (method_value) {
+            .string => |method| method,
+            else => return error.UnexpectedToken,
+        };
+        const method = std.meta.stringToEnum(enums.BroadcastName, method_string) orelse return error.InvalidEnumTag;
+        const pv = obj.get("params") orelse return error.MissingField;
+        var arm_opts = o;
+        arm_opts.ignore_unknown_fields = true;
+
+        const params = try broadcastDataFromValue(a, method, pv, arm_opts);
+
+        return .{ .method = method, .params = params };
+    }
+
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        try jw.beginObject();
+        try jw.objectField("method");
+        try jw.write(@tagName(self.method));
+        try jw.objectField("params");
+        try jw.write(self.params);
+        try jw.endObject();
+    }
+};
+
+/// Decode a method result from its JSON value.
+pub fn resultFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
+    var arm_opts = o;
+    arm_opts.ignore_unknown_fields = true;
+    return resultFromTable(a, method, v, arm_opts);
+}
+
+/// Decode a method response from its JSON value.
+pub fn responseFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !Response {
+    const obj = switch (v) {
+        .object => |obj| obj,
+        else => return error.UnexpectedToken,
+    };
+    var arm_opts = o;
+    arm_opts.ignore_unknown_fields = true;
+    if (obj.get("error") != null)
+        return .{ .err = try std.json.parseFromValueLeaky(ResponseError, a, v, arm_opts) };
+
+    const id_value = obj.get("id") orelse return error.MissingField;
+    const id = switch (id_value) {
+        .string => |id| id,
+        else => return error.UnexpectedToken,
+    };
+    const result = obj.get("result") orelse return error.MissingField;
+    return .{ .ok = .{ .id = id, .result = try resultFromValue(a, method, result, o) } };
+}
+
+const testing = std.testing;
+const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "request envelope round-trips" {
+    const json =
+        \\{"id":"req-1","method":"initialize","params":{"client":{"name":"test","version":"1"}}}
+    ;
+    const parsed = try std.json.parseFromSlice(Request, testing.allocator, json, parse_opts);
+    defer parsed.deinit();
+    try testing.expectEqualStrings("req-1", parsed.value.id);
+    try testing.expect(parsed.value.params == .initialize_params);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(
+        \\{"id":"req-1","method":"initialize","params":{"protocol":1,"client":{"name":"test","version":"1"}}}
+    , buf.written());
+}
+
+test "notification envelope round-trips" {
+    const json =
+        \\{"method":"notice","params":{"level":"info","source":"test","message":"hello"}}
+    ;
+    const parsed = try std.json.parseFromSlice(Notification, testing.allocator, json, parse_opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value.params == .notice);
+    try testing.expectEqualStrings("hello", parsed.value.params.notice.message);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}
+
+test "result dispatch and response error" {
+    const result_json =
+        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"cron_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
+    ;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result_value = try std.json.parseFromSlice(std.json.Value, arena.allocator(), result_json, parse_opts);
+    const result = try resultFromValue(arena.allocator(), .initialize, result_value.value, parse_opts);
+    try testing.expect(result == .initialize_result);
+    try testing.expectEqual(@as(u32, 1), result.initialize_result.protocol);
+
+    const error_json =
+        \\{"id":"req-1","error":{"code":-32602,"message":"bad request"}}
+    ;
+    const parsed = try std.json.parseFromSlice(ResponseError, testing.allocator, error_json, parse_opts);
+    defer parsed.deinit();
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(error_json, buf.written());
+}

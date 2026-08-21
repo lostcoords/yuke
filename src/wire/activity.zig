@@ -1,0 +1,104 @@
+//! Session activity state updates.
+
+const std = @import("std");
+const ids = @import("ids.zig");
+const enums = @import("enums.zig");
+const tagged = @import("tagged.zig");
+
+/// Session activity state; locator fields let clients detect drift and resync.
+pub const ActivityState = union(enum) {
+    idle: ActivityStateIdle,
+    building: ActivityStateBuilding,
+    running: ActivityStateRunning,
+    reasoning: ActivityStateReasoning,
+    waiting_permission: ActivityStateWaitingPermission,
+    running_tool: ActivityStateRunningTool,
+    retrying: ActivityStateRetrying,
+    compacting: ActivityStateCompacting,
+
+    /// Decode a tagged wire union from JSON.
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        return tagged.jsonParse(@This(), a, s, o);
+    }
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        return tagged.fromValue(@This(), a, v, o);
+    }
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        return tagged.stringify(@This(), self, jw);
+    }
+};
+
+/// Runtime is being built as the first phase of a run.
+pub const ActivityStateBuilding = struct {
+    run_id: ids.RunId,
+    started_at_ms: u64,
+};
+
+/// Compaction model call is active.
+pub const ActivityStateCompacting = struct {
+    run_id: ids.RunId,
+    reason: enums.CompactionReason,
+    started_at_ms: u64,
+};
+
+/// No active work.
+pub const ActivityStateIdle = struct {};
+
+/// Model is producing reasoning.
+pub const ActivityStateReasoning = struct {
+    run_id: ids.RunId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+};
+
+/// Run is waiting to retry.
+pub const ActivityStateRetrying = struct {
+    run_id: ids.RunId,
+    attempt: u64,
+    max_attempts: u64,
+    next_at_ms: u64,
+    code: enums.RunErrorCode,
+    message: []const u8,
+};
+
+/// Run is active.
+pub const ActivityStateRunning = struct {
+    run_id: ids.RunId,
+    started_at_ms: u64,
+};
+
+/// Tool call is running.
+pub const ActivityStateRunningTool = struct {
+    run_id: ids.RunId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+    tool_name: []const u8,
+    started_at_ms: u64,
+};
+
+/// Tool call awaits permission.
+pub const ActivityStateWaitingPermission = struct {
+    run_id: ids.RunId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+    tool_name: []const u8,
+    requested_at_ms: u64,
+};
+
+const testing = std.testing;
+const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "activity state running_tool round-trips" {
+    const json =
+        \\{"type":"running_tool","run_id":7,"message_id":8,"part_id":9,"tool_name":"search","started_at_ms":100}
+    ;
+    const parsed = try std.json.parseFromSlice(ActivityState, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value == .running_tool);
+    try testing.expectEqualStrings("search", parsed.value.running_tool.tool_name);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}

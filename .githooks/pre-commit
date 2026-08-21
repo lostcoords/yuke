@@ -1,0 +1,14 @@
+#!/bin/sh
+# Keep schema/wire.json in sync with the Zig wire types.
+# Only runs when wire sources or the contract are staged.
+if git diff --cached --quiet -- src/wire schema/wire.json; then
+    exit 0
+fi
+
+zig build gen-schema || exit 1
+
+if ! git diff --quiet -- schema/wire.json; then
+    echo "error: schema/wire.json was out of date and has been regenerated." >&2
+    echo "       run 'git add schema/wire.json' and commit again." >&2
+    exit 1
+fi

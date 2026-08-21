@@ -1,0 +1,94 @@
+//! Tool execution state and updates.
+
+const std = @import("std");
+const ids = @import("ids.zig");
+const enums = @import("enums.zig");
+const tagged = @import("tagged.zig");
+const permission = @import("permission.zig");
+const view = @import("view.zig");
+
+/// Lifecycle state of a tool part. Non-owning.
+pub const ToolState = union(enum) {
+    pending: ToolStatePending,
+    waiting_permission: ToolStateWaitingPermission,
+    running: ToolStateRunning,
+    completed: ToolStateCompleted,
+    @"error": ToolStateError,
+    denied: ToolStateDenied,
+    canceled: ToolStateCanceled,
+
+    /// Decode a tagged wire union from JSON.
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        return tagged.jsonParse(@This(), a, s, o);
+    }
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        return tagged.fromValue(@This(), a, v, o);
+    }
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        return tagged.stringify(@This(), self, jw);
+    }
+};
+
+/// Call was canceled.
+pub const ToolStateCanceled = struct {
+    duration_ms: ?u64 = null,
+};
+
+/// Payload for `tool.state_changed`.
+pub const ToolStateChangedData = struct {
+    session_id: ids.SessionId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+    state: ToolState,
+    permission_state: ?permission.PermissionState = null,
+};
+
+/// Call finished successfully.
+pub const ToolStateCompleted = struct {
+    output: []const u8,
+    view: ?[]const view.View = null,
+    duration_ms: u64,
+};
+
+/// Permission was denied.
+pub const ToolStateDenied = struct {
+    reason: []const u8,
+    denied_by: enums.DeniedBy,
+};
+
+/// Call failed.
+pub const ToolStateError = struct {
+    @"error": []const u8,
+    view: ?[]const view.View = null,
+    duration_ms: u64,
+};
+
+/// Not yet started.
+pub const ToolStatePending = struct {};
+
+/// Call is executing.
+pub const ToolStateRunning = struct {
+    started_at_ms: u64,
+    output: ?[]const u8 = null,
+};
+
+/// Awaiting a permission decision.
+pub const ToolStateWaitingPermission = struct {};
+
+const testing = std.testing;
+const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "tool state running preserves an optional output" {
+    const json =
+        \\{"type":"running","started_at_ms":100,"output":"partial"}
+    ;
+    const parsed = try std.json.parseFromSlice(ToolState, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value == .running);
+    try testing.expectEqualStrings("partial", parsed.value.running.output.?);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}
