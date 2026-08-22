@@ -43,6 +43,11 @@ const Output = struct {
     tool: ?event.BlockId = null,
 };
 
+const PartSlot = struct {
+    slot: *?event.BlockId,
+    kind: event.BlockKind,
+};
+
 /// An active stream block. The reducer owns tool fields until `deinit`.
 const Block = struct {
     kind: event.BlockKind,
@@ -155,15 +160,9 @@ pub const Reducer = struct {
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
-        if (std.mem.eql(u8, part_type, "output_text")) {
-            if (output.text != null) return error.Protocol;
-            const id = try self.startBlock(.text, out);
-            output.text = id;
-        } else if (std.mem.eql(u8, part_type, "summary_text")) {
-            if (output.reasoning != null) return error.Protocol;
-            const id = try self.startBlock(.reasoning, out);
-            output.reasoning = id;
-        }
+        const part_slot = partSlot(output, part_type) orelse return;
+        if (part_slot.slot.* != null) return error.Protocol;
+        part_slot.slot.* = try self.startBlock(part_slot.kind, out);
     }
 
     fn onTextDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -211,11 +210,8 @@ pub const Reducer = struct {
         const part = json.fieldGet(root, "part") orelse return error.Protocol;
         const part_type = json.fieldStr(part, "type") orelse return error.Protocol;
 
-        if (std.mem.eql(u8, part_type, "output_text")) {
-            if (output.text) |id| try self.stopBlockIfOpen(id, out);
-        } else if (std.mem.eql(u8, part_type, "summary_text")) {
-            if (output.reasoning) |id| try self.stopBlockIfOpen(id, out);
-        }
+        const part_slot = partSlot(output, part_type) orelse return;
+        if (part_slot.slot.*) |id| try self.stopBlockIfOpen(id, out);
     }
 
     fn onToolArgumentsDone(self: *Reducer, root: std.json.Value) Error!void {
@@ -260,7 +256,7 @@ pub const Reducer = struct {
     fn onCompleted(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (self.done_emitted) return error.Protocol;
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
-        const status = childStr(response, "status") orelse return error.Protocol;
+        const status = json.fieldStr(.{ .object = response }, "status") orelse return error.Protocol;
         if (!std.mem.eql(u8, status, "completed")) return error.Protocol;
         self.recordUsage(response);
         self.stop_reason = .stop;
@@ -405,23 +401,18 @@ fn mapIncompleteReason(raw: []const u8) wire.enums.StopReason {
 
 /// The output index must be present, non-negative, and representable as `usize`.
 fn outputIndex(root: std.json.Value) Error!usize {
-    const n = json.fieldInt(root, "output_index") orelse return error.Protocol;
-    if (n < 0) return error.Protocol;
-    return std.math.cast(usize, n) orelse error.Protocol;
+    return json.fieldIndex(root, "output_index") orelse error.Protocol;
 }
 
 /// The content index must be present, non-negative, and representable as `usize`.
 fn contentIndex(root: std.json.Value) Error!usize {
-    const n = json.fieldInt(root, "content_index") orelse return error.Protocol;
-    if (n < 0) return error.Protocol;
-    return std.math.cast(usize, n) orelse error.Protocol;
+    return json.fieldIndex(root, "content_index") orelse error.Protocol;
 }
 
-fn childStr(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    return switch (o.get(key) orelse return null) {
-        .string => |s| s,
-        else => null,
-    };
+fn partSlot(output: *Output, part_type: []const u8) ?PartSlot {
+    if (std.mem.eql(u8, part_type, "output_text")) return .{ .slot = &output.text, .kind = .text };
+    if (std.mem.eql(u8, part_type, "summary_text")) return .{ .slot = &output.reasoning, .kind = .reasoning };
+    return null;
 }
 
 const testing = std.testing;

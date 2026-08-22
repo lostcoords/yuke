@@ -30,6 +30,14 @@ pub const CatalogModel = struct {
 const stringify_opts: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
+fn loadRows(comptime T: type, arena: std.mem.Allocator, iterator: anytype) ![]const T {
+    var out: std.ArrayList(T) = .empty;
+    while (try iterator.next(arena)) |row| {
+        try out.append(arena, try std.json.parseFromSliceLeaky(T, arena, row.value.data, parse_opts));
+    }
+    return out.items;
+}
+
 /// Replace the snapshot in one transaction. Deletes and inserts commit together or roll back.
 /// `scratch` holds each JSON blob until SQLite copies it.
 pub fn replace(
@@ -62,24 +70,16 @@ pub fn replace(
 
 /// Load providers into `arena` in id order. The result borrows `arena`.
 pub fn providers(db: *Database, arena: std.mem.Allocator) ![]const CatalogProvider {
-    var out: std.ArrayList(CatalogProvider) = .empty;
     var it = try db.queries.select_providers.rows(.{});
     defer it.deinit();
-    while (try it.next(arena)) |row| {
-        try out.append(arena, try std.json.parseFromSliceLeaky(CatalogProvider, arena, row.value.data, parse_opts));
-    }
-    return out.items;
+    return loadRows(CatalogProvider, arena, &it);
 }
 
 /// Load models for `provider_id` into `arena` in id order. The result borrows `arena`.
 pub fn models(db: *Database, arena: std.mem.Allocator, provider_id: []const u8) ![]const ModelBinding {
-    var out: std.ArrayList(ModelBinding) = .empty;
     var it = try db.queries.select_models.rows(.{ .provider_id = provider_id });
     defer it.deinit();
-    while (try it.next(arena)) |row| {
-        try out.append(arena, try std.json.parseFromSliceLeaky(ModelBinding, arena, row.value.data, parse_opts));
-    }
-    return out.items;
+    return loadRows(ModelBinding, arena, &it);
 }
 
 /// Return the last feed etag from `arena`, or null. The result borrows `arena`.

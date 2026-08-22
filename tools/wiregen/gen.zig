@@ -278,13 +278,7 @@ fn writeUnion(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.St
             try jw.write(doc);
         }
         try jw.objectField("type");
-        if (std.mem.eql(u8, entry.name, "BroadcastData") and std.mem.eql(u8, field.name, "message_part_delta_data")) {
-            try jw.write("MessagePartDeltaData");
-        } else if (std.mem.eql(u8, entry.name, "BroadcastData") and std.mem.eql(u8, field.name, "tool_output_delta_data")) {
-            try jw.write("ToolOutputDeltaData");
-        } else {
-            try jw.write(shortName(@typeName(field.type)));
-        }
+        try jw.write(broadcastType("", entry.name, field.name, field.type));
         try jw.endObject();
     }
     try jw.endArray();
@@ -343,9 +337,18 @@ fn writeMethods(jw: *std.json.Stringify) !void {
     try jw.endArray();
 }
 
-fn broadcastType(comptime name: []const u8, comptime T: type) []const u8 {
-    if (std.mem.eql(u8, name, "message.part_delta")) return "MessagePartDeltaData";
-    if (std.mem.eql(u8, name, "tool.output_delta")) return "ToolOutputDeltaData";
+fn broadcastType(
+    comptime name: []const u8,
+    comptime union_name: []const u8,
+    comptime field_name: []const u8,
+    comptime T: type,
+) []const u8 {
+    if (std.mem.eql(u8, name, "message.part_delta") or
+        (std.mem.eql(u8, union_name, "BroadcastData") and std.mem.eql(u8, field_name, "message_part_delta_data")))
+        return "MessagePartDeltaData";
+    if (std.mem.eql(u8, name, "tool.output_delta") or
+        (std.mem.eql(u8, union_name, "BroadcastData") and std.mem.eql(u8, field_name, "tool_output_delta_data")))
+        return "ToolOutputDeltaData";
     return shortName(@typeName(T));
 }
 
@@ -356,7 +359,7 @@ fn writeBroadcasts(jw: *std.json.Stringify) !void {
         try jw.objectField("name");
         try jw.write(@tagName(spec.name));
         try jw.objectField("params");
-        try jw.write(broadcastType(@tagName(spec.name), spec.data));
+        try jw.write(broadcastType(@tagName(spec.name), "", "", spec.data));
         try jw.objectField("direction");
         try jw.write("serverToClient");
         try jw.endObject();

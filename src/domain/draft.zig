@@ -73,8 +73,8 @@ pub const Part = union(enum) {
     };
 
     /// Treat the protocol part id as the index in `Draft.parts`.
-    pub fn id(self: Part) ids.PartId {
-        return switch (self) {
+    pub fn id(self: *const Part) ids.PartId {
+        return switch (self.*) {
             inline else => |p| p.id,
         };
     }

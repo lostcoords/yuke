@@ -72,7 +72,7 @@ pub const Reducer = struct {
 
         if (choices.items.len > 1) return error.Protocol; // We request n=1.
         if (choices.items.len == 1) {
-            const index = json.fieldInt(choices.items[0], "index") orelse return error.Protocol;
+            const index = json.fieldIndex(choices.items[0], "index") orelse return error.Protocol;
             if (index != 0) return error.Protocol;
             try self.onChoice(choices.items[0], out);
         }
@@ -101,26 +101,12 @@ pub const Reducer = struct {
 
     fn onDelta(self: *Reducer, delta: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (json.fieldStr(delta, "content")) |text| {
-            if (text.len != 0) {
-                const index = self.text_block orelse blk: {
-                    const started = try self.startBlock(.text, null, "", "", out);
-                    self.text_block = started;
-                    break :blk started;
-                };
-                try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = text } });
-            }
+            try self.appendTextDelta(text, out);
         }
 
         // A refusal is assistant-visible text; surface it so it is never dropped.
         if (json.fieldStr(delta, "refusal")) |text| {
-            if (text.len != 0) {
-                const index = self.text_block orelse blk: {
-                    const started = try self.startBlock(.text, null, "", "", out);
-                    self.text_block = started;
-                    break :blk started;
-                };
-                try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = text } });
-            }
+            try self.appendTextDelta(text, out);
         }
 
         if (json.fieldStr(delta, "reasoning_content")) |text| {
@@ -136,6 +122,16 @@ pub const Reducer = struct {
             .array => |calls| for (calls.items) |call| try self.onToolCall(call, out),
             else => {},
         };
+    }
+
+    fn appendTextDelta(self: *Reducer, text: []const u8, out: *std.ArrayList(StreamEvent)) Error!void {
+        if (text.len == 0) return;
+        const index = self.text_block orelse blk: {
+            const started = try self.startBlock(.text, null, "", "", out);
+            self.text_block = started;
+            break :blk started;
+        };
+        try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = text } });
     }
 
     fn onToolCall(self: *Reducer, call: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -258,9 +254,7 @@ fn mapStopReason(raw: []const u8) wire.enums.StopReason {
 
 /// The tool index must be present, non-negative, and representable as `usize`.
 fn toolIndex(call: std.json.Value) Error!usize {
-    const n = json.fieldInt(call, "index") orelse return error.Protocol;
-    if (n < 0) return error.Protocol;
-    return std.math.cast(usize, n) orelse error.Protocol;
+    return json.fieldIndex(call, "index") orelse error.Protocol;
 }
 
 const testing = std.testing;

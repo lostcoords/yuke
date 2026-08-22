@@ -113,10 +113,7 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
         std.debug.assert(block.role == .user);
         switch (block.value) {
             .text => |text| {
-                try jw.beginObject();
-                try json.field(jw, "type", "text");
-                try json.field(jw, "text", text);
-                try jw.endObject();
+                try writeTextBlock(jw, text);
             },
             .image => |image| try writeImage(jw, image.source),
             .audio, .file, .reasoning, .redacted_reasoning, .tool_use, .tool_result => return error.UnsupportedContent,
@@ -147,12 +144,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !voi
     if (has_text) {
         try jw.beginArray();
         for (blocks) |block| switch (block.value) {
-            .text => |text| {
-                try jw.beginObject();
-                try json.field(jw, "type", "text");
-                try json.field(jw, "text", text);
-                try jw.endObject();
-            },
+            .text => |text| try writeTextBlock(jw, text),
             .tool_use => {},
             else => unreachable,
         };
@@ -181,6 +173,13 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !voi
         };
         try jw.endArray();
     }
+    try jw.endObject();
+}
+
+fn writeTextBlock(jw: *std.json.Stringify, text: []const u8) !void {
+    try jw.beginObject();
+    try json.field(jw, "type", "text");
+    try json.field(jw, "text", text);
     try jw.endObject();
 }
 

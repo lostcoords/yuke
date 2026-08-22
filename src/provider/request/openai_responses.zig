@@ -52,22 +52,14 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         switch (block.value) {
             .text => |text| switch (block.role) {
                 .user => {
-                    if (message != .user) {
-                        if (message != null) try endMessage(&jw);
-                        try beginMessage(&jw, .user);
-                        message = .user;
-                    }
+                    try ensureMessage(&jw, &message, .user);
                     try jw.beginObject();
                     try json.field(&jw, "type", "input_text");
                     try json.field(&jw, "text", text);
                     try jw.endObject();
                 },
                 .assistant => {
-                    if (message != .assistant) {
-                        if (message != null) try endMessage(&jw);
-                        try beginMessage(&jw, .assistant);
-                        message = .assistant;
-                    }
+                    try ensureMessage(&jw, &message, .assistant);
                     try jw.beginObject();
                     try json.field(&jw, "type", "output_text");
                     try json.field(&jw, "text", text);
@@ -76,11 +68,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             },
             .image => |image| {
                 if (block.role != .user) return error.UnsupportedContent;
-                if (message != .user) {
-                    if (message != null) try endMessage(&jw);
-                    try beginMessage(&jw, .user);
-                    message = .user;
-                }
+                try ensureMessage(&jw, &message, .user);
                 try jw.beginObject();
                 try json.field(&jw, "type", "input_image");
                 try writeImageSource(&jw, image.source);
@@ -88,8 +76,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             },
             .audio, .file => return error.UnsupportedContent,
             .reasoning => |reasoning| {
-                if (message != null) try endMessage(&jw);
-                message = null;
+                try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "reasoning");
                 try jw.objectField("summary");
@@ -103,8 +90,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.endObject();
             },
             .redacted_reasoning => |data| {
-                if (message != null) try endMessage(&jw);
-                message = null;
+                try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "reasoning");
                 try jw.objectField("summary");
@@ -114,8 +100,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.endObject();
             },
             .tool_use => |tool_use| {
-                if (message != null) try endMessage(&jw);
-                message = null;
+                try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "function_call");
                 try json.field(&jw, "call_id", tool_use.call_id);
@@ -124,8 +109,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.endObject();
             },
             .tool_result => |tool_result| {
-                if (message != null) try endMessage(&jw);
-                message = null;
+                try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "function_call_output");
                 try json.field(&jw, "call_id", tool_result.call_id);
@@ -134,12 +118,25 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             },
         }
     }
-    if (message != null) try endMessage(&jw);
+    try closeMessage(&jw, &message);
     try jw.endArray();
     try jw.endObject();
 }
 
 const Message = enum { user, assistant };
+
+fn ensureMessage(jw: *std.json.Stringify, message: *?Message, role: Message) !void {
+    if (message.* == role) return;
+    try closeMessage(jw, message);
+    try beginMessage(jw, role);
+    message.* = role;
+}
+
+fn closeMessage(jw: *std.json.Stringify, message: *?Message) !void {
+    if (message.* == null) return;
+    try endMessage(jw);
+    message.* = null;
+}
 
 fn beginMessage(jw: *std.json.Stringify, role: Message) !void {
     try jw.beginObject();

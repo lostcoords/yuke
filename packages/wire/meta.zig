@@ -59,7 +59,7 @@ pub const constants = struct {
     pub const MAX_REQUEST_ID_BYTES: u64 = 64;
     pub const MAX_SESSION_REVISION: u64 = 9007199254740991;
     pub const MAX_WIRE_INTEGER: u64 = 9007199254740991;
-    pub const PROTOCOL_VERSION: u64 = 1;
+    pub const PROTOCOL_VERSION: u64 = initialize.protocol_version;
 };
 
 pub const string_constants = struct {

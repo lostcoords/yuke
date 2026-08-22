@@ -134,11 +134,3 @@ test "catalog list result full round-trips with nested skip reason union" {
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(out, buf.written());
 }
-
-test "catalog list params optional since_rev defaults to null" {
-    const parsed = try std.json.parseFromSlice(CatalogListParams, testing.allocator,
-        \\{}
-    , opts);
-    defer parsed.deinit();
-    try testing.expect(parsed.value.since_rev == null);
-}

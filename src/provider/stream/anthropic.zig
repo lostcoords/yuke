@@ -237,9 +237,7 @@ fn mapStopReason(raw: []const u8) wire.enums.StopReason {
 
 /// The block index from an event. It rejects a missing, negative, or huge value.
 fn blockIndex(root: std.json.Value) Error!usize {
-    const n = json.fieldInt(root, "index") orelse return error.Protocol;
-    if (n < 0) return error.Protocol;
-    return std.math.cast(usize, n) orelse error.Protocol;
+    return json.fieldIndex(root, "index") orelse error.Protocol;
 }
 
 const testing = std.testing;

@@ -24,6 +24,12 @@ pub fn fieldInt(v: std.json.Value, key: []const u8) ?i64 {
     };
 }
 
+pub fn fieldIndex(v: std.json.Value, key: []const u8) ?usize {
+    const n = fieldInt(v, key) orelse return null;
+    if (n < 0) return null;
+    return std.math.cast(usize, n);
+}
+
 pub fn fieldObj(v: std.json.Value, key: []const u8) ?std.json.ObjectMap {
     return switch (fieldGet(v, key) orelse return null) {
         .object => |o| o,

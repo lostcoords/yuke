@@ -17,6 +17,12 @@ const subscription = @import("subscription.zig");
 const tool = @import("tool.zig");
 const workspace = @import("workspace.zig");
 
+fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
+    switch (self) {
+        inline else => |payload| try jw.write(payload),
+    }
+}
+
 /// Client request parameter envelope.
 pub const RequestParams = union(enum) {
     initialize_params: initialize.InitializeParams,
@@ -51,9 +57,7 @@ pub const RequestParams = union(enum) {
     cron_list_params: cron.CronListParams,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        switch (self) {
-            inline else => |payload| try jw.write(payload),
-        }
+        try stringifyPayload(self, jw);
     }
 };
 
@@ -85,9 +89,7 @@ pub const ResponseResult = union(enum) {
     cron_run_now_result: cron.CronRunNowResult,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        switch (self) {
-            inline else => |payload| try jw.write(payload),
-        }
+        try stringifyPayload(self, jw);
     }
 };
 
@@ -122,9 +124,7 @@ pub const BroadcastData = union(enum) {
     session_deltas_shed_data: session.SessionDeltasShedData,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        switch (self) {
-            inline else => |payload| try jw.write(payload),
-        }
+        try stringifyPayload(self, jw);
     }
 };
 
@@ -211,44 +211,43 @@ pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"session.deltas_shed", .data = session.SessionDeltasShedData },
 };
 
-fn requestParamsFromValue(a: std.mem.Allocator, method: enums.MethodName, pv: std.json.Value, optional_pv: std.json.Value, o: std.json.ParseOptions) !RequestParams {
-    inline for (methods) |spec| {
+fn decodeFromTable(
+    a: std.mem.Allocator,
+    method: anytype,
+    v: std.json.Value,
+    optional_v: std.json.Value,
+    o: std.json.ParseOptions,
+    comptime table: anytype,
+    comptime Target: type,
+    comptime payload_field: []const u8,
+) !Target {
+    inline for (table) |spec| {
         if (method == spec.name) {
-            const value = if (spec.params_optional) optional_pv else pv;
-            inline for (@typeInfo(RequestParams).@"union".fields) |field| {
-                if (field.type == spec.params)
-                    return @unionInit(RequestParams, field.name, try std.json.parseFromValueLeaky(spec.params, a, value, o));
+            const value = if (@hasField(@TypeOf(spec), "params_optional"))
+                if (spec.params_optional) optional_v else v
+            else
+                v;
+            const payload = @field(spec, payload_field);
+            inline for (@typeInfo(Target).@"union".fields) |field| {
+                if (field.type == payload)
+                    return @unionInit(Target, field.name, try std.json.parseFromValueLeaky(payload, a, value, o));
             }
             return error.InvalidEnumTag;
         }
     }
     return error.InvalidEnumTag;
+}
+
+fn requestParamsFromValue(a: std.mem.Allocator, method: enums.MethodName, pv: std.json.Value, optional_pv: std.json.Value, o: std.json.ParseOptions) !RequestParams {
+    return decodeFromTable(a, method, pv, optional_pv, o, methods, RequestParams, "params");
 }
 
 fn broadcastDataFromValue(a: std.mem.Allocator, method: enums.BroadcastName, v: std.json.Value, o: std.json.ParseOptions) !BroadcastData {
-    inline for (broadcasts) |spec| {
-        if (method == spec.name) {
-            inline for (@typeInfo(BroadcastData).@"union".fields) |field| {
-                if (field.type == spec.data)
-                    return @unionInit(BroadcastData, field.name, try std.json.parseFromValueLeaky(spec.data, a, v, o));
-            }
-            return error.InvalidEnumTag;
-        }
-    }
-    return error.InvalidEnumTag;
+    return decodeFromTable(a, method, v, v, o, broadcasts, BroadcastData, "data");
 }
 
 fn resultFromTable(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
-    inline for (methods) |spec| {
-        if (method == spec.name) {
-            inline for (@typeInfo(ResponseResult).@"union".fields) |field| {
-                if (field.type == spec.result)
-                    return @unionInit(ResponseResult, field.name, try std.json.parseFromValueLeaky(spec.result, a, v, o));
-            }
-            return error.InvalidEnumTag;
-        }
-    }
-    return error.InvalidEnumTag;
+    return decodeFromTable(a, method, v, v, o, methods, ResponseResult, "result");
 }
 
 /// RPC response envelope.
@@ -257,9 +256,7 @@ pub const Response = union(enum) {
     err: ResponseError,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        switch (self) {
-            inline else => |payload| try jw.write(payload),
-        }
+        try stringifyPayload(self, jw);
     }
 };
 
