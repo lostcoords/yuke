@@ -26,6 +26,8 @@ pub fn build(gpa: std.mem.Allocator, messages: []const wire.message.Message, opt
         },
     };
 
+    // A serializer needs at least one block. An empty transcript is a bad turn, not a crash.
+    if (blocks.items.len == 0) return error.InvalidTranscript;
     return .{ .blocks = try blocks.toOwnedSlice(gpa) };
 }
 

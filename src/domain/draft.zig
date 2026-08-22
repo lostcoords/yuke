@@ -102,6 +102,7 @@ pub const Part = union(enum) {
             .reasoning => |r| {
                 var text: std.ArrayList(u8) = .empty;
                 try text.appendSlice(gpa, r.text);
+                errdefer text.deinit(gpa);
 
                 return .{ .reasoning = .{ .id = r.id, .text = text, .signature = try arena.dupe(u8, r.signature) } };
             },
@@ -113,6 +114,7 @@ pub const Part = union(enum) {
                 // Seed output from a running snapshot; live parts start empty.
                 var output: std.ArrayList(u8) = .empty;
                 try output.appendSlice(gpa, toolOutputSeed(t.state));
+                errdefer output.deinit(gpa);
 
                 return .{ .tool = .{
                     .id = t.id,
@@ -172,18 +174,17 @@ pub const Draft = struct {
     fn appendPart(self: *Draft, p: message.AssistantPart) Error!void {
         const expected: ids.PartId = @intCast(self.parts.items.len);
         var cloned = try Part.initFrom(self.gpa, self.arena.allocator(), p);
+        errdefer cloned.deinit(self.gpa);
         // Only a client that missed a part_added sees a mismatch. The daemon builds ids in order.
-        if (cloned.id() != expected) {
-            cloned.deinit(self.gpa);
-            return error.PartOutOfOrder;
-        }
+        if (cloned.id() != expected) return error.PartOutOfOrder;
         try self.parts.append(self.gpa, cloned);
     }
 
     /// Fold a text/reasoning byte delta from `message.part_delta` into its buffer.
     pub fn applyPartDelta(self: *Draft, d: message.PartDelta) Error!DeltaOutcome {
         const buf = try self.streamBuffer(d.part_id);
-        return foldBytes(self.gpa, buf, d.offset, d.delta, null);
+        const cap: usize = @intCast(wire.meta.limits.max_message_string_bytes);
+        return foldBytes(self.gpa, buf, d.offset, d.delta, cap);
     }
 
     /// Fold a `tool.output_delta` into the tool output buffer.
@@ -344,7 +345,7 @@ fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes
     const have = buf.items.len;
     if (offset > have) return .gap;
     if (offset < have) return .stale;
-    if (cap) |c| if (have + bytes.len > c) return .gap;
+    if (cap) |c| if (have > c or bytes.len > c - have) return .gap;
     try buf.appendSlice(gpa, bytes);
     return .applied;
 }

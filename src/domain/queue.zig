@@ -60,7 +60,8 @@ pub const Queue = struct {
     /// optimistic entry merges with its broadcast. Enforce `max_queued_inputs` before `send_input`.
     pub fn onQueued(self: *Queue, d: input.InputQueuedData) Error!Applied {
         if (self.indexOf(d.input.input_id) != null) return .noop;
-        const item = try Item.clone(self.gpa, d.input);
+        var item = try Item.clone(self.gpa, d.input);
+        errdefer item.deinit();
         try self.list.append(self.gpa, item);
         return .changed;
     }
