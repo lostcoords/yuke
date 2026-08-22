@@ -126,6 +126,7 @@ pub fn build(b: *std.Build) void {
     });
     daemon_mod.addImport("zio", zio.module("zio"));
     daemon_mod.addImport("websocket", websocket);
+    daemon_mod.addImport("wire", wire);
     const daemon_exe = b.addExecutable(.{
         .name = "yuked",
         .root_module = daemon_mod,
@@ -143,6 +144,7 @@ pub fn build(b: *std.Build) void {
     });
     daemon_tests_mod.addImport("zio", zio.module("zio"));
     daemon_tests_mod.addImport("websocket", websocket);
+    daemon_tests_mod.addImport("wire", wire);
     const daemon_tests = b.addTest(.{
         .root_module = daemon_tests_mod,
     });

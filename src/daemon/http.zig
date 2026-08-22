@@ -4,6 +4,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const wss = @import("websocket").server;
+const rpc = @import("rpc.zig");
 
 // The header buffer bounds one request head. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
@@ -57,7 +58,7 @@ fn dispatch(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
                 .websocket => |maybe_key| {
                     const key = maybe_key orelse return badRequest(&request);
                     if (!validUpgrade(&request, key)) return badRequest(&request);
-                    return echoWebSocket(gpa, &request, key);
+                    return serveWebSocket(gpa, &request, key);
                 },
                 else => {},
             }
@@ -70,12 +71,12 @@ fn dispatch(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
     }
 }
 
-/// Echo data messages and answer WebSocket control frames.
-fn echoWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key: []const u8) !void {
+/// Read wire requests from a WebSocket and answer control frames.
+fn serveWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key: []const u8) !void {
     var socket = try request.respondWebSocket(.{ .key = key });
     try socket.output.flush();
 
-    var reader: wss.MessageReader = .init(max_ws_message_bytes, max_ws_message_bytes);
+    var reader: wss.MessageReader = .init(max_ws_message_bytes);
     defer reader.deinit(gpa);
 
     while (true) {
@@ -97,22 +98,30 @@ fn echoWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key:
         };
         defer message.deinit(gpa);
         switch (message.opcode) {
-            .text => try wss.writeMessage(socket.output, .text, message.data),
-            .binary => try wss.writeMessage(socket.output, .binary, message.data),
-            .ping => try wss.writePong(socket.output, message.data),
+            // Wire frames are text JSON. A binary frame is a protocol error.
+            .text => switch (try rpc.handleRequest(gpa, socket.output, message.data)) {
+                .keep_open => {},
+                .close => return,
+            },
+            .binary => return closeWith(&socket, .unsupported_data),
+            .ping => {
+                try wss.writePong(socket.output, message.data);
+                try socket.output.flush();
+            },
             .connection_close => {
                 const parsed = wss.checkedClose(message.data) catch return closeWith(&socket, .protocol_error);
                 const echo = if (parsed.code == .no_status_rcvd) .normal_closure else parsed.code;
                 return closeWith(&socket, echo);
             },
-            .pong, .continuation => continue,
+            .pong => continue,
+            // MessageReader resolves a continuation into its message opcode.
+            .continuation => unreachable,
         }
-        try socket.output.flush();
     }
 }
 
 /// Send a close frame with the code, then stop.
-fn closeWith(socket: anytype, code: wss.CloseCode) !void {
+fn closeWith(socket: *std.http.Server.WebSocket, code: wss.CloseCode) !void {
     try wss.writeClose(socket.output, code);
     try socket.output.flush();
 }

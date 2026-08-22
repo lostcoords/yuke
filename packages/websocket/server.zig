@@ -9,7 +9,6 @@ const ws = @import("websocket.zig");
 pub const Opcode = ws.Opcode;
 pub const CloseCode = ws.CloseCode;
 pub const ParsedClose = ws.ParsedClose;
-pub const parseClose = ws.parseClose;
 
 const Header0 = packed struct(u8) { opcode: u4, rsv: u3 = 0, fin: bool };
 const Header1 = packed struct(u8) { payload_len: PayloadLen, mask: bool };
@@ -81,11 +80,10 @@ pub fn unmask(data: []u8, mask: [4]u8) void {
 pub const MessageReader = struct {
     continuing_what: ?Opcode = null,
     buffer: std.ArrayList(u8),
-    max_frame_len: ?usize,
-    max_message_len: ?usize,
+    max_message_bytes: usize,
 
-    pub fn init(max_frame_len: ?usize, max_message_len: ?usize) MessageReader {
-        return .{ .buffer = .empty, .max_frame_len = max_frame_len, .max_message_len = max_message_len };
+    pub fn init(max_message_bytes: usize) MessageReader {
+        return .{ .buffer = .empty, .max_message_bytes = max_message_bytes };
     }
 
     pub fn deinit(reader: *MessageReader, gpa: Allocator) void {
@@ -117,17 +115,15 @@ pub const MessageReader = struct {
         const message_opcode = while (true) {
             const frame = try takeFrame(reader);
 
-            if (self.max_frame_len) |max| if (frame.len > max) return error.FrameTooBig;
-
             // A control frame is never fragmented, so it does not join the buffer.
+            // takeFrame bounds a control frame to 125 bytes.
             if (frame.opcode.isControl()) {
                 const data = try reader.readAlloc(gpa, frame.len);
                 unmask(data, frame.mask);
                 return .{ .opcode = frame.opcode, .data = data };
             }
 
-            if (self.max_message_len) |max|
-                if (self.buffer.items.len +| frame.len > max) return error.MessageTooBig;
+            if (self.buffer.items.len +| frame.len > self.max_message_bytes) return error.MessageTooBig;
 
             const message_opcode: Opcode = if (frame.opcode == .continuation) recall: {
                 const recalled = self.continuing_what orelse return error.InvalidContinuation;
@@ -159,7 +155,7 @@ pub const CloseError = error{ BadClose, InvalidCloseCode, InvalidUtf8 };
 /// A close code is valid if IANA assigns it or reserves it for private use.
 pub fn isValidCloseCode(code: CloseCode) bool {
     return switch (@intFromEnum(code)) {
-        1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011 => true,
+        1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014 => true,
         3000...4999 => true,
         else => false,
     };
@@ -215,10 +211,6 @@ pub const MessageType = enum(u4) {
 /// Write a complete server message in one frame.
 pub fn writeMessage(writer: *Io.Writer, message_type: MessageType, payload: []const u8) Io.Writer.Error!void {
     try writeFrame(writer, true, @enumFromInt(@intFromEnum(message_type)), payload);
-}
-
-pub fn writePing(writer: *Io.Writer, payload: []const u8) Io.Writer.Error!void {
-    try writeFrame(writer, true, .ping, payload);
 }
 
 pub fn writePong(writer: *Io.Writer, payload: []const u8) Io.Writer.Error!void {
@@ -284,7 +276,7 @@ test "MessageReader reassembles a fragmented masked message" {
     }
 
     var reader: Io.Reader = .fixed(bytes.items);
-    var message_reader: MessageReader = .init(null, 1024);
+    var message_reader: MessageReader = .init(1024);
     defer message_reader.deinit(a);
     var message = try message_reader.next(a, &reader);
     defer message.deinit(a);
@@ -315,7 +307,7 @@ test "checkedClose validates the code and the reason" {
 test "MessageReader rejects invalid UTF-8 text" {
     var bytes = [_]u8{ 0x81, 0x82, 0, 0, 0, 0, 0xff, 0xfe };
     var reader: Io.Reader = .fixed(&bytes);
-    var message_reader: MessageReader = .init(null, null);
+    var message_reader: MessageReader = .init(1 << 20);
     defer message_reader.deinit(std.testing.allocator);
     try std.testing.expectError(error.InvalidUtf8, message_reader.next(std.testing.allocator, &reader));
 }
