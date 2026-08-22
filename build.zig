@@ -89,6 +89,8 @@ pub fn build(b: *std.Build) void {
     tests.addImport("wire", wire);
     tests.addImport("sql", sql);
     tests.addImport("zqlite", zqlite.module("zqlite"));
+    tests.addImport("zio", zio.module("zio"));
+    tests.addImport("websocket", websocket);
     const layer_tests = b.addTest(.{
         .root_module = tests,
     });
@@ -118,15 +120,17 @@ pub fn build(b: *std.Build) void {
     const run_gen_schema = b.addRunArtifact(gen_schema);
     run_gen_schema.setCwd(b.path("."));
 
-    // Build the daemon executable with the zio reactor and front door.
+    // Use src/main.zig as the daemon root. Relative imports reach the src layers.
     const daemon_mod = b.createModule(.{
-        .root_source_file = b.path("src/daemon/main.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
     daemon_mod.addImport("zio", zio.module("zio"));
     daemon_mod.addImport("websocket", websocket);
     daemon_mod.addImport("wire", wire);
+    daemon_mod.addImport("sql", sql);
+    daemon_mod.addImport("zqlite", zqlite.module("zqlite"));
     const daemon_exe = b.addExecutable(.{
         .name = "yuked",
         .root_module = daemon_mod,
@@ -137,28 +141,13 @@ pub fn build(b: *std.Build) void {
     const run_daemon_step = b.step("run-daemon", "Run the yuke daemon");
     run_daemon_step.dependOn(&run_daemon.step);
 
-    const daemon_tests_mod = b.createModule(.{
-        .root_source_file = b.path("src/daemon/http.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    daemon_tests_mod.addImport("zio", zio.module("zio"));
-    daemon_tests_mod.addImport("websocket", websocket);
-    daemon_tests_mod.addImport("wire", wire);
-    const daemon_tests = b.addTest(.{
-        .root_module = daemon_tests_mod,
-    });
-    const run_daemon_tests = b.addRunArtifact(daemon_tests);
-    const test_daemon_step = b.step("test-daemon", "Run daemon tests");
-    test_daemon_step.dependOn(&run_daemon_tests.step);
-
+    // The src test root imports the daemon files, so one artifact runs each src-layer test once.
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
     test_step.dependOn(&run_websocket_tests.step);
     test_step.dependOn(&run_layer_tests.step);
-    test_step.dependOn(&run_daemon_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
 
     // Regenerate schema/wire.json in place from the Zig wire types.

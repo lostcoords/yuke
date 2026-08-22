@@ -1,27 +1,28 @@
-//! Decode a wire request, dispatch it to a handler, and write the response frame.
+//! Decode a wire request, dispatch it, and write its response frame.
 
 const std = @import("std");
 const wire = @import("wire");
 const wss = @import("websocket").server;
+const State = @import("State.zig");
 
-/// The outcome of one frame: keep reading, or the connection was closed.
+/// Result for one frame: keep reading or close the connection.
 pub const Outcome = enum { keep_open, close };
 
-/// Handle one text frame: decode, dispatch, and write the response. A per-request arena
-/// backs the decode and the response bytes; nothing escapes it.
-pub fn handleRequest(gpa: std.mem.Allocator, out: *std.Io.Writer, frame: []const u8) !Outcome {
-    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+/// Handle one text frame: decode it, dispatch it, and write the response.
+/// Use a per-request arena for decoded data and response bytes. Nothing escapes the arena.
+pub fn handleRequest(state: *State, out: *std.Io.Writer, frame: []const u8) !Outcome {
+    var arena_state: std.heap.ArenaAllocator = .init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Parse the frame to a JSON value first, so a typed-decode error can still name the id.
+    // Parse the frame as JSON first. Then a typed-decode error can include the request id.
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, frame, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => return closeProtocol(out),
     };
-    // Without an id the daemon cannot correlate a response, so it closes.
+    // The daemon needs an id to match a response to the request, so it closes the connection.
     const request_id = requestId(value) orelse return closeProtocol(out);
-    // An unknown method is distinct from a bad parameter of a known method.
+    // Report unknown_method for an unknown method. Report bad_request for bad parameters.
     if (requestMethod(value) == null)
         return respond(arena, out, errorResponse(request_id, .unknown_method, "unknown method"));
 
@@ -30,16 +31,16 @@ pub fn handleRequest(gpa: std.mem.Allocator, out: *std.Io.Writer, frame: []const
         else => return respond(arena, out, errorResponse(request_id, .bad_request, "bad request")),
     };
 
-    return respond(arena, out, dispatch(request));
+    return respond(arena, out, dispatch(state, request));
 }
 
-fn dispatch(request: wire.rpc.Request) wire.rpc.Response {
+fn dispatch(state: *State, request: wire.rpc.Request) wire.rpc.Response {
     switch (request.method) {
         .initialize => {
             const params = request.params.initialize_params;
             if (params.protocol != wire.meta.protocol_version)
                 return errorResponse(request.id, .bad_protocol, "unsupported protocol version");
-            return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = initializeResult() } } };
+            return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = initializeResult(state) } } };
         },
         .@"session.list",
         .@"session.create",
@@ -78,11 +79,11 @@ fn dispatch(request: wire.rpc.Request) wire.rpc.Response {
     }
 }
 
-/// Report the daemon handshake. Slice 4 returns a stub; the stores and the clock fill it later.
-fn initializeResult() wire.misc.InitializeResult {
+/// Report the daemon handshake. Use the real clock; keep store revisions at 0 until stores exist.
+fn initializeResult(state: *const State) wire.misc.InitializeResult {
     return .{
         .protocol = wire.meta.protocol_version,
-        .daemon = .{ .version = "0.0.1", .server_now_ms = 0 },
+        .daemon = .{ .version = "0.0.1", .server_now_ms = state.nowMillis() },
         .workspaces = &.{},
         .profiles = &.{},
         .agents = &.{},
@@ -111,7 +112,7 @@ fn closeProtocol(out: *std.Io.Writer) !Outcome {
     return .close;
 }
 
-/// Read a string request id, or return null when the id is absent or invalid.
+/// Read a string request id. Return null for a missing or invalid id.
 fn requestId(value: std.json.Value) ?wire.ids.RequestId {
     const object = switch (value) {
         .object => |object| object,
@@ -123,7 +124,7 @@ fn requestId(value: std.json.Value) ?wire.ids.RequestId {
     };
 }
 
-/// Read the method as a known name, or null when it is absent, non-string, or unknown.
+/// Read the method as a known name. Return null for a missing, non-string, or unknown name.
 fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
     const object = switch (value) {
         .object => |object| object,
@@ -136,26 +137,64 @@ fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
     return std.meta.stringToEnum(wire.enums.MethodName, name);
 }
 
+const zio = @import("zio");
+const zqlite = @import("zqlite");
+const database = @import("../database/database.zig");
+
+/// Test request handlers with a daemon state and an in-memory database.
+const TestState = struct {
+    rt: *zio.Runtime,
+    state: State,
+
+    fn init() !TestState {
+        const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+        errdefer rt.deinit();
+        const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+        const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+        // Database.open is the last fallible step. It closes conn on failure.
+        const db = try database.Database.open(conn);
+        return .{ .rt = rt, .state = .{
+            .gpa = std.testing.allocator,
+            .io = rt.io(),
+            .db = db,
+            .config = .{ .listen = listen },
+        } };
+    }
+
+    fn deinit(self: *TestState) void {
+        self.state.db.deinit();
+        self.rt.deinit();
+    }
+};
+
 test "dispatch initialize returns a result" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
     var buffer: [4096]u8 = undefined;
     var out: std.Io.Writer = .fixed(&buffer);
     const frame =
         \\{"id":"1","method":"initialize","params":{"client":{"name":"test","version":"0"}}}
     ;
-    _ = try handleRequest(std.testing.allocator, &out, frame);
+    _ = try handleRequest(&fixture.state, &out, frame);
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "server_now_ms") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
+    // The clock uses the current time, so it exceeds this 2023 timestamp.
+    try std.testing.expect(fixture.state.nowMillis() > 1_700_000_000_000);
 }
 
 test "dispatch reports an unknown method with the request id" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
     var buffer: [1024]u8 = undefined;
     var out: std.Io.Writer = .fixed(&buffer);
     const frame =
         \\{"id":"7","method":"not_a_method","params":{}}
     ;
-    _ = try handleRequest(std.testing.allocator, &out, frame);
+    _ = try handleRequest(&fixture.state, &out, frame);
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"7\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, "-32601") != null); // unknown_method
+    try std.testing.expect(std.mem.indexOf(u8, written, "-32601") != null);
 }

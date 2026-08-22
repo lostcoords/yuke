@@ -1,0 +1,229 @@
+//! Resolve the daemon's XDG paths and the files under them.
+//! Return owned paths. The caller frees them.
+//! Treat an empty environment value as unset, per the XDG specification.
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+const Map = std.process.Environ.Map;
+
+/// Default directory leaf under each platform root. `YUKE_APPNAME` can replace it.
+pub const app_dir = "yuke";
+
+/// Environment variable for the process-wide profile name. It remaps the config and data paths.
+pub const app_name_env = "YUKE_APPNAME";
+
+/// SQLite event-log file in the data directory.
+pub const db_file = "yuked.db";
+
+/// Content-addressed blob directory under the data directory.
+pub const blob_subdir = "blobs";
+
+/// Home-directory variable: `USERPROFILE` on Windows and `HOME` on other systems.
+const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+
+/// Return the non-empty value for `key`, or null.
+fn envNonEmpty(env: *const Map, key: []const u8) ?[]const u8 {
+    const value = env.get(key) orelse return null;
+    return if (value.len == 0) null else value;
+}
+
+/// Return the non-empty absolute value for `key`, or null.
+/// Ignore relative values because the XDG specification requires an absolute base directory.
+fn envBasePath(env: *const Map, key: []const u8) ?[]const u8 {
+    const value = envNonEmpty(env, key) orelse return null;
+    return if (std.fs.path.isAbsolute(value)) value else null;
+}
+
+/// Return the user's home directory, or null when its environment variable has no value.
+/// The result borrows `env`.
+pub fn homeDir(env: *const Map) ?[]const u8 {
+    return envNonEmpty(env, home_env);
+}
+
+/// Return true for a directory name with no separator that is not `.` or `..`.
+pub fn appNameValid(name: []const u8) bool {
+    if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
+    for (name) |ch| {
+        if (ch == '/' or ch == '\\' or ch == 0) return false;
+    }
+    return true;
+}
+
+pub const Error = error{InvalidAppName};
+
+/// Return the directory leaf under the platform roots. `app_dir` when `YUKE_APPNAME` is unset.
+/// An invalid `YUKE_APPNAME` is an error. The result borrows `env`.
+pub fn appName(env: *const Map) Error![]const u8 {
+    const value = envNonEmpty(env, app_name_env) orelse return app_dir;
+    if (!appNameValid(value)) return error.InvalidAppName;
+    return value;
+}
+
+/// Join `base`, the middle segments, and the profile leaf.
+fn joinUnder(alloc: std.mem.Allocator, env: *const Map, base: []const u8, mid: []const []const u8) ![]u8 {
+    std.debug.assert(mid.len <= 2);
+    const leaf = try appName(env);
+
+    var parts: [4][]const u8 = undefined;
+    parts[0] = base;
+    for (mid, 0..) |segment, i| parts[1 + i] = segment;
+    parts[1 + mid.len] = leaf;
+
+    return try std.fs.path.join(alloc, parts[0 .. 2 + mid.len]);
+}
+
+/// Return the shared configuration directory: `APPDATA` on Windows, else `XDG_CONFIG_HOME`
+/// or `~/.config`. Null when no base exists; an invalid profile errors. The caller frees it.
+pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
+    if (builtin.os.tag == .windows) {
+        const base = envBasePath(env, "APPDATA") orelse return null;
+        return try joinUnder(alloc, env, base, &.{});
+    }
+    if (envBasePath(env, "XDG_CONFIG_HOME")) |xdg| return try joinUnder(alloc, env, xdg, &.{});
+    const home = homeDir(env) orelse return null;
+    return try joinUnder(alloc, env, home, &.{".config"});
+}
+
+/// Return the data directory: `LOCALAPPDATA` on Windows, else `XDG_DATA_HOME`
+/// or `~/.local/share`. Null when no base exists; an invalid profile errors. The caller frees it.
+pub fn dataDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
+    if (builtin.os.tag == .windows) {
+        const base = envBasePath(env, "LOCALAPPDATA") orelse return null;
+        return try joinUnder(alloc, env, base, &.{});
+    }
+    if (envBasePath(env, "XDG_DATA_HOME")) |xdg| return try joinUnder(alloc, env, xdg, &.{});
+    const home = homeDir(env) orelse return null;
+    return try joinUnder(alloc, env, home, &.{ ".local", "share" });
+}
+
+/// Return the event-log database path under `base`. The caller frees the result.
+pub fn dbPathIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
+    std.debug.assert(base.len != 0);
+    return std.fs.path.join(alloc, &.{ base, db_file });
+}
+
+/// Return the blob store directory under `base`. The caller frees the result.
+pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
+    std.debug.assert(base.len != 0);
+    return std.fs.path.join(alloc, &.{ base, blob_subdir });
+}
+
+/// Expand a leading `~` against the home directory.
+/// Return the input unchanged without a home or a leading `~`. The caller frees the result.
+pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ![]u8 {
+    const sep = std.fs.path.sep;
+    if (path.len == 0 or path[0] != '~') return alloc.dupe(u8, path);
+    if (path.len > 1 and path[1] != sep) return alloc.dupe(u8, path);
+
+    const home = homeDir(env) orelse return alloc.dupe(u8, path);
+    const rest = std.mem.trimStart(u8, path[1..], &.{sep});
+    if (rest.len == 0) return alloc.dupe(u8, home);
+    return std.fs.path.join(alloc, &.{ home, rest });
+}
+
+const testing = std.testing;
+
+/// Build an environment map from key/value pairs for the resolver tests.
+fn testEnv(pairs: []const [2][]const u8) !Map {
+    var map = Map.init(testing.allocator);
+    errdefer map.deinit();
+    for (pairs) |kv| try map.put(kv[0], kv[1]);
+    return map;
+}
+
+test appNameValid {
+    try testing.expect(appNameValid("yuke"));
+    try testing.expect(!appNameValid(""));
+    try testing.expect(!appNameValid("."));
+    try testing.expect(!appNameValid(".."));
+    try testing.expect(!appNameValid("a/b"));
+    try testing.expect(!appNameValid("a\\b"));
+}
+
+test "dataDir prefers XDG_DATA_HOME" {
+    var env = try testEnv(&.{ .{ "HOME", "/home/u" }, .{ "XDG_DATA_HOME", "/xdg/data" } });
+    defer env.deinit();
+    const got = (try dataDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/xdg/data/yuke", got);
+}
+
+test "dataDir falls back to the home default" {
+    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
+    defer env.deinit();
+    const got = (try dataDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/home/u/.local/share/yuke", got);
+}
+
+test "an empty XDG value means unset" {
+    var env = try testEnv(&.{ .{ "HOME", "/home/u" }, .{ "XDG_DATA_HOME", "" } });
+    defer env.deinit();
+    const got = (try dataDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/home/u/.local/share/yuke", got);
+}
+
+test "a relative XDG value is ignored, per the spec" {
+    var env = try testEnv(&.{ .{ "HOME", "/home/u" }, .{ "XDG_DATA_HOME", "relative/dir" } });
+    defer env.deinit();
+    const got = (try dataDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/home/u/.local/share/yuke", got);
+}
+
+test "no home resolves to null" {
+    var env = try testEnv(&.{});
+    defer env.deinit();
+    try testing.expect((try dataDir(testing.allocator, &env)) == null);
+}
+
+test "YUKE_APPNAME remaps the leaf" {
+    var env = try testEnv(&.{ .{ "HOME", "/home/u" }, .{ "YUKE_APPNAME", "yuke-dev" } });
+    defer env.deinit();
+    const got = (try dataDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/home/u/.local/share/yuke-dev", got);
+}
+
+test "an invalid YUKE_APPNAME is an error, not a silent fallback" {
+    var env = try testEnv(&.{ .{ "HOME", "/home/u" }, .{ "YUKE_APPNAME", "a/b" } });
+    defer env.deinit();
+    try testing.expectError(error.InvalidAppName, dataDir(testing.allocator, &env));
+}
+
+test "configDir falls back to dot-config" {
+    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
+    defer env.deinit();
+    const got = (try configDir(testing.allocator, &env)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("/home/u/.config/yuke", got);
+}
+
+test "dbPathIn and blobDirIn append the file and subdirectory" {
+    const db = try dbPathIn(testing.allocator, "/data/yuke");
+    defer testing.allocator.free(db);
+    try testing.expectEqualStrings("/data/yuke/yuked.db", db);
+
+    const blobs = try blobDirIn(testing.allocator, "/data/yuke");
+    defer testing.allocator.free(blobs);
+    try testing.expectEqualStrings("/data/yuke/blobs", blobs);
+}
+
+test "expandHome substitutes a leading tilde" {
+    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
+    defer env.deinit();
+
+    const a = try expandHome(testing.allocator, &env, "~/x");
+    defer testing.allocator.free(a);
+    try testing.expectEqualStrings("/home/u/x", a);
+
+    const b = try expandHome(testing.allocator, &env, "/abs");
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings("/abs", b);
+
+    const c = try expandHome(testing.allocator, &env, "~");
+    defer testing.allocator.free(c);
+    try testing.expectEqualStrings("/home/u", c);
+}

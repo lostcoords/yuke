@@ -1,24 +1,25 @@
-//! The front door accepts connections and dispatches HTTP requests.
-//! A proxy terminates TLS for remote clients.
+//! Accept HTTP connections and dispatch requests.
+//! A proxy terminates TLS before remote clients connect.
 
 const std = @import("std");
 const zio = @import("zio");
 const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
+const State = @import("State.zig");
 
-// The header buffer bounds one request head. The decoder rejects a larger head.
+// Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
 const write_buffer_bytes = 4096;
-// The message cap limits the reassembly buffer to one megabyte.
+// Limit each WebSocket message to 1 MiB.
 const max_ws_message_bytes = 1 << 20;
 
 const text_plain = [_]std.http.Header{
     .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
 };
 
-/// Accept connections forever. Each connection runs on its own task.
-pub fn serve(gpa: std.mem.Allocator, address: zio.net.IpAddress) !void {
-    const listener = try address.listen(.{});
+/// Accept connections forever. Run each connection in its own task.
+pub fn serve(state: *State) !void {
+    const listener = try state.config.listen.listen(.{});
     defer listener.close();
     std.log.info("front door on http://{f}", .{listener.socket.address});
 
@@ -28,20 +29,20 @@ pub fn serve(gpa: std.mem.Allocator, address: zio.net.IpAddress) !void {
     while (true) {
         const stream = try listener.accept(.{});
         errdefer stream.close();
-        try group.spawn(handleConnection, .{ gpa, stream });
+        try group.spawn(handleConnection, .{ state, stream });
     }
 }
 
-fn handleConnection(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
+fn handleConnection(state: *State, stream: zio.net.Stream) !void {
     defer stream.close();
-    dispatch(gpa, stream) catch |err| switch (err) {
-        // A clean keep-alive close, a dropped client, or shutdown is not a failure.
+    dispatch(state, stream) catch |err| switch (err) {
+        // Treat a clean keep-alive close, a dropped client, or shutdown as normal.
         error.HttpConnectionClosing, error.HttpRequestTruncated, error.Canceled => return,
         else => return err,
     };
 }
 
-fn dispatch(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
+fn dispatch(state: *State, stream: zio.net.Stream) !void {
     var head_buffer: [max_head_bytes]u8 = undefined;
     var reader = stream.reader(&head_buffer);
     var write_buffer: [write_buffer_bytes]u8 = undefined;
@@ -58,7 +59,7 @@ fn dispatch(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
                 .websocket => |maybe_key| {
                     const key = maybe_key orelse return badRequest(&request);
                     if (!validUpgrade(&request, key)) return badRequest(&request);
-                    return serveWebSocket(gpa, &request, key);
+                    return serveWebSocket(state, &request, key);
                 },
                 else => {},
             }
@@ -72,10 +73,11 @@ fn dispatch(gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
 }
 
 /// Read wire requests from a WebSocket and answer control frames.
-fn serveWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key: []const u8) !void {
+fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const u8) !void {
     var socket = try request.respondWebSocket(.{ .key = key });
     try socket.output.flush();
 
+    const gpa = state.gpa;
     var reader: wss.MessageReader = .init(max_ws_message_bytes);
     defer reader.deinit(gpa);
 
@@ -98,8 +100,8 @@ fn serveWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key
         };
         defer message.deinit(gpa);
         switch (message.opcode) {
-            // Wire frames are text JSON. A binary frame is a protocol error.
-            .text => switch (try rpc.handleRequest(gpa, socket.output, message.data)) {
+            // Wire frames carry text JSON. Treat a binary frame as a protocol error.
+            .text => switch (try rpc.handleRequest(state, socket.output, message.data)) {
                 .keep_open => {},
                 .close => return,
             },
@@ -114,7 +116,7 @@ fn serveWebSocket(gpa: std.mem.Allocator, request: *std.http.Server.Request, key
                 return closeWith(&socket, echo);
             },
             .pong => continue,
-            // MessageReader resolves a continuation into its message opcode.
+            // MessageReader resolves continuations to the message opcode.
             .continuation => unreachable,
         }
     }
@@ -126,7 +128,7 @@ fn closeWith(socket: *std.http.Server.WebSocket, code: wss.CloseCode) !void {
     try socket.output.flush();
 }
 
-/// Validate the WebSocket handshake fields that upgradeRequested does not check.
+/// Validate handshake fields that `upgradeRequested` does not check.
 fn validUpgrade(request: *std.http.Server.Request, key: []const u8) bool {
     if (!validKey(key)) return false;
 
@@ -143,7 +145,7 @@ fn validUpgrade(request: *std.http.Server.Request, key: []const u8) bool {
     return has_connection_upgrade and has_version_13;
 }
 
-/// Return true when a comma-separated header value holds the token.
+/// Return true when a comma-separated header value contains the token.
 fn headerHasToken(value: []const u8, token: []const u8) bool {
     var it = std.mem.splitScalar(u8, value, ',');
     while (it.next()) |part| {
@@ -152,7 +154,7 @@ fn headerHasToken(value: []const u8, token: []const u8) bool {
     return false;
 }
 
-/// The Sec-WebSocket-Key must decode to exactly 16 bytes.
+/// Return true when `Sec-WebSocket-Key` decodes to exactly 16 bytes.
 fn validKey(key: []const u8) bool {
     var decoded: [16]u8 = undefined;
     const len = std.base64.standard.Decoder.calcSizeForSlice(key) catch return false;
@@ -169,10 +171,10 @@ test headerHasToken {
 }
 
 test validKey {
-    try std.testing.expect(validKey("dGhlIHNhbXBsZSBub25jZQ==")); // 16 bytes
-    try std.testing.expect(!validKey("dGhlIHNhbXBsZQ==")); // 10 bytes
-    try std.testing.expect(!validKey("################========")); // bad charset
-    try std.testing.expect(!validKey("")); // empty
+    try std.testing.expect(validKey("dGhlIHNhbXBsZSBub25jZQ=="));
+    try std.testing.expect(!validKey("dGhlIHNhbXBsZQ=="));
+    try std.testing.expect(!validKey("################========"));
+    try std.testing.expect(!validKey(""));
 }
 
 fn badRequest(request: *std.http.Server.Request) !void {
