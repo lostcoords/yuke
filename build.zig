@@ -8,6 +8,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zio = b.dependency("zio", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const sql = b.addModule("sql", .{
         .root_source_file = b.path("packages/sql/sql.zig"),
         .target = target,
@@ -64,6 +68,19 @@ pub fn build(b: *std.Build) void {
     const test_wire_step = b.step("test-wire", "Run wire package tests");
     test_wire_step.dependOn(&run_wire_tests.step);
 
+    // The WebSocket package implements sans-IO RFC 6455 framing and has no dependencies.
+    const websocket = b.addModule("websocket", .{
+        .root_source_file = b.path("packages/websocket/websocket.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const websocket_tests = b.addTest(.{
+        .root_module = websocket,
+    });
+    const run_websocket_tests = b.addRunArtifact(websocket_tests);
+    const test_websocket_step = b.step("test-websocket", "Run websocket package tests");
+    test_websocket_step.dependOn(&run_websocket_tests.step);
+
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
@@ -101,11 +118,45 @@ pub fn build(b: *std.Build) void {
     const run_gen_schema = b.addRunArtifact(gen_schema);
     run_gen_schema.setCwd(b.path("."));
 
+    // Build the daemon executable with the zio reactor and front door.
+    const daemon_mod = b.createModule(.{
+        .root_source_file = b.path("src/daemon/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    daemon_mod.addImport("zio", zio.module("zio"));
+    daemon_mod.addImport("websocket", websocket);
+    const daemon_exe = b.addExecutable(.{
+        .name = "yuked",
+        .root_module = daemon_mod,
+    });
+    b.installArtifact(daemon_exe);
+    const run_daemon = b.addRunArtifact(daemon_exe);
+    if (b.args) |args| run_daemon.addArgs(args);
+    const run_daemon_step = b.step("run-daemon", "Run the yuke daemon");
+    run_daemon_step.dependOn(&run_daemon.step);
+
+    const daemon_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/daemon/http.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    daemon_tests_mod.addImport("zio", zio.module("zio"));
+    daemon_tests_mod.addImport("websocket", websocket);
+    const daemon_tests = b.addTest(.{
+        .root_module = daemon_tests_mod,
+    });
+    const run_daemon_tests = b.addRunArtifact(daemon_tests);
+    const test_daemon_step = b.step("test-daemon", "Run daemon tests");
+    test_daemon_step.dependOn(&run_daemon_tests.step);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
+    test_step.dependOn(&run_websocket_tests.step);
     test_step.dependOn(&run_layer_tests.step);
+    test_step.dependOn(&run_daemon_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
 
     // Regenerate schema/wire.json in place from the Zig wire types.

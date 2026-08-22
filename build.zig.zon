@@ -8,11 +8,16 @@
             .url = "git+https://github.com/karlseguin/zqlite.zig#b519eea9b1a2b5fcad68af6d0629e717e8746684",
             .hash = "zqlite-0.0.1-RWLaY8M8nAB4m0tlSpT9A5PGUwX_JfWC5VlPjLe7lG2Q",
         },
+        .zio = .{
+            .url = "git+https://github.com/lalinsky/zio?ref=v0.16.0#fd16258e8fadec5aa74f13302efecd070593cb06",
+            .hash = "zio-0.16.0-xHbVVJQxIgAMdBlOCF65siVKJRVww9Z_ayfJanpk7VEK",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "packages",
+        "schema",
         "src",
         "tools",
     },

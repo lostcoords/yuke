@@ -1,7 +1,7 @@
 #!/bin/sh
 # Keep schema/wire.json in sync with the Zig wire types.
 # Only runs when wire sources or the contract are staged.
-if git diff --cached --quiet -- src/wire schema/wire.json; then
+if git diff --cached --quiet -- packages/wire schema/wire.json; then
     exit 0
 fi
 
