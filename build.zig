@@ -51,9 +51,9 @@ pub fn build(b: *std.Build) void {
     const test_sqlgen_step = b.step("test-sqlgen", "Run SQL generator tests");
     test_sqlgen_step.dependOn(&run_sqlgen_tests.step);
 
-    // The wire package. Standalone for now; the daemon and client will import it.
+    // The wire package: the authoritative protocol types. Standalone, no deps.
     const wire = b.addModule("wire", .{
-        .root_source_file = b.path("src/wire/wire.zig"),
+        .root_source_file = b.path("packages/wire/wire.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -61,45 +61,21 @@ pub fn build(b: *std.Build) void {
         .root_module = wire,
     });
     const run_wire_tests = b.addRunArtifact(wire_tests);
+    const test_wire_step = b.step("test-wire", "Run wire package tests");
+    test_wire_step.dependOn(&run_wire_tests.step);
 
-    // The domain package: the shared session-projection fold. Imports wire.
-    const domain = b.addModule("domain", .{
-        .root_source_file = b.path("src/domain/domain.zig"),
+    const tests = b.createModule(.{
+        .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
     });
-    domain.addImport("wire", wire);
-    const domain_tests = b.addTest(.{
-        .root_module = domain,
+    tests.addImport("wire", wire);
+    tests.addImport("sql", sql);
+    tests.addImport("zqlite", zqlite.module("zqlite"));
+    const layer_tests = b.addTest(.{
+        .root_module = tests,
     });
-    const run_domain_tests = b.addRunArtifact(domain_tests);
-
-    // The provider package: request serializers + streaming SSE decoders. Imports wire.
-    const provider = b.addModule("provider", .{
-        .root_source_file = b.path("src/provider/provider.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    provider.addImport("wire", wire);
-    const provider_tests = b.addTest(.{
-        .root_module = provider,
-    });
-    const run_provider_tests = b.addRunArtifact(provider_tests);
-
-    // The daemon database: the shared SQLite stores (catalog today). Imports sql + provider.
-    const database = b.addModule("database", .{
-        .root_source_file = b.path("src/database/database.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    database.addImport("sql", sql);
-    database.addImport("provider", provider);
-    database.addImport("wire", wire); // the generated queries import wire
-    database.addImport("zqlite", zqlite.module("zqlite"));
-    const database_tests = b.addTest(.{
-        .root_module = database,
-    });
-    const run_database_tests = b.addRunArtifact(database_tests);
+    const run_layer_tests = b.addRunArtifact(layer_tests);
 
     // Fail the build if the committed queries drift from the SQL sources.
     const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
@@ -129,9 +105,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
-    test_step.dependOn(&run_domain_tests.step);
-    test_step.dependOn(&run_provider_tests.step);
-    test_step.dependOn(&run_database_tests.step);
+    test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
 
     // Regenerate schema/wire.json in place from the Zig wire types.

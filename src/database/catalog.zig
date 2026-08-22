@@ -2,7 +2,7 @@
 //! It stores no credentials. An unsupported protocol remains null.
 
 const std = @import("std");
-const provider = @import("provider");
+const provider = @import("../provider/provider.zig");
 const Database = @import("database.zig").Database;
 
 const instance = provider.instance;
