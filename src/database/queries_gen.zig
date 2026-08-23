@@ -69,6 +69,61 @@ pub const GetEtag = sql.OptionalQuery(
     },
 );
 
+pub const AllocSeq = sql.OneQuery(
+    \\UPDATE sessions SET seq_high = seq_high + 1 WHERE id = :id RETURNING seq_high;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        seq_high: u64,
+    },
+);
+
+pub const AppendEvent = sql.ExecQuery(
+    \\INSERT INTO events(session_id, seq, name, payload) VALUES (:session_id, :seq, :name, :payload);
+,
+    struct {
+        session_id: [16]u8,
+        seq: u64,
+        name: []const u8,
+        payload: []const u8,
+    },
+);
+
+pub const BumpIds = sql.ExecQuery(
+    \\UPDATE sessions SET
+    \\    message_id_high = MAX(message_id_high, :message_id_high),
+    \\    run_id_high     = MAX(run_id_high, :run_id_high),
+    \\    input_id_high   = MAX(input_id_high, :input_id_high),
+    \\    config_rev_high = MAX(config_rev_high, :config_rev_high)
+    \\    WHERE id = :id;
+,
+    struct {
+        message_id_high: u64,
+        run_id_high: u64,
+        input_id_high: u64,
+        config_rev_high: u64,
+        id: [16]u8,
+    },
+);
+
+pub const ReadHigh = sql.OptionalQuery(
+    \\SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
+    \\    FROM sessions WHERE id = :id;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        seq_high: u64,
+        message_id_high: u64,
+        run_id_high: u64,
+        input_id_high: u64,
+        config_rev_high: u64,
+    },
+);
+
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, workspace_id, origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
@@ -289,6 +344,10 @@ pub const Queries = struct {
     select_providers: SelectProviders,
     select_models: SelectModels,
     get_etag: GetEtag,
+    alloc_seq: AllocSeq,
+    append_event: AppendEvent,
+    bump_ids: BumpIds,
+    read_high: ReadHigh,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,
