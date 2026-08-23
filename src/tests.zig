@@ -3,6 +3,7 @@
 
 test {
     _ = @import("id.zig");
+    _ = @import("engine/fold.zig");
     _ = @import("domain/domain.zig");
     _ = @import("provider/provider.zig");
     _ = @import("database/database.zig");
