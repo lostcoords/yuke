@@ -57,7 +57,6 @@ pub const InitializeResult = struct {
     profiles: []const []const u8,
     agents: []const []const u8,
     session_revision: ids.SessionRevision,
-    cron_revision: ids.CronRevision,
     catalog_rev: ids.CatalogRev,
     catalog_health: catalog.CatalogHealth,
     capabilities: []const enums.Capability,

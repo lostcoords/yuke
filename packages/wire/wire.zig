@@ -12,7 +12,6 @@ pub const auth = @import("auth.zig");
 pub const workspace = @import("workspace.zig");
 pub const catalog = @import("catalog.zig");
 pub const activity = @import("activity.zig");
-pub const cron = @import("cron.zig");
 pub const input = @import("input.zig");
 pub const message = @import("message.zig");
 pub const misc = @import("misc.zig");

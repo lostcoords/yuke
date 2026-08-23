@@ -4,7 +4,6 @@ const activity = @import("activity.zig");
 const auth = @import("auth.zig");
 const catalog = @import("catalog.zig");
 const content = @import("content.zig");
-const cron = @import("cron.zig");
 const enums = @import("enums.zig");
 const initialize = @import("initialize.zig");
 const input = @import("input.zig");
@@ -89,23 +88,6 @@ pub const structs = [_]TypeEntry{
     .{ .name = "ActivityStateRunning", .ty = activity.ActivityStateRunning },
     .{ .name = "ActivityStateRunningTool", .ty = activity.ActivityStateRunningTool },
     .{ .name = "ActivityStateWaitingPermission", .ty = activity.ActivityStateWaitingPermission },
-    .{ .name = "CronCreateParams", .ty = cron.CronCreateParams },
-    .{ .name = "CronCreatedData", .ty = cron.CronCreatedData },
-    .{ .name = "CronJob", .ty = cron.CronJob },
-    .{ .name = "CronJobRef", .ty = cron.CronJobRef },
-    .{ .name = "CronJobResult", .ty = cron.CronJobResult },
-    .{ .name = "CronJobSpec", .ty = cron.CronJobSpec },
-    .{ .name = "CronListParams", .ty = cron.CronListParams },
-    .{ .name = "CronListResult", .ty = cron.CronListResult },
-    .{ .name = "CronPatch", .ty = cron.CronPatch },
-    .{ .name = "CronPatchParams", .ty = cron.CronPatchParams },
-    .{ .name = "CronRemovedData", .ty = cron.CronRemovedData },
-    .{ .name = "CronRunNowResult", .ty = cron.CronRunNowResult },
-    .{ .name = "CronScheduleAfter", .ty = cron.CronScheduleAfter },
-    .{ .name = "CronScheduleAt", .ty = cron.CronScheduleAt },
-    .{ .name = "CronScheduleCron", .ty = cron.CronScheduleCron },
-    .{ .name = "CronScheduleEvery", .ty = cron.CronScheduleEvery },
-    .{ .name = "CronUpdatedData", .ty = cron.CronUpdatedData },
     .{ .name = "InputCanceledData", .ty = input.InputCanceledData },
     .{ .name = "InputContent", .ty = input.InputContent },
     .{ .name = "InputQueuedData", .ty = input.InputQueuedData },
@@ -174,14 +156,12 @@ pub const structs = [_]TypeEntry{
     .{ .name = "SessionListParams", .ty = session.SessionListParams },
     .{ .name = "SessionListResult", .ty = session.SessionListResult },
     .{ .name = "SessionOriginChild", .ty = session.SessionOriginChild },
-    .{ .name = "SessionOriginCron", .ty = session.SessionOriginCron },
     .{ .name = "SessionOriginFork", .ty = session.SessionOriginFork },
     .{ .name = "SessionOriginRoot", .ty = session.SessionOriginRoot },
     .{ .name = "SessionPatch", .ty = session.SessionPatch },
     .{ .name = "SessionPatchParams", .ty = session.SessionPatchParams },
     .{ .name = "SessionPopulationAll", .ty = session.SessionPopulationAll },
     .{ .name = "SessionPopulationChildren", .ty = session.SessionPopulationChildren },
-    .{ .name = "SessionPopulationJobRuns", .ty = session.SessionPopulationJobRuns },
     .{ .name = "SessionPopulationTopLevel", .ty = session.SessionPopulationTopLevel },
     .{ .name = "SessionRemoveParams", .ty = session.SessionRemoveParams },
     .{ .name = "SessionRemovedData", .ty = session.SessionRemovedData },
@@ -219,7 +199,6 @@ pub const tagged_unions = [_]TypeEntry{
     .{ .name = "CatalogListResult", .ty = catalog.CatalogListResult },
     .{ .name = "SkipReason", .ty = catalog.SkipReason },
     .{ .name = "ActivityState", .ty = activity.ActivityState },
-    .{ .name = "CronSchedule", .ty = cron.CronSchedule },
     .{ .name = "Input", .ty = input.Input },
     .{ .name = "AssistantPart", .ty = message.AssistantPart },
     .{ .name = "Message", .ty = message.Message },
@@ -244,10 +223,6 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "AuthCredentialKind", .ty = enums.AuthCredentialKind },
     .{ .name = "BroadcastName", .ty = enums.BroadcastName },
     .{ .name = "RunErrorCode", .ty = enums.RunErrorCode },
-    .{ .name = "CronRetain", .ty = enums.CronRetain },
-    .{ .name = "CronOverlap", .ty = enums.CronOverlap },
-    .{ .name = "CronMissedPolicy", .ty = enums.CronMissedPolicy },
-    .{ .name = "CronRunOutcome", .ty = enums.CronRunOutcome },
     .{ .name = "Capability", .ty = enums.Capability },
     .{ .name = "MethodName", .ty = enums.MethodName },
     .{ .name = "NoticeLevel", .ty = enums.NoticeLevel },
@@ -292,10 +267,6 @@ pub const enum_order = .{
     .{ .entry = string_enums[17], .numeric = false },
     .{ .entry = string_enums[18], .numeric = false },
     .{ .entry = string_enums[19], .numeric = false },
-    .{ .entry = string_enums[20], .numeric = false },
-    .{ .entry = string_enums[21], .numeric = false },
-    .{ .entry = string_enums[22], .numeric = false },
-    .{ .entry = string_enums[23], .numeric = false },
 };
 
 pub const aliases = [_]AliasEntry{
@@ -306,7 +277,6 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "ModelId", .base = "string" },
     .{ .name = "SessionId", .base = "[16]u8" },
     .{ .name = "WorkspaceId", .base = "[16]u8" },
-    .{ .name = "JobId", .base = "[16]u8" },
     .{ .name = "RuleId", .base = "[16]u8" },
     .{ .name = "LoginId", .base = "[32]u8" },
     .{ .name = "RequestId", .base = "string" },
@@ -316,6 +286,5 @@ pub const aliases = [_]AliasEntry{
     .{ .name = "PartId", .base = "u64" },
     .{ .name = "Seq", .base = "u64" },
     .{ .name = "SessionRevision", .base = "u64" },
-    .{ .name = "CronRevision", .base = "u64" },
     .{ .name = "ConfigRev", .base = "u64" },
 };

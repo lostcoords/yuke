@@ -43,12 +43,11 @@ CREATE TABLE sessions (
     id           BLOB PRIMARY KEY CHECK (length(id) = 16), -- wire.SessionId
     workspace_id BLOB NOT NULL CHECK (length(workspace_id) = 16) REFERENCES workspaces(id), -- wire.WorkspaceId
 
-    origin            TEXT NOT NULL CHECK (origin IN ('root', 'child', 'fork', 'cron')),
+    origin            TEXT NOT NULL CHECK (origin IN ('root', 'child', 'fork')),
     parent_id         BLOB    CHECK (parent_id IS NULL OR length(parent_id) = 16), -- wire.SessionId
     parent_message_id INTEGER CHECK (parent_message_id IS NULL OR parent_message_id BETWEEN 1 AND 9007199254740991), -- wire.MessageId
     parent_part_id    INTEGER CHECK (parent_part_id IS NULL OR parent_part_id BETWEEN 0 AND 9007199254740991), -- wire.PartId
     source_id         BLOB    CHECK (source_id IS NULL OR length(source_id) = 16), -- wire.SessionId
-    job_id            BLOB    CHECK (job_id IS NULL OR length(job_id) = 16), -- wire.JobId
 
     profile    TEXT NOT NULL CHECK (length(profile)   <= 64),
     model      TEXT NOT NULL CHECK (length(model)     <= 128),
@@ -95,7 +94,6 @@ CREATE TABLE sessions (
         (origin <> 'child' AND parent_id IS NULL     AND parent_message_id IS NULL     AND parent_part_id IS NULL)
     ),
     CHECK ((origin = 'fork') = (source_id IS NOT NULL)),
-    CHECK ((origin = 'cron') = (job_id IS NOT NULL)),
     CHECK ((created_by_name IS NULL) = (created_by_version IS NULL)),
     CHECK (updated_at_ms >= created_at_ms),
 
@@ -111,7 +109,6 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_by_recent    ON sessions(updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_workspace ON sessions(workspace_id, updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
-CREATE INDEX sessions_by_job       ON sessions(job_id, updated_at_ms DESC, id DESC)    WHERE job_id IS NOT NULL;
 
 -- Use a rowid table for full committed messages. Keep payload last to avoid overflow I/O
 -- in earlier columns.

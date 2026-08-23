@@ -7,7 +7,6 @@
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- job_id: ?[16]u8!
 -- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
@@ -21,11 +20,11 @@
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
 INSERT INTO sessions(
-    id, workspace_id, origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
+    id, workspace_id, origin, parent_id, parent_message_id, parent_part_id, source_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version, created_at_ms, updated_at_ms
 ) VALUES (
-    :id, :workspace_id, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id, :job_id,
+    :id, :workspace_id, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
     :profile, :model, :reasoning, :config_rev, :permission, :max_rounds, :title, :agent,
     :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
 );
@@ -45,7 +44,6 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- job_id: ?[16]u8!
 -- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
@@ -69,7 +67,7 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- open_run_started_at_ms: ?u64!
 SELECT
     id, workspace_id,
-    origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
+    origin, parent_id, parent_message_id, parent_part_id, source_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
     message_count,
@@ -81,10 +79,9 @@ WHERE id = :id;
 
 -- name: SessionPage :many
 -- One keyset page of the session list, newest first. Optional filters select the population:
--- top_level, one parent, or one job. The id tiebreak keeps the page stable.
+-- top_level, one parent, or all. The id tiebreak keeps the page stable.
 -- filter_workspace_id: ?[16]u8!
 -- filter_parent_id: ?[16]u8!
--- filter_job_id: ?[16]u8!
 -- top_level: bool!
 -- cursor_updated_at_ms: ?u64!
 -- cursor_id: ?[16]u8!
@@ -96,7 +93,6 @@ WHERE id = :id;
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- job_id: ?[16]u8!
 -- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
@@ -117,7 +113,7 @@ WHERE id = :id;
 -- updated_at_ms: u64!
 SELECT
     id, workspace_id,
-    origin, parent_id, parent_message_id, parent_part_id, source_id, job_id,
+    origin, parent_id, parent_message_id, parent_part_id, source_id,
     profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
     created_by_name, created_by_version,
     message_count,
@@ -126,7 +122,6 @@ SELECT
 FROM sessions
 WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
-  AND (:filter_job_id        IS NULL OR job_id        = :filter_job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'))
   AND (:cursor_updated_at_ms IS NULL
        OR updated_at_ms < :cursor_updated_at_ms
@@ -138,13 +133,11 @@ LIMIT :limit;
 -- Return the size of the full view that the selector describes. The selector matches SessionPage.
 -- filter_workspace_id: ?[16]u8!
 -- filter_parent_id: ?[16]u8!
--- filter_job_id: ?[16]u8!
 -- top_level: bool!
 -- total: u64!
 SELECT count(*) AS total FROM sessions
 WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
-  AND (:filter_job_id        IS NULL OR job_id        = :filter_job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: InsertPrompt :exec

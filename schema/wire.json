@@ -2,7 +2,6 @@
   "protocolVersion": 1,
   "limits": {
     "dead_connection_ms": 90000,
-    "default_cron_list_page_size": 25,
     "default_page_size": 50,
     "default_session_list_page_size": 25,
     "default_workspace_browse_page_size": 100,
@@ -15,9 +14,6 @@
     "max_auth_user_code_bytes": 128,
     "max_blob_bytes": 67108864,
     "max_catalog_models": 4096,
-    "max_cron_jobs": 1024,
-    "max_cron_list_cursor_bytes": 256,
-    "max_cron_list_page_size": 100,
     "max_error_message_bytes": 4096,
     "max_frame_bytes": 8388608,
     "max_inline_media_base64_bytes": 349528,
@@ -49,7 +45,6 @@
     "ping_interval_ms": 30000
   },
   "constants": {
-    "MAX_CRON_REVISION": 9007199254740991,
     "MAX_REQUEST_ID": 9007199254740991,
     "MAX_REQUEST_ID_BYTES": 64,
     "MAX_SESSION_REVISION": 9007199254740991,
@@ -241,36 +236,6 @@
       "params": "PermissionForgetParams",
       "result": "Empty",
       "direction": "clientToServer"
-    },
-    {
-      "name": "cron.create",
-      "params": "CronCreateParams",
-      "result": "CronJobResult",
-      "direction": "clientToServer"
-    },
-    {
-      "name": "cron.patch",
-      "params": "CronPatchParams",
-      "result": "CronJobResult",
-      "direction": "clientToServer"
-    },
-    {
-      "name": "cron.remove",
-      "params": "CronJobRef",
-      "result": "Empty",
-      "direction": "clientToServer"
-    },
-    {
-      "name": "cron.list",
-      "params": "CronListParams",
-      "result": "CronListResult",
-      "direction": "clientToServer"
-    },
-    {
-      "name": "cron.run_now",
-      "params": "CronJobRef",
-      "result": "CronRunNowResult",
-      "direction": "clientToServer"
     }
   ],
   "broadcasts": [
@@ -317,21 +282,6 @@
     {
       "name": "auth.changed",
       "params": "AuthChangedData",
-      "direction": "serverToClient"
-    },
-    {
-      "name": "cron.created",
-      "params": "CronCreatedData",
-      "direction": "serverToClient"
-    },
-    {
-      "name": "cron.updated",
-      "params": "CronUpdatedData",
-      "direction": "serverToClient"
-    },
-    {
-      "name": "cron.removed",
-      "params": "CronRemovedData",
       "direction": "serverToClient"
     },
     {
@@ -1050,14 +1000,7 @@
     {
       "name": "WorkspaceRemoveResult",
       "doc": "workspace.remove result.",
-      "fields": [
-        {
-          "name": "related_job_ids",
-          "doc": "Cron jobs that referenced the removed workspace.",
-          "type": "[]JobId",
-          "presence": "required"
-        }
-      ]
+      "fields": []
     },
     {
       "name": "WorkspaceRemovedData",
@@ -1536,358 +1479,6 @@
         {
           "name": "requested_at_ms",
           "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronCreateParams",
-      "doc": "Params for `cron.create`.",
-      "fields": [
-        {
-          "name": "spec",
-          "type": "CronJobSpec",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronCreatedData",
-      "doc": "Payload for `cron.created`.",
-      "fields": [
-        {
-          "name": "revision",
-          "type": "CronRevision",
-          "presence": "required"
-        },
-        {
-          "name": "job",
-          "type": "CronJob",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronJob",
-      "doc": "A cron job record. Non-owning.",
-      "fields": [
-        {
-          "name": "id",
-          "type": "JobId",
-          "presence": "required"
-        },
-        {
-          "name": "spec",
-          "type": "CronJobSpec",
-          "presence": "required"
-        },
-        {
-          "name": "enabled",
-          "type": "bool",
-          "presence": "required"
-        },
-        {
-          "name": "created_at_ms",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "next_run_ms",
-          "type": "u64",
-          "presence": "optional"
-        },
-        {
-          "name": "last_run_ms",
-          "type": "u64",
-          "presence": "optional"
-        },
-        {
-          "name": "last_session_id",
-          "type": "SessionId",
-          "presence": "optional"
-        },
-        {
-          "name": "last_outcome",
-          "type": "CronRunOutcome",
-          "presence": "optional"
-        },
-        {
-          "name": "run_count",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "dispatch_failures",
-          "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronJobRef",
-      "doc": "Params identifying a cron job.",
-      "fields": [
-        {
-          "name": "job_id",
-          "type": "JobId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronJobResult",
-      "doc": "Result of `cron.create` and `cron.patch`.",
-      "fields": [
-        {
-          "name": "job",
-          "type": "CronJob",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronJobSpec",
-      "doc": "Full spec for a cron job.",
-      "fields": [
-        {
-          "name": "name",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "schedule",
-          "type": "CronSchedule",
-          "presence": "required"
-        },
-        {
-          "name": "session",
-          "type": "CreateSession",
-          "presence": "required"
-        },
-        {
-          "name": "retain",
-          "type": "CronRetain",
-          "presence": "required"
-        },
-        {
-          "name": "input",
-          "type": "Input",
-          "presence": "required"
-        },
-        {
-          "name": "on_missed",
-          "type": "CronMissedPolicy",
-          "presence": "required"
-        },
-        {
-          "name": "overlap",
-          "type": "CronOverlap",
-          "presence": "required"
-        },
-        {
-          "name": "delete_after_run",
-          "type": "bool",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronListParams",
-      "doc": "Params for `cron.list`.",
-      "fields": [
-        {
-          "name": "limit",
-          "type": "u64",
-          "presence": "optional"
-        },
-        {
-          "name": "cursor",
-          "type": "string",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "CronListResult",
-      "doc": "Result of `cron.list`.",
-      "fields": [
-        {
-          "name": "revision",
-          "type": "CronRevision",
-          "presence": "required"
-        },
-        {
-          "name": "jobs",
-          "type": "[]CronJob",
-          "presence": "required"
-        },
-        {
-          "name": "next_cursor",
-          "type": "string",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "CronPatch",
-      "doc": "Optional-field patch applied to an existing cron job.",
-      "fields": [
-        {
-          "name": "name",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "schedule",
-          "type": "CronSchedule",
-          "presence": "required"
-        },
-        {
-          "name": "session",
-          "type": "CreateSession",
-          "presence": "optional"
-        },
-        {
-          "name": "retain",
-          "type": "CronRetain",
-          "presence": "optional"
-        },
-        {
-          "name": "input",
-          "type": "Input",
-          "presence": "required"
-        },
-        {
-          "name": "on_missed",
-          "type": "CronMissedPolicy",
-          "presence": "optional"
-        },
-        {
-          "name": "overlap",
-          "type": "CronOverlap",
-          "presence": "optional"
-        },
-        {
-          "name": "delete_after_run",
-          "type": "bool",
-          "presence": "optional"
-        },
-        {
-          "name": "enabled",
-          "type": "bool",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "CronPatchParams",
-      "doc": "Params for `cron.patch`.",
-      "fields": [
-        {
-          "name": "job_id",
-          "type": "JobId",
-          "presence": "required"
-        },
-        {
-          "name": "patch",
-          "type": "CronPatch",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronRemovedData",
-      "doc": "Payload for `cron.removed`.",
-      "fields": [
-        {
-          "name": "revision",
-          "type": "CronRevision",
-          "presence": "required"
-        },
-        {
-          "name": "job_id",
-          "type": "JobId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronRunNowResult",
-      "doc": "Result of `cron.run_now`.",
-      "fields": [
-        {
-          "name": "session_id",
-          "type": "SessionId",
-          "presence": "required"
-        },
-        {
-          "name": "run_id",
-          "type": "RunId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronScheduleAfter",
-      "doc": "Delay-based cron schedule arm.",
-      "fields": [
-        {
-          "name": "delay_ms",
-          "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronScheduleAt",
-      "doc": "One-shot cron schedule arm.",
-      "fields": [
-        {
-          "name": "at_ms",
-          "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronScheduleCron",
-      "doc": "Cron-expression schedule arm.",
-      "fields": [
-        {
-          "name": "expr",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "utc_offset_minutes",
-          "type": "i64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronScheduleEvery",
-      "doc": "Recurring-interval schedule arm.",
-      "fields": [
-        {
-          "name": "interval_ms",
-          "type": "u64",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CronUpdatedData",
-      "doc": "Payload for `cron.updated`.",
-      "fields": [
-        {
-          "name": "revision",
-          "type": "CronRevision",
-          "presence": "required"
-        },
-        {
-          "name": "job",
-          "type": "CronJob",
           "presence": "required"
         }
       ]
@@ -2535,11 +2126,6 @@
         {
           "name": "session_revision",
           "type": "SessionRevision",
-          "presence": "required"
-        },
-        {
-          "name": "cron_revision",
-          "type": "CronRevision",
           "presence": "required"
         },
         {
@@ -3444,17 +3030,6 @@
       ]
     },
     {
-      "name": "SessionOriginCron",
-      "doc": "Created by a cron job.",
-      "fields": [
-        {
-          "name": "job_id",
-          "type": "JobId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "SessionOriginFork",
       "doc": "Fork of another session.",
       "fields": [
@@ -3524,17 +3099,6 @@
         {
           "name": "parent_id",
           "type": "SessionId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SessionPopulationJobRuns",
-      "doc": "Sessions created by one cron job.",
-      "fields": [
-        {
-          "name": "job_id",
-          "type": "JobId",
           "presence": "required"
         }
       ]
@@ -4130,29 +3694,6 @@
       ]
     },
     {
-      "name": "CronSchedule",
-      "doc": "A cron schedule: recurring or one-shot. Non-owning.",
-      "discriminator": "type",
-      "arms": [
-        {
-          "tag": "every",
-          "type": "CronScheduleEvery"
-        },
-        {
-          "tag": "cron",
-          "type": "CronScheduleCron"
-        },
-        {
-          "tag": "at",
-          "type": "CronScheduleAt"
-        },
-        {
-          "tag": "after",
-          "type": "CronScheduleAfter"
-        }
-      ]
-    },
-    {
       "name": "Input",
       "doc": "A unit of user input: either raw content or a skill invocation. Non-owning.",
       "discriminator": "type",
@@ -4267,10 +3808,6 @@
         {
           "tag": "fork",
           "type": "SessionOriginFork"
-        },
-        {
-          "tag": "cron",
-          "type": "SessionOriginCron"
         }
       ]
     },
@@ -4286,10 +3823,6 @@
         {
           "tag": "children",
           "type": "SessionPopulationChildren"
-        },
-        {
-          "tag": "job_runs",
-          "type": "SessionPopulationJobRuns"
         },
         {
           "tag": "all",
@@ -4456,18 +3989,6 @@
         },
         {
           "type": "PermissionForgetParams"
-        },
-        {
-          "type": "CronCreateParams"
-        },
-        {
-          "type": "CronPatchParams"
-        },
-        {
-          "type": "CronJobRef"
-        },
-        {
-          "type": "CronListParams"
         }
       ]
     },
@@ -4538,15 +4059,6 @@
         },
         {
           "type": "PermissionRulesResult"
-        },
-        {
-          "type": "CronJobResult"
-        },
-        {
-          "type": "CronListResult"
-        },
-        {
-          "type": "CronRunNowResult"
         }
       ]
     },
@@ -4581,15 +4093,6 @@
         },
         {
           "type": "AuthChangedData"
-        },
-        {
-          "type": "CronCreatedData"
-        },
-        {
-          "type": "CronUpdatedData"
-        },
-        {
-          "type": "CronRemovedData"
         },
         {
           "type": "Notice"
@@ -4712,15 +4215,6 @@
           "wire": "auth.changed"
         },
         {
-          "wire": "cron.created"
-        },
-        {
-          "wire": "cron.updated"
-        },
-        {
-          "wire": "cron.removed"
-        },
-        {
           "wire": "notice"
         },
         {
@@ -4801,12 +4295,6 @@
         },
         {
           "wire": "-31006"
-        },
-        {
-          "wire": "-31007"
-        },
-        {
-          "wire": "-31008"
         },
         {
           "wire": "-31009"
@@ -4895,67 +4383,6 @@
         },
         {
           "wire": "internal"
-        }
-      ]
-    },
-    {
-      "name": "CronRetain",
-      "doc": "Cron job retention policy.",
-      "numeric": false,
-      "values": [
-        {
-          "wire": "always"
-        },
-        {
-          "wire": "on_failure"
-        },
-        {
-          "wire": "never"
-        }
-      ]
-    },
-    {
-      "name": "CronOverlap",
-      "doc": "Cron schedule overlap policy.",
-      "numeric": false,
-      "values": [
-        {
-          "wire": "skip"
-        },
-        {
-          "wire": "parallel"
-        }
-      ]
-    },
-    {
-      "name": "CronMissedPolicy",
-      "doc": "Policy for a missed cron schedule.",
-      "numeric": false,
-      "values": [
-        {
-          "wire": "skip"
-        },
-        {
-          "wire": "run_once"
-        }
-      ]
-    },
-    {
-      "name": "CronRunOutcome",
-      "doc": "Cron run outcome.",
-      "numeric": false,
-      "values": [
-        {
-          "wire": "completed"
-        },
-        {
-          "wire": "canceled"
-        },
-        {
-          "wire": "failed"
-        },
-        {
-          "wire": "dispatch_failed"
         }
       ]
     },
@@ -5060,21 +4487,6 @@
         },
         {
           "wire": "permission.forget"
-        },
-        {
-          "wire": "cron.create"
-        },
-        {
-          "wire": "cron.patch"
-        },
-        {
-          "wire": "cron.remove"
-        },
-        {
-          "wire": "cron.list"
-        },
-        {
-          "wire": "cron.run_now"
         }
       ]
     },
@@ -5330,10 +4742,6 @@
       "base": "[16]u8"
     },
     {
-      "name": "JobId",
-      "base": "[16]u8"
-    },
-    {
       "name": "RuleId",
       "base": "[16]u8"
     },
@@ -5367,10 +4775,6 @@
     },
     {
       "name": "SessionRevision",
-      "base": "u64"
-    },
-    {
-      "name": "CronRevision",
       "base": "u64"
     },
     {

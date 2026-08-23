@@ -6,7 +6,6 @@ pub const protocol_version = initialize.protocol_version;
 
 pub const limits = struct {
     pub const dead_connection_ms: u64 = 90000;
-    pub const default_cron_list_page_size: u64 = 25;
     pub const default_page_size: u64 = 50;
     pub const default_session_list_page_size: u64 = 25;
     pub const default_workspace_browse_page_size: u64 = 100;
@@ -19,9 +18,6 @@ pub const limits = struct {
     pub const max_auth_user_code_bytes: u64 = 128;
     pub const max_blob_bytes: u64 = 67108864;
     pub const max_catalog_models: u64 = 4096;
-    pub const max_cron_jobs: u64 = 1024;
-    pub const max_cron_list_cursor_bytes: u64 = 256;
-    pub const max_cron_list_page_size: u64 = 100;
     pub const max_error_message_bytes: u64 = 4096;
     pub const max_frame_bytes: u64 = 8388608;
     pub const max_inline_media_base64_bytes: u64 = 349528;
@@ -54,7 +50,6 @@ pub const limits = struct {
 };
 
 pub const constants = struct {
-    pub const MAX_CRON_REVISION: u64 = 9007199254740991;
     pub const MAX_REQUEST_ID: u64 = 9007199254740991;
     pub const MAX_REQUEST_ID_BYTES: u64 = 64;
     pub const MAX_SESSION_REVISION: u64 = 9007199254740991;

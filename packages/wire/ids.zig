@@ -6,8 +6,6 @@ const std = @import("std");
 pub const SessionId = [16]u8;
 /// Fixed-width workspace identifier.
 pub const WorkspaceId = [16]u8;
-/// Fixed-width cron job identifier.
-pub const JobId = [16]u8;
 /// Fixed-width permission rule identifier.
 pub const RuleId = [16]u8;
 /// Fixed-width login identifier.
@@ -28,8 +26,6 @@ pub const PartId = u64;
 pub const Seq = u64;
 /// Numeric session revision.
 pub const SessionRevision = u64;
-/// Numeric cron revision.
-pub const CronRevision = u64;
 /// Numeric run-configuration revision.
 pub const ConfigRev = u64;
 

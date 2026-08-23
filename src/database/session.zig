@@ -16,7 +16,6 @@ pub const PageRow = queries_gen.SessionPage.Row;
 pub const Selector = struct {
     workspace_id: ?[16]u8 = null,
     parent_id: ?[16]u8 = null,
-    job_id: ?[16]u8 = null,
     top_level: bool = false,
 };
 
@@ -32,7 +31,6 @@ pub const CreateParams = struct {
     parent_message_id: ?u64 = null,
     parent_part_id: ?u64 = null,
     source_id: ?[16]u8 = null,
-    job_id: ?[16]u8 = null,
     profile: []const u8,
     model: []const u8,
     reasoning: []const u8,
@@ -77,7 +75,6 @@ pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cur
     var it = try db.queries.session_page.rows(.{
         .filter_workspace_id = sel.workspace_id,
         .filter_parent_id = sel.parent_id,
-        .filter_job_id = sel.job_id,
         .top_level = sel.top_level,
         .cursor_updated_at_ms = if (cursor) |c| c.updated_at_ms else null,
         .cursor_id = if (cursor) |c| c.id else null,
@@ -95,7 +92,6 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
     const row = try db.queries.session_count.one(arena, .{
         .filter_workspace_id = sel.workspace_id,
         .filter_parent_id = sel.parent_id,
-        .filter_job_id = sel.job_id,
         .top_level = sel.top_level,
     });
     return row.value.total;
@@ -194,7 +190,7 @@ test "a child session needs all three parent marks" {
     }
 }
 
-test "fork needs a source id and cron needs a job id" {
+test "fork needs a source id" {
     var db = try testDb();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -207,11 +203,6 @@ test "fork needs a source id and cron needs a job id" {
     fork.origin = "fork";
     fork.source_id = [_]u8{5} ** 16;
     try create(&db, fork);
-
-    var cron = rootParams([_]u8{2} ** 16, ws.id);
-    cron.origin = "cron";
-    cron.job_id = [_]u8{6} ** 16;
-    try create(&db, cron);
 
     var bad_fork = rootParams([_]u8{3} ** 16, ws.id);
     bad_fork.origin = "fork"; // The fork has no source_id.

@@ -77,11 +77,6 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
         .@"workspace.skills",
         .@"permission.rules",
         .@"permission.forget",
-        .@"cron.create",
-        .@"cron.patch",
-        .@"cron.remove",
-        .@"cron.list",
-        .@"cron.run_now",
         => return errorResponse(request.id, .unknown_method, "not implemented"),
     }
 }
@@ -95,7 +90,6 @@ fn initializeResult(state: *const State) wire.misc.InitializeResult {
         .profiles = &.{},
         .agents = &.{},
         .session_revision = 0,
-        .cron_revision = 0,
         .catalog_rev = [_]u8{'0'} ** 64,
         .catalog_health = .{ .skipped = &.{} },
         .capabilities = &.{},

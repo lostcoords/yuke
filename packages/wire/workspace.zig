@@ -96,10 +96,7 @@ pub const WorkspaceRef = struct {
 };
 
 /// workspace.remove result.
-pub const WorkspaceRemoveResult = struct {
-    /// Cron jobs that referenced the removed workspace.
-    related_job_ids: []const ids.JobId,
-};
+pub const WorkspaceRemoveResult = struct {};
 
 /// Payload for `workspace.removed`.
 pub const WorkspaceRemovedData = struct {

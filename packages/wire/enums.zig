@@ -19,9 +19,6 @@ pub const BroadcastName = enum {
     @"catalog.changed",
     @"auth.login_finished",
     @"auth.changed",
-    @"cron.created",
-    @"cron.updated",
-    @"cron.removed",
     notice,
     @"message.committed",
     @"run.started",
@@ -56,18 +53,6 @@ pub const RunErrorCode = enum {
     internal,
 };
 
-/// Cron job retention policy.
-pub const CronRetain = enum { always, on_failure, never };
-
-/// Cron schedule overlap policy.
-pub const CronOverlap = enum { skip, parallel };
-
-/// Policy for a missed cron schedule.
-pub const CronMissedPolicy = enum { skip, run_once };
-
-/// Cron run outcome.
-pub const CronRunOutcome = enum { completed, canceled, failed, dispatch_failed };
-
 /// RPC method name.
 pub const MethodName = enum {
     initialize,
@@ -99,11 +84,6 @@ pub const MethodName = enum {
     @"workspace.skills",
     @"permission.rules",
     @"permission.forget",
-    @"cron.create",
-    @"cron.patch",
-    @"cron.remove",
-    @"cron.list",
-    @"cron.run_now",
 };
 
 /// Notice severity level.
@@ -169,8 +149,6 @@ pub const ErrorCode = enum(i32) {
     unknown_part = -31004,
     unknown_input = -31005,
     unknown_config_rev = -31006,
-    unknown_job = -31007,
-    job_busy = -31008,
     unknown_skill = -31009,
     input_already_started = -31010,
     queue_full = -31011,

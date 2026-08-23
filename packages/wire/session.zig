@@ -129,7 +129,6 @@ pub const SessionOrigin = union(enum) {
     root: SessionOriginRoot,
     child: SessionOriginChild,
     fork: SessionOriginFork,
-    cron: SessionOriginCron,
 
     /// Decode a tagged wire union from JSON.
     pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
@@ -148,11 +147,6 @@ pub const SessionOriginChild = struct {
     parent_id: ids.SessionId,
     parent_message_id: ids.MessageId,
     parent_part_id: ids.PartId,
-};
-
-/// Created by a cron job.
-pub const SessionOriginCron = struct {
-    job_id: ids.JobId,
 };
 
 /// Fork of another session.
@@ -181,7 +175,6 @@ pub const SessionPatchParams = struct {
 pub const SessionPopulation = union(enum) {
     top_level: SessionPopulationTopLevel,
     children: SessionPopulationChildren,
-    job_runs: SessionPopulationJobRuns,
     all: SessionPopulationAll,
 
     /// Decode a tagged wire union from JSON.
@@ -202,11 +195,6 @@ pub const SessionPopulationAll = struct {};
 /// Immediate persistent children of one session.
 pub const SessionPopulationChildren = struct {
     parent_id: ids.SessionId,
-};
-
-/// Sessions created by one cron job.
-pub const SessionPopulationJobRuns = struct {
-    job_id: ids.JobId,
 };
 
 /// User-facing conversations: root sessions and forks.

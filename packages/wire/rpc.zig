@@ -3,7 +3,6 @@
 const std = @import("std");
 const auth = @import("auth.zig");
 const catalog = @import("catalog.zig");
-const cron = @import("cron.zig");
 const enums = @import("enums.zig");
 const ids = @import("ids.zig");
 const initialize = @import("initialize.zig");
@@ -51,10 +50,6 @@ pub const RequestParams = union(enum) {
     workspace_browse_params: workspace.WorkspaceBrowseParams,
     workspace_ref: workspace.WorkspaceRef,
     permission_forget_params: permission.PermissionForgetParams,
-    cron_create_params: cron.CronCreateParams,
-    cron_patch_params: cron.CronPatchParams,
-    cron_job_ref: cron.CronJobRef,
-    cron_list_params: cron.CronListParams,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -84,9 +79,6 @@ pub const ResponseResult = union(enum) {
     workspace_remove_result: workspace.WorkspaceRemoveResult,
     workspace_skills_result: workspace.WorkspaceSkillsResult,
     permission_rules_result: permission.PermissionRulesResult,
-    cron_job_result: cron.CronJobResult,
-    cron_list_result: cron.CronListResult,
-    cron_run_now_result: cron.CronRunNowResult,
 
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         try stringifyPayload(self, jw);
@@ -104,9 +96,6 @@ pub const BroadcastData = union(enum) {
     catalog_changed_data: catalog.CatalogChangedData,
     auth_login_finished_data: auth.AuthLoginFinishedData,
     auth_changed_data: auth.AuthChangedData,
-    cron_created_data: cron.CronCreatedData,
-    cron_updated_data: cron.CronUpdatedData,
-    cron_removed_data: cron.CronRemovedData,
     notice: misc.Notice,
     message_committed_data: message.MessageCommittedData,
     run_started_data: run.RunStartedData,
@@ -167,11 +156,6 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"workspace.skills", .params = workspace.WorkspaceRef, .result = workspace.WorkspaceSkillsResult, .params_optional = false },
     .{ .name = .@"permission.rules", .params = workspace.WorkspaceRef, .result = permission.PermissionRulesResult, .params_optional = false },
     .{ .name = .@"permission.forget", .params = permission.PermissionForgetParams, .result = misc.Empty, .params_optional = false },
-    .{ .name = .@"cron.create", .params = cron.CronCreateParams, .result = cron.CronJobResult, .params_optional = false },
-    .{ .name = .@"cron.patch", .params = cron.CronPatchParams, .result = cron.CronJobResult, .params_optional = false },
-    .{ .name = .@"cron.remove", .params = cron.CronJobRef, .result = misc.Empty, .params_optional = false },
-    .{ .name = .@"cron.list", .params = cron.CronListParams, .result = cron.CronListResult, .params_optional = true },
-    .{ .name = .@"cron.run_now", .params = cron.CronJobRef, .result = cron.CronRunNowResult, .params_optional = false },
 };
 
 /// Broadcast routing specification.
@@ -191,9 +175,6 @@ pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"catalog.changed", .data = catalog.CatalogChangedData },
     .{ .name = .@"auth.login_finished", .data = auth.AuthLoginFinishedData },
     .{ .name = .@"auth.changed", .data = auth.AuthChangedData },
-    .{ .name = .@"cron.created", .data = cron.CronCreatedData },
-    .{ .name = .@"cron.updated", .data = cron.CronUpdatedData },
-    .{ .name = .@"cron.removed", .data = cron.CronRemovedData },
     .{ .name = .notice, .data = misc.Notice },
     .{ .name = .@"message.committed", .data = message.MessageCommittedData },
     .{ .name = .@"run.started", .data = run.RunStartedData },
@@ -430,7 +411,7 @@ test "notification envelope round-trips" {
 
 test "result dispatch and response error" {
     const result_json =
-        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"cron_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
+        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
     ;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
