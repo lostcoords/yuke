@@ -1,5 +1,5 @@
-//! The daemon database owns one SQLite connection and all store queries.
-//! The daemon uses one rebased baseline schema and can discard the database before release.
+//! The daemon database owns one SQLite connection and all prepared queries.
+//! A forward-only migration engine brings the schema to the latest version on open.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -7,40 +7,44 @@ const queries_gen = @import("queries_gen.zig");
 
 pub const catalog = @import("catalog.zig");
 
-/// The baseline schema version. The daemon rejects any other version and does not migrate it.
-const SCHEMA_VERSION: i64 = 1;
+/// A yuke database carries this id in the SQLite application_id header slot.
+const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
 
-/// Each entry is a sentinel-terminated DDL script. The daemon applies entries in array order.
-const schema = [_][:0]const u8{
-    @embedFile("schema/catalog.sql"),
-    @embedFile("schema/session.sql"),
+/// One forward-only schema step. The sql is immutable once shipped; a change is a new step.
+const Migration = struct { version: i64, sql: [:0]const u8 };
+
+/// Applied in order; entry i brings the database to version i+1.
+const migrations = [_]Migration{
+    .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
 };
+
+comptime {
+    std.debug.assert(migrations.len > 0);
+    for (migrations, 0..) |m, i| {
+        std.debug.assert(m.version == @as(i64, @intCast(i)) + 1); // dense and 1-based
+        std.debug.assert(m.sql.len > 0);
+    }
+}
+
+/// Store one checksum row per applied step. Check it on open so a changed shipped migration
+/// cannot diverge from the applied database.
+const migration_hash_ddl =
+    \\CREATE TABLE IF NOT EXISTS migration_hash (
+    \\    version INTEGER PRIMARY KEY CHECK (version >= 1),
+    \\    hash    TEXT NOT NULL CHECK (length(hash) = 16)
+    \\) STRICT
+;
 
 /// The shared handle stores the connection and owns all prepared queries.
 pub const Database = struct {
     conn: sql.Connection,
     queries: queries_gen.Queries,
 
-    /// Take ownership of `conn`, apply the baseline schema once, and prepare the queries.
+    /// Take ownership of `conn`, migrate to the latest version, and prepare the queries.
     /// Close the connection if any step fails.
     pub fn open(conn: sql.Connection) !Database {
         errdefer conn.close();
-
-        // Run these per-connection pragmas outside a transaction.
-        try conn.execNoArgs("PRAGMA foreign_keys = ON");
-        try setWal(conn);
-
-        const version = try userVersion(conn);
-        if (version == 0) {
-            try conn.execNoArgs("BEGIN");
-            errdefer conn.execNoArgs("ROLLBACK") catch {};
-            for (schema) |s| try conn.execNoArgs(s);
-            try conn.execNoArgs(std.fmt.comptimePrint("PRAGMA user_version = {d}", .{SCHEMA_VERSION}));
-            try conn.execNoArgs("COMMIT");
-        } else if (version != SCHEMA_VERSION) {
-            return error.IncompatibleDatabase;
-        }
-
+        try migrate(conn);
         return .{ .conn = conn, .queries = try queries_gen.Queries.prepareAll(conn) };
     }
 
@@ -51,9 +55,74 @@ pub const Database = struct {
     }
 };
 
-/// Read the database format version from the header.
-fn userVersion(conn: sql.Connection) !i64 {
-    const r = (try conn.row("PRAGMA user_version", .{})) orelse return error.PragmaReadFailed;
+/// Bring the database to the latest schema version. Forward-only.
+fn migrate(conn: sql.Connection) !void {
+    // Validate identity before any change to the file.
+    const app_id = try scalarInt(conn, "PRAGMA application_id");
+    if (app_id != 0 and app_id != APPLICATION_ID) return error.ForeignDatabase;
+
+    const applied = try scalarInt(conn, "PRAGMA user_version");
+    const user_tables = try scalarInt(conn, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'");
+
+    const fresh = app_id == 0 and applied == 0 and user_tables == 0;
+    const ours = app_id == APPLICATION_ID and applied >= 1 and applied <= migrations.len;
+    if (!fresh and !ours) return error.IncompatibleDatabase;
+
+    // The file is ours or empty; now set the per-connection pragmas.
+    try conn.execNoArgs("PRAGMA foreign_keys = ON");
+    try setWal(conn);
+
+    var next: usize = @intCast(applied);
+    while (next < migrations.len) : (next += 1) try applyMigration(conn, migrations[next]);
+
+    try checkHashes(conn);
+}
+
+/// Apply one step and record its checksum, atomically.
+fn applyMigration(conn: sql.Connection, m: Migration) !void {
+    try conn.execNoArgs("BEGIN");
+    errdefer conn.execNoArgs("ROLLBACK") catch {};
+
+    try conn.execNoArgs(migration_hash_ddl);
+    try conn.execNoArgs(m.sql);
+
+    const hash = migrationHash(m.sql);
+    try conn.exec("INSERT INTO migration_hash(version, hash) VALUES (?1, ?2)", .{ m.version, &hash });
+    try conn.execNoArgs(std.fmt.comptimePrint("PRAGMA application_id = {d}", .{APPLICATION_ID}));
+
+    var buf: [48]u8 = undefined;
+    try conn.execNoArgs(try std.fmt.bufPrintZ(&buf, "PRAGMA user_version = {d}", .{m.version}));
+
+    try conn.execNoArgs("COMMIT");
+}
+
+/// Verify one dense checksum row per applied step, each matching the embedded text.
+fn checkHashes(conn: sql.Connection) !void {
+    var rows = try conn.rows("SELECT version, hash FROM migration_hash ORDER BY version", .{});
+    defer rows.deinit();
+
+    var expected: usize = 0;
+    while (rows.next()) |row| {
+        if (expected >= migrations.len) return error.MigrationDrift;
+        const want = migrationHash(migrations[expected].sql);
+        if (row.int(0) != migrations[expected].version) return error.MigrationDrift;
+        if (!std.mem.eql(u8, row.text(1), &want)) return error.MigrationDrift;
+        expected += 1;
+    }
+    if (rows.err) |err| return err;
+    if (expected != migrations.len) return error.MigrationDrift;
+}
+
+/// The 16-hex-character checksum of one migration. Big-endian, so it is host-portable.
+fn migrationHash(source: [:0]const u8) [16]u8 {
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &bytes, std.hash.Wyhash.hash(0, source), .big);
+    return std.fmt.bytesToHex(bytes, .lower);
+}
+
+/// Read a single-integer scalar query.
+fn scalarInt(conn: sql.Connection, query: []const u8) !i64 {
+    const r = (try conn.row(query, .{})) orelse return error.QueryFailed;
     defer r.deinit();
     return r.int(0);
 }
@@ -73,28 +142,42 @@ test {
 const zqlite = @import("zqlite");
 const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
-test "open applies the baseline on a fresh database" {
+test "migrate applies the baseline and claims the database" {
     const conn = try zqlite.open(":memory:", test_flags);
     var db = try Database.open(conn);
     defer db.deinit();
 
-    const r = (try db.conn.row("PRAGMA user_version", .{})).?;
-    defer r.deinit();
-    try std.testing.expectEqual(SCHEMA_VERSION, r.int(0));
+    try std.testing.expectEqual(@as(i64, 1), try scalarInt(db.conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(APPLICATION_ID, try scalarInt(db.conn, "PRAGMA application_id"));
+    try std.testing.expectEqual(@as(i64, 1), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
 }
 
-test "open rejects an incompatible database version" {
+test "migrate is idempotent on reopen" {
     const conn = try zqlite.open(":memory:", test_flags);
+    defer conn.close();
+    try migrate(conn);
+    try migrate(conn); // already at latest: apply nothing, re-check hashes
+    try std.testing.expectEqual(@as(i64, 1), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+}
+
+test "migrate rejects a version from the future" {
+    const conn = try zqlite.open(":memory:", test_flags);
+    defer conn.close();
     try conn.execNoArgs("PRAGMA user_version = 99");
-    try std.testing.expectError(error.IncompatibleDatabase, Database.open(conn));
+    try std.testing.expectError(error.IncompatibleDatabase, migrate(conn));
 }
 
-// The skip path becomes strict once session.sql adds plain CREATE TABLE; catalog.sql uses
-// IF NOT EXISTS, so a reapply here would not fail.
-test "open skips the baseline when the version matches" {
+test "migrate rejects a foreign application id" {
     const conn = try zqlite.open(":memory:", test_flags);
-    for (schema) |s| try conn.execNoArgs(s);
-    try conn.execNoArgs("PRAGMA user_version = 1");
-    var db = try Database.open(conn);
-    defer db.deinit();
+    defer conn.close();
+    try conn.execNoArgs("PRAGMA application_id = 12345");
+    try std.testing.expectError(error.ForeignDatabase, migrate(conn));
+}
+
+test "migrate detects an edited migration" {
+    const conn = try zqlite.open(":memory:", test_flags);
+    defer conn.close();
+    try migrate(conn);
+    try conn.execNoArgs("UPDATE migration_hash SET hash = '0000000000000000'");
+    try std.testing.expectError(error.MigrationDrift, migrate(conn));
 }
