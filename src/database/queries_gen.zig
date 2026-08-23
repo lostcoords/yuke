@@ -469,6 +469,18 @@ pub const WorkspaceById = sql.OptionalQuery(
     },
 );
 
+pub const WorkspaceList = sql.ManyQuery(
+    \\SELECT id, kind, root, title FROM workspaces ORDER BY title, id;
+,
+    struct {},
+    struct {
+        id: [16]u8,
+        kind: []const u8,
+        root: []const u8,
+        title: []const u8,
+    },
+);
+
 pub const Queries = struct {
     delete_providers: DeleteProviders,
     delete_models: DeleteModels,
@@ -495,6 +507,7 @@ pub const Queries = struct {
     workspace_by_stable_key: WorkspaceByStableKey,
     insert_workspace: InsertWorkspace,
     workspace_by_id: WorkspaceById,
+    workspace_list: WorkspaceList,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);

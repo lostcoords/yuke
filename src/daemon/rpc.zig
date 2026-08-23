@@ -44,7 +44,8 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
             const params = request.params.initialize_params;
             if (params.protocol != wire.meta.protocol_version)
                 return errorResponse(request.id, .bad_protocol, "unsupported protocol version");
-            return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = initializeResult(state) } } };
+            const result = try handlers.initialize(state, arena);
+            return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = result } } };
         },
         .@"session.create" => {
             const result = try handlers.sessionCreate(state, arena, request.params.create_session);
@@ -85,21 +86,6 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
         .@"permission.forget",
         => return errorResponse(request.id, .unknown_method, "not implemented"),
     }
-}
-
-/// Report the daemon handshake. Use the real clock; keep store revisions at 0 until stores exist.
-fn initializeResult(state: *const State) wire.misc.InitializeResult {
-    return .{
-        .protocol = wire.meta.protocol_version,
-        .daemon = .{ .version = "0.0.1", .server_now_ms = state.nowMillis() },
-        .workspaces = &.{},
-        .profiles = &.{},
-        .agents = &.{},
-        .session_revision = 0,
-        .catalog_rev = [_]u8{'0'} ** 64,
-        .catalog_health = .{ .skipped = &.{} },
-        .capabilities = &.{},
-    };
 }
 
 fn errorResponse(id: wire.ids.RequestId, code: wire.enums.ErrorCode, message: []const u8) wire.rpc.Response {
@@ -285,6 +271,25 @@ test "dispatch initialize returns a result" {
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
     // The clock uses the current time, so it exceeds this 2023 timestamp.
     try std.testing.expect(fixture.state.nowMillis() > 1_700_000_000_000);
+    // A fresh daemon has no workspaces and a zero session revision.
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"workspaces\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"session_revision\":0") != null);
+}
+
+test "initialize lists the workspaces the stores hold" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var create_buffer: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "1", "/init/proj", &create_buffer);
+
+    var buffer: [4096]u8 = undefined;
+    const written = try call(&fixture,
+        \\{"id":"2","method":"initialize","params":{"client":{"name":"test","version":"0"}}}
+    , &buffer);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"root\":\"/init/proj\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"title\":\"proj\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"kind\":\"local\"") != null);
 }
 
 test "dispatch reports an unknown method with the request id" {

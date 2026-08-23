@@ -195,6 +195,29 @@ test "session list cursor round-trips and binds to its selector" {
     try std.testing.expectError(error.BadCursor, decodeCursor(a, different, encoded));
 }
 
+/// Handle initialize: report the daemon snapshot. The session revision starts at 0 each run because
+/// it is in-memory, not durable. The catalog revision waits for the catalog slice.
+pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.InitializeResult {
+    const stored = try workspace_store.list(&state.db, arena);
+    const workspaces = try arena.alloc(wire.workspace.Workspace, stored.len);
+    for (stored, 0..) |ws, i| {
+        const kind = std.meta.stringToEnum(wire.enums.WorkspaceKind, ws.kind);
+        std.debug.assert(kind != null); // The schema constrains kind to a known value.
+        workspaces[i] = .{ .id = ws.id, .kind = kind.?, .root = ws.root, .title = ws.title };
+    }
+    return .{
+        .protocol = wire.meta.protocol_version,
+        .daemon = .{ .version = "0.0.1", .server_now_ms = state.nowMillis() },
+        .workspaces = workspaces,
+        .profiles = &.{},
+        .agents = &.{},
+        .session_revision = 0,
+        .catalog_rev = [_]u8{'0'} ** 64,
+        .catalog_health = .{ .skipped = &.{} },
+        .capabilities = &.{},
+    };
+}
+
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 /// The broadcast fan-out is a later slice; this returns the result only.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {

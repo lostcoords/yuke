@@ -46,6 +46,20 @@ pub fn byId(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Workspace {
     return .{ .id = row.value.id, .kind = row.value.kind, .root = row.value.root, .title = row.value.title };
 }
 
+/// List every workspace into `arena`, ordered by title then id. The result borrows `arena`.
+pub fn list(db: *Database, arena: std.mem.Allocator) ![]const Workspace {
+    var it = try db.queries.workspace_list.rows(.{});
+    defer it.deinit();
+    var out: std.ArrayList(Workspace) = .empty;
+    while (try it.next(arena)) |row| try out.append(arena, .{
+        .id = row.value.id,
+        .kind = row.value.kind,
+        .root = row.value.root,
+        .title = row.value.title,
+    });
+    return out.items;
+}
+
 const testing = std.testing;
 const zqlite = @import("zqlite");
 
@@ -86,6 +100,29 @@ test "resolve dedups a persistent root by stable_key" {
     try testing.expect(first.created);
     try testing.expect(!again.created);
     try testing.expectEqualSlices(u8, &first.id, &again.id); // the second call reuses the first id
+}
+
+test "list returns every workspace" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expectEqual(@as(usize, 0), (try list(&db, a)).len);
+    _ = try resolve(&db, a, [_]u8{1} ** 16, "/b", "b", "/b");
+    _ = try resolve(&db, a, [_]u8{2} ** 16, "/a", "a", "/a");
+    // Two rows share a title, so the id tie-break decides their order.
+    _ = try resolve(&db, a, [_]u8{5} ** 16, "/a2", "a", "/a2");
+    _ = try resolve(&db, a, [_]u8{3} ** 16, "/a3", "a", "/a3");
+
+    const all = try list(&db, a);
+    try testing.expectEqual(@as(usize, 4), all.len);
+    try testing.expectEqualStrings("a", all[0].title); // title orders first
+    try testing.expectEqual(@as(u8, 2), all[0].id[0]); // then id ascending: 2 < 3 < 5
+    try testing.expectEqual(@as(u8, 3), all[1].id[0]);
+    try testing.expectEqual(@as(u8, 5), all[2].id[0]);
+    try testing.expectEqualStrings("b", all[3].title);
 }
 
 test "resolve never dedups an ephemeral workspace" {

@@ -20,3 +20,11 @@ INSERT INTO workspaces(id, kind, root, title, stable_key)
 -- root: []const u8!
 -- title: []const u8!
 SELECT id, kind, root, title FROM workspaces WHERE id = :id;
+
+-- name: WorkspaceList :many
+-- List every workspace for the initialize snapshot, ordered by title then id.
+-- id: [16]u8!
+-- kind: []const u8!
+-- root: []const u8!
+-- title: []const u8!
+SELECT id, kind, root, title FROM workspaces ORDER BY title, id;
