@@ -34,11 +34,13 @@ pub const SkillRef = struct {
     arguments: []const u8,
 };
 
-/// Daemon-known workspace directory.
+/// Daemon-known workspace.
 pub const Workspace = struct {
-    /// Derived workspace id.
+    /// The daemon mints the opaque workspace id.
     id: ids.WorkspaceId,
-    /// Canonical absolute path.
+    /// The daemon supports only the local kind today.
+    kind: enums.WorkspaceKind = .local,
+    /// Canonical absolute path of the local root.
     root: []const u8,
     /// Display title.
     title: []const u8,
@@ -113,6 +115,29 @@ pub const WorkspaceSkillsResult = struct {
 
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+
+test "workspace defaults to local kind and emits it" {
+    const json =
+        \\{"id":"0123456789abcdef","root":"/home/x","title":"x"}
+    ;
+    const parsed = try std.json.parseFromSlice(Workspace, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expectEqual(enums.WorkspaceKind.local, parsed.value.kind);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{}, &buf.writer);
+    try testing.expectEqualStrings(
+        \\{"id":"0123456789abcdef","kind":"local","root":"/home/x","title":"x"}
+    , buf.written());
+}
+
+test "workspace rejects unknown kind" {
+    const json =
+        \\{"id":"0123456789abcdef","kind":"vm","root":"/home/x","title":"x"}
+    ;
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Workspace, testing.allocator, json, opts));
+}
 
 test "workspace browse params round-trips with optional fields" {
     const json =

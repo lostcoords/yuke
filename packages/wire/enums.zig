@@ -151,6 +151,9 @@ pub const ProviderProtocol = enum { @"anthropic-messages", @"openai-completions"
 /// Skill scope.
 pub const SkillScope = enum { project, personal };
 
+/// Workspace execution environment.
+pub const WorkspaceKind = enum { local, container, cloud };
+
 /// Advertised daemon capability.
 pub const Capability = enum { blob_upload };
 

@@ -902,17 +902,23 @@
     },
     {
       "name": "Workspace",
-      "doc": "Daemon-known workspace directory.",
+      "doc": "Daemon-known workspace.",
       "fields": [
         {
           "name": "id",
-          "doc": "Derived workspace id.",
+          "doc": "The daemon mints the opaque workspace id.",
           "type": "WorkspaceId",
           "presence": "required"
         },
         {
+          "name": "kind",
+          "doc": "The daemon supports only the local kind today.",
+          "type": "WorkspaceKind",
+          "presence": "defaulted"
+        },
+        {
           "name": "root",
-          "doc": "Canonical absolute path.",
+          "doc": "Canonical absolute path of the local root.",
           "type": "string",
           "presence": "required"
         },
@@ -5274,6 +5280,22 @@
         },
         {
           "wire": "personal"
+        }
+      ]
+    },
+    {
+      "name": "WorkspaceKind",
+      "doc": "Workspace execution environment.",
+      "numeric": false,
+      "values": [
+        {
+          "wire": "local"
+        },
+        {
+          "wire": "container"
+        },
+        {
+          "wire": "cloud"
         }
       ]
     }
