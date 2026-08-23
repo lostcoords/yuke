@@ -13,6 +13,7 @@ const SCHEMA_VERSION: i64 = 1;
 /// Each entry is a sentinel-terminated DDL script. The daemon applies entries in array order.
 const schema = [_][:0]const u8{
     @embedFile("schema/catalog.sql"),
+    @embedFile("schema/session.sql"),
 };
 
 /// The shared handle stores the connection and owns all prepared queries.
