@@ -6,6 +6,12 @@ const c = zqlite.c;
 
 pub const Connection = zqlite.Conn;
 
+/// Report whether `conn` is inside an explicit transaction. A multi-statement store operation
+/// asserts this so a partial failure cannot leave a half-applied commit.
+pub fn inTransaction(conn: Connection) bool {
+    return c.sqlite3_get_autocommit(conn.conn) == 0;
+}
+
 /// Marks bytes that SQLite must store as BLOB rather than TEXT.
 pub const Blob = struct {
     bytes: []const u8,

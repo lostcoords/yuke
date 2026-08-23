@@ -12,6 +12,7 @@ pub const Owned = query.Owned;
 pub const OptionalQuery = query.OptionalQuery;
 pub const Statement = query.Statement;
 pub const blob = query.blob;
+pub const inTransaction = query.inTransaction;
 pub const deinitAll = query.deinitAll;
 pub const prepare = query.prepare;
 pub const prepareAll = query.prepareAll;
