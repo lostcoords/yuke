@@ -69,6 +69,45 @@ pub const GetEtag = sql.OptionalQuery(
     },
 );
 
+pub const WorkspaceByStableKey = sql.OptionalQuery(
+    \\SELECT id FROM workspaces WHERE kind = :kind AND stable_key = :stable_key;
+,
+    struct {
+        kind: []const u8,
+        stable_key: []const u8,
+    },
+    struct {
+        id: [16]u8,
+    },
+);
+
+pub const InsertWorkspace = sql.ExecQuery(
+    \\INSERT INTO workspaces(id, kind, root, title, stable_key)
+    \\    VALUES (:id, :kind, :root, :title, :stable_key);
+,
+    struct {
+        id: [16]u8,
+        kind: []const u8,
+        root: []const u8,
+        title: []const u8,
+        stable_key: ?[]const u8,
+    },
+);
+
+pub const WorkspaceById = sql.OptionalQuery(
+    \\SELECT id, kind, root, title FROM workspaces WHERE id = :id;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        id: [16]u8,
+        kind: []const u8,
+        root: []const u8,
+        title: []const u8,
+    },
+);
+
 pub const Queries = struct {
     delete_providers: DeleteProviders,
     delete_models: DeleteModels,
@@ -78,6 +117,9 @@ pub const Queries = struct {
     select_providers: SelectProviders,
     select_models: SelectModels,
     get_etag: GetEtag,
+    workspace_by_stable_key: WorkspaceByStableKey,
+    insert_workspace: InsertWorkspace,
+    workspace_by_id: WorkspaceById,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);
