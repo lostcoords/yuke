@@ -71,14 +71,34 @@ fn migrate(conn: sql.Connection) !void {
     const ours = app_id == APPLICATION_ID and applied >= 1 and applied <= migrations.len;
     if (!fresh and !ours) return error.IncompatibleDatabase;
 
-    // The file is ours or empty; now set the per-connection pragmas.
-    try conn.execNoArgs("PRAGMA foreign_keys = ON");
-    try setWal(conn);
+    // The file is ours or empty; now configure the connection.
+    try configurePragmas(conn, fresh);
 
     var next: usize = @intCast(applied);
     while (next < migrations.len) : (next += 1) try applyMigration(conn, migrations[next]);
 
     try checkHashes(conn);
+}
+
+/// Set the durability and performance pragmas. A fresh file sets its page size before WAL.
+fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
+    // The page size is fixed once WAL starts, so a fresh database sets it first.
+    if (fresh) try conn.execNoArgs("PRAGMA page_size = 4096");
+    try setWal(conn);
+
+    // FULL keeps a committed event durable after a power loss. The event log must not lose a commit.
+    try conn.execNoArgs("PRAGMA synchronous = FULL");
+    try conn.execNoArgs("PRAGMA wal_autocheckpoint = 1000");
+    try conn.execNoArgs("PRAGMA cache_size = -32768"); // 32 MiB, negative means KiB not pages
+
+    // A small timeout guards against an external checkpoint or backup. A large value would freeze the
+    // single reactor thread on a busy signal.
+    try conn.busyTimeout(250);
+
+    // Foreign keys enforce the projection pointers. The pragma is a no-op inside a transaction, so set
+    // it outside one and confirm the build supports it.
+    try conn.execNoArgs("PRAGMA foreign_keys = ON");
+    if (try scalarInt(conn, "PRAGMA foreign_keys") != 1) return error.ForeignKeysUnavailable;
 }
 
 /// Apply one step and record its checksum, atomically.

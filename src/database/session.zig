@@ -79,20 +79,22 @@ pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cur
     const c = cursor orelse first_page;
 
     var out: std.ArrayList(PageRow) = .empty;
-    if (sel.workspace_id) |w| {
-        var it = try db.queries.session_page_workspace.rows(.{
-            .filter_workspace_id = w,
+    // Parent is more selective than workspace, so a children query seeks the parent index and treats
+    // a workspace scope as a post-filter.
+    if (sel.parent_id) |p| {
+        var it = try db.queries.session_page_parent.rows(.{
+            .filter_parent_id = p,
+            .filter_workspace_id = sel.workspace_id,
             .top_level = sel.top_level,
-            .filter_parent_id = sel.parent_id,
             .cursor_updated_at_ms = c.updated_at_ms,
             .cursor_id = c.id,
             .limit = limit,
         });
         defer it.deinit();
         try collectPage(&it, arena, &out);
-    } else if (sel.parent_id) |p| {
-        var it = try db.queries.session_page_parent.rows(.{
-            .filter_parent_id = p,
+    } else if (sel.workspace_id) |w| {
+        var it = try db.queries.session_page_workspace.rows(.{
+            .filter_workspace_id = w,
             .top_level = sel.top_level,
             .cursor_updated_at_ms = c.updated_at_ms,
             .cursor_id = c.id,
@@ -127,15 +129,18 @@ fn asPageRow(row: anytype) PageRow {
 
 /// Count the whole view the selector describes. The selector picks the same variant as `list`.
 pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
-    if (sel.workspace_id) |w| {
+    if (sel.parent_id) |p| {
+        const row = try db.queries.session_count_parent.one(arena, .{
+            .filter_parent_id = p,
+            .filter_workspace_id = sel.workspace_id,
+            .top_level = sel.top_level,
+        });
+        return row.value.total;
+    } else if (sel.workspace_id) |w| {
         const row = try db.queries.session_count_workspace.one(arena, .{
             .filter_workspace_id = w,
             .top_level = sel.top_level,
-            .filter_parent_id = sel.parent_id,
         });
-        return row.value.total;
-    } else if (sel.parent_id) |p| {
-        const row = try db.queries.session_count_parent.one(arena, .{ .filter_parent_id = p, .top_level = sel.top_level });
         return row.value.total;
     }
     const row = try db.queries.session_count_recent.one(arena, .{ .top_level = sel.top_level });
@@ -404,6 +409,12 @@ test "the workspace and parent selectors filter and page" {
     const kids = try list(&db, a, .{ .parent_id = root_a }, null, 10);
     try testing.expectEqual(@as(usize, 1), kids.len);
     try testing.expectEqualStrings("child", kids[0].origin);
+
+    // A parent plus a matching workspace keeps the child; a mismatched workspace drops it.
+    try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .parent_id = root_a, .workspace_id = wa.id }));
+    try testing.expectEqual(@as(usize, 1), (try list(&db, a, .{ .parent_id = root_a, .workspace_id = wa.id }, null, 10)).len);
+    try testing.expectEqual(@as(u64, 0), try count(&db, a, .{ .parent_id = root_a, .workspace_id = wb.id }));
+    try testing.expectEqual(@as(usize, 0), (try list(&db, a, .{ .parent_id = root_a, .workspace_id = wb.id }, null, 10)).len);
 }
 
 test "each list variant seeks its index and never sorts" {

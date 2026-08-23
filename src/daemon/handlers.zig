@@ -231,10 +231,8 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     const permission = params.permission orelse .normal;
     const now = state.nowMillis();
 
-    var workspace_id: [16]u8 = undefined;
-    state.io.random(&workspace_id);
-    var id: [16]u8 = undefined;
-    state.io.random(&id);
+    const workspace_id = state.newId();
+    const id = state.newId();
 
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};

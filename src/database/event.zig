@@ -16,11 +16,27 @@ pub const HighWater = struct {
 };
 
 /// Allocate the next seq and append the event. Return the seq. Run inside a write transaction.
-pub fn append(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, name: []const u8, payload: []const u8) !u64 {
+/// The caller mints event_id (UUIDv7) and stamps committed_at_ms; both belong to the event envelope.
+pub fn append(
+    db: *Database,
+    arena: std.mem.Allocator,
+    session_id: [16]u8,
+    event_id: [16]u8,
+    committed_at_ms: u64,
+    name: []const u8,
+    payload: []const u8,
+) !u64 {
     std.debug.assert(sql.inTransaction(db.conn)); // else a partial failure leaves a seq hole
     const alloc = try db.queries.alloc_seq.one(arena, .{ .id = session_id });
     const seq = alloc.value.seq_high;
-    try db.queries.append_event.exec(.{ .session_id = session_id, .seq = seq, .name = name, .payload = payload });
+    try db.queries.append_event.exec(.{
+        .session_id = session_id,
+        .seq = seq,
+        .event_id = event_id,
+        .committed_at_ms = committed_at_ms,
+        .name = name,
+        .payload = payload,
+    });
     return seq;
 }
 
@@ -63,6 +79,11 @@ fn testDb() !Database {
     return Database.open(conn);
 }
 
+/// A distinct event id for a test. The event_id column is globally unique.
+fn eid(n: u8) [16]u8 {
+    return [_]u8{n} ** 16;
+}
+
 fn seedSession(db: *Database, a: std.mem.Allocator, id: [16]u8) !void {
     const ws = try workspace.resolve(db, a, [_]u8{7} ** 16, "/w", "w", "/w");
     try session.create(db, .{
@@ -91,8 +112,8 @@ test "append allocates contiguous seqs and raises the high-water mark" {
     try seedSession(&db, a, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, "run.started", "{}"));
-    try testing.expectEqual(@as(u64, 2), try append(&db, a, sid, "message.committed", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(1), 1, "run.started", "{}"));
+    try testing.expectEqual(@as(u64, 2), try append(&db, a, sid, eid(2), 1, "message.committed", "{}"));
     try db.conn.execNoArgs("COMMIT");
 
     const hw = (try highWater(&db, a, sid)).?;
@@ -141,7 +162,7 @@ test "append rejects a missing session" {
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     defer db.conn.execNoArgs("ROLLBACK") catch {};
-    try testing.expectError(error.NoRow, append(&db, a, [_]u8{9} ** 16, "x", "{}"));
+    try testing.expectError(error.NoRow, append(&db, a, [_]u8{9} ** 16, eid(1), 1, "x", "{}"));
 }
 
 test "a rolled-back append leaves no seq hole" {
@@ -155,13 +176,13 @@ test "a rolled-back append leaves no seq hole" {
     try seedSession(&db, a, sid);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try append(&db, a, sid, "run.started", "{}");
+    _ = try append(&db, a, sid, eid(1), 1, "run.started", "{}");
     try db.conn.execNoArgs("ROLLBACK");
 
     try testing.expectEqual(@as(u64, 0), (try highWater(&db, a, sid)).?.seq_high);
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, "run.started", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(2), 1, "run.started", "{}"));
     try db.conn.execNoArgs("COMMIT");
 }
 
@@ -192,8 +213,8 @@ test "two sessions each start at seq 1" {
     }
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, one, "x", "{}"));
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, two, "x", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, one, eid(1), 1, "x", "{}"));
+    try testing.expectEqual(@as(u64, 1), try append(&db, a, two, eid(2), 1, "x", "{}"));
     try db.conn.execNoArgs("COMMIT");
 }
 

@@ -4,6 +4,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const database = @import("../database/database.zig");
+const id = @import("../id.zig");
 
 const State = @This();
 
@@ -24,4 +25,11 @@ pub const Config = struct {
 pub fn nowMillis(self: *const State) u64 {
     const ms = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
     return @intCast(@max(ms, 0));
+}
+
+/// Mint a fresh UUIDv7 for a session, workspace, or event.
+pub fn newId(self: *const State) [16]u8 {
+    var rand: [10]u8 = undefined;
+    self.io.random(&rand);
+    return id.v7(self.nowMillis(), rand);
 }

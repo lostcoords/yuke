@@ -8,9 +8,12 @@ UPDATE sessions SET seq_high = seq_high + 1 WHERE id = :id RETURNING seq_high;
 -- name: AppendEvent :exec
 -- session_id: [16]u8!
 -- seq: u64!
+-- event_id: [16]u8!
+-- committed_at_ms: u64!
 -- name: []const u8!
 -- payload: []const u8!
-INSERT INTO events(session_id, seq, name, payload) VALUES (:session_id, :seq, :name, :payload);
+INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload)
+    VALUES (:session_id, :seq, :event_id, :committed_at_ms, :name, :payload);
 
 -- name: BumpIds :one
 -- Id marks only increase. A stale bump does not rewind a mark.

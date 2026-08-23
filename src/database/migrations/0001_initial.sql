@@ -1,6 +1,5 @@
--- This baseline creates the catalog, workspace, session, event, and projection tables.
--- STRICT types enforce storage types, and checks enforce domain rules. Numeric upper
--- bounds are 2^53-1, the largest integer the wire JSON round-trips exactly.
+-- The design has mutable registry tables plus an append-only activity log; projections rebuild from it.
+-- STRICT types enforce storage; checks enforce domain rules; numeric bounds are 2^53-1 (wire JSON safe).
 
 -- The models.dev catalog. A thin key/value store until a typed catalog schema lands.
 CREATE TABLE catalog_meta (
@@ -37,10 +36,10 @@ CREATE TABLE workspaces (
     UNIQUE (kind, stable_key)
 ) STRICT, WITHOUT ROWID;
 
--- Primary state, not derived: session.summary_changed never reaches the event log.
--- Flatten Session_Origin; each arm's ids are non-null only for that arm.
+-- The session registry holds primary state; it is not derived from the log. A rowid table suits this
+-- wide, frequently updated row. Flatten Session_Origin; each arm's ids are non-null only for that arm.
 CREATE TABLE sessions (
-    id           BLOB PRIMARY KEY CHECK (length(id) = 16), -- wire.SessionId
+    id           BLOB NOT NULL UNIQUE CHECK (length(id) = 16), -- wire.SessionId; UUIDv7 for index locality
     workspace_id BLOB NOT NULL CHECK (length(workspace_id) = 16) REFERENCES workspaces(id), -- wire.WorkspaceId
 
     origin            TEXT NOT NULL CHECK (origin IN ('root', 'child', 'fork')),
@@ -82,6 +81,9 @@ CREATE TABLE sessions (
     input_id_high   INTEGER NOT NULL DEFAULT 0 CHECK (input_id_high   BETWEEN 0 AND 9007199254740991),
     config_rev_high INTEGER NOT NULL DEFAULT 0 CHECK (config_rev_high BETWEEN 0 AND 9007199254740991),
 
+    -- The read model reflects the log through this seq. The projections slice raises it on rebuild.
+    projection_seq INTEGER NOT NULL DEFAULT 0 CHECK (projection_seq BETWEEN 0 AND 9007199254740991),
+
     -- Recovery marker, not activity: a start closes these at the next restart. These are
     -- the three fields a terminal needs; all null when nothing is owed.
     open_run_id            INTEGER CHECK (open_run_id IS NULL OR open_run_id BETWEEN 1 AND 9007199254740991), -- wire.RunId
@@ -102,7 +104,7 @@ CREATE TABLE sessions (
     CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
     -- An open run reuses a minted id, so it never exceeds the run high-water mark.
     CHECK (open_run_id IS NULL OR open_run_id <= run_id_high)
-) STRICT, WITHOUT ROWID;
+) STRICT;
 
 -- Every ORDER BY term is DESC, including the id tiebreak; a trailing ASC id costs a temp
 -- B-tree on every session.list page.
@@ -110,12 +112,14 @@ CREATE INDEX sessions_by_recent    ON sessions(updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_workspace ON sessions(workspace_id, updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
 
--- Use a rowid table for full committed messages. Keep payload last to avoid overflow I/O
--- in earlier columns.
+-- The append-only activity log. A rowid table holds full bodies; keep payload last for overflow I/O.
+-- event_id is a stable global id for export or sync; (session_id, seq) is the local stream order.
 CREATE TABLE events (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
-    seq     INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991), -- wire.Seq
+    seq          INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991), -- wire.Seq
+    event_id     BLOB NOT NULL UNIQUE CHECK (length(event_id) = 16), -- UUIDv7, stable across sync
+    committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms BETWEEN 0 AND 9007199254740991), -- u64
     name    TEXT NOT NULL CHECK (length(name)    > 0),
     payload TEXT NOT NULL CHECK (length(payload) > 0)
 ) STRICT;
@@ -126,6 +130,8 @@ CREATE UNIQUE INDEX events_by_session_seq ON events(session_id, seq);
 -- Replay rebuilds this projection. Keep the body in events.payload and join by
 -- (session_id, seq). The composite FK stops the pointer from dangling.
 CREATE TABLE messages (
+    -- A stable alias rowid. FTS5 external-content will index by it and VACUUM keeps it fixed.
+    search_id  INTEGER PRIMARY KEY,
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
     message_id INTEGER NOT NULL CHECK (message_id BETWEEN 1 AND 9007199254740991), -- wire.MessageId
@@ -148,11 +154,15 @@ CREATE TABLE messages (
     tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0), -- u64
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),
 
-    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), -- u64
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
-    PRIMARY KEY (session_id, message_id),
+    -- A rowid table so FTS5 external-content can index the transcript by rowid in a later slice.
+    UNIQUE (session_id, message_id),
     FOREIGN KEY (session_id, seq) REFERENCES events(session_id, seq) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
+) STRICT;
+
+-- Index the FK child columns so a session or event cascade seeks instead of scanning messages.
+CREATE INDEX messages_by_event ON messages(session_id, seq);
 
 -- Index only rows with a recorded model. This answers "which turns used X" and costs
 -- nothing before the engine records provenance.

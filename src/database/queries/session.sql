@@ -128,10 +128,9 @@ LIMIT :limit;
 
 -- name: SessionPageWorkspace :many
 -- Same page inside one workspace. A seek on sessions_by_workspace serves the filter and order.
--- top_level and filter_parent_id refine the population.
+-- top_level refines the population. A parent filter dispatches to SessionPageParent instead.
 -- filter_workspace_id: [16]u8!
 -- top_level: bool!
--- filter_parent_id: ?[16]u8!
 -- cursor_updated_at_ms: u64!
 -- cursor_id: [16]u8!
 -- limit: i64!
@@ -171,14 +170,15 @@ SELECT
 FROM sessions
 WHERE workspace_id = :filter_workspace_id
   AND (NOT :top_level OR origin IN ('root', 'fork'))
-  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id)
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
 ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;
 
 -- name: SessionPageParent :many
--- Children of one session. A seek on sessions_by_parent serves the order.
+-- Children of one session. A seek on sessions_by_parent serves the order; parent is more selective
+-- than workspace, so a workspace scope becomes a post-filter here.
 -- filter_parent_id: [16]u8!
+-- filter_workspace_id: ?[16]u8!
 -- top_level: bool!
 -- cursor_updated_at_ms: u64!
 -- cursor_id: [16]u8!
@@ -218,6 +218,7 @@ SELECT
     created_at_ms, updated_at_ms
 FROM sessions
 WHERE parent_id = :filter_parent_id
+  AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'))
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
 ORDER BY updated_at_ms DESC, id DESC
@@ -234,20 +235,20 @@ WHERE (NOT :top_level OR origin IN ('root', 'fork'));
 -- Count sessions in one workspace. Matches SessionPageWorkspace.
 -- filter_workspace_id: [16]u8!
 -- top_level: bool!
--- filter_parent_id: ?[16]u8!
 -- total: u64!
 SELECT count(*) AS total FROM sessions
 WHERE workspace_id = :filter_workspace_id
-  AND (NOT :top_level OR origin IN ('root', 'fork'))
-  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id);
+  AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: SessionCountParent :one
 -- Count children of one session. Matches SessionPageParent.
 -- filter_parent_id: [16]u8!
+-- filter_workspace_id: ?[16]u8!
 -- top_level: bool!
 -- total: u64!
 SELECT count(*) AS total FROM sessions
 WHERE parent_id = :filter_parent_id
+  AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: InsertPrompt :exec

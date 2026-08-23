@@ -81,11 +81,14 @@ pub const AllocSeq = sql.OneQuery(
 );
 
 pub const AppendEvent = sql.ExecQuery(
-    \\INSERT INTO events(session_id, seq, name, payload) VALUES (:session_id, :seq, :name, :payload);
+    \\INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload)
+    \\    VALUES (:session_id, :seq, :event_id, :committed_at_ms, :name, :payload);
 ,
     struct {
         session_id: [16]u8,
         seq: u64,
+        event_id: [16]u8,
+        committed_at_ms: u64,
         name: []const u8,
         payload: []const u8,
     },
@@ -285,7 +288,6 @@ pub const SessionPageWorkspace = sql.ManyQuery(
     \\FROM sessions
     \\WHERE workspace_id = :filter_workspace_id
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
-    \\  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id)
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
     \\ORDER BY updated_at_ms DESC, id DESC
     \\LIMIT :limit;
@@ -293,7 +295,6 @@ pub const SessionPageWorkspace = sql.ManyQuery(
     struct {
         filter_workspace_id: [16]u8,
         top_level: bool,
-        filter_parent_id: ?[16]u8,
         cursor_updated_at_ms: u64,
         cursor_id: [16]u8,
         limit: i64,
@@ -338,6 +339,7 @@ pub const SessionPageParent = sql.ManyQuery(
     \\    created_at_ms, updated_at_ms
     \\FROM sessions
     \\WHERE parent_id = :filter_parent_id
+    \\  AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
     \\ORDER BY updated_at_ms DESC, id DESC
@@ -345,6 +347,7 @@ pub const SessionPageParent = sql.ManyQuery(
 ,
     struct {
         filter_parent_id: [16]u8,
+        filter_workspace_id: ?[16]u8,
         top_level: bool,
         cursor_updated_at_ms: u64,
         cursor_id: [16]u8,
@@ -394,13 +397,11 @@ pub const SessionCountRecent = sql.OneQuery(
 pub const SessionCountWorkspace = sql.OneQuery(
     \\SELECT count(*) AS total FROM sessions
     \\WHERE workspace_id = :filter_workspace_id
-    \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
-    \\  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id);
+    \\  AND (NOT :top_level OR origin IN ('root', 'fork'));
 ,
     struct {
         filter_workspace_id: [16]u8,
         top_level: bool,
-        filter_parent_id: ?[16]u8,
     },
     struct {
         total: u64,
@@ -410,10 +411,12 @@ pub const SessionCountWorkspace = sql.OneQuery(
 pub const SessionCountParent = sql.OneQuery(
     \\SELECT count(*) AS total FROM sessions
     \\WHERE parent_id = :filter_parent_id
+    \\  AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'));
 ,
     struct {
         filter_parent_id: [16]u8,
+        filter_workspace_id: ?[16]u8,
         top_level: bool,
     },
     struct {
