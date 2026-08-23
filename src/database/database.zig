@@ -7,6 +7,7 @@ const queries_gen = @import("queries_gen.zig");
 
 pub const catalog = @import("catalog.zig");
 pub const workspace = @import("workspace.zig");
+pub const session = @import("session.zig");
 
 /// A yuke database carries this id in the SQLite application_id header slot.
 const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
