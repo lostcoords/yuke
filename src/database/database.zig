@@ -16,7 +16,7 @@ const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
 /// One forward-only schema step. The sql is immutable once shipped; a change is a new step.
 const Migration = struct { version: i64, sql: [:0]const u8 };
 
-/// Applied in order; entry i brings the database to version i+1.
+/// Apply the migrations in order. Entry i sets version i+1.
 const migrations = [_]Migration{
     .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
 };
@@ -24,7 +24,7 @@ const migrations = [_]Migration{
 comptime {
     std.debug.assert(migrations.len > 0);
     for (migrations, 0..) |m, i| {
-        std.debug.assert(m.version == @as(i64, @intCast(i)) + 1); // dense and 1-based
+        std.debug.assert(m.version == @as(i64, @intCast(i)) + 1); // versions stay dense and start at 1
         std.debug.assert(m.sql.len > 0);
     }
 }
@@ -99,7 +99,7 @@ fn applyMigration(conn: sql.Connection, m: Migration) !void {
     try conn.execNoArgs("COMMIT");
 }
 
-/// Verify one dense checksum row per applied step, each matching the embedded text.
+/// Verify one checksum row for each applied step. Compare each row with the embedded text.
 fn checkHashes(conn: sql.Connection) !void {
     var rows = try conn.rows("SELECT version, hash FROM migration_hash ORDER BY version", .{});
     defer rows.deinit();

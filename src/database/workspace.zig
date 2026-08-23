@@ -1,4 +1,4 @@
-//! The workspace registry stores daemon-known execution environments; only local today.
+//! The workspace registry stores daemon-known execution environments. It supports only local workspaces today.
 //! The daemon mints each opaque id. A stable key deduplicates a persistent local root.
 
 const std = @import("std");

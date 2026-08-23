@@ -104,6 +104,7 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
+const event = @import("event.zig");
 
 fn testDb() !Database {
     const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
@@ -224,6 +225,30 @@ test "create rejects a missing workspace" {
         error.ConstraintForeignKey,
         create(&db, rootParams([_]u8{8} ** 16, [_]u8{9} ** 16)),
     );
+}
+
+test "an open run cannot exceed the run high-water mark" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const ws = try workspace.resolve(&db, a, [_]u8{7} ** 16, "/w", "w", "/w");
+    const id = [_]u8{3} ** 16;
+    try create(&db, rootParams(id, ws.id));
+
+    // run_id_high is 0, so an open run fails the mark check.
+    const open =
+        "UPDATE sessions SET open_run_id = 1, open_run_kind = 'turn', open_run_started_at_ms = 0 " ++
+        "WHERE id = x'03030303030303030303030303030303'";
+    try testing.expectError(error.ConstraintCheck, db.conn.execNoArgs(open));
+
+    // Raise the mark, then the same open run passes.
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    try event.bumpIds(&db, a, id, .{ .run_id_high = 1 });
+    try db.conn.execNoArgs("COMMIT");
+    try db.conn.execNoArgs(open);
 }
 
 test "list pages newest first and count matches" {

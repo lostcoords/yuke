@@ -25,13 +25,14 @@ pub fn append(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, name:
 }
 
 /// Raise the id-minting marks. Each mark only rises. Run inside a write transaction.
-pub fn bumpIds(db: *Database, session_id: [16]u8, marks: struct {
+pub fn bumpIds(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, marks: struct {
     message_id_high: u64 = 0,
     run_id_high: u64 = 0,
     input_id_high: u64 = 0,
     config_rev_high: u64 = 0,
 }) !void {
-    try db.queries.bump_ids.exec(.{
+    std.debug.assert(sql.inTransaction(db.conn)); // else a partial failure desyncs the id marks
+    _ = try db.queries.bump_ids.one(arena, .{
         .id = session_id,
         .message_id_high = marks.message_id_high,
         .run_id_high = marks.run_id_high,
@@ -108,13 +109,27 @@ test "bumpIds only raises a mark" {
     const sid = [_]u8{3} ** 16;
     try seedSession(&db, a, sid);
 
-    try bumpIds(&db, sid, .{ .message_id_high = 5, .run_id_high = 3, .input_id_high = 7, .config_rev_high = 2 });
-    try bumpIds(&db, sid, .{ .message_id_high = 2 }); // lower value does not lower the mark
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    try bumpIds(&db, a, sid, .{ .message_id_high = 5, .run_id_high = 3, .input_id_high = 7, .config_rev_high = 2 });
+    try bumpIds(&db, a, sid, .{ .message_id_high = 2 }); // lower value does not lower the mark
+    try db.conn.execNoArgs("COMMIT");
     const hw = (try highWater(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 5), hw.message_id_high);
     try testing.expectEqual(@as(u64, 3), hw.run_id_high);
     try testing.expectEqual(@as(u64, 7), hw.input_id_high);
     try testing.expectEqual(@as(u64, 2), hw.config_rev_high);
+}
+
+test "bumpIds rejects a missing session" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    defer db.conn.execNoArgs("ROLLBACK") catch {};
+    try testing.expectError(error.NoRow, bumpIds(&db, a, [_]u8{9} ** 16, .{ .run_id_high = 1 }));
 }
 
 test "append rejects a missing session" {

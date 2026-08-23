@@ -91,13 +91,13 @@ pub const AppendEvent = sql.ExecQuery(
     },
 );
 
-pub const BumpIds = sql.ExecQuery(
+pub const BumpIds = sql.OneQuery(
     \\UPDATE sessions SET
     \\    message_id_high = MAX(message_id_high, :message_id_high),
     \\    run_id_high     = MAX(run_id_high, :run_id_high),
     \\    input_id_high   = MAX(input_id_high, :input_id_high),
     \\    config_rev_high = MAX(config_rev_high, :config_rev_high)
-    \\    WHERE id = :id;
+    \\    WHERE id = :id RETURNING 1 AS bumped;
 ,
     struct {
         message_id_high: u64,
@@ -105,6 +105,9 @@ pub const BumpIds = sql.ExecQuery(
         input_id_high: u64,
         config_rev_high: u64,
         id: [16]u8,
+    },
+    struct {
+        bumped: i64,
     },
 );
 

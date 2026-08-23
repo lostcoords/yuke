@@ -69,7 +69,7 @@ pub fn Statement(comptime statement_sql: [:0]const u8) type {
             self.* = undefined;
         }
 
-        /// Execute a statement that produces no columns, resetting and clearing it on every path.
+        /// Execute a statement with no result columns. Reset and clear the statement on every path.
         pub fn exec(self: *Self, params: anytype) !void {
             std.debug.assert(!self.active);
             if (c.sqlite3_column_count(self.statement.stmt) != 0) return error.UnexpectedRow;
@@ -249,9 +249,7 @@ pub fn prepare(conn: zqlite.Conn, comptime statement_sql: [:0]const u8) !Stateme
     return .{ .statement = try prepareStatement(conn, statement_sql) };
 }
 
-/// A generated statement with no result columns.
-/// Validate that `Actual` has exactly the fields in `Expected`.
-/// Report a mismatch as a compile error.
+/// Validate that `Actual` has exactly the fields in `Expected`. Report a mismatch as a compile error.
 fn validateParamShape(comptime Expected: type, comptime Actual: type) void {
     const actual = switch (@typeInfo(Actual)) {
         .@"struct" => |info| info,

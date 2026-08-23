@@ -101,7 +101,9 @@ CREATE TABLE sessions (
 
     -- Open-run columns move as a unit: all set while a terminal is owed, all null once one is written.
     CHECK ((open_run_id IS NULL) = (open_run_kind IS NULL)),
-    CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL))
+    CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
+    -- An open run reuses a minted id, so it never exceeds the run high-water mark.
+    CHECK (open_run_id IS NULL OR open_run_id <= run_id_high)
 ) STRICT, WITHOUT ROWID;
 
 -- Every ORDER BY term is DESC, including the id tiebreak; a trailing ASC id costs a temp
