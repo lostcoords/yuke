@@ -296,6 +296,15 @@ pub const SessionCount = sql.OneQuery(
     },
 );
 
+pub const InsertPrompt = sql.ExecQuery(
+    \\INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
+,
+    struct {
+        session_id: [16]u8,
+        prompt: []const u8,
+    },
+);
+
 pub const WorkspaceByStableKey = sql.OptionalQuery(
     \\SELECT id FROM workspaces WHERE kind = :kind AND stable_key = :stable_key;
 ,
@@ -353,6 +362,7 @@ pub const Queries = struct {
     session_snapshot: SessionSnapshot,
     session_page: SessionPage,
     session_count: SessionCount,
+    insert_prompt: InsertPrompt,
     workspace_by_stable_key: WorkspaceByStableKey,
     insert_workspace: InsertWorkspace,
     workspace_by_id: WorkspaceById,

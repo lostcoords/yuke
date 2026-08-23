@@ -11,6 +11,7 @@ gpa: std.mem.Allocator, // Long-lived allocations. The per-request arena has a s
 io: std.Io, // Reactor I/O for the clock, files, and sockets.
 db: database.Database, // One SQLite connection with prepared queries. One executor writes.
 config: Config,
+home: []const u8, // The default workspace root. A create with no workspace path uses it.
 
 /// Daemon configuration. The code sets it directly for now.
 pub const Config = struct {

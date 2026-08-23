@@ -52,6 +52,11 @@ pub fn create(db: *Database, params: CreateParams) !void {
     try db.queries.insert_session.exec(params);
 }
 
+/// Store the session's system prompt. Create sets it once; no method changes it.
+pub fn setPrompt(db: *Database, id: [16]u8, prompt: []const u8) !void {
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = prompt });
+}
+
 /// Report whether a session with `id` exists.
 pub fn exists(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
     var row = (try db.queries.session_exists.maybeOne(arena, .{ .id = id })) orelse return false;

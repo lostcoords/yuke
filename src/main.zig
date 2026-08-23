@@ -38,6 +38,7 @@ pub fn main(init: std.process.Init) !void {
         .io = io,
         .db = try database.Database.open(conn),
         .config = config,
+        .home = init.environ_map.get("HOME") orelse "/",
     };
     defer state.db.deinit();
 

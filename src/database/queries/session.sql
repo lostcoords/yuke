@@ -146,3 +146,9 @@ WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
   AND (:filter_job_id        IS NULL OR job_id        = :filter_job_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'));
+
+-- name: InsertPrompt :exec
+-- The system prompt is snapshotted at creation. A missing row reads back as null.
+-- session_id: [16]u8!
+-- prompt: []const u8!
+INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);

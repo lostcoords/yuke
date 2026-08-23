@@ -4,6 +4,7 @@ const std = @import("std");
 const wire = @import("wire");
 const wss = @import("websocket").server;
 const State = @import("State.zig");
+const handlers = @import("handlers.zig");
 
 /// Result for one frame: keep reading or close the connection.
 pub const Outcome = enum { keep_open, close };
@@ -31,10 +32,13 @@ pub fn handleRequest(state: *State, out: *std.Io.Writer, frame: []const u8) !Out
         else => return respond(arena, out, errorResponse(request_id, .bad_request, "bad request")),
     };
 
-    return respond(arena, out, dispatch(state, request));
+    // The store error set has no OutOfMemory to preserve, so map every dispatch error to internal.
+    const response = dispatch(state, arena, request) catch
+        errorResponse(request_id, .internal, "internal error");
+    return respond(arena, out, response);
 }
 
-fn dispatch(state: *State, request: wire.rpc.Request) wire.rpc.Response {
+fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) !wire.rpc.Response {
     switch (request.method) {
         .initialize => {
             const params = request.params.initialize_params;
@@ -42,8 +46,11 @@ fn dispatch(state: *State, request: wire.rpc.Request) wire.rpc.Response {
                 return errorResponse(request.id, .bad_protocol, "unsupported protocol version");
             return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = initializeResult(state) } } };
         },
+        .@"session.create" => {
+            const result = try handlers.sessionCreate(state, arena, request.params.create_session);
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_result = result } } };
+        },
         .@"session.list",
-        .@"session.create",
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
@@ -158,6 +165,7 @@ const TestState = struct {
             .io = rt.io(),
             .db = db,
             .config = .{ .listen = listen },
+            .home = "/home/test",
         } };
     }
 
@@ -197,4 +205,47 @@ test "dispatch reports an unknown method with the request id" {
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"7\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "-32601") != null);
+}
+
+test "dispatch session.create persists and returns the session" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var buffer: [4096]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&buffer);
+    const frame =
+        \\{"id":"2","method":"session.create","params":{"workspace_path":"/home/x/proj","model":"opus"}}
+    ;
+    _ = try handleRequest(&fixture.state, &out, frame);
+    const written = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"title\":\"proj\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"model\":\"opus\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"type\":\"root\"") != null);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectEqual(@as(u64, 1), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
+}
+
+test "session.create defaults the workspace to home and stacks sessions" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var buf1: [4096]u8 = undefined;
+    var out1: std.Io.Writer = .fixed(&buf1);
+    const empty_params =
+        \\{"id":"1","method":"session.create","params":{}}
+    ;
+    _ = try handleRequest(&fixture.state, &out1, empty_params);
+    // The home default is "/home/test"; its basename is the title.
+    try std.testing.expect(std.mem.indexOf(u8, out1.buffered(), "\"title\":\"test\"") != null);
+
+    var buf2: [4096]u8 = undefined;
+    var out2: std.Io.Writer = .fixed(&buf2);
+    _ = try handleRequest(&fixture.state, &out2, empty_params);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
 }
