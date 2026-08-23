@@ -99,7 +99,7 @@ pub fn build(b: *std.Build) void {
     // Fail the build if the committed queries drift from the SQL sources.
     const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
     database_sqlgen_check.addArgs(&.{
-        "--migrations",  "src/database/migrations",
+        "--migrations",  "src/database/schema",
         "--queries",     "src/database/queries",
         "--queries-out", "src/database/queries_gen.zig",
         "--check",
