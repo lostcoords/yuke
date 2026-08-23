@@ -77,14 +77,15 @@ SELECT
 FROM sessions
 WHERE id = :id;
 
--- name: SessionPage :many
--- One keyset page of the session list, newest first. Optional filters select the population:
--- top_level, one parent, or all. The id tiebreak keeps the page stable.
--- filter_workspace_id: ?[16]u8!
--- filter_parent_id: ?[16]u8!
+-- The session.list page columns. Every page variant selects this same set in this same order, so
+-- the store maps each generated row to one PageRow.
+
+-- name: SessionPageRecent :many
+-- Newest-first page over every workspace. sessions_by_recent supplies the order and the cursor seek.
+-- top_level applies during the scan and keeps roots and forks.
 -- top_level: bool!
--- cursor_updated_at_ms: ?u64!
--- cursor_id: ?[16]u8!
+-- cursor_updated_at_ms: u64!
+-- cursor_id: [16]u8!
 -- limit: i64!
 -- id: [16]u8!
 -- workspace_id: [16]u8!
@@ -120,24 +121,133 @@ SELECT
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     created_at_ms, updated_at_ms
 FROM sessions
-WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
-  AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
-  AND (NOT :top_level OR origin IN ('root', 'fork'))
-  AND (:cursor_updated_at_ms IS NULL
-       OR updated_at_ms < :cursor_updated_at_ms
-       OR (updated_at_ms = :cursor_updated_at_ms AND id < :cursor_id))
+WHERE (NOT :top_level OR origin IN ('root', 'fork'))
+  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
 ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;
 
--- name: SessionCount :one
--- Return the size of the full view that the selector describes. The selector matches SessionPage.
--- filter_workspace_id: ?[16]u8!
+-- name: SessionPageWorkspace :many
+-- Same page inside one workspace. A seek on sessions_by_workspace serves the filter and order.
+-- top_level and filter_parent_id refine the population.
+-- filter_workspace_id: [16]u8!
+-- top_level: bool!
 -- filter_parent_id: ?[16]u8!
+-- cursor_updated_at_ms: u64!
+-- cursor_id: [16]u8!
+-- limit: i64!
+-- id: [16]u8!
+-- workspace_id: [16]u8!
+-- origin: []const u8!
+-- parent_id: ?[16]u8!
+-- parent_message_id: ?u64!
+-- parent_part_id: ?u64!
+-- source_id: ?[16]u8!
+-- profile: []const u8!
+-- model: []const u8!
+-- reasoning: []const u8!
+-- config_rev: u64!
+-- permission: []const u8!
+-- max_rounds: ?u64!
+-- title: []const u8!
+-- agent: ?[]const u8!
+-- created_by_name: ?[]const u8!
+-- created_by_version: ?[]const u8!
+-- message_count: u64!
+-- usage_input_total: u64!
+-- usage_output_total: u64!
+-- usage_reasoning_total: u64!
+-- usage_cache_read_total: u64!
+-- usage_cache_write_total: u64!
+-- created_at_ms: u64!
+-- updated_at_ms: u64!
+SELECT
+    id, workspace_id,
+    origin, parent_id, parent_message_id, parent_part_id, source_id,
+    profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
+    created_by_name, created_by_version,
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms
+FROM sessions
+WHERE workspace_id = :filter_workspace_id
+  AND (NOT :top_level OR origin IN ('root', 'fork'))
+  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id)
+  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
+ORDER BY updated_at_ms DESC, id DESC
+LIMIT :limit;
+
+-- name: SessionPageParent :many
+-- Children of one session. A seek on sessions_by_parent serves the order.
+-- filter_parent_id: [16]u8!
+-- top_level: bool!
+-- cursor_updated_at_ms: u64!
+-- cursor_id: [16]u8!
+-- limit: i64!
+-- id: [16]u8!
+-- workspace_id: [16]u8!
+-- origin: []const u8!
+-- parent_id: ?[16]u8!
+-- parent_message_id: ?u64!
+-- parent_part_id: ?u64!
+-- source_id: ?[16]u8!
+-- profile: []const u8!
+-- model: []const u8!
+-- reasoning: []const u8!
+-- config_rev: u64!
+-- permission: []const u8!
+-- max_rounds: ?u64!
+-- title: []const u8!
+-- agent: ?[]const u8!
+-- created_by_name: ?[]const u8!
+-- created_by_version: ?[]const u8!
+-- message_count: u64!
+-- usage_input_total: u64!
+-- usage_output_total: u64!
+-- usage_reasoning_total: u64!
+-- usage_cache_read_total: u64!
+-- usage_cache_write_total: u64!
+-- created_at_ms: u64!
+-- updated_at_ms: u64!
+SELECT
+    id, workspace_id,
+    origin, parent_id, parent_message_id, parent_part_id, source_id,
+    profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
+    created_by_name, created_by_version,
+    message_count,
+    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    created_at_ms, updated_at_ms
+FROM sessions
+WHERE parent_id = :filter_parent_id
+  AND (NOT :top_level OR origin IN ('root', 'fork'))
+  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
+ORDER BY updated_at_ms DESC, id DESC
+LIMIT :limit;
+
+-- name: SessionCountRecent :one
+-- Count every session, with an optional top_level filter. Matches SessionPageRecent.
 -- top_level: bool!
 -- total: u64!
 SELECT count(*) AS total FROM sessions
-WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
-  AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
+WHERE (NOT :top_level OR origin IN ('root', 'fork'));
+
+-- name: SessionCountWorkspace :one
+-- Count sessions in one workspace. Matches SessionPageWorkspace.
+-- filter_workspace_id: [16]u8!
+-- top_level: bool!
+-- filter_parent_id: ?[16]u8!
+-- total: u64!
+SELECT count(*) AS total FROM sessions
+WHERE workspace_id = :filter_workspace_id
+  AND (NOT :top_level OR origin IN ('root', 'fork'))
+  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id);
+
+-- name: SessionCountParent :one
+-- Count children of one session. Matches SessionPageParent.
+-- filter_parent_id: [16]u8!
+-- top_level: bool!
+-- total: u64!
+SELECT count(*) AS total FROM sessions
+WHERE parent_id = :filter_parent_id
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: InsertPrompt :exec

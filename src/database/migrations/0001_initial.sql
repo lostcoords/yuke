@@ -71,8 +71,8 @@ CREATE TABLE sessions (
     usage_cache_read_total  INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_read_total  BETWEEN 0 AND 9007199254740991), -- u64
     usage_cache_write_total INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_write_total BETWEEN 0 AND 9007199254740991), -- u64
 
-    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), -- u64
-    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0), -- u64
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
     -- These id marks only increase. Recovery reads them, never MAX(seq), so a truncating
     -- rewind cannot reclaim ids.

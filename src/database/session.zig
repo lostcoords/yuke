@@ -8,8 +8,8 @@ const queries_gen = @import("queries_gen.zig");
 /// SessionSnapshot returns the client-facing summary and the open-run marker.
 pub const Snapshot = queries_gen.SessionSnapshot.Row;
 
-/// SessionPage returns one row of a session.list page.
-pub const PageRow = queries_gen.SessionPage.Row;
+/// One row of a session.list page. Every page variant selects the same columns.
+pub const PageRow = queries_gen.SessionPageRecent.Row;
 
 /// The session.list selector drops a filter when its field is null.
 /// top_level keeps roots and forks.
@@ -68,32 +68,77 @@ pub fn snapshot(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Snapshot 
     return row.value;
 }
 
-/// Load one keyset page of the session list into `arena`, newest first. A null cursor starts
-/// at the newest row. The result borrows `arena`.
+/// The first page seeks below this cursor. The schema bounds updated_at_ms to 2^53-1, so this
+/// timestamp exceeds every stored row. The row-value predicate keeps one seekable form and admits all.
+const first_page: Cursor = .{ .updated_at_ms = std.math.maxInt(i64), .id = [_]u8{0xFF} ** 16 };
+
+/// Load one keyset page of the session list into `arena`, newest first. The result borrows `arena`.
+/// The selector picks the index-seeking variant: a workspace scope, then a parent, else recent.
 pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cursor, limit: i64) ![]PageRow {
     if (limit < 0) return error.InvalidLimit; // SQLite reads a negative LIMIT as unbounded.
-    var it = try db.queries.session_page.rows(.{
-        .filter_workspace_id = sel.workspace_id,
-        .filter_parent_id = sel.parent_id,
-        .top_level = sel.top_level,
-        .cursor_updated_at_ms = if (cursor) |c| c.updated_at_ms else null,
-        .cursor_id = if (cursor) |c| c.id else null,
-        .limit = limit,
-    });
-    defer it.deinit();
+    const c = cursor orelse first_page;
 
     var out: std.ArrayList(PageRow) = .empty;
-    while (try it.next(arena)) |row| try out.append(arena, row.value);
+    if (sel.workspace_id) |w| {
+        var it = try db.queries.session_page_workspace.rows(.{
+            .filter_workspace_id = w,
+            .top_level = sel.top_level,
+            .filter_parent_id = sel.parent_id,
+            .cursor_updated_at_ms = c.updated_at_ms,
+            .cursor_id = c.id,
+            .limit = limit,
+        });
+        defer it.deinit();
+        try collectPage(&it, arena, &out);
+    } else if (sel.parent_id) |p| {
+        var it = try db.queries.session_page_parent.rows(.{
+            .filter_parent_id = p,
+            .top_level = sel.top_level,
+            .cursor_updated_at_ms = c.updated_at_ms,
+            .cursor_id = c.id,
+            .limit = limit,
+        });
+        defer it.deinit();
+        try collectPage(&it, arena, &out);
+    } else {
+        var it = try db.queries.session_page_recent.rows(.{
+            .top_level = sel.top_level,
+            .cursor_updated_at_ms = c.updated_at_ms,
+            .cursor_id = c.id,
+            .limit = limit,
+        });
+        defer it.deinit();
+        try collectPage(&it, arena, &out);
+    }
     return out.items;
 }
 
-/// Count the whole view the selector describes.
+/// Copy each variant row into one PageRow. The variants select the same columns in the same order.
+fn collectPage(it: anytype, arena: std.mem.Allocator, out: *std.ArrayList(PageRow)) !void {
+    while (try it.next(arena)) |row| try out.append(arena, asPageRow(row.value));
+}
+
+fn asPageRow(row: anytype) PageRow {
+    if (@TypeOf(row) == PageRow) return row;
+    var out: PageRow = undefined;
+    inline for (@typeInfo(PageRow).@"struct".fields) |field| @field(out, field.name) = @field(row, field.name);
+    return out;
+}
+
+/// Count the whole view the selector describes. The selector picks the same variant as `list`.
 pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
-    const row = try db.queries.session_count.one(arena, .{
-        .filter_workspace_id = sel.workspace_id,
-        .filter_parent_id = sel.parent_id,
-        .top_level = sel.top_level,
-    });
+    if (sel.workspace_id) |w| {
+        const row = try db.queries.session_count_workspace.one(arena, .{
+            .filter_workspace_id = w,
+            .top_level = sel.top_level,
+            .filter_parent_id = sel.parent_id,
+        });
+        return row.value.total;
+    } else if (sel.parent_id) |p| {
+        const row = try db.queries.session_count_parent.one(arena, .{ .filter_parent_id = p, .top_level = sel.top_level });
+        return row.value.total;
+    }
+    const row = try db.queries.session_count_recent.one(arena, .{ .top_level = sel.top_level });
     return row.value.total;
 }
 
@@ -327,4 +372,61 @@ test "top_level excludes a child session" {
     const top = try list(&db, a, .{ .top_level = true }, null, 10);
     try testing.expectEqual(@as(usize, 1), top.len);
     try testing.expectEqualStrings("root", top[0].origin);
+}
+
+test "the workspace and parent selectors filter and page" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const wa = try workspace.resolve(&db, a, [_]u8{7} ** 16, "/a", "a", "/a");
+    const wb = try workspace.resolve(&db, a, [_]u8{8} ** 16, "/b", "b", "/b");
+    const root_a = [_]u8{1} ** 16;
+    try create(&db, rootParams(root_a, wa.id));
+    try create(&db, rootParams([_]u8{2} ** 16, wb.id));
+
+    var child = rootParams([_]u8{3} ** 16, wa.id);
+    child.origin = "child";
+    child.parent_id = root_a;
+    child.parent_message_id = 1;
+    child.parent_part_id = 0;
+    try create(&db, child);
+
+    // The workspace selector keeps only workspace a (a root and its child).
+    try testing.expectEqual(@as(u64, 2), try count(&db, a, .{ .workspace_id = wa.id }));
+    const in_a = try list(&db, a, .{ .workspace_id = wa.id }, null, 10);
+    try testing.expectEqual(@as(usize, 2), in_a.len);
+
+    // The parent selector keeps only children of root a.
+    try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .parent_id = root_a }));
+    const kids = try list(&db, a, .{ .parent_id = root_a }, null, 10);
+    try testing.expectEqual(@as(usize, 1), kids.len);
+    try testing.expectEqualStrings("child", kids[0].origin);
+}
+
+test "each list variant seeks its index and never sorts" {
+    var db = try testDb();
+    defer db.deinit();
+
+    try expectPlan(&db, queries_gen.SessionPageRecent.sql, "sessions_by_recent");
+    try expectPlan(&db, queries_gen.SessionPageWorkspace.sql, "sessions_by_workspace");
+    try expectPlan(&db, queries_gen.SessionPageParent.sql, "sessions_by_parent");
+}
+
+/// Assert the planner SEARCHes `index` for the real generated query and adds no sort step.
+/// SEARCH proves a subset seek; a plain SCAN or a temp b-tree would mean the keyset does not hold.
+fn expectPlan(db: *Database, comptime query: [:0]const u8, index: []const u8) !void {
+    var rows = try db.conn.rows("EXPLAIN QUERY PLAN " ++ query, .{});
+    defer rows.deinit();
+    var seeks_index = false;
+    while (rows.next()) |row| {
+        const detail = row.text(3);
+        if (std.mem.indexOf(u8, detail, "SEARCH") != null and std.mem.indexOf(u8, detail, index) != null)
+            seeks_index = true;
+        try testing.expect(std.mem.indexOf(u8, detail, "USE TEMP B-TREE") == null);
+    }
+    if (rows.err) |err| return err;
+    try testing.expect(seeks_index);
 }

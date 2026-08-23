@@ -184,6 +184,9 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\    open_run_id, open_run_kind, open_run_started_at_ms
     \\FROM sessions
     \\WHERE id = :id;
+    \\
+    \\-- The session.list page columns. Every page variant selects this same set in this same order, so
+    \\-- the store maps each generated row to one PageRow.
 ,
     struct {
         id: [16]u8,
@@ -220,7 +223,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
     },
 );
 
-pub const SessionPage = sql.ManyQuery(
+pub const SessionPageRecent = sql.ManyQuery(
     \\SELECT
     \\    id, workspace_id,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -230,21 +233,15 @@ pub const SessionPage = sql.ManyQuery(
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     \\    created_at_ms, updated_at_ms
     \\FROM sessions
-    \\WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
-    \\  AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
-    \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
-    \\  AND (:cursor_updated_at_ms IS NULL
-    \\       OR updated_at_ms < :cursor_updated_at_ms
-    \\       OR (updated_at_ms = :cursor_updated_at_ms AND id < :cursor_id))
+    \\WHERE (NOT :top_level OR origin IN ('root', 'fork'))
+    \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
     \\ORDER BY updated_at_ms DESC, id DESC
     \\LIMIT :limit;
 ,
     struct {
-        filter_workspace_id: ?[16]u8,
-        filter_parent_id: ?[16]u8,
         top_level: bool,
-        cursor_updated_at_ms: ?u64,
-        cursor_id: ?[16]u8,
+        cursor_updated_at_ms: u64,
+        cursor_id: [16]u8,
         limit: i64,
     },
     struct {
@@ -276,15 +273,147 @@ pub const SessionPage = sql.ManyQuery(
     },
 );
 
-pub const SessionCount = sql.OneQuery(
+pub const SessionPageWorkspace = sql.ManyQuery(
+    \\SELECT
+    \\    id, workspace_id,
+    \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
+    \\    profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
+    \\    created_by_name, created_by_version,
+    \\    message_count,
+    \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    \\    created_at_ms, updated_at_ms
+    \\FROM sessions
+    \\WHERE workspace_id = :filter_workspace_id
+    \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
+    \\  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id)
+    \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
+    \\ORDER BY updated_at_ms DESC, id DESC
+    \\LIMIT :limit;
+,
+    struct {
+        filter_workspace_id: [16]u8,
+        top_level: bool,
+        filter_parent_id: ?[16]u8,
+        cursor_updated_at_ms: u64,
+        cursor_id: [16]u8,
+        limit: i64,
+    },
+    struct {
+        id: [16]u8,
+        workspace_id: [16]u8,
+        origin: []const u8,
+        parent_id: ?[16]u8,
+        parent_message_id: ?u64,
+        parent_part_id: ?u64,
+        source_id: ?[16]u8,
+        profile: []const u8,
+        model: []const u8,
+        reasoning: []const u8,
+        config_rev: u64,
+        permission: []const u8,
+        max_rounds: ?u64,
+        title: []const u8,
+        agent: ?[]const u8,
+        created_by_name: ?[]const u8,
+        created_by_version: ?[]const u8,
+        message_count: u64,
+        usage_input_total: u64,
+        usage_output_total: u64,
+        usage_reasoning_total: u64,
+        usage_cache_read_total: u64,
+        usage_cache_write_total: u64,
+        created_at_ms: u64,
+        updated_at_ms: u64,
+    },
+);
+
+pub const SessionPageParent = sql.ManyQuery(
+    \\SELECT
+    \\    id, workspace_id,
+    \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
+    \\    profile, model, reasoning, config_rev, permission, max_rounds, title, agent,
+    \\    created_by_name, created_by_version,
+    \\    message_count,
+    \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    \\    created_at_ms, updated_at_ms
+    \\FROM sessions
+    \\WHERE parent_id = :filter_parent_id
+    \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
+    \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
+    \\ORDER BY updated_at_ms DESC, id DESC
+    \\LIMIT :limit;
+,
+    struct {
+        filter_parent_id: [16]u8,
+        top_level: bool,
+        cursor_updated_at_ms: u64,
+        cursor_id: [16]u8,
+        limit: i64,
+    },
+    struct {
+        id: [16]u8,
+        workspace_id: [16]u8,
+        origin: []const u8,
+        parent_id: ?[16]u8,
+        parent_message_id: ?u64,
+        parent_part_id: ?u64,
+        source_id: ?[16]u8,
+        profile: []const u8,
+        model: []const u8,
+        reasoning: []const u8,
+        config_rev: u64,
+        permission: []const u8,
+        max_rounds: ?u64,
+        title: []const u8,
+        agent: ?[]const u8,
+        created_by_name: ?[]const u8,
+        created_by_version: ?[]const u8,
+        message_count: u64,
+        usage_input_total: u64,
+        usage_output_total: u64,
+        usage_reasoning_total: u64,
+        usage_cache_read_total: u64,
+        usage_cache_write_total: u64,
+        created_at_ms: u64,
+        updated_at_ms: u64,
+    },
+);
+
+pub const SessionCountRecent = sql.OneQuery(
     \\SELECT count(*) AS total FROM sessions
-    \\WHERE (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
-    \\  AND (:filter_parent_id     IS NULL OR parent_id    = :filter_parent_id)
+    \\WHERE (NOT :top_level OR origin IN ('root', 'fork'));
+,
+    struct {
+        top_level: bool,
+    },
+    struct {
+        total: u64,
+    },
+);
+
+pub const SessionCountWorkspace = sql.OneQuery(
+    \\SELECT count(*) AS total FROM sessions
+    \\WHERE workspace_id = :filter_workspace_id
+    \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
+    \\  AND (:filter_parent_id IS NULL OR parent_id = :filter_parent_id);
+,
+    struct {
+        filter_workspace_id: [16]u8,
+        top_level: bool,
+        filter_parent_id: ?[16]u8,
+    },
+    struct {
+        total: u64,
+    },
+);
+
+pub const SessionCountParent = sql.OneQuery(
+    \\SELECT count(*) AS total FROM sessions
+    \\WHERE parent_id = :filter_parent_id
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'));
 ,
     struct {
-        filter_workspace_id: ?[16]u8,
-        filter_parent_id: ?[16]u8,
+        filter_parent_id: [16]u8,
         top_level: bool,
     },
     struct {
@@ -356,8 +485,12 @@ pub const Queries = struct {
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,
-    session_page: SessionPage,
-    session_count: SessionCount,
+    session_page_recent: SessionPageRecent,
+    session_page_workspace: SessionPageWorkspace,
+    session_page_parent: SessionPageParent,
+    session_count_recent: SessionCountRecent,
+    session_count_workspace: SessionCountWorkspace,
+    session_count_parent: SessionCountParent,
     insert_prompt: InsertPrompt,
     workspace_by_stable_key: WorkspaceByStableKey,
     insert_workspace: InsertWorkspace,
