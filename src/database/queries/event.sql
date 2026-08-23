@@ -41,3 +41,21 @@ UPDATE sessions SET
 -- config_rev_high: u64!
 SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
     FROM sessions WHERE id = :id;
+
+-- name: AllocRunId :one
+-- Allocate the next run id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- run_id_high: u64!
+UPDATE sessions SET run_id_high = run_id_high + 1 WHERE id = :id RETURNING run_id_high;
+
+-- name: AllocMessageId :one
+-- Allocate the next message id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- message_id_high: u64!
+UPDATE sessions SET message_id_high = message_id_high + 1 WHERE id = :id RETURNING message_id_high;
+
+-- name: AllocInputId :one
+-- Allocate the next input id for one session. Run inside a write transaction.
+-- id: [16]u8!
+-- input_id_high: u64!
+UPDATE sessions SET input_id_high = input_id_high + 1 WHERE id = :id RETURNING input_id_high;

@@ -178,6 +178,39 @@ pub const ReadHigh = sql.OptionalQuery(
     },
 );
 
+pub const AllocRunId = sql.OneQuery(
+    \\UPDATE sessions SET run_id_high = run_id_high + 1 WHERE id = :id RETURNING run_id_high;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        run_id_high: u64,
+    },
+);
+
+pub const AllocMessageId = sql.OneQuery(
+    \\UPDATE sessions SET message_id_high = message_id_high + 1 WHERE id = :id RETURNING message_id_high;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        message_id_high: u64,
+    },
+);
+
+pub const AllocInputId = sql.OneQuery(
+    \\UPDATE sessions SET input_id_high = input_id_high + 1 WHERE id = :id RETURNING input_id_high;
+,
+    struct {
+        id: [16]u8,
+    },
+    struct {
+        input_id_high: u64,
+    },
+);
+
 pub const InsertMessage = sql.ExecQuery(
     \\INSERT INTO messages(
     \\    session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
@@ -635,6 +668,9 @@ pub const Queries = struct {
     append_event: AppendEvent,
     bump_ids: BumpIds,
     read_high: ReadHigh,
+    alloc_run_id: AllocRunId,
+    alloc_message_id: AllocMessageId,
+    alloc_input_id: AllocInputId,
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,

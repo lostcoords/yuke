@@ -57,6 +57,24 @@ pub fn bumpIds(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, mark
     });
 }
 
+/// Allocate the next run id for a session. Run inside a write transaction. Return NoRow when missing.
+pub fn allocRunId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    std.debug.assert(sql.inTransaction(db.conn));
+    return (try db.queries.alloc_run_id.one(arena, .{ .id = session_id })).value.run_id_high;
+}
+
+/// Allocate the next message id for a session. Run inside a write transaction. Return NoRow when missing.
+pub fn allocMessageId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    std.debug.assert(sql.inTransaction(db.conn));
+    return (try db.queries.alloc_message_id.one(arena, .{ .id = session_id })).value.message_id_high;
+}
+
+/// Allocate the next input id for a session. Run inside a write transaction. Return NoRow when missing.
+pub fn allocInputId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    std.debug.assert(sql.inTransaction(db.conn));
+    return (try db.queries.alloc_input_id.one(arena, .{ .id = session_id })).value.input_id_high;
+}
+
 /// Read the high-water marks into `arena`, or null when the session has no row.
 pub fn highWater(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !?HighWater {
     const row = (try db.queries.read_high.maybeOne(arena, .{ .id = session_id })) orelse return null;

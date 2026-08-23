@@ -5,6 +5,17 @@ const std = @import("std");
 const sse = @import("stream/sse.zig");
 const event = @import("stream/event.zig");
 
+/// Cap the whole response so one turn cannot grow memory without bound.
+const max_response_bytes = 16 * 1024 * 1024;
+
+/// A provider HTTP request. E1 fills only `body`; the real client fills url and headers from resolve.
+pub const Header = struct { name: []const u8, value: []const u8 };
+pub const Request = struct {
+    url: []const u8 = "",
+    headers: []const Header = &.{},
+    body: []const u8,
+};
+
 /// A pulled byte stream of one provider response. The owner reads until end of stream, then deinits.
 /// `ctx` stays live until deinit. The real client maps its std.Io.Reader semantics to this contract.
 pub const ResponseBody = struct {
@@ -46,9 +57,12 @@ pub fn drain(
     defer frames.deinit(arena);
 
     var buf: [4096]u8 = undefined;
+    var total: usize = 0;
     while (true) {
         const n = try body.read(&buf);
         if (n == 0) break;
+        total += n;
+        if (total > max_response_bytes) return error.ResponseTooLarge; // bound a long or hostile stream
         frames.clearRetainingCapacity();
         try parser.push(buf[0..n], arena, &frames);
         for (frames.items) |data| try reducer.decode(data, arena, out);
@@ -69,6 +83,7 @@ pub const MockTransport = struct {
     chunk_size: usize,
     offset: usize = 0,
     canceled: bool = false,
+    captured: ?[]const u8 = null, // the last request body, for assertions
 
     pub fn init(bytes: []const u8, chunk_size: usize) MockTransport {
         return .{ .bytes = bytes, .chunk_size = if (chunk_size == 0) bytes.len else chunk_size };
@@ -76,6 +91,13 @@ pub const MockTransport = struct {
 
     pub fn body(self: *MockTransport) ResponseBody {
         return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    /// Record the request and replay the canned response. The seam the run loop calls.
+    pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request) !ResponseBody {
+        _ = arena;
+        self.captured = request.body;
+        return self.body();
     }
 
     const vtable: ResponseBody.VTable = .{ .read = read, .cancel = cancel, .deinit = deinitNoop };
