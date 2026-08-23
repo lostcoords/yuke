@@ -50,7 +50,13 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
             const result = try handlers.sessionCreate(state, arena, request.params.create_session);
             return .{ .ok = .{ .id = request.id, .result = .{ .session_result = result } } };
         },
-        .@"session.list",
+        .@"session.list" => {
+            const result = handlers.sessionList(state, arena, request.params.session_list_params) catch |err| switch (err) {
+                error.BadCursor => return errorResponse(request.id, .stale_cursor, "stale cursor"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_list_result = result } } };
+        },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
@@ -169,6 +175,101 @@ const TestState = struct {
     }
 };
 
+fn call(fixture: *TestState, frame: []const u8, buffer: []u8) ![]const u8 {
+    var out: std.Io.Writer = .fixed(buffer);
+    _ = try handleRequest(&fixture.state, &out, frame);
+    return out.buffered();
+}
+
+fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u8) ![]const u8 {
+    var frame: [512]u8 = undefined;
+    const request = try std.fmt.bufPrint(
+        &frame,
+        "{{\"id\":\"{s}\",\"method\":\"session.create\",\"params\":{{\"workspace_path\":\"{s}\"}}}}",
+        .{ id, path },
+    );
+    return call(fixture, request, buffer);
+}
+
+fn responsePayload(bytes: []const u8) ![]const u8 {
+    const start = std.mem.indexOfScalar(u8, bytes, '{') orelse return error.InvalidResponse;
+    const end = std.mem.lastIndexOfScalar(u8, bytes, '}') orelse return error.InvalidResponse;
+    if (end < start) return error.InvalidResponse;
+    return bytes[start .. end + 1];
+}
+
+fn responseNextCursor(arena: std.mem.Allocator, bytes: []const u8) !?[]const u8 {
+    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, try responsePayload(bytes), .{});
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidResponse,
+    };
+    const result = switch (object.get("result") orelse return error.InvalidResponse) {
+        .object => |result| result,
+        else => return error.InvalidResponse,
+    };
+    const cursor = result.get("next_cursor") orelse return null;
+    return switch (cursor) {
+        .string => |text| text,
+        .null => null,
+        else => error.InvalidResponse,
+    };
+}
+
+fn responseItemCount(bytes: []const u8) !usize {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), try responsePayload(bytes), .{});
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidResponse,
+    };
+    const result = switch (object.get("result") orelse return error.InvalidResponse) {
+        .object => |result| result,
+        else => return error.InvalidResponse,
+    };
+    return switch (result.get("items") orelse return error.InvalidResponse) {
+        .array => |items| items.items.len,
+        else => error.InvalidResponse,
+    };
+}
+
+fn responseUpdatedAt(bytes: []const u8) ![2]u64 {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), try responsePayload(bytes), .{});
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidResponse,
+    };
+    const result = switch (object.get("result") orelse return error.InvalidResponse) {
+        .object => |result| result,
+        else => return error.InvalidResponse,
+    };
+    const items = switch (result.get("items") orelse return error.InvalidResponse) {
+        .array => |items| items.items,
+        else => return error.InvalidResponse,
+    };
+    if (items.len != 2) return error.InvalidResponse;
+
+    var updated_at: [2]u64 = undefined;
+    for (items, 0..) |item, i| {
+        const item_object = switch (item) {
+            .object => |item_object| item_object,
+            else => return error.InvalidResponse,
+        };
+        const session = switch (item_object.get("session") orelse return error.InvalidResponse) {
+            .object => |session| session,
+            else => return error.InvalidResponse,
+        };
+        updated_at[i] = switch (session.get("updated_at_ms") orelse return error.InvalidResponse) {
+            .integer => |timestamp| @intCast(timestamp),
+            else => return error.InvalidResponse,
+        };
+    }
+    return updated_at;
+}
+
 test "dispatch initialize returns a result" {
     var fixture = try TestState.init();
     defer fixture.deinit();
@@ -242,4 +343,127 @@ test "session.create defaults the workspace to home and stacks sessions" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
+}
+
+test "session.list returns created sessions newest-first" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var create_one: [4096]u8 = undefined;
+    var create_two: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "1", "/list/one", &create_one);
+    _ = try createCall(&fixture, "2", "/list/two", &create_two);
+
+    var list_buffer: [8192]u8 = undefined;
+    const written = try call(&fixture,
+        \\{"id":"3","method":"session.list","params":{}}
+    , &list_buffer);
+    try std.testing.expectEqual(@as(usize, 2), try responseItemCount(written));
+    const updated_at = try responseUpdatedAt(written);
+    try std.testing.expect(updated_at[0] >= updated_at[1]);
+    const first_title = std.mem.indexOf(u8, written, "\"title\":\"one\"") orelse return error.MissingTitle;
+    const second_title = std.mem.indexOf(u8, written, "\"title\":\"two\"") orelse return error.MissingTitle;
+    try std.testing.expect(first_title != second_title);
+}
+
+test "session.list pages with a selector-bound cursor" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var create_one: [4096]u8 = undefined;
+    var create_two: [4096]u8 = undefined;
+    var create_three: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "1", "/page/one", &create_one);
+    _ = try createCall(&fixture, "2", "/page/two", &create_two);
+    _ = try createCall(&fixture, "3", "/page/three", &create_three);
+
+    var first_buffer: [8192]u8 = undefined;
+    const first = try call(&fixture,
+        \\{"id":"4","method":"session.list","params":{"limit":2}}
+    , &first_buffer);
+    try std.testing.expectEqual(@as(usize, 2), try responseItemCount(first));
+
+    var cursor_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer cursor_arena.deinit();
+    const cursor = (try responseNextCursor(cursor_arena.allocator(), first)) orelse return error.MissingCursor;
+    var second_frame: [8192]u8 = undefined;
+    const second_request = try std.fmt.bufPrint(
+        &second_frame,
+        "{{\"id\":\"5\",\"method\":\"session.list\",\"params\":{{\"limit\":2,\"cursor\":\"{s}\"}}}}",
+        .{cursor},
+    );
+    var second_buffer: [8192]u8 = undefined;
+    const second = try call(&fixture, second_request, &second_buffer);
+    try std.testing.expectEqual(@as(usize, 1), try responseItemCount(second));
+    try std.testing.expect((try responseNextCursor(cursor_arena.allocator(), second)) == null);
+
+    // Each session appears on exactly one page. The cursor advances with no duplicate or skipped row.
+    inline for (.{ "one", "two", "three" }) |name| {
+        const on_first = std.mem.indexOf(u8, first, "\"title\":\"" ++ name ++ "\"") != null;
+        const on_second = std.mem.indexOf(u8, second, "\"title\":\"" ++ name ++ "\"") != null;
+        try std.testing.expect(on_first != on_second);
+    }
+}
+
+test "session.list workspace scope filters sessions" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var create_one: [4096]u8 = undefined;
+    var create_two: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "1", "/scope/one", &create_one);
+    _ = try createCall(&fixture, "2", "/scope/two", &create_two);
+
+    var id_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer id_arena.deinit();
+    const workspace = try database.workspace.resolve(
+        &fixture.state.db,
+        id_arena.allocator(),
+        [_]u8{9} ** 16,
+        "/scope/one",
+        "one",
+        "/scope/one",
+    );
+    var scope_buffer: std.Io.Writer.Allocating = .init(id_arena.allocator());
+    const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = workspace.id } };
+    try std.json.Stringify.value(scope, .{}, &scope_buffer.writer);
+    var request: [8192]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &request,
+        "{{\"id\":\"3\",\"method\":\"session.list\",\"params\":{{\"scope\":{s}}}}}",
+        .{scope_buffer.written()},
+    );
+    var list_buffer: [8192]u8 = undefined;
+    const written = try call(&fixture, frame, &list_buffer);
+    try std.testing.expectEqual(@as(usize, 1), try responseItemCount(written));
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"title\":\"one\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"title\":\"two\"") == null);
+}
+
+test "session.list rejects a cursor from a different selector" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var create_buffer: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "1", "/stale", &create_buffer);
+    var second_create_buffer: [4096]u8 = undefined;
+    _ = try createCall(&fixture, "2", "/stale-two", &second_create_buffer);
+    var first_buffer: [8192]u8 = undefined;
+    const first = try call(&fixture,
+        \\{"id":"2","method":"session.list","params":{"limit":1}}
+    , &first_buffer);
+    var cursor_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer cursor_arena.deinit();
+    const cursor = (try responseNextCursor(cursor_arena.allocator(), first)) orelse return error.MissingCursor;
+
+    var request: [8192]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &request,
+        "{{\"id\":\"3\",\"method\":\"session.list\",\"params\":{{\"population\":{{\"type\":\"all\"}},\"cursor\":\"{s}\"}}}}",
+        .{cursor},
+    );
+    var stale_buffer: [8192]u8 = undefined;
+    const stale = try call(&fixture, frame, &stale_buffer);
+    try std.testing.expect(std.mem.indexOf(u8, stale, "-31002") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stale, "\"id\":\"3\"") != null);
 }
