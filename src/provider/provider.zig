@@ -15,6 +15,8 @@ pub const request_openai_responses = @import("request/openai_responses.zig");
 pub const instance = @import("instance/instance.zig");
 pub const resolve = @import("instance/resolve.zig");
 
+pub const transport = @import("transport.zig");
+
 test {
     @import("std").testing.refAllDecls(@This());
 }
