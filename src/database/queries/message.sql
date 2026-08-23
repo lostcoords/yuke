@@ -48,3 +48,17 @@ UPDATE sessions SET
     projection_seq          = :seq,
     updated_at_ms           = MAX(updated_at_ms, :updated_at_ms)
 WHERE id = :id RETURNING 1 AS advanced;
+
+-- name: MessagePage :many
+-- One backward page of committed messages, newest first; the caller reverses to oldest-first.
+-- The body lives in events.payload, joined by (session_id, seq). cursor_message_id is exclusive.
+-- session_id: [16]u8!
+-- cursor_message_id: u64!
+-- limit: i64!
+-- message_id: u64!
+-- payload: []const u8!
+SELECT m.message_id AS message_id, e.payload AS payload
+FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.message_id < :cursor_message_id
+ORDER BY m.message_id DESC
+LIMIT :limit;

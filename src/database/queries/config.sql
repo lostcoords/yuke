@@ -25,3 +25,11 @@ UPDATE sessions SET
     projection_seq  = :seq,
     updated_at_ms   = MAX(updated_at_ms, :updated_at_ms)
 WHERE id = :id RETURNING 1 AS advanced;
+
+-- name: ConfigByRevision :optional
+-- Read one historical config revision. A superseded revision stays readable.
+-- session_id: [16]u8!
+-- config_rev: u64!
+-- model: []const u8!
+-- reasoning: []const u8!
+SELECT model, reasoning FROM session_configs WHERE session_id = :session_id AND config_rev = :config_rev;

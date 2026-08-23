@@ -51,8 +51,14 @@ pub fn create(db: *Database, params: CreateParams) !void {
 }
 
 /// Store the session's system prompt. Create sets it once; no method changes it.
-pub fn setPrompt(db: *Database, id: [16]u8, prompt: []const u8) !void {
-    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = prompt });
+pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8) !void {
+    try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text });
+}
+
+/// Read the session's system prompt into `arena`, or null when no prompt was set.
+pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
+    const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
+    return row.value.prompt;
 }
 
 /// Report whether a session with `id` exists.
@@ -266,6 +272,22 @@ test "create rejects a missing workspace" {
         error.ConstraintForeignKey,
         create(&db, rootParams([_]u8{8} ** 16, [_]u8{9} ** 16)),
     );
+}
+
+test "prompt reads a set prompt and null when absent" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const ws = try workspace.resolve(&db, a, [_]u8{7} ** 16, "/w", "w", "/w");
+    const id = [_]u8{3} ** 16;
+    try create(&db, rootParams(id, ws.id));
+
+    try testing.expect((try prompt(&db, a, id)) == null); // no prompt row yet
+    try setPrompt(&db, id, "be helpful");
+    try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?);
 }
 
 test "an open run cannot exceed the run high-water mark" {

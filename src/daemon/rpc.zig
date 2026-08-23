@@ -58,6 +58,21 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_list_result = result } } };
         },
+        .@"session.config" => {
+            const result = handlers.sessionConfig(state, arena, request.params.session_config_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.UnknownConfigRev => return errorResponse(request.id, .unknown_config_rev, "unknown config revision"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_config_result = result } } };
+        },
+        .@"session.history" => {
+            const result = handlers.sessionHistory(state, arena, request.params.session_history_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_history_result = result } } };
+        },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
@@ -67,9 +82,7 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
         .@"session.cancel_input",
         .@"session.cancel_run",
         .@"session.resync",
-        .@"session.history",
         .@"permission.decide",
-        .@"session.config",
         .@"subscription.set",
         .@"catalog.list",
         .@"catalog.refresh",
@@ -471,4 +484,81 @@ test "session.list rejects a cursor from a different selector" {
     const stale = try call(&fixture, frame, &stale_buffer);
     try std.testing.expect(std.mem.indexOf(u8, stale, "-31002") != null);
     try std.testing.expect(std.mem.indexOf(u8, stale, "\"id\":\"3\"") != null);
+}
+
+test "session.create records the initial config as revision 0" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
+    // The initial config is readable by its revision, not only as the current config.
+    const cfg = try handlers.sessionConfig(&fixture.state, a, .{ .session_id = created.session.id, .config_rev = 0 });
+    try std.testing.expectEqual(@as(u64, 0), cfg.config.config_rev);
+    try std.testing.expectEqualStrings("opus", cfg.config.model);
+}
+
+test "session.history returns committed messages oldest-first with their configs" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
+    const sid = created.session.id;
+
+    const user: wire.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 150 } } };
+    const assistant: wire.message.Message = .{
+        .assistant = .{
+            .id = 2,
+            .run_id = 1,
+            .config_rev = 0, // references the initial config recordInitial stored
+            .agent = "claude",
+            .content = &.{},
+            .time = .{ .created_at_ms = 160 },
+        },
+    };
+    try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid, [_]u8{1} ** 16, 150, user);
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid, [_]u8{2} ** 16, 160, assistant);
+    try fixture.state.db.conn.execNoArgs("COMMIT");
+
+    const hist = try handlers.sessionHistory(&fixture.state, a, .{ .session_id = sid, .before_message_id = 0, .limit = 10 });
+    try std.testing.expectEqual(@as(usize, 2), hist.messages.len);
+    try std.testing.expectEqual(@as(u64, 1), hist.messages[0].user.id); // oldest first
+    try std.testing.expectEqual(@as(u64, 2), hist.messages[1].assistant.id);
+    try std.testing.expect(!hist.has_more);
+    // The assistant turn references config_rev 0, so gatherConfigs resolves exactly that revision.
+    try std.testing.expectEqual(@as(usize, 1), hist.configs.len);
+    try std.testing.expectEqual(@as(u64, 0), hist.configs[0].config_rev);
+}
+
+test "session reads reject an unknown session and an unknown revision" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const missing = [_]u8{9} ** 16;
+    try std.testing.expectError(error.UnknownSession, handlers.sessionConfig(&fixture.state, a, .{ .session_id = missing }));
+    try std.testing.expectError(error.UnknownSession, handlers.sessionHistory(&fixture.state, a, .{ .session_id = missing, .before_message_id = 0 }));
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p" });
+    try std.testing.expectError(error.UnknownConfigRev, handlers.sessionConfig(&fixture.state, a, .{ .session_id = created.session.id, .config_rev = 99 }));
+}
+
+test "session.config dispatch maps an unknown session to its error code" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var buffer: [4096]u8 = undefined;
+    // A printable 16-byte id decodes fine but matches no session.
+    const written = try call(&fixture,
+        \\{"id":"1","method":"session.config","params":{"session_id":"0123456789abcdef"}}
+    , &buffer);
+    try std.testing.expect(std.mem.indexOf(u8, written, "-31000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
 }

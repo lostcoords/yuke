@@ -382,6 +382,7 @@ fn queryPrepare(conn: zqlite.Conn, comptime statement_sql: [:0]const u8) !Statem
 
 /// Prepare every generated query field, unwinding completed fields on failure.
 pub fn prepareAll(comptime Queries: type, conn: zqlite.Conn) !Queries {
+    @setEvalBranchQuota(10_000); // the two inline loops unroll over every generated query.
     const fields = comptime queryFields(Queries);
     var queries: Queries = undefined;
     var initialized: usize = 0;

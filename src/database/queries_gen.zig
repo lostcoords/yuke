@@ -104,6 +104,19 @@ pub const AdvanceConfig = sql.OneQuery(
     },
 );
 
+pub const ConfigByRevision = sql.OptionalQuery(
+    \\SELECT model, reasoning FROM session_configs WHERE session_id = :session_id AND config_rev = :config_rev;
+,
+    struct {
+        session_id: [16]u8,
+        config_rev: u64,
+    },
+    struct {
+        model: []const u8,
+        reasoning: []const u8,
+    },
+);
+
 pub const AllocSeq = sql.OneQuery(
     \\UPDATE sessions SET seq_high = seq_high + 1 WHERE id = :id RETURNING seq_high;
 ,
@@ -220,6 +233,24 @@ pub const AdvanceMessage = sql.OneQuery(
     },
     struct {
         advanced: i64,
+    },
+);
+
+pub const MessagePage = sql.ManyQuery(
+    \\SELECT m.message_id AS message_id, e.payload AS payload
+    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.message_id < :cursor_message_id
+    \\ORDER BY m.message_id DESC
+    \\LIMIT :limit;
+,
+    struct {
+        session_id: [16]u8,
+        cursor_message_id: u64,
+        limit: i64,
+    },
+    struct {
+        message_id: u64,
+        payload: []const u8,
     },
 );
 
@@ -526,6 +557,17 @@ pub const InsertPrompt = sql.ExecQuery(
     },
 );
 
+pub const SelectPrompt = sql.OptionalQuery(
+    \\SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        prompt: []const u8,
+    },
+);
+
 pub const WorkspaceByStableKey = sql.OptionalQuery(
     \\SELECT id FROM workspaces WHERE kind = :kind AND stable_key = :stable_key;
 ,
@@ -588,12 +630,14 @@ pub const Queries = struct {
     get_etag: GetEtag,
     insert_config: InsertConfig,
     advance_config: AdvanceConfig,
+    config_by_revision: ConfigByRevision,
     alloc_seq: AllocSeq,
     append_event: AppendEvent,
     bump_ids: BumpIds,
     read_high: ReadHigh,
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
+    message_page: MessagePage,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,
@@ -604,6 +648,7 @@ pub const Queries = struct {
     session_count_workspace: SessionCountWorkspace,
     session_count_parent: SessionCountParent,
     insert_prompt: InsertPrompt,
+    select_prompt: SelectPrompt,
     workspace_by_stable_key: WorkspaceByStableKey,
     insert_workspace: InsertWorkspace,
     workspace_by_id: WorkspaceById,

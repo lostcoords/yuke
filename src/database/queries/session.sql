@@ -256,3 +256,9 @@ WHERE parent_id = :filter_parent_id
 -- session_id: [16]u8!
 -- prompt: []const u8!
 INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
+
+-- name: SelectPrompt :optional
+-- Read the session's system prompt. A missing row reads back as null.
+-- session_id: [16]u8!
+-- prompt: []const u8!
+SELECT prompt FROM session_prompts WHERE session_id = :session_id;

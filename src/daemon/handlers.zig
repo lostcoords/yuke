@@ -8,6 +8,8 @@ const database = @import("../database/database.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
+const message_store = database.message;
+const config_store = database.config;
 
 const cursor_version: u8 = 1;
 const cursor_raw_size = 33;
@@ -218,6 +220,50 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
     };
 }
 
+/// Handle session.config: return one config revision and the session's system prompt.
+/// A null config_rev returns the session's current config; a missing revision is UnknownConfigRev.
+pub fn sessionConfig(state: *State, arena: std.mem.Allocator, params: wire.session.SessionConfigParams) !wire.session.SessionConfigResult {
+    const snap = (try session_store.snapshot(&state.db, arena, params.session_id)) orelse return error.UnknownSession;
+    const config: wire.run.RunConfig = if (params.config_rev) |rev|
+        (try config_store.byRevision(&state.db, arena, params.session_id, rev)) orelse return error.UnknownConfigRev
+    else
+        .{ .config_rev = snap.config_rev, .model = snap.model, .reasoning = snap.reasoning };
+    return .{ .config = config, .system_prompt = try session_store.prompt(&state.db, arena, params.session_id) };
+}
+
+/// Handle session.history: return a page of committed messages oldest first, the configs those
+/// assistant turns reference, and whether older messages remain.
+pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.session.SessionHistoryParams) !wire.session.SessionHistoryResult {
+    if (!try session_store.exists(&state.db, arena, params.session_id)) return error.UnknownSession;
+    const requested = params.limit orelse wire.meta.limits.default_page_size;
+    const limit: usize = @intCast(@min(@max(requested, 1), wire.meta.limits.max_page_size));
+    const page = try message_store.historyPage(&state.db, arena, params.session_id, params.before_message_id, limit);
+    return .{
+        .session_id = params.session_id,
+        .messages = page.messages,
+        .configs = try gatherConfigs(state, arena, params.session_id, page.messages),
+        .has_more = page.has_more,
+    };
+}
+
+/// Collect the distinct configs the assistant messages reference, in first-reference order.
+/// A referenced revision that is absent is log corruption, not a bad request.
+fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
+    var out: std.ArrayList(wire.run.RunConfig) = .empty;
+    for (messages) |message| switch (message) {
+        .assistant => |a| {
+            for (out.items) |seen| {
+                if (seen.config_rev == a.config_rev) break;
+            } else {
+                const config = (try config_store.byRevision(&state.db, arena, session_id, a.config_rev)) orelse return error.CorruptLog;
+                try out.append(arena, config);
+            }
+        },
+        else => {},
+    };
+    return out.items;
+}
+
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 /// The broadcast fan-out is a later slice; this returns the result only.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
@@ -251,7 +297,8 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
         .created_at_ms = now,
         .updated_at_ms = now,
     });
-    if (params.system_prompt) |prompt| try session_store.setPrompt(&state.db, id, prompt);
+    if (params.system_prompt) |sys| try session_store.setPrompt(&state.db, id, sys);
+    try config_store.recordInitial(&state.db, id, model, reasoning);
     try state.db.conn.execNoArgs("COMMIT");
 
     return .{ .session = .{

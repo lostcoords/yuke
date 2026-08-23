@@ -147,6 +147,44 @@ fn metaOf(message: wire.message.Message) Meta {
     };
 }
 
+/// One oldest-first page of committed messages plus whether older messages remain.
+pub const History = struct { messages: []const wire.message.Message, has_more: bool };
+
+/// The message id, common to every message arm.
+fn messageId(message: wire.message.Message) u64 {
+    return switch (message) {
+        inline else => |m| m.id,
+    };
+}
+
+/// Read a backward page of committed messages, decoded from the log, oldest first. before_message_id
+/// is exclusive; 0 means the newest page. The result borrows `arena`.
+pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, before_message_id: u64, limit: usize) !History {
+    std.debug.assert(limit > 0); // the caller clamps the peer limit to at least 1
+    // A cursor of 0 means "no cursor". The sentinel is above every message id.
+    const cursor: u64 = if (before_message_id == 0) std.math.maxInt(i64) else before_message_id;
+    var it = try db.queries.message_page.rows(.{
+        .session_id = session_id,
+        .cursor_message_id = cursor,
+        .limit = @as(i64, @intCast(limit + 1)), // the extra row detects a further page
+    });
+    defer it.deinit();
+
+    // The query returns newest first. Collect, then reverse the kept rows to oldest first.
+    var newest_first: std.ArrayList(wire.message.Message) = .empty;
+    while (try it.next(arena)) |row| {
+        const msg = try std.json.parseFromSliceLeaky(wire.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true });
+        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // the row and its body disagree
+        try newest_first.append(arena, msg);
+    }
+
+    const has_more = newest_first.items.len > limit;
+    const kept = newest_first.items[0..@min(newest_first.items.len, limit)];
+    const out = try arena.alloc(wire.message.Message, kept.len);
+    for (kept, 0..) |msg, i| out[out.len - 1 - i] = msg;
+    return .{ .messages = out, .has_more = has_more };
+}
+
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
@@ -269,6 +307,38 @@ test "a rolled-back commit leaves no event, row, or seq advance" {
     try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT count(*) FROM events"));
     try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT count(*) FROM messages"));
     try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT seq_high FROM sessions"));
+}
+
+test "historyPage returns a page oldest-first with has_more" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const sid = [_]u8{3} ** 16;
+    try seedSession(&db, a, sid);
+
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    for (1..4) |i| {
+        const n: u8 = @intCast(i);
+        const m: wire.message.Message = .{ .user = .{ .id = i, .content = &.{}, .input_id = i, .time = .{ .created_at_ms = 100 + i } } };
+        _ = try appendCommittedMessage(&db, a, sid, [_]u8{n} ** 16, 100 + i, m);
+    }
+    try db.conn.execNoArgs("COMMIT");
+
+    // The newest page of 2 returns ids 2 and 3 oldest-first; id 1 still remains.
+    const page = try historyPage(&db, a, sid, 0, 2);
+    try testing.expectEqual(@as(usize, 2), page.messages.len);
+    try testing.expectEqual(@as(u64, 2), page.messages[0].user.id);
+    try testing.expectEqual(@as(u64, 3), page.messages[1].user.id);
+    try testing.expect(page.has_more);
+
+    // Before id 2 returns only id 1, with nothing older.
+    const older = try historyPage(&db, a, sid, 2, 2);
+    try testing.expectEqual(@as(usize, 1), older.messages.len);
+    try testing.expectEqual(@as(u64, 1), older.messages[0].user.id);
+    try testing.expect(!older.has_more);
 }
 
 test "appendCommittedMessage rejects a missing session" {

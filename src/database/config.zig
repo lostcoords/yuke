@@ -38,6 +38,19 @@ pub fn appendConfig(
     return seq;
 }
 
+/// Record the birth config as revision 0. Create calls this so every referenced revision, the initial
+/// one included, resolves. It logs no event; the session row already carries the config.
+pub fn recordInitial(db: *Database, session_id: [16]u8, model: []const u8, reasoning: []const u8) !void {
+    std.debug.assert(sql.inTransaction(db.conn)); // create records this with the session in one commit
+    try db.queries.insert_config.exec(.{ .session_id = session_id, .config_rev = 0, .model = model, .reasoning = reasoning });
+}
+
+/// Read one historical config revision into `arena`, or null when the revision does not exist.
+pub fn byRevision(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, config_rev: u64) !?wire.run.RunConfig {
+    const row = (try db.queries.config_by_revision.maybeOne(arena, .{ .session_id = session_id, .config_rev = config_rev })) orelse return null;
+    return .{ .config_rev = config_rev, .model = row.value.model, .reasoning = row.value.reasoning };
+}
+
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
@@ -90,6 +103,39 @@ test "a config change stores a revision and sets the current config" {
     try testing.expectEqualStrings("sonnet", snap.model);
     try testing.expectEqualStrings("low", snap.reasoning);
     try testing.expectEqual(@as(u64, 1), snap.config_rev);
+}
+
+test "byRevision reads a stored revision and misses an absent one" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const ws = try workspace.resolve(&db, a, [_]u8{7} ** 16, "/w", "w", "/w");
+    const sid = [_]u8{3} ** 16;
+    try session.create(&db, .{
+        .id = sid,
+        .workspace_id = ws.id,
+        .origin = "root",
+        .profile = "default",
+        .model = "opus",
+        .reasoning = "high",
+        .config_rev = 0,
+        .permission = "normal",
+        .title = "t",
+        .created_at_ms = 100,
+        .updated_at_ms = 100,
+    });
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 1, .model = "sonnet", .reasoning = "low" });
+    try db.conn.execNoArgs("COMMIT");
+
+    const got = (try byRevision(&db, a, sid, 1)).?;
+    try testing.expectEqual(@as(u64, 1), got.config_rev);
+    try testing.expectEqualStrings("sonnet", got.model);
+    try testing.expectEqualStrings("low", got.reasoning);
+    try testing.expect((try byRevision(&db, a, sid, 99)) == null);
 }
 
 test "appendConfig rejects a missing session" {
