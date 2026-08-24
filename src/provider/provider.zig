@@ -20,6 +20,7 @@ pub const resolve = @import("instance/resolve.zig");
 pub const config = @import("config/providers.zig");
 
 pub const transport = @import("transport.zig");
+pub const http_transport = @import("transport/http.zig");
 
 /// Serialize a provider request body from messages. A user turn and an internal model call use this function.
 /// The bytes use the allocator's storage, so pass an arena. The function supports the Anthropic protocol only.
