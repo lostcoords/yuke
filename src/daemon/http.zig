@@ -102,7 +102,19 @@ fn writerLoop(conn: *Connection, socket: *std.http.Server.WebSocket) void {
         socket.output.writeAll(item.bytes) catch return;
         socket.output.flush() catch return;
         if (item.terminal) return;
+        // The outbox drained. Send a resync marker for any dropped deltas.
+        if (conn.outbox.isEmpty()) flushShedMarkers(conn, socket) catch return;
     }
+}
+
+/// Frame the pending resync markers, then write them to the socket in one pass.
+fn flushShedMarkers(conn: *Connection, socket: *std.http.Server.WebSocket) !void {
+    var buf: std.Io.Writer.Allocating = .init(conn.gpa);
+    defer buf.deinit();
+    try conn.drainShedMarkers(&buf.writer);
+    if (buf.written().len == 0) return;
+    try socket.output.writeAll(buf.written());
+    try socket.output.flush();
 }
 
 /// Decode client frames and enqueue framed replies, pongs, and closes. Never write to the socket.

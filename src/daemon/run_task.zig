@@ -3,8 +3,8 @@
 
 const std = @import("std");
 const wire = @import("wire");
-const wss = @import("websocket").server;
 const State = @import("State.zig");
+const connection = @import("connection.zig");
 const run = @import("../engine/run.zig");
 const provider = @import("../provider/provider.zig");
 const draft = @import("../domain/draft.zig");
@@ -142,10 +142,15 @@ const Streamer = struct {
             .text_delta => |d| try self.partDelta(d.block, d.text),
             .reasoning_delta => |d| try self.partDelta(d.block, d.text),
             .tool_input_delta => return error.ToolUnsupported,
-            .block_stopped => {
-                // Drop the stop result. A reasoning signature and redacted data are not captured yet.
+            .block_stopped => |b| {
                 if (self.open == 0) return error.Protocol; // a stop needs an open block
                 self.open -= 1;
+                // Attach the provider-only stop state. The Draft copies it before the reducer frees the scratch.
+                switch (b.result) {
+                    .reasoning => |r| try self.live.finalizeReasoning(b.block, r.signature),
+                    .redacted_reasoning => |r| try self.live.finalizeRedacted(b.block, r.data),
+                    .text, .tool => {},
+                }
             },
             .done => |d| {
                 if (self.open != 0) return error.Protocol; // done closes every block
@@ -188,14 +193,9 @@ fn clearActive(state: *State, session_id: ids.SessionId) void {
 }
 
 /// Serialize a notification and fan it out to the session's subscribers. The registry copies the frame per
-/// connection, so a short arena holds it and frees it at once.
+/// connection, so free it right after the fan-out.
 fn publish(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) !void {
-    var arena_state = std.heap.ArenaAllocator.init(state.gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var body: std.Io.Writer.Allocating = .init(arena);
-    try std.json.Stringify.value(note, .{ .emit_null_optional_fields = false }, &body.writer);
-    var ws_frame: std.Io.Writer.Allocating = .init(arena);
-    try wss.writeMessage(&ws_frame.writer, .text, body.written());
-    state.registry.publish(session_id, ws_frame.written());
+    const bytes = try connection.frameNotification(state.gpa, note);
+    defer state.gpa.free(bytes);
+    state.registry.publish(session_id, bytes, connection.classOf(note.method));
 }

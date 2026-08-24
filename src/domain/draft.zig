@@ -207,6 +207,24 @@ pub const Draft = struct {
         return .applied;
     }
 
+    /// Attach the reasoning signature at block stop. A signed block re-sends verifiably on a tool continuation.
+    pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, signature: []const u8) Error!void {
+        const part = try self.partAt(part_id);
+        switch (part.*) {
+            .reasoning => |*r| r.signature = try self.arena.allocator().dupe(u8, signature),
+            else => return error.WrongPartKind,
+        }
+    }
+
+    /// Attach the redacted reasoning data at block stop. The provider encrypts this block, so keep it opaque.
+    pub fn finalizeRedacted(self: *Draft, part_id: ids.PartId, data: []const u8) Error!void {
+        const part = try self.partAt(part_id);
+        switch (part.*) {
+            .redacted_reasoning => |*r| r.data = try self.arena.allocator().dupe(u8, data),
+            else => return error.WrongPartKind,
+        }
+    }
+
     /// Give a running tool priority over trailing reasoning.
     /// Return `tool_name` borrowed from the draft; it stays valid until the draft changes.
     pub fn deriveStreamingState(self: *const Draft, run_started_at_ms: u64) activity.ActivityState {
@@ -484,6 +502,28 @@ test "reasoning owns its signature; redacted owns its data" {
     try testing.expectEqualStrings("whynot", d.parts.items[0].reasoning.text.items);
     try testing.expectEqualStrings("sig", d.parts.items[0].reasoning.signature);
     try testing.expectEqualStrings("opaque", d.parts.items[1].redacted_reasoning.data);
+}
+
+test "streamed reasoning finalizes its signature and redacted data at block stop" {
+    var d = try Draft.init(testing.allocator, started("a"));
+    defer d.deinit();
+    // The streaming path adds empty parts, streams text, then finalizes at block stop.
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "" } } });
+    _ = try d.applyPartDelta(delta(0, 0, "why"));
+
+    var sig = [_]u8{ 's', 'i', 'g' };
+    var enc = [_]u8{ 'e', 'n', 'c' };
+    try d.finalizeReasoning(0, &sig);
+    try d.finalizeRedacted(1, &enc);
+    @memset(&sig, 'x'); // the Draft keeps its own copies, so the overwrite is safe
+    @memset(&enc, 'x');
+
+    try testing.expectEqualStrings("why", d.parts.items[0].reasoning.text.items);
+    try testing.expectEqualStrings("sig", d.parts.items[0].reasoning.signature);
+    try testing.expectEqualStrings("enc", d.parts.items[1].redacted_reasoning.data);
+    try testing.expectError(error.WrongPartKind, d.finalizeReasoning(1, &sig));
+    try testing.expectError(error.WrongPartKind, d.finalizeRedacted(0, &enc));
 }
 
 test "tool output streams; a text delta to a tool part is WrongPartKind" {
