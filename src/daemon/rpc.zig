@@ -32,7 +32,7 @@ pub fn handleRequest(state: *State, out: *std.Io.Writer, frame: []const u8) !Out
         else => return respond(arena, out, errorResponse(request_id, .bad_request, "bad request")),
     };
 
-    // Preserve OutOfMemory; map every other dispatch error to an internal error response.
+    // Preserve OutOfMemory. Map every other dispatch error to an internal error response.
     const response = dispatch(state, arena, request) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => errorResponse(request_id, .internal, "internal error"),

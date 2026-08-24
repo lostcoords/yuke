@@ -69,8 +69,8 @@ fn sessionSelector(params: wire.session.SessionListParams) session_store.Selecto
     return sel;
 }
 
-/// Map a durable session row to its origin. A row that breaks the schema invariants is corrupt, so
-/// the boundary returns an error and degrades the one request rather than a daemon-wide panic.
+/// Map a durable session row to its origin. A row that breaks the schema invariants is corrupt. The
+/// boundary returns an error, so one request fails and the daemon does not panic.
 fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "root")) {
         if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id != null)

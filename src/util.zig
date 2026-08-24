@@ -1,5 +1,5 @@
-//! Small shared helpers: 16-byte ids and the wall clock. run.zig and State.zig both use these, so the
-//! module holds no daemon state and no import cycle forms.
+//! Small shared helpers: 16-byte ids and the wall clock. run.zig and State.zig both use them. The
+//! module holds no daemon state, so no import cycle forms.
 
 const std = @import("std");
 
@@ -15,7 +15,7 @@ pub fn v7(ms: u64, rand: [10]u8) [16]u8 {
     return out;
 }
 
-/// Wall-clock milliseconds since the Unix epoch. Clamp a time before 1970 to 0.
+/// Return wall-clock milliseconds since the Unix epoch. Clamp a time before 1970 to 0.
 /// This clock is not monotonic. Do not use it for durations or timeouts.
 pub fn nowMillis(io: std.Io) u64 {
     return @intCast(@max(std.Io.Timestamp.now(io, .real).toMilliseconds(), 0));

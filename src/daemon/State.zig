@@ -20,7 +20,7 @@ pub const Config = struct {
     db_path: [:0]const u8 = ":memory:",
 };
 
-/// Wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
+/// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
 pub fn nowMillis(self: *const State) u64 {
     return util.nowMillis(self.io);
 }

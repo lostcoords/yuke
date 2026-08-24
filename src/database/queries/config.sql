@@ -8,8 +8,8 @@ INSERT INTO session_configs(session_id, config_rev, model, reasoning)
     VALUES (:session_id, :config_rev, :model, :reasoning);
 
 -- name: AdvanceConfig :one
--- Set the session's current config and raise the config mark and the projection seq. The guard keeps the
--- current config monotonic, so a stale revision yields no row and the caller sees NoRow.
+-- Set the current config. Raise the config mark and the projection seq. The guard keeps the config
+-- monotonic. A stale revision yields no row, and the caller sees NoRow.
 -- id: [16]u8!
 -- config_rev: u64!
 -- model: []const u8!

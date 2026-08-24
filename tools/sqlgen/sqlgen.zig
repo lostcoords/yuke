@@ -131,7 +131,7 @@ fn parseField(line: []const u8) ?Field {
 fn joinLines(a: std.mem.Allocator, lines: []const []const u8) ![]const u8 {
     var first: usize = 0;
     while (first < lines.len and std.mem.trim(u8, lines[first], " \t").len == 0) : (first += 1) {}
-    // Drop trailing blank or comment-only lines. A loose comment before the next query is not this SQL.
+    // Drop blank or comment-only lines at the end. A loose comment before the next query is not part of the current SQL.
     var end = lines.len;
     while (end > first and isBlankOrComment(lines[end - 1])) : (end -= 1) {}
     if (first == end) return a.dupe(u8, "");

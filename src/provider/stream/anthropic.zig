@@ -30,7 +30,7 @@ const Block = struct {
     kind: event.BlockKind,
     open: bool = true,
     ignored: bool = false,
-    emitted_id: u32 = 0, // The dense neutral id. A dropped block never emits, so it keeps 0.
+    emitted_id: u32 = 0, // The dense neutral id. A dropped block emits no event, so the id stays 0.
     call_id: []const u8 = "",
     name: []const u8 = "",
     args: std.ArrayList(u8) = .empty,
@@ -45,7 +45,7 @@ pub const Reducer = struct {
     raw_stop_reason: []const u8 = "",
     stop_reason: wire.enums.StopReason = .unknown,
     started: bool = false, // The reducer saw message_start.
-    emitted_count: u32 = 0, // The next dense neutral id. A dropped block does not advance it.
+    emitted_count: u32 = 0, // The next dense neutral id. A dropped block does not advance the count.
     done_emitted: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Reducer {
