@@ -211,6 +211,98 @@ pub const AllocInputId = sql.OneQuery(
     },
 );
 
+pub const InsertPendingInput = sql.ExecQuery(
+    \\INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload)
+    \\    VALUES (:session_id, :input_id, :seq, :queued_at_ms, :payload);
+,
+    struct {
+        session_id: [16]u8,
+        input_id: u64,
+        seq: u64,
+        queued_at_ms: u64,
+        payload: []const u8,
+    },
+);
+
+pub const PendingInputById = sql.OptionalQuery(
+    \\SELECT p.session_id AS row_session_id,
+    \\       p.input_id AS row_input_id,
+    \\       p.seq,
+    \\       p.queued_at_ms,
+    \\       p.payload,
+    \\       e.name AS event_name,
+    \\       e.payload AS event_payload
+    \\FROM pending_inputs p
+    \\JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
+    \\WHERE p.session_id = :session_id AND p.input_id = :input_id;
+,
+    struct {
+        session_id: [16]u8,
+        input_id: u64,
+    },
+    struct {
+        row_session_id: [16]u8,
+        row_input_id: u64,
+        seq: u64,
+        queued_at_ms: u64,
+        payload: []const u8,
+        event_name: []const u8,
+        event_payload: []const u8,
+    },
+);
+
+pub const PendingInputs = sql.ManyQuery(
+    \\SELECT p.session_id AS row_session_id,
+    \\       p.input_id AS row_input_id,
+    \\       p.seq,
+    \\       p.queued_at_ms,
+    \\       p.payload,
+    \\       e.name AS event_name,
+    \\       e.payload AS event_payload
+    \\FROM pending_inputs p
+    \\JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
+    \\WHERE p.session_id = :session_id
+    \\ORDER BY p.seq ASC;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        row_session_id: [16]u8,
+        row_input_id: u64,
+        seq: u64,
+        queued_at_ms: u64,
+        payload: []const u8,
+        event_name: []const u8,
+        event_payload: []const u8,
+    },
+);
+
+pub const DeletePendingInput = sql.OneQuery(
+    \\DELETE FROM pending_inputs
+    \\WHERE session_id = :session_id AND input_id = :input_id
+    \\RETURNING 1 AS deleted;
+,
+    struct {
+        session_id: [16]u8,
+        input_id: u64,
+    },
+    struct {
+        deleted: i64,
+    },
+);
+
+pub const PendingSessionIds = sql.ManyQuery(
+    \\SELECT DISTINCT session_id
+    \\FROM pending_inputs
+    \\ORDER BY session_id;
+,
+    struct {},
+    struct {
+        session_id: [16]u8,
+    },
+);
+
 pub const InsertMessage = sql.ExecQuery(
     \\INSERT INTO messages(
     \\    session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
@@ -728,6 +820,11 @@ pub const Queries = struct {
     alloc_run_id: AllocRunId,
     alloc_message_id: AllocMessageId,
     alloc_input_id: AllocInputId,
+    insert_pending_input: InsertPendingInput,
+    pending_input_by_id: PendingInputById,
+    pending_inputs: PendingInputs,
+    delete_pending_input: DeletePendingInput,
+    pending_session_ids: PendingSessionIds,
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,

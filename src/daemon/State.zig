@@ -17,6 +17,9 @@ config: Config,
 home: []const u8, // The default workspace root. A create with no workspace path uses it.
 sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
 registry: connection.Registry, // Live connections and the reverse subscription index.
+run_group: zio.Group = .init, // Own every launched run task until it returns.
+pending_starts: std.ArrayListUnmanaged(*session_runtime.RunSlot) = .empty,
+shutting_down: bool = false,
 
 /// Daemon configuration. The code sets it directly for now.
 pub const Config = struct {
@@ -42,6 +45,16 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
     var event_ids: RecoveryEventIds = .{ .state = &self };
     const recovered = try database.run.recoverOpen(&self.db, arena.allocator(), self.nowMillis(), &event_ids);
     if (recovered > 0) std.log.info("recovered {d} open runs as canceled", .{recovered});
+    const pending_sessions = try database.input.sessionIds(&self.db, arena.allocator());
+    for (pending_sessions) |session_id| {
+        const rt = try self.sessions.getOrCreate(.bytes(session_id));
+        const entries = try database.input.list(&self.db, arena.allocator(), session_id);
+        for (entries) |entry| {
+            const applied = try rt.queue.onQueued(.{ .session_id = .bytes(session_id), .input = entry.input });
+            std.debug.assert(applied == .changed);
+        }
+        rt.hydrated = true;
+    }
     return self;
 }
 
@@ -55,6 +68,9 @@ const RecoveryEventIds = struct {
 
 /// Free the live sessions and the registry, then close the store.
 pub fn deinit(self: *State) void {
+    self.shutting_down = true;
+    self.run_group.cancel();
+    self.pending_starts.deinit(self.gpa);
     self.registry.deinit();
     self.sessions.deinit();
     self.db.deinit();

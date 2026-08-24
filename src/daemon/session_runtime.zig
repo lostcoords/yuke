@@ -4,18 +4,42 @@
 const std = @import("std");
 const wire = @import("wire");
 const queue = @import("../domain/queue.zig");
+const run = @import("../engine/run.zig");
+const transport = @import("../provider/transport.zig");
 
 const ids = wire.ids;
 
-/// The active run's live state. A later change attaches the owned config, the draft, and the task handle.
+/// Stable state for one run. The State task group owns execution. The session owns this allocation.
 pub const RunSlot = struct {
-    run_id: ids.RunId,
-    kind: wire.enums.RunKind,
-    input_id: ids.InputId,
-    user_message_id: ids.MessageId,
-    assistant_message_id: ids.MessageId,
-    config_rev: ids.ConfigRev,
+    gpa: std.mem.Allocator,
+    handle: run.RunHandle,
+    config: run.Config,
     epoch: u64,
+    phase: Phase = .pending_start,
+    started_published: bool = false,
+    cancel_requested: bool = false,
+    body: ?transport.ResponseBody = null,
+    terminalized: bool = false,
+
+    pub const Phase = enum { pending_start, running, terminalized, faulted };
+
+    pub fn create(gpa: std.mem.Allocator, handle: run.RunHandle, model: []u8, system_prompt: []u8, epoch: u64) !*RunSlot {
+        const self = try gpa.create(RunSlot);
+        self.* = .{
+            .gpa = gpa,
+            .handle = handle,
+            .config = .{ .model = model, .config_rev = handle.started.config_rev, .system_prompt = system_prompt },
+            .epoch = epoch,
+        };
+        return self;
+    }
+
+    pub fn destroy(self: *RunSlot) void {
+        std.debug.assert(self.body == null);
+        self.gpa.free(self.config.model);
+        self.gpa.free(self.config.system_prompt);
+        self.gpa.destroy(self);
+    }
 };
 
 /// One session's live state. The reactor mutates it between await points, so it needs no lock.
@@ -23,7 +47,9 @@ pub const SessionRuntime = struct {
     gpa: std.mem.Allocator,
     session_id: ids.SessionId,
     queue: queue.Queue,
-    active: ?RunSlot = null,
+    active: ?*RunSlot = null,
+    hydrated: bool = false,
+    faulted: bool = false,
     next_epoch: u64 = 0, // Each run start takes the next epoch. A stale completion checks it.
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
@@ -33,13 +59,14 @@ pub const SessionRuntime = struct {
     }
 
     fn destroy(self: *SessionRuntime) void {
+        if (self.active) |slot| slot.destroy();
         self.queue.deinit();
         self.gpa.destroy(self);
     }
 
     /// A runtime is idle when no run is active and no input waits. A later check also requires no subscriber.
     pub fn idle(self: *const SessionRuntime) bool {
-        return self.active == null and self.queue.depth() == 0;
+        return self.active == null and self.queue.depth() == 0 and !self.faulted;
     }
 };
 
@@ -109,12 +136,23 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     try testing.expect(rt.idle());
 
     // A live run pins the runtime.
-    rt.active = .{ .run_id = 1, .kind = .turn, .input_id = 1, .user_message_id = 1, .assistant_message_id = 2, .config_rev = 0, .epoch = 1 };
+    const model = try testing.allocator.dupe(u8, "model");
+    errdefer testing.allocator.free(model);
+    const prompt = try testing.allocator.dupe(u8, "");
+    errdefer testing.allocator.free(prompt);
+    rt.active = try RunSlot.create(testing.allocator, .{
+        .run_id = 1,
+        .input_id = 1,
+        .user_message_id = 1,
+        .assistant_message_id = 2,
+        .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
+    }, model, prompt, 1);
     try testing.expect(!rt.idle());
     sessions.evictIfIdle(sid);
     try testing.expect(sessions.get(sid) == rt); // still present
 
     // The run ends; eviction now reclaims it.
+    rt.active.?.destroy();
     rt.active = null;
     sessions.evictIfIdle(sid);
     try testing.expect(sessions.get(sid) == null);

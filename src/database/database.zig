@@ -12,6 +12,7 @@ pub const event = @import("event.zig");
 pub const message = @import("message.zig");
 pub const config = @import("config.zig");
 pub const run = @import("run.zig");
+pub const input = @import("input.zig");
 
 /// A yuke database carries this id in the SQLite application_id header slot.
 const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
@@ -22,6 +23,7 @@ const Migration = struct { version: i64, sql: [:0]const u8 };
 /// Apply the migrations in order. Entry i sets version i+1.
 const migrations = [_]Migration{
     .{ .version = 1, .sql = @embedFile("migrations/0001_initial.sql") },
+    .{ .version = 2, .sql = @embedFile("migrations/0002_pending_inputs.sql") },
 };
 
 comptime {
@@ -173,9 +175,9 @@ test "migrate applies the baseline and claims the database" {
     var db = try Database.open(conn);
     defer db.deinit();
 
-    try std.testing.expectEqual(@as(i64, 1), try scalarInt(db.conn, "PRAGMA user_version"));
+    try std.testing.expectEqual(@as(i64, 2), try scalarInt(db.conn, "PRAGMA user_version"));
     try std.testing.expectEqual(APPLICATION_ID, try scalarInt(db.conn, "PRAGMA application_id"));
-    try std.testing.expectEqual(@as(i64, 1), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, 2), try scalarInt(db.conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate is idempotent on reopen" {
@@ -183,7 +185,7 @@ test "migrate is idempotent on reopen" {
     defer conn.close();
     try migrate(conn);
     try migrate(conn); // already at latest: apply nothing, re-check hashes
-    try std.testing.expectEqual(@as(i64, 1), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
+    try std.testing.expectEqual(@as(i64, 2), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
 }
 
 test "migrate rejects a version from the future" {

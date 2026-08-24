@@ -85,17 +85,32 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
                 error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
                 error.SkillUnsupported => return errorResponse(request.id, .unknown_skill, "skills are not supported"),
                 error.QueueFull => return errorResponse(request.id, .queue_full, "the input queue is full"),
+                error.RuntimeFailed => return errorResponse(request.id, .runtime_failed, "the session runtime failed"),
                 else => return err,
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_send_input_result = result } } };
+        },
+        .@"session.cancel_input" => {
+            const result = handlers.sessionCancelInput(state, arena, request.params.session_cancel_input_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.UnknownInput => return errorResponse(request.id, .unknown_input, "unknown queued input"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_cancel_input_result = result } } };
+        },
+        .@"session.cancel_run" => {
+            const result = handlers.sessionCancelRun(state, arena, request.params.session_cancel_run_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.RunMismatch => return errorResponse(request.id, .run_mismatch, "the active run does not match"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_cancel_run_result = result } } };
         },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
         .@"session.compact",
         .@"session.rewind",
-        .@"session.cancel_input",
-        .@"session.cancel_run",
         .@"session.resync",
         .@"permission.decide",
         .@"catalog.list",
@@ -160,6 +175,8 @@ fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
 const zio = @import("zio");
 const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
+const engine_run = @import("../engine/run.zig");
+const run_task = @import("run_task.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -204,6 +221,23 @@ fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u
         .{ id, path },
     );
     return call(fixture, request, buffer);
+}
+
+fn launchUntilIdle(state: *State, session_id: wire.ids.SessionId) !void {
+    try run_task.launchPending(state);
+    var attempts: usize = 0;
+    while (attempts < 10_000) : (attempts += 1) {
+        const rt = state.sessions.get(session_id) orelse return;
+        if (rt.active == null and rt.queue.depth() == 0) return;
+        try zio.yield();
+    }
+    return error.RunDidNotFinish;
+}
+
+fn countNamedEvents(db: *database.Database, name: []const u8) !i64 {
+    const row = (try db.conn.row("SELECT count(*) FROM events WHERE name = ?1", .{name})) orelse return error.NoRow;
+    defer row.deinit();
+    return row.int(0);
 }
 
 /// Return the payload of one unmasked server text frame. Read the length header, never scan for a brace,
@@ -590,4 +624,141 @@ test "session.config dispatch maps an unknown session to its error code" {
     , &buffer);
     try std.testing.expect(std.mem.indexOf(u8, written, "-31000") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
+}
+
+test "a completed run drains every queued input into one next run" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/drain", .model = "mock" });
+    const sid = created.session.id;
+    const one = [_]wire.content.ContentPart{.{ .text = .{ .text = "one" } }};
+    const two = [_]wire.content.ContentPart{.{ .text = .{ .text = "two" } }};
+    const three = [_]wire.content.ContentPart{.{ .text = .{ .text = "three" } }};
+    const first = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &one } } });
+    try std.testing.expect(first == .started);
+    const second = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &two } } });
+    const third = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
+    try std.testing.expect(second == .queued);
+    try std.testing.expect(third == .queued);
+    try std.testing.expectEqual(@as(usize, 1), fixture.state.pending_starts.items.len);
+    try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.queue.depth());
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 5), history.len);
+    try std.testing.expectEqualStrings("one", history[0].user.content[0].text.text);
+    try std.testing.expectEqualStrings("two", history[2].user.content[0].text.text);
+    try std.testing.expectEqualStrings("three", history[3].user.content[0].text.text);
+    try std.testing.expect(history[1] == .assistant);
+    try std.testing.expect(history[4] == .assistant);
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.started"));
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.done"));
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "input.queued"));
+    try std.testing.expectEqual(@as(i64, 0), try countNamedEvents(&fixture.state.db, "input.canceled"));
+    try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
+}
+
+test "a durable queue starts before a new idle input" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resume", .model = "mock" });
+    const sid = created.session.id;
+    const old_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "old" } }};
+    const new_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "new" } }};
+    try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    const old = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), 100, &old_content, 100);
+    try fixture.state.db.conn.execNoArgs("COMMIT");
+
+    const accepted = try handlers.sessionSendInput(&fixture.state, a, .{
+        .session_id = sid,
+        .input = .{ .content = .{ .content = &new_content } },
+    });
+    try std.testing.expect(accepted == .queued);
+    const rt = fixture.state.sessions.get(sid).?;
+    try std.testing.expectEqual(old.input.input_id, rt.active.?.handle.input_id);
+    try std.testing.expectEqual(@as(usize, 1), rt.queue.depth());
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 4), history.len);
+    try std.testing.expectEqualStrings("old", history[0].user.content[0].text.text);
+    try std.testing.expect(history[1] == .assistant);
+    try std.testing.expectEqualStrings("new", history[2].user.content[0].text.text);
+    try std.testing.expect(history[3] == .assistant);
+}
+
+test "a faulted runtime retains the old open-run fence" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/fault", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "first" } }};
+    const old = try engine_run.beginTurn(&fixture.state.db, fixture.state.io, a, sid.raw, &content, 0);
+    const rt = try fixture.state.sessions.getOrCreate(sid);
+    rt.hydrated = true;
+    rt.faulted = true;
+    fixture.state.sessions.evictIfIdle(sid);
+    try std.testing.expect(fixture.state.sessions.get(sid) == rt);
+
+    try std.testing.expectError(error.RuntimeFailed, handlers.sessionSendInput(&fixture.state, a, .{
+        .session_id = sid,
+        .input = .{ .content = .{ .content = &content } },
+    }));
+    try std.testing.expectEqual(@as(?u64, old.run_id), (try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id);
+    try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "run.started"));
+}
+
+test "cancel input and cancel run preserve exact durable outcomes" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/cancel", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "input" } }};
+    const started = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const queued_one = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
+    const queued_two = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
+
+    try std.testing.expectError(error.RunMismatch, handlers.sessionCancelRun(&fixture.state, a, .{ .session_id = sid, .run_id = started.run_id + 1 }));
+    _ = try handlers.sessionCancelInput(&fixture.state, a, .{ .session_id = sid, .input_id = queued_one.input_id });
+    try std.testing.expectError(error.UnknownInput, handlers.sessionCancelInput(&fixture.state, a, .{ .session_id = sid, .input_id = queued_one.input_id }));
+    const canceled = try handlers.sessionCancelRun(&fixture.state, a, .{
+        .session_id = sid,
+        .run_id = started.run_id,
+        .clear_queue = true,
+    });
+    try std.testing.expectEqual(@as(?u64, started.run_id), canceled.canceled_run);
+    try std.testing.expectEqualSlices(u64, &.{queued_two.input_id}, canceled.cleared_inputs);
+    const repeated = try handlers.sessionCancelRun(&fixture.state, a, .{ .session_id = sid, .run_id = started.run_id });
+    try std.testing.expectEqual(@as(?u64, started.run_id), repeated.canceled_run);
+    try std.testing.expectEqual(@as(usize, 0), repeated.cleared_inputs.len);
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "input.canceled"));
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .canceled);
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
 }

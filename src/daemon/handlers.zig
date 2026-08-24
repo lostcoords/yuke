@@ -2,18 +2,18 @@
 //! Each handler owns its write transaction.
 
 const std = @import("std");
-const zio = @import("zio");
 const wire = @import("wire");
 const State = @import("State.zig");
 const database = @import("../database/database.zig");
 const run = @import("../engine/run.zig");
 const run_task = @import("run_task.zig");
+const session_runtime = @import("session_runtime.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
 const message_store = database.message;
 const config_store = database.config;
-const event_store = database.event;
+const input_store = database.input;
 
 const cursor_version: u8 = 1;
 const cursor_raw_size = 33;
@@ -252,46 +252,122 @@ pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.se
     const sid = params.session_id.raw;
     const snapshot = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
+    try hydrateRuntime(state, arena, rt);
+    if (rt.faulted) return error.RuntimeFailed;
+    if (rt.active == null and rt.queue.depth() > 0) _ = try run_task.prepareQueued(state, rt);
 
     if (rt.active == null) {
-        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content);
-        // The coroutine owns the frozen config and frees the model string.
+        try state.pending_starts.ensureUnusedCapacity(state.gpa, 1);
+        const slot = try state.gpa.create(session_runtime.RunSlot);
+        errdefer state.gpa.destroy(slot);
         const model = try state.gpa.dupe(u8, snapshot.model);
         errdefer state.gpa.free(model);
-        const config: run.Config = .{ .model = model, .config_rev = snapshot.config_rev, .system_prompt = "" };
-        var task = try zio.spawn(run_task.runSession, .{ state, params.session_id, handle, config });
-        task.detach();
-        rt.active = .{
-            .run_id = handle.run_id,
-            .kind = .turn,
-            .input_id = handle.input_id,
-            .user_message_id = handle.user_message_id,
-            .assistant_message_id = handle.assistant_message_id,
-            .config_rev = snapshot.config_rev,
+        const stored_prompt = try session_store.prompt(&state.db, arena, sid);
+        const system_prompt = try state.gpa.dupe(u8, stored_prompt orelse "");
+        errdefer state.gpa.free(system_prompt);
+        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
+        slot.* = .{
+            .gpa = state.gpa,
+            .handle = handle,
+            .config = .{ .model = model, .config_rev = snapshot.config_rev, .system_prompt = system_prompt },
             .epoch = rt.next_epoch,
         };
         rt.next_epoch += 1;
+        rt.active = slot;
+        state.pending_starts.appendAssumeCapacity(slot);
         return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
     }
 
-    // A run is active. Queue the input. A later change drains the queue and adds the durable input event.
+    // A run is active. Persist and fold the queued input before the response.
     if (rt.queue.depth() >= wire.meta.limits.max_queued_inputs) return error.QueueFull;
-    const input_id = try allocQueuedInputId(state, arena, sid);
-    _ = try rt.queue.onQueued(.{ .session_id = params.session_id, .input = .{
-        .input_id = input_id,
-        .content = content,
-        .queued_at_ms = state.nowMillis(),
-    } });
-    return .{ .queued = .{ .input_id = input_id } };
-}
-
-/// Allocate one input id in its own write transaction.
-fn allocQueuedInputId(state: *State, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    const now = state.nowMillis();
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
-    const input_id = try event_store.allocInputId(&state.db, arena, session_id);
+    const queued = try input_store.enqueue(&state.db, arena, sid, state.newId(), now, content, now);
+    const applied = try rt.queue.onQueued(.{ .session_id = params.session_id, .input = queued.input });
+    std.debug.assert(applied == .changed);
+    errdefer std.debug.assert(rt.queue.retire(queued.input.input_id) == .changed);
     try state.db.conn.execNoArgs("COMMIT");
-    return input_id;
+    run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.queued", .params = .{
+        .input_queued_data = .{ .session_id = params.session_id, .input = queued.input },
+    } });
+    return .{ .queued = .{ .input_id = queued.input.input_id } };
+}
+
+/// Cancel one exact pending input. A started input is not a queue entry.
+pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionCancelInputParams) !wire.session.SessionCancelInputResult {
+    const sid = params.session_id.raw;
+    if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
+    const rt = try state.sessions.getOrCreate(params.session_id);
+    try hydrateRuntime(state, arena, rt);
+
+    const now = state.nowMillis();
+    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    input_store.cancel(&state.db, arena, sid, state.newId(), now, params.input_id) catch |err| switch (err) {
+        error.NoRow => return error.UnknownInput,
+        else => return err,
+    };
+    try state.db.conn.execNoArgs("COMMIT");
+    std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .input_id = params.input_id }) == .changed);
+    run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
+        .input_canceled_data = .{ .session_id = params.session_id, .input_id = params.input_id },
+    } });
+    state.sessions.evictIfIdle(params.session_id);
+    return .{ .canceled_input = params.input_id };
+}
+
+/// Request cancellation of the active run. Clear the durable queue only when requested.
+pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.session.SessionCancelRunParams) !wire.session.SessionCancelRunResult {
+    const sid = params.session_id.raw;
+    if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
+    const rt = try state.sessions.getOrCreate(params.session_id);
+    try hydrateRuntime(state, arena, rt);
+
+    const active = rt.active;
+    if (params.run_id) |expected| {
+        if (active == null or active.?.handle.run_id != expected) return error.RunMismatch;
+    }
+
+    var cleared_inputs: []wire.ids.InputId = &.{};
+    if (params.clear_queue orelse false) {
+        const pending = try input_store.list(&state.db, arena, sid);
+        cleared_inputs = try arena.alloc(wire.ids.InputId, pending.len);
+        const now = state.nowMillis();
+        try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+        errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+        for (pending, 0..) |entry, i| {
+            cleared_inputs[i] = entry.input.input_id;
+            try input_store.cancel(&state.db, arena, sid, state.newId(), now, entry.input.input_id);
+        }
+        try state.db.conn.execNoArgs("COMMIT");
+        for (cleared_inputs) |input_id| {
+            std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .input_id = input_id }) == .changed);
+            run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
+                .input_canceled_data = .{ .session_id = params.session_id, .input_id = input_id },
+            } });
+        }
+    }
+
+    const canceled_run = if (active) |slot| slot.handle.run_id else null;
+    if (active) |slot| {
+        if (!slot.cancel_requested) {
+            slot.cancel_requested = true;
+            if (slot.body) |body| body.cancel();
+        }
+    }
+    if (active == null) state.sessions.evictIfIdle(params.session_id);
+    return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs };
+}
+
+fn hydrateRuntime(state: *State, arena: std.mem.Allocator, rt: *session_runtime.SessionRuntime) !void {
+    if (rt.hydrated) return;
+    const entries = try input_store.list(&state.db, arena, rt.session_id.raw);
+    for (entries) |entry| {
+        const applied = try rt.queue.onQueued(.{ .session_id = rt.session_id, .input = entry.input });
+        std.debug.assert(applied == .changed);
+    }
+    rt.hydrated = true;
 }
 
 /// Collect the distinct configs the assistant messages reference, in first-reference order.
