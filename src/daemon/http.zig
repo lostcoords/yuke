@@ -6,6 +6,7 @@ const zio = @import("zio");
 const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
 const State = @import("State.zig");
+const Connection = @import("connection.zig").Connection;
 
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
@@ -72,11 +73,38 @@ fn dispatch(state: *State, stream: zio.net.Stream) !void {
     }
 }
 
-/// Read wire requests from a WebSocket and answer control frames.
+/// Serve one WebSocket. A reader coroutine decodes client frames and enqueues framed replies. A writer
+/// coroutine owns socket.output and drains the outbox, so two writes never race on the socket.
 fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const u8) !void {
     var socket = try request.respondWebSocket(.{ .key = key });
     try socket.output.flush();
 
+    var conn: Connection = undefined;
+    conn.init(state.gpa);
+    defer conn.deinit();
+
+    var writer = try zio.spawn(writerLoop, .{ &conn, &socket });
+    readerLoop(state, &conn, &socket) catch {};
+    conn.outbox.close(.graceful); // let the writer flush queued frames, then stop
+    writer.join();
+}
+
+/// Drain the outbox to socket.output. The writer owns socket.output after the handshake. Stop after a
+/// terminal close frame. On any exit, close the outbox so a reader blocked on a full send unwinds.
+fn writerLoop(conn: *Connection, socket: *std.http.Server.WebSocket) void {
+    defer conn.outbox.close(.graceful);
+    while (true) {
+        const item = conn.outbox.receive() catch return; // closed and drained
+        defer conn.gpa.free(item.bytes);
+        // A stuck peer can block this write with no timeout. A proxy deadline or task cancel frees it.
+        socket.output.writeAll(item.bytes) catch return;
+        socket.output.flush() catch return;
+        if (item.terminal) return;
+    }
+}
+
+/// Decode client frames and enqueue framed replies, pongs, and closes. Never write to the socket.
+fn readerLoop(state: *State, conn: *Connection, socket: *std.http.Server.WebSocket) !void {
     const gpa = state.gpa;
     var reader: wss.MessageReader = .init(max_ws_message_bytes);
     defer reader.deinit(gpa);
@@ -84,8 +112,8 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     while (true) {
         var message = reader.next(gpa, socket.input) catch |err| switch (err) {
             error.EndOfStream => return,
-            error.MessageTooBig, error.FrameTooBig => return closeWith(&socket, .message_too_big),
-            error.InvalidUtf8 => return closeWith(&socket, .invalid_frame_payload_data),
+            error.MessageTooBig, error.FrameTooBig => return enqueueClose(conn, .message_too_big),
+            error.InvalidUtf8 => return enqueueClose(conn, .invalid_frame_payload_data),
             error.Unmasked,
             error.ReservedBitSet,
             error.UnrecognizedOpcode,
@@ -95,25 +123,23 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
             error.BadClose,
             error.InvalidContinuation,
             error.Interrupted,
-            => return closeWith(&socket, .protocol_error),
+            => return enqueueClose(conn, .protocol_error),
             else => return err,
         };
         defer message.deinit(gpa);
         switch (message.opcode) {
             // Wire frames carry text JSON. Treat a binary frame as a protocol error.
-            .text => switch (try rpc.handleRequest(state, socket.output, message.data)) {
-                .keep_open => {},
-                .close => return,
+            .text => {
+                const reply = try frameReply(state, gpa, message.data);
+                try conn.send(.{ .bytes = reply.bytes, .terminal = reply.terminal });
+                if (reply.terminal) return;
             },
-            .binary => return closeWith(&socket, .unsupported_data),
-            .ping => {
-                try wss.writePong(socket.output, message.data);
-                try socket.output.flush();
-            },
+            .binary => return enqueueClose(conn, .unsupported_data),
+            .ping => try conn.send(.{ .bytes = try framePong(gpa, message.data) }),
             .connection_close => {
-                const parsed = wss.checkedClose(message.data) catch return closeWith(&socket, .protocol_error);
+                const parsed = wss.checkedClose(message.data) catch return enqueueClose(conn, .protocol_error);
                 const echo = if (parsed.code == .no_status_rcvd) .normal_closure else parsed.code;
-                return closeWith(&socket, echo);
+                return enqueueClose(conn, echo);
             },
             .pong => continue,
             // MessageReader resolves continuations to the message opcode.
@@ -122,10 +148,30 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     }
 }
 
-/// Send a close frame with the code, then stop.
-fn closeWith(socket: *std.http.Server.WebSocket, code: wss.CloseCode) !void {
-    try wss.writeClose(socket.output, code);
-    try socket.output.flush();
+const FramedReply = struct { bytes: []u8, terminal: bool };
+
+/// Frame one wire reply as WS bytes. handleRequest writes the frame. A close outcome ends the connection.
+fn frameReply(state: *State, gpa: std.mem.Allocator, data: []const u8) !FramedReply {
+    var buf: std.Io.Writer.Allocating = .init(gpa);
+    errdefer buf.deinit();
+    const outcome = try rpc.handleRequest(state, &buf.writer, data);
+    return .{ .bytes = try buf.toOwnedSlice(), .terminal = outcome == .close };
+}
+
+/// Frame a pong that echoes the ping payload.
+fn framePong(gpa: std.mem.Allocator, payload: []const u8) ![]u8 {
+    var buf: std.Io.Writer.Allocating = .init(gpa);
+    errdefer buf.deinit();
+    try wss.writePong(&buf.writer, payload);
+    return buf.toOwnedSlice();
+}
+
+/// Enqueue a terminal close frame with the code.
+fn enqueueClose(conn: *Connection, code: wss.CloseCode) !void {
+    var buf: std.Io.Writer.Allocating = .init(conn.gpa);
+    errdefer buf.deinit();
+    try wss.writeClose(&buf.writer, code);
+    try conn.send(.{ .bytes = try buf.toOwnedSlice(), .terminal = true });
 }
 
 /// Validate handshake fields that `upgradeRequested` does not check.
