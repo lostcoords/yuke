@@ -204,11 +204,24 @@ fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u
     return call(fixture, request, buffer);
 }
 
+/// Return the payload of one unmasked server text frame. Read the length header, never scan for a brace,
+/// because the 2-byte length can hold a '{' byte.
 fn responsePayload(bytes: []const u8) ![]const u8 {
-    const start = std.mem.indexOfScalar(u8, bytes, '{') orelse return error.InvalidResponse;
-    const end = std.mem.lastIndexOfScalar(u8, bytes, '}') orelse return error.InvalidResponse;
-    if (end < start) return error.InvalidResponse;
-    return bytes[start .. end + 1];
+    if (bytes.len < 2) return error.InvalidResponse;
+    const indicator = bytes[1] & 0x7f; // a server frame is never masked
+    var offset: usize = 2;
+    var payload_len: usize = indicator;
+    if (indicator == 126) {
+        if (bytes.len < 4) return error.InvalidResponse;
+        payload_len = std.mem.readInt(u16, bytes[2..4], .big);
+        offset = 4;
+    } else if (indicator == 127) {
+        if (bytes.len < 10) return error.InvalidResponse;
+        payload_len = @intCast(std.mem.readInt(u64, bytes[2..10], .big));
+        offset = 10;
+    }
+    if (offset + payload_len > bytes.len) return error.InvalidResponse;
+    return bytes[offset .. offset + payload_len];
 }
 
 fn responseNextCursor(arena: std.mem.Allocator, bytes: []const u8) !?[]const u8 {
@@ -457,7 +470,7 @@ test "session.list workspace scope filters sessions" {
         "/scope/one",
     );
     var scope_buffer: std.Io.Writer.Allocating = .init(id_arena.allocator());
-    const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = workspace.id } };
+    const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = .from(workspace.id) } };
     try std.json.Stringify.value(scope, .{}, &scope_buffer.writer);
     var request: [8192]u8 = undefined;
     const frame = try std.fmt.bufPrint(
@@ -536,8 +549,8 @@ test "session.history returns committed messages oldest-first with their configs
         },
     };
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid, [_]u8{1} ** 16, 150, user);
-    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid, [_]u8{2} ** 16, 160, assistant);
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.bytes, [_]u8{1} ** 16, 150, user);
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.bytes, [_]u8{2} ** 16, 160, assistant);
     try fixture.state.db.conn.execNoArgs("COMMIT");
 
     const hist = try handlers.sessionHistory(&fixture.state, a, .{ .session_id = sid, .before_message_id = 0, .limit = 10 });
@@ -557,7 +570,7 @@ test "session reads reject an unknown session and an unknown revision" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const missing = [_]u8{9} ** 16;
+    const missing: wire.ids.SessionId = .from([_]u8{9} ** 16);
     try std.testing.expectError(error.UnknownSession, handlers.sessionConfig(&fixture.state, a, .{ .session_id = missing }));
     try std.testing.expectError(error.UnknownSession, handlers.sessionHistory(&fixture.state, a, .{ .session_id = missing, .before_message_id = 0 }));
 
@@ -571,7 +584,7 @@ test "session.config dispatch maps an unknown session to its error code" {
     var buffer: [4096]u8 = undefined;
     // A printable 16-byte id decodes fine but matches no session.
     const written = try call(&fixture,
-        \\{"id":"1","method":"session.config","params":{"session_id":"0123456789abcdef"}}
+        \\{"id":"1","method":"session.config","params":{"session_id":"0123456789abcdef0123456789abcdef"}}
     , &buffer);
     try std.testing.expect(std.mem.indexOf(u8, written, "-31000") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);

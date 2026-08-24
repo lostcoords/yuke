@@ -399,7 +399,7 @@ test "notification envelope round-trips" {
 
 test "result dispatch and response error" {
     const result_json =
-        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
+        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
     ;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

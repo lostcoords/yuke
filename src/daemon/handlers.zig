@@ -63,11 +63,11 @@ fn sessionSelector(params: wire.session.SessionListParams) session_store.Selecto
     var sel: session_store.Selector = .{};
     switch (params.scope) {
         .all => {},
-        .workspace => |workspace| sel.workspace_id = workspace.workspace_id,
+        .workspace => |workspace| sel.workspace_id = workspace.workspace_id.bytes,
     }
     switch (params.population) {
         .top_level => sel.top_level = true,
-        .children => |children| sel.parent_id = children.parent_id,
+        .children => |children| sel.parent_id = children.parent_id.bytes,
         .all => {},
     }
     return sel;
@@ -85,7 +85,7 @@ fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
         if (row.parent_id == null or row.parent_message_id == null or row.parent_part_id == null or row.source_id != null)
             return error.CorruptDatabase;
         return .{ .child = .{
-            .parent_id = row.parent_id.?,
+            .parent_id = .from(row.parent_id.?),
             .parent_message_id = row.parent_message_id.?,
             .parent_part_id = row.parent_part_id.?,
         } };
@@ -93,7 +93,7 @@ fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "fork")) {
         if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id == null)
             return error.CorruptDatabase;
-        return .{ .fork = .{ .source_id = row.source_id.? } };
+        return .{ .fork = .{ .source_id = .from(row.source_id.?) } };
     }
     return error.CorruptDatabase;
 }
@@ -114,8 +114,8 @@ fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.sessi
 
     return .{
         .session = .{
-            .id = row.id,
-            .workspace_id = row.workspace_id,
+            .id = .from(row.id),
+            .workspace_id = .from(row.workspace_id),
             .profile = try arena.dupe(u8, row.profile),
             .model = try arena.dupe(u8, row.model),
             .reasoning = try arena.dupe(u8, row.reasoning),
@@ -199,7 +199,7 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
     for (stored, 0..) |ws, i| {
         const kind = std.meta.stringToEnum(wire.enums.WorkspaceKind, ws.kind);
         std.debug.assert(kind != null); // The schema constrains kind to a known value.
-        workspaces[i] = .{ .id = ws.id, .kind = kind.?, .root = ws.root, .title = ws.title };
+        workspaces[i] = .{ .id = .from(ws.id), .kind = kind.?, .root = ws.root, .title = ws.title };
     }
     return .{
         .protocol = wire.meta.protocol_version,
@@ -208,7 +208,7 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
         .profiles = &.{},
         .agents = &.{},
         .session_revision = 0,
-        .catalog_rev = [_]u8{'0'} ** 64,
+        .catalog_rev = .from([_]u8{'0'} ** 64),
         .catalog_health = .{ .skipped = &.{} },
         .capabilities = &.{},
     };
@@ -217,25 +217,27 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
 /// Handle session.config: return one config revision and the session's system prompt.
 /// A null config_rev returns the session's current config; a missing revision is UnknownConfigRev.
 pub fn sessionConfig(state: *State, arena: std.mem.Allocator, params: wire.session.SessionConfigParams) !wire.session.SessionConfigResult {
-    const snap = (try session_store.snapshot(&state.db, arena, params.session_id)) orelse return error.UnknownSession;
+    const sid = params.session_id.bytes;
+    const snap = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
     const config: wire.run.RunConfig = if (params.config_rev) |rev|
-        (try config_store.byRevision(&state.db, arena, params.session_id, rev)) orelse return error.UnknownConfigRev
+        (try config_store.byRevision(&state.db, arena, sid, rev)) orelse return error.UnknownConfigRev
     else
         .{ .config_rev = snap.config_rev, .model = snap.model, .reasoning = snap.reasoning };
-    return .{ .config = config, .system_prompt = try session_store.prompt(&state.db, arena, params.session_id) };
+    return .{ .config = config, .system_prompt = try session_store.prompt(&state.db, arena, sid) };
 }
 
 /// Handle session.history: return a page of committed messages oldest first, the configs those
 /// assistant turns reference, and whether older messages remain.
 pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.session.SessionHistoryParams) !wire.session.SessionHistoryResult {
-    if (!try session_store.exists(&state.db, arena, params.session_id)) return error.UnknownSession;
+    const sid = params.session_id.bytes;
+    if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
     const requested = params.limit orelse wire.meta.limits.default_page_size;
     const limit: usize = @intCast(@min(@max(requested, 1), wire.meta.limits.max_page_size));
-    const page = try message_store.historyPage(&state.db, arena, params.session_id, params.before_message_id, limit);
+    const page = try message_store.historyPage(&state.db, arena, sid, params.before_message_id, limit);
     return .{
         .session_id = params.session_id,
         .messages = page.messages,
-        .configs = try gatherConfigs(state, arena, params.session_id, page.messages),
+        .configs = try gatherConfigs(state, arena, sid, page.messages),
         .has_more = page.has_more,
     };
 }
@@ -247,11 +249,12 @@ pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.se
         .content => |c| c.content,
         .skill => return error.SkillUnsupported,
     };
-    const snapshot = (try session_store.snapshot(&state.db, arena, params.session_id)) orelse return error.UnknownSession;
+    const sid = params.session_id.bytes;
+    const snapshot = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
 
     if (rt.active == null) {
-        const handle = try run.beginTurn(&state.db, state.io, arena, params.session_id, content);
+        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content);
         // The coroutine owns the frozen config and frees the model string.
         const model = try state.gpa.dupe(u8, snapshot.model);
         errdefer state.gpa.free(model);
@@ -273,7 +276,7 @@ pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.se
 
     // A run is active. Queue the input. A later change drains the queue and adds the durable input event.
     if (rt.queue.depth() >= wire.meta.limits.max_queued_inputs) return error.QueueFull;
-    const input_id = try allocQueuedInputId(state, arena, params.session_id);
+    const input_id = try allocQueuedInputId(state, arena, sid);
     _ = try rt.queue.onQueued(.{ .session_id = params.session_id, .input = .{
         .input_id = input_id,
         .content = content,
@@ -347,8 +350,8 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     try state.db.conn.execNoArgs("COMMIT");
 
     return .{ .session = .{
-        .id = id,
-        .workspace_id = workspace.id,
+        .id = .from(id),
+        .workspace_id = .from(workspace.id),
         .profile = profile,
         .model = model,
         .reasoning = reasoning,

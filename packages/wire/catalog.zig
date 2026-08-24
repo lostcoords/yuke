@@ -117,10 +117,10 @@ const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 test "catalog list result full round-trips with nested skip reason union" {
     // `load_error` is null → omitted on encode; input carries it as null to prove null decodes.
     const in =
-        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}],"load_error":null}}
+        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}],"load_error":null}}
     ;
     const out =
-        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}]}}
+        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}]}}
     ;
     const parsed = try std.json.parseFromSlice(CatalogListResult, testing.allocator, in, opts);
     defer parsed.deinit();

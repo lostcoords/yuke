@@ -42,11 +42,11 @@ test "decode payload-free arm" {
 
 test "decode arm with a fixed-hex id" {
     const parsed = try std.json.parseFromSlice(SessionScope, testing.allocator,
-        \\{"type":"workspace","workspace_id":"0123456789abcdef"}
+        \\{"type":"workspace","workspace_id":"abababababababababababababababab"}
     , opts);
     defer parsed.deinit();
     try testing.expect(parsed.value == .workspace);
-    try testing.expectEqualStrings("0123456789abcdef", &parsed.value.workspace.workspace_id);
+    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.workspace.workspace_id.bytes);
 }
 
 test "wrong-length id rejected by std.json" {
@@ -68,13 +68,13 @@ test "missing discriminator rejected" {
 }
 
 test "round-trip re-encodes to flat internally-tagged JSON" {
-    const s: SessionScope = .{ .workspace = .{ .workspace_id = "0123456789abcdef".* } };
+    const s: SessionScope = .{ .workspace = .{ .workspace_id = .from(@splat(0xab)) } };
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try std.json.Stringify.value(s, .{}, &buf.writer);
     try testing.expectEqualStrings(
-        \\{"type":"workspace","workspace_id":"0123456789abcdef"}
+        \\{"type":"workspace","workspace_id":"abababababababababababababababab"}
     , buf.written());
 }
 

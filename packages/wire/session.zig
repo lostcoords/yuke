@@ -286,12 +286,12 @@ const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "session population round-trips" {
     const json =
-        \\{"type":"children","parent_id":"0123456789abcdef"}
+        \\{"type":"children","parent_id":"abababababababababababababababab"}
     ;
     const parsed = try std.json.parseFromSlice(SessionPopulation, testing.allocator, json, opts);
     defer parsed.deinit();
     try testing.expect(parsed.value == .children);
-    try testing.expectEqualStrings("0123456789abcdef", &parsed.value.children.parent_id);
+    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.children.parent_id.bytes);
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();

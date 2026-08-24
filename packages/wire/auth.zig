@@ -128,7 +128,7 @@ const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "login result union round-trips a device_code arm" {
     const json =
-        \\{"type":"device_code","login_id":"0123456789abcdef0123456789abcdef","verification_url":"https://example.com/device","user_code":"ABCD-1234"}
+        \\{"type":"device_code","login_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","verification_url":"https://example.com/device","user_code":"ABCD-1234"}
     ;
     const parsed = try std.json.parseFromSlice(AuthLoginResult, testing.allocator, json, opts);
     defer parsed.deinit();

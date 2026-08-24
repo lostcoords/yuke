@@ -149,7 +149,7 @@ test "registry routes a broadcast only to subscribers" {
     try registry.register(&b);
     try testing.expect(a.id != 0 and b.id != 0 and a.id != b.id);
 
-    const sid = [_]u8{7} ** 16;
+    const sid: ids.SessionId = .from([_]u8{7} ** 16);
     try registry.setSubscriptions(&a, &.{sid});
 
     registry.publish(sid, "hello");
@@ -174,8 +174,8 @@ test "setSubscriptions replaces the previous set" {
     defer c.deinit();
     try registry.register(&c);
 
-    const one = [_]u8{1} ** 16;
-    const two = [_]u8{2} ** 16;
+    const one: ids.SessionId = .from([_]u8{1} ** 16);
+    const two: ids.SessionId = .from([_]u8{2} ** 16);
     try registry.setSubscriptions(&c, &.{ one, one, two }); // a duplicate collapses
     try registry.setSubscriptions(&c, &.{two}); // now only two remains
 
