@@ -12,6 +12,14 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const vaxis = b.dependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const quickjs = b.dependency("quickjs", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const sql = b.addModule("sql", .{
         .root_source_file = b.path("packages/sql/sql.zig"),
         .target = target,
@@ -81,6 +89,34 @@ pub fn build(b: *std.Build) void {
     const test_websocket_step = b.step("test-websocket", "Run websocket package tests");
     test_websocket_step.dependOn(&run_websocket_tests.step);
 
+    const term = b.addModule("term", .{
+        .root_source_file = b.path("packages/term/term.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    term.addImport("vaxis", vaxis.module("vaxis"));
+    term.addImport("zio", zio.module("zio"));
+    const term_tests = b.addTest(.{
+        .root_module = term,
+    });
+    const run_term_tests = b.addRunArtifact(term_tests);
+    const test_term_step = b.step("test-term", "Run term package tests");
+    test_term_step.dependOn(&run_term_tests.step);
+
+    const js_mod = b.createModule(.{
+        .root_source_file = b.path("src/js/host.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    js_mod.addImport("quickjs", quickjs.module("quickjs"));
+    js_mod.addImport("zio", zio.module("zio"));
+    const js_tests = b.addTest(.{
+        .root_module = js_mod,
+    });
+    const run_js_tests = b.addRunArtifact(js_tests);
+    const test_js_step = b.step("test-js", "Run JS host tests");
+    test_js_step.dependOn(&run_js_tests.step);
+
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
@@ -147,6 +183,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
     test_step.dependOn(&run_websocket_tests.step);
+    test_step.dependOn(&run_term_tests.step);
+    test_step.dependOn(&run_js_tests.step);
     test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
 
