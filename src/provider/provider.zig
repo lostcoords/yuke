@@ -1,5 +1,8 @@
 //! The provider layer exposes SSE framing, neutral events, and provider reducers.
 
+const std = @import("std");
+const wire = @import("wire");
+
 pub const sse = @import("stream/sse.zig");
 pub const event = @import("stream/event.zig");
 pub const anthropic = @import("stream/anthropic.zig");
@@ -17,6 +20,15 @@ pub const resolve = @import("instance/resolve.zig");
 
 pub const transport = @import("transport.zig");
 
+/// Serialize a provider request body from messages. A user turn and an internal model call use this function.
+/// The bytes use the allocator's storage, so pass an arena. The function supports the Anthropic protocol only.
+pub fn requestBody(arena: std.mem.Allocator, messages: []const wire.message.Message, request: ir.Request) ![]const u8 {
+    const request_ir = try build.build(arena, messages, .{});
+    var body: std.Io.Writer.Allocating = .init(arena);
+    try request_anthropic.serialize(&body.writer, request, request_ir, .{});
+    return body.written();
+}
+
 test {
-    @import("std").testing.refAllDecls(@This());
+    std.testing.refAllDecls(@This());
 }

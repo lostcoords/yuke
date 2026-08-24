@@ -82,17 +82,14 @@ pub fn finishTurn(
     transport_impl: anytype,
 ) !TurnResult {
     const transcript = (try message_store.historyPage(db, arena, session_id, 0, max_transcript_messages)).messages;
-    const request_ir = try provider.build.build(arena, transcript, .{});
-    var body: std.Io.Writer.Allocating = .init(arena);
-    defer body.deinit();
-    try provider.request_anthropic.serialize(&body.writer, .{
+    const body = try provider.requestBody(arena, transcript, .{
         .model = config.model,
         .system = config.system_prompt,
         .max_output_tokens = max_output_tokens,
-    }, request_ir, .{});
+    });
 
     // Stream the response and fold it into an assistant message.
-    var stream_body = try transport_impl.open(arena, .{ .body = body.written() });
+    var stream_body = try transport_impl.open(arena, .{ .body = body });
     defer stream_body.deinit();
     var reducer = provider.anthropic.Reducer.init(arena);
     defer reducer.deinit();
