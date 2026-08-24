@@ -20,6 +20,11 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(true);
     try jw.objectField("store");
     try jw.write(false);
+    // Stateless requests carry reasoning state in encrypted_content, so request it.
+    try jw.objectField("include");
+    try jw.beginArray();
+    try jw.write("reasoning.encrypted_content");
+    try jw.endArray();
     try jw.objectField("max_output_tokens");
     try jw.write(request.max_output_tokens);
 
@@ -76,6 +81,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             },
             .audio, .file => return error.UnsupportedContent,
             .reasoning => |reasoning| {
+                // Without encrypted_content a stateless reasoning item is rejected, so omit it.
+                if (reasoning.signature.len == 0) continue;
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "reasoning");
@@ -90,6 +97,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.endObject();
             },
             .redacted_reasoning => |data| {
+                // Without encrypted_content a stateless reasoning item is rejected, so omit it.
+                if (data.len == 0) continue;
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
                 try json.field(&jw, "type", "reasoning");
@@ -173,7 +182,7 @@ fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestI
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .system = "be brief", .max_output_tokens = 1024 },
         .{ .blocks = &blocks },
@@ -189,9 +198,23 @@ test "assistant reasoning text and tool call precede a tool result" {
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "ok", .is_error = false } } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 64 },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "a reasoning block with no signature is omitted" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "think", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .text = "done" } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
         .{},
     );
@@ -201,7 +224,7 @@ test "tools declare a flat raw schema with strict mode" {
     const tools = [_]ir.Tool{.{ .name = "run", .description = "run a command", .input_schema = "{\"type\":\"object\"}" }};
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },
@@ -215,7 +238,7 @@ test "a base64 user image writes a data URL" {
         .value = .{ .image = .{ .source = .{ .base64 = .{ .mime = "image/png", .data = "aGk=" } } } },
     }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGk="}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGk="}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },

@@ -48,12 +48,13 @@ const PartSlot = struct {
     kind: event.BlockKind,
 };
 
-/// An active stream block. The reducer owns tool fields until `deinit`.
+/// An active stream block. The reducer owns tool and signature fields until `deinit`.
 const Block = struct {
     kind: event.BlockKind,
     open: bool = true,
     call_id: []const u8 = "",
     name: []const u8 = "",
+    signature: []const u8 = "",
     args: std.ArrayList(u8) = .empty,
     authoritative_args: ?[]const u8 = null,
 };
@@ -77,6 +78,7 @@ pub const Reducer = struct {
             block.args.deinit(self.gpa);
             self.release(block.call_id);
             self.release(block.name);
+            self.release(block.signature);
             if (block.authoritative_args) |arguments| self.release(arguments);
         }
         self.blocks.deinit(self.gpa);
@@ -112,10 +114,7 @@ pub const Reducer = struct {
             .@"response.output_item.done" => try self.onOutputItemDone(root, out),
             .@"response.completed" => try self.onCompleted(root, out),
             .@"response.incomplete" => try self.onIncomplete(root, out),
-            .@"response.failed", .@"error" => {
-                if (self.done_emitted) return error.Protocol;
-                return error.Provider;
-            },
+            .@"response.failed", .@"error" => return error.Provider,
         }
     }
 
@@ -231,7 +230,20 @@ pub const Reducer = struct {
 
         switch (output.kind) {
             .message => if (!std.mem.eql(u8, item_type, "message")) return error.Protocol,
-            .reasoning => if (output.reasoning) |id| try self.stopBlockIfOpen(id, out),
+            .reasoning => {
+                // Encrypted reasoning can arrive with no summary deltas, so open a block to carry it.
+                const encrypted = json.fieldStr(item, "encrypted_content") orelse "";
+                const id = output.reasoning orelse blk: {
+                    if (encrypted.len == 0) break :blk null;
+                    const new_id = try self.startBlock(.reasoning, out);
+                    output.reasoning = new_id;
+                    break :blk new_id;
+                };
+                if (id) |rid| {
+                    if (encrypted.len != 0) (try self.openBlock(rid)).signature = try self.own(encrypted);
+                    try self.stopBlockIfOpen(rid, out);
+                }
+            },
             .ignored => {},
             .tool => {
                 if (!std.mem.eql(u8, item_type, "function_call")) return error.Protocol;
@@ -256,7 +268,7 @@ pub const Reducer = struct {
     fn onCompleted(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (self.done_emitted) return error.Protocol;
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
-        const status = json.fieldStr(.{ .object = response }, "status") orelse return error.Protocol;
+        const status = json.childStr(response, "status") orelse return error.Protocol;
         if (!std.mem.eql(u8, status, "completed")) return error.Protocol;
         self.recordUsage(response);
         self.stop_reason = .stop;
@@ -365,7 +377,7 @@ pub const Reducer = struct {
         block.open = false;
         const result: event.BlockResult = switch (block.kind) {
             .text => .text,
-            .reasoning => .{ .reasoning = .{ .signature = "" } },
+            .reasoning => .{ .reasoning = .{ .signature = block.signature } },
             .redacted_reasoning => unreachable,
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
@@ -539,7 +551,7 @@ test "an incomplete response maps max output tokens to length" {
     try testing.expectEqualStrings("max_output_tokens", done.raw_stop_reason);
 }
 
-test "a reasoning output item streams a reasoning block" {
+test "a reasoning output item streams a block and captures encrypted content" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
@@ -547,14 +559,43 @@ test "a reasoning output item streams a reasoning block" {
         ,
         \\{"type":"response.reasoning_summary_text.delta","output_index":0,"delta":"pondering"}
         ,
-        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}
         ,
         \\{"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":7}}}
     });
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
     try testing.expectEqualStrings("pondering", h.out.items[1].reasoning_delta.text);
-    try testing.expect(h.out.items[2].block_stopped.result == .reasoning);
+    try testing.expectEqualStrings("gAAAAsig", h.out.items[2].block_stopped.result.reasoning.signature);
     try testing.expect(h.out.items[3] == .done);
+}
+
+test "encrypted reasoning with no summary delta still emits a block" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":7}}}
+    });
+    try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("gAAAAsig", h.out.items[1].block_stopped.result.reasoning.signature);
+    try testing.expect(h.out.items[2] == .done);
+}
+
+test "a reasoning item with no summary and no encrypted content emits no block" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        ,
+        \\{"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":7}}}
+    });
+    try testing.expectEqual(@as(usize, 1), h.out.items.len);
+    try testing.expect(h.out.items[0] == .done);
 }
 
 test "a failed response terminates with a provider error" {
@@ -583,13 +624,17 @@ fn decodeAll(gpa: std.mem.Allocator, events: []const []const u8) !void {
 
 test "decode frees everything on allocation failure at every point" {
     try testing.checkAllAllocationFailures(testing.allocator, decodeAll, .{&.{
-        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"run"}}
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
         ,
-        \\{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"a\":1}"}
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}
         ,
-        \\{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"a\":1}"}
+        \\{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"run"}}
         ,
-        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"a\":1}"}}
+        \\{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"a\":1}"}
+        ,
+        \\{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"a\":1}"}
+        ,
+        \\{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"a\":1}"}}
         ,
         \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":1}}}
     }});

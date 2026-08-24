@@ -22,7 +22,6 @@ const Block = struct {
     call_id: []const u8 = "",
     name: []const u8 = "",
     args: std.ArrayList(u8) = .empty,
-    signature: std.ArrayList(u8) = .empty,
 };
 
 pub const Reducer = struct {
@@ -42,7 +41,6 @@ pub const Reducer = struct {
     pub fn deinit(self: *Reducer) void {
         for (self.blocks.items) |*b| {
             b.args.deinit(self.gpa);
-            b.signature.deinit(self.gpa);
             self.release(b.call_id);
             self.release(b.name);
         }
@@ -167,9 +165,6 @@ pub const Reducer = struct {
         const usage = json.fieldObj(root, "usage") orelse return;
         self.usage.input = json.countOf(usage, "prompt_tokens");
         self.usage.output = json.countOf(usage, "completion_tokens");
-        self.usage.cache_read = 0;
-        self.usage.reasoning = 0;
-        self.usage.cache_write = 0;
         if (json.childObj(usage, "prompt_tokens_details")) |d| self.usage.cache_read = json.countOf(d, "cached_tokens");
         if (json.childObj(usage, "completion_tokens_details")) |d| self.usage.reasoning = json.countOf(d, "reasoning_tokens");
     }
@@ -214,7 +209,7 @@ pub const Reducer = struct {
             block.open = false;
             const result: event.BlockResult = switch (block.kind) {
                 .text => .text,
-                .reasoning => .{ .reasoning = .{ .signature = block.signature.items } },
+                .reasoning => .{ .reasoning = .{ .signature = "" } },
                 .redacted_reasoning => .{ .redacted_reasoning = .{ .data = "" } },
                 .tool => .{ .tool = .{
                     .call_id = block.call_id,

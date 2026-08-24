@@ -44,6 +44,13 @@ pub fn childObj(o: std.json.ObjectMap, key: []const u8) ?std.json.ObjectMap {
     };
 }
 
+pub fn childStr(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    return switch (o.get(key) orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
 pub fn countOf(o: std.json.ObjectMap, key: []const u8) u64 {
     const n = switch (o.get(key) orelse return 0) {
         .integer => |n| n,
