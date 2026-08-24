@@ -1,4 +1,5 @@
-//! Mint 16-byte ids. UUIDv7 stores the time first, which improves locality in the id indexes.
+//! Small shared helpers: 16-byte ids and the wall clock. run.zig and State.zig both use these, so the
+//! module holds no daemon state and no import cycle forms.
 
 const std = @import("std");
 
@@ -12,6 +13,19 @@ pub fn v7(ms: u64, rand: [10]u8) [16]u8 {
     out[6] = 0x70 | (out[6] & 0x0f); // version 7 in the high nibble
     out[8] = 0x80 | (out[8] & 0x3f); // variant 10 in the top two bits
     return out;
+}
+
+/// Wall-clock milliseconds since the Unix epoch. Clamp a time before 1970 to 0.
+/// This clock is not monotonic. Do not use it for durations or timeouts.
+pub fn nowMillis(io: std.Io) u64 {
+    return @intCast(@max(std.Io.Timestamp.now(io, .real).toMilliseconds(), 0));
+}
+
+/// Mint a fresh UUIDv7 from the wall clock and random bytes.
+pub fn newId(io: std.Io) [16]u8 {
+    var rand: [10]u8 = undefined;
+    io.random(&rand);
+    return v7(nowMillis(io), rand);
 }
 
 test "v7 stamps the version, variant, and a sortable timestamp" {

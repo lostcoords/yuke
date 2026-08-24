@@ -4,7 +4,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const database = @import("../database/database.zig");
-const id = @import("../id.zig");
+const util = @import("../util.zig");
 
 const State = @This();
 
@@ -20,16 +20,12 @@ pub const Config = struct {
     db_path: [:0]const u8 = ":memory:",
 };
 
-/// Return wall-clock milliseconds since the Unix epoch. Clamp times before 1970 to 0.
-/// This clock is not monotonic. Do not use it for durations or timeouts.
+/// Wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
 pub fn nowMillis(self: *const State) u64 {
-    const ms = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
-    return @intCast(@max(ms, 0));
+    return util.nowMillis(self.io);
 }
 
 /// Mint a fresh UUIDv7 for a session, workspace, or event.
 pub fn newId(self: *const State) [16]u8 {
-    var rand: [10]u8 = undefined;
-    self.io.random(&rand);
-    return id.v7(self.nowMillis(), rand);
+    return util.newId(self.io);
 }

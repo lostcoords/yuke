@@ -6,7 +6,7 @@ const wire = @import("wire");
 const provider = @import("../provider/provider.zig");
 const database = @import("../database/database.zig");
 const fold = @import("fold.zig");
-const id = @import("../id.zig");
+const util = @import("../util.zig");
 
 const Database = database.Database;
 const session_store = database.session;
@@ -46,14 +46,14 @@ pub fn runTurn(
         const run_id = try event_store.allocRunId(db, arena, session_id);
         const user_message_id = try event_store.allocMessageId(db, arena, session_id);
         const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
-        const user_now = nowMillis(io);
+        const user_now = util.nowMillis(io);
         const user_message: wire.message.Message = .{ .user = .{
             .id = user_message_id,
             .content = input,
             .input_id = input_id,
             .time = .{ .created_at_ms = user_now },
         } };
-        _ = try message_store.appendCommittedMessage(db, arena, session_id, newEventId(io), user_now, user_message);
+        _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
         try db.conn.execNoArgs("COMMIT");
         break :blk .{ .run_id = run_id, .assistant_message_id = assistant_message_id };
     };
@@ -78,7 +78,7 @@ pub fn runTurn(
     defer events.deinit(arena);
     try transport.drain(arena, arena, stream_body, &reducer, &events);
 
-    const assistant_now = nowMillis(io);
+    const assistant_now = util.nowMillis(io);
     const assistant = try fold.assistant(arena, events.items, .{
         .id = alloc.assistant_message_id,
         .run_id = alloc.run_id,
@@ -93,21 +93,9 @@ pub fn runTurn(
     {
         try db.conn.execNoArgs("BEGIN IMMEDIATE");
         errdefer db.conn.execNoArgs("ROLLBACK") catch {};
-        _ = try message_store.appendCommittedMessage(db, arena, session_id, newEventId(io), assistant_now, .{ .assistant = assistant });
+        _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), assistant_now, .{ .assistant = assistant });
         try db.conn.execNoArgs("COMMIT");
     }
-}
-
-/// Wall-clock milliseconds. Clamp a pre-1970 time to 0.
-fn nowMillis(io: std.Io) u64 {
-    return @intCast(@max(std.Io.Timestamp.now(io, .real).toMilliseconds(), 0));
-}
-
-/// Mint a fresh event id.
-fn newEventId(io: std.Io) [16]u8 {
-    var rand: [10]u8 = undefined;
-    io.random(&rand);
-    return id.v7(nowMillis(io), rand);
 }
 
 const testing = std.testing;

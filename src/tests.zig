@@ -2,7 +2,7 @@
 //! A referenced import runs a file's tests; a function call alone does not.
 
 test {
-    _ = @import("id.zig");
+    _ = @import("util.zig");
     _ = @import("engine/fold.zig");
     _ = @import("engine/run.zig");
     _ = @import("domain/domain.zig");
