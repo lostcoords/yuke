@@ -12,9 +12,11 @@ pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 /// Selects whether the endpoint accepts Anthropic `cache_control`.
 pub const CachePolicy = enum { unsupported, ephemeral };
 
-/// Names the source of a key. The source holds no key value.
+/// Names the source of a key. `env` and `store` refer to a key. `literal` refers to an owned literal key.
+/// The owner zeroes a `literal` buffer before it frees it.
 pub const CredentialSource = union(enum) {
     env: []const u8,
+    literal: []const u8,
     store: []const u8,
 };
 
