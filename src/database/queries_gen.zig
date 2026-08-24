@@ -89,7 +89,7 @@ pub const AdvanceConfig = sql.OneQuery(
     \\    config_rev_high = MAX(config_rev_high, :config_rev),
     \\    projection_seq  = :seq,
     \\    updated_at_ms   = MAX(updated_at_ms, :updated_at_ms)
-    \\WHERE id = :id RETURNING 1 AS advanced;
+    \\WHERE id = :id AND :config_rev >= config_rev_high RETURNING 1 AS advanced;
 ,
     struct {
         model: []const u8,
@@ -344,9 +344,6 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\    open_run_id, open_run_kind, open_run_started_at_ms
     \\FROM sessions
     \\WHERE id = :id;
-    \\
-    \\-- The session.list page columns. Every page variant selects this same set in this same order, so
-    \\-- the store maps each generated row to one PageRow.
 ,
     struct {
         id: [16]u8,

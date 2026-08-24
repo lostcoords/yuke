@@ -131,8 +131,9 @@ fn parseField(line: []const u8) ?Field {
 fn joinLines(a: std.mem.Allocator, lines: []const []const u8) ![]const u8 {
     var first: usize = 0;
     while (first < lines.len and std.mem.trim(u8, lines[first], " \t").len == 0) : (first += 1) {}
+    // Drop trailing blank or comment-only lines. A loose comment before the next query is not this SQL.
     var end = lines.len;
-    while (end > first and std.mem.trim(u8, lines[end - 1], " \t").len == 0) : (end -= 1) {}
+    while (end > first and isBlankOrComment(lines[end - 1])) : (end -= 1) {}
     if (first == end) return a.dupe(u8, "");
 
     var out: std.Io.Writer.Allocating = .init(a);
@@ -241,6 +242,11 @@ fn prepareStatement(conn: zqlite.Conn, source: []const u8) !zqlite.Stmt {
         }
     }
     return .{ .stmt = raw_statement.?, .conn = conn.conn };
+}
+
+fn isBlankOrComment(line: []const u8) bool {
+    const trimmed = std.mem.trim(u8, line, " \t");
+    return trimmed.len == 0 or std.mem.startsWith(u8, trimmed, "--");
 }
 
 fn fieldIndex(fields: []const Field, name: []const u8) ?usize {
@@ -446,6 +452,23 @@ test "parse explicit cardinality and typed annotations" {
     try std.testing.expectEqual(@as(usize, 2), definitions[0].fields.len);
     try std.testing.expect(definitions[0].fields[0].required);
     try std.testing.expect(!definitions[0].fields[1].required);
+}
+
+test "parse drops a trailing comment that belongs to the next query" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const definitions = try parse(arena.allocator(),
+        \\-- name: ReadWidget :optional
+        \\-- id: i64!
+        \\SELECT id FROM widget WHERE id = :id;
+        \\
+        \\-- A loose comment that documents the next query.
+        \\-- name: ReadOther :one
+        \\SELECT 1 AS value;
+        \\
+    );
+    try std.testing.expectEqual(@as(usize, 2), definitions.len);
+    try std.testing.expectEqualStrings("SELECT id FROM widget WHERE id = :id;", definitions[0].sql);
 }
 
 test "resolve uses SQLite names and requires ambiguous types to be annotated" {

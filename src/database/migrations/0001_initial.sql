@@ -88,7 +88,7 @@ CREATE TABLE sessions (
     -- the three fields a terminal needs; all null when nothing is owed.
     open_run_id            INTEGER CHECK (open_run_id IS NULL OR open_run_id BETWEEN 1 AND 9007199254740991), -- wire.RunId
     open_run_kind          TEXT    CHECK (open_run_kind IS NULL OR open_run_kind IN ('turn', 'compaction')),
-    open_run_started_at_ms INTEGER CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms >= 0), -- u64
+    open_run_started_at_ms INTEGER CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
     -- A child has all three parent marks; a non-child has none.
     CHECK (
@@ -147,11 +147,11 @@ CREATE TABLE messages (
 
     finish TEXT CHECK (finish IS NULL OR
         finish IN ('stop', 'length', 'content_filter', 'tool_calls', 'canceled', 'error', 'unknown')),
-    tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       >= 0), -- u64
-    tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      >= 0), -- u64
-    tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   >= 0), -- u64
-    tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  >= 0), -- u64
-    tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write >= 0), -- u64
+    tokens_input       INTEGER CHECK (tokens_input       IS NULL OR tokens_input       BETWEEN 0 AND 9007199254740991), -- u64
+    tokens_output      INTEGER CHECK (tokens_output      IS NULL OR tokens_output      BETWEEN 0 AND 9007199254740991), -- u64
+    tokens_reasoning   INTEGER CHECK (tokens_reasoning   IS NULL OR tokens_reasoning   BETWEEN 0 AND 9007199254740991), -- u64
+    tokens_cache_read  INTEGER CHECK (tokens_cache_read  IS NULL OR tokens_cache_read  BETWEEN 0 AND 9007199254740991), -- u64
+    tokens_cache_write INTEGER CHECK (tokens_cache_write IS NULL OR tokens_cache_write BETWEEN 0 AND 9007199254740991), -- u64
     cost               REAL    CHECK (cost               IS NULL OR cost               >= 0),
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64

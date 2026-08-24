@@ -149,3 +149,41 @@ test "appendConfig rejects a missing session" {
     defer db.conn.execNoArgs("ROLLBACK") catch {};
     try testing.expectError(error.NoRow, appendConfig(&db, a, [_]u8{9} ** 16, [_]u8{1} ** 16, 1, .{ .config_rev = 1, .model = "m", .reasoning = "r" }));
 }
+
+test "appendConfig keeps the current config monotonic" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const ws = try workspace.resolve(&db, a, [_]u8{7} ** 16, "/w", "w", "/w");
+    const sid = [_]u8{3} ** 16;
+    try session.create(&db, .{
+        .id = sid,
+        .workspace_id = ws.id,
+        .origin = "root",
+        .profile = "default",
+        .model = "opus",
+        .reasoning = "high",
+        .config_rev = 0,
+        .permission = "normal",
+        .title = "t",
+        .created_at_ms = 100,
+        .updated_at_ms = 100,
+    });
+
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 2, .model = "sonnet", .reasoning = "low" });
+    try db.conn.execNoArgs("COMMIT");
+
+    // A revision below the mark cannot become current, so the caller sees NoRow.
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    try testing.expectError(error.NoRow, appendConfig(&db, a, sid, [_]u8{2} ** 16, 300, .{ .config_rev = 1, .model = "haiku", .reasoning = "off" }));
+    try db.conn.execNoArgs("ROLLBACK");
+
+    // The current config still points at the newer revision.
+    const snap = (try session.snapshot(&db, a, sid)).?;
+    try testing.expectEqualStrings("sonnet", snap.model);
+    try testing.expectEqual(@as(u64, 2), snap.config_rev);
+}
