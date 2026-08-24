@@ -187,6 +187,7 @@ const zio = @import("zio");
 const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
+const transport = @import("../provider/transport.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -777,4 +778,86 @@ test "cancel input and cancel run preserve exact durable outcomes" {
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
     try std.testing.expectEqual(@as(usize, 2), history.len);
     try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
+}
+
+/// A transport whose read parks until the reader task is canceled. `entered` signals the parked read.
+const BlockingTransport = struct {
+    entered: *zio.ResetEvent,
+    gate: *zio.ResetEvent,
+    interrupted: *bool, // set when the parked read catches error.Canceled
+
+    fn transportFor(self: *BlockingTransport) transport.Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    const vtable: transport.Transport.VTable = .{ .open = open };
+
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+        _ = request;
+        const self: *BlockingTransport = @ptrCast(@alignCast(ctx));
+        const reader = try arena.create(Reader);
+        reader.* = .{ .entered = self.entered, .gate = self.gate, .interrupted = self.interrupted };
+        return .{ .ctx = reader, .vtable = &Reader.vtable };
+    }
+
+    const Reader = struct {
+        entered: *zio.ResetEvent,
+        gate: *zio.ResetEvent,
+        interrupted: *bool,
+
+        const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
+
+        fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+            _ = buf;
+            const self: *Reader = @ptrCast(@alignCast(ctx));
+            self.entered.set(); // the read is parked; the canceler can now fire
+            self.gate.wait() catch |err| { // parks until the reader task is canceled
+                if (err == error.Canceled) self.interrupted.* = true;
+                return err;
+            };
+            return 0;
+        }
+        fn deinitNoop(_: *anyopaque) void {}
+    };
+};
+
+fn cancelWhenBlocked(state: *State, sid: wire.ids.SessionId, run_id: u64, entered: *zio.ResetEvent) !void {
+    try entered.wait(); // wait until the provider read parks
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
+    try launchUntilIdle(state, sid);
+}
+
+test "cancel run interrupts a blocked provider read" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var interrupted = false;
+    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    fixture.state.transport = blocking.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/block", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    const started = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+
+    // The run parks in the read; a separate task cancels it mid-read.
+    var driver = try fixture.rt.spawn(cancelWhenBlocked, .{ &fixture.state, sid, started.run_id, &entered });
+    try driver.join();
+
+    try std.testing.expect(interrupted); // the parked read was interrupted, not drained
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .canceled);
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
+    try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
 }
