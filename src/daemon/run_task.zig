@@ -173,7 +173,7 @@ fn terminalize(
     usage: ?message.TokenUsage,
     terminal: Terminal,
 ) !void {
-    std.debug.assert(!slot.terminalized);
+    std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
     zio.beginShield();
     defer zio.endShield();
@@ -227,7 +227,6 @@ fn terminalize(
         .outcome = outcome,
     });
     try state.db.conn.execNoArgs("COMMIT");
-    slot.terminalized = true;
     slot.phase = .terminalized;
 
     publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"message.committed", .params = .{
@@ -247,9 +246,10 @@ fn faultSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot, err: anye
 
 fn finishSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot) void {
     std.debug.assert(slot.body == null);
+    std.debug.assert(slot.phase == .terminalized or slot.phase == .faulted);
     const rt = state.sessions.get(session_id) orelse unreachable;
     std.debug.assert(rt.active == slot);
-    const can_drain = slot.terminalized and !state.shutting_down and !rt.faulted;
+    const can_drain = slot.phase == .terminalized and !state.shutting_down and !rt.faulted;
     rt.active = null;
     slot.destroy();
 
@@ -276,21 +276,14 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const snapshot = (try session_store.snapshot(&state.db, arena, rt.session_id.raw)) orelse return error.UnknownSession;
+    const prompt = try session_store.prompt(&state.db, arena, rt.session_id.raw);
     const model = try state.gpa.dupe(u8, snapshot.model);
     errdefer state.gpa.free(model);
-    const prompt = try session_store.prompt(&state.db, arena, rt.session_id.raw);
     const system_prompt = try state.gpa.dupe(u8, prompt orelse "");
     errdefer state.gpa.free(system_prompt);
-    const slot = try state.gpa.create(RunSlot);
-    errdefer state.gpa.destroy(slot);
-
     const handle = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
-    slot.* = .{
-        .gpa = state.gpa,
-        .handle = handle,
-        .config = .{ .model = model, .config_rev = snapshot.config_rev, .system_prompt = system_prompt },
-        .epoch = rt.next_epoch,
-    };
+    const slot = try RunSlot.create(state.gpa, handle, model, system_prompt, rt.next_epoch);
+    errdefer slot.destroy();
     rt.next_epoch += 1;
     while (rt.queue.depth() > 0) {
         const input_id = rt.queue.entries()[0].input_id;
@@ -324,7 +317,7 @@ const Streamer = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
     live: *draft.Draft,
-    offsets: std.ArrayListUnmanaged(u64) = .empty,
+    offsets: std.ArrayList(u64) = .empty,
     open: usize = 0,
     stop_reason: ?wire.enums.StopReason = null,
     usage: ?message.TokenUsage = null,

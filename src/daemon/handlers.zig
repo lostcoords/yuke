@@ -265,25 +265,18 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     const sid = params.session_id.raw;
     const snapshot = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
-    try hydrateRuntime(state, arena, rt);
     if (rt.faulted) return error.RuntimeFailed;
     if (rt.active == null and rt.queue.depth() > 0) launch.* = try run_task.prepareQueued(state, rt);
 
     if (rt.active == null) {
-        const slot = try state.gpa.create(session_runtime.RunSlot);
-        errdefer state.gpa.destroy(slot);
         const model = try state.gpa.dupe(u8, snapshot.model);
         errdefer state.gpa.free(model);
         const stored_prompt = try session_store.prompt(&state.db, arena, sid);
         const system_prompt = try state.gpa.dupe(u8, stored_prompt orelse "");
         errdefer state.gpa.free(system_prompt);
         const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
-        slot.* = .{
-            .gpa = state.gpa,
-            .handle = handle,
-            .config = .{ .model = model, .config_rev = snapshot.config_rev, .system_prompt = system_prompt },
-            .epoch = rt.next_epoch,
-        };
+        const slot = try session_runtime.RunSlot.create(state.gpa, handle, model, system_prompt, rt.next_epoch);
+        errdefer slot.destroy();
         rt.next_epoch += 1;
         rt.active = slot;
         launch.* = slot;
@@ -311,7 +304,6 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
-    try hydrateRuntime(state, arena, rt);
 
     const now = state.nowMillis();
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -334,7 +326,6 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
-    try hydrateRuntime(state, arena, rt);
 
     const active = rt.active;
     if (params.run_id) |expected| {
@@ -370,16 +361,6 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     }
     if (active == null) state.sessions.evictIfIdle(params.session_id);
     return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs };
-}
-
-fn hydrateRuntime(state: *State, arena: std.mem.Allocator, rt: *session_runtime.SessionRuntime) !void {
-    if (rt.hydrated) return;
-    const entries = try input_store.list(&state.db, arena, rt.session_id.raw);
-    for (entries) |entry| {
-        const applied = try rt.queue.onQueued(.{ .session_id = rt.session_id, .input = entry.input });
-        std.debug.assert(applied == .changed);
-    }
-    rt.hydrated = true;
 }
 
 /// Collect the distinct configs the assistant messages reference, in first-reference order.

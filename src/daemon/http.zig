@@ -220,8 +220,7 @@ fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
                 var launch = reply.launch;
                 defer releaseLaunch(state, &launch);
                 if (reply.terminal) {
-                    const result = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
-                    return result == .queued;
+                    return conn.tryEnqueue(.{ .bytes = reply.bytes, .terminal = true });
                 }
                 conn.send(.{ .bytes = reply.bytes }) catch |err| {
                     return err;
@@ -274,7 +273,7 @@ fn enqueueClose(conn: *Connection, code: wss.CloseCode) !bool {
     var buf: std.Io.Writer.Allocating = .init(conn.gpa);
     errdefer buf.deinit();
     try wss.writeClose(&buf.writer, code);
-    return (conn.trySendTerminal(.{ .bytes = try buf.toOwnedSlice(), .terminal = true }) == .queued);
+    return conn.tryEnqueue(.{ .bytes = try buf.toOwnedSlice(), .terminal = true });
 }
 
 /// Validate handshake fields that `upgradeRequested` does not check.
@@ -352,7 +351,7 @@ fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !
     var launch = reply.launch;
     defer releaseLaunch(state, &launch);
     if (reply.terminal) {
-        _ = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
+        _ = conn.tryEnqueue(.{ .bytes = reply.bytes, .terminal = true });
     } else {
         try conn.send(.{ .bytes = reply.bytes });
     }
@@ -470,7 +469,7 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     const created = try handlers.sessionCreate(&state, arena, .{ .workspace_path = "/error-order", .model = "mock" });
     try state.registry.setSubscriptions(&conn, &.{created.session.id});
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try database.input.enqueue(
+    const old = try database.input.enqueue(
         &state.db,
         arena,
         created.session.id.raw,
@@ -480,6 +479,8 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
         100,
     );
     try state.db.conn.execNoArgs("COMMIT");
+    const runtime = try state.sessions.getOrCreate(created.session.id);
+    try testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = created.session.id, .input = old.input }));
     try state.db.conn.execNoArgs(
         \\CREATE TRIGGER fail_new_input BEFORE INSERT ON events
         \\WHEN NEW.name = 'input.queued'

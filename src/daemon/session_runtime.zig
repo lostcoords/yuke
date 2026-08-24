@@ -19,7 +19,6 @@ pub const RunSlot = struct {
     started_published: bool = false,
     cancel_requested: bool = false,
     body: ?transport.ResponseBody = null,
-    terminalized: bool = false,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
@@ -48,7 +47,6 @@ pub const SessionRuntime = struct {
     session_id: ids.SessionId,
     queue: queue.Queue,
     active: ?*RunSlot = null,
-    hydrated: bool = false,
     faulted: bool = false,
     next_epoch: u64 = 0, // Each run start takes the next epoch. A stale completion checks it.
 

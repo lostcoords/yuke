@@ -686,15 +686,16 @@ test "a durable queue starts before a new idle input" {
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     const old = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), 100, &old_content, 100);
     try fixture.state.db.conn.execNoArgs("COMMIT");
+    const runtime = try fixture.state.sessions.getOrCreate(sid);
+    try std.testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = sid, .input = old.input }));
 
     const accepted = try handlers.sessionSendInput(&fixture.state, a, .{
         .session_id = sid,
         .input = .{ .content = .{ .content = &new_content } },
     });
     try std.testing.expect(accepted == .queued);
-    const rt = fixture.state.sessions.get(sid).?;
-    try std.testing.expectEqual(old.input.input_id, rt.active.?.handle.input_id);
-    try std.testing.expectEqual(@as(usize, 1), rt.queue.depth());
+    try std.testing.expectEqual(old.input.input_id, runtime.active.?.handle.input_id);
+    try std.testing.expectEqual(@as(usize, 1), runtime.queue.depth());
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -718,7 +719,6 @@ test "a faulted runtime retains the old open-run fence" {
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "first" } }};
     const old = try engine_run.beginTurn(&fixture.state.db, fixture.state.io, a, sid.raw, &content, 0);
     const rt = try fixture.state.sessions.getOrCreate(sid);
-    rt.hydrated = true;
     rt.faulted = true;
     fixture.state.sessions.evictIfIdle(sid);
     try std.testing.expect(fixture.state.sessions.get(sid) == rt);

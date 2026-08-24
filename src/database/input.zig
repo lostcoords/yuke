@@ -12,8 +12,6 @@ pub const Entry = struct {
     seq: u64,
 };
 
-pub const EnqueueResult = Entry;
-
 /// Append input.queued and create its pending projection in one transaction.
 pub fn enqueue(
     db: *Database,
@@ -23,7 +21,7 @@ pub fn enqueue(
     committed_at_ms: u64,
     content: []const wire.content.ContentPart,
     queued_at_ms: u64,
-) !EnqueueResult {
+) !Entry {
     std.debug.assert(sql.inTransaction(db.conn));
 
     const input_id = try event.allocInputId(db, arena, session_id);
@@ -65,18 +63,13 @@ pub fn list(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]Entr
     return out.items;
 }
 
-/// Delete one exact queued input without appending input.canceled.
-pub fn remove(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
+/// Consume one exact queued input without appending input.canceled.
+pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
     std.debug.assert(sql.inTransaction(db.conn));
     _ = try checkedPending(db, arena, session_id, input_id);
     var deleted = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
     defer deleted.deinit();
     std.debug.assert(deleted.value.deleted == 1);
-}
-
-/// Consume one exact queued input without appending input.canceled.
-pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
-    try remove(db, arena, session_id, input_id);
 }
 
 /// Append input.canceled and delete one exact queued input in one transaction.

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const zio = @import("zio");
+const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const util = @import("../util.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -52,7 +53,6 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
             const applied = try rt.queue.onQueued(.{ .session_id = .bytes(session_id), .input = entry.input });
             std.debug.assert(applied == .changed);
         }
-        rt.hydrated = true;
     }
     return self;
 }
@@ -82,4 +82,40 @@ pub fn nowMillis(self: *const State) u64 {
 /// Mint a fresh UUIDv7 for a session, workspace, or event.
 pub fn newId(self: *const State) [16]u8 {
     return util.newId(self.io);
+}
+
+test "init restores durable pending input into the runtime queue" {
+    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+    var db = try database.Database.open(sqlite);
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const workspace_id = [_]u8{1} ** 16;
+    const session_id = [_]u8{2} ** 16;
+    _ = try database.workspace.resolve(&db, arena, workspace_id, "/boot", "boot", null);
+    try database.session.create(&db, .{
+        .id = session_id,
+        .workspace_id = workspace_id,
+        .origin = "root",
+        .profile = "default",
+        .model = "mock",
+        .reasoning = "",
+        .config_rev = 0,
+        .permission = "normal",
+        .title = "boot",
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+    });
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
+    try db.conn.execNoArgs("COMMIT");
+
+    var state = try State.init(std.testing.allocator, runtime.io(), db, .{ .listen = listen }, "/home/test");
+    defer state.deinit();
+    const rt = state.sessions.get(.bytes(session_id)).?;
+    try std.testing.expectEqual(@as(usize, 1), rt.queue.depth());
+    try std.testing.expectEqual(queued.input.input_id, rt.queue.entries()[0].input_id);
 }

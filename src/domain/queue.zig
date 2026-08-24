@@ -86,10 +86,6 @@ pub const Queue = struct {
         return self.list.items;
     }
 
-    pub fn contains(self: *const Queue, input_id: ids.InputId) bool {
-        return self.indexOf(input_id) != null;
-    }
-
     fn removeById(self: *Queue, input_id: ids.InputId) Applied {
         const i = self.indexOf(input_id) orelse return .noop;
         var it = self.list.orderedRemove(i);

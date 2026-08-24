@@ -15,8 +15,6 @@ pub const OutboxItem = struct {
     terminal: bool = false,
 };
 
-pub const TerminalSendResult = enum { queued, aborted };
-
 /// The outbox capacity bounds how far the writer falls behind before the reader blocks.
 const outbox_capacity = 256;
 
@@ -94,16 +92,6 @@ pub const Connection = struct {
         self.shed.deinit(self.gpa);
     }
 
-    /// Enqueue a terminal frame without waiting for outbox capacity.
-    pub fn trySendTerminal(self: *Connection, item: OutboxItem) TerminalSendResult {
-        std.debug.assert(item.terminal);
-        self.outbox.trySend(item) catch {
-            self.gpa.free(item.bytes);
-            return .aborted;
-        };
-        return .queued;
-    }
-
     /// Record one dropped delta for a session. Return false when the shed cannot be tracked.
     fn recordShed(self: *Connection, session_id: ids.SessionId) bool {
         const gop = self.shed.getOrPut(self.gpa, session_id) catch return false;
@@ -132,7 +120,7 @@ pub const Registry = struct {
     gpa: std.mem.Allocator,
     next_id: u64 = 1,
     connections: std.AutoHashMapUnmanaged(u64, *Connection) = .empty,
-    subscribers: std.AutoHashMapUnmanaged(ids.SessionId, std.ArrayListUnmanaged(u64)) = .empty,
+    subscribers: std.AutoHashMapUnmanaged(ids.SessionId, std.ArrayList(u64)) = .empty,
 
     pub fn init(gpa: std.mem.Allocator) Registry {
         return .{ .gpa = gpa };
@@ -234,7 +222,7 @@ pub fn frameNotification(gpa: std.mem.Allocator, note: wire.rpc.Notification) ![
     var ws_frame: std.Io.Writer.Allocating = .init(gpa);
     defer ws_frame.deinit();
     try wss.writeMessage(&ws_frame.writer, .text, body.written());
-    return gpa.dupe(u8, ws_frame.written());
+    return ws_frame.toOwnedSlice();
 }
 
 /// Frame a `session.deltas_shed` marker. It tells the client to resync after dropped deltas.
@@ -336,7 +324,7 @@ test "a terminal close aborts without waiting on a full outbox" {
 
     try fillOutbox(&c);
     const bytes = try testing.allocator.dupe(u8, "close");
-    try testing.expectEqual(TerminalSendResult.aborted, c.trySendTerminal(.{ .bytes = bytes, .terminal = true }));
+    try testing.expect(!c.tryEnqueue(.{ .bytes = bytes, .terminal = true }));
 }
 
 test "a shed-able overflow drops the delta; the writer drains a resync marker" {
