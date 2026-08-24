@@ -27,38 +27,54 @@ pub const Config = struct {
     system_prompt: []const u8,
 };
 
-/// Run one turn. `transport_impl` opens the provider stream: it has `open(arena, Request) !ResponseBody`.
-/// The user input and the assembled messages borrow `arena`.
-pub fn runTurn(
+/// The ids a started run owns. session.send_input returns run_id and input_id at once.
+pub const RunHandle = struct {
+    run_id: wire.ids.RunId,
+    input_id: wire.ids.InputId,
+    user_message_id: wire.ids.MessageId,
+    assistant_message_id: wire.ids.MessageId,
+};
+
+/// Tx1: allocate the ids and commit the user message. The daemon runs this before it spawns the run,
+/// so send_input returns the run id at once. `input` borrows `arena`.
+pub fn beginTurn(
     db: *Database,
     io: std.Io,
     arena: std.mem.Allocator,
     session_id: [16]u8,
     input: []const wire.content.ContentPart,
+) !RunHandle {
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    const handle: RunHandle = .{
+        .input_id = try event_store.allocInputId(db, arena, session_id),
+        .run_id = try event_store.allocRunId(db, arena, session_id),
+        .user_message_id = try event_store.allocMessageId(db, arena, session_id),
+        .assistant_message_id = try event_store.allocMessageId(db, arena, session_id),
+    };
+    const user_now = util.nowMillis(io);
+    const user_message: wire.message.Message = .{ .user = .{
+        .id = handle.user_message_id,
+        .content = input,
+        .input_id = handle.input_id,
+        .time = .{ .created_at_ms = user_now },
+    } };
+    _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
+    try db.conn.execNoArgs("COMMIT");
+    return handle;
+}
+
+/// Build the request from the committed transcript, stream the reply, fold it, and commit it in Tx2.
+/// The daemon runs this in the run coroutine. `handle` comes from `beginTurn`.
+pub fn finishTurn(
+    db: *Database,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    session_id: [16]u8,
+    handle: RunHandle,
     config: Config,
     transport_impl: anytype,
 ) !void {
-    // Tx1: allocate the ids and commit the user message. The block scopes the rollback to the commit.
-    const alloc = blk: {
-        try db.conn.execNoArgs("BEGIN IMMEDIATE");
-        errdefer db.conn.execNoArgs("ROLLBACK") catch {};
-        const input_id = try event_store.allocInputId(db, arena, session_id);
-        const run_id = try event_store.allocRunId(db, arena, session_id);
-        const user_message_id = try event_store.allocMessageId(db, arena, session_id);
-        const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
-        const user_now = util.nowMillis(io);
-        const user_message: wire.message.Message = .{ .user = .{
-            .id = user_message_id,
-            .content = input,
-            .input_id = input_id,
-            .time = .{ .created_at_ms = user_now },
-        } };
-        _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
-        try db.conn.execNoArgs("COMMIT");
-        break :blk .{ .run_id = run_id, .assistant_message_id = assistant_message_id };
-    };
-
-    // Build the request from the committed transcript, which now includes the user message.
     const transcript = (try message_store.historyPage(db, arena, session_id, 0, max_transcript_messages)).messages;
     const request_ir = try provider.build.build(arena, transcript, .{});
     var body: std.Io.Writer.Allocating = .init(arena);
@@ -80,8 +96,8 @@ pub fn runTurn(
 
     const assistant_now = util.nowMillis(io);
     const assistant = try fold.assistant(arena, events.items, .{
-        .id = alloc.assistant_message_id,
-        .run_id = alloc.run_id,
+        .id = handle.assistant_message_id,
+        .run_id = handle.run_id,
         .config_rev = config.config_rev,
         .agent = agent_name,
         .created_at_ms = assistant_now,
@@ -90,12 +106,24 @@ pub fn runTurn(
     });
 
     // Tx2: commit the assistant message.
-    {
-        try db.conn.execNoArgs("BEGIN IMMEDIATE");
-        errdefer db.conn.execNoArgs("ROLLBACK") catch {};
-        _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), assistant_now, .{ .assistant = assistant });
-        try db.conn.execNoArgs("COMMIT");
-    }
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), assistant_now, .{ .assistant = assistant });
+    try db.conn.execNoArgs("COMMIT");
+}
+
+/// Run one turn end to end. The engine test uses this; the daemon calls beginTurn then finishTurn.
+pub fn runTurn(
+    db: *Database,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    session_id: [16]u8,
+    input: []const wire.content.ContentPart,
+    config: Config,
+    transport_impl: anytype,
+) !void {
+    const handle = try beginTurn(db, io, arena, session_id, input);
+    try finishTurn(db, io, arena, session_id, handle, config, transport_impl);
 }
 
 const testing = std.testing;
