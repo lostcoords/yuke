@@ -49,7 +49,7 @@ pub fn enqueue(
     return .{ .input = queued, .seq = seq };
 }
 
-/// List pending inputs in FIFO order. Returned content borrows `arena`.
+/// List pending inputs in FIFO order. The content borrows `arena`.
 pub fn list(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]Entry {
     var rows = try db.queries.pending_inputs.rows(.{ .session_id = session_id });
     defer rows.deinit();
