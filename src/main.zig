@@ -67,11 +67,11 @@ pub fn main(init: std.process.Init) !void {
     try http.serve(&state);
 }
 
-/// Return the `providers.json` path under the config directory. The caller owns it.
+/// Return the `providers.json` path. `configDir` already ends with the app directory. The caller owns it.
 fn resolveProvidersPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
     const base = try paths.configDir(gpa, env) orelse return null;
     defer gpa.free(base);
-    return try std.fs.path.join(gpa, &.{ base, "yuke", "providers.json" });
+    return try std.fs.path.join(gpa, &.{ base, "providers.json" });
 }
 
 /// Resolve the SQLite path inside the data directory.
