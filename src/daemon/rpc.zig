@@ -669,7 +669,15 @@ test "a completed run drains every queued input into one next run" {
     try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.done"));
     try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "input.queued"));
     try std.testing.expectEqual(@as(i64, 0), try countNamedEvents(&fixture.state.db, "input.canceled"));
-    try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
+
+    // The session summary counts every message and folds the assistant usage of both runs.
+    const snap = (try database.session.snapshot(&fixture.state.db, a, sid.raw)).?;
+    try std.testing.expect(snap.open_run_id == null);
+    try std.testing.expectEqual(@as(u64, 5), snap.message_count);
+    try std.testing.expectEqual(@as(u64, 0), snap.usage_input_total);
+    try std.testing.expectEqual(@as(u64, 16), snap.usage_output_total);
+    // The committed assistant record carries the session's configured model.
+    try std.testing.expectEqualStrings("mock", history[1].assistant.provenance.?.model);
 }
 
 test "a durable queue starts before a new idle input" {

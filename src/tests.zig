@@ -3,7 +3,6 @@
 
 test {
     _ = @import("util.zig");
-    _ = @import("engine/fold.zig");
     _ = @import("engine/run.zig");
     _ = @import("domain/domain.zig");
     _ = @import("provider/provider.zig");
