@@ -82,6 +82,8 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     var conn: Connection = undefined;
     conn.init(state.gpa);
     defer conn.deinit();
+    try state.registry.register(&conn);
+    defer state.registry.unregister(&conn); // runs before conn.deinit, so no publish targets a dead outbox
 
     var writer = try zio.spawn(writerLoop, .{ &conn, &socket });
     readerLoop(state, &conn, &socket) catch {};
@@ -130,7 +132,7 @@ fn readerLoop(state: *State, conn: *Connection, socket: *std.http.Server.WebSock
         switch (message.opcode) {
             // Wire frames carry text JSON. Treat a binary frame as a protocol error.
             .text => {
-                const reply = try frameReply(state, gpa, message.data);
+                const reply = try frameReply(state, conn, gpa, message.data);
                 try conn.send(.{ .bytes = reply.bytes, .terminal = reply.terminal });
                 if (reply.terminal) return;
             },
@@ -151,10 +153,10 @@ fn readerLoop(state: *State, conn: *Connection, socket: *std.http.Server.WebSock
 const FramedReply = struct { bytes: []u8, terminal: bool };
 
 /// Frame one wire reply as WS bytes. handleRequest writes the frame. A close outcome ends the connection.
-fn frameReply(state: *State, gpa: std.mem.Allocator, data: []const u8) !FramedReply {
+fn frameReply(state: *State, conn: *Connection, gpa: std.mem.Allocator, data: []const u8) !FramedReply {
     var buf: std.Io.Writer.Allocating = .init(gpa);
     errdefer buf.deinit();
-    const outcome = try rpc.handleRequest(state, &buf.writer, data);
+    const outcome = try rpc.handleRequest(state, conn, &buf.writer, data);
     return .{ .bytes = try buf.toOwnedSlice(), .terminal = outcome == .close };
 }
 

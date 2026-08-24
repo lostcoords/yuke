@@ -12,4 +12,5 @@ test {
     _ = @import("daemon/http.zig");
     _ = @import("daemon/rpc.zig");
     _ = @import("daemon/session_runtime.zig");
+    _ = @import("daemon/connection.zig");
 }

@@ -5,13 +5,14 @@ const wire = @import("wire");
 const wss = @import("websocket").server;
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
+const connection = @import("connection.zig");
 
 /// Result for one frame: keep reading or close the connection.
 pub const Outcome = enum { keep_open, close };
 
 /// Handle one text frame: decode it, dispatch it, and write the response.
 /// Use a per-request arena for decoded data and response bytes. Nothing escapes the arena.
-pub fn handleRequest(state: *State, out: *std.Io.Writer, frame: []const u8) !Outcome {
+pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.Writer, frame: []const u8) !Outcome {
     var arena_state: std.heap.ArenaAllocator = .init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -33,14 +34,14 @@ pub fn handleRequest(state: *State, out: *std.Io.Writer, frame: []const u8) !Out
     };
 
     // Preserve OutOfMemory. Map every other dispatch error to an internal error response.
-    const response = dispatch(state, arena, request) catch |err| switch (err) {
+    const response = dispatch(state, conn, arena, request) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => errorResponse(request_id, .internal, "internal error"),
     };
     return respond(arena, out, response);
 }
 
-fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) !wire.rpc.Response {
+fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocator, request: wire.rpc.Request) !wire.rpc.Response {
     switch (request.method) {
         .initialize => {
             const params = request.params.initialize_params;
@@ -75,6 +76,10 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_history_result = result } } };
         },
+        .@"subscription.set" => {
+            try state.registry.setSubscriptions(conn, request.params.subscription_set_params.sessions);
+            return .{ .ok = .{ .id = request.id, .result = .{ .empty = .{} } } };
+        },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
@@ -85,7 +90,6 @@ fn dispatch(state: *State, arena: std.mem.Allocator, request: wire.rpc.Request) 
         .@"session.cancel_run",
         .@"session.resync",
         .@"permission.decide",
-        .@"subscription.set",
         .@"catalog.list",
         .@"catalog.refresh",
         .@"auth.list",
@@ -153,18 +157,24 @@ const database = @import("../database/database.zig");
 const TestState = struct {
     rt: *zio.Runtime,
     state: State,
+    conn: *connection.Connection,
 
     fn init() !TestState {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer rt.deinit();
         const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-        const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-        // Database.open is the last fallible step. It closes conn on failure.
-        const db = try database.Database.open(conn);
-        return .{ .rt = rt, .state = State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test") };
+        const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+        // Database.open is the last fallible step. It closes the connection on failure.
+        const db = try database.Database.open(sqlite);
+        // A heap Connection keeps a stable address for its channel across the returned struct's move.
+        const conn = try std.testing.allocator.create(connection.Connection);
+        conn.init(std.testing.allocator);
+        return .{ .rt = rt, .state = State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test"), .conn = conn };
     }
 
     fn deinit(self: *TestState) void {
+        self.conn.deinit();
+        std.testing.allocator.destroy(self.conn);
         self.state.deinit();
         self.rt.deinit();
     }
@@ -172,7 +182,7 @@ const TestState = struct {
 
 fn call(fixture: *TestState, frame: []const u8, buffer: []u8) ![]const u8 {
     var out: std.Io.Writer = .fixed(buffer);
-    _ = try handleRequest(&fixture.state, &out, frame);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out, frame);
     return out.buffered();
 }
 
@@ -274,7 +284,7 @@ test "dispatch initialize returns a result" {
     const frame =
         \\{"id":"1","method":"initialize","params":{"client":{"name":"test","version":"0"}}}
     ;
-    _ = try handleRequest(&fixture.state, &out, frame);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out, frame);
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "server_now_ms") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
@@ -310,7 +320,7 @@ test "dispatch reports an unknown method with the request id" {
     const frame =
         \\{"id":"7","method":"not_a_method","params":{}}
     ;
-    _ = try handleRequest(&fixture.state, &out, frame);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out, frame);
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"7\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "-32601") != null);
@@ -325,7 +335,7 @@ test "dispatch session.create persists and returns the session" {
     const frame =
         \\{"id":"2","method":"session.create","params":{"workspace_path":"/home/x/proj","model":"opus"}}
     ;
-    _ = try handleRequest(&fixture.state, &out, frame);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out, frame);
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"2\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"title\":\"proj\"") != null);
@@ -346,13 +356,13 @@ test "session.create defaults the workspace to home and stacks sessions" {
     const empty_params =
         \\{"id":"1","method":"session.create","params":{}}
     ;
-    _ = try handleRequest(&fixture.state, &out1, empty_params);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out1, empty_params);
     // The home default is "/home/test"; its basename is the title.
     try std.testing.expect(std.mem.indexOf(u8, out1.buffered(), "\"title\":\"test\"") != null);
 
     var buf2: [4096]u8 = undefined;
     var out2: std.Io.Writer = .fixed(&buf2);
-    _ = try handleRequest(&fixture.state, &out2, empty_params);
+    _ = try handleRequest(&fixture.state, fixture.conn, &out2, empty_params);
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();

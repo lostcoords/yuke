@@ -6,6 +6,7 @@ const zio = @import("zio");
 const database = @import("../database/database.zig");
 const util = @import("../util.zig");
 const session_runtime = @import("session_runtime.zig");
+const connection = @import("connection.zig");
 
 const State = @This();
 
@@ -15,6 +16,7 @@ db: database.Database, // One SQLite connection with prepared queries. One execu
 config: Config,
 home: []const u8, // The default workspace root. A create with no workspace path uses it.
 sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
+registry: connection.Registry, // Live connections and the reverse subscription index.
 
 /// Daemon configuration. The code sets it directly for now.
 pub const Config = struct {
@@ -31,11 +33,13 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         .config = config,
         .home = home,
         .sessions = session_runtime.Sessions.init(gpa),
+        .registry = connection.Registry.init(gpa),
     };
 }
 
-/// Free the live sessions, then close the store.
+/// Free the live sessions and the registry, then close the store.
 pub fn deinit(self: *State) void {
+    self.registry.deinit();
     self.sessions.deinit();
     self.db.deinit();
 }
