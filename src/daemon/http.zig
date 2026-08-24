@@ -76,8 +76,19 @@ fn dispatch(state: *State, stream: zio.net.Stream) !void {
     }
 }
 
-/// Serve one WebSocket. A reader coroutine decodes client frames and enqueues framed replies. A writer
-/// coroutine owns socket.output and drains the outbox, so two writes never race on the socket.
+const ReaderTask = zio.JoinHandle(anyerror!void);
+const WriterTask = zio.JoinHandle(void);
+const close_drain_timeout = zio.Timeout.fromMilliseconds(250);
+
+/// Coordinate task startup and terminal close state.
+const WebSocketLifecycle = struct {
+    ready: zio.ResetEvent = .init,
+    close: zio.ResetEvent = .init,
+    terminal_close_queued: std.atomic.Value(bool) = .init(false),
+};
+
+/// Serve one WebSocket. Reader and writer tasks own socket.input and socket.output respectively.
+/// This function supervises and owns both task handles.
 fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const u8) !void {
     var socket = try request.respondWebSocket(.{ .key = key });
     try socket.output.flush();
@@ -85,50 +96,111 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     var conn: Connection = undefined;
     conn.init(state.gpa);
     defer conn.deinit();
+
+    var lifecycle: WebSocketLifecycle = .{};
+    conn.setTeardown(&lifecycle.close, signalWebSocketClose);
     try state.registry.register(&conn);
     defer state.registry.unregister(&conn); // runs before conn.deinit, so no publish targets a dead outbox
 
-    var writer = try zio.spawn(writerLoop, .{ &conn, &socket });
-    readerLoop(state, &conn, &socket) catch {};
-    conn.outbox.close(.graceful); // let the writer flush queued frames, then stop
-    writer.join();
+    var reader = try zio.spawn(readerTask, .{ state, &conn, socket.input, &lifecycle });
+    errdefer reader.cancel();
+
+    var writer = try zio.spawn(writerTask, .{ &conn, socket.output, &lifecycle });
+    lifecycle.ready.set();
+
+    superviseWebSocket(&reader, &writer, &lifecycle, close_drain_timeout);
+    reader.cancel();
+    writer.cancel();
 }
 
-/// Drain the outbox to socket.output. The writer owns socket.output after the handshake. Stop after a
-/// terminal close frame. On any exit, close the outbox so a reader blocked on a full send unwinds.
-fn writerLoop(conn: *Connection, socket: *std.http.Server.WebSocket) void {
-    defer conn.outbox.close(.graceful);
+/// Signal the persistent close event when the registry closes a connection.
+fn signalWebSocketClose(context: *anyopaque) void {
+    const close: *zio.ResetEvent = @ptrCast(@alignCast(context));
+    close.set();
+}
+
+/// Wait for the first terminal condition. The parent owns all cancellation and joins.
+fn superviseWebSocket(
+    reader: *ReaderTask,
+    writer: *WriterTask,
+    lifecycle: *WebSocketLifecycle,
+    drain_timeout: zio.Timeout,
+) void {
+    const result = zio.select(.{
+        .reader = reader,
+        .writer = writer,
+        .close = &lifecycle.close,
+    }) catch return;
+
+    switch (result) {
+        .reader, .close => if (lifecycle.terminal_close_queued.load(.acquire)) {
+            _ = zio.select(.{
+                .writer = writer,
+                .timeout = drain_timeout,
+            }) catch {};
+        },
+        .writer => {},
+    }
+}
+
+/// Start the reader after the parent installs both tasks.
+fn readerTask(
+    state: *State,
+    conn: *Connection,
+    input: *std.Io.Reader,
+    lifecycle: *WebSocketLifecycle,
+) anyerror!void {
+    defer {
+        conn.outbox.close(.graceful);
+        lifecycle.close.set();
+    }
+    try lifecycle.ready.wait();
+    lifecycle.terminal_close_queued.store(try readerLoop(state, conn, input), .release);
+}
+
+/// Start the writer after the parent installs both tasks.
+fn writerTask(conn: *Connection, output: *std.Io.Writer, lifecycle: *WebSocketLifecycle) void {
+    defer {
+        conn.outbox.close(.graceful);
+        lifecycle.close.set();
+    }
+    lifecycle.ready.wait() catch return;
+    writerLoop(conn, output);
+}
+
+/// Drain the outbox to socket.output. Stop after a terminal close frame. The task owns socket.output.
+fn writerLoop(conn: *Connection, output: *std.Io.Writer) void {
     while (true) {
         const item = conn.outbox.receive() catch return; // closed and drained
         defer conn.gpa.free(item.bytes);
         // A stuck peer can block this write with no timeout. A proxy deadline or task cancel frees it.
-        socket.output.writeAll(item.bytes) catch return;
-        socket.output.flush() catch return;
+        output.writeAll(item.bytes) catch return;
+        output.flush() catch return;
         if (item.terminal) return;
         // The outbox drained. Send a resync marker for any dropped deltas.
-        if (conn.outbox.isEmpty()) flushShedMarkers(conn, socket) catch return;
+        if (conn.outbox.isEmpty()) flushShedMarkers(conn, output) catch return;
     }
 }
 
 /// Frame the pending resync markers, then write them to the socket in one pass.
-fn flushShedMarkers(conn: *Connection, socket: *std.http.Server.WebSocket) !void {
+fn flushShedMarkers(conn: *Connection, output: *std.Io.Writer) !void {
     var buf: std.Io.Writer.Allocating = .init(conn.gpa);
     defer buf.deinit();
     try conn.drainShedMarkers(&buf.writer);
     if (buf.written().len == 0) return;
-    try socket.output.writeAll(buf.written());
-    try socket.output.flush();
+    try output.writeAll(buf.written());
+    try output.flush();
 }
 
 /// Decode client frames and enqueue framed replies, pongs, and closes. Never write to the socket.
-fn readerLoop(state: *State, conn: *Connection, socket: *std.http.Server.WebSocket) !void {
+fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
     const gpa = state.gpa;
     var reader: wss.MessageReader = .init(max_ws_message_bytes);
     defer reader.deinit(gpa);
 
     while (true) {
-        var message = reader.next(gpa, socket.input) catch |err| switch (err) {
-            error.EndOfStream => return,
+        var message = reader.next(gpa, input) catch |err| switch (err) {
+            error.EndOfStream => return false,
             error.MessageTooBig, error.FrameTooBig => return enqueueClose(conn, .message_too_big),
             error.InvalidUtf8 => return enqueueClose(conn, .invalid_frame_payload_data),
             error.Unmasked,
@@ -148,14 +220,18 @@ fn readerLoop(state: *State, conn: *Connection, socket: *std.http.Server.WebSock
             // Wire frames carry text JSON. Treat a binary frame as a protocol error.
             .text => {
                 const reply = try frameReply(state, conn, gpa, message.data);
-                conn.send(.{ .bytes = reply.bytes, .terminal = reply.terminal }) catch |err| {
+                if (reply.terminal) {
+                    const result = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
+                    if (reply.launch) |slot| run_task.launchSlot(state, slot) catch {};
+                    return result == .queued;
+                }
+                conn.send(.{ .bytes = reply.bytes }) catch |err| {
                     if (reply.launch) |slot| run_task.launchSlot(state, slot) catch {};
                     return err;
                 };
                 if (reply.launch) |slot| run_task.launchSlot(state, slot) catch |err| {
                     std.log.err("cannot release the run launch gate: {t}", .{err});
                 };
-                if (reply.terminal) return;
             },
             .binary => return enqueueClose(conn, .unsupported_data),
             .ping => try conn.send(.{ .bytes = try framePong(gpa, message.data) }),
@@ -198,11 +274,11 @@ fn framePong(gpa: std.mem.Allocator, payload: []const u8) ![]u8 {
 }
 
 /// Enqueue a terminal close frame with the code.
-fn enqueueClose(conn: *Connection, code: wss.CloseCode) !void {
+fn enqueueClose(conn: *Connection, code: wss.CloseCode) !bool {
     var buf: std.Io.Writer.Allocating = .init(conn.gpa);
     errdefer buf.deinit();
     try wss.writeClose(&buf.writer, code);
-    try conn.send(.{ .bytes = try buf.toOwnedSlice(), .terminal = true });
+    return (conn.trySendTerminal(.{ .bytes = try buf.toOwnedSlice(), .terminal = true }) == .queued);
 }
 
 /// Validate handshake fields that `upgradeRequested` does not check.
@@ -277,8 +353,63 @@ const handlers = @import("handlers.zig");
 const wire = @import("wire");
 
 fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !void {
-    try conn.send(.{ .bytes = reply.bytes, .terminal = reply.terminal });
+    if (reply.terminal) {
+        _ = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
+    } else {
+        try conn.send(.{ .bytes = reply.bytes });
+    }
     if (reply.launch) |slot| try run_task.launchSlot(state, slot);
+}
+
+fn blockedReader(started: *zio.ResetEvent, release: *zio.ResetEvent) anyerror!void {
+    started.set();
+    try release.wait();
+}
+
+fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent) void {
+    started.set();
+    release.wait() catch return;
+}
+
+test "websocket close signal supervises both tasks" {
+    var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var lifecycle: WebSocketLifecycle = .{};
+    var reader_started: zio.ResetEvent = .init;
+    var writer_started: zio.ResetEvent = .init;
+    var release: zio.ResetEvent = .init;
+    var reader = try rt.spawn(blockedReader, .{ &reader_started, &release });
+    var writer = try rt.spawn(blockedWriter, .{ &writer_started, &release });
+    try reader_started.wait();
+    try writer_started.wait();
+
+    signalWebSocketClose(&lifecycle.close);
+    superviseWebSocket(&reader, &writer, &lifecycle, close_drain_timeout);
+    reader.cancel();
+    writer.cancel();
+    try testing.expect(reader.hasResult());
+    try testing.expect(writer.hasResult());
+}
+
+fn completedReader() anyerror!void {}
+
+test "websocket terminal drain stops at its timeout" {
+    var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var lifecycle: WebSocketLifecycle = .{};
+    lifecycle.terminal_close_queued.store(true, .release);
+    var writer_started: zio.ResetEvent = .init;
+    var release: zio.ResetEvent = .init;
+    var reader = try rt.spawn(completedReader, .{});
+    var writer = try rt.spawn(blockedWriter, .{ &writer_started, &release });
+    try writer_started.wait();
+
+    superviseWebSocket(&reader, &writer, &lifecycle, .fromMilliseconds(1));
+    try testing.expect(!writer.hasResult());
+    reader.cancel();
+    writer.cancel();
 }
 
 test "a send_input response enters the outbox before run.started" {

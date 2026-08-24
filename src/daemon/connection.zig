@@ -15,6 +15,8 @@ pub const OutboxItem = struct {
     terminal: bool = false,
 };
 
+pub const TerminalSendResult = enum { queued, aborted };
+
 /// The outbox capacity bounds how far the writer falls behind before the reader blocks.
 const outbox_capacity = 256;
 
@@ -39,6 +41,8 @@ pub const Connection = struct {
     gpa: std.mem.Allocator,
     id: u64 = 0, // The registry assigns a nonzero id. 0 means unregistered.
     closing: bool = false, // A must-deliver overflow forced a close; publish skips this connection.
+    teardown_context: ?*anyopaque = null,
+    teardown_callback: ?*const fn (*anyopaque) void = null,
     buffer: [outbox_capacity]OutboxItem = undefined,
     outbox: zio.Channel(OutboxItem) = undefined,
     subscribed: std.AutoHashMapUnmanaged(ids.SessionId, void) = .empty, // sessions this connection follows
@@ -48,6 +52,18 @@ pub const Connection = struct {
     pub fn init(self: *Connection, gpa: std.mem.Allocator) void {
         self.* = .{ .gpa = gpa };
         self.outbox = zio.Channel(OutboxItem).init(self.buffer[0..]);
+    }
+
+    /// Register the non-blocking callback that wakes the WebSocket supervisor.
+    pub fn setTeardown(self: *Connection, context: *anyopaque, callback: *const fn (*anyopaque) void) void {
+        self.teardown_context = context;
+        self.teardown_callback = callback;
+    }
+
+    /// Clear the registry callback before the connection leaves the registry.
+    pub fn clearTeardown(self: *Connection) void {
+        self.teardown_context = null;
+        self.teardown_callback = null;
     }
 
     /// Hand owned frame bytes to the writer. Free them when the outbox no longer accepts them.
@@ -73,8 +89,19 @@ pub const Connection = struct {
             self.gpa.free(item.bytes);
         } else |_| {}
         self.outbox.close(.graceful);
+        self.clearTeardown();
         self.subscribed.deinit(self.gpa);
         self.shed.deinit(self.gpa);
+    }
+
+    /// Enqueue a terminal frame without waiting for outbox capacity.
+    pub fn trySendTerminal(self: *Connection, item: OutboxItem) TerminalSendResult {
+        std.debug.assert(item.terminal);
+        self.outbox.trySend(item) catch {
+            self.gpa.free(item.bytes);
+            return .aborted;
+        };
+        return .queued;
     }
 
     /// Record one dropped delta for a session. Return false when the shed cannot be tracked.
@@ -132,6 +159,7 @@ pub const Registry = struct {
         var it = conn.subscribed.keyIterator();
         while (it.next()) |sid| self.removeSubscriber(sid.*, conn.id);
         _ = self.connections.remove(conn.id);
+        conn.clearTeardown();
         conn.id = 0;
     }
 
@@ -175,11 +203,12 @@ pub const Registry = struct {
         }
     }
 
-    /// Stop sending to a hopelessly slow connection. Mark it closing and wake its writer to drain and exit.
-    /// A reader parked on a socket read needs a socket shutdown or a task cancel; that teardown comes later.
+    /// Stop sending to a hopelessly slow connection and request both task cancellations.
     fn beginClose(conn: *Connection) void {
+        if (conn.closing) return;
         conn.closing = true;
         conn.outbox.close(.graceful);
+        if (conn.teardown_callback) |callback| callback(conn.teardown_context.?);
     }
 
     fn removeSubscriber(self: *Registry, session_id: ids.SessionId, conn_id: u64) void {
@@ -276,6 +305,11 @@ fn fillOutbox(conn: *Connection) !void {
     }
 }
 
+fn markTeardown(context: *anyopaque) void {
+    const marked: *bool = @ptrCast(@alignCast(context));
+    marked.* = true;
+}
+
 test "a must-deliver overflow closes the connection" {
     var registry = Registry.init(testing.allocator);
     defer registry.deinit();
@@ -283,13 +317,26 @@ test "a must-deliver overflow closes the connection" {
     c.init(testing.allocator);
     defer c.deinit();
     try registry.register(&c);
+    var teardown = false;
+    c.setTeardown(&teardown, markTeardown);
     const sid: ids.SessionId = .bytes([_]u8{3} ** 16);
     try registry.setSubscriptions(&c, &.{sid});
 
     try fillOutbox(&c);
     registry.publish(sid, "committed", .must_deliver);
     try testing.expect(c.closing);
+    try testing.expect(teardown);
     registry.publish(sid, "more", .must_deliver); // a closing connection is skipped
+}
+
+test "a terminal close aborts without waiting on a full outbox" {
+    var c: Connection = undefined;
+    c.init(testing.allocator);
+    defer c.deinit();
+
+    try fillOutbox(&c);
+    const bytes = try testing.allocator.dupe(u8, "close");
+    try testing.expectEqual(TerminalSendResult.aborted, c.trySendTerminal(.{ .bytes = bytes, .terminal = true }));
 }
 
 test "a shed-able overflow drops the delta; the writer drains a resync marker" {
