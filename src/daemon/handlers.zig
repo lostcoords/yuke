@@ -2,14 +2,18 @@
 //! Each handler owns its write transaction.
 
 const std = @import("std");
+const zio = @import("zio");
 const wire = @import("wire");
 const State = @import("State.zig");
 const database = @import("../database/database.zig");
+const run = @import("../engine/run.zig");
+const run_task = @import("run_task.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
 const message_store = database.message;
 const config_store = database.config;
+const event_store = database.event;
 
 const cursor_version: u8 = 1;
 const cursor_raw_size = 33;
@@ -143,7 +147,7 @@ fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.sessi
     };
 }
 
-/// Handle session.list from durable state. The active view needs the reactor live-session set in a later slice.
+/// Handle session.list from durable state. The active view needs the reactor live-session set, added later.
 pub fn sessionList(state: *State, arena: std.mem.Allocator, params: wire.session.SessionListParams) !wire.session.SessionListResult {
     const sel = sessionSelector(params);
     const requested_limit = params.limit orelse wire.meta.limits.default_session_list_page_size;
@@ -236,6 +240,57 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
     };
 }
 
+/// Accept input for a session. Start a run when the session is idle, else queue the input. The run
+/// coroutine streams and commits asynchronously. There is no skill support yet, so a skill input fails.
+pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams) !wire.session.SessionSendInputResult {
+    const content = switch (params.input) {
+        .content => |c| c.content,
+        .skill => return error.SkillUnsupported,
+    };
+    const snapshot = (try session_store.snapshot(&state.db, arena, params.session_id)) orelse return error.UnknownSession;
+    const rt = try state.sessions.getOrCreate(params.session_id);
+
+    if (rt.active == null) {
+        const handle = try run.beginTurn(&state.db, state.io, arena, params.session_id, content);
+        // The coroutine owns the frozen config and frees the model string.
+        const model = try state.gpa.dupe(u8, snapshot.model);
+        errdefer state.gpa.free(model);
+        const config: run.Config = .{ .model = model, .config_rev = snapshot.config_rev, .system_prompt = "" };
+        var task = try zio.spawn(run_task.runSession, .{ state, params.session_id, handle, config });
+        task.detach();
+        rt.active = .{
+            .run_id = handle.run_id,
+            .kind = .turn,
+            .input_id = handle.input_id,
+            .user_message_id = handle.user_message_id,
+            .assistant_message_id = handle.assistant_message_id,
+            .config_rev = snapshot.config_rev,
+            .epoch = rt.next_epoch,
+        };
+        rt.next_epoch += 1;
+        return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
+    }
+
+    // A run is active. Queue the input. A later change drains the queue and adds the durable input event.
+    if (rt.queue.depth() >= wire.meta.limits.max_queued_inputs) return error.QueueFull;
+    const input_id = try allocQueuedInputId(state, arena, params.session_id);
+    _ = try rt.queue.onQueued(.{ .session_id = params.session_id, .input = .{
+        .input_id = input_id,
+        .content = content,
+        .queued_at_ms = state.nowMillis(),
+    } });
+    return .{ .queued = .{ .input_id = input_id } };
+}
+
+/// Allocate one input id in its own write transaction.
+fn allocQueuedInputId(state: *State, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    const input_id = try event_store.allocInputId(&state.db, arena, session_id);
+    try state.db.conn.execNoArgs("COMMIT");
+    return input_id;
+}
+
 /// Collect the distinct configs the assistant messages reference, in first-reference order.
 /// A referenced revision that is absent is log corruption, not a bad request.
 fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
@@ -255,7 +310,7 @@ fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, me
 }
 
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
-/// The broadcast fan-out is a later slice; this returns the result only.
+/// The broadcast fan-out is added later; this returns the result only.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
     // The raw path is the dedup key for now. Canonicalization is a later workspace-chunk refinement.
     const root = params.workspace_path orelse state.home;

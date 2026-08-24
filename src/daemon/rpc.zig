@@ -80,12 +80,20 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             try state.registry.setSubscriptions(conn, request.params.subscription_set_params.sessions);
             return .{ .ok = .{ .id = request.id, .result = .{ .empty = .{} } } };
         },
+        .@"session.send_input" => {
+            const result = handlers.sessionSendInput(state, arena, request.params.session_send_input_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.SkillUnsupported => return errorResponse(request.id, .unknown_skill, "skills are not supported"),
+                error.QueueFull => return errorResponse(request.id, .queue_full, "the input queue is full"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_send_input_result = result } } };
+        },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
         .@"session.compact",
         .@"session.rewind",
-        .@"session.send_input",
         .@"session.cancel_input",
         .@"session.cancel_run",
         .@"session.resync",

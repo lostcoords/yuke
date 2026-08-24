@@ -1,5 +1,5 @@
 //! Per-session live state. The reactor owns each SessionRuntime. Sessions holds a stable pointer.
-//! A run coroutine and a streaming draft attach in later slices.
+//! A run coroutine and a streaming draft attach later.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -7,7 +7,7 @@ const queue = @import("../domain/queue.zig");
 
 const ids = wire.ids;
 
-/// The active run's live state. A later slice attaches the owned config, the draft, and the task handle.
+/// The active run's live state. A later change attaches the owned config, the draft, and the task handle.
 pub const RunSlot = struct {
     run_id: ids.RunId,
     kind: wire.enums.RunKind,
@@ -24,6 +24,7 @@ pub const SessionRuntime = struct {
     session_id: ids.SessionId,
     queue: queue.Queue,
     active: ?RunSlot = null,
+    next_epoch: u64 = 0, // Each run start takes the next epoch. A stale completion checks it.
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
         const self = try gpa.create(SessionRuntime);
@@ -36,7 +37,7 @@ pub const SessionRuntime = struct {
         self.gpa.destroy(self);
     }
 
-    /// A runtime is idle when no run is active and no input waits. A later slice also needs no subscriber.
+    /// A runtime is idle when no run is active and no input waits. A later check also requires no subscriber.
     pub fn idle(self: *const SessionRuntime) bool {
         return self.active == null and self.queue.depth() == 0;
     }

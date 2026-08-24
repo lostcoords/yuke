@@ -1,5 +1,5 @@
 //! The run loop: one non-tool turn. Commit the user message, call the provider, fold the response, and
-//! commit the assistant message. E1 uses an injected transport and the Anthropic provider only.
+//! commit the assistant message. This uses an injected transport and the Anthropic provider only.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -14,10 +14,10 @@ const message_store = database.message;
 const event_store = database.event;
 const transport = provider.transport;
 
-// E1 targets one provider and a fixed output cap. E2 resolves both from the model binding.
+// This targets one provider and a fixed output cap. A later change resolves both from the model binding.
 const max_output_tokens: u32 = 8192;
 const agent_name = "claude";
-// A temporary full-transcript window. The compaction slice replaces it with a real context rule.
+// A temporary full-transcript window. A later context rule replaces it.
 const max_transcript_messages: usize = 1000;
 
 /// The run config, frozen at run start. A mid-run change applies to the next run.
@@ -65,6 +65,12 @@ pub fn beginTurn(
 }
 
 /// Build the request from the committed transcript, stream the reply, fold it, and commit it in Tx2.
+/// The committed reply. `message` borrows `arena`, so the caller broadcasts it before it frees the arena.
+pub const TurnResult = struct {
+    seq: wire.ids.Seq,
+    message: wire.message.Message,
+};
+
 /// The daemon runs this in the run coroutine. `handle` comes from `beginTurn`.
 pub fn finishTurn(
     db: *Database,
@@ -74,7 +80,7 @@ pub fn finishTurn(
     handle: RunHandle,
     config: Config,
     transport_impl: anytype,
-) !void {
+) !TurnResult {
     const transcript = (try message_store.historyPage(db, arena, session_id, 0, max_transcript_messages)).messages;
     const request_ir = try provider.build.build(arena, transcript, .{});
     var body: std.Io.Writer.Allocating = .init(arena);
@@ -106,10 +112,12 @@ pub fn finishTurn(
     });
 
     // Tx2: commit the assistant message.
+    const message: wire.message.Message = .{ .assistant = assistant };
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer db.conn.execNoArgs("ROLLBACK") catch {};
-    _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), assistant_now, .{ .assistant = assistant });
+    const seq = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), assistant_now, message);
     try db.conn.execNoArgs("COMMIT");
+    return .{ .seq = seq, .message = message };
 }
 
 /// Run one turn end to end. The engine test uses this; the daemon calls beginTurn then finishTurn.
@@ -123,7 +131,7 @@ pub fn runTurn(
     transport_impl: anytype,
 ) !void {
     const handle = try beginTurn(db, io, arena, session_id, input);
-    try finishTurn(db, io, arena, session_id, handle, config, transport_impl);
+    _ = try finishTurn(db, io, arena, session_id, handle, config, transport_impl);
 }
 
 const testing = std.testing;
