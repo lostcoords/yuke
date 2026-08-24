@@ -171,13 +171,15 @@ const TestState = struct {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer rt.deinit();
         const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-        const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-        // Database.open is the last fallible step. It closes the connection on failure.
-        const db = try database.Database.open(sqlite);
         // A heap Connection keeps a stable address for its channel across the returned struct's move.
         const conn = try std.testing.allocator.create(connection.Connection);
+        errdefer std.testing.allocator.destroy(conn);
         conn.init(std.testing.allocator);
-        return .{ .rt = rt, .state = State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test"), .conn = conn };
+        errdefer conn.deinit();
+        const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+        const db = try database.Database.open(sqlite);
+        const state = try State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test");
+        return .{ .rt = rt, .state = state, .conn = conn };
     }
 
     fn deinit(self: *TestState) void {

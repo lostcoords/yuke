@@ -27,8 +27,33 @@ pub fn append(
     payload: []const u8,
 ) !u64 {
     std.debug.assert(sql.inTransaction(db.conn)); // else a partial failure leaves a seq hole
+    const seq = try allocSeq(db, arena, session_id);
+    try appendAt(db, session_id, seq, event_id, committed_at_ms, name, payload);
+    return seq;
+}
+
+/// Allocate the next event sequence. Run inside the transaction that appends the event.
+pub fn allocSeq(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
+    std.debug.assert(sql.inTransaction(db.conn));
     const alloc = try db.queries.alloc_seq.one(arena, .{ .id = session_id });
-    const seq = alloc.value.seq_high;
+    std.debug.assert(alloc.value.seq_high > 0);
+    return alloc.value.seq_high;
+}
+
+/// Append an event at a sequence that `allocSeq` reserved in the same transaction.
+pub fn appendAt(
+    db: *Database,
+    session_id: [16]u8,
+    seq: u64,
+    event_id: [16]u8,
+    committed_at_ms: u64,
+    name: []const u8,
+    payload: []const u8,
+) !void {
+    std.debug.assert(sql.inTransaction(db.conn));
+    std.debug.assert(seq > 0);
+    std.debug.assert(name.len > 0);
+    std.debug.assert(payload.len > 0);
     try db.queries.append_event.exec(.{
         .session_id = session_id,
         .seq = seq,
@@ -37,7 +62,6 @@ pub fn append(
         .name = name,
         .payload = payload,
     });
-    return seq;
 }
 
 /// Raise the id-minting marks. Each mark only rises. Run inside a write transaction.

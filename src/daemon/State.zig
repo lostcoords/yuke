@@ -24,9 +24,9 @@ pub const Config = struct {
     db_path: [:0]const u8 = ":memory:",
 };
 
-/// Build the daemon state. The caller keeps `db` and `io` alive for the daemon lifetime.
-pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: Config, home: []const u8) State {
-    return .{
+/// Build the daemon state. It takes ownership of `db` and borrows `io` for its lifetime.
+pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: Config, home: []const u8) !State {
+    var self: State = .{
         .gpa = gpa,
         .io = io,
         .db = db,
@@ -35,7 +35,23 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
     };
+    errdefer self.deinit();
+
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    var event_ids: RecoveryEventIds = .{ .state = &self };
+    const recovered = try database.run.recoverOpen(&self.db, arena.allocator(), self.nowMillis(), &event_ids);
+    if (recovered > 0) std.log.info("recovered {d} open runs as canceled", .{recovered});
+    return self;
 }
+
+const RecoveryEventIds = struct {
+    state: *State,
+
+    pub fn next(self: *RecoveryEventIds) ![16]u8 {
+        return self.state.newId();
+    }
+};
 
 /// Free the live sessions and the registry, then close the store.
 pub fn deinit(self: *State) void {

@@ -77,6 +77,52 @@ SELECT
 FROM sessions
 WHERE id = :id;
 
+-- name: SetOpenRun :one
+-- Set the terminal obligation for a newly started run. A live session has at most one open run.
+-- id: [16]u8!
+-- run_id: u64!
+-- kind: []const u8!
+-- started_at_ms: u64!
+-- changed: i64!
+UPDATE sessions SET
+    open_run_id = :run_id,
+    open_run_kind = :kind,
+    open_run_started_at_ms = :started_at_ms
+WHERE id = :id AND open_run_id IS NULL
+RETURNING 1 AS changed;
+
+-- name: ClearOpenRun :one
+-- Clear only the run that the terminal event closes.
+-- id: [16]u8!
+-- run_id: u64!
+-- kind: []const u8!
+-- started_at_ms: u64!
+-- changed: i64!
+UPDATE sessions SET
+    open_run_id = NULL,
+    open_run_kind = NULL,
+    open_run_started_at_ms = NULL
+WHERE id = :id
+  AND open_run_id = :run_id
+  AND open_run_kind = :kind
+  AND open_run_started_at_ms = :started_at_ms
+RETURNING 1 AS changed;
+
+-- name: SelectOpenRuns :many
+-- Load every terminal obligation before the daemon accepts work.
+-- id: [16]u8!
+-- run_id: u64!
+-- kind: []const u8!
+-- started_at_ms: u64!
+SELECT
+    id,
+    open_run_id AS run_id,
+    open_run_kind AS kind,
+    open_run_started_at_ms AS started_at_ms
+FROM sessions
+WHERE open_run_id IS NOT NULL
+ORDER BY id;
+
 -- The session.list page columns. Every page variant selects this same set in this same order, so
 -- the store maps each generated row to one PageRow.
 

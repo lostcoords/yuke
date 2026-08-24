@@ -74,6 +74,55 @@ pub fn snapshot(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Snapshot 
     return row.value;
 }
 
+/// Record the one open run for a session. Run inside the start transaction.
+pub fn setOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64, kind: []const u8, started_at_ms: u64) !void {
+    var row = try db.queries.set_open_run.one(arena, .{
+        .id = id,
+        .run_id = run_id,
+        .kind = kind,
+        .started_at_ms = started_at_ms,
+    });
+    defer row.deinit();
+    std.debug.assert(row.value.changed == 1);
+}
+
+/// Clear the exact open run that a terminal event closes. Run inside the terminal transaction.
+pub fn clearOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64, kind: []const u8, started_at_ms: u64) !void {
+    var row = try db.queries.clear_open_run.one(arena, .{
+        .id = id,
+        .run_id = run_id,
+        .kind = kind,
+        .started_at_ms = started_at_ms,
+    });
+    defer row.deinit();
+    std.debug.assert(row.value.changed == 1);
+}
+
+pub const OpenRun = struct {
+    session_id: [16]u8,
+    run_id: u64,
+    kind: []const u8,
+    started_at_ms: u64,
+};
+
+/// Load every open run into `arena` before restart recovery writes terminal events.
+pub fn openRuns(db: *Database, arena: std.mem.Allocator) ![]const OpenRun {
+    var rows = try db.queries.select_open_runs.rows(.{});
+    defer rows.deinit();
+    var out: std.ArrayList(OpenRun) = .empty;
+    while (try rows.next(arena)) |owned| {
+        var row = owned;
+        defer row.deinit();
+        try out.append(arena, .{
+            .session_id = row.value.id,
+            .run_id = row.value.run_id,
+            .kind = try arena.dupe(u8, row.value.kind),
+            .started_at_ms = row.value.started_at_ms,
+        });
+    }
+    return out.items;
+}
+
 /// The first page seeks below this cursor. The schema bounds updated_at_ms to 2^53-1, so this
 /// timestamp exceeds every stored row. The row-value predicate keeps one seekable form and admits all.
 const first_page: Cursor = .{ .updated_at_ms = std.math.maxInt(i64), .id = [_]u8{0xFF} ** 16 };

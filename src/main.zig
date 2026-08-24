@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     const conn = try zqlite.open(config.db_path, open_flags);
-    var state = State.init(
+    var state = try State.init(
         init.gpa,
         io,
         try database.Database.open(conn),

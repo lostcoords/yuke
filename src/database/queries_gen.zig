@@ -380,6 +380,66 @@ pub const SessionSnapshot = sql.OptionalQuery(
     },
 );
 
+pub const SetOpenRun = sql.OneQuery(
+    \\UPDATE sessions SET
+    \\    open_run_id = :run_id,
+    \\    open_run_kind = :kind,
+    \\    open_run_started_at_ms = :started_at_ms
+    \\WHERE id = :id AND open_run_id IS NULL
+    \\RETURNING 1 AS changed;
+,
+    struct {
+        run_id: u64,
+        kind: []const u8,
+        started_at_ms: u64,
+        id: [16]u8,
+    },
+    struct {
+        changed: i64,
+    },
+);
+
+pub const ClearOpenRun = sql.OneQuery(
+    \\UPDATE sessions SET
+    \\    open_run_id = NULL,
+    \\    open_run_kind = NULL,
+    \\    open_run_started_at_ms = NULL
+    \\WHERE id = :id
+    \\  AND open_run_id = :run_id
+    \\  AND open_run_kind = :kind
+    \\  AND open_run_started_at_ms = :started_at_ms
+    \\RETURNING 1 AS changed;
+,
+    struct {
+        id: [16]u8,
+        run_id: u64,
+        kind: []const u8,
+        started_at_ms: u64,
+    },
+    struct {
+        changed: i64,
+    },
+);
+
+pub const SelectOpenRuns = sql.ManyQuery(
+    \\SELECT
+    \\    id,
+    \\    open_run_id AS run_id,
+    \\    open_run_kind AS kind,
+    \\    open_run_started_at_ms AS started_at_ms
+    \\FROM sessions
+    \\WHERE open_run_id IS NOT NULL
+    \\ORDER BY id;
+,
+    struct {},
+    struct {
+        id: [16]u8,
+        run_id: u64,
+        kind: []const u8,
+        started_at_ms: u64,
+    },
+);
+
 pub const SessionPageRecent = sql.ManyQuery(
     \\SELECT
     \\    id, workspace_id,
@@ -674,6 +734,9 @@ pub const Queries = struct {
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,
+    set_open_run: SetOpenRun,
+    clear_open_run: ClearOpenRun,
+    select_open_runs: SelectOpenRuns,
     session_page_recent: SessionPageRecent,
     session_page_workspace: SessionPageWorkspace,
     session_page_parent: SessionPageParent,
