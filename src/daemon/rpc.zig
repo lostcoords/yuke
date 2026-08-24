@@ -6,13 +6,20 @@ const wss = @import("websocket").server;
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
 const connection = @import("connection.zig");
+const run_task = @import("run_task.zig");
+const RunSlot = @import("session_runtime.zig").RunSlot;
 
 /// Result for one frame: keep reading or close the connection.
 pub const Outcome = enum { keep_open, close };
 
+pub const HandleResult = struct {
+    outcome: Outcome,
+    launch: ?*RunSlot = null,
+};
+
 /// Handle one text frame: decode it, dispatch it, and write the response.
 /// Use a per-request arena for decoded data and response bytes. Nothing escapes the arena.
-pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.Writer, frame: []const u8) !Outcome {
+pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.Writer, frame: []const u8) !HandleResult {
     var arena_state: std.heap.ArenaAllocator = .init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -20,28 +27,32 @@ pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.W
     // Parse the frame as JSON first. Then a typed-decode error can include the request id.
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, frame, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
-        else => return closeProtocol(out),
+        else => return .{ .outcome = try closeProtocol(out) },
     };
     // The daemon needs an id to match a response to the request, so it closes the connection.
-    const request_id = requestId(value) orelse return closeProtocol(out);
+    const request_id = requestId(value) orelse return .{ .outcome = try closeProtocol(out) };
     // Report unknown_method for an unknown method. Report bad_request for bad parameters.
     if (requestMethod(value) == null)
-        return respond(arena, out, errorResponse(request_id, .unknown_method, "unknown method"));
+        return .{ .outcome = try respond(arena, out, errorResponse(request_id, .unknown_method, "unknown method")) };
 
     const request = wire.rpc.Request.jsonParseFromValue(arena, value, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return err,
-        else => return respond(arena, out, errorResponse(request_id, .bad_request, "bad request")),
+        else => return .{ .outcome = try respond(arena, out, errorResponse(request_id, .bad_request, "bad request")) },
     };
 
     // Preserve OutOfMemory. Map every other dispatch error to an internal error response.
-    const response = dispatch(state, conn, arena, request) catch |err| switch (err) {
+    var launch: ?*RunSlot = null;
+    errdefer if (launch) |slot| run_task.launchSlot(state, slot) catch |err| {
+        std.log.err("cannot release the run launch gate: {t}", .{err});
+    };
+    const response = dispatch(state, conn, arena, request, &launch) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => errorResponse(request_id, .internal, "internal error"),
     };
-    return respond(arena, out, response);
+    return .{ .outcome = try respond(arena, out, response), .launch = launch };
 }
 
-fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocator, request: wire.rpc.Request) !wire.rpc.Response {
+fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocator, request: wire.rpc.Request, launch: *?*RunSlot) !wire.rpc.Response {
     switch (request.method) {
         .initialize => {
             const params = request.params.initialize_params;
@@ -81,7 +92,7 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             return .{ .ok = .{ .id = request.id, .result = .{ .empty = .{} } } };
         },
         .@"session.send_input" => {
-            const result = handlers.sessionSendInput(state, arena, request.params.session_send_input_params) catch |err| switch (err) {
+            const result = handlers.sessionSendInputForRpc(state, arena, request.params.session_send_input_params, launch) catch |err| switch (err) {
                 error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
                 error.SkillUnsupported => return errorResponse(request.id, .unknown_skill, "skills are not supported"),
                 error.QueueFull => return errorResponse(request.id, .queue_full, "the input queue is full"),
@@ -176,7 +187,6 @@ const zio = @import("zio");
 const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
-const run_task = @import("run_task.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -224,7 +234,6 @@ fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u
 }
 
 fn launchUntilIdle(state: *State, session_id: wire.ids.SessionId) !void {
-    try run_task.launchPending(state);
     var attempts: usize = 0;
     while (attempts < 10_000) : (attempts += 1) {
         const rt = state.sessions.get(session_id) orelse return;
@@ -644,7 +653,6 @@ test "a completed run drains every queued input into one next run" {
     const third = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
     try std.testing.expect(second == .queued);
     try std.testing.expect(third == .queued);
-    try std.testing.expectEqual(@as(usize, 1), fixture.state.pending_starts.items.len);
     try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.queue.depth());
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });

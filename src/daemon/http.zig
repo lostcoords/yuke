@@ -220,17 +220,14 @@ fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
             // Wire frames carry text JSON. Treat a binary frame as a protocol error.
             .text => {
                 const reply = try frameReply(state, conn, gpa, message.data);
+                var launch = reply.launch;
+                defer releaseLaunch(state, &launch);
                 if (reply.terminal) {
                     const result = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
-                    if (reply.launch) |slot| run_task.launchSlot(state, slot) catch {};
                     return result == .queued;
                 }
                 conn.send(.{ .bytes = reply.bytes }) catch |err| {
-                    if (reply.launch) |slot| run_task.launchSlot(state, slot) catch {};
                     return err;
-                };
-                if (reply.launch) |slot| run_task.launchSlot(state, slot) catch |err| {
-                    std.log.err("cannot release the run launch gate: {t}", .{err});
                 };
             },
             .binary => return enqueueClose(conn, .unsupported_data),
@@ -251,18 +248,20 @@ const FramedReply = struct { bytes: []u8, terminal: bool, launch: ?*RunSlot };
 
 /// Frame one wire reply as WS bytes. handleRequest writes the frame. A close outcome ends the connection.
 fn frameReply(state: *State, conn: *Connection, gpa: std.mem.Allocator, data: []const u8) !FramedReply {
-    const pending_before = state.pending_starts.items.len;
     var buf: std.Io.Writer.Allocating = .init(gpa);
     errdefer buf.deinit();
-    errdefer if (state.pending_starts.items.len == pending_before + 1) {
-        run_task.launchSlot(state, state.pending_starts.items[pending_before]) catch |err| {
-            std.log.err("cannot release a failed response launch gate: {t}", .{err});
-        };
+    const reply = try rpc.handleRequest(state, conn, &buf.writer, data);
+    var launch = reply.launch;
+    errdefer releaseLaunch(state, &launch);
+    return .{ .bytes = try buf.toOwnedSlice(), .terminal = reply.outcome == .close, .launch = launch };
+}
+
+fn releaseLaunch(state: *State, launch: *?*RunSlot) void {
+    const slot = launch.* orelse return;
+    launch.* = null;
+    run_task.launchSlot(state, slot) catch |err| {
+        std.log.err("cannot release the run launch gate: {t}", .{err});
     };
-    const outcome = try rpc.handleRequest(state, conn, &buf.writer, data);
-    std.debug.assert(state.pending_starts.items.len == pending_before or state.pending_starts.items.len == pending_before + 1);
-    const launch = if (state.pending_starts.items.len == pending_before + 1) state.pending_starts.items[pending_before] else null;
-    return .{ .bytes = try buf.toOwnedSlice(), .terminal = outcome == .close, .launch = launch };
 }
 
 /// Frame a pong that echoes the ping payload.
@@ -353,12 +352,13 @@ const handlers = @import("handlers.zig");
 const wire = @import("wire");
 
 fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !void {
+    var launch = reply.launch;
+    defer releaseLaunch(state, &launch);
     if (reply.terminal) {
         _ = conn.trySendTerminal(.{ .bytes = reply.bytes, .terminal = true });
     } else {
         try conn.send(.{ .bytes = reply.bytes });
     }
-    if (reply.launch) |slot| try run_task.launchSlot(state, slot);
 }
 
 fn blockedReader(started: *zio.ResetEvent, release: *zio.ResetEvent) anyerror!void {
@@ -451,5 +451,65 @@ test "a send_input response enters the outbox before run.started" {
     defer testing.allocator.free(started_item.bytes);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-1\"") != null);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"result\"") != null);
+    try testing.expect(std.mem.indexOf(u8, started_item.bytes, "\"method\":\"run.started\"") != null);
+}
+
+test "a send_input error enters the outbox before a prepared queued run starts" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+    var state = try State.init(testing.allocator, rt.io(), try database.Database.open(sqlite), .{ .listen = listen }, "/home/test");
+    defer state.deinit();
+
+    var conn: Connection = undefined;
+    conn.init(testing.allocator);
+    defer conn.deinit();
+    try state.registry.register(&conn);
+    defer state.registry.unregister(&conn);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const created = try handlers.sessionCreate(&state, arena, .{ .workspace_path = "/error-order", .model = "mock" });
+    try state.registry.setSubscriptions(&conn, &.{created.session.id});
+    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try database.input.enqueue(
+        &state.db,
+        arena,
+        created.session.id.raw,
+        state.newId(),
+        100,
+        &.{.{ .text = .{ .text = "old" } }},
+        100,
+    );
+    try state.db.conn.execNoArgs("COMMIT");
+    try state.db.conn.execNoArgs(
+        \\CREATE TRIGGER fail_new_input BEFORE INSERT ON events
+        \\WHEN NEW.name = 'input.queued'
+        \\BEGIN SELECT RAISE(ABORT, 'test failure'); END
+    );
+
+    const request: wire.rpc.Request = .{
+        .id = "request-error",
+        .method = .@"session.send_input",
+        .params = .{ .session_send_input_params = .{
+            .session_id = created.session.id,
+            .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "new" } }} } },
+        } },
+    };
+    const request_bytes = try std.json.Stringify.valueAlloc(arena, request, .{ .emit_null_optional_fields = false });
+    const reply = try frameReply(&state, &conn, testing.allocator, request_bytes);
+    try testing.expect(reply.launch != null);
+    try testing.expectError(error.ChannelEmpty, conn.outbox.tryReceive());
+
+    var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
+    try launch.join();
+    const response_item = try conn.outbox.tryReceive();
+    defer testing.allocator.free(response_item.bytes);
+    const started_item = try conn.outbox.tryReceive();
+    defer testing.allocator.free(started_item.bytes);
+    try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-error\"") != null);
+    try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"error\"") != null);
     try testing.expect(std.mem.indexOf(u8, started_item.bytes, "\"method\":\"run.started\"") != null);
 }

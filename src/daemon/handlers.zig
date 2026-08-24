@@ -241,9 +241,23 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
     };
 }
 
-/// Accept input for a session. Start a run when the session is idle, else queue the input. The run
-/// coroutine streams and commits asynchronously. There is no skill support yet, so a skill input fails.
+/// Accept input for a session and launch any prepared run directly.
 pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams) !wire.session.SessionSendInputResult {
+    var launch: ?*session_runtime.RunSlot = null;
+    errdefer if (launch) |slot| run_task.launchSlot(state, slot) catch |err| {
+        std.log.err("cannot release the run launch gate: {t}", .{err});
+    };
+    const result = try sessionSendInputForRpc(state, arena, params, &launch);
+    if (launch) |slot| {
+        launch = null;
+        try run_task.launchSlot(state, slot);
+    }
+    return result;
+}
+
+/// Accept input for an RPC and return its prepared run to the response gate.
+pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams, launch: *?*session_runtime.RunSlot) !wire.session.SessionSendInputResult {
+    std.debug.assert(launch.* == null);
     const content = switch (params.input) {
         .content => |c| c.content,
         .skill => return error.SkillUnsupported,
@@ -253,10 +267,9 @@ pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.se
     const rt = try state.sessions.getOrCreate(params.session_id);
     try hydrateRuntime(state, arena, rt);
     if (rt.faulted) return error.RuntimeFailed;
-    if (rt.active == null and rt.queue.depth() > 0) _ = try run_task.prepareQueued(state, rt);
+    if (rt.active == null and rt.queue.depth() > 0) launch.* = try run_task.prepareQueued(state, rt);
 
     if (rt.active == null) {
-        try state.pending_starts.ensureUnusedCapacity(state.gpa, 1);
         const slot = try state.gpa.create(session_runtime.RunSlot);
         errdefer state.gpa.destroy(slot);
         const model = try state.gpa.dupe(u8, snapshot.model);
@@ -273,7 +286,7 @@ pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.se
         };
         rt.next_epoch += 1;
         rt.active = slot;
-        state.pending_starts.appendAssumeCapacity(slot);
+        launch.* = slot;
         return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
     }
 

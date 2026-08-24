@@ -43,21 +43,8 @@ const canned_reply =
         \\{"type":"message_stop"}
     );
 
-/// Publish pending run starts after their RPC responses enter the connection outbox.
-pub fn launchPending(state: *State) !void {
-    while (state.pending_starts.items.len > 0) try launchSlot(state, state.pending_starts.items[0]);
-}
-
-/// Launch one exact response-gated run without releasing any unrelated gate.
+/// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
-    var index: ?usize = null;
-    for (state.pending_starts.items, 0..) |pending, i| {
-        if (pending == slot) {
-            index = i;
-            break;
-        }
-    }
-    const i = index orelse return;
     std.debug.assert(slot.phase == .pending_start);
     if (!slot.started_published) {
         publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"run.started", .params = .{
@@ -68,7 +55,6 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     const run_id = slot.handle.run_id;
     const session_id = slot.handle.started.session_id;
     slot.phase = .running;
-    _ = state.pending_starts.orderedRemove(i);
     state.run_group.spawn(runSession, .{ state, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
         const created_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
@@ -281,11 +267,10 @@ fn startQueued(state: *State, rt: *session_runtime.SessionRuntime) !void {
     try launchSlot(state, slot);
 }
 
-/// Commit one run for all queued inputs and hold it behind a response launch gate.
+/// Commit one run for all queued inputs.
 pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSlot {
     std.debug.assert(rt.active == null);
     std.debug.assert(rt.queue.depth() > 0);
-    try state.pending_starts.ensureUnusedCapacity(state.gpa, 1);
 
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
@@ -312,7 +297,6 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
         std.debug.assert(rt.queue.retire(input_id) == .changed);
     }
     rt.active = slot;
-    state.pending_starts.appendAssumeCapacity(slot);
     return slot;
 }
 

@@ -18,7 +18,6 @@ home: []const u8, // The default workspace root. A create with no workspace path
 sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
 registry: connection.Registry, // Live connections and the reverse subscription index.
 run_group: zio.Group = .init, // Own every launched run task until it returns.
-pending_starts: std.ArrayListUnmanaged(*session_runtime.RunSlot) = .empty,
 shutting_down: bool = false,
 
 /// Daemon configuration. The code sets it directly for now.
@@ -70,7 +69,6 @@ const RecoveryEventIds = struct {
 pub fn deinit(self: *State) void {
     self.shutting_down = true;
     self.run_group.cancel();
-    self.pending_starts.deinit(self.gpa);
     self.registry.deinit();
     self.sessions.deinit();
     self.db.deinit();
