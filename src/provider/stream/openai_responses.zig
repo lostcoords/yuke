@@ -231,6 +231,7 @@ pub const Reducer = struct {
         switch (output.kind) {
             .message => if (!std.mem.eql(u8, item_type, "message")) return error.Protocol,
             .reasoning => {
+                if (!std.mem.eql(u8, item_type, "reasoning")) return error.Protocol;
                 // Encrypted reasoning can arrive with no summary deltas, so open a block to carry it.
                 const encrypted = json.fieldStr(item, "encrypted_content") orelse "";
                 const id = output.reasoning orelse blk: {
@@ -582,6 +583,16 @@ test "encrypted reasoning with no summary delta still emits a block" {
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
     try testing.expectEqualStrings("gAAAAsig", h.out.items[1].block_stopped.result.reasoning.signature);
     try testing.expect(h.out.items[2] == .done);
+}
+
+test "a reasoning item done with a mismatched type is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        ,
+        \\{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"message"}}
+    }));
 }
 
 test "a reasoning item with no summary and no encrypted content emits no block" {

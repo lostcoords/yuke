@@ -20,7 +20,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(true);
     try jw.objectField("store");
     try jw.write(false);
-    // Stateless requests carry reasoning state in encrypted_content, so request it.
+    // Keep the legacy include for stateless reasoning replay.
     try jw.objectField("include");
     try jw.beginArray();
     try jw.write("reasoning.encrypted_content");
@@ -81,7 +81,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             },
             .audio, .file => return error.UnsupportedContent,
             .reasoning => |reasoning| {
-                // Without encrypted_content a stateless reasoning item is rejected, so omit it.
+                // Omit reasoning state when it has no encrypted content.
                 if (reasoning.signature.len == 0) continue;
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
@@ -97,7 +97,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 try jw.endObject();
             },
             .redacted_reasoning => |data| {
-                // Without encrypted_content a stateless reasoning item is rejected, so omit it.
+                // Omit reasoning state when it has no encrypted content.
                 if (data.len == 0) continue;
                 try closeMessage(&jw, &message);
                 try jw.beginObject();
