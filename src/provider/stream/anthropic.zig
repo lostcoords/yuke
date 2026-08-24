@@ -30,6 +30,7 @@ const Block = struct {
     kind: event.BlockKind,
     open: bool = true,
     ignored: bool = false,
+    emitted_id: u32 = 0, // The dense neutral id. A dropped block never emits, so it keeps 0.
     call_id: []const u8 = "",
     name: []const u8 = "",
     args: std.ArrayList(u8) = .empty,
@@ -43,6 +44,8 @@ pub const Reducer = struct {
     usage: wire.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
     raw_stop_reason: []const u8 = "",
     stop_reason: wire.enums.StopReason = .unknown,
+    started: bool = false, // The reducer saw message_start.
+    emitted_count: u32 = 0, // The next dense neutral id. A dropped block does not advance it.
     done_emitted: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Reducer {
@@ -78,7 +81,7 @@ pub const Reducer = struct {
         switch (kind) {
             .ping => {},
             .@"error" => return error.Provider,
-            .message_start => self.onMessageStart(root),
+            .message_start => try self.onMessageStart(root),
             .content_block_start => try self.onBlockStart(root, out),
             .content_block_delta => try self.onBlockDelta(root, out),
             .content_block_stop => try self.onBlockStop(root, out),
@@ -90,7 +93,9 @@ pub const Reducer = struct {
     /// Anthropic sends all events before EOF, so this method emits nothing.
     pub fn finish(_: *Reducer, _: *std.ArrayList(StreamEvent)) Error!void {}
 
-    fn onMessageStart(self: *Reducer, root: std.json.Value) void {
+    fn onMessageStart(self: *Reducer, root: std.json.Value) Error!void {
+        if (self.started) return error.Protocol; // one message_start per stream
+        self.started = true;
         const usage = json.fieldObj(json.fieldGet(root, "message") orelse return, "usage") orelse return;
         self.usage.input = json.countOf(usage, "input_tokens");
         self.usage.cache_read = json.countOf(usage, "cache_read_input_tokens");
@@ -133,7 +138,12 @@ pub const Reducer = struct {
         if (call_id.len != 0) block.call_id = try self.own(call_id);
         if (name.len != 0) block.name = try self.own(name);
 
-        if (!ignored) try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
+        // A dropped block emits nothing, so the neutral ids stay dense from 0 for the fold.
+        if (!ignored) {
+            block.emitted_id = self.emitted_count;
+            self.emitted_count += 1;
+            try out.append(self.gpa, .{ .block_started = .{ .block = block.emitted_id, .kind = kind } });
+        }
     }
 
     fn onBlockDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -146,10 +156,10 @@ pub const Reducer = struct {
 
         if (std.mem.eql(u8, delta_type, "text_delta")) {
             if (block.kind != .text) return error.Protocol;
-            try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = json.fieldStr(delta, "text") orelse return error.Protocol } });
+            try out.append(self.gpa, .{ .text_delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "text") orelse return error.Protocol } });
         } else if (std.mem.eql(u8, delta_type, "thinking_delta")) {
             if (block.kind != .reasoning) return error.Protocol;
-            try out.append(self.gpa, .{ .reasoning_delta = .{ .block = @intCast(index), .text = json.fieldStr(delta, "thinking") orelse return error.Protocol } });
+            try out.append(self.gpa, .{ .reasoning_delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "thinking") orelse return error.Protocol } });
         } else if (std.mem.eql(u8, delta_type, "signature_delta")) {
             if (block.kind != .reasoning) return error.Protocol;
             try block.signature.appendSlice(self.gpa, json.fieldStr(delta, "signature") orelse return error.Protocol);
@@ -158,7 +168,7 @@ pub const Reducer = struct {
             const fragment = json.fieldStr(delta, "partial_json") orelse return error.Protocol;
             if (fragment.len > max_tool_arg_bytes - block.args.items.len) return error.Protocol;
             try block.args.appendSlice(self.gpa, fragment);
-            try out.append(self.gpa, .{ .tool_input_delta = .{ .block = @intCast(index), .partial_json = fragment } });
+            try out.append(self.gpa, .{ .tool_input_delta = .{ .block = block.emitted_id, .partial_json = fragment } });
         }
         // Unknown delta types are no-ops.
     }
@@ -179,7 +189,7 @@ pub const Reducer = struct {
                 .arguments = if (block.args.items.len == 0) "{}" else block.args.items,
             } },
         };
-        try out.append(self.gpa, .{ .block_stopped = .{ .block = @intCast(index), .result = result } });
+        try out.append(self.gpa, .{ .block_stopped = .{ .block = block.emitted_id, .result = result } });
     }
 
     fn onMessageDelta(self: *Reducer, root: std.json.Value) Error!void {
@@ -191,6 +201,7 @@ pub const Reducer = struct {
                 self.raw_stop_reason = owned;
             }
         }
+        // The final message_delta breaks out the thinking tokens as a subset of output_tokens.
         if (json.fieldObj(root, "usage")) |usage| {
             self.usage.output = json.countOf(usage, "output_tokens");
             if (json.childObj(usage, "output_tokens_details")) |d| self.usage.reasoning = json.countOf(d, "thinking_tokens");
@@ -198,6 +209,7 @@ pub const Reducer = struct {
     }
 
     fn onMessageStop(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
+        if (!self.started) return error.Protocol; // message_stop needs a prior message_start
         if (self.done_emitted) return error.Protocol;
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
@@ -301,6 +313,8 @@ test "tool turn: input deltas stream and the whole call surfaces at stop" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":8}}}
+        ,
         \\{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"run"}}
         ,
         \\{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"zig "}}
@@ -341,6 +355,21 @@ test "thinking block accumulates its signature into the result" {
     try testing.expectEqualStrings("sig123", h.out.items[2].block_stopped.result.reasoning.signature);
 }
 
+test "the final message_delta reports thinking tokens as reasoning usage" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":10}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}}
+        ,
+        \\{"type":"message_stop"}
+    });
+    const done = h.out.items[h.out.items.len - 1].done;
+    try testing.expectEqual(@as(u64, 40), done.usage.output);
+    try testing.expectEqual(@as(u64, 25), done.usage.reasoning);
+}
+
 test "unknown event type is a forward-compatible no-op" {
     var h = Harness.init();
     defer h.deinit();
@@ -370,10 +399,55 @@ test "a second message_stop is rejected, not asserted" {
     var h = Harness.init();
     defer h.deinit();
     try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
         \\{"type":"message_stop"}
         ,
         \\{"type":"message_stop"}
     }));
+}
+
+test "message_stop without a message_start is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"message_stop"}
+    }));
+}
+
+test "a repeated message_start is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+    }));
+}
+
+test "a dropped leading block keeps the neutral ids dense from zero" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web"}}
+        ,
+        \\{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+        ,
+        \\{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}
+        ,
+        \\{"type":"content_block_stop","index":1}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    // The dropped block emits nothing, so the text block is neutral id 0, not the provider index 1.
+    try testing.expectEqual(@as(usize, 4), h.out.items.len);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[0].block_started.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[1].text_delta.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
+    try testing.expect(h.out.items[3] == .done);
 }
 
 fn decodeAll(gpa: std.mem.Allocator, events: []const []const u8) !void {

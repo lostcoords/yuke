@@ -145,8 +145,8 @@ pub const Reducer = struct {
             out,
         );
         const block = &self.blocks.items[block_index];
-        std.debug.assert(block.open);
-        std.debug.assert(block.kind == .tool);
+        if (!block.open) return error.Protocol; // The decode boundary returns, not asserts, on stream state.
+        std.debug.assert(block.kind == .tool); // findTool matched a tool block
         std.debug.assert(block.tool_index.? == index);
 
         if (block.call_id.len == 0) try self.capture(&block.call_id, json.fieldStr(call, "id"));
