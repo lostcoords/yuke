@@ -46,7 +46,7 @@ test "decode arm with a fixed-hex id" {
     , opts);
     defer parsed.deinit();
     try testing.expect(parsed.value == .workspace);
-    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.workspace.workspace_id.bytes);
+    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.workspace.workspace_id.raw);
 }
 
 test "wrong-length id rejected by std.json" {
@@ -68,7 +68,7 @@ test "missing discriminator rejected" {
 }
 
 test "round-trip re-encodes to flat internally-tagged JSON" {
-    const s: SessionScope = .{ .workspace = .{ .workspace_id = .from(@splat(0xab)) } };
+    const s: SessionScope = .{ .workspace = .{ .workspace_id = .bytes(@splat(0xab)) } };
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();

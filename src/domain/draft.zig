@@ -407,7 +407,7 @@ fn dupeToolState(a: std.mem.Allocator, s: tool.ToolState) Error!tool.ToolState {
 
 const testing = std.testing;
 
-const zero_session: ids.SessionId = .from(@splat(0));
+const zero_session: ids.SessionId = .bytes(@splat(0));
 
 fn started(agent: []const u8) message.MessageStartedData {
     return .{

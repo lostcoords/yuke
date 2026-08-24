@@ -88,8 +88,8 @@ test "getOrCreate returns one stable runtime per session" {
     var sessions = Sessions.init(testing.allocator);
     defer sessions.deinit();
 
-    const a: ids.SessionId = .from([_]u8{1} ** 16);
-    const b: ids.SessionId = .from([_]u8{2} ** 16);
+    const a: ids.SessionId = .bytes([_]u8{1} ** 16);
+    const b: ids.SessionId = .bytes([_]u8{2} ** 16);
     const ra = try sessions.getOrCreate(a);
     const ra_again = try sessions.getOrCreate(a);
     const rb = try sessions.getOrCreate(b);
@@ -97,14 +97,14 @@ test "getOrCreate returns one stable runtime per session" {
     try testing.expect(ra == ra_again); // one runtime per id, a stable pointer
     try testing.expect(ra != rb);
     try testing.expect(sessions.get(a) == ra);
-    try testing.expect(sessions.get(ids.SessionId.from([_]u8{9} ** 16)) == null);
+    try testing.expect(sessions.get(ids.SessionId.bytes([_]u8{9} ** 16)) == null);
 }
 
 test "evictIfIdle drops an idle runtime but keeps an active one" {
     var sessions = Sessions.init(testing.allocator);
     defer sessions.deinit();
 
-    const sid: ids.SessionId = .from([_]u8{3} ** 16);
+    const sid: ids.SessionId = .bytes([_]u8{3} ** 16);
     const rt = try sessions.getOrCreate(sid);
     try testing.expect(rt.idle());
 

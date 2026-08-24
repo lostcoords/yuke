@@ -39,7 +39,7 @@ pub fn runSession(state: *State, session_id: ids.SessionId, handle: run.RunHandl
     const arena = arena_state.allocator();
 
     var mock = transport.MockTransport.init(canned_reply, 0);
-    const result = run.finishTurn(&state.db, state.io, arena, session_id.bytes, handle, config, &mock) catch |err| {
+    const result = run.finishTurn(&state.db, state.io, arena, session_id.raw, handle, config, &mock) catch |err| {
         std.log.warn("run {d} did not finish: {t}", .{ handle.run_id, err });
         clearActive(state, session_id);
         return;

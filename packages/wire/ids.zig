@@ -6,18 +6,18 @@ const std = @import("std");
 /// Hex is stable for every byte value and is path-safe for a store key.
 pub fn HexId(comptime N: usize) type {
     return struct {
-        bytes: [N]u8,
+        raw: [N]u8,
 
         const Self = @This();
         pub const byte_len = N;
 
         /// Wrap raw bytes as an id. Callers at the wire boundary use this value in place of a struct literal.
-        pub fn from(raw: [N]u8) Self {
-            return .{ .bytes = raw };
+        pub fn bytes(raw: [N]u8) Self {
+            return .{ .raw = raw };
         }
 
         pub fn jsonStringify(self: Self, jw: *std.json.Stringify) !void {
-            const hex = std.fmt.bytesToHex(self.bytes, .lower);
+            const hex = std.fmt.bytesToHex(self.raw, .lower);
             try jw.write(hex[0..]);
         }
 
@@ -34,7 +34,7 @@ pub fn HexId(comptime N: usize) type {
             if (text.len != N * 2) return error.LengthMismatch;
             if (!isLowerHex(text)) return error.InvalidCharacter; // the wire uses lowercase hex only
             var self: Self = undefined;
-            _ = std.fmt.hexToBytes(&self.bytes, text) catch return error.InvalidCharacter;
+            _ = std.fmt.hexToBytes(&self.raw, text) catch return error.InvalidCharacter;
             return self;
         }
     };
@@ -95,12 +95,12 @@ test "HexId encodes lowercase hex and rejects uppercase or a wrong length" {
 
     var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer buf.deinit();
-    try std.json.Stringify.value(Id.from(.{ 0xab, 0xcd, 0x01, 0x23 }), .{}, &buf.writer);
+    try std.json.Stringify.value(Id.bytes(.{ 0xab, 0xcd, 0x01, 0x23 }), .{}, &buf.writer);
     try std.testing.expectEqualStrings("\"abcd0123\"", buf.written());
 
     const decoded = try std.json.parseFromSlice(Id, std.testing.allocator, "\"abcd0123\"", .{});
     defer decoded.deinit();
-    try std.testing.expectEqual([_]u8{ 0xab, 0xcd, 0x01, 0x23 }, decoded.value.bytes);
+    try std.testing.expectEqual([_]u8{ 0xab, 0xcd, 0x01, 0x23 }, decoded.value.raw);
 
     try std.testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(Id, std.testing.allocator, "\"ABCD0123\"", .{}));
     try std.testing.expectError(error.LengthMismatch, std.json.parseFromSlice(Id, std.testing.allocator, "\"abcd\"", .{}));

@@ -470,7 +470,7 @@ test "session.list workspace scope filters sessions" {
         "/scope/one",
     );
     var scope_buffer: std.Io.Writer.Allocating = .init(id_arena.allocator());
-    const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = .from(workspace.id) } };
+    const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = .bytes(workspace.id) } };
     try std.json.Stringify.value(scope, .{}, &scope_buffer.writer);
     var request: [8192]u8 = undefined;
     const frame = try std.fmt.bufPrint(
@@ -549,8 +549,8 @@ test "session.history returns committed messages oldest-first with their configs
         },
     };
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.bytes, [_]u8{1} ** 16, 150, user);
-    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.bytes, [_]u8{2} ** 16, 160, assistant);
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.raw, [_]u8{1} ** 16, 150, user);
+    _ = try database.message.appendCommittedMessage(&fixture.state.db, a, sid.raw, [_]u8{2} ** 16, 160, assistant);
     try fixture.state.db.conn.execNoArgs("COMMIT");
 
     const hist = try handlers.sessionHistory(&fixture.state, a, .{ .session_id = sid, .before_message_id = 0, .limit = 10 });
@@ -570,7 +570,7 @@ test "session reads reject an unknown session and an unknown revision" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const missing: wire.ids.SessionId = .from([_]u8{9} ** 16);
+    const missing: wire.ids.SessionId = .bytes([_]u8{9} ** 16);
     try std.testing.expectError(error.UnknownSession, handlers.sessionConfig(&fixture.state, a, .{ .session_id = missing }));
     try std.testing.expectError(error.UnknownSession, handlers.sessionHistory(&fixture.state, a, .{ .session_id = missing, .before_message_id = 0 }));
 

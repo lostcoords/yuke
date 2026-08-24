@@ -104,7 +104,7 @@ pub const Queue = struct {
 };
 
 const testing = std.testing;
-const zero_session: ids.SessionId = .from(@splat(0));
+const zero_session: ids.SessionId = .bytes(@splat(0));
 
 // `text` is comptime so the content literal promotes to a static const. A runtime
 // value would make `&.{...}` a dangling pointer to this frame.

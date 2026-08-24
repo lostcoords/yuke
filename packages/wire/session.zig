@@ -291,7 +291,7 @@ test "session population round-trips" {
     const parsed = try std.json.parseFromSlice(SessionPopulation, testing.allocator, json, opts);
     defer parsed.deinit();
     try testing.expect(parsed.value == .children);
-    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.children.parent_id.bytes);
+    try testing.expectEqual([_]u8{0xab} ** 16, parsed.value.children.parent_id.raw);
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();

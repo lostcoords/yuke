@@ -16,11 +16,11 @@ test "decode array of fixed-hex ids" {
     , .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 2), parsed.value.sessions.len);
-    try testing.expectEqual([_]u8{0xcd} ** 16, parsed.value.sessions[1].bytes);
+    try testing.expectEqual([_]u8{0xcd} ** 16, parsed.value.sessions[1].raw);
 }
 
 test "round-trip re-encodes ids as hex strings" {
-    const p: SubscriptionSetParams = .{ .sessions = &.{.from(@splat(0xab))} };
+    const p: SubscriptionSetParams = .{ .sessions = &.{.bytes(@splat(0xab))} };
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
