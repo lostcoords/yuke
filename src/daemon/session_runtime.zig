@@ -1,0 +1,120 @@
+//! Per-session live state. The reactor owns each SessionRuntime. Sessions holds a stable pointer.
+//! A run coroutine and a streaming draft attach in later slices.
+
+const std = @import("std");
+const wire = @import("wire");
+const queue = @import("../domain/queue.zig");
+
+const ids = wire.ids;
+
+/// The active run's live state. A later slice attaches the owned config, the draft, and the task handle.
+pub const RunSlot = struct {
+    run_id: ids.RunId,
+    kind: wire.enums.RunKind,
+    input_id: ids.InputId,
+    user_message_id: ids.MessageId,
+    assistant_message_id: ids.MessageId,
+    config_rev: ids.ConfigRev,
+    epoch: u64,
+};
+
+/// One session's live state. The reactor mutates it between await points, so it needs no lock.
+pub const SessionRuntime = struct {
+    gpa: std.mem.Allocator,
+    session_id: ids.SessionId,
+    queue: queue.Queue,
+    active: ?RunSlot = null,
+
+    fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
+        const self = try gpa.create(SessionRuntime);
+        self.* = .{ .gpa = gpa, .session_id = session_id, .queue = queue.Queue.init(gpa) };
+        return self;
+    }
+
+    fn destroy(self: *SessionRuntime) void {
+        self.queue.deinit();
+        self.gpa.destroy(self);
+    }
+
+    /// A runtime is idle when no run is active and no input waits. A later slice also needs no subscriber.
+    pub fn idle(self: *const SessionRuntime) bool {
+        return self.active == null and self.queue.depth() == 0;
+    }
+};
+
+/// The live-session registry. The daemon owns one. It keys runtimes by session id.
+pub const Sessions = struct {
+    gpa: std.mem.Allocator,
+    map: std.AutoHashMapUnmanaged(ids.SessionId, *SessionRuntime) = .empty,
+
+    pub fn init(gpa: std.mem.Allocator) Sessions {
+        return .{ .gpa = gpa };
+    }
+
+    /// Destroy every runtime, then free the map.
+    pub fn deinit(self: *Sessions) void {
+        var it = self.map.valueIterator();
+        while (it.next()) |rt| rt.*.destroy();
+        self.map.deinit(self.gpa);
+        self.* = undefined;
+    }
+
+    /// Return the live runtime for a session, or null.
+    pub fn get(self: *Sessions, session_id: ids.SessionId) ?*SessionRuntime {
+        return self.map.get(session_id);
+    }
+
+    /// Return the live runtime for a session. Create it on the first input.
+    pub fn getOrCreate(self: *Sessions, session_id: ids.SessionId) !*SessionRuntime {
+        const gop = try self.map.getOrPut(self.gpa, session_id);
+        errdefer if (!gop.found_existing) std.debug.assert(self.map.remove(session_id));
+        if (!gop.found_existing) gop.value_ptr.* = try SessionRuntime.create(self.gpa, session_id);
+        return gop.value_ptr.*;
+    }
+
+    /// Drop an idle runtime so memory does not grow with dormant sessions.
+    pub fn evictIfIdle(self: *Sessions, session_id: ids.SessionId) void {
+        const rt = self.map.get(session_id) orelse return;
+        if (!rt.idle()) return;
+        rt.destroy();
+        _ = self.map.remove(session_id);
+    }
+};
+
+const testing = std.testing;
+
+test "getOrCreate returns one stable runtime per session" {
+    var sessions = Sessions.init(testing.allocator);
+    defer sessions.deinit();
+
+    const a = [_]u8{1} ** 16;
+    const b = [_]u8{2} ** 16;
+    const ra = try sessions.getOrCreate(a);
+    const ra_again = try sessions.getOrCreate(a);
+    const rb = try sessions.getOrCreate(b);
+
+    try testing.expect(ra == ra_again); // one runtime per id, a stable pointer
+    try testing.expect(ra != rb);
+    try testing.expect(sessions.get(a) == ra);
+    try testing.expect(sessions.get([_]u8{9} ** 16) == null);
+}
+
+test "evictIfIdle drops an idle runtime but keeps an active one" {
+    var sessions = Sessions.init(testing.allocator);
+    defer sessions.deinit();
+
+    const sid = [_]u8{3} ** 16;
+    const rt = try sessions.getOrCreate(sid);
+    try testing.expect(rt.idle());
+
+    // A live run pins the runtime.
+    rt.active = .{ .run_id = 1, .kind = .turn, .input_id = 1, .user_message_id = 1, .assistant_message_id = 2, .config_rev = 0, .epoch = 1 };
+    try testing.expect(!rt.idle());
+    sessions.evictIfIdle(sid);
+    try testing.expect(sessions.get(sid) == rt); // still present
+
+    // The run ends; eviction now reclaims it.
+    rt.active = null;
+    sessions.evictIfIdle(sid);
+    try testing.expect(sessions.get(sid) == null);
+}

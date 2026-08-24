@@ -33,14 +33,14 @@ pub fn main(init: std.process.Init) !void {
     };
 
     const conn = try zqlite.open(config.db_path, open_flags);
-    var state: State = .{
-        .gpa = init.gpa,
-        .io = io,
-        .db = try database.Database.open(conn),
-        .config = config,
-        .home = init.environ_map.get("HOME") orelse "/",
-    };
-    defer state.db.deinit();
+    var state = State.init(
+        init.gpa,
+        io,
+        try database.Database.open(conn),
+        config,
+        init.environ_map.get("HOME") orelse "/",
+    );
+    defer state.deinit();
 
     std.log.info("daemon store at {s}", .{config.db_path});
     try http.serve(&state);

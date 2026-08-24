@@ -5,6 +5,7 @@ const std = @import("std");
 const zio = @import("zio");
 const database = @import("../database/database.zig");
 const util = @import("../util.zig");
+const session_runtime = @import("session_runtime.zig");
 
 const State = @This();
 
@@ -13,12 +14,31 @@ io: std.Io, // Reactor I/O for the clock, files, and sockets.
 db: database.Database, // One SQLite connection with prepared queries. One executor writes.
 config: Config,
 home: []const u8, // The default workspace root. A create with no workspace path uses it.
+sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
 
 /// Daemon configuration. The code sets it directly for now.
 pub const Config = struct {
     listen: zio.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",
 };
+
+/// Build the daemon state. The caller keeps `db` and `io` alive for the daemon lifetime.
+pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: Config, home: []const u8) State {
+    return .{
+        .gpa = gpa,
+        .io = io,
+        .db = db,
+        .config = config,
+        .home = home,
+        .sessions = session_runtime.Sessions.init(gpa),
+    };
+}
+
+/// Free the live sessions, then close the store.
+pub fn deinit(self: *State) void {
+    self.sessions.deinit();
+    self.db.deinit();
+}
 
 /// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
 pub fn nowMillis(self: *const State) u64 {

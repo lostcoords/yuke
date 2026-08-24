@@ -161,17 +161,11 @@ const TestState = struct {
         const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
         // Database.open is the last fallible step. It closes conn on failure.
         const db = try database.Database.open(conn);
-        return .{ .rt = rt, .state = .{
-            .gpa = std.testing.allocator,
-            .io = rt.io(),
-            .db = db,
-            .config = .{ .listen = listen },
-            .home = "/home/test",
-        } };
+        return .{ .rt = rt, .state = State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test") };
     }
 
     fn deinit(self: *TestState) void {
-        self.state.db.deinit();
+        self.state.deinit();
         self.rt.deinit();
     }
 };
