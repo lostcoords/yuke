@@ -22,12 +22,22 @@ pub const config = @import("config/providers.zig");
 pub const transport = @import("transport.zig");
 pub const http_transport = @import("transport/http.zig");
 
-/// Serialize a provider request body from messages. A user turn and an internal model call use this function.
-/// The bytes use the allocator's storage, so pass an arena. The function supports the Anthropic protocol only.
-pub fn requestBody(arena: std.mem.Allocator, messages: []const wire.message.Message, request: ir.Request) ![]const u8 {
-    const request_ir = try build.build(arena, messages, .{});
+/// Serialize a provider request body for `protocol`. The result uses `arena` storage.
+/// The function uses `request.model` as the upstream model. A null `target` drops reasoning replay.
+pub fn requestBody(
+    arena: std.mem.Allocator,
+    messages: []const wire.message.Message,
+    protocol: wire.enums.ProviderProtocol,
+    request: ir.Request,
+    target: ?wire.message.TurnProvenance,
+) ![]const u8 {
+    const request_ir = try build.build(arena, messages, .{ .target = target });
     var body: std.Io.Writer.Allocating = .init(arena);
-    try request_anthropic.serialize(&body.writer, request, request_ir, .{});
+    switch (protocol) {
+        .@"anthropic-messages" => try request_anthropic.serialize(&body.writer, request, request_ir, .{}),
+        .@"openai-completions" => try request_openai_chat.serialize(&body.writer, request, request_ir, .{}),
+        .@"openai-responses" => try request_openai_responses.serialize(&body.writer, request, request_ir, .{}),
+    }
     return body.written();
 }
 

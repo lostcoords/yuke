@@ -7,7 +7,11 @@ const zqlite = @import("zqlite");
 const http = @import("daemon/http.zig");
 const database = @import("database/database.zig");
 const paths = @import("paths/paths.zig");
+const provider = @import("provider/provider.zig");
 const State = @import("daemon/State.zig");
+
+// The timeout wakes a stalled provider read. Cancellation also interrupts the read.
+const provider_idle_timeout = zio.Timeout.fromMilliseconds(60_000);
 
 // zio.debug_io breaks the WebSocket upgrade in zio v0.16.0. Keep it disabled.
 
@@ -32,6 +36,10 @@ pub fn main(init: std.process.Init) !void {
         .db_path = db_path,
     };
 
+    // The HTTP client outlives State. State.deinit joins every run before the defer calls HttpTransport.deinit.
+    var http_transport = provider.http_transport.HttpTransport.init(init.gpa, io, provider_idle_timeout);
+    defer http_transport.deinit();
+
     const conn = try zqlite.open(config.db_path, open_flags);
     var state = try State.init(
         init.gpa,
@@ -42,8 +50,28 @@ pub fn main(init: std.process.Init) !void {
     );
     defer state.deinit();
 
+    // Load the user providers. An invalid file fails startup. A missing file keeps the placeholder.
+    const providers_path = try resolveProvidersPath(init.gpa, init.environ_map);
+    defer if (providers_path) |path| init.gpa.free(path);
+    if (providers_path) |path| {
+        var loaded = try provider.config.load(init.gpa, io, path);
+        if (loaded.providers.len > 0) {
+            state.providers = loaded;
+            state.env = init.environ_map;
+            state.transport = http_transport.transportFor();
+            std.log.info("loaded {d} provider(s) from providers.json", .{loaded.providers.len});
+        } else loaded.deinit();
+    }
+
     std.log.info("daemon store at {s}", .{config.db_path});
     try http.serve(&state);
+}
+
+/// Return the `providers.json` path under the config directory. The caller owns it.
+fn resolveProvidersPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
+    const base = try paths.configDir(gpa, env) orelse return null;
+    defer gpa.free(base);
+    return try std.fs.path.join(gpa, &.{ base, "yuke", "providers.json" });
 }
 
 /// Resolve the SQLite path inside the data directory.

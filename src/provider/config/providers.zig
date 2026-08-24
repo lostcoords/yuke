@@ -281,17 +281,37 @@ fn cleanHeaderValue(value: []const u8) bool {
     return true;
 }
 
+/// A resolved value holds a provider and a model binding. Both values borrow the `Loaded` arena.
+pub const Resolved = struct {
+    provider: instance.ProviderInstance,
+    binding: instance.ModelBinding,
+};
+
+/// Resolve a provider-qualified "providerId/modelId" key against the loaded providers.
+/// Return null when the key names no provider or model.
+pub fn resolveModel(loaded: Loaded, qualified: []const u8) ?Resolved {
+    const slash = std.mem.indexOfScalar(u8, qualified, '/') orelse return null;
+    const provider_id = qualified[0..slash];
+    const model_id = qualified[slash + 1 ..];
+    for (loaded.providers) |p| {
+        if (!std.mem.eql(u8, p.id, provider_id)) continue;
+        for (p.models) |m| if (std.mem.eql(u8, m.id, model_id)) return .{ .provider = p, .binding = m };
+        return null; // the provider has no binding for the model
+    }
+    return null;
+}
+
 pub const ResolveError = error{ AuthMismatch, MissingCredential, CredentialUnsupported };
 
 /// Resolve one provider's API key from the process environment or a literal key.
 /// The result borrows the key. Never log the key.
-pub fn resolveApiKey(p: instance.ProviderInstance, env: *const EnvMap) ResolveError!resolve.Secret {
+pub fn resolveApiKey(p: instance.ProviderInstance, env: ?*const EnvMap) ResolveError!resolve.Secret {
     const src = switch (p.auth) {
         .api_key => |a| a.source,
         else => return error.AuthMismatch,
     };
     const key = switch (src) {
-        .env => |name| env.get(name) orelse return error.MissingCredential,
+        .env => |name| (if (env) |e| e.get(name) else null) orelse return error.MissingCredential,
         .literal => |bytes| bytes,
         .store => return error.CredentialUnsupported,
     };

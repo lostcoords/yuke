@@ -44,8 +44,15 @@ pub const HttpTransport = struct {
 
         // sendBodyComplete uses the body as a writer buffer, so give it a mutable copy.
         const body = try arena.dupe(u8, request.body);
-        const extra = try arena.alloc(std.http.Header, request.headers.len);
-        for (request.headers, extra) |h, *out| out.* = .{ .name = h.name, .value = h.value };
+        // The provider streams SSE, so ask for it. This Accept wins over a caller Accept.
+        const extra = try arena.alloc(std.http.Header, request.headers.len + 1);
+        extra[0] = .{ .name = "accept", .value = "text/event-stream" };
+        var extra_len: usize = 1;
+        for (request.headers) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "accept")) continue;
+            extra[extra_len] = .{ .name = h.name, .value = h.value };
+            extra_len += 1;
+        }
 
         const hb = try self.client.allocator.create(HttpBody);
         errdefer self.client.allocator.destroy(hb);
@@ -62,7 +69,7 @@ pub const HttpTransport = struct {
             .redirect_behavior = .not_allowed, // Never resend the key to another origin.
             .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
             .headers = .{ .content_type = .{ .override = "application/json" }, .accept_encoding = .omit },
-            .extra_headers = extra,
+            .extra_headers = extra[0..extra_len],
         });
         // A failed send or read leaves a partial exchange. Close the connection so the pool never reuses it.
         errdefer {

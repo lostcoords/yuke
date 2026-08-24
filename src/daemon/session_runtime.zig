@@ -16,6 +16,7 @@ pub const RunSlot = struct {
     handle: run.RunHandle,
     config: run.Config,
     phase: Phase = .pending_start,
+    protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // the run sets this when it resolves a provider
     started_published: bool = false,
     cancel_requested: bool = false,
     // The RPC task sets this to interrupt the run. The run task waits on it and cancels its reader.

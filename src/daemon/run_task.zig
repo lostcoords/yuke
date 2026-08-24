@@ -123,13 +123,21 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     try checkCanceled(slot);
     const session_id = slot.handle.started.session_id;
     const transcript = (try message_store.historyPage(&state.db, arena, session_id.raw, 0, max_transcript_messages)).messages;
-    const request_body = try provider.requestBody(arena, transcript, .{
-        .model = slot.config.model,
-        .system = slot.config.system_prompt,
-        .max_output_tokens = max_output_tokens,
-    });
+    const model = slot.config.model;
 
-    const body = try state.transport.open(arena, .{ .body = request_body });
+    const resolved = if (state.providers) |p| provider.config.resolveModel(p, model) else null;
+    // A configured daemon rejects an unknown model. An unconfigured daemon uses the placeholder transport.
+    if (resolved == null and state.providers != null) return error.UnknownModel;
+    const request = if (resolved) |r| try resolvedRequest(state, arena, slot, transcript, r) else fallback: {
+        // The fallback uses the injected or placeholder transport.
+        break :fallback provider.transport.Request{ .body = try provider.requestBody(arena, transcript, .@"anthropic-messages", .{
+            .model = model,
+            .system = slot.config.system_prompt,
+            .max_output_tokens = max_output_tokens,
+        }, .{ .protocol = .@"anthropic-messages", .model = model }) };
+    };
+
+    const body = try state.transport.open(arena, request);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {
@@ -137,10 +145,56 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         body.deinit();
     }
     try checkCanceled(slot);
+    try streamWithReducer(state, body, streamer, slot.protocol);
+}
 
-    var reducer = provider.anthropic.Reducer.init(state.gpa);
-    defer reducer.deinit();
-    try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
+/// Build the real provider request. It sets the run protocol, the endpoint URL, and the auth headers.
+fn resolvedRequest(
+    state: *State,
+    arena: std.mem.Allocator,
+    slot: *RunSlot,
+    transcript: []const wire.message.Message,
+    r: provider.config.Resolved,
+) !provider.transport.Request {
+    slot.protocol = r.provider.protocol;
+    const body_bytes = try provider.requestBody(arena, transcript, r.provider.protocol, .{
+        .model = r.binding.upstream_id,
+        .system = slot.config.system_prompt,
+        .max_output_tokens = std.math.cast(u32, r.binding.limits.max_output_tokens) orelse max_output_tokens,
+    }, .{ .protocol = r.provider.protocol, .model = slot.config.model });
+
+    const secret = try provider.config.resolveApiKey(r.provider, state.env);
+    var auth: std.ArrayList(provider.instance.Header) = .empty;
+    try provider.resolve.authHeaders(arena, r.provider, secret, &auth);
+    const headers = try arena.alloc(provider.transport.Header, auth.items.len);
+    for (auth.items, headers) |h, *out| out.* = .{ .name = h.name, .value = h.value };
+
+    return .{
+        .url = try provider.resolve.endpointUrl(arena, r.provider),
+        .headers = headers,
+        .body = body_bytes,
+    };
+}
+
+/// Reduce the response stream with the reducer for `protocol`.
+fn streamWithReducer(state: *State, body: provider.transport.ResponseBody, streamer: *Streamer, protocol: wire.enums.ProviderProtocol) !void {
+    switch (protocol) {
+        .@"anthropic-messages" => {
+            var reducer = provider.anthropic.Reducer.init(state.gpa);
+            defer reducer.deinit();
+            try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
+        },
+        .@"openai-completions" => {
+            var reducer = provider.openai_chat.Reducer.init(state.gpa);
+            defer reducer.deinit();
+            try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
+        },
+        .@"openai-responses" => {
+            var reducer = provider.openai_responses.Reducer.init(state.gpa);
+            defer reducer.deinit();
+            try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
+        },
+    }
 }
 
 const Terminal = union(enum) {
@@ -157,7 +211,11 @@ const Failure = struct {
 fn failure(err: anyerror) Failure {
     return switch (err) {
         error.OutOfMemory => .{ .code = .internal, .message = @errorName(err) },
-        error.IncompleteStream, error.Protocol, error.InvalidCharacter => .{ .code = .protocol, .message = @errorName(err) },
+        error.UnknownModel => .{ .code = .unknown_model, .message = @errorName(err) },
+        error.AuthFailed => .{ .code = .auth, .message = @errorName(err) },
+        error.RateLimited => .{ .code = .rate_limited, .message = @errorName(err) },
+        error.Timeout => .{ .code = .timeout, .message = @errorName(err) },
+        error.IncompleteStream, error.Protocol, error.InvalidCharacter, error.HttpChunkTruncated, error.HttpChunkInvalid => .{ .code = .protocol, .message = @errorName(err) },
         error.ConnectionRefused, error.ConnectionResetByPeer, error.EndOfStream => .{ .code = .network, .message = @errorName(err) },
         else => .{ .code = .provider, .message = @errorName(err) },
     };
@@ -199,7 +257,7 @@ fn terminalize(
         .cost = null,
         .time = .{ .created_at_ms = created_at, .completed_at_ms = ended_at },
         .@"error" = message_error,
-        .provenance = .{ .protocol = .@"anthropic-messages", .model = slot.config.model },
+        .provenance = .{ .protocol = slot.protocol, .model = slot.config.model },
     } };
     const outcome: wire.run.RunOutcome = switch (terminal) {
         .success => |reason| .{ .turn = .{ .finish = reason, .rounds = 1 } },

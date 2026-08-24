@@ -188,6 +188,7 @@ const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
+const provider = @import("../provider/provider.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -860,4 +861,92 @@ test "cancel run interrupts a blocked provider read" {
     try std.testing.expectEqual(@as(usize, 2), history.len);
     try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
     try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
+}
+
+/// This transport records the request and replays a fixed Anthropic reply.
+const CaptureTransport = struct {
+    gpa: std.mem.Allocator,
+    reply: []const u8,
+    url: std.ArrayList(u8) = .empty,
+    body: std.ArrayList(u8) = .empty,
+    api_key: std.ArrayList(u8) = .empty,
+
+    fn deinit(self: *CaptureTransport) void {
+        self.url.deinit(self.gpa);
+        self.body.deinit(self.gpa);
+        self.api_key.deinit(self.gpa);
+    }
+
+    fn transportFor(self: *CaptureTransport) transport.Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    const vtable: transport.Transport.VTable = .{ .open = open };
+
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+        const self: *CaptureTransport = @ptrCast(@alignCast(ctx));
+        try self.url.appendSlice(self.gpa, request.url);
+        try self.body.appendSlice(self.gpa, request.body);
+        for (request.headers) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "x-api-key")) try self.api_key.appendSlice(self.gpa, h.value);
+        }
+        const reader = try arena.create(Reader);
+        reader.* = .{ .bytes = self.reply };
+        return .{ .ctx = reader, .vtable = &Reader.vtable };
+    }
+
+    const Reader = struct {
+        bytes: []const u8,
+        offset: usize = 0,
+
+        const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = noop };
+
+        fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+            const self: *Reader = @ptrCast(@alignCast(ctx));
+            const remaining = self.bytes[self.offset..];
+            const n = @min(buf.len, remaining.len);
+            @memcpy(buf[0..n], remaining[0..n]);
+            self.offset += n;
+            return n;
+        }
+        fn noop(_: *anyopaque) void {}
+    };
+};
+
+test "a provider-qualified model builds the real endpoint, headers, and body" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // State.deinit frees the loaded provider layer. This test must not deinit it.
+    fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic-messages",
+        \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-test"}}},
+        \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
+        \\ "models":[{"id":"fast","upstream_id":"acme-fast-1","limits":{"context_window":200000,"max_output_tokens":8192}}]}]}
+    );
+    var capture: CaptureTransport = .{ .gpa = std.testing.allocator, .reply = provider.transport.placeholder_reply };
+    defer capture.deinit();
+    fixture.state.transport = capture.transportFor();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    try std.testing.expectEqualStrings("https://llm.acme.example/v1/messages", capture.url.items);
+    try std.testing.expectEqualStrings("sk-test", capture.api_key.items);
+    // The body carries the exact upstream model, never the session-qualified name.
+    const sent = try std.json.parseFromSliceLeaky(std.json.Value, a, capture.body.items, .{});
+    try std.testing.expectEqualStrings("acme-fast-1", sent.object.get("model").?.string);
+    try std.testing.expect(std.mem.indexOf(u8, capture.body.items, "acme/fast") == null);
+    // The committed assistant message records the resolved protocol and the session model.
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(wire.enums.ProviderProtocol.@"anthropic-messages", history[1].assistant.provenance.?.protocol);
+    try std.testing.expectEqualStrings("acme/fast", history[1].assistant.provenance.?.model);
 }

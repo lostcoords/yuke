@@ -20,6 +20,8 @@ home: []const u8, // The default workspace root. A create with no workspace path
 sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
 registry: connection.Registry, // Live connections and the reverse subscription index.
 transport: provider.transport.Transport, // Opens each provider response. A test or adapter overrides it.
+providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
+env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
 run_group: zio.Group = .init, // Own every launched run task until it returns.
 shutting_down: bool = false,
 
@@ -74,6 +76,7 @@ pub fn deinit(self: *State) void {
     self.run_group.cancel();
     self.registry.deinit();
     self.sessions.deinit();
+    if (self.providers) |*p| p.deinit();
     self.db.deinit();
 }
 
