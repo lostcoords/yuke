@@ -76,6 +76,68 @@ pub fn drain(
     if (out.items.len == 0 or out.items[out.items.len - 1] != .done) return error.IncompleteStream;
 }
 
+/// Pull the response and hand each StreamEvent to `onEvent`. Reset the scratch after each read, so parse
+/// trees do not accumulate for the whole turn. An event borrows the scratch, so `onEvent` copies what it
+/// keeps before it returns.
+pub fn stream(
+    gpa: std.mem.Allocator,
+    body: ResponseBody,
+    reducer: anytype,
+    ctx: anytype,
+    comptime onEvent: fn (@TypeOf(ctx), event.StreamEvent) anyerror!void,
+) !void {
+    var parser: sse.Sse = .init(gpa);
+    defer parser.deinit();
+    var scratch: std.heap.ArenaAllocator = .init(gpa);
+    defer scratch.deinit();
+    // The reducer appends events with its own gpa, so this backing survives a scratch reset.
+    var events: std.ArrayList(event.StreamEvent) = .empty;
+    defer events.deinit(gpa);
+
+    var buf: [4096]u8 = undefined;
+    var total: usize = 0;
+    var saw_done = false;
+
+    while (true) {
+        const n = try body.read(&buf);
+        if (n == 0) break;
+        total += n;
+        if (total > max_response_bytes) return error.ResponseTooLarge;
+        // A fresh frames list each read. Its backing lives in scratch and is discarded with the reset.
+        var frames: std.ArrayList([]const u8) = .empty;
+        try parser.push(buf[0..n], scratch.allocator(), &frames);
+        for (frames.items) |data| {
+            events.clearRetainingCapacity();
+            try reducer.decode(data, scratch.allocator(), &events);
+            for (events.items) |ev| {
+                if (ev == .done) saw_done = true;
+                try onEvent(ctx, ev);
+            }
+        }
+        _ = scratch.reset(.retain_capacity); // free this read's frame slices and parse trees
+    }
+
+    // Drain the parser tail and the reducer's terminal event.
+    var tail: std.ArrayList([]const u8) = .empty;
+    try parser.finish(scratch.allocator(), &tail);
+    for (tail.items) |data| {
+        events.clearRetainingCapacity();
+        try reducer.decode(data, scratch.allocator(), &events);
+        for (events.items) |ev| {
+            if (ev == .done) saw_done = true;
+            try onEvent(ctx, ev);
+        }
+    }
+    events.clearRetainingCapacity();
+    try reducer.finish(&events);
+    for (events.items) |ev| {
+        if (ev == .done) saw_done = true;
+        try onEvent(ctx, ev);
+    }
+
+    if (!saw_done) return error.IncompleteStream; // a stream that ends before the terminal done is truncated
+}
+
 /// Replays canned response bytes. `chunk_size` fragments the stream to exercise partial reads and the
 /// SSE parser's cross-read state. 0 delivers the whole body in one read.
 pub const MockTransport = struct {
@@ -203,6 +265,54 @@ test "cancel makes the next read fail" {
     b.cancel();
     var buf: [16]u8 = undefined;
     try testing.expectError(error.Canceled, b.read(&buf));
+}
+
+const StreamCollector = struct {
+    gpa: std.mem.Allocator,
+    kinds: std.ArrayList(std.meta.Tag(event.StreamEvent)) = .empty,
+    text: std.ArrayList(u8) = .empty,
+    stop: ?wire.enums.StopReason = null,
+
+    fn deinit(self: *StreamCollector) void {
+        self.kinds.deinit(self.gpa);
+        self.text.deinit(self.gpa);
+    }
+    fn on(self: *StreamCollector, ev: event.StreamEvent) !void {
+        try self.kinds.append(self.gpa, std.meta.activeTag(ev));
+        switch (ev) {
+            .text_delta => |d| try self.text.appendSlice(self.gpa, d.text),
+            .done => |d| self.stop = d.stop_reason,
+            else => {},
+        }
+    }
+};
+
+test "stream delivers each event to the callback across fragmented reads" {
+    var reducer = anthropic.Reducer.init(testing.allocator);
+    defer reducer.deinit();
+    var collector: StreamCollector = .{ .gpa = testing.allocator };
+    defer collector.deinit();
+
+    // A 7-byte chunk splits SSE events across reads, so the parser holds cross-read state.
+    var mock = MockTransport.init(canned_text_turn, 7);
+    try stream(testing.allocator, mock.body(), &reducer, &collector, StreamCollector.on);
+
+    try testing.expectEqualStrings("Hello", collector.text.items);
+    try testing.expectEqual(wire.enums.StopReason.stop, collector.stop.?);
+    // The order is block_started, two text_delta, block_stopped, done.
+    try testing.expectEqual(@as(usize, 5), collector.kinds.items.len);
+    try testing.expectEqual(std.meta.activeTag(event.StreamEvent{ .block_started = undefined }), collector.kinds.items[0]);
+    try testing.expectEqual(std.meta.activeTag(event.StreamEvent{ .done = undefined }), collector.kinds.items[4]);
+}
+
+test "stream reports a truncated stream" {
+    var reducer = anthropic.Reducer.init(testing.allocator);
+    defer reducer.deinit();
+    var collector: StreamCollector = .{ .gpa = testing.allocator };
+    defer collector.deinit();
+
+    var mock = MockTransport.init(canned_truncated, 0);
+    try testing.expectError(error.IncompleteStream, stream(testing.allocator, mock.body(), &reducer, &collector, StreamCollector.on));
 }
 
 const wire = @import("wire");
