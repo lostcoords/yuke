@@ -7,10 +7,13 @@ pub const Screen = vaxis.Screen;
 pub const Window = vaxis.Window;
 pub const Parser = vaxis.Parser;
 
-test "vaxis sans-io cores are available" {
-    _ = Cell;
-    _ = Style;
-    _ = Screen;
-    _ = Window;
-    _ = Parser;
+pub const Tty = @import("tty.zig").Tty;
+pub const Winsize = @import("tty.zig").Winsize;
+pub const Input = @import("input.zig").Input;
+pub const Event = @import("input.zig").Event;
+pub const Key = @import("input.zig").Key;
+
+test {
+    _ = @import("tty.zig");
+    _ = @import("input.zig");
 }
