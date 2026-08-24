@@ -219,18 +219,6 @@ fn decodeFromTable(
     return error.InvalidEnumTag;
 }
 
-fn requestParamsFromValue(a: std.mem.Allocator, method: enums.MethodName, pv: std.json.Value, optional_pv: std.json.Value, o: std.json.ParseOptions) !RequestParams {
-    return decodeFromTable(a, method, pv, optional_pv, o, methods, RequestParams, "params");
-}
-
-fn broadcastDataFromValue(a: std.mem.Allocator, method: enums.BroadcastName, v: std.json.Value, o: std.json.ParseOptions) !BroadcastData {
-    return decodeFromTable(a, method, v, v, o, broadcasts, BroadcastData, "data");
-}
-
-fn resultFromTable(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
-    return decodeFromTable(a, method, v, v, o, methods, ResponseResult, "result");
-}
-
 /// RPC response envelope.
 pub const Response = union(enum) {
     ok: ResponseOk,
@@ -277,7 +265,7 @@ pub const Request = struct {
         var arm_opts = o;
         arm_opts.ignore_unknown_fields = true;
 
-        const params = try requestParamsFromValue(a, method, pv, optional_pv, arm_opts);
+        const params = try decodeFromTable(a, method, pv, optional_pv, arm_opts, methods, RequestParams, "params");
 
         return .{ .id = id, .method = method, .params = params };
     }
@@ -332,7 +320,7 @@ pub const Notification = struct {
         var arm_opts = o;
         arm_opts.ignore_unknown_fields = true;
 
-        const params = try broadcastDataFromValue(a, method, pv, arm_opts);
+        const params = try decodeFromTable(a, method, pv, pv, arm_opts, broadcasts, BroadcastData, "data");
 
         return .{ .method = method, .params = params };
     }
@@ -351,7 +339,7 @@ pub const Notification = struct {
 pub fn resultFromValue(a: std.mem.Allocator, method: enums.MethodName, v: std.json.Value, o: std.json.ParseOptions) !ResponseResult {
     var arm_opts = o;
     arm_opts.ignore_unknown_fields = true;
-    return resultFromTable(a, method, v, arm_opts);
+    return decodeFromTable(a, method, v, v, arm_opts, methods, ResponseResult, "result");
 }
 
 /// Decode a method response from its JSON value.

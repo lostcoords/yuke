@@ -258,11 +258,9 @@ fn validateParamShape(comptime Expected: type, comptime Actual: type) void {
     if (actual.is_tuple and actual.fields.len != 0) @compileError("SQL parameters must be a named struct");
     const expected = @typeInfo(Expected).@"struct".fields;
     if (actual.fields.len != expected.len) @compileError("wrong SQL parameter count for " ++ @typeName(Expected));
+    // Equal counts plus every expected field present proves the two field sets match.
     inline for (expected) |field| {
         if (!@hasField(Actual, field.name)) @compileError("missing SQL parameter field: " ++ field.name);
-    }
-    inline for (actual.fields) |field| {
-        if (!@hasField(Expected, field.name)) @compileError("unknown SQL parameter field: " ++ field.name);
     }
 }
 
