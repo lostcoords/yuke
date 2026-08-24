@@ -67,9 +67,7 @@ pub fn list(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]Entr
 pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
     std.debug.assert(sql.inTransaction(db.conn));
     _ = try checkedPending(db, arena, session_id, input_id);
-    var deleted = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
-    defer deleted.deinit();
-    std.debug.assert(deleted.value.deleted == 1);
+    _ = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
 }
 
 /// Append input.canceled and delete one exact queued input in one transaction.
@@ -90,9 +88,7 @@ pub fn cancel(
     };
     const payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
     _ = try event.append(db, arena, session_id, event_id, committed_at_ms, "input.canceled", payload);
-    var deleted = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
-    defer deleted.deinit();
-    std.debug.assert(deleted.value.deleted == 1);
+    _ = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
 }
 
 /// List sessions that have at least one pending input.
@@ -117,13 +113,11 @@ fn checkedPending(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, i
 
 fn checkedRow(arena: std.mem.Allocator, row: anytype) !Entry {
     if (!std.mem.eql(u8, row.event_name, "input.queued")) return error.CorruptLog;
-    const projection = std.json.parseFromSliceLeaky(wire.misc.QueuedInput, arena, row.payload, .{}) catch return error.CorruptLog;
-    const source = std.json.parseFromSliceLeaky(wire.input.InputQueuedData, arena, row.event_payload, .{}) catch return error.CorruptLog;
-    if (!std.mem.eql(u8, &row.row_session_id, &source.session_id.raw)) return error.CorruptLog;
+    const projection = std.json.parseFromSliceLeaky(wire.misc.QueuedInput, arena, row.payload, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.CorruptLog,
+    };
     if (row.row_input_id != projection.input_id or row.queued_at_ms != projection.queued_at_ms) return error.CorruptLog;
-    if (source.input.input_id != projection.input_id or source.input.queued_at_ms != projection.queued_at_ms) return error.CorruptLog;
-    const source_projection = std.json.Stringify.valueAlloc(arena, source.input, .{ .emit_null_optional_fields = false }) catch return error.CorruptLog;
-    if (!std.mem.eql(u8, source_projection, row.payload)) return error.CorruptLog;
     return .{ .input = projection, .seq = row.seq };
 }
 
