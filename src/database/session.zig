@@ -2,6 +2,7 @@
 //! The event log omits session.summary_changed, so this table is authoritative.
 
 const std = @import("std");
+const sql = @import("sql");
 const Database = @import("database.zig").Database;
 const queries_gen = @import("queries_gen.zig");
 
@@ -76,26 +77,24 @@ pub fn snapshot(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Snapshot 
 
 /// Record the one open run for a session. Run inside the start transaction.
 pub fn setOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64, kind: []const u8, started_at_ms: u64) !void {
-    var row = try db.queries.set_open_run.one(arena, .{
+    std.debug.assert(sql.inTransaction(db.conn));
+    _ = try db.queries.set_open_run.one(arena, .{
         .id = id,
         .run_id = run_id,
         .kind = kind,
         .started_at_ms = started_at_ms,
     });
-    defer row.deinit();
-    std.debug.assert(row.value.changed == 1);
 }
 
 /// Clear the exact open run that a terminal event closes. Run inside the terminal transaction.
 pub fn clearOpenRun(db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64, kind: []const u8, started_at_ms: u64) !void {
-    var row = try db.queries.clear_open_run.one(arena, .{
+    std.debug.assert(sql.inTransaction(db.conn));
+    _ = try db.queries.clear_open_run.one(arena, .{
         .id = id,
         .run_id = run_id,
         .kind = kind,
         .started_at_ms = started_at_ms,
     });
-    defer row.deinit();
-    std.debug.assert(row.value.changed == 1);
 }
 
 pub const OpenRun = struct {
@@ -111,13 +110,11 @@ pub fn openRuns(db: *Database, arena: std.mem.Allocator) ![]const OpenRun {
     defer rows.deinit();
     var out: std.ArrayList(OpenRun) = .empty;
     while (try rows.next(arena)) |owned| {
-        var row = owned;
-        defer row.deinit();
         try out.append(arena, .{
-            .session_id = row.value.id,
-            .run_id = row.value.run_id,
-            .kind = try arena.dupe(u8, row.value.kind),
-            .started_at_ms = row.value.started_at_ms,
+            .session_id = owned.value.id,
+            .run_id = owned.value.run_id,
+            .kind = owned.value.kind,
+            .started_at_ms = owned.value.started_at_ms,
         });
     }
     return out.items;
