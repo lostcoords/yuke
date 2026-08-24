@@ -208,7 +208,7 @@ fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u
 /// because the 2-byte length can hold a '{' byte.
 fn responsePayload(bytes: []const u8) ![]const u8 {
     if (bytes.len < 2) return error.InvalidResponse;
-    const indicator = bytes[1] & 0x7f; // a server frame is never masked
+    const indicator = bytes[1] & 0x7f; // The server sends a frame without a mask.
     var offset: usize = 2;
     var payload_len: usize = indicator;
     if (indicator == 126) {
@@ -220,7 +220,7 @@ fn responsePayload(bytes: []const u8) ![]const u8 {
         payload_len = @intCast(std.mem.readInt(u64, bytes[2..10], .big));
         offset = 10;
     }
-    if (offset + payload_len > bytes.len) return error.InvalidResponse;
+    if (payload_len > bytes.len - offset) return error.InvalidResponse; // subtract to avoid an overflow
     return bytes[offset .. offset + payload_len];
 }
 

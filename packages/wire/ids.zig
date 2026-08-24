@@ -11,7 +11,7 @@ pub fn HexId(comptime N: usize) type {
         const Self = @This();
         pub const byte_len = N;
 
-        /// Wrap raw bytes as an id. Callers at the wire boundary use it in place of a struct literal.
+        /// Wrap raw bytes as an id. Callers at the wire boundary use this value in place of a struct literal.
         pub fn from(raw: [N]u8) Self {
             return .{ .bytes = raw };
         }
@@ -32,6 +32,7 @@ pub fn HexId(comptime N: usize) type {
                 else => return error.UnexpectedToken,
             };
             if (text.len != N * 2) return error.LengthMismatch;
+            if (!isLowerHex(text)) return error.InvalidCharacter; // the wire uses lowercase hex only
             var self: Self = undefined;
             _ = std.fmt.hexToBytes(&self.bytes, text) catch return error.InvalidCharacter;
             return self;
@@ -87,4 +88,20 @@ test isLowerHex {
     try std.testing.expect(isLowerHex("0123456789abcdef"));
     try std.testing.expect(!isLowerHex("0123456789ABCDEF")); // uppercase rejected
     try std.testing.expect(!isLowerHex("../etc/passwd_xx")); // path chars rejected
+}
+
+test "HexId encodes lowercase hex and rejects uppercase or a wrong length" {
+    const Id = HexId(4);
+
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(Id.from(.{ 0xab, 0xcd, 0x01, 0x23 }), .{}, &buf.writer);
+    try std.testing.expectEqualStrings("\"abcd0123\"", buf.written());
+
+    const decoded = try std.json.parseFromSlice(Id, std.testing.allocator, "\"abcd0123\"", .{});
+    defer decoded.deinit();
+    try std.testing.expectEqual([_]u8{ 0xab, 0xcd, 0x01, 0x23 }, decoded.value.bytes);
+
+    try std.testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(Id, std.testing.allocator, "\"ABCD0123\"", .{}));
+    try std.testing.expectError(error.LengthMismatch, std.json.parseFromSlice(Id, std.testing.allocator, "\"abcd\"", .{}));
 }
