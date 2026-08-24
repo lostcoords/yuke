@@ -209,7 +209,6 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
         .agents = &.{},
         .session_revision = 0,
         .catalog_rev = .bytes([_]u8{0} ** 64),
-        .catalog_health = .{ .skipped = &.{} },
         .capabilities = &.{},
     };
 }

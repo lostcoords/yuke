@@ -1,4 +1,4 @@
-//! Provider/model catalog: health, list/refresh results, and skip reasons.
+//! Provider/model catalog and list/refresh results.
 
 const std = @import("std");
 const ids = @import("ids.zig");
@@ -7,13 +7,6 @@ const tagged = @import("tagged.zig");
 /// Payload for `catalog.changed`.
 pub const CatalogChangedData = struct {
     catalog_rev: ids.CatalogRev,
-    health: CatalogHealth,
-};
-
-/// Catalog load health.
-pub const CatalogHealth = struct {
-    skipped: []const SkippedProvider,
-    load_error: ?[]const u8 = null,
 };
 
 /// Params for catalog.list.
@@ -42,7 +35,6 @@ pub const CatalogListResult = union(enum) {
 pub const CatalogListResultFull = struct {
     catalog_rev: ids.CatalogRev,
     models: []const ModelInfo,
-    health: CatalogHealth,
 };
 
 /// Client's revision is current; no catalog data included.
@@ -53,7 +45,6 @@ pub const CatalogListResultUnchanged = struct {
 /// Result of catalog.refresh.
 pub const CatalogRefreshResult = struct {
     catalog_rev: ids.CatalogRev,
-    health: CatalogHealth,
 };
 
 /// United States dollars per million tokens.
@@ -78,59 +69,18 @@ pub const ModelInfo = struct {
     cost: ModelCost,
 };
 
-/// Providers skipped during catalog load. Non-owning.
-pub const SkippedProvider = struct {
-    provider: []const u8,
-    reason: SkipReason,
-};
-
-/// Reason a provider was skipped.
-pub const SkipReason = union(enum) {
-    missing_credential: SkipReasonMissingCredential,
-    invalid_config: SkipReasonInvalidConfig,
-
-    /// Decode a tagged wire union from JSON.
-    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
-        return tagged.jsonParse(@This(), a, s, o);
-    }
-    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
-        return tagged.fromValue(@This(), a, v, o);
-    }
-    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
-        return tagged.stringify(@This(), self, jw);
-    }
-};
-
-/// Provider config was invalid.
-pub const SkipReasonInvalidConfig = struct {
-    message: []const u8,
-};
-
-/// Required credential was absent.
-pub const SkipReasonMissingCredential = struct {
-    env: []const u8,
-};
-
-const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "catalog list result full round-trips with nested skip reason union" {
-    // `load_error` is null → omitted on encode; input carries it as null to prove null decodes.
-    const in =
-        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}],"load_error":null}}
+test "catalog list result full round-trips without availability state" {
+    const testing = std.testing;
+    const input =
+        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[]}
     ;
-    const out =
-        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[],"health":{"skipped":[{"provider":"acme","reason":{"type":"missing_credential","env":"ACME_API_KEY"}}]}}
-    ;
-    const parsed = try std.json.parseFromSlice(CatalogListResult, testing.allocator, in, opts);
+    const parsed = try std.json.parseFromSlice(CatalogListResult, testing.allocator, input, .{});
     defer parsed.deinit();
     try testing.expect(parsed.value == .full);
-    try testing.expectEqual(@as(usize, 1), parsed.value.full.health.skipped.len);
-    try testing.expect(parsed.value.full.health.skipped[0].reason == .missing_credential);
-    try testing.expectEqualStrings("ACME_API_KEY", parsed.value.full.health.skipped[0].reason.missing_credential.env);
+    try testing.expectEqual(@as(usize, 0), parsed.value.full.models.len);
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
-    try testing.expectEqualStrings(out, buf.written());
+    try testing.expectEqualStrings(input, buf.written());
 }

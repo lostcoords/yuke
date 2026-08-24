@@ -72,7 +72,6 @@ pub const ResponseResult = union(enum) {
     catalog_list_result: catalog.CatalogListResult,
     catalog_refresh_result: catalog.CatalogRefreshResult,
     auth_list_result: auth.AuthListResult,
-    auth_set_api_key_result: auth.AuthSetApiKeyResult,
     auth_login_result: auth.AuthLoginResult,
     workspace_describe_result: workspace.WorkspaceDescribeResult,
     workspace_browse_result: workspace.WorkspaceBrowseResult,
@@ -146,7 +145,7 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"catalog.list", .params = catalog.CatalogListParams, .result = catalog.CatalogListResult, .params_optional = true },
     .{ .name = .@"catalog.refresh", .params = misc.Empty, .result = catalog.CatalogRefreshResult, .params_optional = true },
     .{ .name = .@"auth.list", .params = misc.Empty, .result = auth.AuthListResult, .params_optional = true },
-    .{ .name = .@"auth.set_api_key", .params = auth.AuthSetApiKeyParams, .result = auth.AuthSetApiKeyResult, .params_optional = false },
+    .{ .name = .@"auth.set_api_key", .params = auth.AuthSetApiKeyParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.login", .params = auth.AuthLoginParams, .result = auth.AuthLoginResult, .params_optional = false },
     .{ .name = .@"auth.cancel_login", .params = auth.AuthCancelLoginParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.logout", .params = auth.AuthLogoutParams, .result = misc.Empty, .params_optional = false },
@@ -399,7 +398,7 @@ test "notification envelope round-trips" {
 
 test "result dispatch and response error" {
     const result_json =
-        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","catalog_health":{"skipped":[]},"capabilities":[]}
+        \\{"protocol":1,"daemon":{"version":"v","server_now_ms":1},"workspaces":[],"profiles":[],"agents":[],"session_revision":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","capabilities":[]}
     ;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -407,6 +406,9 @@ test "result dispatch and response error" {
     const result = try resultFromValue(arena.allocator(), .initialize, result_value.value, parse_opts);
     try testing.expect(result == .initialize_result);
     try testing.expectEqual(@as(u32, 1), result.initialize_result.protocol);
+
+    const auth_result = try resultFromValue(arena.allocator(), .@"auth.set_api_key", .{ .object = .empty }, parse_opts);
+    try testing.expect(auth_result == .empty);
 
     const error_json =
         \\{"id":"req-1","error":{"code":-32602,"message":"bad request"}}

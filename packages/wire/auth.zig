@@ -107,7 +107,6 @@ pub const AuthLogoutParams = struct {
 pub const AuthProvider = struct {
     provider_id: ids.ProviderId,
     credential_kind: ?enums.AuthCredentialKind = null,
-    restart_required: bool,
     login_flows: []const enums.AuthFlow,
     pending_login: ?AuthLoginSummary = null,
 };
@@ -116,11 +115,6 @@ pub const AuthProvider = struct {
 pub const AuthSetApiKeyParams = struct {
     provider_id: ids.ProviderId,
     api_key: []const u8,
-};
-
-/// Result of staging an API-key replacement.
-pub const AuthSetApiKeyResult = struct {
-    restart_required: bool,
 };
 
 const testing = std.testing;
@@ -143,7 +137,7 @@ test "login result union round-trips a device_code arm" {
 
 test "provider decodes null requiredNullable fields" {
     const json =
-        \\{"provider_id":"anthropic","credential_kind":null,"restart_required":false,"login_flows":["browser"],"pending_login":null}
+        \\{"provider_id":"anthropic","credential_kind":null,"login_flows":["browser"],"pending_login":null}
     ;
     const parsed = try std.json.parseFromSlice(AuthProvider, testing.allocator, json, opts);
     defer parsed.deinit();

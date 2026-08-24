@@ -4,7 +4,6 @@ const std = @import("std");
 const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 const content = @import("content.zig");
-const catalog = @import("catalog.zig");
 const initialize = @import("initialize.zig");
 const message = @import("message.zig");
 const run = @import("run.zig");
@@ -58,7 +57,6 @@ pub const InitializeResult = struct {
     agents: []const []const u8,
     session_revision: ids.SessionRevision,
     catalog_rev: ids.CatalogRev,
-    catalog_health: catalog.CatalogHealth,
     capabilities: []const enums.Capability,
 };
 

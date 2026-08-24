@@ -36,7 +36,6 @@ pub const limits = struct {
     pub const max_session_list_cursor_bytes: u64 = 256;
     pub const max_session_list_page_size: u64 = 100;
     pub const max_skills: u64 = 1024;
-    pub const max_skipped_providers: u64 = 256;
     pub const max_snapshot_configs: u64 = 501;
     pub const max_subscriptions: u64 = 64;
     pub const max_tool_output_stream_bytes: u64 = 1048576;

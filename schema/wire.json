@@ -32,7 +32,6 @@
     "max_session_list_cursor_bytes": 256,
     "max_session_list_page_size": 100,
     "max_skills": 1024,
-    "max_skipped_providers": 256,
     "max_snapshot_configs": 501,
     "max_subscriptions": 64,
     "max_tool_output_stream_bytes": 1048576,
@@ -219,7 +218,7 @@
       "name": "auth.set_api_key",
       "doc": "Set an API key for a provider.",
       "params": "AuthSetApiKeyParams",
-      "result": "AuthSetApiKeyResult",
+      "result": "Empty",
       "direction": "clientToServer",
       "paramsOptional": false
     },
@@ -781,11 +780,6 @@
           "presence": "optional"
         },
         {
-          "name": "restart_required",
-          "type": "bool",
-          "presence": "required"
-        },
-        {
           "name": "login_flows",
           "type": "[]AuthFlow",
           "presence": "required"
@@ -809,17 +803,6 @@
         {
           "name": "api_key",
           "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AuthSetApiKeyResult",
-      "doc": "Result of staging an API-key replacement.",
-      "fields": [
-        {
-          "name": "restart_required",
-          "type": "bool",
           "presence": "required"
         }
       ]
@@ -1090,27 +1073,6 @@
           "name": "catalog_rev",
           "type": "CatalogRev",
           "presence": "required"
-        },
-        {
-          "name": "health",
-          "type": "CatalogHealth",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "CatalogHealth",
-      "doc": "Catalog load health.",
-      "fields": [
-        {
-          "name": "skipped",
-          "type": "[]SkippedProvider",
-          "presence": "required"
-        },
-        {
-          "name": "load_error",
-          "type": "string",
-          "presence": "optional"
         }
       ]
     },
@@ -1138,11 +1100,6 @@
           "name": "models",
           "type": "[]ModelInfo",
           "presence": "required"
-        },
-        {
-          "name": "health",
-          "type": "CatalogHealth",
-          "presence": "required"
         }
       ]
     },
@@ -1164,11 +1121,6 @@
         {
           "name": "catalog_rev",
           "type": "CatalogRev",
-          "presence": "required"
-        },
-        {
-          "name": "health",
-          "type": "CatalogHealth",
           "presence": "required"
         }
       ]
@@ -1251,44 +1203,6 @@
         {
           "name": "cost",
           "type": "ModelCost",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SkippedProvider",
-      "doc": "Providers skipped during catalog load. Non-owning.",
-      "fields": [
-        {
-          "name": "provider",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "reason",
-          "type": "SkipReason",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SkipReasonInvalidConfig",
-      "doc": "Provider config was invalid.",
-      "fields": [
-        {
-          "name": "message",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SkipReasonMissingCredential",
-      "doc": "Required credential was absent.",
-      "fields": [
-        {
-          "name": "env",
-          "type": "string",
           "presence": "required"
         }
       ]
@@ -2187,11 +2101,6 @@
         {
           "name": "catalog_rev",
           "type": "CatalogRev",
-          "presence": "required"
-        },
-        {
-          "name": "catalog_health",
-          "type": "CatalogHealth",
           "presence": "required"
         },
         {
@@ -3696,21 +3605,6 @@
       ]
     },
     {
-      "name": "SkipReason",
-      "doc": "Reason a provider was skipped.",
-      "discriminator": "type",
-      "arms": [
-        {
-          "tag": "missing_credential",
-          "type": "SkipReasonMissingCredential"
-        },
-        {
-          "tag": "invalid_config",
-          "type": "SkipReasonInvalidConfig"
-        }
-      ]
-    },
-    {
       "name": "ActivityState",
       "doc": "Session activity state; locator fields let clients detect drift and resync.",
       "discriminator": "type",
@@ -4094,9 +3988,6 @@
         },
         {
           "type": "AuthListResult"
-        },
-        {
-          "type": "AuthSetApiKeyResult"
         },
         {
           "type": "AuthLoginResult"
