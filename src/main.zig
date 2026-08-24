@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
         io,
         try database.Database.open(conn),
         config,
-        init.environ_map.get("HOME") orelse "/",
+        paths.homeDir(init.environ_map) orelse "/",
     );
     defer state.deinit();
 
