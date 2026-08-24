@@ -69,20 +69,3 @@ pub const close_codes = struct {
     pub const shutting_down: u16 = 1012;
     pub const unsupported_protocol: u16 = 4000;
 };
-
-/// Delivery policy class.
-pub const DeliveryClass = enum {
-    ungated,
-    durable_gated,
-    live_gated,
-    live_droppable,
-
-    pub fn props(self: @This()) struct { gated: bool, droppable: bool, sequenced: bool } {
-        return switch (self) {
-            .ungated => .{ .gated = false, .droppable = false, .sequenced = false },
-            .durable_gated => .{ .gated = true, .droppable = false, .sequenced = true },
-            .live_gated => .{ .gated = true, .droppable = false, .sequenced = false },
-            .live_droppable => .{ .gated = true, .droppable = true, .sequenced = false },
-        };
-    }
-};

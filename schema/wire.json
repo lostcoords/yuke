@@ -65,325 +65,381 @@
   "methods": [
     {
       "name": "initialize",
+      "doc": "Establish the connection and negotiate the protocol version.",
       "params": "InitializeParams",
       "result": "InitializeResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.list",
+      "doc": "List sessions.",
       "params": "SessionListParams",
       "result": "SessionListResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "session.create",
+      "doc": "Create a new session.",
       "params": "CreateSession",
       "result": "SessionResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "session.patch",
+      "doc": "Update a session's mutable fields.",
       "params": "SessionPatchParams",
       "result": "SessionResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.remove",
+      "doc": "Remove a session.",
       "params": "SessionRemoveParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.fork",
+      "doc": "Fork a session at a message.",
       "params": "SessionForkParams",
       "result": "SessionResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.compact",
+      "doc": "Compact a session's transcript.",
       "params": "SessionCompactParams",
       "result": "SessionCompactResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.rewind",
+      "doc": "Rewind a session to before a message.",
       "params": "SessionRewindParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.send_input",
+      "doc": "Send user input to a session.",
       "params": "SessionSendInputParams",
       "result": "SessionSendInputResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.cancel_input",
+      "doc": "Cancel a queued input.",
       "params": "SessionCancelInputParams",
       "result": "SessionCancelInputResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.cancel_run",
+      "doc": "Cancel the active run.",
       "params": "SessionCancelRunParams",
       "result": "SessionCancelRunResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.resync",
+      "doc": "Resync a session after live deltas were shed.",
       "params": "SessionResyncParams",
       "result": "SessionResyncResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.history",
+      "doc": "Fetch a page of a session's transcript history.",
       "params": "SessionHistoryParams",
       "result": "SessionHistoryResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "permission.decide",
+      "doc": "Decide a pending permission request.",
       "params": "PermissionDecideParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "session.config",
+      "doc": "Fetch a session's run config.",
       "params": "SessionConfigParams",
       "result": "SessionConfigResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "subscription.set",
+      "doc": "Set the connection's broadcast subscriptions.",
       "params": "SubscriptionSetParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "catalog.list",
+      "doc": "List the model catalog.",
       "params": "CatalogListParams",
       "result": "CatalogListResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "catalog.refresh",
+      "doc": "Refresh the model catalog from providers.",
       "params": "Empty",
       "result": "CatalogRefreshResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "auth.list",
+      "doc": "List authentication providers and logins.",
       "params": "Empty",
       "result": "AuthListResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "auth.set_api_key",
+      "doc": "Set an API key for a provider.",
       "params": "AuthSetApiKeyParams",
       "result": "AuthSetApiKeyResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "auth.login",
+      "doc": "Begin a provider login flow.",
       "params": "AuthLoginParams",
       "result": "AuthLoginResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "auth.cancel_login",
+      "doc": "Cancel an in-progress login flow.",
       "params": "AuthCancelLoginParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "auth.logout",
+      "doc": "Log out of a provider.",
       "params": "AuthLogoutParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "workspace.describe",
+      "doc": "Describe a workspace.",
       "params": "WorkspaceDescribeParams",
       "result": "WorkspaceDescribeResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "workspace.browse",
+      "doc": "Browse a workspace's filesystem.",
       "params": "WorkspaceBrowseParams",
       "result": "WorkspaceBrowseResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": true
     },
     {
       "name": "workspace.remove",
+      "doc": "Remove a workspace.",
       "params": "WorkspaceRef",
       "result": "WorkspaceRemoveResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "workspace.skills",
+      "doc": "List a workspace's skills.",
       "params": "WorkspaceRef",
       "result": "WorkspaceSkillsResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "permission.rules",
+      "doc": "List a workspace's permission rules.",
       "params": "WorkspaceRef",
       "result": "PermissionRulesResult",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     },
     {
       "name": "permission.forget",
+      "doc": "Forget a stored permission rule.",
       "params": "PermissionForgetParams",
       "result": "Empty",
-      "direction": "clientToServer"
+      "direction": "clientToServer",
+      "paramsOptional": false
     }
   ],
   "broadcasts": [
     {
       "name": "session.summary_changed",
+      "doc": "A session's summary metadata changed.",
       "params": "SessionSummaryChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "session.activity_changed",
+      "doc": "A session's activity state changed.",
       "params": "SessionActivityChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "session.removed",
+      "doc": "A session was removed.",
       "params": "SessionRemovedData",
       "direction": "serverToClient"
     },
     {
       "name": "workspace.created",
+      "doc": "A workspace was created.",
       "params": "WorkspaceCreatedData",
       "direction": "serverToClient"
     },
     {
       "name": "workspace.removed",
+      "doc": "A workspace was removed.",
       "params": "WorkspaceRemovedData",
       "direction": "serverToClient"
     },
     {
       "name": "permission.rules_changed",
+      "doc": "A workspace's permission rules changed.",
       "params": "PermissionRulesChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "catalog.changed",
+      "doc": "The model catalog changed.",
       "params": "CatalogChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "auth.login_finished",
+      "doc": "An authentication login flow finished.",
       "params": "AuthLoginFinishedData",
       "direction": "serverToClient"
     },
     {
       "name": "auth.changed",
+      "doc": "Authentication state changed.",
       "params": "AuthChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "notice",
+      "doc": "Out-of-band notice from the daemon.",
       "params": "Notice",
       "direction": "serverToClient"
     },
     {
       "name": "message.committed",
+      "doc": "A message was committed to a session's transcript.",
       "params": "MessageCommittedData",
       "direction": "serverToClient"
     },
     {
       "name": "run.started",
+      "doc": "A run started.",
       "params": "RunStartedData",
       "direction": "serverToClient"
     },
     {
       "name": "run.done",
+      "doc": "A run finished.",
       "params": "RunDoneData",
       "direction": "serverToClient"
     },
     {
       "name": "config.changed",
+      "doc": "A session's run config changed.",
       "params": "ConfigChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "transcript.truncated",
+      "doc": "Older transcript messages were truncated.",
       "params": "TranscriptTruncatedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.started",
+      "doc": "A new streaming message started.",
       "params": "MessageStartedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.discarded",
+      "doc": "An in-progress message was discarded.",
       "params": "MessageDiscardedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.part_added",
+      "doc": "A part was added to a message.",
       "params": "MessagePartAddedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.part_delta",
+      "doc": "Incremental content for a streaming message part.",
       "params": "MessagePartDeltaData",
       "direction": "serverToClient"
     },
     {
       "name": "tool.state_changed",
+      "doc": "A tool call's state changed.",
       "params": "ToolStateChangedData",
       "direction": "serverToClient"
     },
     {
       "name": "tool.output_delta",
+      "doc": "Incremental output from a running tool.",
       "params": "ToolOutputDeltaData",
       "direction": "serverToClient"
     },
     {
       "name": "input.queued",
+      "doc": "An input was queued behind the active run.",
       "params": "InputQueuedData",
       "direction": "serverToClient"
     },
     {
       "name": "input.canceled",
+      "doc": "A queued input was canceled.",
       "params": "InputCanceledData",
       "direction": "serverToClient"
     },
     {
       "name": "session.deltas_shed",
+      "doc": "Live deltas were shed; the client must resync the session.",
       "params": "SessionDeltasShedData",
       "direction": "serverToClient"
-    }
-  ],
-  "deliveryClasses": [
-    {
-      "name": "ungated",
-      "gated": false,
-      "droppable": false,
-      "sequenced": false
-    },
-    {
-      "name": "durable_gated",
-      "gated": true,
-      "droppable": false,
-      "sequenced": true
-    },
-    {
-      "name": "live_gated",
-      "gated": true,
-      "droppable": false,
-      "sequenced": false
-    },
-    {
-      "name": "live_droppable",
-      "gated": true,
-      "droppable": true,
-      "sequenced": false
     }
   ],
   "structures": [
@@ -4162,9 +4218,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "browser",
           "wire": "browser"
         },
         {
+          "name": "device_code",
           "wire": "device_code"
         }
       ]
@@ -4175,9 +4233,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "api_key",
           "wire": "api_key"
         },
         {
+          "name": "oauth",
           "wire": "oauth"
         }
       ]
@@ -4188,76 +4248,124 @@
       "numeric": false,
       "values": [
         {
-          "wire": "session.summary_changed"
+          "name": "session.summary_changed",
+          "wire": "session.summary_changed",
+          "doc": "A session's summary metadata changed."
         },
         {
-          "wire": "session.activity_changed"
+          "name": "session.activity_changed",
+          "wire": "session.activity_changed",
+          "doc": "A session's activity state changed."
         },
         {
-          "wire": "session.removed"
+          "name": "session.removed",
+          "wire": "session.removed",
+          "doc": "A session was removed."
         },
         {
-          "wire": "workspace.created"
+          "name": "workspace.created",
+          "wire": "workspace.created",
+          "doc": "A workspace was created."
         },
         {
-          "wire": "workspace.removed"
+          "name": "workspace.removed",
+          "wire": "workspace.removed",
+          "doc": "A workspace was removed."
         },
         {
-          "wire": "permission.rules_changed"
+          "name": "permission.rules_changed",
+          "wire": "permission.rules_changed",
+          "doc": "A workspace's permission rules changed."
         },
         {
-          "wire": "catalog.changed"
+          "name": "catalog.changed",
+          "wire": "catalog.changed",
+          "doc": "The model catalog changed."
         },
         {
-          "wire": "auth.login_finished"
+          "name": "auth.login_finished",
+          "wire": "auth.login_finished",
+          "doc": "An authentication login flow finished."
         },
         {
-          "wire": "auth.changed"
+          "name": "auth.changed",
+          "wire": "auth.changed",
+          "doc": "Authentication state changed."
         },
         {
-          "wire": "notice"
+          "name": "notice",
+          "wire": "notice",
+          "doc": "Out-of-band notice from the daemon."
         },
         {
-          "wire": "message.committed"
+          "name": "message.committed",
+          "wire": "message.committed",
+          "doc": "A message was committed to a session's transcript."
         },
         {
-          "wire": "run.started"
+          "name": "run.started",
+          "wire": "run.started",
+          "doc": "A run started."
         },
         {
-          "wire": "run.done"
+          "name": "run.done",
+          "wire": "run.done",
+          "doc": "A run finished."
         },
         {
-          "wire": "config.changed"
+          "name": "config.changed",
+          "wire": "config.changed",
+          "doc": "A session's run config changed."
         },
         {
-          "wire": "transcript.truncated"
+          "name": "transcript.truncated",
+          "wire": "transcript.truncated",
+          "doc": "Older transcript messages were truncated."
         },
         {
-          "wire": "message.started"
+          "name": "message.started",
+          "wire": "message.started",
+          "doc": "A new streaming message started."
         },
         {
-          "wire": "message.discarded"
+          "name": "message.discarded",
+          "wire": "message.discarded",
+          "doc": "An in-progress message was discarded."
         },
         {
-          "wire": "message.part_added"
+          "name": "message.part_added",
+          "wire": "message.part_added",
+          "doc": "A part was added to a message."
         },
         {
-          "wire": "message.part_delta"
+          "name": "message.part_delta",
+          "wire": "message.part_delta",
+          "doc": "Incremental content for a streaming message part."
         },
         {
-          "wire": "tool.state_changed"
+          "name": "tool.state_changed",
+          "wire": "tool.state_changed",
+          "doc": "A tool call's state changed."
         },
         {
-          "wire": "tool.output_delta"
+          "name": "tool.output_delta",
+          "wire": "tool.output_delta",
+          "doc": "Incremental output from a running tool."
         },
         {
-          "wire": "input.queued"
+          "name": "input.queued",
+          "wire": "input.queued",
+          "doc": "An input was queued behind the active run."
         },
         {
-          "wire": "input.canceled"
+          "name": "input.canceled",
+          "wire": "input.canceled",
+          "doc": "A queued input was canceled."
         },
         {
-          "wire": "session.deltas_shed"
+          "name": "session.deltas_shed",
+          "wire": "session.deltas_shed",
+          "doc": "Live deltas were shed; the client must resync the session."
         }
       ]
     },
@@ -4267,75 +4375,99 @@
       "numeric": true,
       "values": [
         {
+          "name": "bad_request",
           "wire": "-32602"
         },
         {
+          "name": "bad_protocol",
           "wire": "-32600"
         },
         {
+          "name": "unknown_method",
           "wire": "-32601"
         },
         {
+          "name": "unknown_session",
           "wire": "-31000"
         },
         {
+          "name": "unknown_workspace",
           "wire": "-31001"
         },
         {
+          "name": "stale_cursor",
           "wire": "-31002"
         },
         {
+          "name": "unknown_message",
           "wire": "-31003"
         },
         {
+          "name": "unknown_part",
           "wire": "-31004"
         },
         {
+          "name": "unknown_input",
           "wire": "-31005"
         },
         {
+          "name": "unknown_config_rev",
           "wire": "-31006"
         },
         {
+          "name": "unknown_skill",
           "wire": "-31009"
         },
         {
+          "name": "input_already_started",
           "wire": "-31010"
         },
         {
+          "name": "queue_full",
           "wire": "-31011"
         },
         {
+          "name": "run_mismatch",
           "wire": "-31012"
         },
         {
+          "name": "permission_unknown",
           "wire": "-31013"
         },
         {
+          "name": "permission_already_decided",
           "wire": "-31014"
         },
         {
+          "name": "session_busy",
           "wire": "-31015"
         },
         {
+          "name": "session_has_children",
           "wire": "-31016"
         },
         {
+          "name": "runtime_failed",
           "wire": "-31017"
         },
         {
+          "name": "invalid_patch",
           "wire": "-31018"
         },
         {
+          "name": "unsupported_model",
           "wire": "-31019"
         },
         {
+          "name": "unsupported_reasoning",
           "wire": "-31020"
         },
         {
+          "name": "internal",
           "wire": "-32603"
         },
         {
+          "name": "overloaded",
           "wire": "-31021"
         }
       ]
@@ -4346,42 +4478,55 @@
       "numeric": false,
       "values": [
         {
+          "name": "provider",
           "wire": "provider"
         },
         {
+          "name": "protocol",
           "wire": "protocol"
         },
         {
+          "name": "network",
           "wire": "network"
         },
         {
+          "name": "timeout",
           "wire": "timeout"
         },
         {
+          "name": "rate_limited",
           "wire": "rate_limited"
         },
         {
+          "name": "quota_exhausted",
           "wire": "quota_exhausted"
         },
         {
+          "name": "auth",
           "wire": "auth"
         },
         {
+          "name": "unknown_model",
           "wire": "unknown_model"
         },
         {
+          "name": "unsupported_reasoning",
           "wire": "unsupported_reasoning"
         },
         {
+          "name": "max_rounds",
           "wire": "max_rounds"
         },
         {
+          "name": "context_overflow",
           "wire": "context_overflow"
         },
         {
+          "name": "runtime",
           "wire": "runtime"
         },
         {
+          "name": "internal",
           "wire": "internal"
         }
       ]
@@ -4392,6 +4537,7 @@
       "numeric": false,
       "values": [
         {
+          "name": "blob_upload",
           "wire": "blob_upload"
         }
       ]
@@ -4402,91 +4548,149 @@
       "numeric": false,
       "values": [
         {
-          "wire": "initialize"
+          "name": "initialize",
+          "wire": "initialize",
+          "doc": "Establish the connection and negotiate the protocol version."
         },
         {
-          "wire": "session.list"
+          "name": "session.list",
+          "wire": "session.list",
+          "doc": "List sessions."
         },
         {
-          "wire": "session.create"
+          "name": "session.create",
+          "wire": "session.create",
+          "doc": "Create a new session."
         },
         {
-          "wire": "session.patch"
+          "name": "session.patch",
+          "wire": "session.patch",
+          "doc": "Update a session's mutable fields."
         },
         {
-          "wire": "session.remove"
+          "name": "session.remove",
+          "wire": "session.remove",
+          "doc": "Remove a session."
         },
         {
-          "wire": "session.fork"
+          "name": "session.fork",
+          "wire": "session.fork",
+          "doc": "Fork a session at a message."
         },
         {
-          "wire": "session.compact"
+          "name": "session.compact",
+          "wire": "session.compact",
+          "doc": "Compact a session's transcript."
         },
         {
-          "wire": "session.rewind"
+          "name": "session.rewind",
+          "wire": "session.rewind",
+          "doc": "Rewind a session to before a message."
         },
         {
-          "wire": "session.send_input"
+          "name": "session.send_input",
+          "wire": "session.send_input",
+          "doc": "Send user input to a session."
         },
         {
-          "wire": "session.cancel_input"
+          "name": "session.cancel_input",
+          "wire": "session.cancel_input",
+          "doc": "Cancel a queued input."
         },
         {
-          "wire": "session.cancel_run"
+          "name": "session.cancel_run",
+          "wire": "session.cancel_run",
+          "doc": "Cancel the active run."
         },
         {
-          "wire": "session.resync"
+          "name": "session.resync",
+          "wire": "session.resync",
+          "doc": "Resync a session after live deltas were shed."
         },
         {
-          "wire": "session.history"
+          "name": "session.history",
+          "wire": "session.history",
+          "doc": "Fetch a page of a session's transcript history."
         },
         {
-          "wire": "permission.decide"
+          "name": "permission.decide",
+          "wire": "permission.decide",
+          "doc": "Decide a pending permission request."
         },
         {
-          "wire": "session.config"
+          "name": "session.config",
+          "wire": "session.config",
+          "doc": "Fetch a session's run config."
         },
         {
-          "wire": "subscription.set"
+          "name": "subscription.set",
+          "wire": "subscription.set",
+          "doc": "Set the connection's broadcast subscriptions."
         },
         {
-          "wire": "catalog.list"
+          "name": "catalog.list",
+          "wire": "catalog.list",
+          "doc": "List the model catalog."
         },
         {
-          "wire": "catalog.refresh"
+          "name": "catalog.refresh",
+          "wire": "catalog.refresh",
+          "doc": "Refresh the model catalog from providers."
         },
         {
-          "wire": "auth.list"
+          "name": "auth.list",
+          "wire": "auth.list",
+          "doc": "List authentication providers and logins."
         },
         {
-          "wire": "auth.set_api_key"
+          "name": "auth.set_api_key",
+          "wire": "auth.set_api_key",
+          "doc": "Set an API key for a provider."
         },
         {
-          "wire": "auth.login"
+          "name": "auth.login",
+          "wire": "auth.login",
+          "doc": "Begin a provider login flow."
         },
         {
-          "wire": "auth.cancel_login"
+          "name": "auth.cancel_login",
+          "wire": "auth.cancel_login",
+          "doc": "Cancel an in-progress login flow."
         },
         {
-          "wire": "auth.logout"
+          "name": "auth.logout",
+          "wire": "auth.logout",
+          "doc": "Log out of a provider."
         },
         {
-          "wire": "workspace.describe"
+          "name": "workspace.describe",
+          "wire": "workspace.describe",
+          "doc": "Describe a workspace."
         },
         {
-          "wire": "workspace.browse"
+          "name": "workspace.browse",
+          "wire": "workspace.browse",
+          "doc": "Browse a workspace's filesystem."
         },
         {
-          "wire": "workspace.remove"
+          "name": "workspace.remove",
+          "wire": "workspace.remove",
+          "doc": "Remove a workspace."
         },
         {
-          "wire": "workspace.skills"
+          "name": "workspace.skills",
+          "wire": "workspace.skills",
+          "doc": "List a workspace's skills."
         },
         {
-          "wire": "permission.rules"
+          "name": "permission.rules",
+          "wire": "permission.rules",
+          "doc": "List a workspace's permission rules."
         },
         {
-          "wire": "permission.forget"
+          "name": "permission.forget",
+          "wire": "permission.forget",
+          "doc": "Forget a stored permission rule."
         }
       ]
     },
@@ -4496,12 +4700,15 @@
       "numeric": false,
       "values": [
         {
+          "name": "info",
           "wire": "info"
         },
         {
+          "name": "warn",
           "wire": "warn"
         },
         {
+          "name": "error",
           "wire": "error"
         }
       ]
@@ -4512,18 +4719,23 @@
       "numeric": false,
       "values": [
         {
+          "name": "allow_once",
           "wire": "allow_once"
         },
         {
+          "name": "allow_session",
           "wire": "allow_session"
         },
         {
+          "name": "allow_always",
           "wire": "allow_always"
         },
         {
+          "name": "reject_once",
           "wire": "reject_once"
         },
         {
+          "name": "reject_always",
           "wire": "reject_always"
         }
       ]
@@ -4534,9 +4746,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "user",
           "wire": "user"
         },
         {
+          "name": "policy",
           "wire": "policy"
         }
       ]
@@ -4547,9 +4761,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "allow",
           "wire": "allow"
         },
         {
+          "name": "deny",
           "wire": "deny"
         }
       ]
@@ -4560,9 +4776,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "turn",
           "wire": "turn"
         },
         {
+          "name": "compaction",
           "wire": "compaction"
         }
       ]
@@ -4573,9 +4791,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "nothing_to_summarize",
           "wire": "nothing_to_summarize"
         },
         {
+          "name": "too_few_messages",
           "wire": "too_few_messages"
         }
       ]
@@ -4586,24 +4806,31 @@
       "numeric": false,
       "values": [
         {
+          "name": "stop",
           "wire": "stop"
         },
         {
+          "name": "length",
           "wire": "length"
         },
         {
+          "name": "content_filter",
           "wire": "content_filter"
         },
         {
+          "name": "tool_calls",
           "wire": "tool_calls"
         },
         {
+          "name": "canceled",
           "wire": "canceled"
         },
         {
+          "name": "error",
           "wire": "error"
         },
         {
+          "name": "unknown",
           "wire": "unknown"
         }
       ]
@@ -4614,9 +4841,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "started",
           "wire": "started"
         },
         {
+          "name": "queued",
           "wire": "queued"
         }
       ]
@@ -4627,12 +4856,15 @@
       "numeric": false,
       "values": [
         {
+          "name": "strict",
           "wire": "strict"
         },
         {
+          "name": "normal",
           "wire": "normal"
         },
         {
+          "name": "yolo",
           "wire": "yolo"
         }
       ]
@@ -4643,12 +4875,15 @@
       "numeric": false,
       "values": [
         {
+          "name": "active",
           "wire": "active"
         },
         {
+          "name": "recent",
           "wire": "recent"
         },
         {
+          "name": "active_recent",
           "wire": "active_recent"
         }
       ]
@@ -4659,9 +4894,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "auto",
           "wire": "auto"
         },
         {
+          "name": "manual",
           "wire": "manual"
         }
       ]
@@ -4672,12 +4909,15 @@
       "numeric": false,
       "values": [
         {
+          "name": "anthropic-messages",
           "wire": "anthropic-messages"
         },
         {
+          "name": "openai-completions",
           "wire": "openai-completions"
         },
         {
+          "name": "openai-responses",
           "wire": "openai-responses"
         }
       ]
@@ -4688,9 +4928,11 @@
       "numeric": false,
       "values": [
         {
+          "name": "project",
           "wire": "project"
         },
         {
+          "name": "personal",
           "wire": "personal"
         }
       ]
@@ -4701,12 +4943,15 @@
       "numeric": false,
       "values": [
         {
+          "name": "local",
           "wire": "local"
         },
         {
+          "name": "container",
           "wire": "container"
         },
         {
+          "name": "cloud",
           "wire": "cloud"
         }
       ]

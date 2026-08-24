@@ -10,29 +10,53 @@ pub const AuthCredentialKind = enum { api_key, oauth };
 
 /// Broadcast event name.
 pub const BroadcastName = enum {
+    /// A session's summary metadata changed.
     @"session.summary_changed",
+    /// A session's activity state changed.
     @"session.activity_changed",
+    /// A session was removed.
     @"session.removed",
+    /// A workspace was created.
     @"workspace.created",
+    /// A workspace was removed.
     @"workspace.removed",
+    /// A workspace's permission rules changed.
     @"permission.rules_changed",
+    /// The model catalog changed.
     @"catalog.changed",
+    /// An authentication login flow finished.
     @"auth.login_finished",
+    /// Authentication state changed.
     @"auth.changed",
+    /// Out-of-band notice from the daemon.
     notice,
+    /// A message was committed to a session's transcript.
     @"message.committed",
+    /// A run started.
     @"run.started",
+    /// A run finished.
     @"run.done",
+    /// A session's run config changed.
     @"config.changed",
+    /// Older transcript messages were truncated.
     @"transcript.truncated",
+    /// A new streaming message started.
     @"message.started",
+    /// An in-progress message was discarded.
     @"message.discarded",
+    /// A part was added to a message.
     @"message.part_added",
+    /// Incremental content for a streaming message part.
     @"message.part_delta",
+    /// A tool call's state changed.
     @"tool.state_changed",
+    /// Incremental output from a running tool.
     @"tool.output_delta",
+    /// An input was queued behind the active run.
     @"input.queued",
+    /// A queued input was canceled.
     @"input.canceled",
+    /// Live deltas were shed; the client must resync the session.
     @"session.deltas_shed",
 };
 
@@ -55,34 +79,63 @@ pub const RunErrorCode = enum {
 
 /// RPC method name.
 pub const MethodName = enum {
+    /// Establish the connection and negotiate the protocol version.
     initialize,
+    /// List sessions.
     @"session.list",
+    /// Create a new session.
     @"session.create",
+    /// Update a session's mutable fields.
     @"session.patch",
+    /// Remove a session.
     @"session.remove",
+    /// Fork a session at a message.
     @"session.fork",
+    /// Compact a session's transcript.
     @"session.compact",
+    /// Rewind a session to before a message.
     @"session.rewind",
+    /// Send user input to a session.
     @"session.send_input",
+    /// Cancel a queued input.
     @"session.cancel_input",
+    /// Cancel the active run.
     @"session.cancel_run",
+    /// Resync a session after live deltas were shed.
     @"session.resync",
+    /// Fetch a page of a session's transcript history.
     @"session.history",
+    /// Decide a pending permission request.
     @"permission.decide",
+    /// Fetch a session's run config.
     @"session.config",
+    /// Set the connection's broadcast subscriptions.
     @"subscription.set",
+    /// List the model catalog.
     @"catalog.list",
+    /// Refresh the model catalog from providers.
     @"catalog.refresh",
+    /// List authentication providers and logins.
     @"auth.list",
+    /// Set an API key for a provider.
     @"auth.set_api_key",
+    /// Begin a provider login flow.
     @"auth.login",
+    /// Cancel an in-progress login flow.
     @"auth.cancel_login",
+    /// Log out of a provider.
     @"auth.logout",
+    /// Describe a workspace.
     @"workspace.describe",
+    /// Browse a workspace's filesystem.
     @"workspace.browse",
+    /// Remove a workspace.
     @"workspace.remove",
+    /// List a workspace's skills.
     @"workspace.skills",
+    /// List a workspace's permission rules.
     @"permission.rules",
+    /// Forget a stored permission rule.
     @"permission.forget",
 };
 

@@ -284,6 +284,8 @@ fn writeEnum(a: std.mem.Allocator, jw: *std.json.Stringify, docs: *const std.Str
     try jw.beginArray();
     inline for (@typeInfo(entry.ty).@"enum".fields) |field| {
         try jw.beginObject();
+        try jw.objectField("name");
+        try jw.write(field.name);
         try jw.objectField("wire");
         if (entry.numeric) try jw.write(try std.fmt.allocPrint(a, "{d}", .{field.value})) else try jw.write(field.name);
         if (try fieldDoc(a, docs, entry.name, field.name)) |doc| {
@@ -305,18 +307,24 @@ fn writeNamespace(jw: *std.json.Stringify, comptime T: type) !void {
     try jw.endObject();
 }
 
-fn writeMethods(jw: *std.json.Stringify) !void {
+fn writeMethods(jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8)) !void {
     try jw.beginArray();
     inline for (rpc.methods) |spec| {
         try jw.beginObject();
         try jw.objectField("name");
         try jw.write(@tagName(spec.name));
+        if (docs.get("MethodName." ++ @tagName(spec.name))) |doc| {
+            try jw.objectField("doc");
+            try jw.write(doc);
+        }
         try jw.objectField("params");
         try jw.write(shortName(@typeName(spec.params)));
         try jw.objectField("result");
         try jw.write(shortName(@typeName(spec.result)));
         try jw.objectField("direction");
         try jw.write("clientToServer");
+        try jw.objectField("paramsOptional");
+        try jw.write(spec.params_optional);
         try jw.endObject();
     }
     try jw.endArray();
@@ -337,35 +345,20 @@ fn broadcastType(
     return shortName(@typeName(T));
 }
 
-fn writeBroadcasts(jw: *std.json.Stringify) !void {
+fn writeBroadcasts(jw: *std.json.Stringify, docs: *const std.StringHashMap([]const u8)) !void {
     try jw.beginArray();
     inline for (rpc.broadcasts) |spec| {
         try jw.beginObject();
         try jw.objectField("name");
         try jw.write(@tagName(spec.name));
+        if (docs.get("BroadcastName." ++ @tagName(spec.name))) |doc| {
+            try jw.objectField("doc");
+            try jw.write(doc);
+        }
         try jw.objectField("params");
         try jw.write(broadcastType(@tagName(spec.name), "", "", spec.data));
         try jw.objectField("direction");
         try jw.write("serverToClient");
-        try jw.endObject();
-    }
-    try jw.endArray();
-}
-
-fn writeDeliveryClasses(jw: *std.json.Stringify) !void {
-    try jw.beginArray();
-    inline for (@typeInfo(meta.DeliveryClass).@"enum".fields) |field| {
-        const class = @field(meta.DeliveryClass, field.name);
-        const props = class.props();
-        try jw.beginObject();
-        try jw.objectField("name");
-        try jw.write(field.name);
-        try jw.objectField("gated");
-        try jw.write(props.gated);
-        try jw.objectField("droppable");
-        try jw.write(props.droppable);
-        try jw.objectField("sequenced");
-        try jw.write(props.sequenced);
         try jw.endObject();
     }
     try jw.endArray();
@@ -387,11 +380,9 @@ pub fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
     try jw.objectField("closeCodes");
     try writeNamespace(&jw, meta.close_codes);
     try jw.objectField("methods");
-    try writeMethods(&jw);
+    try writeMethods(&jw, &docs);
     try jw.objectField("broadcasts");
-    try writeBroadcasts(&jw);
-    try jw.objectField("deliveryClasses");
-    try writeDeliveryClasses(&jw);
+    try writeBroadcasts(&jw, &docs);
     try jw.objectField("structures");
     try jw.beginArray();
     inline for (registry.structs) |entry| try writeStruct(a, &jw, &docs, entry);
