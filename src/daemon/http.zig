@@ -80,11 +80,11 @@ const ReaderTask = zio.JoinHandle(anyerror!void);
 const WriterTask = zio.JoinHandle(void);
 const close_drain_timeout = zio.Timeout.fromMilliseconds(250);
 
-/// Coordinate task startup and terminal close state.
+/// Track the persistent close signal and terminal drain state.
 const WebSocketLifecycle = struct {
-    ready: zio.ResetEvent = .init,
     close: zio.ResetEvent = .init,
-    terminal_close_queued: std.atomic.Value(bool) = .init(false),
+    // The daemon runtime uses one executor. The parent reads this after close wakes it.
+    terminal_close_queued: bool = false,
 };
 
 /// Serve one WebSocket. Reader and writer tasks own socket.input and socket.output respectively.
@@ -106,7 +106,6 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     errdefer reader.cancel();
 
     var writer = try zio.spawn(writerTask, .{ &conn, socket.output, &lifecycle });
-    lifecycle.ready.set();
 
     superviseWebSocket(&reader, &writer, &lifecycle, close_drain_timeout);
     reader.cancel();
@@ -133,7 +132,7 @@ fn superviseWebSocket(
     }) catch return;
 
     switch (result) {
-        .reader, .close => if (lifecycle.terminal_close_queued.load(.acquire)) {
+        .reader, .close => if (lifecycle.terminal_close_queued) {
             _ = zio.select(.{
                 .writer = writer,
                 .timeout = drain_timeout,
@@ -143,7 +142,7 @@ fn superviseWebSocket(
     }
 }
 
-/// Start the reader after the parent installs both tasks.
+/// Read WebSocket frames and signal teardown on exit.
 fn readerTask(
     state: *State,
     conn: *Connection,
@@ -154,17 +153,15 @@ fn readerTask(
         conn.outbox.close(.graceful);
         lifecycle.close.set();
     }
-    try lifecycle.ready.wait();
-    lifecycle.terminal_close_queued.store(try readerLoop(state, conn, input), .release);
+    lifecycle.terminal_close_queued = try readerLoop(state, conn, input);
 }
 
-/// Start the writer after the parent installs both tasks.
+/// Write queued WebSocket frames and signal teardown on exit.
 fn writerTask(conn: *Connection, output: *std.Io.Writer, lifecycle: *WebSocketLifecycle) void {
     defer {
         conn.outbox.close(.graceful);
         lifecycle.close.set();
     }
-    lifecycle.ready.wait() catch return;
     writerLoop(conn, output);
 }
 
@@ -399,12 +396,11 @@ test "websocket terminal drain stops at its timeout" {
     defer rt.deinit();
 
     var lifecycle: WebSocketLifecycle = .{};
-    lifecycle.terminal_close_queued.store(true, .release);
+    lifecycle.terminal_close_queued = true;
     var writer_started: zio.ResetEvent = .init;
     var release: zio.ResetEvent = .init;
     var reader = try rt.spawn(completedReader, .{});
     var writer = try rt.spawn(blockedWriter, .{ &writer_started, &release });
-    try writer_started.wait();
 
     superviseWebSocket(&reader, &writer, &lifecycle, .fromMilliseconds(1));
     try testing.expect(!writer.hasResult());
