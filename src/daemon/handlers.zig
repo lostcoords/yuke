@@ -69,23 +69,17 @@ fn sessionSelector(params: wire.session.SessionListParams) session_store.Selecto
     return sel;
 }
 
-fn copyOptional(arena: std.mem.Allocator, value: ?[]const u8) !?[]const u8 {
-    return if (value) |text| try arena.dupe(u8, text) else null;
-}
-
-fn sessionOrigin(row: session_store.PageRow) wire.session.SessionOrigin {
+/// Map a durable session row to its origin. A row that breaks the schema invariants is corrupt, so
+/// the boundary returns an error and degrades the one request rather than a daemon-wide panic.
+fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "root")) {
-        std.debug.assert(row.parent_id == null);
-        std.debug.assert(row.parent_message_id == null);
-        std.debug.assert(row.parent_part_id == null);
-        std.debug.assert(row.source_id == null);
+        if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id != null)
+            return error.CorruptDatabase;
         return .{ .root = .{} };
     }
     if (std.mem.eql(u8, row.origin, "child")) {
-        std.debug.assert(row.parent_id != null);
-        std.debug.assert(row.parent_message_id != null);
-        std.debug.assert(row.parent_part_id != null);
-        std.debug.assert(row.source_id == null);
+        if (row.parent_id == null or row.parent_message_id == null or row.parent_part_id == null or row.source_id != null)
+            return error.CorruptDatabase;
         return .{ .child = .{
             .parent_id = row.parent_id.?,
             .parent_message_id = row.parent_message_id.?,
@@ -93,28 +87,24 @@ fn sessionOrigin(row: session_store.PageRow) wire.session.SessionOrigin {
         } };
     }
     if (std.mem.eql(u8, row.origin, "fork")) {
-        std.debug.assert(row.parent_id == null);
-        std.debug.assert(row.parent_message_id == null);
-        std.debug.assert(row.parent_part_id == null);
-        std.debug.assert(row.source_id != null);
+        if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id == null)
+            return error.CorruptDatabase;
         return .{ .fork = .{ .source_id = row.source_id.? } };
     }
-    std.debug.assert(false);
-    unreachable;
+    return error.CorruptDatabase;
 }
 
 fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.session.SessionListItem {
-    const permission = std.meta.stringToEnum(wire.enums.PermissionMode, row.permission);
-    std.debug.assert(permission != null);
+    const permission = std.meta.stringToEnum(wire.enums.PermissionMode, row.permission) orelse return error.CorruptDatabase;
 
     const created_by = if (row.created_by_name) |name| blk: {
-        std.debug.assert(row.created_by_version != null);
+        if (row.created_by_version == null) return error.CorruptDatabase;
         break :blk wire.initialize.Client{
             .name = try arena.dupe(u8, name),
             .version = try arena.dupe(u8, row.created_by_version.?),
         };
     } else blk: {
-        std.debug.assert(row.created_by_version == null);
+        if (row.created_by_version != null) return error.CorruptDatabase;
         break :blk null;
     };
 
@@ -126,7 +116,7 @@ fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.sessi
             .model = try arena.dupe(u8, row.model),
             .reasoning = try arena.dupe(u8, row.reasoning),
             .config_rev = row.config_rev,
-            .permission = permission.?,
+            .permission = permission,
             .max_rounds = row.max_rounds,
             .title = try arena.dupe(u8, row.title),
             .message_count = row.message_count,
@@ -140,8 +130,8 @@ fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.sessi
             .created_at_ms = row.created_at_ms,
             .updated_at_ms = row.updated_at_ms,
             .created_by = created_by,
-            .origin = sessionOrigin(row),
-            .agent = try copyOptional(arena, row.agent),
+            .origin = try sessionOrigin(row),
+            .agent = if (row.agent) |text| try arena.dupe(u8, text) else null,
         },
         .activity = .{
             .state = .{ .idle = .{} },
