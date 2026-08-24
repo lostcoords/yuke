@@ -156,7 +156,7 @@ CREATE TABLE messages (
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- A rowid table so FTS5 external-content can index the transcript by rowid in a later slice.
+    -- A rowid table so FTS5 external-content can index the transcript by rowid later.
     UNIQUE (session_id, message_id),
     FOREIGN KEY (session_id, seq) REFERENCES events(session_id, seq) ON DELETE CASCADE
 ) STRICT;

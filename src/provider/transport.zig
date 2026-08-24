@@ -8,7 +8,7 @@ const event = @import("stream/event.zig");
 /// Cap the whole response so one turn cannot grow memory without bound.
 const max_response_bytes = 16 * 1024 * 1024;
 
-/// A provider HTTP request. E1 fills only `body`; the real client fills url and headers from resolve.
+/// A provider HTTP request. This fills only `body`; the real client fills url and headers from resolve.
 pub const Header = struct { name: []const u8, value: []const u8 };
 pub const Request = struct {
     url: []const u8 = "",

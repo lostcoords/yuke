@@ -1,5 +1,5 @@
 //! Fold provider StreamEvents into a committed assistant message. Blocks arrive with dense ids in
-//! start order and may overlap. E1 handles text and reasoning; a tool block waits for the tools slice.
+//! start order and may overlap. This handles text and reasoning; a tool block is not supported yet.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -206,7 +206,7 @@ test "the fold rejects malformed streams" {
     }, meta1()));
 }
 
-test "a tool block is unsupported in E1" {
+test "a tool block is unsupported" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     try testing.expectError(error.ToolUnsupported, assistant(arena.allocator(), &.{

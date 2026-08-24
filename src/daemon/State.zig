@@ -1,5 +1,5 @@
 //! Daemon-global state. One reactor executor owns it for the daemon lifetime.
-//! Keep per-connection state separate; later slices add subscriptions and identity.
+//! Keep per-connection state separate; connection identity is added later.
 
 const std = @import("std");
 const zio = @import("zio");

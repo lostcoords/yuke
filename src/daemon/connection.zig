@@ -108,7 +108,7 @@ pub const Registry = struct {
     }
 
     /// Fan out framed bytes to every subscriber of a session. Copy the bytes per connection.
-    /// The caller owns `bytes`. A must-deliver overflow drops the frame; E1c.5 adds the shed and close rules.
+    /// The caller owns `bytes`. A must-deliver overflow drops the frame; a later change adds the shed and close rules.
     pub fn publish(self: *Registry, session_id: ids.SessionId, bytes: []const u8) void {
         const list = self.subscribers.getPtr(session_id) orelse return;
         for (list.items) |cid| {
