@@ -77,8 +77,7 @@ pub fn drain(
 }
 
 /// Pull the response and hand each StreamEvent to `onEvent`. Reset the scratch after each read, so parse
-/// trees do not accumulate for the whole turn. An event borrows the scratch, so `onEvent` copies what it
-/// keeps before it returns.
+/// trees do not accumulate for the whole turn. The callback must copy each borrowed slice before it returns.
 pub fn stream(
     gpa: std.mem.Allocator,
     body: ResponseBody,
@@ -90,9 +89,9 @@ pub fn stream(
     defer parser.deinit();
     var scratch: std.heap.ArenaAllocator = .init(gpa);
     defer scratch.deinit();
-    // The reducer appends events with its own gpa, so this backing survives a scratch reset.
+    // The reducer appends events with its own gpa, so it owns this backing.
     var events: std.ArrayList(event.StreamEvent) = .empty;
-    defer events.deinit(gpa);
+    defer events.deinit(reducer.gpa);
 
     var buf: [4096]u8 = undefined;
     var total: usize = 0;
@@ -103,18 +102,15 @@ pub fn stream(
         if (n == 0) break;
         total += n;
         if (total > max_response_bytes) return error.ResponseTooLarge;
-        // A fresh frames list each read. Its backing lives in scratch and is discarded with the reset.
+        // Create the list inside the read loop. Scratch owns the backing and resets it after the read.
         var frames: std.ArrayList([]const u8) = .empty;
         try parser.push(buf[0..n], scratch.allocator(), &frames);
         for (frames.items) |data| {
             events.clearRetainingCapacity();
             try reducer.decode(data, scratch.allocator(), &events);
-            for (events.items) |ev| {
-                if (ev == .done) saw_done = true;
-                try onEvent(ctx, ev);
-            }
+            try emit(events.items, &saw_done, ctx, onEvent);
         }
-        _ = scratch.reset(.retain_capacity); // free this read's frame slices and parse trees
+        _ = scratch.reset(.retain_capacity); // Reset the arena after this read.
     }
 
     // Drain the parser tail and the reducer's terminal event.
@@ -123,19 +119,27 @@ pub fn stream(
     for (tail.items) |data| {
         events.clearRetainingCapacity();
         try reducer.decode(data, scratch.allocator(), &events);
-        for (events.items) |ev| {
-            if (ev == .done) saw_done = true;
-            try onEvent(ctx, ev);
-        }
+        try emit(events.items, &saw_done, ctx, onEvent);
     }
     events.clearRetainingCapacity();
     try reducer.finish(&events);
-    for (events.items) |ev| {
-        if (ev == .done) saw_done = true;
-        try onEvent(ctx, ev);
-    }
+    try emit(events.items, &saw_done, ctx, onEvent);
 
-    if (!saw_done) return error.IncompleteStream; // a stream that ends before the terminal done is truncated
+    if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done as truncated.
+}
+
+/// Hand each event to the callback. Reject an event after the terminal done.
+fn emit(
+    events: []const event.StreamEvent,
+    saw_done: *bool,
+    ctx: anytype,
+    comptime onEvent: fn (@TypeOf(ctx), event.StreamEvent) anyerror!void,
+) !void {
+    for (events) |ev| {
+        if (saw_done.*) return error.Protocol; // no event follows the terminal done
+        try onEvent(ctx, ev);
+        if (ev == .done) saw_done.* = true;
+    }
 }
 
 /// Replays canned response bytes. `chunk_size` fragments the stream to exercise partial reads and the
