@@ -197,9 +197,8 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
     const stored = try workspace_store.list(&state.db, arena);
     const workspaces = try arena.alloc(wire.workspace.Workspace, stored.len);
     for (stored, 0..) |ws, i| {
-        const kind = std.meta.stringToEnum(wire.enums.WorkspaceKind, ws.kind);
-        std.debug.assert(kind != null); // The schema constrains kind to a known value.
-        workspaces[i] = .{ .id = .bytes(ws.id), .kind = kind.?, .root = ws.root, .title = ws.title };
+        const kind = std.meta.stringToEnum(wire.enums.WorkspaceKind, ws.kind) orelse return error.CorruptDatabase;
+        workspaces[i] = .{ .id = .bytes(ws.id), .kind = kind, .root = ws.root, .title = ws.title };
     }
     return .{
         .protocol = wire.meta.protocol_version,
@@ -269,15 +268,10 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     if (rt.active == null and rt.queue.depth() > 0) launch.* = try run_task.prepareQueued(state, rt);
 
     if (rt.active == null) {
-        const model = try state.gpa.dupe(u8, snapshot.model);
-        errdefer state.gpa.free(model);
         const stored_prompt = try session_store.prompt(&state.db, arena, sid);
-        const system_prompt = try state.gpa.dupe(u8, stored_prompt orelse "");
-        errdefer state.gpa.free(system_prompt);
         const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
-        const slot = try session_runtime.RunSlot.create(state.gpa, handle, model, system_prompt, rt.next_epoch);
+        const slot = try session_runtime.RunSlot.create(state.gpa, handle, snapshot.model, stored_prompt orelse "");
         errdefer slot.destroy();
-        rt.next_epoch += 1;
         rt.active = slot;
         launch.* = slot;
         return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };

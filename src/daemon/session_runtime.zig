@@ -14,7 +14,6 @@ pub const RunSlot = struct {
     gpa: std.mem.Allocator,
     handle: run.RunHandle,
     config: run.Config,
-    epoch: u64,
     phase: Phase = .pending_start,
     started_published: bool = false,
     cancel_requested: bool = false,
@@ -22,13 +21,17 @@ pub const RunSlot = struct {
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
-    pub fn create(gpa: std.mem.Allocator, handle: run.RunHandle, model: []u8, system_prompt: []u8, epoch: u64) !*RunSlot {
+    /// The slot owns its own copies of `model` and `system_prompt`. The caller keeps its slices.
+    pub fn create(gpa: std.mem.Allocator, handle: run.RunHandle, model: []const u8, system_prompt: []const u8) !*RunSlot {
+        const model_copy = try gpa.dupe(u8, model);
+        errdefer gpa.free(model_copy);
+        const prompt_copy = try gpa.dupe(u8, system_prompt);
+        errdefer gpa.free(prompt_copy);
         const self = try gpa.create(RunSlot);
         self.* = .{
             .gpa = gpa,
             .handle = handle,
-            .config = .{ .model = model, .config_rev = handle.started.config_rev, .system_prompt = system_prompt },
-            .epoch = epoch,
+            .config = .{ .model = model_copy, .config_rev = handle.started.config_rev, .system_prompt = prompt_copy },
         };
         return self;
     }
@@ -48,7 +51,6 @@ pub const SessionRuntime = struct {
     queue: queue.Queue,
     active: ?*RunSlot = null,
     faulted: bool = false,
-    next_epoch: u64 = 0, // Each run start takes the next epoch. A stale completion checks it.
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
         const self = try gpa.create(SessionRuntime);
@@ -134,17 +136,13 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     try testing.expect(rt.idle());
 
     // A live run pins the runtime.
-    const model = try testing.allocator.dupe(u8, "model");
-    errdefer testing.allocator.free(model);
-    const prompt = try testing.allocator.dupe(u8, "");
-    errdefer testing.allocator.free(prompt);
     rt.active = try RunSlot.create(testing.allocator, .{
         .run_id = 1,
         .input_id = 1,
         .user_message_id = 1,
         .assistant_message_id = 2,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
-    }, model, prompt, 1);
+    }, "model", "");
     try testing.expect(!rt.idle());
     sessions.evictIfIdle(sid);
     try testing.expect(sessions.get(sid) == rt); // still present

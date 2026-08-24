@@ -136,6 +136,7 @@ pub const Registry = struct {
 
     /// Assign a monotonic id and track the connection.
     pub fn register(self: *Registry, conn: *Connection) !void {
+        std.debug.assert(conn.id == 0); // A fresh connection is unregistered.
         try self.connections.put(self.gpa, self.next_id, conn);
         conn.id = self.next_id;
         self.next_id += 1;

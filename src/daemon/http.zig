@@ -222,9 +222,7 @@ fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
                 if (reply.terminal) {
                     return conn.tryEnqueue(.{ .bytes = reply.bytes, .terminal = true });
                 }
-                conn.send(.{ .bytes = reply.bytes }) catch |err| {
-                    return err;
-                };
+                try conn.send(.{ .bytes = reply.bytes });
             },
             .binary => return enqueueClose(conn, .unsupported_data),
             .ping => try conn.send(.{ .bytes = try framePong(gpa, message.data) }),

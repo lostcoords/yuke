@@ -277,14 +277,9 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     const arena = arena_state.allocator();
     const snapshot = (try session_store.snapshot(&state.db, arena, rt.session_id.raw)) orelse return error.UnknownSession;
     const prompt = try session_store.prompt(&state.db, arena, rt.session_id.raw);
-    const model = try state.gpa.dupe(u8, snapshot.model);
-    errdefer state.gpa.free(model);
-    const system_prompt = try state.gpa.dupe(u8, prompt orelse "");
-    errdefer state.gpa.free(system_prompt);
     const handle = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
-    const slot = try RunSlot.create(state.gpa, handle, model, system_prompt, rt.next_epoch);
+    const slot = try RunSlot.create(state.gpa, handle, snapshot.model, prompt orelse "");
     errdefer slot.destroy();
-    rt.next_epoch += 1;
     while (rt.queue.depth() > 0) {
         const input_id = rt.queue.entries()[0].input_id;
         std.debug.assert(rt.queue.retire(input_id) == .changed);
