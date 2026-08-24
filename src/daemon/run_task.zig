@@ -23,26 +23,6 @@ const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 const max_transcript_messages: usize = 1000;
 
-fn frame(comptime json: []const u8) []const u8 {
-    return "data: " ++ json ++ "\n\n";
-}
-
-// A fixed mock reply. The real provider transport replaces it later.
-const canned_reply =
-    frame(
-        \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
-    ) ++ frame(
-        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-    ) ++ frame(
-        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the yuke mock provider."}}
-    ) ++ frame(
-        \\{"type":"content_block_stop","index":0}
-    ) ++ frame(
-        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}
-    ) ++ frame(
-        \\{"type":"message_stop"}
-    );
-
 /// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
@@ -104,15 +84,32 @@ fn runSession(state: *State, slot: *RunSlot) void {
     defer streamer.offsets.deinit(state.gpa);
     publishBestEffort(state, session_id, .{ .method = .@"message.started", .params = .{ .message_started_data = started } });
 
+    // Stream on a child task and wait for it or a cancel signal. The child owns the body, so a
+    // blocked read stops through child cancellation and the body deinits before this run terminalizes.
     const terminal: Terminal = blk: {
-        streamTurn(state, arena, slot, &streamer) catch |err| {
-            if (err == error.Canceled or slot.cancel_requested) break :blk .canceled;
+        var reader = zio.spawn(streamChild, .{ state, arena, slot, &streamer }) catch |err| {
             break :blk .{ .failed = failure(err) };
         };
-        if (slot.cancel_requested) break :blk .canceled;
-        break :blk .{ .success = streamer.stop_reason orelse {
-            break :blk .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
-        } };
+        const winner = zio.select(.{ .reader = &reader, .cancel = &slot.cancel_event }) catch {
+            reader.cancel(); // this run task was canceled at shutdown; stop the reader
+            break :blk .canceled;
+        };
+        switch (winner) {
+            .reader => {
+                reader.join() catch |err| {
+                    if (err == error.Canceled or slot.cancel_requested) break :blk .canceled;
+                    break :blk .{ .failed = failure(err) };
+                };
+                if (slot.cancel_requested) break :blk .canceled;
+                break :blk .{ .success = streamer.stop_reason orelse {
+                    break :blk .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
+                } };
+            },
+            .cancel => {
+                reader.cancel(); // request cancellation and join the reader
+                break :blk .canceled;
+            },
+        }
     };
 
     terminalize(state, arena, slot, created_at, &live, streamer.usage, terminal) catch |err| {
@@ -120,7 +117,9 @@ fn runSession(state: *State, slot: *RunSlot) void {
     };
 }
 
-fn streamTurn(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !void {
+/// Open the response and stream it into the draft. The run task runs this as a child so a cancel can
+/// interrupt a blocked read. The child owns the body and deinits it before it returns.
+fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !void {
     try checkCanceled(slot);
     const session_id = slot.handle.started.session_id;
     const transcript = (try message_store.historyPage(&state.db, arena, session_id.raw, 0, max_transcript_messages)).messages;
@@ -130,8 +129,8 @@ fn streamTurn(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer:
         .max_output_tokens = max_output_tokens,
     });
 
-    var mock = provider.transport.MockTransport.init(canned_reply, 0);
-    const body = try mock.open(arena, .{ .body = request_body });
+    const body = try state.transport.open(arena, .{ .body = request_body });
+    std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {
         slot.body = null;

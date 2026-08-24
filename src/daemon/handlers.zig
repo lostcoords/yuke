@@ -351,7 +351,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     if (active) |slot| {
         if (!slot.cancel_requested) {
             slot.cancel_requested = true;
-            if (slot.body) |body| body.cancel();
+            slot.cancel_event.set(); // wake the run task, which cancels its reader
         }
     }
     if (active == null) state.sessions.evictIfIdle(params.session_id);

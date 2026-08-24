@@ -6,6 +6,7 @@ const zio = @import("zio");
 const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const util = @import("../util.zig");
+const provider = @import("../provider/provider.zig");
 const session_runtime = @import("session_runtime.zig");
 const connection = @import("connection.zig");
 
@@ -18,6 +19,7 @@ config: Config,
 home: []const u8, // The default workspace root. A create with no workspace path uses it.
 sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
 registry: connection.Registry, // Live connections and the reverse subscription index.
+transport: provider.transport.Transport, // Opens each provider response. A test or adapter overrides it.
 run_group: zio.Group = .init, // Own every launched run task until it returns.
 shutting_down: bool = false,
 
@@ -37,6 +39,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         .home = home,
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
+        .transport = provider.transport.placeholderTransport(),
     };
     errdefer self.deinit();
 

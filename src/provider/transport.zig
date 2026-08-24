@@ -16,8 +16,23 @@ pub const Request = struct {
     body: []const u8,
 };
 
-/// A pulled byte stream of one provider response. The owner reads until end of stream, then deinits.
-/// `ctx` stays live until deinit. The real client maps its std.Io.Reader semantics to this contract.
+/// Opens one provider response. The daemon injects it, so a test or the real client can vary the body.
+/// The run's reader child calls open. The returned body borrows `arena` for the turn.
+pub const Transport = struct {
+    ctx: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        open: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody,
+    };
+
+    pub fn open(self: Transport, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
+        return self.vtable.open(self.ctx, arena, request);
+    }
+};
+
+/// A pulled byte stream of one provider response. The reader child reads to end of stream, then deinits.
+/// A blocking read must use cancelable zio I/O; the run task cancels the child and the read returns error.Canceled.
 pub const ResponseBody = struct {
     ctx: *anyopaque,
     vtable: *const VTable,
@@ -26,16 +41,11 @@ pub const ResponseBody = struct {
         /// Fill `buf` (never empty) with one or more bytes, or return 0 at end of stream. A real
         /// adapter must retry a non-EOF zero-byte read and map only std EndOfStream to 0.
         read: *const fn (ctx: *anyopaque, buf: []u8) anyerror!usize,
-        /// Stop an in-flight read. It returns after no read touches `ctx`, so deinit is then safe.
-        cancel: *const fn (ctx: *anyopaque) void,
         deinit: *const fn (ctx: *anyopaque) void,
     };
 
     pub fn read(self: ResponseBody, buf: []u8) anyerror!usize {
         return self.vtable.read(self.ctx, buf);
-    }
-    pub fn cancel(self: ResponseBody) void {
-        self.vtable.cancel(self.ctx);
     }
     pub fn deinit(self: ResponseBody) void {
         self.vtable.deinit(self.ctx);
@@ -148,7 +158,6 @@ pub const MockTransport = struct {
     bytes: []const u8,
     chunk_size: usize,
     offset: usize = 0,
-    canceled: bool = false,
     captured: ?[]const u8 = null, // the last request body, for assertions
 
     pub fn init(bytes: []const u8, chunk_size: usize) MockTransport {
@@ -166,32 +175,89 @@ pub const MockTransport = struct {
         return self.body();
     }
 
-    const vtable: ResponseBody.VTable = .{ .read = read, .cancel = cancel, .deinit = deinitNoop };
+    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
 
     fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
         std.debug.assert(buf.len > 0); // the seam never reads into an empty buffer
         const self: *MockTransport = @ptrCast(@alignCast(ctx));
-        if (self.canceled) return error.Canceled;
         const remaining = self.bytes[self.offset..];
         const n = @min(@min(buf.len, self.chunk_size), remaining.len);
         @memcpy(buf[0..n], remaining[0..n]);
         self.offset += n;
         return n;
     }
-    fn cancel(ctx: *anyopaque) void {
-        const self: *MockTransport = @ptrCast(@alignCast(ctx));
-        self.canceled = true;
-    }
     fn deinitNoop(_: *anyopaque) void {}
 };
-
-const testing = std.testing;
-const anthropic = @import("stream/anthropic.zig");
 
 /// Wrap a JSON event body as one SSE event.
 fn frame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }
+
+/// The placeholder response until the real HTTP adapter lands.
+pub const placeholder_reply =
+    frame(
+        \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
+    ) ++ frame(
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+    ) ++ frame(
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the yuke mock provider."}}
+    ) ++ frame(
+        \\{"type":"content_block_stop","index":0}
+    ) ++ frame(
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}
+    ) ++ frame(
+        \\{"type":"message_stop"}
+    );
+
+/// Replays fixed bytes. This stands in for the provider until the real HTTP adapter lands.
+pub const CannedTransport = struct {
+    bytes: []const u8,
+
+    pub fn transport(self: *CannedTransport) Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    const vtable: Transport.VTable = .{ .open = open };
+
+    /// Allocate a fresh reader in `arena`. Concurrent runs then share no offset state.
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
+        _ = request;
+        const self: *CannedTransport = @ptrCast(@alignCast(ctx));
+        const reader = try arena.create(CannedReader);
+        reader.* = .{ .bytes = self.bytes };
+        return .{ .ctx = reader, .vtable = &CannedReader.vtable };
+    }
+};
+
+/// One in-flight replay of canned bytes. The turn arena owns it.
+const CannedReader = struct {
+    bytes: []const u8,
+    offset: usize = 0,
+
+    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
+
+    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+        std.debug.assert(buf.len > 0);
+        const self: *CannedReader = @ptrCast(@alignCast(ctx));
+        const remaining = self.bytes[self.offset..];
+        const n = @min(buf.len, remaining.len);
+        @memcpy(buf[0..n], remaining[0..n]);
+        self.offset += n;
+        return n;
+    }
+    fn deinitNoop(_: *anyopaque) void {}
+};
+
+var placeholder_instance = CannedTransport{ .bytes = placeholder_reply };
+
+/// The default daemon transport until a real adapter is wired at startup.
+pub fn placeholderTransport() Transport {
+    return placeholder_instance.transport();
+}
+
+const testing = std.testing;
+const anthropic = @import("stream/anthropic.zig");
 
 const canned_text_turn =
     frame(
@@ -261,14 +327,6 @@ test "a stream that ends before done is truncated" {
 
     var mock = MockTransport.init(canned_truncated, 0);
     try testing.expectError(error.IncompleteStream, drain(testing.allocator, arena.allocator(), mock.body(), &reducer, &out));
-}
-
-test "cancel makes the next read fail" {
-    var mock = MockTransport.init(canned_text_turn, 0);
-    const b = mock.body();
-    b.cancel();
-    var buf: [16]u8 = undefined;
-    try testing.expectError(error.Canceled, b.read(&buf));
 }
 
 const StreamCollector = struct {

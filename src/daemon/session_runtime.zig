@@ -2,6 +2,7 @@
 //! A run coroutine and a live draft attach later.
 
 const std = @import("std");
+const zio = @import("zio");
 const wire = @import("wire");
 const queue = @import("../domain/queue.zig");
 const run = @import("../engine/run.zig");
@@ -17,6 +18,8 @@ pub const RunSlot = struct {
     phase: Phase = .pending_start,
     started_published: bool = false,
     cancel_requested: bool = false,
+    // The RPC task sets this to interrupt the run. The run task waits on it and cancels its reader.
+    cancel_event: zio.ResetEvent = .init,
     body: ?transport.ResponseBody = null,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
