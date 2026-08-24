@@ -1,5 +1,5 @@
 //! Per-session live state. The reactor owns each SessionRuntime. Sessions holds a stable pointer.
-//! A run coroutine and a streaming draft attach later.
+//! A run coroutine and a live draft attach later.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -21,8 +21,9 @@ pub const RunSlot = struct {
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
-    /// The slot owns its own copies of `model` and `system_prompt`. The caller keeps its slices.
-    pub fn create(gpa: std.mem.Allocator, handle: run.RunHandle, model: []const u8, system_prompt: []const u8) !*RunSlot {
+    /// Allocate the slot and own copies of `model` and `system_prompt`. Bind the handle after Tx1.
+    /// The caller allocates before the run transaction, so a late failure cannot orphan an open run.
+    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, system_prompt: []const u8) !*RunSlot {
         const model_copy = try gpa.dupe(u8, model);
         errdefer gpa.free(model_copy);
         const prompt_copy = try gpa.dupe(u8, system_prompt);
@@ -30,10 +31,16 @@ pub const RunSlot = struct {
         const self = try gpa.create(RunSlot);
         self.* = .{
             .gpa = gpa,
-            .handle = handle,
-            .config = .{ .model = model_copy, .config_rev = handle.started.config_rev, .system_prompt = prompt_copy },
+            .handle = undefined,
+            .config = .{ .model = model_copy, .config_rev = 0, .system_prompt = prompt_copy },
         };
         return self;
+    }
+
+    /// Bind the committed run handle. Call once after Tx1 and before launch.
+    pub fn bind(self: *RunSlot, handle: run.RunHandle) void {
+        self.handle = handle;
+        self.config.config_rev = handle.started.config_rev;
     }
 
     pub fn destroy(self: *RunSlot) void {
@@ -136,13 +143,14 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     try testing.expect(rt.idle());
 
     // A live run pins the runtime.
-    rt.active = try RunSlot.create(testing.allocator, .{
+    rt.active = try RunSlot.prepare(testing.allocator, "model", "");
+    rt.active.?.bind(.{
         .run_id = 1,
         .input_id = 1,
         .user_message_id = 1,
         .assistant_message_id = 2,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
-    }, "model", "");
+    });
     try testing.expect(!rt.idle());
     sessions.evictIfIdle(sid);
     try testing.expect(sessions.get(sid) == rt); // still present

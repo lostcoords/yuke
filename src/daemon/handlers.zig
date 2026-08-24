@@ -269,9 +269,10 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
 
     if (rt.active == null) {
         const stored_prompt = try session_store.prompt(&state.db, arena, sid);
-        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
-        const slot = try session_runtime.RunSlot.create(state.gpa, handle, snapshot.model, stored_prompt orelse "");
+        const slot = try session_runtime.RunSlot.prepare(state.gpa, snapshot.model, stored_prompt orelse "");
         errdefer slot.destroy();
+        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
+        slot.bind(handle);
         rt.active = slot;
         launch.* = slot;
         return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
