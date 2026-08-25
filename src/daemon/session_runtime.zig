@@ -35,7 +35,7 @@ pub const RunSlot = struct {
         self.* = .{
             .gpa = gpa,
             .handle = undefined,
-            .config = .{ .model = model_copy, .config_rev = 0, .system_prompt = prompt_copy },
+            .config = .{ .model = model_copy, .system_prompt = prompt_copy },
         };
         return self;
     }
@@ -43,7 +43,6 @@ pub const RunSlot = struct {
     /// Bind the committed run handle. Call once after Tx1 and before launch.
     pub fn bind(self: *RunSlot, handle: run.RunHandle) void {
         self.handle = handle;
-        self.config.config_rev = handle.started.config_rev;
     }
 
     pub fn destroy(self: *RunSlot) void {
@@ -57,7 +56,6 @@ pub const RunSlot = struct {
 /// Store one session's live state. One reactor executor mutates it between await points without a lock.
 pub const SessionRuntime = struct {
     gpa: std.mem.Allocator,
-    session_id: ids.SessionId,
     // The projection owns the input queue, the live draft, the committed window, and the cursors.
     session: Session,
     active: ?*RunSlot = null,
@@ -66,7 +64,7 @@ pub const SessionRuntime = struct {
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
         const self = try gpa.create(SessionRuntime);
-        self.* = .{ .gpa = gpa, .session_id = session_id, .session = Session.init(gpa, session_id) };
+        self.* = .{ .gpa = gpa, .session = Session.init(gpa, session_id) };
         return self;
     }
 
@@ -150,7 +148,6 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     // A live run pins the runtime.
     rt.active = try RunSlot.prepare(testing.allocator, "model", "");
     rt.active.?.bind(.{
-        .run_id = 1,
         .input_id = 1,
         .assistant_message_id = 2,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },

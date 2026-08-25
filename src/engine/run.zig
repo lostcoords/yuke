@@ -16,13 +16,11 @@ const run_store = database.run;
 /// The run uses this config from its start. A mid-run change applies to the next run.
 pub const Config = struct {
     model: []const u8,
-    config_rev: wire.ids.ConfigRev,
     system_prompt: []const u8,
 };
 
 /// These IDs belong to the started run. session.send_input returns run_id and input_id together.
 pub const RunHandle = struct {
-    run_id: wire.ids.RunId,
     input_id: wire.ids.InputId,
     assistant_message_id: wire.ids.MessageId,
     started: wire.run.RunStartedData,
@@ -64,7 +62,6 @@ pub fn beginTurn(
     const user_message_id = try event_store.allocMessageId(db, arena, session_id);
     var handle: RunHandle = .{
         .input_id = input_id,
-        .run_id = run_id,
         .assistant_message_id = try event_store.allocMessageId(db, arena, session_id),
         .started = undefined,
     };
@@ -79,7 +76,7 @@ pub fn beginTurn(
     // Build the commit slice before COMMIT, so a late allocation failure cannot orphan the durable run.
     const commits = try arena.alloc(wire.message.MessageCommittedData, 1);
     commits[0] = .{ .session_id = .bytes(session_id), .seq = user_seq, .message = user_message };
-    handle.started = try appendRunStarted(db, arena, io, session_id, handle.run_id, config_rev, user_now);
+    handle.started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
     try db.conn.execNoArgs("COMMIT");
     return .{ .handle = handle, .user_commits = commits };
 }
@@ -131,7 +128,6 @@ pub fn beginQueuedTurn(
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
     try db.conn.execNoArgs("COMMIT");
     return .{ .handle = .{
-        .run_id = run_id,
         .input_id = first_input_id,
         .assistant_message_id = assistant_message_id,
         .started = started,
@@ -187,7 +183,7 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
 
     const started = try beginQueuedTurn(&db, rt.io(), a, sid, 7);
     const handle = started.handle;
-    try testing.expectEqual(@as(u64, 1), handle.run_id);
+    try testing.expectEqual(@as(u64, 1), handle.started.run_id);
     try testing.expectEqual(@as(u64, 1), handle.input_id);
     try testing.expectEqual(@as(u64, 3), handle.assistant_message_id);
     // The drain returns one committed user message per input in FIFO order with contiguous sequences.
@@ -214,5 +210,5 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     try testing.expectEqualStrings("two", page.messages[1].user.content[0].text.text);
     try testing.expectEqual(@as(i64, 1), try eventCount(&db, "run.started"));
     try testing.expectEqual(@as(i64, 0), try eventCount(&db, "run.done"));
-    try testing.expectEqual(@as(?u64, handle.run_id), (try session_store.snapshot(&db, a, sid)).?.open_run_id);
+    try testing.expectEqual(@as(?u64, handle.started.run_id), (try session_store.snapshot(&db, a, sid)).?.open_run_id);
 }

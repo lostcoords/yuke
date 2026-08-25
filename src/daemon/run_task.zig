@@ -43,7 +43,7 @@ pub const Launch = struct {
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
     // The caller already folded and published run.started. This spawns the run task.
-    const run_id = slot.handle.run_id;
+    const run_id = slot.handle.started.run_id;
     const session_id = slot.handle.started.session_id;
     slot.phase = .running;
     state.run_group.spawn(runSession, .{ state, slot }) catch |err| {
@@ -75,8 +75,8 @@ fn runSession(state: *State, slot: *RunSlot) void {
     const started: message.MessageStartedData = .{
         .session_id = session_id,
         .message_id = slot.handle.assistant_message_id,
-        .run_id = slot.handle.run_id,
-        .config_rev = slot.config.config_rev,
+        .run_id = slot.handle.started.run_id,
+        .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
         .created_at_ms = created_at,
     };
@@ -101,8 +101,6 @@ fn runSession(state: *State, slot: *RunSlot) void {
         .state = state,
         .slot = slot,
         .session = &rt.session,
-        .session_id = session_id,
-        .message_id = slot.handle.assistant_message_id,
     };
     defer streamer.offsets.deinit(state.gpa);
     publishBestEffort(state, session_id, started_note);
@@ -148,7 +146,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     const transcript = (try message_store.historyPage(&state.db, arena, session_id.raw, 0, max_transcript_messages)).messages;
     const model = slot.config.model;
 
-    const resolved = if (state.providers) |p| provider.config.resolveModel(p, model) else null;
+    const resolved = if (state.providers) |*p| provider.config.resolveModel(p, model) else null;
     // A daemon with providers rejects an unknown model. A daemon without providers uses the placeholder transport.
     if (resolved == null and state.providers != null) return error.UnknownModel;
     const request = if (resolved) |r| try resolvedRequest(state, arena, slot, transcript, r) else fallback: {
@@ -267,8 +265,8 @@ fn terminalize(
     };
     const committed: message.Message = .{ .assistant = .{
         .id = slot.handle.assistant_message_id,
-        .run_id = slot.handle.run_id,
-        .config_rev = slot.config.config_rev,
+        .run_id = slot.handle.started.run_id,
+        .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
         .content = content,
         .finish = finish,
@@ -293,7 +291,7 @@ fn terminalize(
     const done = try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
         .session_id = slot.handle.started.session_id,
         .seq = 0,
-        .run_id = slot.handle.run_id,
+        .run_id = slot.handle.started.run_id,
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
@@ -313,7 +311,7 @@ fn terminalize(
 fn faultSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
     slot.phase = .faulted;
     if (state.sessions.get(session_id)) |rt| rt.faulted = true;
-    std.log.err("run {d} could not commit its terminal state: {t}", .{ slot.handle.run_id, err });
+    std.log.err("run {d} could not commit its terminal state: {t}", .{ slot.handle.started.run_id, err });
 }
 
 fn finishSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot) void {
@@ -347,11 +345,12 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const snapshot = (try session_store.snapshot(&state.db, arena, rt.session_id.raw)) orelse return error.UnknownSession;
-    const prompt = try session_store.prompt(&state.db, arena, rt.session_id.raw);
+    const session_id = rt.session.id;
+    const snapshot = (try session_store.snapshot(&state.db, arena, session_id.raw)) orelse return error.UnknownSession;
+    const prompt = try session_store.prompt(&state.db, arena, session_id.raw);
     const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "");
     errdefer slot.destroy();
-    const started = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
+    const started = try run.beginQueuedTurn(&state.db, state.io, arena, session_id.raw, snapshot.config_rev);
     slot.bind(started.handle);
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
@@ -385,8 +384,6 @@ const Streamer = struct {
     state: *State,
     slot: *RunSlot,
     session: *Session,
-    session_id: ids.SessionId,
-    message_id: ids.MessageId,
     offsets: std.ArrayList(u64) = .empty,
     open: usize = 0,
     stop_reason: ?wire.enums.StopReason = null,
@@ -395,7 +392,7 @@ const Streamer = struct {
     /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
     fn emit(self: *Streamer, note: wire.rpc.Notification) !void {
         try self.session.applyAuthoritative(note.params);
-        try publish(self.state, self.session_id, note);
+        try publish(self.state, self.slot.handle.started.session_id, note);
     }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
@@ -405,8 +402,8 @@ const Streamer = struct {
         switch (ev) {
             .block_started => |b| {
                 try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
-                    .session_id = self.session_id,
-                    .message_id = self.message_id,
+                    .session_id = self.slot.handle.started.session_id,
+                    .message_id = self.slot.handle.assistant_message_id,
                     .part = try emptyPart(b.block, b.kind),
                 } } });
                 try self.offsets.append(self.state.gpa, 0);
@@ -438,8 +435,8 @@ const Streamer = struct {
         const offset = self.offsets.items[index];
         try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
         try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
-            .session_id = self.session_id,
-            .message_id = self.message_id,
+            .session_id = self.slot.handle.started.session_id,
+            .message_id = self.slot.handle.assistant_message_id,
             .part_id = part_id,
             .delta = text,
             .offset = offset,
@@ -455,8 +452,8 @@ const Streamer = struct {
         };
         try checkStreamCap(0, len);
         try self.emit(.{ .method = .@"message.part_finalized", .params = .{ .message_part_finalized_data = .{
-            .session_id = self.session_id,
-            .message_id = self.message_id,
+            .session_id = self.slot.handle.started.session_id,
+            .message_id = self.slot.handle.assistant_message_id,
             .part_id = part_id,
             .final = final,
         } } });
@@ -485,7 +482,7 @@ pub fn emitDurable(state: *State, rt: *session_runtime.SessionRuntime, note: wir
     rt.session.applyAuthoritative(note.params) catch |err| {
         std.debug.panic("cannot fold the durable event {t}: {t}", .{ note.method, err });
     };
-    publishBestEffort(state, rt.session_id, note);
+    publishBestEffort(state, rt.session.id, note);
 }
 
 /// Fold and publish each committed user message. A publish failure leaves the durable event for client resync.

@@ -125,7 +125,6 @@ pub const MockTransport = struct {
     bytes: []const u8,
     chunk_size: usize,
     offset: usize = 0,
-    captured: ?[]const u8 = null, // The last request body, for assertions.
 
     pub fn init(bytes: []const u8, chunk_size: usize) MockTransport {
         return .{ .bytes = bytes, .chunk_size = if (chunk_size == 0) bytes.len else chunk_size };
@@ -135,10 +134,10 @@ pub const MockTransport = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    /// Record the request and replay the canned response. The run loop calls this seam.
+    /// Replay the canned response. The run loop calls this seam.
     pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request) !ResponseBody {
         _ = arena;
-        self.captured = request.body;
+        _ = request;
         return self.body();
     }
 

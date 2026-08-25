@@ -252,7 +252,7 @@ pub fn sessionResync(state: *State, arena: std.mem.Allocator, params: wire.sessi
     const snap = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
 
     if (state.sessions.get(params.session_id)) |rt| {
-        const run_info: ?RunInfo = if (rt.active) |slot| .{ .run_id = slot.handle.run_id, .started_at_ms = slot.handle.started.started_at_ms } else null;
+        const run_info: ?RunInfo = if (rt.active) |slot| .{ .run_id = slot.handle.started.run_id, .started_at_ms = slot.handle.started.started_at_ms } else null;
         return serializeResync(state, arena, snap, &rt.session, run_info, limit);
     }
     // The session is idle. Hydrate a transient projection, serialize it, then release it.
@@ -351,7 +351,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
         // Fold each durable event in sequence order: the user message, then run.started.
         run_task.publishUserCommits(state, rt, started.user_commits);
         run_task.emitDurable(state, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
-        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.run_id } };
+        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };
     }
 
     // A run is active. Persist and fold the queued input before the response.
@@ -396,7 +396,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
 
     const active = rt.active;
     if (params.run_id) |expected| {
-        if (active == null or active.?.handle.run_id != expected) return error.RunMismatch;
+        if (active == null or active.?.handle.started.run_id != expected) return error.RunMismatch;
     }
 
     var cleared_inputs: []wire.ids.InputId = &.{};
@@ -420,7 +420,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
         }
     }
 
-    const canceled_run = if (active) |slot| slot.handle.run_id else null;
+    const canceled_run = if (active) |slot| slot.handle.started.run_id else null;
     if (active) |slot| {
         if (!slot.cancel_requested) {
             slot.cancel_requested = true;

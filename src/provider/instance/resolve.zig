@@ -17,7 +17,7 @@ const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
 });
 
 /// Build the full URL in `gpa`. A trailing slash on the base gives one separator, not two.
-pub fn endpointUrl(gpa: std.mem.Allocator, p: ProviderInstance) std.mem.Allocator.Error![]u8 {
+pub fn endpointUrl(gpa: std.mem.Allocator, p: *const ProviderInstance) std.mem.Allocator.Error![]u8 {
     const base = std.mem.trimEnd(u8, p.base_url, "/");
     return std.mem.concat(gpa, u8, &.{ base, protocol_path.get(p.protocol) });
 }
@@ -36,7 +36,7 @@ pub const Secret = union(enum) {
 
 /// Append the credential and pinned headers to `out`, an arena-backed empty list.
 /// The checks run before any allocation, so no error leaves partial output.
-pub fn authHeaders(gpa: std.mem.Allocator, p: ProviderInstance, secret: Secret, out: *std.ArrayList(Header)) Error!void {
+pub fn authHeaders(gpa: std.mem.Allocator, p: *const ProviderInstance, secret: Secret, out: *std.ArrayList(Header)) Error!void {
     // This call knows the header names before it allocates memory.
     const generated: []const []const u8 = switch (p.auth) {
         .api_key => |a| switch (a.header) {
@@ -93,7 +93,7 @@ fn header(headers: []const Header, name: []const u8) ?[]const u8 {
 }
 
 test "endpoint url appends the protocol path" {
-    const url = try endpointUrl(testing.allocator, .{
+    const url = try endpointUrl(testing.allocator, &.{
         .id = "x",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .@"anthropic-messages",
@@ -104,7 +104,7 @@ test "endpoint url appends the protocol path" {
 }
 
 test "endpoint url collapses a trailing slash on the base" {
-    const url = try endpointUrl(testing.allocator, .{
+    const url = try endpointUrl(testing.allocator, &.{
         .id = "x",
         .base_url = "https://api.anthropic.com/v1/",
         .protocol = .@"anthropic-messages",
@@ -117,7 +117,7 @@ test "endpoint url collapses a trailing slash on the base" {
 test "anthropic api key uses x-api-key plus the pinned version header" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, .{
+    try authHeaders(testing.allocator, &.{
         .id = "anthropic",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .@"anthropic-messages",
@@ -133,7 +133,7 @@ test "anthropic api key uses x-api-key plus the pinned version header" {
 test "a compat host uses Authorization Bearer" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, .{
+    try authHeaders(testing.allocator, &.{
         .id = "compat",
         .base_url = "https://llm.acme/v1",
         .protocol = .@"anthropic-messages",
@@ -147,7 +147,7 @@ test "a compat host uses Authorization Bearer" {
 test "codex oauth emits the account header" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, .{
+    try authHeaders(testing.allocator, &.{
         .id = "codex",
         .base_url = "https://chatgpt.com/backend-api/codex",
         .protocol = .@"openai-responses",
@@ -162,7 +162,7 @@ test "codex oauth emits the account header" {
 test "a secret of the wrong kind is rejected" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
-    try testing.expectError(error.AuthMismatch, authHeaders(testing.allocator, .{
+    try testing.expectError(error.AuthMismatch, authHeaders(testing.allocator, &.{
         .id = "codex",
         .base_url = "x",
         .protocol = .@"openai-responses",
@@ -173,7 +173,7 @@ test "a secret of the wrong kind is rejected" {
 test "a pinned header that collides with the credential is rejected" {
     var out: std.ArrayList(Header) = .empty;
     defer out.deinit(testing.allocator);
-    try testing.expectError(error.HeaderConflict, authHeaders(testing.allocator, .{
+    try testing.expectError(error.HeaderConflict, authHeaders(testing.allocator, &.{
         .id = "x",
         .base_url = "x",
         .protocol = .@"anthropic-messages",
