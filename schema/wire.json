@@ -72,7 +72,7 @@
     },
     {
       "name": "session.list",
-      "doc": "List sessions.",
+      "doc": "List the sessions.",
       "params": "SessionListParams",
       "result": "SessionListResult",
       "direction": "clientToServer",
@@ -80,7 +80,7 @@
     },
     {
       "name": "session.create",
-      "doc": "Create a new session.",
+      "doc": "Create a session.",
       "params": "CreateSession",
       "result": "SessionResult",
       "direction": "clientToServer",
@@ -152,7 +152,7 @@
     },
     {
       "name": "session.resync",
-      "doc": "Resync a session after live deltas were shed.",
+      "doc": "Resync a session after the daemon drops live deltas.",
       "params": "SessionResyncParams",
       "result": "SessionResyncResult",
       "direction": "clientToServer",
@@ -160,7 +160,7 @@
     },
     {
       "name": "session.history",
-      "doc": "Fetch a page of a session's transcript history.",
+      "doc": "Fetch a page from a session transcript.",
       "params": "SessionHistoryParams",
       "result": "SessionHistoryResult",
       "direction": "clientToServer",
@@ -232,7 +232,7 @@
     },
     {
       "name": "auth.cancel_login",
-      "doc": "Cancel an in-progress login flow.",
+      "doc": "Cancel an active login flow.",
       "params": "AuthCancelLoginParams",
       "result": "Empty",
       "direction": "clientToServer",
@@ -256,7 +256,7 @@
     },
     {
       "name": "workspace.browse",
-      "doc": "Browse a workspace's filesystem.",
+      "doc": "Browse a workspace filesystem.",
       "params": "WorkspaceBrowseParams",
       "result": "WorkspaceBrowseResult",
       "direction": "clientToServer",
@@ -310,19 +310,19 @@
     },
     {
       "name": "session.removed",
-      "doc": "A session was removed.",
+      "doc": "The daemon removed a session.",
       "params": "SessionRemovedData",
       "direction": "serverToClient"
     },
     {
       "name": "workspace.created",
-      "doc": "A workspace was created.",
+      "doc": "The daemon created a workspace.",
       "params": "WorkspaceCreatedData",
       "direction": "serverToClient"
     },
     {
       "name": "workspace.removed",
-      "doc": "A workspace was removed.",
+      "doc": "The daemon removed a workspace.",
       "params": "WorkspaceRemovedData",
       "direction": "serverToClient"
     },
@@ -340,7 +340,7 @@
     },
     {
       "name": "auth.login_finished",
-      "doc": "An authentication login flow finished.",
+      "doc": "The daemon finished an authentication login flow.",
       "params": "AuthLoginFinishedData",
       "direction": "serverToClient"
     },
@@ -352,13 +352,13 @@
     },
     {
       "name": "notice",
-      "doc": "Out-of-band notice from the daemon.",
+      "doc": "The daemon sent an out-of-band notice.",
       "params": "Notice",
       "direction": "serverToClient"
     },
     {
       "name": "message.committed",
-      "doc": "A message was committed to a session's transcript.",
+      "doc": "The daemon committed a message to a session transcript.",
       "params": "MessageCommittedData",
       "direction": "serverToClient"
     },
@@ -382,7 +382,7 @@
     },
     {
       "name": "transcript.truncated",
-      "doc": "Older transcript messages were truncated.",
+      "doc": "The daemon truncated older transcript messages.",
       "params": "TranscriptTruncatedData",
       "direction": "serverToClient"
     },
@@ -394,19 +394,19 @@
     },
     {
       "name": "message.discarded",
-      "doc": "An in-progress message was discarded.",
+      "doc": "The daemon discarded an unfinished message.",
       "params": "MessageDiscardedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.part_added",
-      "doc": "A part was added to a message.",
+      "doc": "The daemon added a part to a message.",
       "params": "MessagePartAddedData",
       "direction": "serverToClient"
     },
     {
       "name": "message.part_delta",
-      "doc": "Incremental content for a streaming message part.",
+      "doc": "The daemon sent more content for a message part.",
       "params": "MessagePartDeltaData",
       "direction": "serverToClient"
     },
@@ -418,25 +418,25 @@
     },
     {
       "name": "tool.output_delta",
-      "doc": "Incremental output from a running tool.",
+      "doc": "The daemon sent more output from a tool.",
       "params": "ToolOutputDeltaData",
       "direction": "serverToClient"
     },
     {
       "name": "input.queued",
-      "doc": "An input was queued behind the active run.",
+      "doc": "The daemon queued an input behind the active run.",
       "params": "InputQueuedData",
       "direction": "serverToClient"
     },
     {
       "name": "input.canceled",
-      "doc": "A queued input was canceled.",
+      "doc": "The daemon canceled a queued input.",
       "params": "InputCanceledData",
       "direction": "serverToClient"
     },
     {
       "name": "session.deltas_shed",
-      "doc": "Live deltas were shed; the client must resync the session.",
+      "doc": "The daemon dropped live deltas. The client must resync the session.",
       "params": "SessionDeltasShedData",
       "direction": "serverToClient"
     }
@@ -444,17 +444,17 @@
   "structures": [
     {
       "name": "Client",
-      "doc": "Connection-level client identity.",
+      "doc": "This type identifies the client connection.",
       "fields": [
         {
           "name": "name",
-          "doc": "Client connection name (e.g. `\"yuke-tui\"`).",
+          "doc": "The client connection name.",
           "type": "string",
           "presence": "required"
         },
         {
           "name": "version",
-          "doc": "Client build/version string.",
+          "doc": "The client build version.",
           "type": "string",
           "presence": "required"
         }
@@ -462,7 +462,7 @@
     },
     {
       "name": "InitializeParams",
-      "doc": "Params of `initialize`; `protocol` defaults to `protocol_version`.",
+      "doc": "These are the parameters for `initialize`. The `protocol` field defaults to `protocol_version`.",
       "fields": [
         {
           "name": "protocol",
@@ -478,12 +478,12 @@
     },
     {
       "name": "SessionScopeAll",
-      "doc": "All workspaces (no payload).",
+      "doc": "This option selects all workspaces and has no payload.",
       "fields": []
     },
     {
       "name": "SessionScopeWorkspace",
-      "doc": "One workspace.",
+      "doc": "This option selects one workspace.",
       "fields": [
         {
           "name": "workspace_id",
@@ -494,7 +494,7 @@
     },
     {
       "name": "SubscriptionSetParams",
-      "doc": "The sessions this connection wants live updates for.",
+      "doc": "This field lists the sessions whose live updates this connection requests.",
       "fields": [
         {
           "name": "sessions",
@@ -505,7 +505,7 @@
     },
     {
       "name": "ContentText",
-      "doc": "Plain text content part.",
+      "doc": "This part holds plain text.",
       "fields": [
         {
           "name": "text",
@@ -516,7 +516,7 @@
     },
     {
       "name": "ContentImage",
-      "doc": "Image content part.",
+      "doc": "This part holds an image source and an optional detail hint.",
       "fields": [
         {
           "name": "source",
@@ -532,7 +532,7 @@
     },
     {
       "name": "ContentAudio",
-      "doc": "Audio content part.",
+      "doc": "This part holds an audio source and its format.",
       "fields": [
         {
           "name": "source",
@@ -548,7 +548,7 @@
     },
     {
       "name": "ContentFile",
-      "doc": "File content part.",
+      "doc": "This part holds a file source and an optional file name.",
       "fields": [
         {
           "name": "source",
@@ -564,7 +564,7 @@
     },
     {
       "name": "MediaUrl",
-      "doc": "Remote URL the daemon fetches.",
+      "doc": "The daemon fetches media from this remote URL.",
       "fields": [
         {
           "name": "url",
@@ -575,7 +575,7 @@
     },
     {
       "name": "MediaBase64",
-      "doc": "Inline base64 bytes.",
+      "doc": "This source stores inline bytes in base64.",
       "fields": [
         {
           "name": "mime",
@@ -591,7 +591,7 @@
     },
     {
       "name": "MediaBlob",
-      "doc": "Content-addressed blob fetched over HTTP.",
+      "doc": "The daemon fetches this content-addressed blob over HTTP.",
       "fields": [
         {
           "name": "hash",
@@ -612,7 +612,7 @@
     },
     {
       "name": "AuthCancelLoginParams",
-      "doc": "Params for `auth.cancel_login`.",
+      "doc": "These are the parameters for `auth.cancel_login`.",
       "fields": [
         {
           "name": "login_id",
@@ -623,7 +623,7 @@
     },
     {
       "name": "AuthChangedData",
-      "doc": "Payload for `auth.changed`.",
+      "doc": "This payload describes `auth.changed`.",
       "fields": [
         {
           "name": "provider",
@@ -634,7 +634,7 @@
     },
     {
       "name": "AuthListResult",
-      "doc": "Result of `auth.list`.",
+      "doc": "This result describes `auth.list`.",
       "fields": [
         {
           "name": "providers",
@@ -645,7 +645,7 @@
     },
     {
       "name": "AuthLoginFinishedData",
-      "doc": "Payload for `auth.login_finished`.",
+      "doc": "This payload describes `auth.login_finished`.",
       "fields": [
         {
           "name": "login_id",
@@ -666,12 +666,12 @@
     },
     {
       "name": "AuthLoginOutcomeCanceled",
-      "doc": "Login was explicitly canceled.",
+      "doc": "The login was explicitly canceled.",
       "fields": []
     },
     {
       "name": "AuthLoginOutcomeFailed",
-      "doc": "Login failed without changing durable credentials.",
+      "doc": "The login failed without changing durable credentials.",
       "fields": [
         {
           "name": "message",
@@ -682,12 +682,12 @@
     },
     {
       "name": "AuthLoginOutcomeSucceeded",
-      "doc": "Login completed successfully and credentials were durably stored.",
+      "doc": "The daemon completed login and durably stored the credentials.",
       "fields": []
     },
     {
       "name": "AuthLoginParams",
-      "doc": "Params for `auth.login`.",
+      "doc": "These are the parameters for `auth.login`.",
       "fields": [
         {
           "name": "provider_id",
@@ -703,7 +703,7 @@
     },
     {
       "name": "AuthLoginResultBrowser",
-      "doc": "Browser authorization details returned only to the requesting connection.",
+      "doc": "The daemon returns these browser authorization details only to the connection that sent the request.",
       "fields": [
         {
           "name": "login_id",
@@ -719,7 +719,7 @@
     },
     {
       "name": "AuthLoginResultDeviceCode",
-      "doc": "Device authorization details returned only to the requesting connection.",
+      "doc": "The daemon returns these device authorization details only to the connection that sent the request.",
       "fields": [
         {
           "name": "login_id",
@@ -740,7 +740,7 @@
     },
     {
       "name": "AuthLoginSummary",
-      "doc": "Public locator for one daemon-owned login attempt. It contains no OAuth secret.",
+      "doc": "This type identifies one daemon-owned login attempt. It contains no OAuth secret.",
       "fields": [
         {
           "name": "login_id",
@@ -756,7 +756,7 @@
     },
     {
       "name": "AuthLogoutParams",
-      "doc": "Params for `auth.logout`.",
+      "doc": "These are the parameters for `auth.logout`.",
       "fields": [
         {
           "name": "provider_id",
@@ -793,7 +793,7 @@
     },
     {
       "name": "AuthSetApiKeyParams",
-      "doc": "Write-only params for `auth.set_api_key`. The key is never returned or retained by wire state.",
+      "doc": "These are write-only parameters for `auth.set_api_key`. The wire state never returns or retains the key.",
       "fields": [
         {
           "name": "provider_id",
@@ -809,7 +809,7 @@
     },
     {
       "name": "DirEntry",
-      "doc": "A single filesystem entry in a browse listing.",
+      "doc": "This entry identifies one filesystem item in a browse result.",
       "fields": [
         {
           "name": "name",
@@ -823,7 +823,7 @@
         },
         {
           "name": "is_git_repo",
-          "doc": "Whether this directory is itself a git repo.",
+          "doc": "This field says whether this directory is a Git repository.",
           "type": "bool",
           "presence": "required"
         }
@@ -831,7 +831,7 @@
     },
     {
       "name": "GitInfo",
-      "doc": "Git status for a workspace root, when it is a repo.",
+      "doc": "This type records Git status for a workspace root when it is a repository.",
       "fields": [
         {
           "name": "branch",
@@ -840,7 +840,7 @@
         },
         {
           "name": "dirty",
-          "doc": "Whether the working tree has uncommitted changes.",
+          "doc": "This field says whether the working tree has uncommitted changes.",
           "type": "bool",
           "presence": "required"
         }
@@ -848,7 +848,7 @@
     },
     {
       "name": "SkillInfo",
-      "doc": "Discovered skill metadata.",
+      "doc": "This type records discovered skill metadata.",
       "fields": [
         {
           "name": "name",
@@ -862,7 +862,7 @@
         },
         {
           "name": "scope",
-          "doc": "Project- or personal-scoped.",
+          "doc": "This scope identifies a project or personal skill.",
           "type": "SkillScope",
           "presence": "required"
         },
@@ -875,7 +875,7 @@
     },
     {
       "name": "SkillRef",
-      "doc": "A named skill invocation with its rendered arguments.",
+      "doc": "This type names a skill and holds its rendered arguments.",
       "fields": [
         {
           "name": "name",
@@ -891,29 +891,29 @@
     },
     {
       "name": "Workspace",
-      "doc": "Daemon-known workspace.",
+      "doc": "This type describes a workspace known to the daemon.",
       "fields": [
         {
           "name": "id",
-          "doc": "The daemon mints the opaque workspace id.",
+          "doc": "The daemon creates this opaque workspace ID.",
           "type": "WorkspaceId",
           "presence": "required"
         },
         {
           "name": "kind",
-          "doc": "The daemon supports only the local kind today.",
+          "doc": "The daemon supports only the local workspace kind at present.",
           "type": "WorkspaceKind",
           "presence": "defaulted"
         },
         {
           "name": "root",
-          "doc": "Canonical absolute path of the local root.",
+          "doc": "The canonical absolute path of the local root.",
           "type": "string",
           "presence": "required"
         },
         {
           "name": "title",
-          "doc": "Display title.",
+          "doc": "The display title.",
           "type": "string",
           "presence": "required"
         }
@@ -921,7 +921,7 @@
     },
     {
       "name": "WorkspaceBrowseParams",
-      "doc": "workspace.browse input.",
+      "doc": "These are the parameters for `workspace.browse`.",
       "fields": [
         {
           "name": "path",
@@ -930,13 +930,13 @@
         },
         {
           "name": "limit",
-          "doc": "Page size; omitted means daemon default.",
+          "doc": "The daemon uses its default page size when this field is absent.",
           "type": "u64",
           "presence": "optional"
         },
         {
           "name": "cursor",
-          "doc": "Opaque continuation within the same directory.",
+          "doc": "An opaque cursor for continuation within the same directory.",
           "type": "string",
           "presence": "optional"
         }
@@ -944,7 +944,7 @@
     },
     {
       "name": "WorkspaceBrowseResult",
-      "doc": "workspace.browse result.",
+      "doc": "This result contains one browse page.",
       "fields": [
         {
           "name": "path",
@@ -953,19 +953,19 @@
         },
         {
           "name": "parent",
-          "doc": "Parent directory path; null at the filesystem root.",
+          "doc": "The daemon sets this field to null at the filesystem root.",
           "type": "string",
           "presence": "optional"
         },
         {
           "name": "entries",
-          "doc": "Directory contents.",
+          "doc": "The directory contents.",
           "type": "[]DirEntry",
           "presence": "required"
         },
         {
           "name": "next_cursor",
-          "doc": "Opaque continuation; required null on the final page.",
+          "doc": "An opaque continuation cursor; null on the final page.",
           "type": "string",
           "presence": "optional"
         }
@@ -973,7 +973,7 @@
     },
     {
       "name": "WorkspaceCreatedData",
-      "doc": "Payload for `workspace.created`.",
+      "doc": "This payload describes `workspace.created`.",
       "fields": [
         {
           "name": "workspace",
@@ -985,7 +985,7 @@
     },
     {
       "name": "WorkspaceDescribeParams",
-      "doc": "workspace.describe input.",
+      "doc": "These are the parameters for `workspace.describe`.",
       "fields": [
         {
           "name": "path",
@@ -996,29 +996,29 @@
     },
     {
       "name": "WorkspaceDescribeResult",
-      "doc": "workspace.describe result.",
+      "doc": "This result describes `workspace.describe`.",
       "fields": [
         {
           "name": "workspace",
-          "doc": "Resolved workspace.",
+          "doc": "The resolved workspace.",
           "type": "Workspace",
           "presence": "required"
         },
         {
           "name": "git",
-          "doc": "Git status; null when the root is not a repo.",
+          "doc": "The daemon sets this field to null when the root is not a repository.",
           "type": "GitInfo",
           "presence": "optional"
         },
         {
           "name": "last_modified_ms",
-          "doc": "Last filesystem modification epoch ms.",
+          "doc": "The last filesystem modification time in epoch milliseconds.",
           "type": "u64",
           "presence": "required"
         },
         {
           "name": "last_used_model",
-          "doc": "Last model used in this workspace; null if never run.",
+          "doc": "The last model used in this workspace. The daemon leaves it null before the first run.",
           "type": "string",
           "presence": "optional"
         }
@@ -1026,11 +1026,11 @@
     },
     {
       "name": "WorkspaceRef",
-      "doc": "Params naming a workspace and nothing else.",
+      "doc": "These parameters name a workspace and nothing else.",
       "fields": [
         {
           "name": "workspace_id",
-          "doc": "Workspace the request targets.",
+          "doc": "This field identifies the workspace that the request targets.",
           "type": "WorkspaceId",
           "presence": "required"
         }
@@ -1038,16 +1038,16 @@
     },
     {
       "name": "WorkspaceRemoveResult",
-      "doc": "workspace.remove result.",
+      "doc": "Result of `workspace.remove`.",
       "fields": []
     },
     {
       "name": "WorkspaceRemovedData",
-      "doc": "Payload for `workspace.removed`.",
+      "doc": "This payload describes `workspace.removed`.",
       "fields": [
         {
           "name": "workspace_id",
-          "doc": "Id of the removed workspace.",
+          "doc": "This field identifies the removed workspace.",
           "type": "WorkspaceId",
           "presence": "required"
         }
@@ -1055,11 +1055,11 @@
     },
     {
       "name": "WorkspaceSkillsResult",
-      "doc": "workspace.skills.list result.",
+      "doc": "This result lists discovered skills.",
       "fields": [
         {
           "name": "skills",
-          "doc": "Discovered skills.",
+          "doc": "This field lists discovered skills.",
           "type": "[]SkillInfo",
           "presence": "required"
         }
@@ -1067,7 +1067,7 @@
     },
     {
       "name": "CatalogChangedData",
-      "doc": "Payload for `catalog.changed`.",
+      "doc": "This payload describes `catalog.changed`.",
       "fields": [
         {
           "name": "catalog_rev",
@@ -1078,7 +1078,7 @@
     },
     {
       "name": "CatalogListParams",
-      "doc": "Params for catalog.list.",
+      "doc": "These are the parameters for `catalog.list`.",
       "fields": [
         {
           "name": "since_rev",
@@ -1089,7 +1089,7 @@
     },
     {
       "name": "CatalogListResultFull",
-      "doc": "Client's revision was stale or absent; full catalog included.",
+      "doc": "The client sent a stale or absent revision, so the daemon returns the full catalog.",
       "fields": [
         {
           "name": "catalog_rev",
@@ -1105,7 +1105,7 @@
     },
     {
       "name": "CatalogListResultUnchanged",
-      "doc": "Client's revision is current; no catalog data included.",
+      "doc": "The client sent the current revision, so the daemon returns no catalog data.",
       "fields": [
         {
           "name": "catalog_rev",
@@ -1116,7 +1116,7 @@
     },
     {
       "name": "CatalogRefreshResult",
-      "doc": "Result of catalog.refresh.",
+      "doc": "This result describes `catalog.refresh`.",
       "fields": [
         {
           "name": "catalog_rev",
@@ -1127,7 +1127,7 @@
     },
     {
       "name": "ModelCost",
-      "doc": "United States dollars per million tokens.",
+      "doc": "These costs use United States dollars per million tokens.",
       "fields": [
         {
           "name": "input",
@@ -1153,7 +1153,7 @@
     },
     {
       "name": "ModelInfo",
-      "doc": "Closed projection of a provider model record. Non-owning.",
+      "doc": "This type exposes a closed projection of a provider model record. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1209,7 +1209,7 @@
     },
     {
       "name": "Request",
-      "doc": "RPC request envelope.",
+      "doc": "This type carries an RPC request.",
       "fields": [
         {
           "name": "id",
@@ -1230,7 +1230,7 @@
     },
     {
       "name": "ResponseOk",
-      "doc": "Successful RPC response envelope.",
+      "doc": "This type carries a successful RPC response.",
       "fields": [
         {
           "name": "id",
@@ -1246,7 +1246,7 @@
     },
     {
       "name": "ResponseError",
-      "doc": "Failed RPC response envelope.",
+      "doc": "This type carries a failed RPC response.",
       "fields": [
         {
           "name": "id",
@@ -1262,7 +1262,7 @@
     },
     {
       "name": "Notification",
-      "doc": "RPC notification envelope.",
+      "doc": "This type carries an RPC notification.",
       "fields": [
         {
           "name": "method",
@@ -1278,7 +1278,7 @@
     },
     {
       "name": "ActivityStateBuilding",
-      "doc": "Runtime is being built as the first phase of a run.",
+      "doc": "This state marks the first phase of a run.",
       "fields": [
         {
           "name": "run_id",
@@ -1294,7 +1294,7 @@
     },
     {
       "name": "ActivityStateCompacting",
-      "doc": "Compaction model call is active.",
+      "doc": "This state marks an active compaction model call.",
       "fields": [
         {
           "name": "run_id",
@@ -1315,12 +1315,12 @@
     },
     {
       "name": "ActivityStateIdle",
-      "doc": "No active work.",
+      "doc": "This state marks a session with no active work.",
       "fields": []
     },
     {
       "name": "ActivityStateReasoning",
-      "doc": "Model is producing reasoning.",
+      "doc": "The model produces reasoning in this state.",
       "fields": [
         {
           "name": "run_id",
@@ -1341,7 +1341,7 @@
     },
     {
       "name": "ActivityStateRetrying",
-      "doc": "Run is waiting to retry.",
+      "doc": "This state marks a run that waits for a retry.",
       "fields": [
         {
           "name": "run_id",
@@ -1377,7 +1377,7 @@
     },
     {
       "name": "ActivityStateRunning",
-      "doc": "Run is active.",
+      "doc": "This state marks an active run.",
       "fields": [
         {
           "name": "run_id",
@@ -1393,7 +1393,7 @@
     },
     {
       "name": "ActivityStateRunningTool",
-      "doc": "Tool call is running.",
+      "doc": "This state marks an active tool call.",
       "fields": [
         {
           "name": "run_id",
@@ -1424,7 +1424,7 @@
     },
     {
       "name": "ActivityStateWaitingPermission",
-      "doc": "Tool call awaits permission.",
+      "doc": "This state marks a tool call that awaits permission.",
       "fields": [
         {
           "name": "run_id",
@@ -1455,7 +1455,7 @@
     },
     {
       "name": "InputCanceledData",
-      "doc": "Payload for `input.canceled`.",
+      "doc": "This payload describes `input.canceled`.",
       "fields": [
         {
           "name": "session_id",
@@ -1482,7 +1482,7 @@
     },
     {
       "name": "InputQueuedData",
-      "doc": "Payload for `input.queued`.",
+      "doc": "This payload describes `input.queued`.",
       "fields": [
         {
           "name": "session_id",
@@ -1498,7 +1498,7 @@
     },
     {
       "name": "InputSkill",
-      "doc": "Skill invocation.",
+      "doc": "This type describes a skill invocation.",
       "fields": [
         {
           "name": "skill",
@@ -1509,7 +1509,7 @@
     },
     {
       "name": "ActiveDraft",
-      "doc": "In-flight assistant draft, resent on resync. Non-owning.",
+      "doc": "The daemon resends this assistant draft during resync. Its fields borrow their data.",
       "fields": [
         {
           "name": "message",
@@ -1520,7 +1520,7 @@
     },
     {
       "name": "AssistantMessage",
-      "doc": "Assistant transcript message payload. Non-owning.",
+      "doc": "This payload describes an assistant transcript message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1581,7 +1581,7 @@
     },
     {
       "name": "CompactionMessage",
-      "doc": "Compaction transcript message payload. Non-owning.",
+      "doc": "This payload describes a compaction transcript message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1627,7 +1627,7 @@
     },
     {
       "name": "MessageCommittedData",
-      "doc": "Payload for `message.committed`.",
+      "doc": "This payload describes `message.committed`.",
       "fields": [
         {
           "name": "session_id",
@@ -1648,7 +1648,7 @@
     },
     {
       "name": "MessageDiscardedData",
-      "doc": "Payload for `message.discarded`.",
+      "doc": "This payload describes `message.discarded`.",
       "fields": [
         {
           "name": "session_id",
@@ -1664,7 +1664,7 @@
     },
     {
       "name": "MessageError",
-      "doc": "Structured error on an assistant message with `finish: \"error\"`. Non-owning.",
+      "doc": "This type describes an assistant error with `finish: \"error\"`. Its fields borrow their data.",
       "fields": [
         {
           "name": "type",
@@ -1680,7 +1680,7 @@
     },
     {
       "name": "MessagePartAddedData",
-      "doc": "Payload for `message.part_added`.",
+      "doc": "This payload describes `message.part_added`.",
       "fields": [
         {
           "name": "session_id",
@@ -1701,7 +1701,7 @@
     },
     {
       "name": "MessageStartedData",
-      "doc": "Payload for `message.started` (draft opened).",
+      "doc": "This payload describes `message.started` when the daemon opens a draft.",
       "fields": [
         {
           "name": "session_id",
@@ -1737,7 +1737,7 @@
     },
     {
       "name": "MessageTime",
-      "doc": "Creation/completion timestamps on an assistant message.",
+      "doc": "Creation and completion times for an assistant message.",
       "fields": [
         {
           "name": "created_at_ms",
@@ -1753,7 +1753,7 @@
     },
     {
       "name": "PartDelta",
-      "doc": "Incremental text or reasoning bytes for a draft.",
+      "doc": "This payload holds more text or reasoning bytes for a draft.",
       "fields": [
         {
           "name": "session_id",
@@ -1784,7 +1784,7 @@
     },
     {
       "name": "ReasoningPart",
-      "doc": "Reasoning assistant part payload. Non-owning.",
+      "doc": "This payload describes a reasoning part in an assistant message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1805,7 +1805,7 @@
     },
     {
       "name": "RedactedReasoningPart",
-      "doc": "Opaque safety-redacted model reasoning payload. Non-owning.",
+      "doc": "This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1821,7 +1821,7 @@
     },
     {
       "name": "TextPart",
-      "doc": "Text assistant part payload. Non-owning.",
+      "doc": "This payload describes a text part in an assistant message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1837,7 +1837,7 @@
     },
     {
       "name": "TokenUsage",
-      "doc": "Token accounting for one assistant message.",
+      "doc": "This type records token counts for one assistant message.",
       "fields": [
         {
           "name": "input",
@@ -1868,7 +1868,7 @@
     },
     {
       "name": "ToolPart",
-      "doc": "Tool assistant part payload. Non-owning.",
+      "doc": "This payload describes a tool part in an assistant message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1909,7 +1909,7 @@
     },
     {
       "name": "TurnProvenance",
-      "doc": "Provider that produced an assistant turn. Non-owning.",
+      "doc": "This type records the provider that produced an assistant turn. Its fields borrow their data.",
       "fields": [
         {
           "name": "protocol",
@@ -1925,7 +1925,7 @@
     },
     {
       "name": "UserMessage",
-      "doc": "User transcript message payload. Non-owning.",
+      "doc": "This payload describes a user transcript message. Its fields borrow their data.",
       "fields": [
         {
           "name": "id",
@@ -1956,7 +1956,7 @@
     },
     {
       "name": "ConfigChangedData",
-      "doc": "Payload for `config.changed`.",
+      "doc": "This payload describes `config.changed`.",
       "fields": [
         {
           "name": "session_id",
@@ -1977,7 +1977,7 @@
     },
     {
       "name": "CreateSession",
-      "doc": "session.create input. Non-owning.",
+      "doc": "These are the `session.create` input fields. They borrow their data.",
       "fields": [
         {
           "name": "workspace_path",
@@ -2018,7 +2018,7 @@
     },
     {
       "name": "CreatedTime",
-      "doc": "Creation timestamp for a user or compaction message.",
+      "doc": "This type records the creation time for a user or compaction message.",
       "fields": [
         {
           "name": "created_at_ms",
@@ -2029,7 +2029,7 @@
     },
     {
       "name": "DaemonInfo",
-      "doc": "Daemon identity and clock. Non-owning.",
+      "doc": "This type records daemon identity and time. Its fields borrow their data.",
       "fields": [
         {
           "name": "version",
@@ -2050,7 +2050,7 @@
     },
     {
       "name": "ErrorObject",
-      "doc": "Request failure details. Non-owning.",
+      "doc": "This type records request failure details. Its fields borrow their data.",
       "fields": [
         {
           "name": "code",
@@ -2066,7 +2066,7 @@
     },
     {
       "name": "InitializeResult",
-      "doc": "Result of the `initialize` request: the coarse daemon snapshot.",
+      "doc": "This result contains the coarse daemon snapshot after `initialize`.",
       "fields": [
         {
           "name": "protocol",
@@ -2112,7 +2112,7 @@
     },
     {
       "name": "Notice",
-      "doc": "Daemon diagnostic notice broadcast to all connections. Non-owning.",
+      "doc": "The daemon broadcasts this diagnostic notice to all connections. Its fields borrow their data.",
       "fields": [
         {
           "name": "level",
@@ -2133,7 +2133,7 @@
     },
     {
       "name": "QueuedInput",
-      "doc": "A queued input waiting behind an active turn.",
+      "doc": "This input waits behind an active turn.",
       "fields": [
         {
           "name": "input_id",
@@ -2154,7 +2154,7 @@
     },
     {
       "name": "Session",
-      "doc": "Daemon-owned session summary.",
+      "doc": "The daemon owns this session summary.",
       "fields": [
         {
           "name": "id",
@@ -2240,7 +2240,7 @@
     },
     {
       "name": "TranscriptTruncatedData",
-      "doc": "Payload for `transcript.truncated`.",
+      "doc": "This payload describes `transcript.truncated`.",
       "fields": [
         {
           "name": "session_id",
@@ -2261,7 +2261,7 @@
     },
     {
       "name": "PermissionDecideParams",
-      "doc": "Params for permission.decide.",
+      "doc": "These are the parameters for `permission.decide`.",
       "fields": [
         {
           "name": "session_id",
@@ -2292,7 +2292,7 @@
     },
     {
       "name": "PermissionDecisionRule",
-      "doc": "Decided by a matched persisted rule.",
+      "doc": "A matched persisted rule decided the request.",
       "fields": [
         {
           "name": "rule_id",
@@ -2313,7 +2313,7 @@
     },
     {
       "name": "PermissionDecisionUser",
-      "doc": "Decided by a user selecting an option.",
+      "doc": "The user selected an option for the decision.",
       "fields": [
         {
           "name": "option_id",
@@ -2344,7 +2344,7 @@
     },
     {
       "name": "PermissionForgetParams",
-      "doc": "Params for permission.forget.",
+      "doc": "These are the parameters for `permission.forget`.",
       "fields": [
         {
           "name": "workspace_id",
@@ -2360,7 +2360,7 @@
     },
     {
       "name": "PermissionOption",
-      "doc": "One option the daemon proposes for a permission request.",
+      "doc": "The daemon proposes this option for a permission request.",
       "fields": [
         {
           "name": "id",
@@ -2386,7 +2386,7 @@
     },
     {
       "name": "PermissionRule",
-      "doc": "A remembered \"allow always\" answer, scoped to a workspace.",
+      "doc": "This rule stores an `allow always` answer for matching requests in a workspace.",
       "fields": [
         {
           "name": "id",
@@ -2427,7 +2427,7 @@
     },
     {
       "name": "PermissionRulesChangedData",
-      "doc": "Payload for `permission.rules_changed`.",
+      "doc": "This payload describes `permission.rules_changed`.",
       "fields": [
         {
           "name": "workspace_id",
@@ -2443,7 +2443,7 @@
     },
     {
       "name": "PermissionRulesResult",
-      "doc": "Result of permission.rules.",
+      "doc": "This result describes `permission.rules`.",
       "fields": [
         {
           "name": "rules",
@@ -2454,7 +2454,7 @@
     },
     {
       "name": "PermissionState",
-      "doc": "Local-only lifecycle data folded into tool state. Never a broadcast.",
+      "doc": "This local lifecycle data belongs in tool state. The daemon never broadcasts it.",
       "fields": [
         {
           "name": "requested_at_ms",
@@ -2475,7 +2475,7 @@
     },
     {
       "name": "RunCanceledTiming",
-      "doc": "Cancellation timing; an accepted queued run may never start.",
+      "doc": "This type records run start and end times. The daemon records no start time when a queued run never starts.",
       "fields": [
         {
           "name": "started_at_ms",
@@ -2491,7 +2491,7 @@
     },
     {
       "name": "RunConfig",
-      "doc": "Run settings captured at start.",
+      "doc": "The daemon saves these run settings at run start.",
       "fields": [
         {
           "name": "config_rev",
@@ -2512,7 +2512,7 @@
     },
     {
       "name": "RunDoneData",
-      "doc": "Payload for `run.done`.",
+      "doc": "This payload describes `run.done`.",
       "fields": [
         {
           "name": "session_id",
@@ -2548,12 +2548,12 @@
     },
     {
       "name": "RunOutcomeCanceled",
-      "doc": "A run canceled by the user or daemon. Its timing rides the terminal envelope.",
+      "doc": "The user or daemon canceled the run. The terminal envelope carries its timing.",
       "fields": []
     },
     {
       "name": "RunOutcomeCompacted",
-      "doc": "A manual compaction that produced a summary.",
+      "doc": "The daemon completed a manual compaction and produced a summary.",
       "fields": [
         {
           "name": "message_id",
@@ -2564,7 +2564,7 @@
     },
     {
       "name": "RunOutcomeFailed",
-      "doc": "A run that failed after daemon retry policy was exhausted.",
+      "doc": "The daemon reports failure after it exhausts its retry policy.",
       "fields": [
         {
           "name": "code",
@@ -2580,7 +2580,7 @@
     },
     {
       "name": "RunOutcomeSkipped",
-      "doc": "A manual compaction that did nothing.",
+      "doc": "The daemon skipped a manual compaction without producing a summary.",
       "fields": [
         {
           "name": "reason",
@@ -2591,7 +2591,7 @@
     },
     {
       "name": "RunOutcomeTurn",
-      "doc": "A completed turn: it stopped for a stop reason after some round trips.",
+      "doc": "The daemon completed a turn after some round trips and recorded its stop reason.",
       "fields": [
         {
           "name": "finish",
@@ -2607,7 +2607,7 @@
     },
     {
       "name": "RunStartedData",
-      "doc": "Payload for `run.started`.",
+      "doc": "This payload describes `run.started`.",
       "fields": [
         {
           "name": "session_id",
@@ -2679,7 +2679,7 @@
     },
     {
       "name": "SessionActivityChangedData",
-      "doc": "Payload for `session.activity_changed`.",
+      "doc": "This payload describes `session.activity_changed`.",
       "fields": [
         {
           "name": "session_id",
@@ -2695,7 +2695,7 @@
     },
     {
       "name": "SessionCancelInputParams",
-      "doc": "Params for `session.cancel_input`.",
+      "doc": "These are the parameters for `session.cancel_input`.",
       "fields": [
         {
           "name": "session_id",
@@ -2711,7 +2711,7 @@
     },
     {
       "name": "SessionCancelInputResult",
-      "doc": "Result of `session.cancel_input`.",
+      "doc": "This result identifies the canceled input.",
       "fields": [
         {
           "name": "canceled_input",
@@ -2722,7 +2722,7 @@
     },
     {
       "name": "SessionCancelRunParams",
-      "doc": "Params for `session.cancel_run`.",
+      "doc": "These are the parameters for `session.cancel_run`.",
       "fields": [
         {
           "name": "session_id",
@@ -2743,7 +2743,7 @@
     },
     {
       "name": "SessionCancelRunResult",
-      "doc": "Result of `session.cancel_run`.",
+      "doc": "This result identifies the canceled run and cleared inputs.",
       "fields": [
         {
           "name": "canceled_run",
@@ -2764,7 +2764,7 @@
     },
     {
       "name": "SessionCompactParams",
-      "doc": "session.compact input.",
+      "doc": "These are the parameters for `session.compact`.",
       "fields": [
         {
           "name": "session_id",
@@ -2775,7 +2775,7 @@
     },
     {
       "name": "SessionCompactResult",
-      "doc": "session.compact result.",
+      "doc": "This result describes `session.compact`.",
       "fields": [
         {
           "name": "status",
@@ -2791,7 +2791,7 @@
     },
     {
       "name": "SessionConfigParams",
-      "doc": "session.config.get input.",
+      "doc": "These are the parameters for `session.config.get`.",
       "fields": [
         {
           "name": "session_id",
@@ -2807,7 +2807,7 @@
     },
     {
       "name": "SessionConfigResult",
-      "doc": "session.config.get result.",
+      "doc": "This result describes `session.config.get`.",
       "fields": [
         {
           "name": "config",
@@ -2823,7 +2823,7 @@
     },
     {
       "name": "SessionDeltasShedData",
-      "doc": "Advisory notice that this connection's live deltas were shed.",
+      "doc": "This advisory notice tells the connection that the daemon dropped its live deltas.",
       "fields": [
         {
           "name": "session_id",
@@ -2839,7 +2839,7 @@
     },
     {
       "name": "SessionForkParams",
-      "doc": "session.fork input.",
+      "doc": "These are the parameters for `session.fork`.",
       "fields": [
         {
           "name": "session_id",
@@ -2855,7 +2855,7 @@
     },
     {
       "name": "SessionHistoryParams",
-      "doc": "session.history input.",
+      "doc": "These are the parameters for `session.history`.",
       "fields": [
         {
           "name": "session_id",
@@ -2876,7 +2876,7 @@
     },
     {
       "name": "SessionHistoryResult",
-      "doc": "session.history result.",
+      "doc": "This result describes `session.history`.",
       "fields": [
         {
           "name": "session_id",
@@ -2902,7 +2902,7 @@
     },
     {
       "name": "SessionListItem",
-      "doc": "Compact session row for `session.list` and session broadcasts. Non-owning.",
+      "doc": "This row summarizes a session for `session.list` and session broadcasts. Its fields borrow their data.",
       "fields": [
         {
           "name": "session",
@@ -2918,7 +2918,7 @@
     },
     {
       "name": "SessionListParams",
-      "doc": "session.list input. Non-owning.",
+      "doc": "These are the `session.list` input fields. They borrow their data.",
       "fields": [
         {
           "name": "scope",
@@ -2949,7 +2949,7 @@
     },
     {
       "name": "SessionListResult",
-      "doc": "One bounded session.list page. Non-owning.",
+      "doc": "This result contains one bounded `session.list` page. Its fields borrow their data.",
       "fields": [
         {
           "name": "revision",
@@ -2975,7 +2975,7 @@
     },
     {
       "name": "SessionOriginChild",
-      "doc": "Child of another session.",
+      "doc": "This origin links a session to its parent session and message part.",
       "fields": [
         {
           "name": "parent_id",
@@ -2996,7 +2996,7 @@
     },
     {
       "name": "SessionOriginFork",
-      "doc": "Fork of another session.",
+      "doc": "This origin links a session to its source session.",
       "fields": [
         {
           "name": "source_id",
@@ -3007,12 +3007,12 @@
     },
     {
       "name": "SessionOriginRoot",
-      "doc": "User-created root session.",
+      "doc": "This origin marks a user-created root session.",
       "fields": []
     },
     {
       "name": "SessionPatch",
-      "doc": "Missing field means no change. The system prompt is snapshotted at creation and is not patchable. Non-owning.",
+      "doc": "An absent field leaves the current value unchanged. The daemon stores the system prompt at creation. The system prompt remains fixed, and the fields borrow their data.",
       "fields": [
         {
           "name": "model",
@@ -3038,7 +3038,7 @@
     },
     {
       "name": "SessionPatchParams",
-      "doc": "Params for `session.patch`.",
+      "doc": "These are the parameters for `session.patch`.",
       "fields": [
         {
           "name": "session_id",
@@ -3054,12 +3054,12 @@
     },
     {
       "name": "SessionPopulationAll",
-      "doc": "Every session regardless of origin.",
+      "doc": "This option selects every session regardless of origin.",
       "fields": []
     },
     {
       "name": "SessionPopulationChildren",
-      "doc": "Immediate persistent children of one session.",
+      "doc": "This option selects the immediate persistent children of one session.",
       "fields": [
         {
           "name": "parent_id",
@@ -3070,12 +3070,12 @@
     },
     {
       "name": "SessionPopulationTopLevel",
-      "doc": "User-facing conversations: root sessions and forks.",
+      "doc": "This option selects root sessions and forks for user-facing conversations.",
       "fields": []
     },
     {
       "name": "SessionRemoveParams",
-      "doc": "Params for `session.remove`.",
+      "doc": "These are the parameters for `session.remove`.",
       "fields": [
         {
           "name": "session_id",
@@ -3091,7 +3091,7 @@
     },
     {
       "name": "SessionRemovedData",
-      "doc": "Payload for `session.removed`.",
+      "doc": "This payload describes `session.removed`.",
       "fields": [
         {
           "name": "revision",
@@ -3107,7 +3107,7 @@
     },
     {
       "name": "SessionResult",
-      "doc": "Result of session creation, forking, or patching.",
+      "doc": "This result contains the session after creation, a fork, or a patch.",
       "fields": [
         {
           "name": "session",
@@ -3118,7 +3118,7 @@
     },
     {
       "name": "SessionResyncParams",
-      "doc": "session.resync input.",
+      "doc": "These are the parameters for `session.resync`.",
       "fields": [
         {
           "name": "session_id",
@@ -3134,7 +3134,7 @@
     },
     {
       "name": "SessionResyncResult",
-      "doc": "Full session snapshot for reconnection. Non-owning.",
+      "doc": "This result contains the full session snapshot for reconnection. Its fields borrow their data.",
       "fields": [
         {
           "name": "item",
@@ -3180,7 +3180,7 @@
     },
     {
       "name": "SessionRewindParams",
-      "doc": "session.rewind input.",
+      "doc": "These are the parameters for `session.rewind`.",
       "fields": [
         {
           "name": "session_id",
@@ -3196,7 +3196,7 @@
     },
     {
       "name": "SessionSendInputParams",
-      "doc": "Params for `session.send_input`.",
+      "doc": "These are the parameters for `session.send_input`.",
       "fields": [
         {
           "name": "session_id",
@@ -3212,7 +3212,7 @@
     },
     {
       "name": "SessionSendInputResultQueued",
-      "doc": "Queued behind an active turn.",
+      "doc": "The daemon queued the input behind an active turn.",
       "fields": [
         {
           "name": "input_id",
@@ -3223,7 +3223,7 @@
     },
     {
       "name": "SessionSendInputResultStarted",
-      "doc": "Started immediately.",
+      "doc": "The daemon started the input immediately.",
       "fields": [
         {
           "name": "input_id",
@@ -3239,7 +3239,7 @@
     },
     {
       "name": "SessionSummaryChangedData",
-      "doc": "Payload for `session.summary_changed`.",
+      "doc": "This payload describes `session.summary_changed`.",
       "fields": [
         {
           "name": "revision",
@@ -3255,7 +3255,7 @@
     },
     {
       "name": "ToolStateCanceled",
-      "doc": "Call was canceled.",
+      "doc": "The user or daemon canceled the call.",
       "fields": [
         {
           "name": "duration_ms",
@@ -3266,7 +3266,7 @@
     },
     {
       "name": "ToolStateChangedData",
-      "doc": "Payload for `tool.state_changed`.",
+      "doc": "This payload describes `tool.state_changed`.",
       "fields": [
         {
           "name": "session_id",
@@ -3297,7 +3297,7 @@
     },
     {
       "name": "ToolStateCompleted",
-      "doc": "Call finished successfully.",
+      "doc": "The tool call completed successfully.",
       "fields": [
         {
           "name": "output",
@@ -3318,7 +3318,7 @@
     },
     {
       "name": "ToolStateDenied",
-      "doc": "Permission was denied.",
+      "doc": "The user or daemon denied permission for the call.",
       "fields": [
         {
           "name": "reason",
@@ -3334,7 +3334,7 @@
     },
     {
       "name": "ToolStateError",
-      "doc": "Call failed.",
+      "doc": "The tool call failed.",
       "fields": [
         {
           "name": "error",
@@ -3355,12 +3355,12 @@
     },
     {
       "name": "ToolStatePending",
-      "doc": "Not yet started.",
+      "doc": "The tool call has not started.",
       "fields": []
     },
     {
       "name": "ToolStateRunning",
-      "doc": "Call is executing.",
+      "doc": "The tool call is active.",
       "fields": [
         {
           "name": "started_at_ms",
@@ -3376,12 +3376,12 @@
     },
     {
       "name": "ToolStateWaitingPermission",
-      "doc": "Awaiting a permission decision.",
+      "doc": "The tool call awaits a permission decision.",
       "fields": []
     },
     {
       "name": "DiffFile",
-      "doc": "One file in a diff view.",
+      "doc": "This type describes one file in a diff view.",
       "fields": [
         {
           "name": "path",
@@ -3402,7 +3402,7 @@
     },
     {
       "name": "DiffHunk",
-      "doc": "One hunk of a unified diff.",
+      "doc": "This type describes one hunk of a unified diff.",
       "fields": [
         {
           "name": "old_start",
@@ -3433,7 +3433,7 @@
     },
     {
       "name": "ViewDiff",
-      "doc": "Unified diff view.",
+      "doc": "This view displays a unified diff.",
       "fields": [
         {
           "name": "files",
@@ -3444,7 +3444,7 @@
     },
     {
       "name": "ViewImage",
-      "doc": "Image view.",
+      "doc": "This view displays an image.",
       "fields": [
         {
           "name": "source",
@@ -3460,7 +3460,7 @@
     },
     {
       "name": "ViewJson",
-      "doc": "JSON view.",
+      "doc": "This view displays JSON text.",
       "fields": [
         {
           "name": "text",
@@ -3471,7 +3471,7 @@
     },
     {
       "name": "ViewMarkdown",
-      "doc": "Markdown view.",
+      "doc": "This view displays Markdown text.",
       "fields": [
         {
           "name": "text",
@@ -3482,7 +3482,7 @@
     },
     {
       "name": "ViewText",
-      "doc": "Plain text view.",
+      "doc": "This view displays plain text.",
       "fields": [
         {
           "name": "text",
@@ -3500,7 +3500,7 @@
   "unions": [
     {
       "name": "SessionScope",
-      "doc": "Workspace scope searched by `session.list`.",
+      "doc": "This scope filters `session.list` by workspace.",
       "discriminator": "type",
       "arms": [
         {
@@ -3515,7 +3515,7 @@
     },
     {
       "name": "ContentPart",
-      "doc": "One part of a message's content.",
+      "doc": "This type describes one part of a message's content.",
       "discriminator": "type",
       "arms": [
         {
@@ -3538,7 +3538,7 @@
     },
     {
       "name": "MediaSource",
-      "doc": "Where media bytes live.",
+      "doc": "This type identifies where media bytes live.",
       "discriminator": "type",
       "arms": [
         {
@@ -3557,7 +3557,7 @@
     },
     {
       "name": "AuthLoginOutcome",
-      "doc": "Terminal outcome for a daemon-owned login attempt.",
+      "doc": "This union reports the terminal outcome of a daemon-owned login attempt.",
       "discriminator": "type",
       "arms": [
         {
@@ -3576,7 +3576,7 @@
     },
     {
       "name": "AuthLoginResult",
-      "doc": "Result of `auth.login`, tagged by the mechanism actually started.",
+      "doc": "This result identifies the mechanism that the daemon started for `auth.login`.",
       "discriminator": "type",
       "arms": [
         {
@@ -3591,7 +3591,7 @@
     },
     {
       "name": "CatalogListResult",
-      "doc": "Result of catalog.list: unchanged since `since_rev`, or a full catalog snapshot.",
+      "doc": "This result reports a catalog unchanged since `since_rev`, or a full catalog snapshot.",
       "discriminator": "type",
       "arms": [
         {
@@ -3606,7 +3606,7 @@
     },
     {
       "name": "ActivityState",
-      "doc": "Session activity state; locator fields let clients detect drift and resync.",
+      "doc": "This state holds locator fields that let clients detect drift and resync.",
       "discriminator": "type",
       "arms": [
         {
@@ -3645,7 +3645,7 @@
     },
     {
       "name": "Input",
-      "doc": "A unit of user input: either raw content or a skill invocation. Non-owning.",
+      "doc": "This type accepts raw content or a skill invocation. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3660,7 +3660,7 @@
     },
     {
       "name": "AssistantPart",
-      "doc": "One element of an assistant message `content[]`. Non-owning.",
+      "doc": "This type describes one element of an assistant message's content. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3683,7 +3683,7 @@
     },
     {
       "name": "Message",
-      "doc": "A transcript message. Non-owning.",
+      "doc": "This union describes a transcript message. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3702,7 +3702,7 @@
     },
     {
       "name": "PermissionDecision",
-      "doc": "Who answered a permission request, and how. Non-owning.",
+      "doc": "This type records who answered a permission request and how. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3717,7 +3717,7 @@
     },
     {
       "name": "RunOutcome",
-      "doc": "Terminal outcome of a run, discriminated by `type`.",
+      "doc": "This union describes the terminal run outcome. The `type` field selects the outcome.",
       "discriminator": "type",
       "arms": [
         {
@@ -3744,7 +3744,7 @@
     },
     {
       "name": "SessionOrigin",
-      "doc": "How a session was created.",
+      "doc": "This union records how the daemon created the session.",
       "discriminator": "type",
       "arms": [
         {
@@ -3763,7 +3763,7 @@
     },
     {
       "name": "SessionPopulation",
-      "doc": "Session relationship population searched by session.list.",
+      "doc": "This union selects the session relationships that `session.list` returns.",
       "discriminator": "type",
       "arms": [
         {
@@ -3782,7 +3782,7 @@
     },
     {
       "name": "SessionSendInputResult",
-      "doc": "Result of `session.send_input`: started immediately or queued behind an active turn.",
+      "doc": "This result says whether the daemon started or queued the input.",
       "discriminator": "type",
       "arms": [
         {
@@ -3797,7 +3797,7 @@
     },
     {
       "name": "ToolState",
-      "doc": "Lifecycle state of a tool part. Non-owning.",
+      "doc": "This union records a tool part's lifecycle state. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3832,7 +3832,7 @@
     },
     {
       "name": "View",
-      "doc": "Display-only rendering hint. Frontends may render natively or ignore. Non-owning.",
+      "doc": "A frontend can render this hint natively or ignore it. Its fields borrow their data.",
       "discriminator": "type",
       "arms": [
         {
@@ -3859,7 +3859,7 @@
     },
     {
       "name": "RequestParams",
-      "doc": "Client request parameter envelope.",
+      "doc": "This union carries client request parameters.",
       "discriminator": "",
       "arms": [
         {
@@ -3944,7 +3944,7 @@
     },
     {
       "name": "ResponseResult",
-      "doc": "Server response result envelope.",
+      "doc": "This union carries server response results.",
       "discriminator": "",
       "arms": [
         {
@@ -4011,7 +4011,7 @@
     },
     {
       "name": "BroadcastData",
-      "doc": "Server broadcast data envelope.",
+      "doc": "This union carries server broadcast data.",
       "discriminator": "",
       "arms": [
         {
@@ -4090,7 +4090,7 @@
     },
     {
       "name": "Response",
-      "doc": "RPC response envelope.",
+      "doc": "This union carries an RPC response.",
       "discriminator": "",
       "arms": [
         {
@@ -4105,7 +4105,6 @@
   "enumerations": [
     {
       "name": "AuthFlow",
-      "doc": "Authentication flow kind.",
       "numeric": false,
       "values": [
         {
@@ -4120,7 +4119,6 @@
     },
     {
       "name": "AuthCredentialKind",
-      "doc": "Authentication credential kind.",
       "numeric": false,
       "values": [
         {
@@ -4135,7 +4133,6 @@
     },
     {
       "name": "BroadcastName",
-      "doc": "Broadcast event name.",
       "numeric": false,
       "values": [
         {
@@ -4151,17 +4148,17 @@
         {
           "name": "session.removed",
           "wire": "session.removed",
-          "doc": "A session was removed."
+          "doc": "The daemon removed a session."
         },
         {
           "name": "workspace.created",
           "wire": "workspace.created",
-          "doc": "A workspace was created."
+          "doc": "The daemon created a workspace."
         },
         {
           "name": "workspace.removed",
           "wire": "workspace.removed",
-          "doc": "A workspace was removed."
+          "doc": "The daemon removed a workspace."
         },
         {
           "name": "permission.rules_changed",
@@ -4176,7 +4173,7 @@
         {
           "name": "auth.login_finished",
           "wire": "auth.login_finished",
-          "doc": "An authentication login flow finished."
+          "doc": "The daemon finished an authentication login flow."
         },
         {
           "name": "auth.changed",
@@ -4186,12 +4183,12 @@
         {
           "name": "notice",
           "wire": "notice",
-          "doc": "Out-of-band notice from the daemon."
+          "doc": "The daemon sent an out-of-band notice."
         },
         {
           "name": "message.committed",
           "wire": "message.committed",
-          "doc": "A message was committed to a session's transcript."
+          "doc": "The daemon committed a message to a session transcript."
         },
         {
           "name": "run.started",
@@ -4211,7 +4208,7 @@
         {
           "name": "transcript.truncated",
           "wire": "transcript.truncated",
-          "doc": "Older transcript messages were truncated."
+          "doc": "The daemon truncated older transcript messages."
         },
         {
           "name": "message.started",
@@ -4221,17 +4218,17 @@
         {
           "name": "message.discarded",
           "wire": "message.discarded",
-          "doc": "An in-progress message was discarded."
+          "doc": "The daemon discarded an unfinished message."
         },
         {
           "name": "message.part_added",
           "wire": "message.part_added",
-          "doc": "A part was added to a message."
+          "doc": "The daemon added a part to a message."
         },
         {
           "name": "message.part_delta",
           "wire": "message.part_delta",
-          "doc": "Incremental content for a streaming message part."
+          "doc": "The daemon sent more content for a message part."
         },
         {
           "name": "tool.state_changed",
@@ -4241,28 +4238,28 @@
         {
           "name": "tool.output_delta",
           "wire": "tool.output_delta",
-          "doc": "Incremental output from a running tool."
+          "doc": "The daemon sent more output from a tool."
         },
         {
           "name": "input.queued",
           "wire": "input.queued",
-          "doc": "An input was queued behind the active run."
+          "doc": "The daemon queued an input behind the active run."
         },
         {
           "name": "input.canceled",
           "wire": "input.canceled",
-          "doc": "A queued input was canceled."
+          "doc": "The daemon canceled a queued input."
         },
         {
           "name": "session.deltas_shed",
           "wire": "session.deltas_shed",
-          "doc": "Live deltas were shed; the client must resync the session."
+          "doc": "The daemon dropped live deltas. The client must resync the session."
         }
       ]
     },
     {
       "name": "ErrorCode",
-      "doc": "Numeric JSON-RPC and yuke error code.",
+      "doc": "Numeric JSON-RPC and yuke error codes.",
       "numeric": true,
       "values": [
         {
@@ -4435,7 +4432,6 @@
     },
     {
       "name": "MethodName",
-      "doc": "RPC method name.",
       "numeric": false,
       "values": [
         {
@@ -4446,12 +4442,12 @@
         {
           "name": "session.list",
           "wire": "session.list",
-          "doc": "List sessions."
+          "doc": "List the sessions."
         },
         {
           "name": "session.create",
           "wire": "session.create",
-          "doc": "Create a new session."
+          "doc": "Create a session."
         },
         {
           "name": "session.patch",
@@ -4496,12 +4492,12 @@
         {
           "name": "session.resync",
           "wire": "session.resync",
-          "doc": "Resync a session after live deltas were shed."
+          "doc": "Resync a session after the daemon drops live deltas."
         },
         {
           "name": "session.history",
           "wire": "session.history",
-          "doc": "Fetch a page of a session's transcript history."
+          "doc": "Fetch a page from a session transcript."
         },
         {
           "name": "permission.decide",
@@ -4546,7 +4542,7 @@
         {
           "name": "auth.cancel_login",
           "wire": "auth.cancel_login",
-          "doc": "Cancel an in-progress login flow."
+          "doc": "Cancel an active login flow."
         },
         {
           "name": "auth.logout",
@@ -4561,7 +4557,7 @@
         {
           "name": "workspace.browse",
           "wire": "workspace.browse",
-          "doc": "Browse a workspace's filesystem."
+          "doc": "Browse a workspace filesystem."
         },
         {
           "name": "workspace.remove",
@@ -4606,7 +4602,6 @@
     },
     {
       "name": "PermissionOptionKind",
-      "doc": "Permission option kind.",
       "numeric": false,
       "values": [
         {
@@ -4663,7 +4658,6 @@
     },
     {
       "name": "RunKind",
-      "doc": "Run kind.",
       "numeric": false,
       "values": [
         {
@@ -4678,7 +4672,6 @@
     },
     {
       "name": "CompactSkipReason",
-      "doc": "Reason compaction was skipped.",
       "numeric": false,
       "values": [
         {
@@ -4728,7 +4721,6 @@
     },
     {
       "name": "CompactStatus",
-      "doc": "Compaction status.",
       "numeric": false,
       "values": [
         {
@@ -4781,7 +4773,6 @@
     },
     {
       "name": "CompactionReason",
-      "doc": "Reason for compaction.",
       "numeric": false,
       "values": [
         {
@@ -4815,7 +4806,6 @@
     },
     {
       "name": "SkillScope",
-      "doc": "Skill scope.",
       "numeric": false,
       "values": [
         {

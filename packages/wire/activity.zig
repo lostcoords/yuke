@@ -5,7 +5,7 @@ const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 
-/// Session activity state; locator fields let clients detect drift and resync.
+/// This state holds locator fields that let clients detect drift and resync.
 pub const ActivityState = union(enum) {
     idle: ActivityStateIdle,
     building: ActivityStateBuilding,
@@ -28,30 +28,30 @@ pub const ActivityState = union(enum) {
     }
 };
 
-/// Runtime is being built as the first phase of a run.
+/// This state marks the first phase of a run.
 pub const ActivityStateBuilding = struct {
     run_id: ids.RunId,
     started_at_ms: u64,
 };
 
-/// Compaction model call is active.
+/// This state marks an active compaction model call.
 pub const ActivityStateCompacting = struct {
     run_id: ids.RunId,
     reason: enums.CompactionReason,
     started_at_ms: u64,
 };
 
-/// No active work.
+/// This state marks a session with no active work.
 pub const ActivityStateIdle = struct {};
 
-/// Model is producing reasoning.
+/// The model produces reasoning in this state.
 pub const ActivityStateReasoning = struct {
     run_id: ids.RunId,
     message_id: ids.MessageId,
     part_id: ids.PartId,
 };
 
-/// Run is waiting to retry.
+/// This state marks a run that waits for a retry.
 pub const ActivityStateRetrying = struct {
     run_id: ids.RunId,
     attempt: u64,
@@ -61,13 +61,13 @@ pub const ActivityStateRetrying = struct {
     message: []const u8,
 };
 
-/// Run is active.
+/// This state marks an active run.
 pub const ActivityStateRunning = struct {
     run_id: ids.RunId,
     started_at_ms: u64,
 };
 
-/// Tool call is running.
+/// This state marks an active tool call.
 pub const ActivityStateRunningTool = struct {
     run_id: ids.RunId,
     message_id: ids.MessageId,
@@ -76,7 +76,7 @@ pub const ActivityStateRunningTool = struct {
     started_at_ms: u64,
 };
 
-/// Tool call awaits permission.
+/// This state marks a tool call that awaits permission.
 pub const ActivityStateWaitingPermission = struct {
     run_id: ids.RunId,
     message_id: ids.MessageId,

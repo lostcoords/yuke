@@ -6,14 +6,14 @@ const sql = @import("sql");
 const Database = @import("database.zig").Database;
 const queries_gen = @import("queries_gen.zig");
 
-/// SessionSnapshot returns the client-facing summary and the open-run marker.
+/// SessionSnapshot returns the summary for the client and the open-run marker.
 pub const Snapshot = queries_gen.SessionSnapshot.Row;
 
-/// One row of a session.list page. Every page variant selects the same columns.
+/// Store one row of a session.list page. Every page variant selects the same columns.
 pub const PageRow = queries_gen.SessionPageRecent.Row;
 
-/// The session.list selector drops a filter when its field is null.
-/// top_level keeps roots and forks.
+/// The session.list selector uses a filter only when its field has a value.
+/// The top_level filter keeps roots and forks.
 pub const Selector = struct {
     workspace_id: ?[16]u8 = null,
     parent_id: ?[16]u8 = null,
@@ -23,7 +23,7 @@ pub const Selector = struct {
 /// The cursor stores the last row that a page returned.
 pub const Cursor = struct { updated_at_ms: u64, id: [16]u8 };
 
-/// The create operation sets these fields. The field names match the InsertSession parameters.
+/// The create operation sets these fields. Their names match the InsertSession parameters.
 pub const CreateParams = struct {
     id: [16]u8,
     workspace_id: [16]u8,
@@ -46,17 +46,17 @@ pub const CreateParams = struct {
     updated_at_ms: u64,
 };
 
-/// Insert a new session row. The schema rejects an origin that does not match its id set.
+/// Insert a new session row. The schema accepts an origin only with its related id set.
 pub fn create(db: *Database, params: CreateParams) !void {
     try db.queries.insert_session.exec(params);
 }
 
-/// Store the session's system prompt. Create sets it once; no method changes it.
+/// Store the session's system prompt. Create sets it once; all methods preserve it.
 pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8) !void {
     try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text });
 }
 
-/// Read the session's system prompt into `arena`, or null when no prompt was set.
+/// Read the session's system prompt into `arena`, or return null when no prompt exists.
 pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?[]const u8 {
     const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
     return row.value.prompt;
@@ -69,7 +69,7 @@ pub fn exists(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
     return true;
 }
 
-/// Load the summary of one session into `arena`. Return null when no row exists.
+/// Load one session summary into `arena`. Return null when no row exists.
 pub fn snapshot(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?Snapshot {
     const row = (try db.queries.session_snapshot.maybeOne(arena, .{ .id = id })) orelse return null;
     return row.value;
@@ -125,14 +125,14 @@ pub fn openRuns(db: *Database, arena: std.mem.Allocator) ![]const OpenRun {
 const first_page: Cursor = .{ .updated_at_ms = std.math.maxInt(i64), .id = [_]u8{0xFF} ** 16 };
 
 /// Load one keyset page of the session list into `arena`, newest first. The result borrows `arena`.
-/// The selector picks the index-seeking variant: a workspace scope, then a parent, else recent.
+/// The selector picks the index-seek variant: workspace scope, parent scope, or recent rows.
 pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cursor, limit: i64) ![]PageRow {
-    if (limit < 0) return error.InvalidLimit; // SQLite reads a negative LIMIT as unbounded.
+    if (limit < 0) return error.InvalidLimit; // SQLite treats a negative LIMIT as unbounded.
     const c = cursor orelse first_page;
 
     var out: std.ArrayList(PageRow) = .empty;
-    // Parent is more selective than workspace, so a children query seeks the parent index and treats
-    // a workspace scope as a post-filter.
+    // Parent is more selective than workspace. The child query seeks the parent index and applies
+    // the workspace scope as a post-filter.
     if (sel.parent_id) |p| {
         var it = try db.queries.session_page_parent.rows(.{
             .filter_parent_id = p,
@@ -167,7 +167,7 @@ pub fn list(db: *Database, arena: std.mem.Allocator, sel: Selector, cursor: ?Cur
     return out.items;
 }
 
-/// Copy each variant row into one PageRow. The variants select the same columns in the same order.
+/// Copy each variant row into one PageRow. All variants select the same columns in the same order.
 fn collectPage(it: anytype, arena: std.mem.Allocator, out: *std.ArrayList(PageRow)) !void {
     while (try it.next(arena)) |row| try out.append(arena, asPageRow(row.value));
 }
@@ -179,7 +179,7 @@ fn asPageRow(row: anytype) PageRow {
     return out;
 }
 
-/// Count the whole view the selector describes. The selector picks the same variant as `list`.
+/// Count the full view that the selector defines. The selector picks the same variant as `list`.
 pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
     if (sel.parent_id) |p| {
         const row = try db.queries.session_count_parent.one(arena, .{
@@ -276,7 +276,7 @@ test "a child session needs all three parent marks" {
     ok.parent_part_id = 0;
     try create(&db, ok);
 
-    // Each missing mark fails the check.
+    // Each absent mark fails the check.
     const missing = [_]struct { m: ?u64, p: ?u64 }{
         .{ .m = null, .p = 0 },
         .{ .m = 1, .p = null },
@@ -307,7 +307,7 @@ test "fork needs a source id" {
     try create(&db, fork);
 
     var bad_fork = rootParams([_]u8{3} ** 16, ws.id);
-    bad_fork.origin = "fork"; // The fork has no source_id.
+    bad_fork.origin = "fork"; // A fork must have a source_id.
     try testing.expectError(error.ConstraintCheck, create(&db, bad_fork));
 }
 
@@ -331,7 +331,7 @@ test "prompt reads a set prompt and null when absent" {
     const id = [_]u8{3} ** 16;
     try create(&db, rootParams(id, ws.id));
 
-    try testing.expect((try prompt(&db, a, id)) == null); // no prompt row yet
+    try testing.expect((try prompt(&db, a, id)) == null); // No prompt row exists yet.
     try setPrompt(&db, id, "be helpful");
     try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?);
 }
@@ -347,13 +347,13 @@ test "an open run cannot exceed the run high-water mark" {
     const id = [_]u8{3} ** 16;
     try create(&db, rootParams(id, ws.id));
 
-    // run_id_high is 0, so an open run fails the mark check.
+    // run_id_high is 0, so the mark check rejects an open run.
     const open =
         "UPDATE sessions SET open_run_id = 1, open_run_kind = 'turn', open_run_started_at_ms = 0 " ++
         "WHERE id = x'03030303030303030303030303030303'";
     try testing.expectError(error.ConstraintCheck, db.conn.execNoArgs(open));
 
-    // Raise the mark, then the same open run passes.
+    // Raise the mark, then the same open run passes the check.
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try event.bumpIds(&db, a, id, .{ .run_id_high = 1 });
     try db.conn.execNoArgs("COMMIT");
@@ -409,7 +409,7 @@ test "the keyset tiebreaks equal timestamps by id descending" {
     for (1..4) |i| {
         var p = rootParams([_]u8{@as(u8, @intCast(i))} ** 16, ws.id);
         p.created_at_ms = 100;
-        p.updated_at_ms = 100; // equal timestamps force the id tiebreak
+        p.updated_at_ms = 100; // Equal timestamps force the id tiebreak.
         try create(&db, p);
     }
 
@@ -467,18 +467,18 @@ test "the workspace and parent selectors filter and page" {
     child.parent_part_id = 0;
     try create(&db, child);
 
-    // The workspace selector keeps only workspace a (a root and its child).
+    // The workspace selector keeps only workspace a, with its root and child.
     try testing.expectEqual(@as(u64, 2), try count(&db, a, .{ .workspace_id = wa.id }));
     const in_a = try list(&db, a, .{ .workspace_id = wa.id }, null, 10);
     try testing.expectEqual(@as(usize, 2), in_a.len);
 
-    // The parent selector keeps only children of root a.
+    // The parent selector keeps only the children of root a.
     try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .parent_id = root_a }));
     const kids = try list(&db, a, .{ .parent_id = root_a }, null, 10);
     try testing.expectEqual(@as(usize, 1), kids.len);
     try testing.expectEqualStrings("child", kids[0].origin);
 
-    // A parent plus a matching workspace keeps the child; a mismatched workspace drops it.
+    // A parent and the same workspace keep the child; a different workspace drops it.
     try testing.expectEqual(@as(u64, 1), try count(&db, a, .{ .parent_id = root_a, .workspace_id = wa.id }));
     try testing.expectEqual(@as(usize, 1), (try list(&db, a, .{ .parent_id = root_a, .workspace_id = wa.id }, null, 10)).len);
     try testing.expectEqual(@as(u64, 0), try count(&db, a, .{ .parent_id = root_a, .workspace_id = wb.id }));

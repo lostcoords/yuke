@@ -1,4 +1,4 @@
-//! yuke wire protocol type modules.
+//! This module exports the yuke wire protocol types.
 
 pub const ids = @import("ids.zig");
 pub const tagged = @import("tagged.zig");

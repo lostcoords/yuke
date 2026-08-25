@@ -2,8 +2,8 @@
 
 const std = @import("std");
 
-/// A fixed-width binary id. It holds `N` raw bytes and encodes as `2*N` lowercase hex on the wire.
-/// Hex is stable for every byte value and is path-safe for a store key.
+/// This ID stores `N` raw bytes and uses `2*N` lowercase hexadecimal characters on the wire.
+/// The encoding stays stable for every byte and remains safe in a store key path.
 pub fn HexId(comptime N: usize) type {
     return struct {
         raw: [N]u8,
@@ -11,7 +11,7 @@ pub fn HexId(comptime N: usize) type {
         const Self = @This();
         pub const byte_len = N;
 
-        /// Wrap raw bytes as an id. Callers at the wire boundary use this value in place of a struct literal.
+        /// Wrap raw bytes as an ID. Use the value at the wire boundary instead of a struct literal.
         pub fn bytes(raw: [N]u8) Self {
             return .{ .raw = raw };
         }
@@ -32,7 +32,7 @@ pub fn HexId(comptime N: usize) type {
                 else => return error.UnexpectedToken,
             };
             if (text.len != N * 2) return error.LengthMismatch;
-            if (!isLowerHex(text)) return error.InvalidCharacter; // the wire uses lowercase hex only
+            if (!isLowerHex(text)) return error.InvalidCharacter; // The wire accepts lowercase hexadecimal only.
             var self: Self = undefined;
             _ = std.fmt.hexToBytes(&self.raw, text) catch return error.InvalidCharacter;
             return self;
@@ -40,42 +40,42 @@ pub fn HexId(comptime N: usize) type {
     };
 }
 
-/// Fixed-width session identifier.
+/// This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire.
 pub const SessionId = HexId(16);
-/// Fixed-width workspace identifier.
+/// This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire.
 pub const WorkspaceId = HexId(16);
-/// Fixed-width permission rule identifier.
+/// This ID uses 16 raw bytes and 32 lowercase hexadecimal characters on the wire.
 pub const RuleId = HexId(16);
-/// Fixed-width login identifier.
+/// This ID uses 32 raw bytes and 64 lowercase hexadecimal characters on the wire.
 pub const LoginId = HexId(32);
-/// Fixed-width catalog revision identifier.
+/// This ID uses 64 raw bytes and 128 lowercase hexadecimal characters on the wire.
 pub const CatalogRev = HexId(64);
 
-// Numeric ids remain within the 2^53 limit where they cross to JavaScript.
-/// Numeric message identifier.
+// Numeric IDs stay within the 2^53 limit when they cross to JavaScript.
+/// This numeric ID identifies a message.
 pub const MessageId = u64;
-/// Numeric run identifier.
+/// This numeric ID identifies a run.
 pub const RunId = u64;
-/// Numeric input identifier.
+/// This numeric ID identifies an input.
 pub const InputId = u64;
-/// Numeric message-part identifier.
+/// This numeric ID identifies a message part.
 pub const PartId = u64;
-/// Numeric event sequence.
+/// This numeric value identifies an event sequence.
 pub const Seq = u64;
-/// Numeric session revision.
+/// This numeric value identifies a session revision.
 pub const SessionRevision = u64;
-/// Numeric run-configuration revision.
+/// This numeric value identifies a run configuration revision.
 pub const ConfigRev = u64;
 
-// Opaque string identifiers are plain slices.
-/// Opaque provider identifier.
+// Opaque string IDs use plain slices.
+/// This opaque string identifies a provider.
 pub const ProviderId = []const u8;
-/// Opaque model identifier.
+/// This opaque string identifies a model.
 pub const ModelId = []const u8;
-/// Opaque request identifier.
+/// This opaque string identifies a request.
 pub const RequestId = []const u8;
 
-/// True when every byte is a lowercase hex digit. The path-safety check for the `[N]u8` ids.
+/// Return true when every byte is a lowercase hexadecimal digit. This check keeps `[N]u8` IDs safe in paths.
 pub fn isLowerHex(bytes: []const u8) bool {
     for (bytes) |c| switch (c) {
         '0'...'9', 'a'...'f' => {},
@@ -86,8 +86,8 @@ pub fn isLowerHex(bytes: []const u8) bool {
 
 test isLowerHex {
     try std.testing.expect(isLowerHex("0123456789abcdef"));
-    try std.testing.expect(!isLowerHex("0123456789ABCDEF")); // uppercase rejected
-    try std.testing.expect(!isLowerHex("../etc/passwd_xx")); // path chars rejected
+    try std.testing.expect(!isLowerHex("0123456789ABCDEF")); // Reject uppercase hexadecimal.
+    try std.testing.expect(!isLowerHex("../etc/passwd_xx")); // Reject path characters.
 }
 
 test "HexId encodes lowercase hex and rejects uppercase or a wrong length" {

@@ -7,7 +7,7 @@ const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
 const workspace = @import("workspace.zig");
 
-/// A unit of user input: either raw content or a skill invocation. Non-owning.
+/// This type accepts raw content or a skill invocation. Its fields borrow their data.
 pub const Input = union(enum) {
     content: InputContent,
     skill: InputSkill,
@@ -24,7 +24,7 @@ pub const Input = union(enum) {
     }
 };
 
-/// Payload for `input.canceled`.
+/// This payload describes `input.canceled`.
 pub const InputCanceledData = struct {
     session_id: ids.SessionId,
     input_id: ids.InputId,
@@ -35,13 +35,13 @@ pub const InputContent = struct {
     content: []const content.ContentPart,
 };
 
-/// Payload for `input.queued`.
+/// This payload describes `input.queued`.
 pub const InputQueuedData = struct {
     session_id: ids.SessionId,
     input: misc.QueuedInput,
 };
 
-/// Skill invocation.
+/// This type describes a skill invocation.
 pub const InputSkill = struct {
     skill: workspace.SkillRef,
 };

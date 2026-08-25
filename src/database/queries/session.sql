@@ -35,7 +35,7 @@ INSERT INTO sessions(
 SELECT 1 AS present FROM sessions WHERE id = :id;
 
 -- name: SessionSnapshot :optional
--- Return the client-facing summary and the open-run recovery marker for one id.
+-- Return the summary for the client and the open-run recovery marker for one id.
 -- Omit the id allocation marks because recovery reads them separately.
 -- id: [16]u8!
 -- workspace_id: [16]u8!
@@ -123,12 +123,12 @@ FROM sessions
 WHERE open_run_id IS NOT NULL
 ORDER BY id;
 
--- The session.list page columns. Every page variant selects this same set in this same order, so
--- the store maps each generated row to one PageRow.
+-- These are the session.list page columns. Every variant selects them in the same order, so the store
+-- maps each generated row to one PageRow.
 
 -- name: SessionPageRecent :many
--- Newest-first page over every workspace. sessions_by_recent supplies the order and the cursor seek.
--- top_level applies during the scan and keeps roots and forks.
+-- Return a newest-first page over every workspace. sessions_by_recent supplies the order and cursor seek.
+-- The top_level value filters the scan and keeps roots and forks.
 -- top_level: bool!
 -- cursor_updated_at_ms: u64!
 -- cursor_id: [16]u8!
@@ -173,8 +173,8 @@ ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;
 
 -- name: SessionPageWorkspace :many
--- Same page inside one workspace. A seek on sessions_by_workspace serves the filter and order.
--- top_level refines the population. A parent filter dispatches to SessionPageParent instead.
+-- Return the same page inside one workspace. A seek on sessions_by_workspace serves the filter and order.
+-- The top_level value refines the population. A parent filter selects SessionPageParent instead.
 -- filter_workspace_id: [16]u8!
 -- top_level: bool!
 -- cursor_updated_at_ms: u64!
@@ -221,8 +221,8 @@ ORDER BY updated_at_ms DESC, id DESC
 LIMIT :limit;
 
 -- name: SessionPageParent :many
--- Children of one session. A seek on sessions_by_parent serves the order; parent is more selective
--- than workspace, so a workspace scope becomes a post-filter here.
+-- Return children of one session. A seek on sessions_by_parent serves the order; parent is more selective
+-- than workspace, so a workspace scope becomes a post-filter.
 -- filter_parent_id: [16]u8!
 -- filter_workspace_id: ?[16]u8!
 -- top_level: bool!
@@ -298,13 +298,13 @@ WHERE parent_id = :filter_parent_id
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: InsertPrompt :exec
--- The system prompt is snapshotted at creation. A missing row reads back as null.
+-- Create snapshots the system prompt. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
 INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
 
 -- name: SelectPrompt :optional
--- Read the session's system prompt. A missing row reads back as null.
+-- Read the session's system prompt. An absent row reads back as null.
 -- session_id: [16]u8!
 -- prompt: []const u8!
 SELECT prompt FROM session_prompts WHERE session_id = :session_id;

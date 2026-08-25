@@ -4,7 +4,7 @@ const std = @import("std");
 const tagged = @import("tagged.zig");
 const ids = @import("ids.zig");
 
-/// Workspace scope searched by `session.list`.
+/// This scope filters `session.list` by workspace.
 pub const SessionScope = union(enum) {
     all: SessionScopeAll,
     workspace: SessionScopeWorkspace,
@@ -21,10 +21,10 @@ pub const SessionScope = union(enum) {
     }
 };
 
-/// All workspaces (no payload).
+/// This option selects all workspaces and has no payload.
 pub const SessionScopeAll = struct {};
 
-/// One workspace.
+/// This option selects one workspace.
 pub const SessionScopeWorkspace = struct {
     workspace_id: ids.WorkspaceId,
 };

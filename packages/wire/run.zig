@@ -5,20 +5,20 @@ const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 
-/// Cancellation timing; an accepted queued run may never start.
+/// This type records run start and end times. The daemon records no start time when a queued run never starts.
 pub const RunCanceledTiming = struct {
     started_at_ms: ?u64 = null,
     ended_at_ms: u64,
 };
 
-/// Run settings captured at start.
+/// The daemon saves these run settings at run start.
 pub const RunConfig = struct {
     config_rev: ids.ConfigRev,
     model: []const u8,
     reasoning: []const u8,
 };
 
-/// Payload for `run.done`.
+/// This payload describes `run.done`.
 pub const RunDoneData = struct {
     session_id: ids.SessionId,
     seq: ids.Seq,
@@ -28,7 +28,7 @@ pub const RunDoneData = struct {
     outcome: RunOutcome,
 };
 
-/// Terminal outcome of a run, discriminated by `type`.
+/// This union describes the terminal run outcome. The `type` field selects the outcome.
 pub const RunOutcome = union(enum) {
     turn: RunOutcomeTurn,
     compacted: RunOutcomeCompacted,
@@ -48,32 +48,32 @@ pub const RunOutcome = union(enum) {
     }
 };
 
-/// A run canceled by the user or daemon. Its timing rides the terminal envelope.
+/// The user or daemon canceled the run. The terminal envelope carries its timing.
 pub const RunOutcomeCanceled = struct {};
 
-/// A manual compaction that produced a summary.
+/// The daemon completed a manual compaction and produced a summary.
 pub const RunOutcomeCompacted = struct {
     message_id: ids.MessageId,
 };
 
-/// A run that failed after daemon retry policy was exhausted.
+/// The daemon reports failure after it exhausts its retry policy.
 pub const RunOutcomeFailed = struct {
     code: enums.RunErrorCode,
     message: []const u8,
 };
 
-/// A manual compaction that did nothing.
+/// The daemon skipped a manual compaction without producing a summary.
 pub const RunOutcomeSkipped = struct {
     reason: enums.CompactSkipReason,
 };
 
-/// A completed turn: it stopped for a stop reason after some round trips.
+/// The daemon completed a turn after some round trips and recorded its stop reason.
 pub const RunOutcomeTurn = struct {
     finish: enums.StopReason,
     rounds: u64,
 };
 
-/// Payload for `run.started`.
+/// This payload describes `run.started`.
 pub const RunStartedData = struct {
     session_id: ids.SessionId,
     seq: ids.Seq,

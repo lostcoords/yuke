@@ -17,7 +17,7 @@ INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload)
 
 -- name: BumpIds :one
 -- Id marks only increase. A stale bump does not rewind a mark.
--- RETURNING yields no row for a missing session, so the caller sees NoRow.
+-- RETURNING yields no row for an absent session, so the caller sees NoRow.
 -- id: [16]u8!
 -- message_id_high: u64!
 -- run_id_high: u64!

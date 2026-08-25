@@ -1,7 +1,7 @@
--- The design has mutable registry tables plus an append-only activity log; projections rebuild from it.
--- STRICT types enforce storage; checks enforce domain rules; numeric bounds are 2^53-1 (wire JSON safe).
+-- The schema has mutable registry tables and an append-only activity log. Projections rebuild from the log.
+-- STRICT types enforce storage; checks enforce domain rules; 2^53-1 keeps numbers safe for wire JSON.
 
--- The models.dev catalog. A thin key/value store until a typed catalog schema lands.
+-- The models.dev catalog uses a thin key-value store until a typed schema exists.
 CREATE TABLE catalog_meta (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
@@ -20,7 +20,7 @@ CREATE TABLE catalog_models (
 
 CREATE INDEX catalog_models_by_provider ON catalog_models (provider_id);
 
--- The daemon mints an opaque id, not a path hash, so container and cloud kinds fit later.
+-- The daemon mints an opaque id instead of a path hash. This supports container and cloud kinds later.
 -- A persistent local root sets stable_key to the canonical path; an ephemeral one leaves it null.
 CREATE TABLE workspaces (
     id   BLOB PRIMARY KEY CHECK (length(id) = 16), -- wire.WorkspaceId
@@ -30,14 +30,14 @@ CREATE TABLE workspaces (
 
     stable_key TEXT CHECK (stable_key IS NULL OR length(stable_key) > 0),
 
-    -- A local workspace must have a root. Other kinds must not have one.
+    -- A local workspace has a root. Other kinds have a null root.
     CHECK ((kind = 'local') = (root IS NOT NULL)),
-    -- A null stable_key repeats freely; SQLite treats each null as distinct.
+    -- A null stable_key can repeat. SQLite treats each null as distinct.
     UNIQUE (kind, stable_key)
 ) STRICT, WITHOUT ROWID;
 
--- The session registry holds primary state; it is not derived from the log. A rowid table suits this
--- wide, frequently updated row. Flatten Session_Origin; each arm's ids are non-null only for that arm.
+-- The session registry holds primary state. The log does not derive this state. A rowid table suits this
+-- wide, often updated row. Flatten Session_Origin; each arm's ids are non-null only for that arm.
 CREATE TABLE sessions (
     id           BLOB NOT NULL UNIQUE CHECK (length(id) = 16), -- wire.SessionId; UUIDv7 for index locality
     workspace_id BLOB NOT NULL CHECK (length(workspace_id) = 16) REFERENCES workspaces(id), -- wire.WorkspaceId
@@ -62,8 +62,8 @@ CREATE TABLE sessions (
 
     message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- Sum lifetime token usage over each committed assistant turn; a truncation never
-    -- subtracts. usage_input_total includes the cache subsets.
+    -- Sum lifetime token usage for each committed assistant turn. A truncation leaves the total unchanged.
+    -- usage_input_total includes the cache subsets.
     usage_input_total       INTEGER NOT NULL DEFAULT 0 CHECK (usage_input_total       BETWEEN 0 AND 9007199254740991), -- u64
     usage_output_total      INTEGER NOT NULL DEFAULT 0 CHECK (usage_output_total      BETWEEN 0 AND 9007199254740991), -- u64
     usage_reasoning_total   INTEGER NOT NULL DEFAULT 0 CHECK (usage_reasoning_total   BETWEEN 0 AND 9007199254740991), -- u64
@@ -73,19 +73,18 @@ CREATE TABLE sessions (
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
     updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- These id marks only increase. Recovery reads them, never MAX(seq), so a truncating
-    -- rewind cannot reclaim ids.
+    -- These id marks only increase. Recovery reads them instead of MAX(seq), so a rewind cannot reclaim ids.
     seq_high        INTEGER NOT NULL DEFAULT 0 CHECK (seq_high        BETWEEN 0 AND 9007199254740991),
     message_id_high INTEGER NOT NULL DEFAULT 0 CHECK (message_id_high BETWEEN 0 AND 9007199254740991),
     run_id_high     INTEGER NOT NULL DEFAULT 0 CHECK (run_id_high     BETWEEN 0 AND 9007199254740991),
     input_id_high   INTEGER NOT NULL DEFAULT 0 CHECK (input_id_high   BETWEEN 0 AND 9007199254740991),
     config_rev_high INTEGER NOT NULL DEFAULT 0 CHECK (config_rev_high BETWEEN 0 AND 9007199254740991),
 
-    -- The read model reflects the log through this seq. The projections slice raises it on rebuild.
+    -- The read model covers the log through this seq. A projection rebuild raises this value.
     projection_seq INTEGER NOT NULL DEFAULT 0 CHECK (projection_seq BETWEEN 0 AND 9007199254740991),
 
-    -- Recovery marker, not activity: a start closes these at the next restart. These are
-    -- the three fields a terminal needs; all null when nothing is owed.
+    -- The recovery marker records an owed terminal event, not activity. A new start closes these fields
+    -- at the next restart. The terminal needs all three fields; null means no obligation.
     open_run_id            INTEGER CHECK (open_run_id IS NULL OR open_run_id BETWEEN 1 AND 9007199254740991), -- wire.RunId
     open_run_kind          TEXT    CHECK (open_run_kind IS NULL OR open_run_kind IN ('turn', 'compaction')),
     open_run_started_at_ms INTEGER CHECK (open_run_started_at_ms IS NULL OR open_run_started_at_ms BETWEEN 0 AND 9007199254740991), -- u64
@@ -99,20 +98,21 @@ CREATE TABLE sessions (
     CHECK ((created_by_name IS NULL) = (created_by_version IS NULL)),
     CHECK (updated_at_ms >= created_at_ms),
 
-    -- Open-run columns move as a unit: all set while a terminal is owed, all null once one is written.
+    -- Open-run columns move as a unit. Set all three while the database owes a terminal; clear all three
+    -- after it writes one.
     CHECK ((open_run_id IS NULL) = (open_run_kind IS NULL)),
     CHECK ((open_run_id IS NULL) = (open_run_started_at_ms IS NULL)),
     -- An open run reuses a minted id, so it never exceeds the run high-water mark.
     CHECK (open_run_id IS NULL OR open_run_id <= run_id_high)
 ) STRICT;
 
--- Every ORDER BY term is DESC, including the id tiebreak; a trailing ASC id costs a temp
+-- Every ORDER BY term uses DESC, and the id tiebreak follows it. An ASC id at the end costs a temp
 -- B-tree on every session.list page.
 CREATE INDEX sessions_by_recent    ON sessions(updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_workspace ON sessions(workspace_id, updated_at_ms DESC, id DESC);
 CREATE INDEX sessions_by_parent    ON sessions(parent_id, updated_at_ms DESC, id DESC) WHERE parent_id IS NOT NULL;
 
--- The append-only activity log. A rowid table holds full bodies; keep payload last for overflow I/O.
+-- The activity log stores full bodies in a rowid table. Keep payload last for overflow I/O.
 -- event_id is a stable global id for export or sync; (session_id, seq) is the local stream order.
 CREATE TABLE events (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
@@ -127,10 +127,10 @@ CREATE TABLE events (
 -- Name this index so the tail query keeps a stable plan name.
 CREATE UNIQUE INDEX events_by_session_seq ON events(session_id, seq);
 
--- Replay rebuilds this projection. Keep the body in events.payload and join by
--- (session_id, seq). The composite FK stops the pointer from dangling.
+-- Replay rebuilds this projection from events.payload joined by session_id and seq. The composite FK
+-- keeps the pointer valid.
 CREATE TABLE messages (
-    -- A stable alias rowid. FTS5 external-content will index by it and VACUUM keeps it fixed.
+    -- Use a stable alias rowid so FTS5 external-content can index it and VACUUM can keep it fixed.
     search_id  INTEGER PRIMARY KEY,
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -141,7 +141,7 @@ CREATE TABLE messages (
     run_id     INTEGER CHECK (run_id     IS NULL OR run_id     BETWEEN 1 AND 9007199254740991), -- wire.RunId
     config_rev INTEGER CHECK (config_rev IS NULL OR config_rev BETWEEN 0 AND 9007199254740991), -- wire.ConfigRev
 
-    -- Store the answering model from turn provenance. Leave it null until the engine records it.
+    -- Store the model that answers the turn. Leave it null until the engine records it.
     model    TEXT CHECK (model    IS NULL OR length(model)    <= 128),
     protocol TEXT CHECK (protocol IS NULL OR length(protocol) <= 32),
 
@@ -156,20 +156,20 @@ CREATE TABLE messages (
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
-    -- A rowid table so FTS5 external-content can index the transcript by rowid later.
+    -- Use a rowid table so FTS5 external-content can index the transcript by rowid later.
     UNIQUE (session_id, message_id),
     FOREIGN KEY (session_id, seq) REFERENCES events(session_id, seq) ON DELETE CASCADE
 ) STRICT;
 
--- Index the FK child columns so a session or event cascade seeks instead of scanning messages.
+-- Index the FK child columns so a session or event cascade can seek instead of a message scan.
 CREATE INDEX messages_by_event ON messages(session_id, seq);
 
--- Index only rows with a recorded model. This answers "which turns used X" and costs
--- nothing before the engine records provenance.
+-- Index only rows with a recorded model. This supports the query for turns that used a model and adds
+-- no cost before the engine records provenance.
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
 
--- Replay rebuilds this projection. Store each revision so session.config reads it
--- directly, not by folding the log from seq 1.
+-- Replay rebuilds this projection. Store each revision so session.config reads it directly instead of
+-- a log scan from seq 1.
 CREATE TABLE session_configs (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -180,8 +180,8 @@ CREATE TABLE session_configs (
     PRIMARY KEY (session_id, config_rev)
 ) STRICT, WITHOUT ROWID;
 
--- Store one prompt per session. Create sets it and no method changes it. Keep it outside
--- sessions because the prompt has no fixed bound. A missing row means null.
+-- Store one prompt per session in a separate table. Create sets it once because the prompt has no fixed bound.
+-- An absent row means null.
 CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY CHECK (length(session_id) = 16) -- wire.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,

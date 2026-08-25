@@ -23,12 +23,12 @@ const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 const max_transcript_messages: usize = 1000;
 
-/// A prepared run the response gate must launch exactly once. Callers hold it as `?Launch`.
-/// `release` nulls the token before launch. `launchSlot` asserts the slot phase to catch a re-launch.
+/// The response gate must launch a prepared run exactly once. Callers hold the token as `?Launch`.
+/// `release` clears the token before launch. `launchSlot` asserts the slot phase to catch a re-launch.
 pub const Launch = struct {
     slot: *RunSlot,
 
-    /// Launch the prepared slot. Do nothing when the token is already consumed.
+    /// Launch the prepared slot. Return when another path consumed the token.
     pub fn release(self: *?Launch, state: *State) void {
         const launch = self.* orelse return;
         self.* = null;
@@ -96,14 +96,14 @@ fn runSession(state: *State, slot: *RunSlot) void {
     defer streamer.offsets.deinit(state.gpa);
     publishBestEffort(state, session_id, .{ .method = .@"message.started", .params = .{ .message_started_data = started } });
 
-    // Stream on a child task and wait for it or a cancel signal. The child owns the body, so a
-    // blocked read stops through child cancellation and the body deinits before this run terminalizes.
+    // Stream on a child task and wait for it or a cancel signal. The child owns the body.
+    // Child cancellation stops a blocked read and deinits the body before this run reaches its terminal state.
     const terminal: Terminal = blk: {
         var reader = zio.spawn(streamChild, .{ state, arena, slot, &streamer }) catch |err| {
             break :blk .{ .failed = failure(err) };
         };
         const winner = zio.select(.{ .reader = &reader, .cancel = &slot.cancel_event }) catch {
-            reader.cancel(); // this run task was canceled at shutdown; stop the reader
+            reader.cancel(); // Shutdown canceled this run task; stop the reader.
             break :blk .canceled;
         };
         switch (winner) {
@@ -118,7 +118,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
                 } };
             },
             .cancel => {
-                reader.cancel(); // request cancellation and join the reader
+                reader.cancel(); // Request cancellation, then join the reader.
                 break :blk .canceled;
             },
         }
@@ -129,8 +129,8 @@ fn runSession(state: *State, slot: *RunSlot) void {
     };
 }
 
-/// Open the response and stream it into the draft. The run task runs this as a child so a cancel can
-/// interrupt a blocked read. The child owns the body and deinits it before it returns.
+/// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
+/// The child owns the body and deinits it before it returns.
 fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !void {
     try checkCanceled(slot);
     const session_id = slot.handle.started.session_id;
@@ -138,7 +138,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     const model = slot.config.model;
 
     const resolved = if (state.providers) |p| provider.config.resolveModel(p, model) else null;
-    // A configured daemon rejects an unknown model. An unconfigured daemon uses the placeholder transport.
+    // A daemon with providers rejects an unknown model. A daemon without providers uses the placeholder transport.
     if (resolved == null and state.providers != null) return error.UnknownModel;
     const request = if (resolved) |r| try resolvedRequest(state, arena, slot, transcript, r) else fallback: {
         // The fallback uses the injected or placeholder transport.
@@ -210,7 +210,7 @@ const Failure = struct {
     message: []const u8,
 };
 
-/// Map a run failure to a wire error code and one short sentence. The wire message never leaks an
+/// Map a run failure to a wire error code and one short sentence. The wire message exposes no
 /// internal error name. Each message stays well under `wire.meta.limits.max_error_message_bytes`.
 fn failure(err: anyerror) Failure {
     return switch (err) {
@@ -373,7 +373,7 @@ fn checkCanceled(slot: *const RunSlot) !void {
     if (slot.cancel_requested) return error.Canceled;
 }
 
-/// Maps each provider StreamEvent to a wire broadcast and folds it into the live Draft.
+/// Map each provider StreamEvent to a wire broadcast and fold it into the live Draft.
 const Streamer = struct {
     state: *State,
     slot: *RunSlot,

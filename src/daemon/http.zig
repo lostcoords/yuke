@@ -13,7 +13,8 @@ const run_task = @import("run_task.zig");
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
 const write_buffer_bytes = 4096;
-// Bound each WebSocket message with the wire frame limit, the single source of truth.
+// Use the wire frame limit as the bound for each WebSocket message.
+// The wire frame limit is the only source of truth.
 const max_ws_message_bytes: usize = @intCast(wire.meta.limits.max_frame_bytes);
 
 const text_plain = [_]std.http.Header{
@@ -100,7 +101,7 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     var lifecycle: WebSocketLifecycle = .{};
     conn.setTeardown(&lifecycle.close, signalWebSocketClose);
     try state.registry.register(&conn);
-    defer state.registry.unregister(&conn); // runs before conn.deinit, so no publish targets a dead outbox
+    defer state.registry.unregister(&conn); // The defer runs before `conn.deinit`, so no publish targets a dead outbox.
 
     var reader = try zio.spawn(readerTask, .{ state, &conn, socket.input, &lifecycle });
     errdefer reader.cancel();
@@ -170,16 +171,16 @@ fn writerLoop(conn: *Connection, output: *std.Io.Writer) void {
     while (true) {
         const item = conn.outbox.receive() catch return; // closed and drained
         defer conn.gpa.free(item.bytes);
-        // A stuck peer can block this write with no timeout. A proxy deadline or task cancel frees it.
+        // A stuck peer can block this write indefinitely. A proxy deadline or task cancel frees it.
         output.writeAll(item.bytes) catch return;
         output.flush() catch return;
         if (item.terminal) return;
-        // The outbox drained. Send a resync marker for any dropped deltas.
+        // The outbox is empty. Send a resync marker for newly reported dropped deltas.
         if (conn.outbox.isEmpty()) flushShedMarkers(conn, output) catch return;
     }
 }
 
-/// Frame the pending resync markers, then write them to the socket in one pass.
+/// Frame the queued resync markers, then write them to the socket in one pass.
 fn flushShedMarkers(conn: *Connection, output: *std.Io.Writer) !void {
     var buf: std.Io.Writer.Allocating = .init(conn.gpa);
     defer buf.deinit();
@@ -189,7 +190,7 @@ fn flushShedMarkers(conn: *Connection, output: *std.Io.Writer) !void {
     try output.flush();
 }
 
-/// Decode client frames and enqueue framed replies, pongs, and closes. Never write to the socket.
+/// Decode client frames and enqueue framed replies, pongs, and closes. Give all socket writes to the writer task.
 fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
     const gpa = state.gpa;
     var reader: wss.MessageReader = .init(max_ws_message_bytes);
@@ -266,7 +267,7 @@ fn enqueueClose(conn: *Connection, code: wss.CloseCode) !bool {
     return conn.tryEnqueue(.{ .bytes = try buf.toOwnedSlice(), .terminal = true });
 }
 
-/// Validate handshake fields that `upgradeRequested` does not check.
+/// Validate handshake fields that `upgradeRequested` leaves unchecked.
 fn validUpgrade(request: *std.http.Server.Request, key: []const u8) bool {
     if (!validKey(key)) return false;
 

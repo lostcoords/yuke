@@ -1,5 +1,5 @@
-//! Shared session-projection domain: the one fold both the daemon and the client run, so the
-//! streaming-state logic that Odin duplicated across daemon and client lives here exactly once.
+//! The daemon and client share one session projection fold.
+//! This module keeps the state logic in one place.
 
 pub const draft = @import("draft.zig");
 pub const queue = @import("queue.zig");

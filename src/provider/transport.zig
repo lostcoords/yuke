@@ -8,7 +8,7 @@ const event = @import("stream/event.zig");
 /// Cap the whole response so one turn cannot grow memory without bound.
 const max_response_bytes = 16 * 1024 * 1024;
 
-/// A provider HTTP request. This fills only `body`; the real client fills url and headers from resolve.
+/// The caller fills only `body`; the real client fills `url` and `headers` from `resolve`.
 pub const Header = struct { name: []const u8, value: []const u8 };
 pub const Request = struct {
     url: []const u8 = "",
@@ -16,7 +16,7 @@ pub const Request = struct {
     body: []const u8,
 };
 
-/// Opens one provider response. The daemon injects it, so a test or the real client can vary the body.
+/// Open one provider response. The daemon injects this seam, so tests and the real client can vary the body.
 /// The run's reader child calls open. The returned body borrows `arena` for the turn.
 pub const Transport = struct {
     ctx: *anyopaque,
@@ -31,15 +31,15 @@ pub const Transport = struct {
     }
 };
 
-/// A pulled byte stream of one provider response. The reader child reads to end of stream, then deinits.
-/// A blocking read must use cancelable zio I/O; the run task cancels the child and the read returns error.Canceled.
+/// A response body provides one provider response. The reader child reads to end of stream, then deinits.
+/// Use cancelable zio I/O for reads that can block; the run task cancels the child, and the read returns error.Canceled.
 pub const ResponseBody = struct {
     ctx: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Fill `buf` (never empty) with one or more bytes, or return 0 at end of stream. A real
-        /// adapter must retry a non-EOF zero-byte read and map only std EndOfStream to 0.
+        /// Fill a non-empty `buf` with one or more bytes, or return 0 at end of stream.
+        /// A real adapter must retry a non-EOF zero-byte read and map only std EndOfStream to 0.
         read: *const fn (ctx: *anyopaque, buf: []u8) anyerror!usize,
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -52,8 +52,8 @@ pub const ResponseBody = struct {
     }
 };
 
-/// Pull the response and hand each StreamEvent to `onEvent`. Reset the scratch after each read, so parse
-/// trees do not accumulate for the whole turn. The callback must copy each borrowed slice before it returns.
+/// Pull the response and hand each StreamEvent to `onEvent`. Reset scratch after each read.
+/// This prevents parse trees from accumulating for the whole turn. The callback must copy each borrowed slice before it returns.
 pub fn stream(
     gpa: std.mem.Allocator,
     body: ResponseBody,
@@ -65,7 +65,7 @@ pub fn stream(
     defer parser.deinit();
     var scratch: std.heap.ArenaAllocator = .init(gpa);
     defer scratch.deinit();
-    // The reducer appends events with its own gpa, so it owns this backing.
+    // The reducer appends events with its own gpa, so it owns this backing memory.
     var events: std.ArrayList(event.StreamEvent) = .empty;
     defer events.deinit(reducer.gpa);
 
@@ -78,7 +78,7 @@ pub fn stream(
         if (n == 0) break;
         total += n;
         if (total > max_response_bytes) return error.ResponseTooLarge;
-        // Create the list inside the read loop. Scratch owns the backing and resets it after the read.
+        // Create the list inside the read loop. The scratch allocator owns and resets its backing after the read.
         var frames: std.ArrayList([]const u8) = .empty;
         try parser.push(buf[0..n], scratch.allocator(), &frames);
         for (frames.items) |data| {
@@ -101,7 +101,7 @@ pub fn stream(
     try reducer.finish(&events);
     try emit(events.items, &saw_done, ctx, onEvent);
 
-    if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done as truncated.
+    if (!saw_done) return error.IncompleteStream; // Treat a stream without the terminal done event as truncated.
 }
 
 /// Hand each event to the callback. Reject an event after the terminal done.
@@ -112,19 +112,19 @@ fn emit(
     comptime onEvent: fn (@TypeOf(ctx), event.StreamEvent) anyerror!void,
 ) !void {
     for (events) |ev| {
-        if (saw_done.*) return error.Protocol; // no event follows the terminal done
+        if (saw_done.*) return error.Protocol; // The terminal done event has no next event.
         try onEvent(ctx, ev);
         if (ev == .done) saw_done.* = true;
     }
 }
 
-/// Replays canned response bytes. `chunk_size` fragments the stream to exercise partial reads and the
-/// SSE parser's cross-read state. 0 delivers the whole body in one read.
+/// Replay canned response bytes. `chunk_size` splits the stream to test partial reads and cross-read SSE state.
+/// A value of 0 delivers the whole body in one read.
 pub const MockTransport = struct {
     bytes: []const u8,
     chunk_size: usize,
     offset: usize = 0,
-    captured: ?[]const u8 = null, // the last request body, for assertions
+    captured: ?[]const u8 = null, // The last request body, for assertions.
 
     pub fn init(bytes: []const u8, chunk_size: usize) MockTransport {
         return .{ .bytes = bytes, .chunk_size = if (chunk_size == 0) bytes.len else chunk_size };
@@ -134,7 +134,7 @@ pub const MockTransport = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    /// Record the request and replay the canned response. The seam the run loop calls.
+    /// Record the request and replay the canned response. The run loop calls this seam.
     pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request) !ResponseBody {
         _ = arena;
         self.captured = request.body;
@@ -144,7 +144,7 @@ pub const MockTransport = struct {
     const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
 
     fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-        std.debug.assert(buf.len > 0); // the seam never reads into an empty buffer
+        std.debug.assert(buf.len > 0); // The seam never reads into an empty buffer.
         const self: *MockTransport = @ptrCast(@alignCast(ctx));
         const remaining = self.bytes[self.offset..];
         const n = @min(@min(buf.len, self.chunk_size), remaining.len);
@@ -160,7 +160,7 @@ fn frame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }
 
-/// The placeholder response until the real HTTP adapter lands.
+/// This is the placeholder response until the real HTTP adapter arrives.
 pub const placeholder_reply =
     frame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
@@ -176,7 +176,7 @@ pub const placeholder_reply =
         \\{"type":"message_stop"}
     );
 
-/// Replays fixed bytes. This stands in for the provider until the real HTTP adapter lands.
+/// Replay fixed bytes. Use this transport until the real HTTP adapter arrives.
 pub const CannedTransport = struct {
     bytes: []const u8,
 
@@ -196,7 +196,7 @@ pub const CannedTransport = struct {
     }
 };
 
-/// One in-flight replay of canned bytes. The turn arena owns it.
+/// This value represents one in-flight replay of canned bytes. The turn arena owns it.
 const CannedReader = struct {
     bytes: []const u8,
     offset: usize = 0,
@@ -217,7 +217,7 @@ const CannedReader = struct {
 
 var placeholder_instance = CannedTransport{ .bytes = placeholder_reply };
 
-/// The default daemon transport until a real adapter is wired at startup.
+/// This is the default daemon transport until startup connects a real adapter.
 pub fn placeholderTransport() Transport {
     return placeholder_instance.transport();
 }

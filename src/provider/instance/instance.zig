@@ -6,13 +6,13 @@ const wire = @import("wire");
 
 pub const Protocol = wire.enums.ProviderProtocol;
 
-/// Selects the API-key header.
+/// Select the API-key header.
 pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 
-/// Selects whether the endpoint accepts Anthropic `cache_control`.
+/// Select whether the endpoint accepts Anthropic `cache_control`.
 pub const CachePolicy = enum { unsupported, ephemeral };
 
-/// Names the source of a key. `env` and `store` refer to a key. `literal` refers to an owned literal key.
+/// Name the source of a key. The `env` and `store` values refer to a key; the `literal` value refers to an owned key.
 /// The owner zeroes a `literal` buffer before it frees it.
 pub const CredentialSource = union(enum) {
     env: []const u8,
@@ -20,7 +20,7 @@ pub const CredentialSource = union(enum) {
     store: []const u8,
 };
 
-/// Selects the authentication scheme. The secret resolves by reference.
+/// Select the authentication scheme. The resolver uses a secret reference.
 pub const Auth = union(enum) {
     api_key: ApiKey,
     codex_oauth: CodexOAuth,
@@ -32,7 +32,7 @@ pub const ApiKey = struct {
     source: CredentialSource,
 };
 
-/// Names the Codex token and account-ID entries in the credential store.
+/// Name the Codex token and account-ID entries in the credential store.
 pub const CodexOAuth = struct {
     store: []const u8,
     account_store: []const u8,
@@ -60,10 +60,10 @@ pub const Cost = struct {
     cache_write: f64 = 0,
 };
 
-/// Selects how prior assistant reasoning returns in an OpenAI Chat request.
+/// Select how prior assistant reasoning returns in an OpenAI Chat request.
 pub const ReasoningReplay = enum { none, reasoning, @"reasoning-content", @"reasoning-details" };
 
-/// Selects the request shape for reasoning control. This enum keeps a compat quirk as data.
+/// Select the request shape for reasoning control. This enum keeps a compatibility quirk as data.
 pub const ThinkingFormat = enum {
     none,
     openai,
@@ -76,7 +76,7 @@ pub const ThinkingFormat = enum {
     @"ant-ling",
 };
 
-/// Selects the output-token field in the OpenAI Chat request.
+/// Select the output-token field in the OpenAI Chat request.
 pub const MaxTokensField = enum { @"max-completion-tokens", @"max-tokens" };
 
 /// Model flags shape request bodies without provider-specific branches.
@@ -92,7 +92,7 @@ pub const ModelFlags = struct {
     max_tokens_field: MaxTokensField = .@"max-tokens",
 };
 
-/// Binds a public model ID to upstream data and request behavior.
+/// Bind a public model ID to upstream data and request behavior.
 pub const ModelBinding = struct {
     id: []const u8,
     upstream_id: []const u8,
@@ -101,7 +101,7 @@ pub const ModelBinding = struct {
     flags: ModelFlags = .{},
 };
 
-/// Defines one provider. The protocol selects a closed request dialect.
+/// Define one provider. The protocol selects a closed request dialect.
 pub const ProviderInstance = struct {
     id: []const u8,
     base_url: []const u8,

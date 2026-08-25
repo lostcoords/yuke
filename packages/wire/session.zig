@@ -20,80 +20,80 @@ pub const SessionActivity = struct {
     pending_compaction: ?ids.RunId = null,
 };
 
-/// Payload for `session.activity_changed`.
+/// This payload describes `session.activity_changed`.
 pub const SessionActivityChangedData = struct {
     session_id: ids.SessionId,
     activity: SessionActivity,
 };
 
-/// Params for `session.cancel_input`.
+/// These are the parameters for `session.cancel_input`.
 pub const SessionCancelInputParams = struct {
     session_id: ids.SessionId,
     input_id: ids.InputId,
 };
 
-/// Result of `session.cancel_input`.
+/// This result identifies the canceled input.
 pub const SessionCancelInputResult = struct {
     canceled_input: ids.InputId,
 };
 
-/// Params for `session.cancel_run`.
+/// These are the parameters for `session.cancel_run`.
 pub const SessionCancelRunParams = struct {
     session_id: ids.SessionId,
     run_id: ?ids.RunId = null,
     clear_queue: ?bool = null,
 };
 
-/// Result of `session.cancel_run`.
+/// This result identifies the canceled run and cleared inputs.
 pub const SessionCancelRunResult = struct {
     canceled_run: ?ids.RunId = null,
     cleared_inputs: []const ids.InputId,
     cleared_compaction: ?ids.RunId = null,
 };
 
-/// session.compact input.
+/// These are the parameters for `session.compact`.
 pub const SessionCompactParams = struct {
     session_id: ids.SessionId,
 };
 
-/// session.compact result.
+/// This result describes `session.compact`.
 pub const SessionCompactResult = struct {
     status: enums.CompactStatus,
     run_id: ids.RunId,
 };
 
-/// session.config.get input.
+/// These are the parameters for `session.config.get`.
 pub const SessionConfigParams = struct {
     session_id: ids.SessionId,
     config_rev: ?ids.ConfigRev = null,
 };
 
-/// session.config.get result.
+/// This result describes `session.config.get`.
 pub const SessionConfigResult = struct {
     config: run.RunConfig,
     system_prompt: ?[]const u8 = null,
 };
 
-/// Advisory notice that this connection's live deltas were shed.
+/// This advisory notice tells the connection that the daemon dropped its live deltas.
 pub const SessionDeltasShedData = struct {
     session_id: ids.SessionId,
     count: u64,
 };
 
-/// session.fork input.
+/// These are the parameters for `session.fork`.
 pub const SessionForkParams = struct {
     session_id: ids.SessionId,
     before_message_id: ?ids.MessageId = null,
 };
 
-/// session.history input.
+/// These are the parameters for `session.history`.
 pub const SessionHistoryParams = struct {
     session_id: ids.SessionId,
     before_message_id: ids.MessageId,
     limit: ?u64 = null,
 };
 
-/// session.history result.
+/// This result describes `session.history`.
 pub const SessionHistoryResult = struct {
     session_id: ids.SessionId,
     messages: []const message.Message,
@@ -101,13 +101,13 @@ pub const SessionHistoryResult = struct {
     has_more: bool,
 };
 
-/// Compact session row for `session.list` and session broadcasts. Non-owning.
+/// This row summarizes a session for `session.list` and session broadcasts. Its fields borrow their data.
 pub const SessionListItem = struct {
     session: misc.Session,
     activity: SessionActivity,
 };
 
-/// session.list input. Non-owning.
+/// These are the `session.list` input fields. They borrow their data.
 pub const SessionListParams = struct {
     scope: scope.SessionScope = .all,
     population: SessionPopulation = .top_level,
@@ -116,7 +116,7 @@ pub const SessionListParams = struct {
     cursor: ?[]const u8 = null,
 };
 
-/// One bounded session.list page. Non-owning.
+/// This result contains one bounded `session.list` page. Its fields borrow their data.
 pub const SessionListResult = struct {
     revision: ids.SessionRevision,
     items: []const SessionListItem,
@@ -124,7 +124,7 @@ pub const SessionListResult = struct {
     total: u64,
 };
 
-/// How a session was created.
+/// This union records how the daemon created the session.
 pub const SessionOrigin = union(enum) {
     root: SessionOriginRoot,
     child: SessionOriginChild,
@@ -142,22 +142,23 @@ pub const SessionOrigin = union(enum) {
     }
 };
 
-/// Child of another session.
+/// This origin links a session to its parent session and message part.
 pub const SessionOriginChild = struct {
     parent_id: ids.SessionId,
     parent_message_id: ids.MessageId,
     parent_part_id: ids.PartId,
 };
 
-/// Fork of another session.
+/// This origin links a session to its source session.
 pub const SessionOriginFork = struct {
     source_id: ids.SessionId,
 };
 
-/// User-created root session.
+/// This origin marks a user-created root session.
 pub const SessionOriginRoot = struct {};
 
-/// Missing field means no change. The system prompt is snapshotted at creation and is not patchable. Non-owning.
+/// An absent field leaves the current value unchanged. The daemon stores the system prompt at creation.
+/// The system prompt remains fixed, and the fields borrow their data.
 pub const SessionPatch = struct {
     model: ?[]const u8 = null,
     reasoning: ?[]const u8 = null,
@@ -165,13 +166,13 @@ pub const SessionPatch = struct {
     max_rounds: ?u64 = null,
 };
 
-/// Params for `session.patch`.
+/// These are the parameters for `session.patch`.
 pub const SessionPatchParams = struct {
     session_id: ids.SessionId,
     patch: SessionPatch,
 };
 
-/// Session relationship population searched by session.list.
+/// This union selects the session relationships that `session.list` returns.
 pub const SessionPopulation = union(enum) {
     top_level: SessionPopulationTopLevel,
     children: SessionPopulationChildren,
@@ -189,41 +190,41 @@ pub const SessionPopulation = union(enum) {
     }
 };
 
-/// Every session regardless of origin.
+/// This option selects every session regardless of origin.
 pub const SessionPopulationAll = struct {};
 
-/// Immediate persistent children of one session.
+/// This option selects the immediate persistent children of one session.
 pub const SessionPopulationChildren = struct {
     parent_id: ids.SessionId,
 };
 
-/// User-facing conversations: root sessions and forks.
+/// This option selects root sessions and forks for user-facing conversations.
 pub const SessionPopulationTopLevel = struct {};
 
-/// Params for `session.remove`.
+/// These are the parameters for `session.remove`.
 pub const SessionRemoveParams = struct {
     session_id: ids.SessionId,
     cascade_children: bool = false,
 };
 
-/// Payload for `session.removed`.
+/// This payload describes `session.removed`.
 pub const SessionRemovedData = struct {
     revision: ids.SessionRevision,
     session_id: ids.SessionId,
 };
 
-/// Result of session creation, forking, or patching.
+/// This result contains the session after creation, a fork, or a patch.
 pub const SessionResult = struct {
     session: misc.Session,
 };
 
-/// session.resync input.
+/// These are the parameters for `session.resync`.
 pub const SessionResyncParams = struct {
     session_id: ids.SessionId,
     limit: ?u64 = null,
 };
 
-/// Full session snapshot for reconnection. Non-owning.
+/// This result contains the full session snapshot for reconnection. Its fields borrow their data.
 pub const SessionResyncResult = struct {
     item: SessionListItem,
     base_seq: ids.Seq,
@@ -235,19 +236,19 @@ pub const SessionResyncResult = struct {
     queued: []const misc.QueuedInput,
 };
 
-/// session.rewind input.
+/// These are the parameters for `session.rewind`.
 pub const SessionRewindParams = struct {
     session_id: ids.SessionId,
     before_message_id: ids.MessageId,
 };
 
-/// Params for `session.send_input`.
+/// These are the parameters for `session.send_input`.
 pub const SessionSendInputParams = struct {
     session_id: ids.SessionId,
     input: input.Input,
 };
 
-/// Result of `session.send_input`: started immediately or queued behind an active turn.
+/// This result says whether the daemon started or queued the input.
 pub const SessionSendInputResult = union(enum) {
     started: SessionSendInputResultStarted,
     queued: SessionSendInputResultQueued,
@@ -264,18 +265,18 @@ pub const SessionSendInputResult = union(enum) {
     }
 };
 
-/// Queued behind an active turn.
+/// The daemon queued the input behind an active turn.
 pub const SessionSendInputResultQueued = struct {
     input_id: ids.InputId,
 };
 
-/// Started immediately.
+/// The daemon started the input immediately.
 pub const SessionSendInputResultStarted = struct {
     input_id: ids.InputId,
     run_id: ids.RunId,
 };
 
-/// Payload for `session.summary_changed`.
+/// This payload describes `session.summary_changed`.
 pub const SessionSummaryChangedData = struct {
     revision: ids.SessionRevision,
     session: misc.Session,

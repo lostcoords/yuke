@@ -2,35 +2,32 @@
 
 const std = @import("std");
 
-/// Authentication flow kind.
 pub const AuthFlow = enum { browser, device_code };
 
-/// Authentication credential kind.
 pub const AuthCredentialKind = enum { api_key, oauth };
 
-/// Broadcast event name.
 pub const BroadcastName = enum {
     /// A session's summary metadata changed.
     @"session.summary_changed",
     /// A session's activity state changed.
     @"session.activity_changed",
-    /// A session was removed.
+    /// The daemon removed a session.
     @"session.removed",
-    /// A workspace was created.
+    /// The daemon created a workspace.
     @"workspace.created",
-    /// A workspace was removed.
+    /// The daemon removed a workspace.
     @"workspace.removed",
     /// A workspace's permission rules changed.
     @"permission.rules_changed",
     /// The model catalog changed.
     @"catalog.changed",
-    /// An authentication login flow finished.
+    /// The daemon finished an authentication login flow.
     @"auth.login_finished",
     /// Authentication state changed.
     @"auth.changed",
-    /// Out-of-band notice from the daemon.
+    /// The daemon sent an out-of-band notice.
     notice,
-    /// A message was committed to a session's transcript.
+    /// The daemon committed a message to a session transcript.
     @"message.committed",
     /// A run started.
     @"run.started",
@@ -38,25 +35,25 @@ pub const BroadcastName = enum {
     @"run.done",
     /// A session's run config changed.
     @"config.changed",
-    /// Older transcript messages were truncated.
+    /// The daemon truncated older transcript messages.
     @"transcript.truncated",
     /// A new streaming message started.
     @"message.started",
-    /// An in-progress message was discarded.
+    /// The daemon discarded an unfinished message.
     @"message.discarded",
-    /// A part was added to a message.
+    /// The daemon added a part to a message.
     @"message.part_added",
-    /// Incremental content for a streaming message part.
+    /// The daemon sent more content for a message part.
     @"message.part_delta",
     /// A tool call's state changed.
     @"tool.state_changed",
-    /// Incremental output from a running tool.
+    /// The daemon sent more output from a tool.
     @"tool.output_delta",
-    /// An input was queued behind the active run.
+    /// The daemon queued an input behind the active run.
     @"input.queued",
-    /// A queued input was canceled.
+    /// The daemon canceled a queued input.
     @"input.canceled",
-    /// Live deltas were shed; the client must resync the session.
+    /// The daemon dropped live deltas. The client must resync the session.
     @"session.deltas_shed",
 };
 
@@ -77,13 +74,12 @@ pub const RunErrorCode = enum {
     internal,
 };
 
-/// RPC method name.
 pub const MethodName = enum {
     /// Establish the connection and negotiate the protocol version.
     initialize,
-    /// List sessions.
+    /// List the sessions.
     @"session.list",
-    /// Create a new session.
+    /// Create a session.
     @"session.create",
     /// Update a session's mutable fields.
     @"session.patch",
@@ -101,9 +97,9 @@ pub const MethodName = enum {
     @"session.cancel_input",
     /// Cancel the active run.
     @"session.cancel_run",
-    /// Resync a session after live deltas were shed.
+    /// Resync a session after the daemon drops live deltas.
     @"session.resync",
-    /// Fetch a page of a session's transcript history.
+    /// Fetch a page from a session transcript.
     @"session.history",
     /// Decide a pending permission request.
     @"permission.decide",
@@ -121,13 +117,13 @@ pub const MethodName = enum {
     @"auth.set_api_key",
     /// Begin a provider login flow.
     @"auth.login",
-    /// Cancel an in-progress login flow.
+    /// Cancel an active login flow.
     @"auth.cancel_login",
     /// Log out of a provider.
     @"auth.logout",
     /// Describe a workspace.
     @"workspace.describe",
-    /// Browse a workspace's filesystem.
+    /// Browse a workspace filesystem.
     @"workspace.browse",
     /// Remove a workspace.
     @"workspace.remove",
@@ -142,7 +138,6 @@ pub const MethodName = enum {
 /// Notice severity level.
 pub const NoticeLevel = enum { info, warn, @"error" };
 
-/// Permission option kind.
 pub const PermissionOptionKind = enum {
     allow_once,
     allow_session,
@@ -157,16 +152,13 @@ pub const DeniedBy = enum { user, policy };
 /// Permission rule action.
 pub const RuleAction = enum { allow, deny };
 
-/// Run kind.
 pub const RunKind = enum { turn, compaction };
 
-/// Reason compaction was skipped.
 pub const CompactSkipReason = enum { nothing_to_summarize, too_few_messages };
 
 /// Assistant stop reason.
 pub const StopReason = enum { stop, length, content_filter, tool_calls, canceled, @"error", unknown };
 
-/// Compaction status.
 pub const CompactStatus = enum { started, queued };
 
 /// Permission enforcement mode.
@@ -175,13 +167,11 @@ pub const PermissionMode = enum { strict, normal, yolo };
 /// Session list view.
 pub const SessionView = enum { active, recent, active_recent };
 
-/// Reason for compaction.
 pub const CompactionReason = enum { auto, manual };
 
 /// Provider protocol kind.
 pub const ProviderProtocol = enum { @"anthropic-messages", @"openai-completions", @"openai-responses" };
 
-/// Skill scope.
 pub const SkillScope = enum { project, personal };
 
 /// Workspace execution environment.
@@ -190,7 +180,7 @@ pub const WorkspaceKind = enum { local, container, cloud };
 /// Advertised daemon capability.
 pub const Capability = enum { blob_upload };
 
-/// Numeric JSON-RPC and yuke error code.
+/// Numeric JSON-RPC and yuke error codes.
 pub const ErrorCode = enum(i32) {
     bad_request = -32602,
     bad_protocol = -32600,
@@ -238,7 +228,7 @@ pub const ErrorCode = enum(i32) {
     }
 };
 
-/// A set of advertised capabilities; unknown tokens are ignored on decode.
+/// This set holds advertised capabilities. The decoder ignores unknown tokens.
 pub const CapabilitySet = struct {
     set: std.EnumSet(Capability) = std.EnumSet(Capability).empty,
 

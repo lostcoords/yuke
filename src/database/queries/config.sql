@@ -1,5 +1,5 @@
 -- name: InsertConfig :exec
--- One config revision. session.config reads it back directly, without folding the log.
+-- Store one config revision. session.config reads it directly without a log fold.
 -- session_id: [16]u8!
 -- config_rev: u64!
 -- model: []const u8!
@@ -8,8 +8,8 @@ INSERT INTO session_configs(session_id, config_rev, model, reasoning)
     VALUES (:session_id, :config_rev, :model, :reasoning);
 
 -- name: AdvanceConfig :one
--- Set the current config. Raise the config mark and the projection seq. The guard keeps the config
--- monotonic. A stale revision yields no row, and the caller sees NoRow.
+-- Set the current config and raise the config mark and projection seq.
+-- The guard keeps the mark monotonic. A stale revision yields no row, so the caller sees NoRow.
 -- id: [16]u8!
 -- config_rev: u64!
 -- model: []const u8!
@@ -27,7 +27,7 @@ UPDATE sessions SET
 WHERE id = :id AND :config_rev >= config_rev_high RETURNING 1 AS advanced;
 
 -- name: ConfigByRevision :optional
--- Read one historical config revision. A superseded revision stays readable.
+-- Read one historical config revision. Keep a superseded revision readable.
 -- session_id: [16]u8!
 -- config_rev: u64!
 -- model: []const u8!

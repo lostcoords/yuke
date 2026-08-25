@@ -45,7 +45,7 @@ WHERE p.session_id = :session_id
 ORDER BY p.seq ASC;
 
 -- name: DeletePendingInput :one
--- Delete one exact projection row. A missing row returns NoRow.
+-- Delete one exact projection row. An absent row returns NoRow.
 -- session_id: [16]u8!
 -- input_id: u64!
 -- deleted: i64!

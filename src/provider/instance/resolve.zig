@@ -9,20 +9,20 @@ const ProviderInstance = instance.ProviderInstance;
 
 pub const Error = error{ AuthMismatch, HeaderConflict, OutOfMemory };
 
-/// Maps each protocol to its streaming path.
+/// Map each protocol to its stream path.
 const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
     .@"anthropic-messages" = "/messages",
     .@"openai-completions" = "/chat/completions",
     .@"openai-responses" = "/responses",
 });
 
-/// Builds the full URL in `gpa`. A trailing slash on the base gives one separator, not two.
+/// Build the full URL in `gpa`. A trailing slash on the base gives one separator, not two.
 pub fn endpointUrl(gpa: std.mem.Allocator, p: ProviderInstance) std.mem.Allocator.Error![]u8 {
     const base = std.mem.trimEnd(u8, p.base_url, "/");
     return std.mem.concat(gpa, u8, &.{ base, protocol_path.get(p.protocol) });
 }
 
-/// Holds a credential from the configured source.
+/// Hold a credential from the configured source.
 pub const Secret = union(enum) {
     api_key: []const u8,
     codex: Codex,
@@ -37,7 +37,7 @@ pub const Secret = union(enum) {
 /// Append the credential and pinned headers to `out`, an arena-backed empty list.
 /// The checks run before any allocation, so no error leaves partial output.
 pub fn authHeaders(gpa: std.mem.Allocator, p: ProviderInstance, secret: Secret, out: *std.ArrayList(Header)) Error!void {
-    // The header names this call generates. Known before any allocation.
+    // This call knows the header names before it allocates memory.
     const generated: []const []const u8 = switch (p.auth) {
         .api_key => |a| switch (a.header) {
             .x_api_key => &.{"x-api-key"},

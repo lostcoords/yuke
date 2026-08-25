@@ -1,5 +1,5 @@
-//! The Anthropic Messages reducer maps SSE data to `StreamEvent` values. The sequence is `message_start`, content blocks, `message_delta`, then `message_stop`.
-//! Deltas borrow caller `scratch`; drain `out` before the next `decode`. Terminal results and `done` borrow reducer buffers until `deinit`; malformed peer input returns `error.Protocol`.
+//! The reducer maps Anthropic Messages SSE data to `StreamEvent` values. Events arrive as `message_start`, content blocks, `message_delta`, and `message_stop`.
+//! Deltas borrow caller `scratch`. Drain `out` before the next `decode`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -65,7 +65,7 @@ pub const Reducer = struct {
         self.* = undefined;
     }
 
-    /// Parses one SSE `data` payload and adds neutral events to `out`.
+    /// Parse one SSE `data` payload and add neutral events to `out`.
     pub fn decode(
         self: *Reducer,
         data: []const u8,
@@ -76,7 +76,7 @@ pub const Reducer = struct {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.Protocol,
         };
-        const kind = std.meta.stringToEnum(AnthropicEvent, json.fieldStr(root, "type") orelse return error.Protocol) orelse return; // Unknown event types are no-ops
+        const kind = std.meta.stringToEnum(AnthropicEvent, json.fieldStr(root, "type") orelse return error.Protocol) orelse return; // Unknown event types are no-ops.
 
         switch (kind) {
             .ping => {},
@@ -94,7 +94,7 @@ pub const Reducer = struct {
     pub fn finish(_: *Reducer, _: *std.ArrayList(StreamEvent)) Error!void {}
 
     fn onMessageStart(self: *Reducer, root: std.json.Value) Error!void {
-        if (self.started) return error.Protocol; // one message_start per stream
+        if (self.started) return error.Protocol; // The stream has one message_start event.
         self.started = true;
         const usage = json.fieldObj(json.fieldGet(root, "message") orelse return, "usage") orelse return;
         self.usage.input = try json.countOf(usage, "input_tokens");
@@ -104,14 +104,14 @@ pub const Reducer = struct {
 
     fn onBlockStart(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = try blockIndex(root);
-        if (index != self.blocks.items.len) return error.Protocol; // Block indexes must arrive in dense order
+        if (index != self.blocks.items.len) return error.Protocol; // Block indexes must arrive in dense order.
         if (self.blocks.items.len >= max_blocks) return error.Protocol;
 
         const cb = json.fieldGet(root, "content_block") orelse return error.Protocol;
         const cb_type = json.fieldStr(cb, "type") orelse return error.Protocol;
 
-        // Borrow the fields now; own them only after the block holds a slot, so a
-        // failed copy leaks nothing and `deinit` frees whatever the block owns.
+        // Borrow the fields now and own them after the block holds a slot. A failed copy leaks nothing.
+        // `deinit` frees each field that the block owns.
         var kind: event.BlockKind = .text;
         var ignored = false;
         var call_id: []const u8 = "";
@@ -201,7 +201,7 @@ pub const Reducer = struct {
                 self.raw_stop_reason = owned;
             }
         }
-        // The final message_delta breaks out the thinking tokens as a subset of output_tokens.
+        // The final message_delta reports thinking tokens as a subset of output_tokens.
         if (json.fieldObj(root, "usage")) |usage| {
             self.usage.output = try json.countOf(usage, "output_tokens");
             if (json.childObj(usage, "output_tokens_details")) |d| self.usage.reasoning = try json.countOf(d, "thinking_tokens");
@@ -209,9 +209,9 @@ pub const Reducer = struct {
     }
 
     fn onMessageStop(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
-        if (!self.started) return error.Protocol; // message_stop needs a prior message_start
+        if (!self.started) return error.Protocol; // The message_stop event needs a prior message_start event.
         if (self.done_emitted) return error.Protocol;
-        for (self.blocks.items) |b| if (b.open and !b.ignored) return error.Protocol; // an emitted block closes before done
+        for (self.blocks.items) |b| if (b.open and !b.ignored) return error.Protocol; // An emitted block closes before the done event.
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
             .stop_reason = self.stop_reason,
@@ -227,7 +227,7 @@ pub const Reducer = struct {
         return block;
     }
 
-    /// Copies peer bytes into memory that the reducer owns until `deinit`.
+    /// Copy peer bytes into memory that the reducer owns until `deinit`.
     fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
         return self.gpa.dupe(u8, bytes);
     }
@@ -244,18 +244,18 @@ fn mapStopReason(raw: []const u8) wire.enums.StopReason {
     if (std.mem.eql(u8, raw, "tool_use")) return .tool_calls;
     if (std.mem.eql(u8, raw, "refusal")) return .content_filter;
     if (std.mem.eql(u8, raw, "model_context_window_exceeded")) return .length;
-    // pause_turn and any new reason keep only the raw value.
+    // The reducer keeps only the raw value for pause_turn and new reasons.
     return .unknown;
 }
 
-/// The block index from an event. It rejects a missing, negative, or huge value.
+/// Return the block index from an event. Reject a missing, negative, or huge value.
 fn blockIndex(root: std.json.Value) Error!usize {
     return json.fieldIndex(root, "index") orelse error.Protocol;
 }
 
 const testing = std.testing;
 
-/// Keeps the parse arena and reducer alive while emitted events borrow them.
+/// Keep the parse arena and reducer alive while emitted events borrow them.
 const Harness = struct {
     arena: std.heap.ArenaAllocator,
     reducer: Reducer,

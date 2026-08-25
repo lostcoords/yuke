@@ -3,7 +3,7 @@
 const std = @import("std");
 const tagged = @import("tagged.zig");
 
-/// Where media bytes live.
+/// This type identifies where media bytes live.
 pub const MediaSource = union(enum) {
     url: MediaUrl,
     base64: MediaBase64,
@@ -21,25 +21,25 @@ pub const MediaSource = union(enum) {
     }
 };
 
-/// Remote URL the daemon fetches.
+/// The daemon fetches media from this remote URL.
 pub const MediaUrl = struct {
     url: []const u8,
 };
 
-/// Inline base64 bytes.
+/// This source stores inline bytes in base64.
 pub const MediaBase64 = struct {
     mime: []const u8,
     data: []const u8,
 };
 
-/// Content-addressed blob fetched over HTTP.
+/// The daemon fetches this content-addressed blob over HTTP.
 pub const MediaBlob = struct {
     hash: [64]u8,
     mime: []const u8,
     bytes: u64,
 };
 
-/// One part of a message's content.
+/// This type describes one part of a message's content.
 pub const ContentPart = union(enum) {
     text: ContentText,
     image: ContentImage,
@@ -58,24 +58,24 @@ pub const ContentPart = union(enum) {
     }
 };
 
-/// Plain text content part.
+/// This part holds plain text.
 pub const ContentText = struct {
     text: []const u8,
 };
 
-/// Image content part.
+/// This part holds an image source and an optional detail hint.
 pub const ContentImage = struct {
     source: MediaSource,
     detail: ?[]const u8 = null,
 };
 
-/// Audio content part.
+/// This part holds an audio source and its format.
 pub const ContentAudio = struct {
     source: MediaSource,
     format: []const u8,
 };
 
-/// File content part.
+/// This part holds a file source and an optional file name.
 pub const ContentFile = struct {
     source: MediaSource,
     filename: ?[]const u8 = null,

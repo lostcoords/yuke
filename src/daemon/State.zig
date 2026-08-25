@@ -1,5 +1,5 @@
 //! Daemon-global state. One reactor executor owns it for the daemon lifetime.
-//! Keep per-connection state separate; connection identity is added later.
+//! Keep per-connection state separate. Add connection identity later.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -12,20 +12,20 @@ const connection = @import("connection.zig");
 
 const State = @This();
 
-gpa: std.mem.Allocator, // Long-lived allocations. The per-request arena has a separate lifetime.
-io: std.Io, // Reactor I/O for the clock, files, and sockets.
-db: database.Database, // One SQLite connection with prepared queries. One executor writes.
+gpa: std.mem.Allocator, // The allocator serves long-lived allocations. The per-request arena has a separate lifetime.
+io: std.Io, // The reactor uses this I/O for the clock, files, and sockets.
+db: database.Database, // The database uses one SQLite connection with prepared queries. One executor writes.
 config: Config,
-home: []const u8, // The default workspace root. A create with no workspace path uses it.
-sessions: session_runtime.Sessions, // Live per-session state, keyed by session id.
-registry: connection.Registry, // Live connections and the reverse subscription index.
-transport: provider.transport.Transport, // Opens each provider response. A test or adapter overrides it.
+home: []const u8, // The default workspace root. A create that omits a workspace path uses it.
+sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
+registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
+transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
-run_group: zio.Group = .init, // Own every launched run task until it returns.
+run_group: zio.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 
-/// Daemon configuration. The code sets it directly for now.
+/// The daemon uses this configuration directly for now.
 pub const Config = struct {
     listen: zio.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",

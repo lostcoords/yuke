@@ -1,10 +1,10 @@
-//! The workspace registry stores daemon-known execution environments. It supports only local workspaces today.
+//! The workspace registry stores daemon-known execution environments. Today it supports local workspaces.
 //! The daemon mints each opaque id. A stable key deduplicates a persistent local root.
 
 const std = @import("std");
 const Database = @import("database.zig").Database;
 
-/// A workspace row for a broadcast or a describe result.
+/// Store a workspace row for a broadcast or describe result.
 pub const Workspace = struct {
     id: [16]u8,
     kind: []const u8,
@@ -85,7 +85,7 @@ test "resolve inserts a new workspace and byId reads it back" {
     try testing.expectEqualStrings("/home/x", ws.root);
     try testing.expectEqualStrings("x", ws.title);
 
-    try testing.expect((try byId(&db, a, [_]u8{9} ** 16)) == null); // no such id
+    try testing.expect((try byId(&db, a, [_]u8{9} ** 16)) == null); // No such id exists.
 }
 
 test "resolve dedups a persistent root by stable_key" {
@@ -99,7 +99,7 @@ test "resolve dedups a persistent root by stable_key" {
     const again = try resolve(&db, a, [_]u8{2} ** 16, "/home/x", "x", "/home/x");
     try testing.expect(first.created);
     try testing.expect(!again.created);
-    try testing.expectEqualSlices(u8, &first.id, &again.id); // the second call reuses the first id
+    try testing.expectEqualSlices(u8, &first.id, &again.id); // The second call reuses the first id.
 }
 
 test "list returns every workspace" {
@@ -118,8 +118,8 @@ test "list returns every workspace" {
 
     const all = try list(&db, a);
     try testing.expectEqual(@as(usize, 4), all.len);
-    try testing.expectEqualStrings("a", all[0].title); // title orders first
-    try testing.expectEqual(@as(u8, 2), all[0].id[0]); // then id ascending: 2 < 3 < 5
+    try testing.expectEqualStrings("a", all[0].title); // Title sorts first.
+    try testing.expectEqual(@as(u8, 2), all[0].id[0]); // Then id sorts from low to high: 2 < 3 < 5.
     try testing.expectEqual(@as(u8, 3), all[1].id[0]);
     try testing.expectEqual(@as(u8, 5), all[2].id[0]);
     try testing.expectEqualStrings("b", all[3].title);
@@ -135,5 +135,5 @@ test "resolve never dedups an ephemeral workspace" {
     const one = try resolve(&db, a, [_]u8{1} ** 16, "/tmp/a", "a", null);
     const two = try resolve(&db, a, [_]u8{2} ** 16, "/tmp/a", "a", null);
     try testing.expect(one.created and two.created);
-    try testing.expect(!std.mem.eql(u8, &one.id, &two.id)); // both calls create rows with different ids
+    try testing.expect(!std.mem.eql(u8, &one.id, &two.id)); // Both calls create rows with different ids.
 }

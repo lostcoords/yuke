@@ -1,5 +1,6 @@
 -- name: InsertMessage :exec
--- One committed-message metadata row. The full body stays in events.payload, joined by (session_id, seq).
+-- Store one metadata row for each committed message. Keep the full body in events.payload and join it
+-- by session_id and seq.
 -- session_id: [16]u8!
 -- message_id: u64!
 -- seq: u64!
@@ -26,7 +27,7 @@ INSERT INTO messages(
 
 -- name: AdvanceMessage :one
 -- Raise the session summary when a message commits: count, token totals, the id mark, and the
--- projection seq. RETURNING yields no row for a missing session, so the caller sees NoRow.
+-- projection seq. RETURNING yields no row for an absent session, so the caller sees NoRow.
 -- id: [16]u8!
 -- message_id: u64!
 -- seq: u64!
@@ -50,7 +51,7 @@ UPDATE sessions SET
 WHERE id = :id RETURNING 1 AS advanced;
 
 -- name: MessagePage :many
--- One backward page of committed messages, newest first; the caller reverses to oldest-first.
+-- Return one backward page of committed messages, newest first; the caller reverses it to oldest-first.
 -- The body lives in events.payload, joined by (session_id, seq). cursor_message_id is exclusive.
 -- session_id: [16]u8!
 -- cursor_message_id: u64!

@@ -1,11 +1,9 @@
-//! The SSE framer converts raw bytes into `data` payloads. A blank line emits a payload.
-//! It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
-//!
-//! Line endings are LF, CRLF, and a lone CR, per the SSE specification.
+//! The SSE framer converts raw bytes into `data` payloads. It accepts LF, CRLF, and lone CR line endings.
+//! A blank line emits a payload. It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
 
 const std = @import("std");
 
-/// Maximum size for one line and one event payload. Larger peer input returns an error.
+/// This constant sets the maximum size for one line and one event payload. Larger peer input returns an error.
 pub const max_bytes = 1 << 20;
 
 pub const Error = error{ LineTooLong, EventTooLarge, OutOfMemory };
@@ -15,11 +13,11 @@ pub const Sse = struct {
     gpa: std.mem.Allocator,
     line: std.ArrayList(u8) = .empty,
     data: std.ArrayList(u8) = .empty,
-    /// True when the current event has a `data:` field.
+    /// This flag is true when the current event has a `data:` field.
     data_seen: bool = false,
-    /// True before the first complete line. The first line may start with a BOM.
+    /// This flag is true before the first complete line. The first line may start with a BOM.
     at_start: bool = true,
-    /// True when the previous byte was a CR. A following LF completes the CRLF ending.
+    /// This flag is true when the previous byte was a CR. The next LF completes the CRLF terminator.
     saw_cr: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Sse {
@@ -32,7 +30,7 @@ pub const Sse = struct {
         self.* = undefined;
     }
 
-    /// Appends complete payloads to `out` in input order. `arena` owns the payloads.
+    /// Append complete payloads to `out` in input order. `arena` owns the payloads.
     pub fn push(
         self: *Sse,
         bytes: []const u8,
@@ -40,7 +38,7 @@ pub const Sse = struct {
         out: *std.ArrayList([]const u8),
     ) Error!void {
         for (bytes) |b| {
-            // A CR ends a line. A following LF is the second half of a CRLF ending.
+            // A CR ends a line. The next LF is the second half of a CRLF terminator.
             if (self.saw_cr) {
                 self.saw_cr = false;
                 if (b == '\n') continue;
@@ -60,7 +58,7 @@ pub const Sse = struct {
         }
     }
 
-    /// Completes the final line at EOF. It drops an event without a blank terminator.
+    /// Complete the final line at EOF. Drop an event without a blank terminator.
     pub fn finish(
         self: *Sse,
         arena: std.mem.Allocator,
@@ -96,14 +94,14 @@ pub const Sse = struct {
             }
             return;
         }
-        if (line[0] == ':') return; // SSE comment line
+        if (line[0] == ':') return; // Ignore an SSE comment line.
 
         const colon = std.mem.indexOfScalar(u8, line, ':');
         const field = if (colon) |c| line[0..c] else line;
         var value = if (colon) |c| line[c + 1 ..] else line[line.len..];
         if (value.len != 0 and value[0] == ' ') value = value[1..];
 
-        if (!std.mem.eql(u8, field, "data")) return; // Ignore non-data fields
+        if (!std.mem.eql(u8, field, "data")) return; // Ignore a non-data field.
 
         if (self.data_seen) try self.appendData("\n");
         try self.appendData(value);
@@ -119,7 +117,7 @@ pub const Sse = struct {
 
 const testing = std.testing;
 
-/// Returns payloads from `chunks` in input order.
+/// Return payloads from `chunks` in input order.
 fn frame(chunks: []const []const u8, arena: std.mem.Allocator) ![]const []const u8 {
     var sse = Sse.init(testing.allocator);
     defer sse.deinit();

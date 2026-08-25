@@ -1,5 +1,5 @@
-//! Per-session live state. The reactor owns each SessionRuntime. Sessions holds a stable pointer.
-//! A run coroutine and a live draft attach later.
+//! Per-session live state. The reactor owns each SessionRuntime. The `Sessions` registry holds a stable pointer.
+//! The session later attaches a run coroutine and a live draft.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -10,13 +10,13 @@ const transport = @import("../provider/transport.zig");
 
 const ids = wire.ids;
 
-/// Stable state for one run. The State task group owns execution. The session owns this allocation.
+/// Store stable state for one run. The State task group owns execution. The session owns this allocation.
 pub const RunSlot = struct {
     gpa: std.mem.Allocator,
     handle: run.RunHandle,
     config: run.Config,
     phase: Phase = .pending_start,
-    protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // the run sets this when it resolves a provider
+    protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // The run sets this after provider resolution.
     cancel_requested: bool = false,
     // The RPC task sets this to interrupt the run. The run task waits on it and cancels its reader.
     cancel_event: zio.ResetEvent = .init,
@@ -54,7 +54,7 @@ pub const RunSlot = struct {
     }
 };
 
-/// One session's live state. The reactor mutates it between await points, so it needs no lock.
+/// Store one session's live state. One reactor executor mutates it between await points without a lock.
 pub const SessionRuntime = struct {
     gpa: std.mem.Allocator,
     session_id: ids.SessionId,
@@ -74,13 +74,13 @@ pub const SessionRuntime = struct {
         self.gpa.destroy(self);
     }
 
-    /// A runtime is idle when no run is active and no input waits. A later check also requires no subscriber.
+    /// A runtime is idle when it has no active run and no queued input. A later check also requires no subscriber.
     pub fn idle(self: *const SessionRuntime) bool {
         return self.active == null and self.queue.depth() == 0 and !self.faulted;
     }
 };
 
-/// The live-session registry. The daemon owns one. It keys runtimes by session id.
+/// Store live session runtimes in a registry. The daemon owns one registry and keys it by session id.
 pub const Sessions = struct {
     gpa: std.mem.Allocator,
     map: std.AutoHashMapUnmanaged(ids.SessionId, *SessionRuntime) = .empty,
@@ -131,7 +131,7 @@ test "getOrCreate returns one stable runtime per session" {
     const ra_again = try sessions.getOrCreate(a);
     const rb = try sessions.getOrCreate(b);
 
-    try testing.expect(ra == ra_again); // one runtime per id, a stable pointer
+    try testing.expect(ra == ra_again); // One runtime per id has a stable pointer.
     try testing.expect(ra != rb);
     try testing.expect(sessions.get(a) == ra);
     try testing.expect(sessions.get(ids.SessionId.bytes([_]u8{9} ** 16)) == null);
@@ -155,9 +155,9 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     });
     try testing.expect(!rt.idle());
     sessions.evictIfIdle(sid);
-    try testing.expect(sessions.get(sid) == rt); // still present
+    try testing.expect(sessions.get(sid) == rt); // The runtime remains present.
 
-    // The run ends; eviction now reclaims it.
+    // The run ends, so eviction can reclaim the runtime.
     rt.active.?.destroy();
     rt.active = null;
     sessions.evictIfIdle(sid);

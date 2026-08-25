@@ -7,8 +7,8 @@ const sql = @import("sql");
 const Database = @import("database.zig").Database;
 const event = @import("event.zig");
 
-/// Append a config change: log the revision, store it, and set the session's current config. Run
-/// inside a write transaction. The caller mints event_id.
+/// Append a config change, store its revision, and set the session's current config.
+/// Run inside a write transaction. The caller mints event_id.
 pub fn appendConfig(
     db: *Database,
     arena: std.mem.Allocator,
@@ -17,7 +17,7 @@ pub fn appendConfig(
     committed_at_ms: u64,
     config: wire.run.RunConfig,
 ) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn)); // else the event and projection can half-apply
+    std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, config, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "config.changed", payload);
 
@@ -38,10 +38,10 @@ pub fn appendConfig(
     return seq;
 }
 
-/// Record the birth config as revision 0. Create calls this so every referenced revision, the initial
-/// one included, resolves. It logs no event; the session row already carries the config.
+/// Record the birth config as revision 0 so every referenced revision resolves.
+/// Create calls this without a log event because the session row already carries the config.
 pub fn recordInitial(db: *Database, session_id: [16]u8, model: []const u8, reasoning: []const u8) !void {
-    std.debug.assert(sql.inTransaction(db.conn)); // create records this with the session in one commit
+    std.debug.assert(sql.inTransaction(db.conn)); // Create records this with the session in one commit.
     try db.queries.insert_config.exec(.{ .session_id = session_id, .config_rev = 0, .model = model, .reasoning = reasoning });
 }
 
@@ -95,10 +95,10 @@ test "a config change stores a revision and sets the current config" {
     try db.conn.execNoArgs("COMMIT");
     try testing.expectEqual(@as(u64, 1), seq);
 
-    // The revision row is stored.
+    // Store the revision row.
     try testing.expectEqualStrings("sonnet", try scalarText(&db, a, "SELECT model FROM session_configs WHERE config_rev = 1"));
 
-    // The session's current config now points at the new revision.
+    // Point the session's current config at the new revision.
     const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqualStrings("sonnet", snap.model);
     try testing.expectEqualStrings("low", snap.reasoning);
@@ -177,12 +177,12 @@ test "appendConfig keeps the current config monotonic" {
     _ = try appendConfig(&db, a, sid, [_]u8{1} ** 16, 200, .{ .config_rev = 2, .model = "sonnet", .reasoning = "low" });
     try db.conn.execNoArgs("COMMIT");
 
-    // A revision below the mark cannot become current, so the caller sees NoRow.
+    // A revision below the mark cannot become current, so return NoRow.
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectError(error.NoRow, appendConfig(&db, a, sid, [_]u8{2} ** 16, 300, .{ .config_rev = 1, .model = "haiku", .reasoning = "off" }));
     try db.conn.execNoArgs("ROLLBACK");
 
-    // The current config still points at the newer revision.
+    // Keep the current config on the newer revision.
     const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqualStrings("sonnet", snap.model);
     try testing.expectEqual(@as(u64, 2), snap.config_rev);

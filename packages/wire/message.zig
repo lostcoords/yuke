@@ -11,12 +11,12 @@ const tool = @import("tool.zig");
 const view = @import("view.zig");
 const workspace = @import("workspace.zig");
 
-/// In-flight assistant draft, resent on resync. Non-owning.
+/// The daemon resends this assistant draft during resync. Its fields borrow their data.
 pub const ActiveDraft = struct {
     message: AssistantMessage,
 };
 
-/// Assistant transcript message payload. Non-owning.
+/// This payload describes an assistant transcript message. Its fields borrow their data.
 pub const AssistantMessage = struct {
     id: ids.MessageId,
     run_id: ids.RunId,
@@ -31,7 +31,7 @@ pub const AssistantMessage = struct {
     provenance: ?TurnProvenance = null,
 };
 
-/// One element of an assistant message `content[]`. Non-owning.
+/// This type describes one element of an assistant message's content. Its fields borrow their data.
 pub const AssistantPart = union(enum) {
     text: TextPart,
     reasoning: ReasoningPart,
@@ -50,7 +50,7 @@ pub const AssistantPart = union(enum) {
     }
 };
 
-/// Compaction transcript message payload. Non-owning.
+/// This payload describes a compaction transcript message. Its fields borrow their data.
 pub const CompactionMessage = struct {
     id: ids.MessageId,
     run_id: ids.RunId,
@@ -62,7 +62,7 @@ pub const CompactionMessage = struct {
     time: misc.CreatedTime,
 };
 
-/// A transcript message. Non-owning.
+/// This union describes a transcript message. Its fields borrow their data.
 pub const Message = union(enum) {
     user: UserMessage,
     assistant: AssistantMessage,
@@ -80,33 +80,33 @@ pub const Message = union(enum) {
     }
 };
 
-/// Payload for `message.committed`.
+/// This payload describes `message.committed`.
 pub const MessageCommittedData = struct {
     session_id: ids.SessionId,
     seq: ids.Seq,
     message: Message,
 };
 
-/// Payload for `message.discarded`.
+/// This payload describes `message.discarded`.
 pub const MessageDiscardedData = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
 };
 
-/// Structured error on an assistant message with `finish: "error"`. Non-owning.
+/// This type describes an assistant error with `finish: "error"`. Its fields borrow their data.
 pub const MessageError = struct {
     type: []const u8,
     message: []const u8,
 };
 
-/// Payload for `message.part_added`.
+/// This payload describes `message.part_added`.
 pub const MessagePartAddedData = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
     part: AssistantPart,
 };
 
-/// Payload for `message.started` (draft opened).
+/// This payload describes `message.started` when the daemon opens a draft.
 pub const MessageStartedData = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
@@ -116,13 +116,13 @@ pub const MessageStartedData = struct {
     created_at_ms: u64,
 };
 
-/// Creation/completion timestamps on an assistant message.
+/// Creation and completion times for an assistant message.
 pub const MessageTime = struct {
     created_at_ms: u64,
     completed_at_ms: ?u64 = null,
 };
 
-/// Incremental text or reasoning bytes for a draft.
+/// This payload holds more text or reasoning bytes for a draft.
 pub const PartDelta = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
@@ -131,32 +131,32 @@ pub const PartDelta = struct {
     offset: u64,
 };
 
-/// Message part-delta broadcast payload alias.
+/// The broadcast uses this shared message-part delta payload.
 pub const MessagePartDeltaData = PartDelta;
 
-/// Tool output-delta broadcast payload alias.
+/// The broadcast uses this shared tool-output delta payload.
 pub const ToolOutputDeltaData = PartDelta;
 
-/// Reasoning assistant part payload. Non-owning.
+/// This payload describes a reasoning part in an assistant message. Its fields borrow their data.
 pub const ReasoningPart = struct {
     id: ids.PartId,
     text: []const u8,
     signature: []const u8,
 };
 
-/// Opaque safety-redacted model reasoning payload. Non-owning.
+/// This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data.
 pub const RedactedReasoningPart = struct {
     id: ids.PartId,
     data: []const u8,
 };
 
-/// Text assistant part payload. Non-owning.
+/// This payload describes a text part in an assistant message. Its fields borrow their data.
 pub const TextPart = struct {
     id: ids.PartId,
     text: []const u8,
 };
 
-/// Token accounting for one assistant message.
+/// This type records token counts for one assistant message.
 pub const TokenUsage = struct {
     input: u64,
     output: u64,
@@ -165,7 +165,7 @@ pub const TokenUsage = struct {
     cache_write: u64,
 };
 
-/// Tool assistant part payload. Non-owning.
+/// This payload describes a tool part in an assistant message. Its fields borrow their data.
 pub const ToolPart = struct {
     id: ids.PartId,
     call_id: ?[]const u8 = null,
@@ -176,13 +176,13 @@ pub const ToolPart = struct {
     permission_state: ?permission.PermissionState = null,
 };
 
-/// Provider that produced an assistant turn. Non-owning.
+/// This type records the provider that produced an assistant turn. Its fields borrow their data.
 pub const TurnProvenance = struct {
     protocol: enums.ProviderProtocol,
     model: []const u8,
 };
 
-/// User transcript message payload. Non-owning.
+/// This payload describes a user transcript message. Its fields borrow their data.
 pub const UserMessage = struct {
     id: ids.MessageId,
     content: []const content.ContentPart,

@@ -1,6 +1,6 @@
 //! The event log is authoritative. Projections rebuild from it.
 //! Call these primitives inside the caller's write transaction so the event and projection commit together.
-//! Idempotency for a retried request lives in the input inbox, not here.
+//! The input inbox owns idempotency for a retried request.
 
 const std = @import("std");
 const sql = @import("sql");
@@ -26,7 +26,7 @@ pub fn append(
     name: []const u8,
     payload: []const u8,
 ) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn)); // else a partial failure leaves a seq hole
+    std.debug.assert(sql.inTransaction(db.conn)); // A partial failure must not leave a seq hole.
     const seq = try allocSeq(db, arena, session_id);
     try appendAt(db, session_id, seq, event_id, committed_at_ms, name, payload);
     return seq;
@@ -64,14 +64,14 @@ pub fn appendAt(
     });
 }
 
-/// Raise the id-minting marks. Each mark only rises. Run inside a write transaction.
+/// Raise the id marks. Each mark only rises. Run inside a write transaction.
 pub fn bumpIds(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, marks: struct {
     message_id_high: u64 = 0,
     run_id_high: u64 = 0,
     input_id_high: u64 = 0,
     config_rev_high: u64 = 0,
 }) !void {
-    std.debug.assert(sql.inTransaction(db.conn)); // else a partial failure desyncs the id marks
+    std.debug.assert(sql.inTransaction(db.conn)); // A partial failure must not desync the id marks.
     _ = try db.queries.bump_ids.one(arena, .{
         .id = session_id,
         .message_id_high = marks.message_id_high,
@@ -81,19 +81,19 @@ pub fn bumpIds(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, mark
     });
 }
 
-/// Allocate the next run id for a session. Run inside a write transaction. Return NoRow when missing.
+/// Allocate the next run id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocRunId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
     return (try db.queries.alloc_run_id.one(arena, .{ .id = session_id })).value.run_id_high;
 }
 
-/// Allocate the next message id for a session. Run inside a write transaction. Return NoRow when missing.
+/// Allocate the next message id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocMessageId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
     return (try db.queries.alloc_message_id.one(arena, .{ .id = session_id })).value.message_id_high;
 }
 
-/// Allocate the next input id for a session. Run inside a write transaction. Return NoRow when missing.
+/// Allocate the next input id for a session. Run inside a write transaction. Return NoRow when absent.
 pub fn allocInputId(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
     return (try db.queries.alloc_input_id.one(arena, .{ .id = session_id })).value.input_id_high;
@@ -174,7 +174,7 @@ test "bumpIds only raises a mark" {
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try bumpIds(&db, a, sid, .{ .message_id_high = 5, .run_id_high = 3, .input_id_high = 7, .config_rev_high = 2 });
-    try bumpIds(&db, a, sid, .{ .message_id_high = 2 }); // lower value does not lower the mark
+    try bumpIds(&db, a, sid, .{ .message_id_high = 2 }); // A lower value does not lower the mark.
     try db.conn.execNoArgs("COMMIT");
     const hw = (try highWater(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 5), hw.message_id_high);

@@ -1,7 +1,7 @@
-//! Session input-queue projection. Store pending user inputs in FIFO order.
+//! Project session inputs into a queue. Store pending user inputs in FIFO order.
 //! The daemon and client fold the same input events into this queue.
 //!
-//! Each item owns an arena for cloned content. Removing an item frees that content at once.
+//! Each item owns an arena for its content. Queue removal frees that content at once.
 //! Keep the queue for the session because it changes often. See draft.zig for the same pattern.
 
 const std = @import("std");
@@ -14,7 +14,7 @@ const misc = wire.misc;
 
 pub const Error = error{OutOfMemory};
 
-/// Result of folding a queue event. The daemon produces events and asserts `changed`.
+/// Return this result from a queue-event fold. The daemon produces events and asserts `changed`.
 pub const Applied = enum {
     /// Mark an item as changed when the fold adds or removes it.
     changed,
@@ -22,7 +22,7 @@ pub const Applied = enum {
     noop,
 };
 
-/// Keep each item's content in `arena` after cloning it from the source frame.
+/// Keep each item's content in `arena` after the queue copies it from the source frame.
 pub const Item = struct {
     arena: std.heap.ArenaAllocator,
     input_id: ids.InputId,
@@ -66,7 +66,7 @@ pub const Queue = struct {
         return .changed;
     }
 
-    /// Fold `input.canceled` by removing the input with its id.
+    /// Fold `input.canceled` by its input id.
     pub fn onCanceled(self: *Queue, d: input.InputCanceledData) Applied {
         return self.removeById(d.input_id);
     }
@@ -103,7 +103,7 @@ const testing = std.testing;
 const zero_session: ids.SessionId = .bytes(@splat(0));
 
 // `text` is comptime so the content literal promotes to a static const. A runtime
-// value would make `&.{...}` a dangling pointer to this frame.
+// A runtime value would make `&.{...}` an invalid pointer to this frame.
 fn queued(input_id: ids.InputId, comptime text: []const u8) input.InputQueuedData {
     return .{
         .session_id = zero_session,

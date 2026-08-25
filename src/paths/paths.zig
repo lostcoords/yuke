@@ -1,25 +1,24 @@
 //! Resolve the daemon's XDG paths and the files under them.
-//! Return owned paths. The caller frees them.
-//! Treat an empty environment value as unset, per the XDG specification.
+//! Return owned paths. The caller frees them. Treat an empty environment value as unset under XDG rules.
 
 const std = @import("std");
 const builtin = @import("builtin");
 
 const Map = std.process.Environ.Map;
 
-/// Default directory leaf under each platform root. `YUKE_APPNAME` can replace it.
+/// This is the default directory leaf under each platform root. `YUKE_APPNAME` can replace it.
 pub const app_dir = "yuke";
 
-/// Environment variable for the process-wide profile name. It remaps the config and data paths.
+/// This environment variable sets the process-wide profile name. It remaps the config and data paths.
 pub const app_name_env = "YUKE_APPNAME";
 
-/// SQLite event-log file in the data directory.
+/// This is the SQLite event-log file in the data directory.
 pub const db_file = "yuked.db";
 
-/// Content-addressed blob directory under the data directory.
+/// This is the content-addressed blob directory under the data directory.
 pub const blob_subdir = "blobs";
 
-/// Home-directory variable: `USERPROFILE` on Windows and `HOME` on other systems.
+/// This variable names the home directory: `USERPROFILE` on Windows and `HOME` elsewhere.
 const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
 /// Return the non-empty value for `key`, or null.
@@ -52,7 +51,7 @@ pub fn appNameValid(name: []const u8) bool {
 
 pub const Error = error{InvalidAppName};
 
-/// Return the directory leaf under the platform roots. `app_dir` when `YUKE_APPNAME` is unset.
+/// Return the directory leaf under the platform roots. Use `app_dir` when `YUKE_APPNAME` is unset.
 /// An invalid `YUKE_APPNAME` is an error. The result borrows `env`.
 pub fn appName(env: *const Map) Error![]const u8 {
     const value = envNonEmpty(env, app_name_env) orelse return app_dir;
@@ -73,8 +72,8 @@ fn joinUnder(alloc: std.mem.Allocator, env: *const Map, base: []const u8, mid: [
     return try std.fs.path.join(alloc, parts[0 .. 2 + mid.len]);
 }
 
-/// Return the shared configuration directory: `APPDATA` on Windows, else `XDG_CONFIG_HOME`
-/// or `~/.config`. Null when no base exists; an invalid profile errors. The caller frees it.
+/// Return the shared configuration directory. Use `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere, or `~/.config` under home.
+/// Return null when no base exists. Return an error for an invalid profile. The caller frees the result.
 pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     if (builtin.os.tag == .windows) {
         const base = envBasePath(env, "APPDATA") orelse return null;
@@ -85,8 +84,8 @@ pub fn configDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     return try joinUnder(alloc, env, home, &.{".config"});
 }
 
-/// Return the data directory: `LOCALAPPDATA` on Windows, else `XDG_DATA_HOME`
-/// or `~/.local/share`. Null when no base exists; an invalid profile errors. The caller frees it.
+/// Return the data directory. Use `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, or `~/.local/share` under home.
+/// Return null when no base exists. Return an error for an invalid profile. The caller frees the result.
 pub fn dataDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     if (builtin.os.tag == .windows) {
         const base = envBasePath(env, "LOCALAPPDATA") orelse return null;
@@ -109,8 +108,8 @@ pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
     return std.fs.path.join(alloc, &.{ base, blob_subdir });
 }
 
-/// Expand a leading `~` against the home directory.
-/// Return the input unchanged without a home or a leading `~`. The caller frees the result.
+/// Expand an initial `~` against the home directory.
+/// Return `path` unchanged when the home directory or the initial `~` is absent. The caller frees the result.
 pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ![]u8 {
     const sep = std.fs.path.sep;
     if (path.len == 0 or path[0] != '~') return alloc.dupe(u8, path);

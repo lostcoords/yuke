@@ -2,18 +2,18 @@
 
 const std = @import("std");
 
-/// Protocol version this build speaks. A client must send exactly this.
+/// This build speaks this protocol version. A client must send this exact value.
 pub const protocol_version: u32 = 1;
 
-/// Connection-level client identity.
+/// This type identifies the client connection.
 pub const Client = struct {
-    /// Client connection name (e.g. `"yuke-tui"`).
+    /// The client connection name.
     name: []const u8,
-    /// Client build/version string.
+    /// The client build version.
     version: []const u8,
 };
 
-/// Params of `initialize`; `protocol` defaults to `protocol_version`.
+/// These are the parameters for `initialize`. The `protocol` field defaults to `protocol_version`.
 pub const InitializeParams = struct {
     protocol: u32 = protocol_version,
     client: Client,
@@ -21,7 +21,7 @@ pub const InitializeParams = struct {
 
 const testing = std.testing;
 
-// Unknown fields are ignored; required fields remain enforced.
+// The decoder ignores unknown fields. It still requires fields without defaults.
 const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "decode + fields" {

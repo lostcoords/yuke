@@ -13,14 +13,14 @@ const event_store = database.event;
 const input_store = database.input;
 const run_store = database.run;
 
-/// The run config, frozen at run start. A mid-run change applies to the next run.
+/// The run uses this config from its start. A mid-run change applies to the next run.
 pub const Config = struct {
     model: []const u8,
     config_rev: wire.ids.ConfigRev,
     system_prompt: []const u8,
 };
 
-/// The ids a started run owns. session.send_input returns run_id and input_id at once.
+/// These IDs belong to the started run. session.send_input returns run_id and input_id together.
 pub const RunHandle = struct {
     run_id: wire.ids.RunId,
     input_id: wire.ids.InputId,
@@ -28,8 +28,8 @@ pub const RunHandle = struct {
     started: wire.run.RunStartedData,
 };
 
-/// Tx1: allocate the ids and commit the user message. The daemon runs this before it spawns the run,
-/// so send_input returns the run id at once. `input` borrows `arena`.
+/// Tx1 allocates the IDs and commits the user message in one transaction. The daemon runs Tx1 before it spawns the run.
+/// Therefore, send_input returns the run ID at once. `input` borrows `arena`.
 pub fn beginTurn(
     db: *Database,
     io: std.Io,
@@ -69,7 +69,7 @@ pub fn beginTurn(
     return handle;
 }
 
-/// Tx1 for a queued drain: commit every durable queued input as one run.
+/// Tx1 for a queued drain commits every durable queued input as one run.
 /// The returned handle uses the oldest input id and the run's assistant message id.
 pub fn beginQueuedTurn(
     db: *Database,

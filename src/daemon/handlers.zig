@@ -74,7 +74,7 @@ fn sessionSelector(params: wire.session.SessionListParams) session_store.Selecto
 }
 
 /// Map a durable session row to its origin. A row that breaks the schema invariants is corrupt. The
-/// boundary returns an error, so one request fails and the daemon does not panic.
+/// boundary returns an error, so one request fails and the daemon stays alive.
 fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "root")) {
         if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id != null)
@@ -147,7 +147,8 @@ fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.sessi
     };
 }
 
-/// Handle session.list from durable state. The active view needs the reactor live-session set, added later.
+/// Handle session.list from durable state. The active view needs the reactor live-session set.
+/// Later code adds that set.
 pub fn sessionList(state: *State, arena: std.mem.Allocator, params: wire.session.SessionListParams) !wire.session.SessionListResult {
     const sel = sessionSelector(params);
     const requested_limit = params.limit orelse wire.meta.limits.default_session_list_page_size;
@@ -192,7 +193,7 @@ test "session list cursor round-trips and binds to its selector" {
 }
 
 /// Handle initialize: report the daemon snapshot. The session revision starts at 0 each run because
-/// it is in-memory, not durable. The catalog revision waits for the catalog slice.
+/// it lives in memory. The catalog revision waits for the catalog slice.
 pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.InitializeResult {
     const stored = try workspace_store.list(&state.db, arena);
     const workspaces = try arena.alloc(wire.workspace.Workspace, stored.len);
@@ -213,7 +214,7 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
 }
 
 /// Handle session.config: return one config revision and the session's system prompt.
-/// A null config_rev returns the session's current config; a missing revision is UnknownConfigRev.
+/// Return the current config for a null config_rev. Return UnknownConfigRev for an absent revision.
 pub fn sessionConfig(state: *State, arena: std.mem.Allocator, params: wire.session.SessionConfigParams) !wire.session.SessionConfigResult {
     const sid = params.session_id.raw;
     const snap = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
@@ -280,7 +281,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     return .{ .queued = .{ .input_id = queued.input.input_id } };
 }
 
-/// Cancel one exact pending input. A started input is not a queue entry.
+/// Cancel one exact queued input. A started input belongs to the active run.
 pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionCancelInputParams) !wire.session.SessionCancelInputResult {
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
@@ -337,7 +338,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     if (active) |slot| {
         if (!slot.cancel_requested) {
             slot.cancel_requested = true;
-            slot.cancel_event.set(); // wake the run task, which cancels its reader
+            slot.cancel_event.set(); // Wake the run task so it cancels its reader.
         }
     }
     if (active == null) state.sessions.evictIfIdle(params.session_id);
@@ -345,7 +346,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
 }
 
 /// Collect the distinct configs the assistant messages reference, in first-reference order.
-/// A referenced revision that is absent is log corruption, not a bad request.
+/// A referenced revision that is absent signals log corruption. The wire request remains valid.
 fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
     var out: std.ArrayList(wire.run.RunConfig) = .empty;
     for (messages) |message| switch (message) {
@@ -363,9 +364,9 @@ fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, me
 }
 
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
-/// The broadcast fan-out is added later; this returns the result only.
+/// Later code adds broadcast fan-out. This function returns only the result.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
-    // The raw path is the dedup key for now. Canonicalization is a later workspace-chunk refinement.
+    // Use the raw path as the dedup key for now. A later workspace chunk adds canonicalization.
     const root = params.workspace_path orelse state.home;
     const base = std.fs.path.basename(root);
     const title = if (base.len == 0) root else base;

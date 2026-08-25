@@ -22,7 +22,7 @@ fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
     }
 }
 
-/// Client request parameter envelope.
+/// This union carries client request parameters.
 pub const RequestParams = union(enum) {
     initialize_params: initialize.InitializeParams,
     session_list_params: session.SessionListParams,
@@ -56,7 +56,7 @@ pub const RequestParams = union(enum) {
     }
 };
 
-/// Server response result envelope.
+/// This union carries server response results.
 pub const ResponseResult = union(enum) {
     initialize_result: misc.InitializeResult,
     session_list_result: session.SessionListResult,
@@ -84,7 +84,7 @@ pub const ResponseResult = union(enum) {
     }
 };
 
-/// Server broadcast data envelope.
+/// This union carries server broadcast data.
 pub const BroadcastData = union(enum) {
     session_summary_changed_data: session.SessionSummaryChangedData,
     session_activity_changed_data: session.SessionActivityChangedData,
@@ -116,7 +116,7 @@ pub const BroadcastData = union(enum) {
     }
 };
 
-/// RPC method routing specification.
+/// Maps an RPC method to its parameter and result types.
 pub const MethodSpec = struct {
     name: enums.MethodName,
     params: type,
@@ -124,7 +124,7 @@ pub const MethodSpec = struct {
     params_optional: bool,
 };
 
-/// RPC method routing table.
+/// This table maps each RPC method to its wire types.
 pub const methods = [_]MethodSpec{
     .{ .name = .initialize, .params = initialize.InitializeParams, .result = misc.InitializeResult, .params_optional = false },
     .{ .name = .@"session.list", .params = session.SessionListParams, .result = session.SessionListResult, .params_optional = true },
@@ -157,13 +157,13 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"permission.forget", .params = permission.PermissionForgetParams, .result = misc.Empty, .params_optional = false },
 };
 
-/// Broadcast routing specification.
+/// Maps a broadcast name to its data type.
 pub const BroadcastSpec = struct {
     name: enums.BroadcastName,
     data: type,
 };
 
-/// Broadcast routing table.
+/// This table maps each broadcast name to its wire type.
 pub const broadcasts = [_]BroadcastSpec{
     .{ .name = .@"session.summary_changed", .data = session.SessionSummaryChangedData },
     .{ .name = .@"session.activity_changed", .data = session.SessionActivityChangedData },
@@ -218,7 +218,7 @@ fn decodeFromTable(
     return error.InvalidEnumTag;
 }
 
-/// RPC response envelope.
+/// This union carries an RPC response.
 pub const Response = union(enum) {
     ok: ResponseOk,
     err: ResponseError,
@@ -228,7 +228,7 @@ pub const Response = union(enum) {
     }
 };
 
-/// RPC request envelope.
+/// This type carries an RPC request.
 pub const Request = struct {
     id: ids.RequestId,
     method: enums.MethodName,
@@ -281,19 +281,19 @@ pub const Request = struct {
     }
 };
 
-/// Successful RPC response envelope.
+/// This type carries a successful RPC response.
 pub const ResponseOk = struct {
     id: ids.RequestId,
     result: ResponseResult,
 };
 
-/// Failed RPC response envelope.
+/// This type carries a failed RPC response.
 pub const ResponseError = struct {
     id: ids.RequestId,
     @"error": misc.ErrorObject,
 };
 
-/// RPC notification envelope.
+/// This type carries an RPC notification.
 pub const Notification = struct {
     method: enums.BroadcastName,
     params: BroadcastData,

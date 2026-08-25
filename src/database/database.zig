@@ -17,7 +17,7 @@ pub const input = @import("input.zig");
 /// A yuke database carries this id in the SQLite application_id header slot.
 const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
 
-/// One forward-only schema step. The sql is immutable once shipped; a change is a new step.
+/// Define one forward-only schema step. Keep shipped SQL fixed; make each change a new step.
 const Migration = struct { version: i64, sql: [:0]const u8 };
 
 /// Apply the migrations in order. Entry i sets version i+1.
@@ -29,13 +29,12 @@ const migrations = [_]Migration{
 comptime {
     std.debug.assert(migrations.len > 0);
     for (migrations, 0..) |m, i| {
-        std.debug.assert(m.version == @as(i64, @intCast(i)) + 1); // versions stay dense and start at 1
+        std.debug.assert(m.version == @as(i64, @intCast(i)) + 1); // Versions stay dense and start at 1.
         std.debug.assert(m.sql.len > 0);
     }
 }
 
-/// Store one checksum row per applied step. Check it on open so a changed shipped migration
-/// cannot diverge from the applied database.
+/// Store one checksum row per applied step. Check it on open to detect changes in shipped SQL.
 const migration_hash_ddl =
     \\CREATE TABLE IF NOT EXISTS migration_hash (
     \\    version INTEGER PRIMARY KEY CHECK (version >= 1),
@@ -63,7 +62,7 @@ pub const Database = struct {
     }
 };
 
-/// Bring the database to the latest schema version. Forward-only.
+/// Bring the database to the latest schema version with forward-only migrations.
 fn migrate(conn: sql.Connection) !void {
     // Validate identity before any change to the file.
     const app_id = try scalarInt(conn, "PRAGMA application_id");
@@ -87,21 +86,21 @@ fn migrate(conn: sql.Connection) !void {
 
 /// Set the durability and performance pragmas. A fresh file sets its page size before WAL.
 fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
-    // The page size is fixed once WAL starts, so a fresh database sets it first.
+    // Set the page size before WAL starts because WAL fixes the page size.
     if (fresh) try conn.execNoArgs("PRAGMA page_size = 4096");
     try setWal(conn);
 
     // FULL keeps a committed event durable after a power loss. The event log must not lose a commit.
     try conn.execNoArgs("PRAGMA synchronous = FULL");
     try conn.execNoArgs("PRAGMA wal_autocheckpoint = 1000");
-    try conn.execNoArgs("PRAGMA cache_size = -32768"); // 32 MiB, negative means KiB not pages
+    try conn.execNoArgs("PRAGMA cache_size = -32768"); // A negative value sets KiB rather than pages.
 
     // A small timeout guards against an external checkpoint or backup. A large value would freeze the
     // single reactor thread on a busy signal.
     try conn.busyTimeout(250);
 
-    // Foreign keys enforce the projection pointers. The pragma is a no-op inside a transaction, so set
-    // it outside one and confirm the build supports it.
+    // Foreign keys enforce the projection pointers. Set the pragma outside a transaction because
+    // SQLite ignores it inside one, then confirm that the build supports it.
     try conn.execNoArgs("PRAGMA foreign_keys = ON");
     if (try scalarInt(conn, "PRAGMA foreign_keys") != 1) return error.ForeignKeysUnavailable;
 }
@@ -184,7 +183,7 @@ test "migrate is idempotent on reopen" {
     const conn = try zqlite.open(":memory:", test_flags);
     defer conn.close();
     try migrate(conn);
-    try migrate(conn); // already at latest: apply nothing, re-check hashes
+    try migrate(conn); // The database is current, so apply no step and recheck hashes.
     try std.testing.expectEqual(@as(i64, 2), try scalarInt(conn, "SELECT count(*) FROM migration_hash"));
 }
 

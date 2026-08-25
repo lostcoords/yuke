@@ -17,7 +17,7 @@ pub fn build(gpa: std.mem.Allocator, messages: []const wire.message.Message, opt
 
     for (messages) |message| switch (message) {
         .user => |user| for (user.content) |part| {
-            if (part == .text and part.text.text.len == 0) continue; // Skip empty text, like assistant text.
+            if (part == .text and part.text.text.len == 0) continue; // Skip empty user text, as the assistant fold does.
             try blocks.append(gpa, .{ .role = .user, .value = userValue(part) });
         },
         .assistant => |assistant| try foldAssistant(gpa, &blocks, assistant, options),
@@ -85,7 +85,7 @@ fn terminalToolResult(state: wire.tool.ToolState) Error!ToolOutcome {
         .@"error" => |e| .{ .content = e.@"error", .is_error = true },
         .denied => |d| .{ .content = d.reason, .is_error = true },
         .canceled => .{ .content = "", .is_error = true },
-        // A committed transcript should hold only terminal tools.
+        // A committed transcript holds only terminal tools.
         .pending, .waiting_permission, .running => error.InvalidTranscript,
     };
 }

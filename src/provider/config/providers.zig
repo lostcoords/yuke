@@ -29,7 +29,7 @@ pub const Error = error{
     InsecurePermissions,
 } || Allocator.Error || std.Uri.ParseError;
 
-// The file schema is strict. std.json rejects unknown fields, duplicate keys, and invalid union shapes.
+// The file schema is strict. The std.json parser rejects unknown fields, duplicate keys, and invalid union shapes.
 
 const FileSource = union(enum) {
     env: []const u8,
@@ -108,7 +108,7 @@ pub fn load(gpa: Allocator, io: std.Io, path: []const u8) !Loaded {
 /// Parse and resolve one document. The caller owns and zeroes `bytes`. `alloc_always` copies each value.
 pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
     if (bytes.len > max_file_bytes) return error.FileTooLarge;
-    // Parse into a private scratch buffer, so we can zero every parsed copy even after a parse error.
+    // Parse into a private scratch buffer. Zero every parsed copy on success or failure.
     const scratch = try gpa.alloc(u8, bytes.len * 8 + 4096);
     defer {
         std.crypto.secureZero(u8, scratch);
@@ -120,7 +120,7 @@ pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
         .ignore_unknown_fields = false,
         .duplicate_field_behavior = .@"error",
     }) catch |err| switch (err) {
-        error.OutOfMemory => return error.FileTooLarge, // the scratch is 8x the input; a denser doc is hostile
+        error.OutOfMemory => return error.FileTooLarge, // The scratch holds eight times the input; a denser document is hostile.
         else => |e| return e,
     };
 
@@ -132,7 +132,7 @@ fn empty(gpa: Allocator) Loaded {
     return .{ .arena = std.heap.ArenaAllocator.init(gpa), .gpa = gpa };
 }
 
-/// Open the file with no symlink traversal. Reject a non-regular file or a group- or other-readable file.
+/// Open the file without symlink traversal. Reject non-regular files and files readable by the group or other users.
 /// Read the file into a size-limited buffer.
 fn readSecureFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
     const file = try std.Io.Dir.openFileAbsolute(io, path, .{ .follow_symlinks = false });
@@ -141,11 +141,11 @@ fn readSecureFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
     const st = try file.stat(io);
     if (st.kind != .file) return error.NotRegularFile;
     const mode: u64 = @intCast(st.permissions.toMode());
-    if ((mode & 0o077) != 0) return error.InsecurePermissions; // a file that can hold a literal key stays private
+    if ((mode & 0o077) != 0) return error.InsecurePermissions; // Keep a file that can hold a literal key private.
     if (st.size > max_file_bytes) return error.FileTooLarge;
 
     var buf: [4096]u8 = undefined;
-    defer std.crypto.secureZero(u8, &buf); // the reader buffer may hold key bytes
+    defer std.crypto.secureZero(u8, &buf); // The reader buffer may hold key bytes.
     var reader = file.reader(io, &buf);
     const raw = try gpa.alloc(u8, @intCast(st.size));
     errdefer {
@@ -184,11 +184,10 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
         },
         .literal => |value| blk: {
             if (value.len == 0 or value.len > max_literal_bytes or !cleanLiteral(value)) return error.BadLiteral;
-            // The literal must appear plainly in the source. A JSON escape would leave key bytes in the
-            // scanner stack that we cannot zero. A plain literal never reaches that decode path.
+            // An escaped JSON value leaves key bytes in the scanner stack that we cannot zero. A plain literal never reaches that decode path.
             if (std.mem.indexOf(u8, source_json, value) == null) return error.BadLiteral;
             const owned = try out.gpa.dupe(u8, value);
-            // Give `owned` to `literals` at once. `out.deinit` frees `owned` after a later error.
+            // Add `owned` to `literals` before later checks. The out.deinit call frees it after an error.
             out.literals.append(out.gpa, owned) catch |err| {
                 std.crypto.secureZero(u8, owned);
                 out.gpa.free(owned);
@@ -300,7 +299,7 @@ pub fn resolveModel(loaded: Loaded, qualified: []const u8) ?Resolved {
     for (loaded.providers) |p| {
         if (!std.mem.eql(u8, p.id, provider_id)) continue;
         for (p.models) |m| if (std.mem.eql(u8, m.id, model_id)) return .{ .provider = p, .binding = m };
-        return null; // the provider has no binding for the model
+        return null; // The provider has no binding for the model.
     }
     return null;
 }
@@ -420,11 +419,11 @@ test "duplicate provider and model ids are rejected" {
 
 test "url validation rejects scheme, host, userinfo, query, and fragment" {
     const cases = [_][]const u8{
-        "ftp://a.example/v1", // the URL uses the wrong scheme
-        "https:///v1", // the URL has no host
-        "https://user:pw@a.example/v1", // the URL includes userinfo
-        "https://a.example/v1?k=v", // the URL includes a query
-        "https://a.example/v1#frag", // the URL includes a fragment
+        "ftp://a.example/v1", // The URL uses the wrong scheme.
+        "https:///v1", // The URL has no host.
+        "https://user:pw@a.example/v1", // The URL includes userinfo.
+        "https://a.example/v1?k=v", // The URL includes a query.
+        "https://a.example/v1#frag", // The URL includes a fragment.
     };
     for (cases) |url| {
         var buf: [256]u8 = undefined;
@@ -475,7 +474,7 @@ test "a literal written with a json escape is rejected" {
 }
 
 test "a literal key is freed once when a later check fails" {
-    // The code appends the literal key before the header check fails. out.deinit frees the literal key once.
+    // The code appends the literal key before the header check fails. Cleanup frees the key once.
     try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(
         \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-secret"}}},

@@ -1,4 +1,4 @@
-//! Shared codec for internally-tagged wire unions.
+//! The shared codec for internally tagged wire unions.
 
 const std = @import("std");
 
@@ -21,7 +21,7 @@ pub fn fromValue(comptime T: type, a: std.mem.Allocator, v: std.json.Value, o: s
         else => return error.UnexpectedToken,
     };
 
-    // Arm fields share the flat object with the discriminator.
+    // The arm fields share the flat object with the discriminator.
     var arm_opts = o;
     arm_opts.ignore_unknown_fields = true;
 
@@ -30,7 +30,7 @@ pub fn fromValue(comptime T: type, a: std.mem.Allocator, v: std.json.Value, o: s
             return @unionInit(T, f.name, try std.json.parseFromValueLeaky(f.type, a, v, arm_opts));
     }
 
-    return error.InvalidEnumTag; // unknown discriminator — strict rejection
+    return error.InvalidEnumTag; // Reject an unknown discriminator.
 }
 
 /// Encode a tagged wire union as JSON.

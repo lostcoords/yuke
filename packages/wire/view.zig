@@ -1,17 +1,17 @@
-//! Renderable views attached to tool output.
+//! Renderable views for tool output.
 
 const std = @import("std");
 const content = @import("content.zig");
 const tagged = @import("tagged.zig");
 
-/// One file in a diff view.
+/// This type describes one file in a diff view.
 pub const DiffFile = struct {
     path: []const u8,
     old_path: ?[]const u8 = null,
     hunks: []const DiffHunk,
 };
 
-/// One hunk of a unified diff.
+/// This type describes one hunk of a unified diff.
 pub const DiffHunk = struct {
     old_start: u64,
     old_lines: u64,
@@ -20,7 +20,7 @@ pub const DiffHunk = struct {
     lines: []const []const u8,
 };
 
-/// Display-only rendering hint. Frontends may render natively or ignore. Non-owning.
+/// A frontend can render this hint natively or ignore it. Its fields borrow their data.
 pub const View = union(enum) {
     text: ViewText,
     markdown: ViewMarkdown,
@@ -40,28 +40,28 @@ pub const View = union(enum) {
     }
 };
 
-/// Unified diff view.
+/// This view displays a unified diff.
 pub const ViewDiff = struct {
     files: []const DiffFile,
 };
 
-/// Image view.
+/// This view displays an image.
 pub const ViewImage = struct {
     source: content.MediaSource,
     alt: ?[]const u8 = null,
 };
 
-/// JSON view.
+/// This view displays JSON text.
 pub const ViewJson = struct {
     text: []const u8,
 };
 
-/// Markdown view.
+/// This view displays Markdown text.
 pub const ViewMarkdown = struct {
     text: []const u8,
 };
 
-/// Plain text view.
+/// This view displays plain text.
 pub const ViewText = struct {
     text: []const u8,
     language: ?[]const u8 = null,

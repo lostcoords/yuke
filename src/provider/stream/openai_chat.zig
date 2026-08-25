@@ -1,5 +1,5 @@
-//! The OpenAI Chat Completions reducer maps SSE data to `StreamEvent` values.
-//! The stream emits content blocks, then `[DONE]`. Deltas borrow caller `scratch`; terminal results and `done` borrow reducer buffers until `deinit`; malformed peer input returns `error.Protocol`.
+//! The reducer maps OpenAI Chat Completions SSE data to `StreamEvent` values. The stream emits content blocks, then `[DONE]`.
+//! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -49,7 +49,7 @@ pub const Reducer = struct {
         self.* = undefined;
     }
 
-    /// Parses one SSE `data` payload and appends neutral events to `out`.
+    /// Parse one SSE `data` payload and append neutral events to `out`.
     pub fn decode(
         self: *Reducer,
         data: []const u8,
@@ -68,7 +68,7 @@ pub const Reducer = struct {
             else => return error.Protocol,
         };
 
-        if (choices.items.len > 1) return error.Protocol; // We request n=1.
+        if (choices.items.len > 1) return error.Protocol; // The request sets n to 1.
         if (choices.items.len == 1) {
             const index = json.fieldIndex(choices.items[0], "index") orelse return error.Protocol;
             if (index != 0) return error.Protocol;
@@ -102,7 +102,7 @@ pub const Reducer = struct {
             try self.appendTextDelta(text, out);
         }
 
-        // A refusal is assistant-visible text; surface it so it is never dropped.
+        // Expose a refusal as assistant text so the consumer receives it.
         if (json.fieldStr(delta, "refusal")) |text| {
             try self.appendTextDelta(text, out);
         }
@@ -143,8 +143,8 @@ pub const Reducer = struct {
             out,
         );
         const block = &self.blocks.items[block_index];
-        if (!block.open) return error.Protocol; // The decode boundary returns, not asserts, on stream state.
-        std.debug.assert(block.kind == .tool); // findTool matched a tool block
+        if (!block.open) return error.Protocol; // The decode boundary returns an error for closed stream state.
+        std.debug.assert(block.kind == .tool); // The findTool call matched a tool block.
         std.debug.assert(block.tool_index.? == index);
 
         if (block.call_id.len == 0) try self.capture(&block.call_id, json.fieldStr(call, "id"));
@@ -228,7 +228,7 @@ pub const Reducer = struct {
         } });
     }
 
-    /// Copies peer bytes into reducer memory until `deinit`.
+    /// Copy peer bytes into reducer memory until `deinit`.
     fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
         return self.gpa.dupe(u8, bytes);
     }

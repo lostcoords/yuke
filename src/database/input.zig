@@ -63,7 +63,7 @@ pub fn list(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) ![]Entr
     return out.items;
 }
 
-/// Consume one exact queued input without appending input.canceled.
+/// Consume one exact queued input without a new input.canceled event.
 pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, input_id: u64) !void {
     std.debug.assert(sql.inTransaction(db.conn));
     _ = try checkedPending(db, arena, session_id, input_id);

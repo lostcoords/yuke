@@ -6,7 +6,7 @@ const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 const initialize = @import("initialize.zig");
 
-/// Params for permission.decide.
+/// These are the parameters for `permission.decide`.
 pub const PermissionDecideParams = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
@@ -15,7 +15,7 @@ pub const PermissionDecideParams = struct {
     message: ?[]const u8 = null,
 };
 
-/// Who answered a permission request, and how. Non-owning.
+/// This type records who answered a permission request and how. Its fields borrow their data.
 pub const PermissionDecision = union(enum) {
     user: PermissionDecisionUser,
     rule: PermissionDecisionRule,
@@ -32,14 +32,14 @@ pub const PermissionDecision = union(enum) {
     }
 };
 
-/// Decided by a matched persisted rule.
+/// A matched persisted rule decided the request.
 pub const PermissionDecisionRule = struct {
     rule_id: ids.RuleId,
     label: []const u8,
     resolved_at_ms: u64,
 };
 
-/// Decided by a user selecting an option.
+/// The user selected an option for the decision.
 pub const PermissionDecisionUser = struct {
     option_id: []const u8,
     kind: enums.PermissionOptionKind,
@@ -48,13 +48,13 @@ pub const PermissionDecisionUser = struct {
     decided_by: initialize.Client,
 };
 
-/// Params for permission.forget.
+/// These are the parameters for `permission.forget`.
 pub const PermissionForgetParams = struct {
     workspace_id: ids.WorkspaceId,
     rule_id: ids.RuleId,
 };
 
-/// One option the daemon proposes for a permission request.
+/// The daemon proposes this option for a permission request.
 pub const PermissionOption = struct {
     id: []const u8,
     kind: enums.PermissionOptionKind,
@@ -62,7 +62,7 @@ pub const PermissionOption = struct {
     creates: ?[]const []const u8 = null,
 };
 
-/// A remembered "allow always" answer, scoped to a workspace.
+/// This rule stores an `allow always` answer for matching requests in a workspace.
 pub const PermissionRule = struct {
     id: ids.RuleId,
     session_id: ?ids.SessionId = null,
@@ -73,18 +73,18 @@ pub const PermissionRule = struct {
     created_by: initialize.Client,
 };
 
-/// Payload for `permission.rules_changed`.
+/// This payload describes `permission.rules_changed`.
 pub const PermissionRulesChangedData = struct {
     workspace_id: ids.WorkspaceId,
     rules: []const PermissionRule,
 };
 
-/// Result of permission.rules.
+/// This result describes `permission.rules`.
 pub const PermissionRulesResult = struct {
     rules: []const PermissionRule,
 };
 
-/// Local-only lifecycle data folded into tool state. Never a broadcast.
+/// This local lifecycle data belongs in tool state. The daemon never broadcasts it.
 pub const PermissionState = struct {
     requested_at_ms: u64,
     options: ?[]const PermissionOption = null,

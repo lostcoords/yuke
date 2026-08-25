@@ -1,33 +1,33 @@
-//! Auth protocol types: providers, login flows, and their outcomes.
+//! Auth types for providers, login flows, and outcomes.
 
 const std = @import("std");
 const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 
-/// Params for `auth.cancel_login`.
+/// These are the parameters for `auth.cancel_login`.
 pub const AuthCancelLoginParams = struct {
     login_id: ids.LoginId,
 };
 
-/// Payload for `auth.changed`.
+/// This payload describes `auth.changed`.
 pub const AuthChangedData = struct {
     provider: AuthProvider,
 };
 
-/// Result of `auth.list`.
+/// This result describes `auth.list`.
 pub const AuthListResult = struct {
     providers: []const AuthProvider,
 };
 
-/// Payload for `auth.login_finished`.
+/// This payload describes `auth.login_finished`.
 pub const AuthLoginFinishedData = struct {
     login_id: ids.LoginId,
     provider_id: ids.ProviderId,
     outcome: AuthLoginOutcome,
 };
 
-/// Terminal outcome for a daemon-owned login attempt.
+/// This union reports the terminal outcome of a daemon-owned login attempt.
 pub const AuthLoginOutcome = union(enum) {
     succeeded: AuthLoginOutcomeSucceeded,
     canceled: AuthLoginOutcomeCanceled,
@@ -45,24 +45,24 @@ pub const AuthLoginOutcome = union(enum) {
     }
 };
 
-/// Login was explicitly canceled.
+/// The login was explicitly canceled.
 pub const AuthLoginOutcomeCanceled = struct {};
 
-/// Login failed without changing durable credentials.
+/// The login failed without changing durable credentials.
 pub const AuthLoginOutcomeFailed = struct {
     message: []const u8,
 };
 
-/// Login completed successfully and credentials were durably stored.
+/// The daemon completed login and durably stored the credentials.
 pub const AuthLoginOutcomeSucceeded = struct {};
 
-/// Params for `auth.login`.
+/// These are the parameters for `auth.login`.
 pub const AuthLoginParams = struct {
     provider_id: ids.ProviderId,
     flow: enums.AuthFlow,
 };
 
-/// Result of `auth.login`, tagged by the mechanism actually started.
+/// This result identifies the mechanism that the daemon started for `auth.login`.
 pub const AuthLoginResult = union(enum) {
     browser: AuthLoginResultBrowser,
     device_code: AuthLoginResultDeviceCode,
@@ -79,26 +79,26 @@ pub const AuthLoginResult = union(enum) {
     }
 };
 
-/// Browser authorization details returned only to the requesting connection.
+/// The daemon returns these browser authorization details only to the connection that sent the request.
 pub const AuthLoginResultBrowser = struct {
     login_id: ids.LoginId,
     auth_url: []const u8,
 };
 
-/// Device authorization details returned only to the requesting connection.
+/// The daemon returns these device authorization details only to the connection that sent the request.
 pub const AuthLoginResultDeviceCode = struct {
     login_id: ids.LoginId,
     verification_url: []const u8,
     user_code: []const u8,
 };
 
-/// Public locator for one daemon-owned login attempt. It contains no OAuth secret.
+/// This type identifies one daemon-owned login attempt. It contains no OAuth secret.
 pub const AuthLoginSummary = struct {
     login_id: ids.LoginId,
     flow: enums.AuthFlow,
 };
 
-/// Params for `auth.logout`.
+/// These are the parameters for `auth.logout`.
 pub const AuthLogoutParams = struct {
     provider_id: ids.ProviderId,
 };
@@ -111,7 +111,7 @@ pub const AuthProvider = struct {
     pending_login: ?AuthLoginSummary = null,
 };
 
-/// Write-only params for `auth.set_api_key`. The key is never returned or retained by wire state.
+/// These are write-only parameters for `auth.set_api_key`. The wire state never returns or retains the key.
 pub const AuthSetApiKeyParams = struct {
     provider_id: ids.ProviderId,
     api_key: []const u8,

@@ -7,7 +7,7 @@ const tagged = @import("tagged.zig");
 const permission = @import("permission.zig");
 const view = @import("view.zig");
 
-/// Lifecycle state of a tool part. Non-owning.
+/// This union records a tool part's lifecycle state. Its fields borrow their data.
 pub const ToolState = union(enum) {
     pending: ToolStatePending,
     waiting_permission: ToolStateWaitingPermission,
@@ -29,12 +29,12 @@ pub const ToolState = union(enum) {
     }
 };
 
-/// Call was canceled.
+/// The user or daemon canceled the call.
 pub const ToolStateCanceled = struct {
     duration_ms: ?u64 = null,
 };
 
-/// Payload for `tool.state_changed`.
+/// This payload describes `tool.state_changed`.
 pub const ToolStateChangedData = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
@@ -43,36 +43,36 @@ pub const ToolStateChangedData = struct {
     permission_state: ?permission.PermissionState = null,
 };
 
-/// Call finished successfully.
+/// The tool call completed successfully.
 pub const ToolStateCompleted = struct {
     output: []const u8,
     view: ?[]const view.View = null,
     duration_ms: u64,
 };
 
-/// Permission was denied.
+/// The user or daemon denied permission for the call.
 pub const ToolStateDenied = struct {
     reason: []const u8,
     denied_by: enums.DeniedBy,
 };
 
-/// Call failed.
+/// The tool call failed.
 pub const ToolStateError = struct {
     @"error": []const u8,
     view: ?[]const view.View = null,
     duration_ms: u64,
 };
 
-/// Not yet started.
+/// The tool call has not started.
 pub const ToolStatePending = struct {};
 
-/// Call is executing.
+/// The tool call is active.
 pub const ToolStateRunning = struct {
     started_at_ms: u64,
     output: ?[]const u8 = null,
 };
 
-/// Awaiting a permission decision.
+/// The tool call awaits a permission decision.
 pub const ToolStateWaitingPermission = struct {};
 
 const testing = std.testing;

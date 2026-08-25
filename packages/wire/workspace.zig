@@ -1,112 +1,112 @@
-//! Workspace directories, browsing, and skill discovery.
+//! Workspace directories, directory access, and skill discovery.
 
 const std = @import("std");
 const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 
-/// A single filesystem entry in a browse listing.
+/// This entry identifies one filesystem item in a browse result.
 pub const DirEntry = struct {
     name: []const u8,
     path: []const u8,
-    /// Whether this directory is itself a git repo.
+    /// This field says whether this directory is a Git repository.
     is_git_repo: bool,
 };
 
-/// Git status for a workspace root, when it is a repo.
+/// This type records Git status for a workspace root when it is a repository.
 pub const GitInfo = struct {
     branch: []const u8,
-    /// Whether the working tree has uncommitted changes.
+    /// This field says whether the working tree has uncommitted changes.
     dirty: bool,
 };
 
-/// Discovered skill metadata.
+/// This type records discovered skill metadata.
 pub const SkillInfo = struct {
     name: []const u8,
     description: []const u8,
-    /// Project- or personal-scoped.
+    /// This scope identifies a project or personal skill.
     scope: enums.SkillScope,
     argument_hint: []const u8,
 };
 
-/// A named skill invocation with its rendered arguments.
+/// This type names a skill and holds its rendered arguments.
 pub const SkillRef = struct {
     name: []const u8,
     arguments: []const u8,
 };
 
-/// Daemon-known workspace.
+/// This type describes a workspace known to the daemon.
 pub const Workspace = struct {
-    /// The daemon mints the opaque workspace id.
+    /// The daemon creates this opaque workspace ID.
     id: ids.WorkspaceId,
-    /// The daemon supports only the local kind today.
+    /// The daemon supports only the local workspace kind at present.
     kind: enums.WorkspaceKind = .local,
-    /// Canonical absolute path of the local root.
+    /// The canonical absolute path of the local root.
     root: []const u8,
-    /// Display title.
+    /// The display title.
     title: []const u8,
 };
 
-/// workspace.browse input.
+/// These are the parameters for `workspace.browse`.
 pub const WorkspaceBrowseParams = struct {
     path: ?[]const u8 = null,
-    /// Page size; omitted means daemon default.
+    /// The daemon uses its default page size when this field is absent.
     limit: ?u64 = null,
-    /// Opaque continuation within the same directory.
+    /// An opaque cursor for continuation within the same directory.
     cursor: ?[]const u8 = null,
 };
 
-/// workspace.browse result.
+/// This result contains one browse page.
 pub const WorkspaceBrowseResult = struct {
     path: []const u8,
-    /// Parent directory path; null at the filesystem root.
+    /// The daemon sets this field to null at the filesystem root.
     parent: ?[]const u8 = null,
-    /// Directory contents.
+    /// The directory contents.
     entries: []const DirEntry,
-    /// Opaque continuation; required null on the final page.
+    /// An opaque continuation cursor; null on the final page.
     next_cursor: ?[]const u8 = null,
 };
 
-/// Payload for `workspace.created`.
+/// This payload describes `workspace.created`.
 pub const WorkspaceCreatedData = struct {
     /// The newly known workspace.
     workspace: Workspace,
 };
 
-/// workspace.describe input.
+/// These are the parameters for `workspace.describe`.
 pub const WorkspaceDescribeParams = struct {
     path: []const u8,
 };
 
-/// workspace.describe result.
+/// This result describes `workspace.describe`.
 pub const WorkspaceDescribeResult = struct {
-    /// Resolved workspace.
+    /// The resolved workspace.
     workspace: Workspace,
-    /// Git status; null when the root is not a repo.
+    /// The daemon sets this field to null when the root is not a repository.
     git: ?GitInfo = null,
-    /// Last filesystem modification epoch ms.
+    /// The last filesystem modification time in epoch milliseconds.
     last_modified_ms: u64,
-    /// Last model used in this workspace; null if never run.
+    /// The last model used in this workspace. The daemon leaves it null before the first run.
     last_used_model: ?[]const u8 = null,
 };
 
-/// Params naming a workspace and nothing else.
+/// These parameters name a workspace and nothing else.
 pub const WorkspaceRef = struct {
-    /// Workspace the request targets.
+    /// This field identifies the workspace that the request targets.
     workspace_id: ids.WorkspaceId,
 };
 
-/// workspace.remove result.
+/// Result of `workspace.remove`.
 pub const WorkspaceRemoveResult = struct {};
 
-/// Payload for `workspace.removed`.
+/// This payload describes `workspace.removed`.
 pub const WorkspaceRemovedData = struct {
-    /// Id of the removed workspace.
+    /// This field identifies the removed workspace.
     workspace_id: ids.WorkspaceId,
 };
 
-/// workspace.skills.list result.
+/// This result lists discovered skills.
 pub const WorkspaceSkillsResult = struct {
-    /// Discovered skills.
+    /// This field lists discovered skills.
     skills: []const SkillInfo,
 };
 

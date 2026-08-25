@@ -1,4 +1,4 @@
-//! Miscellaneous shared request, result, state, and broadcast wire types.
+//! Shared request, result, state, and broadcast wire types.
 
 const std = @import("std");
 const ids = @import("ids.zig");
@@ -10,14 +10,14 @@ const run = @import("run.zig");
 const session = @import("session.zig");
 const workspace = @import("workspace.zig");
 
-/// Payload for `config.changed`.
+/// This payload describes `config.changed`.
 pub const ConfigChangedData = struct {
     session_id: ids.SessionId,
     seq: ids.Seq,
     config: run.RunConfig,
 };
 
-/// session.create input. Non-owning.
+/// These are the `session.create` input fields. They borrow their data.
 pub const CreateSession = struct {
     workspace_path: ?[]const u8 = null,
     profile: ?[]const u8 = null,
@@ -28,12 +28,12 @@ pub const CreateSession = struct {
     max_rounds: ?u64 = null,
 };
 
-/// Creation timestamp for a user or compaction message.
+/// This type records the creation time for a user or compaction message.
 pub const CreatedTime = struct {
     created_at_ms: u64,
 };
 
-/// Daemon identity and clock. Non-owning.
+/// This type records daemon identity and time. Its fields borrow their data.
 pub const DaemonInfo = struct {
     version: []const u8,
     server_now_ms: u64,
@@ -42,13 +42,13 @@ pub const DaemonInfo = struct {
 /// Empty params or result object.
 pub const Empty = struct {};
 
-/// Request failure details. Non-owning.
+/// This type records request failure details. Its fields borrow their data.
 pub const ErrorObject = struct {
     code: enums.ErrorCode,
     message: []const u8,
 };
 
-/// Result of the `initialize` request: the coarse daemon snapshot.
+/// This result contains the coarse daemon snapshot after `initialize`.
 pub const InitializeResult = struct {
     protocol: u32,
     daemon: DaemonInfo,
@@ -60,21 +60,21 @@ pub const InitializeResult = struct {
     capabilities: []const enums.Capability,
 };
 
-/// Daemon diagnostic notice broadcast to all connections. Non-owning.
+/// The daemon broadcasts this diagnostic notice to all connections. Its fields borrow their data.
 pub const Notice = struct {
     level: enums.NoticeLevel,
     source: []const u8,
     message: []const u8,
 };
 
-/// A queued input waiting behind an active turn.
+/// This input waits behind an active turn.
 pub const QueuedInput = struct {
     input_id: ids.InputId,
     content: []const content.ContentPart,
     queued_at_ms: u64,
 };
 
-/// Daemon-owned session summary.
+/// The daemon owns this session summary.
 pub const Session = struct {
     id: ids.SessionId,
     workspace_id: ids.WorkspaceId,
@@ -94,7 +94,7 @@ pub const Session = struct {
     agent: ?[]const u8 = null,
 };
 
-/// Payload for `transcript.truncated`.
+/// This payload describes `transcript.truncated`.
 pub const TranscriptTruncatedData = struct {
     session_id: ids.SessionId,
     seq: ids.Seq,

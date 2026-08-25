@@ -8,7 +8,7 @@ const handlers = @import("handlers.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
 
-/// Result for one frame: keep reading or close the connection.
+/// Store the result for one frame: continue or close the connection.
 pub const Outcome = enum { keep_open, close };
 
 pub const HandleResult = struct {
@@ -23,19 +23,19 @@ pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.W
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Parse the frame as JSON first. Then a typed-decode error can include the request id.
+    // Parse the frame as JSON first. This lets a typed-decode error include the request id.
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, frame, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => return .{ .outcome = try closeProtocol(out) },
     };
-    // The daemon needs an id to match a response to the request, so it closes the connection.
+    // The daemon needs an id to match each response. Close the connection when the frame has none.
     const request_id = requestId(value) orelse return .{ .outcome = try closeProtocol(out) };
     // Report unknown_method for an unknown method. Report bad_request for bad parameters.
     if (requestMethod(value) == null)
         return .{ .outcome = try respond(arena, out, errorResponse(request_id, .unknown_method, "unknown method")) };
 
     // The wire request parser owns the unknown-field policy. It ignores unknown fields for forward
-    // compatibility, so the call options stay default.
+    // compatibility, so use the default call options.
     const request = wire.rpc.Request.jsonParseFromValue(arena, value, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => return .{ .outcome = try respond(arena, out, errorResponse(request_id, .bad_request, "bad request")) },
@@ -160,7 +160,7 @@ fn closeProtocol(out: *std.Io.Writer) !Outcome {
     return .close;
 }
 
-/// Read a string request id. Return null for a missing or invalid id.
+/// Read a string request id. Return null when the id is absent or invalid.
 fn requestId(value: std.json.Value) ?wire.ids.RequestId {
     const object = switch (value) {
         .object => |object| object,
@@ -172,7 +172,7 @@ fn requestId(value: std.json.Value) ?wire.ids.RequestId {
     };
 }
 
-/// Read the method as a known name. Return null for a missing, non-string, or unknown name.
+/// Read the method as a known name. Return null when the field is absent, not a string, or unknown.
 fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
     const object = switch (value) {
         .object => |object| object,
@@ -202,7 +202,7 @@ const TestState = struct {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer rt.deinit();
         const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-        // A heap Connection keeps a stable address for its channel across the returned struct's move.
+        // A heap Connection keeps a stable channel address when the returned struct moves.
         const conn = try std.testing.allocator.create(connection.Connection);
         errdefer std.testing.allocator.destroy(conn);
         conn.init(std.testing.allocator);
@@ -265,11 +265,11 @@ fn countNamedEvents(db: *database.Database, name: []const u8) !i64 {
     return row.int(0);
 }
 
-/// Return the payload of one unmasked server text frame. Read the length header, never scan for a brace,
-/// because the 2-byte length can hold a '{' byte.
+/// Return the payload of one unmasked server text frame. Read the length header to locate the payload.
+/// The two-byte length can contain a brace byte.
 fn responsePayload(bytes: []const u8) ![]const u8 {
     if (bytes.len < 2) return error.InvalidResponse;
-    const indicator = bytes[1] & 0x7f; // The server sends a frame without a mask.
+    const indicator = bytes[1] & 0x7f; // The server sends an unmasked frame.
     var offset: usize = 2;
     var payload_len: usize = indicator;
     if (indicator == 126) {
@@ -281,7 +281,7 @@ fn responsePayload(bytes: []const u8) ![]const u8 {
         payload_len = @intCast(std.mem.readInt(u64, bytes[2..10], .big));
         offset = 10;
     }
-    if (payload_len > bytes.len - offset) return error.InvalidResponse; // subtract to avoid an overflow
+    if (payload_len > bytes.len - offset) return error.InvalidResponse; // Subtract first to avoid an overflow.
     return bytes[offset .. offset + payload_len];
 }
 
@@ -370,9 +370,9 @@ test "dispatch initialize returns a result" {
     const written = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, written, "server_now_ms") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"id\":\"1\"") != null);
-    // The clock uses the current time, so it exceeds this 2023 timestamp.
+    // The clock returns a time after this 2023 timestamp.
     try std.testing.expect(fixture.state.nowMillis() > 1_700_000_000_000);
-    // A fresh daemon has no workspaces and a zero session revision.
+    // A fresh daemon returns an empty workspace list and a zero session revision.
     try std.testing.expect(std.mem.indexOf(u8, written, "\"workspaces\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"session_revision\":0") != null);
 }
@@ -439,7 +439,7 @@ test "session.create defaults the workspace to home and stacks sessions" {
         \\{"id":"1","method":"session.create","params":{}}
     ;
     _ = try handleRequest(&fixture.state, fixture.conn, &out1, empty_params);
-    // The home default is "/home/test"; its basename is the title.
+    // The default home is "/home/test"; use its basename as the title.
     try std.testing.expect(std.mem.indexOf(u8, out1.buffered(), "\"title\":\"test\"") != null);
 
     var buf2: [4096]u8 = undefined;
@@ -503,7 +503,7 @@ test "session.list pages with a selector-bound cursor" {
     try std.testing.expectEqual(@as(usize, 1), try responseItemCount(second));
     try std.testing.expect((try responseNextCursor(cursor_arena.allocator(), second)) == null);
 
-    // Each session appears on exactly one page. The cursor advances with no duplicate or skipped row.
+    // Each session appears on exactly one page. The cursor advances through each row once.
     inline for (.{ "one", "two", "three" }) |name| {
         const on_first = std.mem.indexOf(u8, first, "\"title\":\"" ++ name ++ "\"") != null;
         const on_second = std.mem.indexOf(u8, second, "\"title\":\"" ++ name ++ "\"") != null;
@@ -582,7 +582,7 @@ test "session.create records the initial config as revision 0" {
     const a = arena.allocator();
 
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
-    // The initial config is readable by its revision, not only as the current config.
+    // Read the initial config by its revision and as the current config.
     const cfg = try handlers.sessionConfig(&fixture.state, a, .{ .session_id = created.session.id, .config_rev = 0 });
     try std.testing.expectEqual(@as(u64, 0), cfg.config.config_rev);
     try std.testing.expectEqualStrings("opus", cfg.config.model);
@@ -603,7 +603,7 @@ test "session.history returns committed messages oldest-first with their configs
         .assistant = .{
             .id = 2,
             .run_id = 1,
-            .config_rev = 0, // references the initial config recordInitial stored
+            .config_rev = 0, // References the initial record from recordInitial.
             .agent = "claude",
             .content = &.{},
             .time = .{ .created_at_ms = 160 },
@@ -616,10 +616,10 @@ test "session.history returns committed messages oldest-first with their configs
 
     const hist = try handlers.sessionHistory(&fixture.state, a, .{ .session_id = sid, .before_message_id = 0, .limit = 10 });
     try std.testing.expectEqual(@as(usize, 2), hist.messages.len);
-    try std.testing.expectEqual(@as(u64, 1), hist.messages[0].user.id); // oldest first
+    try std.testing.expectEqual(@as(u64, 1), hist.messages[0].user.id); // The history lists the oldest message first.
     try std.testing.expectEqual(@as(u64, 2), hist.messages[1].assistant.id);
     try std.testing.expect(!hist.has_more);
-    // The assistant turn references config_rev 0, so gatherConfigs resolves exactly that revision.
+    // The assistant turn uses config_rev 0, so gatherConfigs resolves that exact revision.
     try std.testing.expectEqual(@as(usize, 1), hist.configs.len);
     try std.testing.expectEqual(@as(u64, 0), hist.configs[0].config_rev);
 }
@@ -643,7 +643,7 @@ test "session.config dispatch maps an unknown session to its error code" {
     var fixture = try TestState.init();
     defer fixture.deinit();
     var buffer: [4096]u8 = undefined;
-    // A printable 16-byte id decodes fine but matches no session.
+    // A printable 16-byte id decodes successfully. The session lookup returns no match.
     const written = try call(&fixture,
         \\{"id":"1","method":"session.config","params":{"session_id":"0123456789abcdef0123456789abcdef"}}
     , &buffer);
@@ -795,11 +795,11 @@ test "cancel input and cancel run preserve exact durable outcomes" {
     try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
 }
 
-/// A transport whose read parks until the reader task is canceled. `entered` signals the parked read.
+/// A transport parks its read until the reader task cancels it. `entered` signals the parked read.
 const BlockingTransport = struct {
     entered: *zio.ResetEvent,
     gate: *zio.ResetEvent,
-    interrupted: *bool, // set when the parked read catches error.Canceled
+    interrupted: *bool, // Set this flag when the parked read catches error.Canceled.
 
     fn transportFor(self: *BlockingTransport) transport.Transport {
         return .{ .ctx = self, .vtable = &vtable };
@@ -825,8 +825,8 @@ const BlockingTransport = struct {
         fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
             _ = buf;
             const self: *Reader = @ptrCast(@alignCast(ctx));
-            self.entered.set(); // the read is parked; the canceler can now fire
-            self.gate.wait() catch |err| { // parks until the reader task is canceled
+            self.entered.set(); // The read parks here, so the canceler can now fire.
+            self.gate.wait() catch |err| { // Park until the reader task cancels this read.
                 if (err == error.Canceled) self.interrupted.* = true;
                 return err;
             };
@@ -837,7 +837,7 @@ const BlockingTransport = struct {
 };
 
 fn cancelWhenBlocked(state: *State, sid: wire.ids.SessionId, run_id: u64, entered: *zio.ResetEvent) !void {
-    try entered.wait(); // wait until the provider read parks
+    try entered.wait(); // Wait until the provider read parks.
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
@@ -862,11 +862,11 @@ test "cancel run interrupts a blocked provider read" {
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
     const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
 
-    // The run parks in the read; a separate task cancels it mid-read.
+    // The run parks in the read. A separate task cancels it during the read.
     var driver = try fixture.rt.spawn(cancelWhenBlocked, .{ &fixture.state, sid, started.run_id, &entered });
     try driver.join();
 
-    try std.testing.expect(interrupted); // the parked read was interrupted, not drained
+    try std.testing.expect(interrupted); // The cancel interrupted the parked read before it drained.
     const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
     defer row.deinit();
     const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
@@ -934,7 +934,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    // State.deinit frees the loaded provider layer. This test must not deinit it.
+    // State.deinit frees the loaded provider layer. Leave that layer for State.deinit.
     fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic-messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-test"}}},
@@ -955,7 +955,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
 
     try std.testing.expectEqualStrings("https://llm.acme.example/v1/messages", capture.url.items);
     try std.testing.expectEqualStrings("sk-test", capture.api_key.items);
-    // The body carries the exact upstream model, never the session-qualified name.
+    // The body carries the exact upstream model rather than the session-qualified name.
     const sent = try std.json.parseFromSliceLeaky(std.json.Value, a, capture.body.items, .{});
     try std.testing.expectEqualStrings("acme-fast-1", sent.object.get("model").?.string);
     try std.testing.expect(std.mem.indexOf(u8, capture.body.items, "acme/fast") == null);

@@ -1,5 +1,5 @@
 //! This provider transport streams an SSE response body through one std.http.Client request.
-//! The client dials through the zio std.Io, so a run-task cancel interrupts a blocked read.
+//! A run task can cancel a blocked read because the client dials through zio std.Io.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -14,9 +14,9 @@ pub const Error = error{
     RateLimited, // 429 without a quota signal
     QuotaExhausted, // 429 with a quota or spend code
     ServerError, // 5xx
-    BadStatus, // any other non-200
+    BadStatus, // Any other non-200 status.
     Timeout, // 408, 504, or an idle read past the deadline
-    RedirectRefused, // a 3xx the client must not follow
+    RedirectRefused, // The client must not follow a 3xx response.
     BadUrl,
 };
 
@@ -45,9 +45,9 @@ pub const HttpTransport = struct {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
-        // sendBodyComplete uses the body as a writer buffer, so give it a mutable copy.
+        // The sendBodyComplete call uses the body as a writer buffer, so give it a mutable copy.
         const body = try arena.dupe(u8, request.body);
-        // The provider streams SSE, so ask for it. This Accept wins over a caller Accept.
+        // The provider sends SSE, so request it. This Accept header overrides a caller Accept header.
         const extra = try arena.alloc(std.http.Header, request.headers.len + 1);
         extra[0] = .{ .name = "accept", .value = "text/event-stream" };
         var extra_len: usize = 1;
@@ -110,20 +110,20 @@ const HttpBody = struct {
         std.debug.assert(buf.len > 0);
         const self: *HttpBody = @ptrCast(@alignCast(ctx));
 
-        // Bound each read. The timer cancels this task. ac.check distinguishes a timeout from user cancellation.
+        // Bound each read. The timer cancels this task. The ac.check call distinguishes a timeout from user cancellation.
         var ac: zio.AutoCancel = .init;
         ac.set(self.idle_timeout);
         defer ac.clear();
 
-        // readSliceShort returns 0 only at end of stream, which matches the ResponseBody contract.
+        // The readSliceShort call returns 0 only at end of stream, which matches the ResponseBody contract.
         return self.reader.readSliceShort(buf) catch |err| switch (err) {
             error.ReadFailed => {
-                // A malformed or truncated body sets bodyErr and no socket error. Return it as a peer error.
+                // A malformed or truncated body sets bodyErr without a socket error. Return it as a peer error.
                 if (self.response.bodyErr()) |be| {
                     if (self.request.connection) |c| c.closing = true;
                     return be;
                 }
-                // A socket failure sets the read error. getReadError is now safe to unwrap.
+                // A socket failure sets the read error. The getReadError call can now unwrap it safely.
                 const cause = if (self.request.connection) |c| c.getReadError() else null;
                 if (cause) |ce| {
                     if (ce == error.Canceled) return if (ac.check(error.Canceled)) Error.Timeout else error.Canceled;
@@ -152,8 +152,8 @@ fn mapStatus(status: std.http.Status) Error {
     };
 }
 
-/// Classify a 429 as a rate limit or a quota error, then return it. Bound the body read with the idle
-/// timeout. A user cancel propagates. A missing or unreadable body defaults to a rate limit.
+/// Classify a 429 as a rate limit or a quota error. Bound the body read with the idle timeout.
+/// Propagate a user cancel. Use a rate limit when the body is missing or unreadable.
 fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
     var ac: zio.AutoCancel = .init;
@@ -161,8 +161,8 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     defer ac.clear();
     var buf: [2048]u8 = undefined;
     const n = hb.reader.readSliceShort(&buf) catch |err| {
-        // A user cancel propagates. A malformed body, idle timeout, or other failure defaults to a
-        // rate limit. Check bodyErr first, so getReadError only runs for a real socket failure.
+        // A user cancel propagates. Default to a rate limit for a malformed body, idle timeout, or other failure.
+        // Check bodyErr first, so getReadError only runs for a real socket failure.
         if (err == error.ReadFailed and hb.response.bodyErr() == null) {
             if (hb.request.connection) |c| if (c.getReadError()) |ce| {
                 if (ce == error.Canceled and !ac.check(error.Canceled)) return error.Canceled;
@@ -220,7 +220,7 @@ const Server = struct {
     listener: *zio.net.Server,
     body: []const u8,
     status: std.http.Status,
-    location: ?[]const u8 = null, // This field holds a redirect target. The client must never follow it.
+    location: ?[]const u8 = null, // A redirect target. The client must never follow it.
     stall: bool = false, // Send the body, then wait on `release`. Keep the stream open.
     release: ?*zio.ResetEvent = null,
     err: ?anyerror = null,
@@ -383,7 +383,7 @@ test "a redirect is rejected without following it" {
 
     var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
     defer out.bytes.deinit(testing.allocator);
-    // The client must reject a 302 response to another origin. Otherwise, the key would leak to the target.
+    // The client must reject a 302 response to another origin to keep the key private.
     var srv: Server = .{ .listener = &listener, .body = "", .status = .found, .location = "http://evil.example/steal" };
 
     var server = try rt.spawn(serveOnce, .{&srv});
@@ -391,7 +391,7 @@ test "a redirect is rejected without following it" {
     client.join();
     server.join();
 
-    // receiveHead rejects the 3xx rather than following it, so the key never reaches the target.
+    // The receiveHead call rejects the 3xx, so the key stays on the original connection.
     try testing.expectEqual(@as(?anyerror, Error.RedirectRefused), out.err);
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
 }

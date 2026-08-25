@@ -1,5 +1,5 @@
 //! The models.dev catalog stores the current provider and model snapshot.
-//! It stores no credentials. An unsupported protocol remains null.
+//! It stores credential names only. An unsupported protocol remains null.
 
 const std = @import("std");
 const provider = @import("../provider/provider.zig");
@@ -9,7 +9,7 @@ const instance = provider.instance;
 pub const ModelBinding = instance.ModelBinding;
 pub const Protocol = instance.Protocol;
 
-/// Describes a provider and its credential environment variable names.
+/// Describe a provider and its credential variable names.
 /// It stores no credential.
 pub const CatalogProvider = struct {
     id: []const u8,
@@ -20,7 +20,7 @@ pub const CatalogProvider = struct {
     env: []const []const u8 = &.{},
 };
 
-/// Binds a model to its provider. The model id is unique in the catalog.
+/// Bind a model to its provider. The model id is unique in the catalog.
 /// The models.dev decoder supplies the provider namespace.
 pub const CatalogModel = struct {
     provider_id: []const u8,
@@ -107,7 +107,7 @@ test "a snapshot round-trips providers, models, and behavioral flags" {
 
     const in_providers = [_]CatalogProvider{
         .{ .id = "anthropic", .models_dev_id = "anthropic", .name = "Anthropic", .base_url = "https://api.anthropic.com/v1", .protocol = .@"anthropic-messages", .env = &.{"ANTHROPIC_API_KEY"} },
-        .{ .id = "google", .models_dev_id = "google", .name = "Google", .base_url = "https://x", .protocol = null }, // An unsupported protocol stays visible with null.
+        .{ .id = "google", .models_dev_id = "google", .name = "Google", .base_url = "https://x", .protocol = null }, // Keep an unsupported protocol visible with null.
     };
     const in_models = [_]CatalogModel{
         .{ .provider_id = "anthropic", .binding = .{ .id = "opus", .upstream_id = "claude-opus-4-8", .limits = .{ .context_window = 200000, .max_output_tokens = 16000 }, .flags = .{ .anthropic_adaptive = true, .supports_vision = true } } },
@@ -117,7 +117,7 @@ test "a snapshot round-trips providers, models, and behavioral flags" {
 
     const got_providers = try providers(&db, a);
     try testing.expectEqual(@as(usize, 2), got_providers.len);
-    try testing.expectEqualStrings("anthropic", got_providers[0].id); // The query orders by id.
+    try testing.expectEqualStrings("anthropic", got_providers[0].id); // The query sorts by id.
 
     const anthropic_models = try models(&db, a, "anthropic");
     try testing.expectEqual(@as(usize, 1), anthropic_models.len);

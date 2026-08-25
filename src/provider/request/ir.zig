@@ -1,6 +1,4 @@
-//! The neutral request IR. `build` maps a transcript to flat blocks.
-//! Serializers read the IR, not `wire.Message`.
-//!
+//! The request IR stays neutral. `build` maps a transcript to flat blocks. Serializers read the IR instead of `wire.Message`.
 //! IR strings borrow the transcript. Keep the transcript and block arena alive.
 
 const wire = @import("wire");
@@ -50,12 +48,12 @@ pub const RequestIr = struct {
     blocks: []const Block,
 };
 
-/// A tool definition for the provider. `input_schema` is raw JSON Schema text.
+/// A tool definition for the provider. `input_schema` holds raw JSON Schema text.
 pub const Tool = struct {
     name: []const u8,
     description: []const u8,
     input_schema: []const u8,
-    /// OpenAI strict mode. Off by default; a non-strict schema returns 400 with it on.
+    /// OpenAI strict mode is off by default. A non-strict schema returns 400 when strict mode is on.
     strict: bool = false,
 };
 
@@ -67,7 +65,7 @@ pub const Request = struct {
     max_output_tokens: u32,
 };
 
-/// Options for the transcript fold.
+/// These options control the transcript fold.
 pub const Options = struct {
     /// Replay reasoning only from a turn with this provenance.
     /// A null target drops all prior reasoning because signatures are model-specific.

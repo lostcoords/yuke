@@ -7,7 +7,7 @@ const sql = @import("sql");
 const Database = @import("database.zig").Database;
 const event = @import("event.zig");
 
-/// The metadata a committed message contributes, extracted per role.
+/// The metadata that a committed message adds for its role.
 const Meta = struct {
     message_id: u64,
     role: []const u8,
@@ -23,7 +23,7 @@ const Meta = struct {
     tokens_cache_write: ?u64,
     cost: ?f64,
     created_at_ms: u64,
-    // Add to the session usage totals; zero for a message that carries no tokens.
+    // Add the session usage totals. Use zero when the message carries no tokens.
     add_input: u64,
     add_output: u64,
     add_reasoning: u64,
@@ -31,8 +31,8 @@ const Meta = struct {
     add_cache_write: u64,
 };
 
-/// Append a committed message: store the body in the log and the metadata in the projection, then
-/// advance the session summary. Run inside a write transaction. The caller mints event_id.
+/// Append a committed message, store its body and metadata, and advance the session summary.
+/// Run inside a write transaction. The caller mints event_id.
 pub fn appendCommittedMessage(
     db: *Database,
     arena: std.mem.Allocator,
@@ -41,7 +41,7 @@ pub fn appendCommittedMessage(
     committed_at_ms: u64,
     message: wire.message.Message,
 ) !u64 {
-    std.debug.assert(sql.inTransaction(db.conn)); // else the event and projection can half-apply
+    std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, message, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "message.committed", payload);
 
@@ -147,34 +147,34 @@ fn metaOf(message: wire.message.Message) Meta {
     };
 }
 
-/// One oldest-first page of committed messages plus whether older messages remain.
+/// Return one oldest-first page of committed messages and whether older messages remain.
 pub const History = struct { messages: []const wire.message.Message, has_more: bool };
 
-/// The message id, common to every message arm.
+/// Return the message id shared by every message arm.
 fn messageId(message: wire.message.Message) u64 {
     return switch (message) {
         inline else => |m| m.id,
     };
 }
 
-/// Read a backward page of committed messages, decoded from the log, oldest first. before_message_id
-/// is exclusive; 0 means the newest page. The result borrows `arena`.
+/// Read a backward page from the log and return it oldest first. before_message_id is exclusive;
+/// 0 means the newest page. The result borrows `arena`.
 pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, before_message_id: u64, limit: usize) !History {
-    std.debug.assert(limit > 0); // the caller clamps the peer limit to at least 1
-    // A cursor of 0 means "no cursor". The sentinel is above every message id.
+    std.debug.assert(limit > 0); // The caller clamps the peer limit to at least 1.
+    // A cursor of 0 means "no cursor". The sentinel exceeds every message id.
     const cursor: u64 = if (before_message_id == 0) std.math.maxInt(i64) else before_message_id;
     var it = try db.queries.message_page.rows(.{
         .session_id = session_id,
         .cursor_message_id = cursor,
-        .limit = @as(i64, @intCast(limit + 1)), // the extra row detects a further page
+        .limit = @as(i64, @intCast(limit + 1)), // The extra row detects a further page.
     });
     defer it.deinit();
 
-    // The query returns newest first. Collect, then reverse the kept rows to oldest first.
+    // The query returns newest first. Collect the rows, then reverse them to oldest first.
     var newest_first: std.ArrayList(wire.message.Message) = .empty;
     while (try it.next(arena)) |row| {
         const msg = try std.json.parseFromSliceLeaky(wire.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true });
-        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // the row and its body disagree
+        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
         try newest_first.append(arena, msg);
     }
 
@@ -300,7 +300,7 @@ test "a rolled-back commit leaves no event, row, or seq advance" {
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 100, msg);
-    // A duplicate message_id fails InsertMessage after event.append raised the seq.
+    // InsertMessage rejects a duplicate message_id after event.append raises the seq.
     try testing.expectError(error.ConstraintUnique, appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 100, msg));
     try db.conn.execNoArgs("ROLLBACK");
 
@@ -327,14 +327,14 @@ test "historyPage returns a page oldest-first with has_more" {
     }
     try db.conn.execNoArgs("COMMIT");
 
-    // The newest page of 2 returns ids 2 and 3 oldest-first; id 1 still remains.
+    // The newest page of 2 returns ids 2 and 3 oldest first; id 1 remains.
     const page = try historyPage(&db, a, sid, 0, 2);
     try testing.expectEqual(@as(usize, 2), page.messages.len);
     try testing.expectEqual(@as(u64, 2), page.messages[0].user.id);
     try testing.expectEqual(@as(u64, 3), page.messages[1].user.id);
     try testing.expect(page.has_more);
 
-    // Before id 2 returns only id 1, with nothing older.
+    // Before id 2 returns only id 1, with no older row.
     const older = try historyPage(&db, a, sid, 2, 2);
     try testing.expectEqual(@as(usize, 1), older.messages.len);
     try testing.expectEqual(@as(u64, 1), older.messages[0].user.id);
@@ -351,6 +351,6 @@ test "appendCommittedMessage rejects a missing session" {
     const user: wire.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 1 } } };
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     defer db.conn.execNoArgs("ROLLBACK") catch {};
-    // A missing session fails the seq allocation before any row is written.
+    // An absent session fails the seq allocation before any row is written.
     try testing.expectError(error.NoRow, appendCommittedMessage(&db, a, [_]u8{9} ** 16, [_]u8{1} ** 16, 1, user));
 }

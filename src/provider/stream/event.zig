@@ -32,7 +32,7 @@ pub const ReasoningDelta = struct {
     text: []const u8,
 };
 
-/// A tool argument fragment. The fragment is not valid JSON alone.
+/// A tool argument fragment. The fragment is not valid JSON by itself.
 pub const ToolInputDelta = struct {
     block: BlockId,
     partial_json: []const u8,
@@ -43,7 +43,7 @@ pub const BlockStopped = struct {
     result: BlockResult,
 };
 
-/// Data at block stop. It carries provider-only state that deltas cannot carry.
+/// The block-stop result carries provider-only state that deltas cannot carry.
 pub const BlockResult = union(enum) {
     text,
     reasoning: Reasoning,
@@ -52,7 +52,7 @@ pub const BlockResult = union(enum) {
 };
 
 pub const Reasoning = struct {
-    /// Provider signature. An empty slice means that the provider sent none.
+    /// The provider signature. An empty slice means that the provider sent none.
     signature: []const u8,
 };
 
@@ -63,12 +63,12 @@ pub const Redacted = struct {
 pub const ToolCall = struct {
     call_id: []const u8,
     name: []const u8,
-    /// Complete JSON object text from the provider or from joined deltas.
+    /// Complete JSON object text from the provider or joined deltas.
     /// The consumer validates this value.
     arguments: []const u8,
 };
 
-/// End of the turn. `stop_reason` uses the closed set; `raw_stop_reason` keeps the provider value.
+/// This value marks the end of the turn. `stop_reason` uses the closed set; `raw_stop_reason` keeps the provider value.
 pub const Done = struct {
     stop_reason: wire.enums.StopReason,
     raw_stop_reason: []const u8,

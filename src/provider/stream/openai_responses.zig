@@ -1,5 +1,5 @@
-//! The OpenAI Responses reducer maps SSE data to `StreamEvent` values.
-//! The stream adds output items, emits content, then completes the response. Deltas borrow caller `scratch`; terminal results and `done` borrow reducer buffers until `deinit`; malformed peer input returns `error.Protocol`.
+//! The reducer maps OpenAI Responses SSE data to `StreamEvent` values. The stream adds output items, emits content, then completes the response.
+//! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -87,7 +87,7 @@ pub const Reducer = struct {
         self.* = undefined;
     }
 
-    /// Parses one SSE `data` payload and appends neutral events to `out`.
+    /// Parse one SSE `data` payload and append neutral events to `out`.
     pub fn decode(
         self: *Reducer,
         data: []const u8,
@@ -136,7 +136,7 @@ pub const Reducer = struct {
             return;
         }
         if (std.mem.eql(u8, item_type, "reasoning")) {
-            entry.value_ptr.kind = .reasoning; // the reasoning block starts on the first delta
+            entry.value_ptr.kind = .reasoning; // The reasoning block starts on the first delta.
             return;
         }
         if (!std.mem.eql(u8, item_type, "function_call")) return;
@@ -217,7 +217,7 @@ pub const Reducer = struct {
         const block = try self.openBlock(id);
         if (block.authoritative_args != null) return error.Protocol;
         const arguments = json.fieldStr(root, "arguments") orelse return error.Protocol;
-        // Keep the accumulated buffer when the echo matches; own a differing value.
+        // Keep the accumulated buffer when the echo matches. Own a different value.
         if (!std.mem.eql(u8, arguments, block.args.items)) block.authoritative_args = try self.own(arguments);
     }
 
@@ -231,7 +231,7 @@ pub const Reducer = struct {
             .message => if (!std.mem.eql(u8, item_type, "message")) return error.Protocol,
             .reasoning => {
                 if (!std.mem.eql(u8, item_type, "reasoning")) return error.Protocol;
-                // Encrypted reasoning can arrive with no summary deltas, so open a block to carry it.
+                // Encrypted reasoning can arrive without summary deltas, so open a block to carry it.
                 const encrypted = json.fieldStr(item, "encrypted_content") orelse "";
                 const id = output.reasoning orelse blk: {
                     if (encrypted.len == 0) break :blk null;
@@ -388,7 +388,7 @@ pub const Reducer = struct {
         try out.append(self.gpa, .{ .block_stopped = .{ .block = id, .result = result } });
     }
 
-    /// Copies peer bytes into reducer memory until `deinit`.
+    /// Copy peer bytes into reducer memory until `deinit`.
     fn own(self: *Reducer, bytes: []const u8) Error![]const u8 {
         return self.gpa.dupe(u8, bytes);
     }
@@ -406,7 +406,7 @@ pub const Reducer = struct {
 
 fn mapIncompleteReason(raw: []const u8) wire.enums.StopReason {
     if (std.mem.eql(u8, raw, "max_output_tokens")) return .length;
-    if (std.mem.eql(u8, raw, "max_tokens")) return .length; // the docs expose both forms
+    if (std.mem.eql(u8, raw, "max_tokens")) return .length; // The docs expose both forms.
     if (std.mem.eql(u8, raw, "content_filter")) return .content_filter;
     return .unknown;
 }

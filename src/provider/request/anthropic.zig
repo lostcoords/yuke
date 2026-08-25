@@ -1,8 +1,5 @@
-//! Serialize the Anthropic Messages request from the neutral IR.
-//! Coalesce adjacent blocks with the same role.
-//!
-//! With `cache`, mark the system block and the last eligible content block.
-//! Keep it off by default; some compatible hosts reject `cache_control` with 400.
+//! Serialize the Anthropic Messages request from the neutral IR. Coalesce adjacent blocks with the same role.
+//! With `cache`, mark the system block and the last eligible content block. Some compatible hosts reject `cache_control` with 400, so keep cache off by default.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -55,7 +52,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
         try jw.endArray();
     }
 
-    // A thinking block cannot carry the marker; mark the last eligible block.
+    // A thinking block cannot carry the marker. Mark the last eligible block.
     const cache_index = if (options.cache) lastCacheable(request_ir.blocks) else null;
 
     try jw.objectField("messages");
@@ -163,8 +160,7 @@ fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !
     try jw.endObject();
 }
 
-/// The last block Anthropic lets carry a marker, or null if none. Thinking and
-/// redacted thinking blocks are excluded.
+/// Return the last block that Anthropic accepts for a marker, or null. Skip thinking and redacted thinking blocks.
 fn lastCacheable(blocks: []const ir.Block) ?usize {
     var i = blocks.len;
     while (i > 0) {

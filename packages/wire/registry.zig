@@ -1,4 +1,4 @@
-//! The protocol type registry shared by the oracle and generator.
+//! The protocol type registry for the oracle and generator.
 
 const activity = @import("activity.zig");
 const auth = @import("auth.zig");

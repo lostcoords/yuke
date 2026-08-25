@@ -1,13 +1,10 @@
-//! Generic deep clone for wire values.
-//! Copy every field and slice into `a`. The result borrows nothing from the source frame.
-//!
-//! `Leaky`: on OOM the partial result stays in `a`. Clone into an arena and free the arena as a
-//! whole. One reflective function serves every wire type, so no per-type clone code can drift.
+//! This module deeply clones wire values. A reflective function keeps every wire type aligned.
+//! Copy each field and slice into `a`. The result owns the copies and borrows nothing from the source frame. OOM leaves partial data in `a`. Use an arena and free it as a whole.
 
 const std = @import("std");
 const registry = @import("registry.zig");
 
-/// Deep-copy `value` into `a`, inferring its type. The result owns all of its bytes in `a`.
+/// Copy `value` into `a` and infer its type. The result owns all bytes in `a`.
 pub fn dupe(a: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeOf(value) {
     const T = @TypeOf(value);
     if (comptime !hasPointers(T)) return value;
@@ -36,7 +33,7 @@ pub fn dupe(a: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeO
         },
         .pointer => |info| blk: {
             if (info.size != .slice) @compileError("wire.dupe: only slices, got " ++ @typeName(T));
-            // A pointer-free element clones by a shallow byte copy.
+            // Copy a pointer-free element as shallow bytes.
             if (comptime !hasPointers(info.child)) break :blk try a.dupe(info.child, value);
             const dst = try a.alloc(info.child, value.len);
             for (value, 0..) |elem, i| dst[i] = try dupe(a, elem);
@@ -46,7 +43,7 @@ pub fn dupe(a: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeO
     };
 }
 
-/// True when a value of `T` holds a slice or pointer. A pointer-free value clones by copy.
+/// Return true when a value of `T` holds a slice or pointer. Copy a pointer-free value directly.
 fn hasPointers(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .bool, .int, .float, .@"enum", .void => false,
@@ -70,7 +67,7 @@ const tool = @import("tool.zig");
 const view = @import("view.zig");
 const testing = std.testing;
 
-/// Force `dupe` to compile for `T`. Referencing `.run` instantiates the whole type graph.
+/// Instantiate `dupe` for `T`. The `.run` reference instantiates the whole type graph.
 fn Instantiate(comptime T: type) type {
     return struct {
         fn run(a: std.mem.Allocator, v: T) std.mem.Allocator.Error!T {

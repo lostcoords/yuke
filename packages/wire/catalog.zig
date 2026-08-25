@@ -1,20 +1,20 @@
-//! Provider/model catalog and list/refresh results.
+//! The provider and model catalog and its list and refresh results.
 
 const std = @import("std");
 const ids = @import("ids.zig");
 const tagged = @import("tagged.zig");
 
-/// Payload for `catalog.changed`.
+/// This payload describes `catalog.changed`.
 pub const CatalogChangedData = struct {
     catalog_rev: ids.CatalogRev,
 };
 
-/// Params for catalog.list.
+/// These are the parameters for `catalog.list`.
 pub const CatalogListParams = struct {
     since_rev: ?ids.CatalogRev = null,
 };
 
-/// Result of catalog.list: unchanged since `since_rev`, or a full catalog snapshot.
+/// This result reports a catalog unchanged since `since_rev`, or a full catalog snapshot.
 pub const CatalogListResult = union(enum) {
     unchanged: CatalogListResultUnchanged,
     full: CatalogListResultFull,
@@ -31,23 +31,23 @@ pub const CatalogListResult = union(enum) {
     }
 };
 
-/// Client's revision was stale or absent; full catalog included.
+/// The client sent a stale or absent revision, so the daemon returns the full catalog.
 pub const CatalogListResultFull = struct {
     catalog_rev: ids.CatalogRev,
     models: []const ModelInfo,
 };
 
-/// Client's revision is current; no catalog data included.
+/// The client sent the current revision, so the daemon returns no catalog data.
 pub const CatalogListResultUnchanged = struct {
     catalog_rev: ids.CatalogRev,
 };
 
-/// Result of catalog.refresh.
+/// This result describes `catalog.refresh`.
 pub const CatalogRefreshResult = struct {
     catalog_rev: ids.CatalogRev,
 };
 
-/// United States dollars per million tokens.
+/// These costs use United States dollars per million tokens.
 pub const ModelCost = struct {
     input: f64,
     output: f64,
@@ -55,7 +55,7 @@ pub const ModelCost = struct {
     cache_write: f64,
 };
 
-/// Closed projection of a provider model record. Non-owning.
+/// This type exposes a closed projection of a provider model record. Its fields borrow their data.
 pub const ModelInfo = struct {
     id: ids.ModelId,
     provider: []const u8,

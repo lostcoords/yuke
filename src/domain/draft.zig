@@ -23,17 +23,17 @@ pub const Error = error{
     OutOfMemory,
 };
 
-/// Describe the result of folding a byte delta by offset.
+/// Describe the result of a byte-delta fold by offset.
 pub const DeltaOutcome = enum {
     /// Apply a delta at the accumulated length.
     applied,
-    /// Ignore a duplicate delta whose bytes are already held.
+    /// Ignore a duplicate delta whose bytes the draft already owns.
     stale,
     /// Return a gap for a hole or stream-cap overflow.
     gap,
 };
 
-/// Describe the result of folding a tool-state transition.
+/// Describe the result of a tool-state fold.
 pub const ToolOutcome = enum {
     /// Apply the transition.
     applied,
@@ -41,7 +41,7 @@ pub const ToolOutcome = enum {
     ignored_terminal,
 };
 
-/// Own streamed buffers and arena-backed fields for one draft part.
+/// Own the stream buffers and arena fields for one draft part.
 pub const Part = union(enum) {
     text: Text,
     reasoning: Reasoning,
@@ -79,7 +79,7 @@ pub const Part = union(enum) {
         };
     }
 
-    /// Free streamed buffers owned by `gpa`.
+    /// Free the stream buffers that `gpa` owns.
     fn deinit(self: *Part, gpa: std.mem.Allocator) void {
         switch (self.*) {
             .text => |*t| t.text.deinit(gpa),
@@ -89,8 +89,8 @@ pub const Part = union(enum) {
         }
     }
 
-    /// Build an owned part from a wire part. `gpa` backs streamed buffers; `arena` backs write-once
-    /// data. `deinit` frees the streamed buffers; the arena stays the caller's.
+    /// Build an owned part from a wire part. `gpa` backs stream buffers; `arena` backs write-once
+    /// data. `deinit` frees stream buffers; the caller keeps the arena.
     pub fn initFrom(gpa: std.mem.Allocator, arena: std.mem.Allocator, p: message.AssistantPart) Error!Part {
         switch (p) {
             .text => |t| {
@@ -111,7 +111,7 @@ pub const Part = union(enum) {
                 .data = try arena.dupe(u8, r.data),
             } },
             .tool => |t| {
-                // Seed output from a running snapshot; live parts start empty.
+                // Seed output from an active snapshot; live parts start empty.
                 var output: std.ArrayList(u8) = .empty;
                 try output.appendSlice(gpa, toolOutputSeed(t.state));
                 errdefer output.deinit(gpa);
@@ -131,7 +131,7 @@ pub const Part = union(enum) {
     }
 };
 
-/// Fold broadcast events into an in-flight assistant message.
+/// Fold broadcast events into an active assistant message.
 pub const Draft = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -165,7 +165,7 @@ pub const Draft = struct {
     }
 
     /// Append a part from `message.part_added`.
-    /// Reject an out-of-order id when a part event is missing.
+    /// Reject an out-of-order id when a part event is absent.
     pub fn addPart(self: *Draft, d: message.MessagePartAddedData) Error!void {
         return self.appendPart(d.part);
     }
@@ -180,7 +180,7 @@ pub const Draft = struct {
         try self.parts.append(self.gpa, cloned);
     }
 
-    /// Fold a text/reasoning byte delta from `message.part_delta` into its buffer.
+    /// Fold a text or reasoning byte delta from `message.part_delta` into its buffer.
     pub fn applyPartDelta(self: *Draft, d: message.PartDelta) Error!DeltaOutcome {
         const buf = try self.streamBuffer(d.part_id);
         const cap: usize = @intCast(wire.meta.limits.max_message_string_bytes);
@@ -207,7 +207,7 @@ pub const Draft = struct {
         return .applied;
     }
 
-    /// Attach the reasoning signature at block stop. A signed block re-sends verifiably on a tool continuation.
+    /// Attach the reasoning signature at block stop. A signed block resends on a tool continuation.
     pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, signature: []const u8) Error!void {
         const part = try self.partAt(part_id);
         switch (part.*) {
@@ -225,8 +225,8 @@ pub const Draft = struct {
         }
     }
 
-    /// Give a running tool priority over trailing reasoning.
-    /// Return `tool_name` borrowed from the draft; it stays valid until the draft changes.
+    /// Give an active tool priority over reasoning after it.
+    /// Return `tool_name` from the draft. The draft keeps it valid until it changes.
     pub fn deriveStreamingState(self: *const Draft, run_started_at_ms: u64) activity.ActivityState {
         if (self.firstRunningTool()) |t| return .{ .running_tool = .{
             .run_id = self.run_id,
@@ -259,8 +259,8 @@ pub const Draft = struct {
         };
     }
 
-    /// Project the draft to a `wire.ActiveDraft` without copying part payloads.
-    /// Encode the result before the draft changes or is freed.
+    /// Project the draft to a `wire.ActiveDraft` and share its part payloads.
+    /// Encode the result before a change or deinit frees the draft.
     pub fn toActiveDraft(self: *const Draft, scratch: std.mem.Allocator) Error!message.ActiveDraft {
         const content = try scratch.alloc(message.AssistantPart, self.parts.items.len);
         for (self.parts.items, 0..) |*p, i| content[i] = partToWire(p);
@@ -328,7 +328,7 @@ pub const Draft = struct {
         return p;
     }
 
-    /// Resolve the append buffer for a streamed text or reasoning part.
+    /// Resolve the append buffer for a stream text or reasoning part.
     fn streamBuffer(self: *Draft, part_id: ids.PartId) Error!*std.ArrayList(u8) {
         const part = try self.partAt(part_id);
         return switch (part.*) {
@@ -368,8 +368,8 @@ fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes
     return .applied;
 }
 
-/// Return a zero-copy wire view of an owned part.
-/// Include accumulated output for a running tool.
+/// Return a wire view that shares an owned part's bytes.
+/// Include accumulated output for an active tool.
 fn partToWire(p: *const Part) message.AssistantPart {
     return switch (p.*) {
         .text => |*t| .{ .text = .{ .id = t.id, .text = t.text.items } },
@@ -397,7 +397,7 @@ fn stateToWire(t: *const Part.Tool) tool.ToolState {
     };
 }
 
-/// Return output from a running state for the tool output buffer.
+/// Return output from an active state for the tool output buffer.
 fn toolOutputSeed(s: tool.ToolState) []const u8 {
     return switch (s) {
         .running => |r| r.output orelse "",
@@ -413,7 +413,7 @@ fn isTerminal(s: tool.ToolState) bool {
 }
 
 /// Clone a tool state into the arena.
-/// Store running output in `Tool.output`, not in the state snapshot.
+/// Store active output in `Tool.output`, not in the state snapshot.
 fn dupeToolState(a: std.mem.Allocator, s: tool.ToolState) Error!tool.ToolState {
     return switch (s) {
         .pending => .{ .pending = .{} },
@@ -507,7 +507,7 @@ test "reasoning owns its signature; redacted owns its data" {
 test "streamed reasoning finalizes its signature and redacted data at block stop" {
     var d = try Draft.init(testing.allocator, started("a"));
     defer d.deinit();
-    // The streaming path adds empty parts, streams text, then finalizes at block stop.
+    // The stream path adds empty parts, sends text, then finalizes at block stop.
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "" } } });
     _ = try d.applyPartDelta(delta(0, 0, "why"));
@@ -516,7 +516,7 @@ test "streamed reasoning finalizes its signature and redacted data at block stop
     var enc = [_]u8{ 'e', 'n', 'c' };
     try d.finalizeReasoning(0, &sig);
     try d.finalizeRedacted(1, &enc);
-    @memset(&sig, 'x'); // the Draft keeps its own copies, so the overwrite is safe
+    @memset(&sig, 'x'); // The Draft owns its copies, so the overwrite is safe.
     @memset(&enc, 'x');
 
     try testing.expectEqualStrings("why", d.parts.items[0].reasoning.text.items);
