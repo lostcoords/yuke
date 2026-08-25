@@ -912,6 +912,42 @@ test "the live draft is reachable from the runtime during a run" {
     try driver.join();
 }
 
+// This reasoning turn has one thinking block, one signature, and a clean stop.
+const reasoning_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"because\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
+test "a reasoning block stop finalizes the signature into the committed message" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var canned: provider.transport.CannedTransport = .{ .bytes = reasoning_reply };
+    fixture.state.transport = canned.transport();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/reason", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    const parts = history[1].assistant.content;
+    try std.testing.expectEqual(@as(usize, 1), parts.len);
+    try std.testing.expect(parts[0] == .reasoning);
+    try std.testing.expectEqualStrings("because", parts[0].reasoning.text);
+    try std.testing.expectEqualStrings("sig", parts[0].reasoning.signature); // The finalization event folded the signature.
+}
+
 /// This transport records the request and replays a fixed Anthropic reply.
 const CaptureTransport = struct {
     gpa: std.mem.Allocator,

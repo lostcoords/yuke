@@ -9,6 +9,7 @@ const session_runtime = @import("session_runtime.zig");
 const run = @import("../engine/run.zig");
 const provider = @import("../provider/provider.zig");
 const draft = @import("../domain/draft.zig");
+const Session = @import("../domain/session.zig").Session;
 const database = @import("../database/database.zig");
 
 const ids = wire.ids;
@@ -84,7 +85,9 @@ fn runSession(state: *State, slot: *RunSlot) void {
 
     // The session owns the live draft. A synchronous resync can read it from the runtime.
     std.debug.assert(rt.session.active == null); // one draft per session at a time
-    rt.session.active = draft.Draft.init(state.gpa, started) catch |err| {
+    const started_note: wire.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = started } };
+    // Fold the start into the session, then publish the same value. The fold opens the draft.
+    rt.session.applyAuthoritative(started_note.params) catch |err| {
         terminalize(state, arena, slot, created_at, null, null, .{ .failed = failure(err) }) catch |terminal_err| {
             faultSlot(state, session_id, slot, terminal_err);
         };
@@ -99,12 +102,12 @@ fn runSession(state: *State, slot: *RunSlot) void {
     var streamer: Streamer = .{
         .state = state,
         .slot = slot,
+        .session = &rt.session,
         .session_id = session_id,
         .message_id = slot.handle.assistant_message_id,
-        .live = live,
     };
     defer streamer.offsets.deinit(state.gpa);
-    publishBestEffort(state, session_id, .{ .method = .@"message.started", .params = .{ .message_started_data = started } });
+    publishBestEffort(state, session_id, started_note);
 
     // Stream on a child task and wait for it or a cancel signal. The child owns the body.
     // Child cancellation stops a blocked read and deinits the body before this run reaches its terminal state.
@@ -383,17 +386,24 @@ fn checkCanceled(slot: *const RunSlot) !void {
     if (slot.cancel_requested) return error.Canceled;
 }
 
-/// Map each provider StreamEvent to a wire broadcast and fold it into the live Draft.
+/// Map each provider StreamEvent to a canonical broadcast. Fold it into the session, then publish it.
+/// The reducer is the peer boundary. It emits dense, ordered, kind-checked events. So the fold trusts them.
 const Streamer = struct {
     state: *State,
     slot: *RunSlot,
+    session: *Session,
     session_id: ids.SessionId,
     message_id: ids.MessageId,
-    live: *draft.Draft,
     offsets: std.ArrayList(u64) = .empty,
     open: usize = 0,
     stop_reason: ?wire.enums.StopReason = null,
     usage: ?message.TokenUsage = null,
+
+    /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
+    fn emit(self: *Streamer, note: wire.rpc.Notification) !void {
+        try self.session.applyAuthoritative(note.params);
+        try publish(self.state, self.session_id, note);
+    }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
         try checkCanceled(self.slot);
@@ -401,15 +411,13 @@ const Streamer = struct {
         try checkCanceled(self.slot);
         switch (ev) {
             .block_started => |b| {
-                const added: message.MessagePartAddedData = .{
+                try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
                     .session_id = self.session_id,
                     .message_id = self.message_id,
                     .part = try emptyPart(b.block, b.kind),
-                };
-                try self.live.addPart(added);
+                } } });
                 try self.offsets.append(self.state.gpa, 0);
                 self.open += 1;
-                try publish(self.state, self.session_id, .{ .method = .@"message.part_added", .params = .{ .message_part_added_data = added } });
             },
             .text_delta => |d| try self.partDelta(d.block, d.text),
             .reasoning_delta => |d| try self.partDelta(d.block, d.text),
@@ -418,8 +426,8 @@ const Streamer = struct {
                 if (self.open == 0) return error.Protocol;
                 self.open -= 1;
                 switch (b.result) {
-                    .reasoning => |r| try self.live.finalizeReasoning(b.block, r.signature),
-                    .redacted_reasoning => |r| try self.live.finalizeRedacted(b.block, r.data),
+                    .reasoning => |r| try self.emitFinalized(b.block, .{ .reasoning = .{ .signature = r.signature } }),
+                    .redacted_reasoning => |r| try self.emitFinalized(b.block, .{ .redacted_reasoning = .{ .data = r.data } }),
                     .text, .tool => {},
                 }
             },
@@ -432,28 +440,40 @@ const Streamer = struct {
     }
 
     fn partDelta(self: *Streamer, part_id: event.BlockId, text: []const u8) !void {
-        const index = std.math.cast(usize, part_id) orelse return error.Protocol;
-        if (index >= self.offsets.items.len) return error.Protocol;
-        const delta: message.PartDelta = .{
+        const index: usize = @intCast(part_id); // The reducer emits dense ids, so this fits a part index.
+        std.debug.assert(index < self.offsets.items.len); // The reducer opens the block before it emits the delta.
+        const offset = self.offsets.items[index];
+        try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
+        try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
             .session_id = self.session_id,
             .message_id = self.message_id,
             .part_id = part_id,
             .delta = text,
-            .offset = self.offsets.items[index],
-        };
-        try applyProviderDelta(self.live, delta);
+            .offset = offset,
+        } } });
         self.offsets.items[index] += text.len;
-        try publish(self.state, self.session_id, .{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = delta } });
+    }
+
+    fn emitFinalized(self: *Streamer, part_id: event.BlockId, final: message.PartFinal) !void {
+        // The provider controls the final metadata size. Reject an oversized signature or data payload.
+        const len = switch (final) {
+            .reasoning => |r| r.signature.len,
+            .redacted_reasoning => |r| r.data.len,
+        };
+        try checkStreamCap(0, len);
+        try self.emit(.{ .method = .@"message.part_finalized", .params = .{ .message_part_finalized_data = .{
+            .session_id = self.session_id,
+            .message_id = self.message_id,
+            .part_id = part_id,
+            .final = final,
+        } } });
     }
 };
 
-fn applyProviderDelta(live: *draft.Draft, delta: message.PartDelta) !void {
-    const outcome = try live.applyPartDelta(delta);
-    return switch (outcome) {
-        .applied => {},
-        .gap => error.ResponseTooLarge,
-        .stale => error.Protocol,
-    };
+/// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.
+fn checkStreamCap(offset: u64, len: usize) error{ResponseTooLarge}!void {
+    const cap: u64 = @intCast(wire.meta.limits.max_message_string_bytes);
+    if (offset > cap or len > cap - offset) return error.ResponseTooLarge;
 }
 
 fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) !message.AssistantPart {
@@ -477,29 +497,10 @@ fn publish(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification
     state.registry.publish(session_id, bytes, connection.classOf(note.method));
 }
 
-test "an oversized provider delta returns an error" {
-    const started: message.MessageStartedData = .{
-        .session_id = .bytes([_]u8{1} ** 16),
-        .message_id = 1,
-        .run_id = 1,
-        .config_rev = 0,
-        .agent = "test",
-        .created_at_ms = 1,
-    };
-    var live = try draft.Draft.init(std.testing.allocator, started);
-    defer live.deinit();
-    try live.addPart(.{
-        .session_id = started.session_id,
-        .message_id = started.message_id,
-        .part = .{ .text = .{ .id = 0, .text = "" } },
-    });
-    const oversized = try std.testing.allocator.alloc(u8, @as(usize, @intCast(wire.meta.limits.max_message_string_bytes)) + 1);
-    defer std.testing.allocator.free(oversized);
-    try std.testing.expectError(error.ResponseTooLarge, applyProviderDelta(&live, .{
-        .session_id = started.session_id,
-        .message_id = started.message_id,
-        .part_id = 0,
-        .delta = oversized,
-        .offset = 0,
-    }));
+test "the stream cap rejects an oversized provider delta" {
+    const max = wire.meta.limits.max_message_string_bytes;
+    try checkStreamCap(0, max); // A delta up to the cap is allowed.
+    try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(0, max + 1));
+    try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max, 1));
+    try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max + 1, 0));
 }

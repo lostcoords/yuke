@@ -494,6 +494,14 @@ test "stale delta is ignored, gap is reported" {
     try testing.expectEqualStrings("hello", d.parts.items[0].text.text.items);
 }
 
+test "foldBytes rejects a delta that would exceed the cap" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    // A delta up to the cap is applied. A contiguous delta one byte over is a gap.
+    try testing.expectEqual(DeltaOutcome.applied, try foldBytes(testing.allocator, &buf, 0, "abc", 3));
+    try testing.expectEqual(DeltaOutcome.gap, try foldBytes(testing.allocator, &buf, 3, "x", 3));
+}
+
 test "reasoning owns its signature; redacted owns its data" {
     var d = try Draft.init(testing.allocator, started("a"));
     defer d.deinit();
