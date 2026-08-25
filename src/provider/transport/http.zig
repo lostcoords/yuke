@@ -9,11 +9,14 @@ const Allocator = std.mem.Allocator;
 
 /// This error set defines stable classes for non-200 statuses and transport failures. The run task decides the outcome.
 pub const Error = error{
-    AuthFailed, // 401 or 403
-    RateLimited, // 429
+    AuthFailed, // 401
+    PermissionDenied, // 403
+    RateLimited, // 429 without a quota signal
+    QuotaExhausted, // 429 with a quota or spend code
     ServerError, // 5xx
     BadStatus, // any other non-200
-    Timeout, // an idle read passed the deadline
+    Timeout, // 408, 504, or an idle read past the deadline
+    RedirectRefused, // a 3xx the client must not follow
     BadUrl,
 };
 
@@ -78,8 +81,14 @@ pub const HttpTransport = struct {
         }
 
         try hb.request.sendBodyComplete(body);
-        hb.response = try hb.request.receiveHead(&.{});
-        if (hb.response.head.status != .ok) return mapStatus(hb.response.head.status);
+        hb.response = hb.request.receiveHead(&.{}) catch |err| switch (err) {
+            error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
+            else => return err,
+        };
+        if (hb.response.head.status != .ok) {
+            if (@intFromEnum(hb.response.head.status) == 429) return classify429(hb, arena);
+            return mapStatus(hb.response.head.status);
+        }
 
         hb.reader = hb.response.reader(&hb.transfer_buffer); // This invalidates the head string slices.
         return .{ .ctx = hb, .vtable = &HttpBody.vtable };
@@ -135,10 +144,69 @@ const HttpBody = struct {
 
 fn mapStatus(status: std.http.Status) Error {
     return switch (@intFromEnum(status)) {
-        401, 403 => Error.AuthFailed,
-        429 => Error.RateLimited,
-        500...599 => Error.ServerError,
+        401 => Error.AuthFailed,
+        403 => Error.PermissionDenied,
+        408, 504 => Error.Timeout,
+        500...503, 505...599 => Error.ServerError,
         else => Error.BadStatus,
+    };
+}
+
+/// Classify a 429 as a rate limit or a quota error, then return it. Bound the body read with the idle
+/// timeout. A user cancel propagates. A missing or unreadable body defaults to a rate limit.
+fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
+    hb.reader = hb.response.reader(&hb.transfer_buffer);
+    var ac: zio.AutoCancel = .init;
+    ac.set(hb.idle_timeout);
+    defer ac.clear();
+    var buf: [2048]u8 = undefined;
+    const n = hb.reader.readSliceShort(&buf) catch |err| {
+        // A user cancel propagates. A malformed body, idle timeout, or other failure defaults to a
+        // rate limit. Check bodyErr first, so getReadError only runs for a real socket failure.
+        if (err == error.ReadFailed and hb.response.bodyErr() == null) {
+            if (hb.request.connection) |c| if (c.getReadError()) |ce| {
+                if (ce == error.Canceled and !ac.check(error.Canceled)) return error.Canceled;
+            };
+        }
+        return Error.RateLimited;
+    };
+    return if (bodyIsQuota(arena, buf[0..n])) Error.QuotaExhausted else Error.RateLimited;
+}
+
+/// Report whether the error body names an exhausted quota. OpenAI marks it in `error.code` or
+/// `error.type`. Anthropic marks a tier spend cap in `error.details.error_code`.
+fn bodyIsQuota(arena: Allocator, body: []const u8) bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, arena, body, .{}) catch return false;
+    defer parsed.deinit();
+    const err = objField(parsed.value, "error") orelse return false;
+    if (strField(err, "code")) |code| if (isQuotaCode(code)) return true;
+    if (strField(err, "type")) |t| if (std.mem.eql(u8, t, "insufficient_quota")) return true;
+    if (objField(err, "details")) |details| if (strField(details, "error_code")) |dc| {
+        if (std.mem.eql(u8, dc, "enforced_spend_limit_reached")) return true;
+    };
+    return false;
+}
+
+/// Report whether a provider error code names an exhausted quota, credit, or spend limit.
+fn isQuotaCode(code: []const u8) bool {
+    if (std.mem.eql(u8, code, "insufficient_quota")) return true;
+    if (std.mem.eql(u8, code, "credit_balance_exhausted")) return true;
+    if (std.mem.eql(u8, code, "organization_usage_limit_exceeded")) return true;
+    return std.mem.endsWith(u8, code, "_spend_limit_exceeded");
+}
+
+fn objField(value: std.json.Value, name: []const u8) ?std.json.Value {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+    return obj.get(name);
+}
+
+fn strField(value: std.json.Value, name: []const u8) ?[]const u8 {
+    return switch (objField(value, name) orelse return null) {
+        .string => |s| s,
+        else => null,
     };
 }
 
@@ -324,6 +392,67 @@ test "a redirect is rejected without following it" {
     server.join();
 
     // receiveHead rejects the 3xx rather than following it, so the key never reaches the target.
-    try testing.expectEqual(@as(?anyerror, error.TooManyHttpRedirects), out.err);
+    try testing.expectEqual(@as(?anyerror, Error.RedirectRefused), out.err);
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
+}
+
+test "a 429 with a quota code maps to QuotaExhausted" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try addr.listen(.{});
+    defer listener.close();
+    const port = listener.socket.address.ip.getPort();
+
+    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    defer out.bytes.deinit(testing.allocator);
+    var srv: Server = .{ .listener = &listener, .body = "{\"error\":{\"code\":\"insufficient_quota\"}}", .status = .too_many_requests };
+
+    var server = try rt.spawn(serveOnce, .{&srv});
+    var client = try rt.spawn(clientTask, .{&out});
+    client.join();
+    server.join();
+
+    try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
+}
+
+test "an Anthropic spend-cap 429 maps to QuotaExhausted" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try addr.listen(.{});
+    defer listener.close();
+    const port = listener.socket.address.ip.getPort();
+
+    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    defer out.bytes.deinit(testing.allocator);
+    const spend_cap = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"details\":{\"error_code\":\"enforced_spend_limit_reached\"}}}";
+    var srv: Server = .{ .listener = &listener, .body = spend_cap, .status = .too_many_requests };
+
+    var server = try rt.spawn(serveOnce, .{&srv});
+    var client = try rt.spawn(clientTask, .{&out});
+    client.join();
+    server.join();
+
+    try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
+}
+
+test "a 429 without a quota code maps to RateLimited" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try addr.listen(.{});
+    defer listener.close();
+    const port = listener.socket.address.ip.getPort();
+
+    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    defer out.bytes.deinit(testing.allocator);
+    var srv: Server = .{ .listener = &listener, .body = "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", .status = .too_many_requests };
+
+    var server = try rt.spawn(serveOnce, .{&srv});
+    var client = try rt.spawn(clientTask, .{&out});
+    client.join();
+    server.join();
+
+    try testing.expectEqual(@as(?anyerror, Error.RateLimited), out.err);
 }

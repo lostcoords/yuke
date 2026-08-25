@@ -210,16 +210,24 @@ const Failure = struct {
     message: []const u8,
 };
 
+/// Map a run failure to a wire error code and one short sentence. The wire message never leaks an
+/// internal error name. Each message stays well under `wire.meta.limits.max_error_message_bytes`.
 fn failure(err: anyerror) Failure {
     return switch (err) {
-        error.OutOfMemory => .{ .code = .internal, .message = @errorName(err) },
-        error.UnknownModel => .{ .code = .unknown_model, .message = @errorName(err) },
-        error.AuthFailed => .{ .code = .auth, .message = @errorName(err) },
-        error.RateLimited => .{ .code = .rate_limited, .message = @errorName(err) },
-        error.Timeout => .{ .code = .timeout, .message = @errorName(err) },
-        error.IncompleteStream, error.Protocol, error.InvalidCharacter, error.HttpChunkTruncated, error.HttpChunkInvalid => .{ .code = .protocol, .message = @errorName(err) },
-        error.ConnectionRefused, error.ConnectionResetByPeer, error.EndOfStream => .{ .code = .network, .message = @errorName(err) },
-        else => .{ .code = .provider, .message = @errorName(err) },
+        error.OutOfMemory => .{ .code = .internal, .message = "the daemon ran out of memory" },
+        error.UnknownModel => .{ .code = .unknown_model, .message = "the model is not configured" },
+        error.AuthFailed => .{ .code = .auth, .message = "the provider rejected the API key" },
+        error.PermissionDenied => .{ .code = .auth, .message = "the provider denied permission for this request" },
+        error.RateLimited => .{ .code = .rate_limited, .message = "the provider rate limit was reached" },
+        error.QuotaExhausted => .{ .code = .quota_exhausted, .message = "the provider account quota is exhausted" },
+        error.Timeout => .{ .code = .timeout, .message = "the provider stream timed out" },
+        error.ServerError => .{ .code = .provider, .message = "the provider returned a server error" },
+        error.BadStatus => .{ .code = .provider, .message = "the provider returned an unexpected status" },
+        error.BadUrl => .{ .code = .provider, .message = "the provider endpoint URL is invalid" },
+        error.RedirectRefused => .{ .code = .protocol, .message = "the provider attempted a redirect" },
+        error.IncompleteStream, error.Protocol, error.InvalidCharacter, error.HttpChunkTruncated, error.HttpChunkInvalid => .{ .code = .protocol, .message = "the provider stream was malformed" },
+        error.ConnectionRefused, error.ConnectionResetByPeer, error.EndOfStream => .{ .code = .network, .message = "the provider connection failed" },
+        else => .{ .code = .provider, .message = "the provider request failed" },
     };
 }
 
