@@ -176,18 +176,8 @@ fn resolvedRequest(
 /// Reduce the response stream with the reducer for `protocol`.
 fn streamWithReducer(state: *State, body: provider.transport.ResponseBody, streamer: *Streamer, protocol: wire.enums.ProviderProtocol) !void {
     switch (protocol) {
-        .@"anthropic-messages" => {
-            var reducer = provider.anthropic.Reducer.init(state.gpa);
-            defer reducer.deinit();
-            try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
-        },
-        .@"openai-completions" => {
-            var reducer = provider.openai_chat.Reducer.init(state.gpa);
-            defer reducer.deinit();
-            try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
-        },
-        .@"openai-responses" => {
-            var reducer = provider.openai_responses.Reducer.init(state.gpa);
+        inline else => |p| {
+            var reducer = provider.Adapter(p).Reducer.init(state.gpa);
             defer reducer.deinit();
             try provider.transport.stream(state.gpa, body, &reducer, streamer, Streamer.onEvent);
         },

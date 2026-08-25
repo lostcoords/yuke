@@ -22,6 +22,24 @@ pub const config = @import("config/providers.zig");
 pub const transport = @import("transport.zig");
 pub const http_transport = @import("transport/http.zig");
 
+/// Return the protocol's request serializer and stream reducer. A new protocol needs one arm here.
+pub fn Adapter(comptime protocol: wire.enums.ProviderProtocol) type {
+    return switch (protocol) {
+        .@"anthropic-messages" => struct {
+            pub const serialize = request_anthropic.serialize;
+            pub const Reducer = anthropic.Reducer;
+        },
+        .@"openai-completions" => struct {
+            pub const serialize = request_openai_chat.serialize;
+            pub const Reducer = openai_chat.Reducer;
+        },
+        .@"openai-responses" => struct {
+            pub const serialize = request_openai_responses.serialize;
+            pub const Reducer = openai_responses.Reducer;
+        },
+    };
+}
+
 /// Serialize a provider request body for `protocol`. The result uses `arena` storage.
 /// The function uses `request.model` as the upstream model. A null `target` drops reasoning replay.
 pub fn requestBody(
@@ -34,9 +52,7 @@ pub fn requestBody(
     const request_ir = try build.build(arena, messages, .{ .target = target });
     var body: std.Io.Writer.Allocating = .init(arena);
     switch (protocol) {
-        .@"anthropic-messages" => try request_anthropic.serialize(&body.writer, request, request_ir, .{}),
-        .@"openai-completions" => try request_openai_chat.serialize(&body.writer, request, request_ir, .{}),
-        .@"openai-responses" => try request_openai_responses.serialize(&body.writer, request, request_ir, .{}),
+        inline else => |p| try Adapter(p).serialize(&body.writer, request, request_ir, .{}),
     }
     return body.written();
 }
