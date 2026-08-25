@@ -2,18 +2,21 @@
 //! The daemon builds an event, applies it with `applyAuthoritative`, then publishes the same value.
 //! The client folds broadcasts with `applyBroadcast`. Both paths share one internal per-event dispatch.
 //!
-//! This slice owns the live draft, the queue, and the durable cursors. A later slice adds the
-//! committed-message window and configs for resync. The committed window belongs to the daemon cache.
+//! The projection owns the live draft, the queue, the durable cursors, and a bounded committed-message
+//! window with its configs. The window is a daemon cache for resync. SQLite stays authoritative.
 
 const std = @import("std");
 const wire = @import("wire");
 const draftmod = @import("draft.zig");
 const queuemod = @import("queue.zig");
+const committedmod = @import("committed.zig");
 
 const ids = wire.ids;
 const message = wire.message;
 const Draft = draftmod.Draft;
 const Queue = queuemod.Queue;
+const Window = committedmod.Window;
+const ConfigSet = committedmod.ConfigSet;
 const BroadcastData = wire.rpc.BroadcastData;
 
 pub const Error = error{ OutOfMemory, Protocol };
@@ -27,17 +30,42 @@ pub const Session = struct {
     id: ids.SessionId,
     active: ?Draft = null,
     queue: Queue,
+    committed: Window,
+    configs: ConfigSet,
     base_seq: ids.Seq = 0,
     finalized_message_id: ids.MessageId = 0,
 
     pub fn init(gpa: std.mem.Allocator, id: ids.SessionId) Session {
-        return .{ .gpa = gpa, .id = id, .queue = Queue.init(gpa) };
+        return .{ .gpa = gpa, .id = id, .queue = Queue.init(gpa), .committed = Window.init(gpa), .configs = ConfigSet.init(gpa) };
     }
 
     pub fn deinit(self: *Session) void {
         if (self.active) |*d| d.deinit();
         self.queue.deinit();
+        self.committed.deinit();
+        self.configs.deinit();
         self.* = undefined;
+    }
+
+    /// The daemon hydrates the cache from SQLite on runtime activation. It seeds the resync window.
+    pub const Snapshot = struct {
+        base_seq: ids.Seq,
+        finalized_message_id: ids.MessageId,
+        messages: []const message.Message,
+        configs: []const wire.run.RunConfig,
+        has_more: bool,
+    };
+
+    /// Seed the projection from a store snapshot. Call once before the first fold on a fresh Session.
+    pub fn installSnapshot(self: *Session, snap: Snapshot) Error!void {
+        std.debug.assert(self.base_seq == 0 and self.finalized_message_id == 0); // a fresh projection
+        std.debug.assert(self.active == null and self.queue.depth() == 0);
+        std.debug.assert(self.committed.list.items.len == 0 and self.configs.map.count() == 0);
+        for (snap.messages) |m| try self.committed.append(m);
+        for (snap.configs) |c| try self.configs.record(c);
+        self.committed.has_more = self.committed.has_more or snap.has_more;
+        self.base_seq = snap.base_seq;
+        self.finalized_message_id = snap.finalized_message_id;
     }
 
     /// Client fold. Validate the durable seq and the part offsets. Return `gap` when the client
@@ -75,7 +103,7 @@ pub const Session = struct {
             .transcript_truncated_data => |d| self.onTruncated(d, mode),
             .run_started_data => |d| self.onCursor(d.seq, mode),
             .run_done_data => |d| self.onCursor(d.seq, mode),
-            .config_changed_data => |d| self.onCursor(d.seq, mode),
+            .config_changed_data => |d| self.onConfig(d, mode),
             // A shed marker tells the client it missed deltas. It must resync.
             .session_deltas_shed_data => if (mode == .checked) .gap else .ignored,
             // Index, workspace, auth, and notice events are not session-projection state.
@@ -201,6 +229,12 @@ pub const Session = struct {
             .gap => return .gap,
             .apply => {},
         }
+        // The daemon commits ids in increasing order. A stale id keeps the window oldest-first for trim.
+        if (d.message.id() <= self.finalized_message_id) {
+            std.debug.assert(mode == .checked);
+            return error.Protocol;
+        }
+        try self.committed.append(d.message); // cache before the draft or queue mutates, so an OOM is clean
         switch (d.message) {
             .user => |u| _ = self.queue.retire(u.input_id),
             .assistant => |a| if (self.active) |*dr| {
@@ -212,6 +246,25 @@ pub const Session = struct {
             .compaction => {},
         }
         self.raiseFinalized(d.message.id());
+        self.base_seq = d.seq;
+        return .changed;
+    }
+
+    fn onConfig(self: *Session, d: wire.misc.ConfigChangedData, mode: Mode) Error!Applied {
+        switch (self.gate(d.seq, mode)) {
+            .ignore => return .ignored,
+            .gap => return .gap,
+            .apply => {},
+        }
+        // A config revision is immutable. A conflicting value for a known revision is malformed.
+        if (self.configs.get(d.config.config_rev)) |existing| {
+            if (!configEql(existing, d.config)) {
+                std.debug.assert(mode == .checked);
+                return error.Protocol;
+            }
+        } else {
+            try self.configs.record(d.config);
+        }
         self.base_seq = d.seq;
         return .changed;
     }
@@ -245,6 +298,7 @@ pub const Session = struct {
             .apply => {},
         }
         self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
+        self.committed.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
         self.base_seq = d.seq;
         return .changed;
     }
@@ -285,7 +339,9 @@ pub const Session = struct {
         if (a.active) |*da| {
             if (!try draftEql(scratch, da, &b.active.?)) return false;
         }
-        return queueEql(scratch, &a.queue, &b.queue);
+        if (!try queueEql(scratch, &a.queue, &b.queue)) return false;
+        if (!try windowEql(scratch, &a.committed, &b.committed)) return false;
+        return configsEql(scratch, &a.configs, &b.configs);
     }
 };
 
@@ -324,6 +380,33 @@ fn draftJson(scratch: std.mem.Allocator, d: *const Draft) Error![]u8 {
     return jsonOf(scratch, ad);
 }
 
+fn windowEql(scratch: std.mem.Allocator, a: *const Window, b: *const Window) Error!bool {
+    if (a.list.items.len != b.list.items.len or a.has_more != b.has_more) return false;
+    for (a.list.items, b.list.items) |*ia, *ib| {
+        const ja = try jsonOf(scratch, ia.message);
+        const jb = try jsonOf(scratch, ib.message);
+        if (!std.mem.eql(u8, ja, jb)) return false;
+    }
+    return true;
+}
+
+// Compare two configs field by field. A config revision is immutable, so a value conflict is malformed.
+fn configEql(a: wire.run.RunConfig, b: wire.run.RunConfig) bool {
+    return a.config_rev == b.config_rev and std.mem.eql(u8, a.model, b.model) and std.mem.eql(u8, a.reasoning, b.reasoning);
+}
+
+fn configsEql(scratch: std.mem.Allocator, a: *const ConfigSet, b: *const ConfigSet) Error!bool {
+    if (a.map.count() != b.map.count()) return false;
+    var it = a.map.iterator();
+    while (it.next()) |entry| {
+        const other = b.map.get(entry.key_ptr.*) orelse return false;
+        const ja = try jsonOf(scratch, entry.value_ptr.*);
+        const jb = try jsonOf(scratch, other);
+        if (!std.mem.eql(u8, ja, jb)) return false;
+    }
+    return true;
+}
+
 fn queueEql(scratch: std.mem.Allocator, a: *const Queue, b: *const Queue) Error!bool {
     if (a.depth() != b.depth()) return false;
     for (a.entries(), b.entries()) |*ia, *ib| {
@@ -356,6 +439,27 @@ fn userCommitted(seq: ids.Seq, message_id: ids.MessageId, input_id: ids.InputId)
 }
 fn queuedInput(seq: ids.Seq, input_id: ids.InputId) BroadcastData {
     return .{ .input_queued_data = .{ .session_id = sid, .seq = seq, .input = .{ .input_id = input_id, .content = &.{}, .queued_at_ms = 1 } } };
+}
+fn configChanged(seq: ids.Seq, rev: ids.ConfigRev) BroadcastData {
+    return .{ .config_changed_data = .{ .session_id = sid, .seq = seq, .config = .{ .config_rev = rev, .model = "opus", .reasoning = "high" } } };
+}
+
+test "the session hydrates a snapshot then caches a config change and a commit" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+    const msgs = [_]message.Message{.{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 1 } } }};
+    const cfgs = [_]wire.run.RunConfig{.{ .config_rev = 0, .model = "opus", .reasoning = "high" }};
+    try s.installSnapshot(.{ .base_seq = 5, .finalized_message_id = 1, .messages = &msgs, .configs = &cfgs, .has_more = true });
+    try testing.expectEqual(@as(?ids.MessageId, 1), s.committed.newestId());
+    try testing.expectEqual(@as(ids.Seq, 5), s.base_seq);
+    try testing.expect(s.committed.has_more and s.configs.map.get(0) != null);
+
+    // A config change folds at seq 6. A user commit folds at seq 7 and enters the window.
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(configChanged(6, 1)));
+    try testing.expect(s.configs.map.get(1) != null);
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(userCommitted(7, 2, 50)));
+    try testing.expectEqual(@as(?ids.MessageId, 2), s.committed.newestId());
+    try testing.expectEqual(@as(ids.Seq, 7), s.base_seq);
 }
 
 test "a live turn folds text and commits" {
@@ -451,4 +555,48 @@ test "wrong-session, finalized, and shed events are handled" {
     // A shed marker forces a resync.
     const shed: BroadcastData = .{ .session_deltas_shed_data = .{ .session_id = sid, .count = 3 } };
     try testing.expectEqual(Applied.gap, try s.applyBroadcast(shed));
+}
+
+test "a committed message enters the window and config.changed records its config" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(configChanged(1, 7)));
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(userCommitted(2, 5, 10)));
+    try testing.expectEqual(@as(?ids.MessageId, 5), s.committed.newestId());
+    try testing.expect(s.configs.get(7) != null);
+}
+
+test "a non-increasing committed id is rejected in checked mode" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+    _ = try s.applyBroadcast(userCommitted(1, 5, 10));
+    // A later commit at a fresh seq with a smaller id is malformed.
+    try testing.expectError(error.Protocol, s.applyBroadcast(userCommitted(2, 3, 11)));
+}
+
+test "a conflicting config revision is rejected in checked mode" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+    _ = try s.applyBroadcast(configChanged(1, 7)); // model opus
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(configChanged(2, 7))); // same value is fine
+    const conflict: BroadcastData = .{ .config_changed_data = .{ .session_id = sid, .seq = 3, .config = .{ .config_rev = 7, .model = "sonnet", .reasoning = "high" } } };
+    try testing.expectError(error.Protocol, s.applyBroadcast(conflict));
+}
+
+test "installSnapshot seeds the window, configs, and cursors" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+    const msgs = [_]message.Message{
+        .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 1 } } },
+        .{ .user = .{ .id = 2, .content = &.{}, .input_id = 2, .time = .{ .created_at_ms = 1 } } },
+    };
+    const cfgs = [_]wire.run.RunConfig{.{ .config_rev = 0, .model = "opus", .reasoning = "high" }};
+    try s.installSnapshot(.{ .base_seq = 5, .finalized_message_id = 2, .messages = &msgs, .configs = &cfgs, .has_more = true });
+    try testing.expectEqual(@as(ids.Seq, 5), s.base_seq);
+    try testing.expectEqual(@as(?ids.MessageId, 2), s.committed.newestId());
+    try testing.expect(s.committed.has_more);
+    try testing.expect(s.configs.get(0) != null);
+    // A live commit at the next seq folds onto the hydrated window.
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(userCommitted(6, 3, 20)));
+    try testing.expectEqual(@as(?ids.MessageId, 3), s.committed.newestId());
 }

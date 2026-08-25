@@ -3,6 +3,7 @@
 
 pub const draft = @import("draft.zig");
 pub const queue = @import("queue.zig");
+pub const committed = @import("committed.zig");
 pub const session = @import("session.zig");
 pub const conformance = @import("conformance.zig");
 
