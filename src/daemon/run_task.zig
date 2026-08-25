@@ -359,8 +359,10 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     const prompt = try session_store.prompt(&state.db, arena, rt.session_id.raw);
     const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "");
     errdefer slot.destroy();
-    const handle = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
-    slot.bind(handle);
+    const started = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
+    slot.bind(started.handle);
+    // Publish each drained user message before run.started, so a fresh fold sees them first.
+    publishUserCommits(state, started.user_commits);
     while (rt.session.queue.depth() > 0) {
         const input_id = rt.session.queue.entries()[0].input_id;
         std.debug.assert(rt.session.queue.retire(input_id) == .changed);
@@ -483,6 +485,11 @@ fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) !message.AssistantPa
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
         .tool => error.ToolUnsupported,
     };
+}
+
+/// Publish each committed user message as a broadcast. A publish failure leaves the durable event for client resync.
+pub fn publishUserCommits(state: *State, commits: []const wire.message.MessageCommittedData) void {
+    for (commits) |c| publishBestEffort(state, c.session_id, .{ .method = .@"message.committed", .params = .{ .message_committed_data = c } });
 }
 
 pub fn publishBestEffort(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) void {

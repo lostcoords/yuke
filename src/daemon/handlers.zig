@@ -258,11 +258,13 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
         const stored_prompt = try session_store.prompt(&state.db, arena, sid);
         const slot = try session_runtime.RunSlot.prepare(state.gpa, snapshot.model, stored_prompt orelse "");
         errdefer slot.destroy();
-        const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
-        slot.bind(handle);
+        const started = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
+        slot.bind(started.handle);
         rt.active = slot;
         launch.* = .{ .slot = slot };
-        return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
+        // Publish the user message before run.started, so a fresh fold sees the input first.
+        run_task.publishUserCommits(state, started.user_commits);
+        return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.run_id } };
     }
 
     // A run is active. Persist and fold the queued input before the response.

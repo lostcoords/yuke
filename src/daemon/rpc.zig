@@ -751,7 +751,7 @@ test "a faulted runtime retains the old open-run fence" {
         .session_id = sid,
         .input = .{ .content = .{ .content = &content } },
     }));
-    try std.testing.expectEqual(@as(?u64, old.run_id), (try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id);
+    try std.testing.expectEqual(@as(?u64, old.handle.run_id), (try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id);
     try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "run.started"));
 }
 

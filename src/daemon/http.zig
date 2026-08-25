@@ -430,13 +430,24 @@ test "a send_input response enters the outbox before run.started" {
 
     var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
     try launch.join();
-    const response_item = try conn.outbox.tryReceive();
-    defer testing.allocator.free(response_item.bytes);
-    const started_item = try conn.outbox.tryReceive();
-    defer testing.allocator.free(started_item.bytes);
-    try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-1\"") != null);
-    try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"result\"") != null);
-    try testing.expect(std.mem.indexOf(u8, started_item.bytes, "\"method\":\"run.started\"") != null);
+
+    // Drain the outbox. The response enters before run.started. The user commit also precedes run.started.
+    var saw_response = false;
+    var saw_user_commit = false;
+    var response_before_started = false;
+    while (conn.outbox.tryReceive()) |item| {
+        defer testing.allocator.free(item.bytes);
+        if (std.mem.indexOf(u8, item.bytes, "\"method\":\"run.started\"") != null) {
+            try testing.expect(saw_response and saw_user_commit); // both precede run.started
+            response_before_started = true;
+        } else if (std.mem.indexOf(u8, item.bytes, "\"id\":\"request-1\"") != null) {
+            try testing.expect(std.mem.indexOf(u8, item.bytes, "\"result\"") != null);
+            saw_response = true;
+        } else if (std.mem.indexOf(u8, item.bytes, "message.committed") != null and std.mem.indexOf(u8, item.bytes, "\"type\":\"user\"") != null) {
+            saw_user_commit = true;
+        }
+    } else |_| {}
+    try testing.expect(saw_response and saw_user_commit and response_before_started);
 }
 
 test "a send_input error enters the outbox before a prepared queued run starts" {
@@ -459,18 +470,12 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     const created = try handlers.sessionCreate(&state, arena, .{ .workspace_path = "/error-order", .model = "mock" });
     try state.registry.setSubscriptions(&conn, &.{created.session.id});
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const old = try database.input.enqueue(
-        &state.db,
-        arena,
-        created.session.id.raw,
-        state.newId(),
-        100,
-        &.{.{ .text = .{ .text = "old" } }},
-        100,
-    );
+    const old = try database.input.enqueue(&state.db, arena, created.session.id.raw, state.newId(), 100, &.{.{ .text = .{ .text = "old" } }}, 100);
+    const old2 = try database.input.enqueue(&state.db, arena, created.session.id.raw, state.newId(), 100, &.{.{ .text = .{ .text = "old2" } }}, 101);
     try state.db.conn.execNoArgs("COMMIT");
     const runtime = try state.sessions.getOrCreate(created.session.id);
     try testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = created.session.id, .seq = old.seq, .input = old.input }));
+    try testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = created.session.id, .seq = old2.seq, .input = old2.input }));
     try state.db.conn.execNoArgs(
         \\CREATE TRIGGER fail_new_input BEFORE INSERT ON events
         \\WHEN NEW.name = 'input.queued'
@@ -488,6 +493,19 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     const request_bytes = try std.json.Stringify.valueAlloc(arena, request, .{ .emit_null_optional_fields = false });
     const reply = try frameReply(&state, &conn, testing.allocator, request_bytes);
     try testing.expect(reply.launch != null);
+    // The queued drain committed both old inputs, so their broadcasts are already in the outbox in order.
+    {
+        const first_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old.input.input_id});
+        const second_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old2.input.input_id});
+        const first = try conn.outbox.tryReceive();
+        defer testing.allocator.free(first.bytes);
+        try testing.expect(std.mem.indexOf(u8, first.bytes, "message.committed") != null);
+        try testing.expect(std.mem.indexOf(u8, first.bytes, first_id) != null);
+        const second = try conn.outbox.tryReceive();
+        defer testing.allocator.free(second.bytes);
+        try testing.expect(std.mem.indexOf(u8, second.bytes, "message.committed") != null);
+        try testing.expect(std.mem.indexOf(u8, second.bytes, second_id) != null);
+    }
     try testing.expectError(error.ChannelEmpty, conn.outbox.tryReceive());
 
     var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
