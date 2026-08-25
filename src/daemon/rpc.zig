@@ -7,14 +7,13 @@ const State = @import("State.zig");
 const handlers = @import("handlers.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
-const RunSlot = @import("session_runtime.zig").RunSlot;
 
 /// Result for one frame: keep reading or close the connection.
 pub const Outcome = enum { keep_open, close };
 
 pub const HandleResult = struct {
     outcome: Outcome,
-    launch: ?*RunSlot = null,
+    launch: ?run_task.Launch = null,
 };
 
 /// Handle one text frame: decode it, dispatch it, and write the response.
@@ -41,10 +40,8 @@ pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.W
     };
 
     // Preserve OutOfMemory. Map every other dispatch error to an internal error response.
-    var launch: ?*RunSlot = null;
-    errdefer if (launch) |slot| run_task.launchSlot(state, slot) catch |err| {
-        std.log.err("cannot release the run launch gate: {t}", .{err});
-    };
+    var launch: ?run_task.Launch = null;
+    errdefer run_task.Launch.release(&launch, state);
     const response = dispatch(state, conn, arena, request, &launch) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => errorResponse(request_id, .internal, "internal error"),
@@ -52,7 +49,7 @@ pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.W
     return .{ .outcome = try respond(arena, out, response), .launch = launch };
 }
 
-fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocator, request: wire.rpc.Request, launch: *?*RunSlot) !wire.rpc.Response {
+fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocator, request: wire.rpc.Request, launch: *?run_task.Launch) !wire.rpc.Response {
     switch (request.method) {
         .initialize => {
             const params = request.params.initialize_params;
@@ -223,6 +220,18 @@ fn call(fixture: *TestState, frame: []const u8, buffer: []u8) ![]const u8 {
     var out: std.Io.Writer = .fixed(buffer);
     _ = try handleRequest(&fixture.state, fixture.conn, &out, frame);
     return out.buffered();
+}
+
+/// Send input and launch any prepared run directly. Tests use this in place of the RPC response gate.
+fn sendInputDirect(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams) !wire.session.SessionSendInputResult {
+    var launch: ?run_task.Launch = null;
+    errdefer run_task.Launch.release(&launch, state);
+    const result = try handlers.sessionSendInputForRpc(state, arena, params, &launch);
+    if (launch) |l| {
+        launch = null;
+        try run_task.launchSlot(state, l.slot);
+    }
+    return result;
 }
 
 fn createCall(fixture: *TestState, id: []const u8, path: []const u8, buffer: []u8) ![]const u8 {
@@ -649,10 +658,10 @@ test "a completed run drains every queued input into one next run" {
     const one = [_]wire.content.ContentPart{.{ .text = .{ .text = "one" } }};
     const two = [_]wire.content.ContentPart{.{ .text = .{ .text = "two" } }};
     const three = [_]wire.content.ContentPart{.{ .text = .{ .text = "three" } }};
-    const first = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &one } } });
+    const first = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &one } } });
     try std.testing.expect(first == .started);
-    const second = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &two } } });
-    const third = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
+    const second = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &two } } });
+    const third = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
     try std.testing.expect(second == .queued);
     try std.testing.expect(third == .queued);
     try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.queue.depth());
@@ -699,7 +708,7 @@ test "a durable queue starts before a new idle input" {
     const runtime = try fixture.state.sessions.getOrCreate(sid);
     try std.testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = sid, .input = old.input }));
 
-    const accepted = try handlers.sessionSendInput(&fixture.state, a, .{
+    const accepted = try sendInputDirect(&fixture.state, a, .{
         .session_id = sid,
         .input = .{ .content = .{ .content = &new_content } },
     });
@@ -733,7 +742,7 @@ test "a faulted runtime retains the old open-run fence" {
     fixture.state.sessions.evictIfIdle(sid);
     try std.testing.expect(fixture.state.sessions.get(sid) == rt);
 
-    try std.testing.expectError(error.RuntimeFailed, handlers.sessionSendInput(&fixture.state, a, .{
+    try std.testing.expectError(error.RuntimeFailed, sendInputDirect(&fixture.state, a, .{
         .session_id = sid,
         .input = .{ .content = .{ .content = &content } },
     }));
@@ -751,9 +760,9 @@ test "cancel input and cancel run preserve exact durable outcomes" {
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/cancel", .model = "mock" });
     const sid = created.session.id;
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "input" } }};
-    const started = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
-    const queued_one = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
-    const queued_two = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
+    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const queued_one = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
+    const queued_two = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
 
     try std.testing.expectError(error.RunMismatch, handlers.sessionCancelRun(&fixture.state, a, .{ .session_id = sid, .run_id = started.run_id + 1 }));
     _ = try handlers.sessionCancelInput(&fixture.state, a, .{ .session_id = sid, .input_id = queued_one.input_id });
@@ -846,7 +855,7 @@ test "cancel run interrupts a blocked provider read" {
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/block", .model = "mock" });
     const sid = created.session.id;
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    const started = (try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
 
     // The run parks in the read; a separate task cancels it mid-read.
     var driver = try fixture.rt.spawn(cancelWhenBlocked, .{ &fixture.state, sid, started.run_id, &entered });
@@ -934,7 +943,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
     const sid = created.session.id;
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try handlers.sessionSendInput(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();

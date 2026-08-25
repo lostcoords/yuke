@@ -23,6 +23,21 @@ const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 const max_transcript_messages: usize = 1000;
 
+/// A prepared run the response gate must launch exactly once. Callers hold it as `?Launch`.
+/// `release` nulls the token before launch. `launchSlot` asserts the slot phase to catch a re-launch.
+pub const Launch = struct {
+    slot: *RunSlot,
+
+    /// Launch the prepared slot. Do nothing when the token is already consumed.
+    pub fn release(self: *?Launch, state: *State) void {
+        const launch = self.* orelse return;
+        self.* = null;
+        launchSlot(state, launch.slot) catch |err| {
+            std.log.err("cannot release the run launch gate: {t}", .{err});
+        };
+    }
+};
+
 /// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);

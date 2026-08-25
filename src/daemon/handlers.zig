@@ -240,22 +240,8 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
     };
 }
 
-/// Accept input for a session and launch any prepared run directly.
-pub fn sessionSendInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams) !wire.session.SessionSendInputResult {
-    var launch: ?*session_runtime.RunSlot = null;
-    errdefer if (launch) |slot| run_task.launchSlot(state, slot) catch |err| {
-        std.log.err("cannot release the run launch gate: {t}", .{err});
-    };
-    const result = try sessionSendInputForRpc(state, arena, params, &launch);
-    if (launch) |slot| {
-        launch = null;
-        try run_task.launchSlot(state, slot);
-    }
-    return result;
-}
-
 /// Accept input for an RPC and return its prepared run to the response gate.
-pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams, launch: *?*session_runtime.RunSlot) !wire.session.SessionSendInputResult {
+pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: wire.session.SessionSendInputParams, launch: *?run_task.Launch) !wire.session.SessionSendInputResult {
     std.debug.assert(launch.* == null);
     const content = switch (params.input) {
         .content => |c| c.content,
@@ -265,7 +251,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     const snapshot = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
     const rt = try state.sessions.getOrCreate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
-    if (rt.active == null and rt.queue.depth() > 0) launch.* = try run_task.prepareQueued(state, rt);
+    if (rt.active == null and rt.queue.depth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(state, rt) };
 
     if (rt.active == null) {
         const stored_prompt = try session_store.prompt(&state.db, arena, sid);
@@ -274,7 +260,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
         const handle = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
         slot.bind(handle);
         rt.active = slot;
-        launch.* = slot;
+        launch.* = .{ .slot = slot };
         return .{ .started = .{ .input_id = handle.input_id, .run_id = handle.run_id } };
     }
 

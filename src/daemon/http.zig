@@ -7,7 +7,6 @@ const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
 const State = @import("State.zig");
 const Connection = @import("connection.zig").Connection;
-const RunSlot = @import("session_runtime.zig").RunSlot;
 const run_task = @import("run_task.zig");
 
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
@@ -218,7 +217,7 @@ fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
             .text => {
                 const reply = try frameReply(state, conn, gpa, message.data);
                 var launch = reply.launch;
-                defer releaseLaunch(state, &launch);
+                defer run_task.Launch.release(&launch, state);
                 if (reply.terminal) {
                     return conn.tryEnqueue(.{ .bytes = reply.bytes, .terminal = true });
                 }
@@ -238,7 +237,7 @@ fn readerLoop(state: *State, conn: *Connection, input: *std.Io.Reader) !bool {
     }
 }
 
-const FramedReply = struct { bytes: []u8, terminal: bool, launch: ?*RunSlot };
+const FramedReply = struct { bytes: []u8, terminal: bool, launch: ?run_task.Launch };
 
 /// Frame one wire reply as WS bytes. handleRequest writes the frame. A close outcome ends the connection.
 fn frameReply(state: *State, conn: *Connection, gpa: std.mem.Allocator, data: []const u8) !FramedReply {
@@ -246,16 +245,8 @@ fn frameReply(state: *State, conn: *Connection, gpa: std.mem.Allocator, data: []
     errdefer buf.deinit();
     const reply = try rpc.handleRequest(state, conn, &buf.writer, data);
     var launch = reply.launch;
-    errdefer releaseLaunch(state, &launch);
+    errdefer run_task.Launch.release(&launch, state);
     return .{ .bytes = try buf.toOwnedSlice(), .terminal = reply.outcome == .close, .launch = launch };
-}
-
-fn releaseLaunch(state: *State, launch: *?*RunSlot) void {
-    const slot = launch.* orelse return;
-    launch.* = null;
-    run_task.launchSlot(state, slot) catch |err| {
-        std.log.err("cannot release the run launch gate: {t}", .{err});
-    };
 }
 
 /// Frame a pong that echoes the ping payload.
@@ -347,7 +338,7 @@ const wire = @import("wire");
 
 fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !void {
     var launch = reply.launch;
-    defer releaseLaunch(state, &launch);
+    defer run_task.Launch.release(&launch, state);
     if (reply.terminal) {
         _ = conn.tryEnqueue(.{ .bytes = reply.bytes, .terminal = true });
     } else {
