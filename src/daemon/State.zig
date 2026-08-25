@@ -55,7 +55,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         const rt = try self.sessions.getOrCreate(.bytes(session_id));
         const entries = try database.input.list(&self.db, arena.allocator(), session_id);
         for (entries) |entry| {
-            const applied = try rt.queue.onQueued(.{ .session_id = .bytes(session_id), .seq = entry.seq, .input = entry.input });
+            const applied = try rt.session.queue.onQueued(.{ .session_id = .bytes(session_id), .seq = entry.seq, .input = entry.input });
             std.debug.assert(applied == .changed);
         }
     }
@@ -122,6 +122,6 @@ test "init restores durable pending input into the runtime queue" {
     var state = try State.init(std.testing.allocator, runtime.io(), db, .{ .listen = listen }, "/home/test");
     defer state.deinit();
     const rt = state.sessions.get(.bytes(session_id)).?;
-    try std.testing.expectEqual(@as(usize, 1), rt.queue.depth());
-    try std.testing.expectEqual(queued.input.input_id, rt.queue.entries()[0].input_id);
+    try std.testing.expectEqual(@as(usize, 1), rt.session.queue.depth());
+    try std.testing.expectEqual(queued.input.input_id, rt.session.queue.entries()[0].input_id);
 }

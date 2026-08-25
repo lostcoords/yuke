@@ -253,7 +253,7 @@ fn launchUntilIdle(state: *State, session_id: wire.ids.SessionId) !void {
     var attempts: usize = 0;
     while (attempts < 10_000) : (attempts += 1) {
         const rt = state.sessions.get(session_id) orelse return;
-        if (rt.active == null and rt.queue.depth() == 0) return;
+        if (rt.active == null and rt.session.queue.depth() == 0) return;
         try zio.yield();
     }
     return error.RunDidNotFinish;
@@ -669,7 +669,7 @@ test "a completed run drains every queued input into one next run" {
     const third = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
     try std.testing.expect(second == .queued);
     try std.testing.expect(third == .queued);
-    try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.queue.depth());
+    try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.session.queue.depth());
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -711,7 +711,7 @@ test "a durable queue starts before a new idle input" {
     const old = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), 100, &old_content, 100);
     try fixture.state.db.conn.execNoArgs("COMMIT");
     const runtime = try fixture.state.sessions.getOrCreate(sid);
-    try std.testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = sid, .seq = old.seq, .input = old.input }));
+    try std.testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = sid, .seq = old.seq, .input = old.input }));
 
     const accepted = try sendInputDirect(&fixture.state, a, .{
         .session_id = sid,
@@ -719,7 +719,7 @@ test "a durable queue starts before a new idle input" {
     });
     try std.testing.expect(accepted == .queued);
     try std.testing.expectEqual(old.input.input_id, runtime.active.?.handle.input_id);
-    try std.testing.expectEqual(@as(usize, 1), runtime.queue.depth());
+    try std.testing.expectEqual(@as(usize, 1), runtime.session.queue.depth());
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();

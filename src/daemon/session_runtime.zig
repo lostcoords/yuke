@@ -4,7 +4,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const wire = @import("wire");
-const queue = @import("../domain/queue.zig");
+const Session = @import("../domain/session.zig").Session;
 const run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
 
@@ -58,25 +58,26 @@ pub const RunSlot = struct {
 pub const SessionRuntime = struct {
     gpa: std.mem.Allocator,
     session_id: ids.SessionId,
-    queue: queue.Queue,
+    // The projection owns the input queue. Later slices use the draft and the cursor fields.
+    session: Session,
     active: ?*RunSlot = null,
     faulted: bool = false,
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
         const self = try gpa.create(SessionRuntime);
-        self.* = .{ .gpa = gpa, .session_id = session_id, .queue = queue.Queue.init(gpa) };
+        self.* = .{ .gpa = gpa, .session_id = session_id, .session = Session.init(gpa, session_id) };
         return self;
     }
 
     fn destroy(self: *SessionRuntime) void {
         if (self.active) |slot| slot.destroy();
-        self.queue.deinit();
+        self.session.deinit();
         self.gpa.destroy(self);
     }
 
     /// A runtime is idle when it has no active run and no queued input. A later check also requires no subscriber.
     pub fn idle(self: *const SessionRuntime) bool {
-        return self.active == null and self.queue.depth() == 0 and !self.faulted;
+        return self.active == null and self.session.queue.depth() == 0 and !self.faulted;
     }
 };
 

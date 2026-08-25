@@ -320,7 +320,7 @@ fn finishSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot) void {
     rt.active = null;
     slot.destroy();
 
-    if (can_drain and rt.queue.depth() > 0) {
+    if (can_drain and rt.session.queue.depth() > 0) {
         startQueued(state, rt) catch |err| {
             if (state.sessions.get(session_id)) |current| current.faulted = true;
             std.log.err("cannot start a queued run: {t}", .{err});
@@ -337,7 +337,7 @@ fn startQueued(state: *State, rt: *session_runtime.SessionRuntime) !void {
 /// Commit one run for all queued inputs.
 pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSlot {
     std.debug.assert(rt.active == null);
-    std.debug.assert(rt.queue.depth() > 0);
+    std.debug.assert(rt.session.queue.depth() > 0);
 
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
@@ -348,9 +348,9 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     errdefer slot.destroy();
     const handle = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
     slot.bind(handle);
-    while (rt.queue.depth() > 0) {
-        const input_id = rt.queue.entries()[0].input_id;
-        std.debug.assert(rt.queue.retire(input_id) == .changed);
+    while (rt.session.queue.depth() > 0) {
+        const input_id = rt.session.queue.entries()[0].input_id;
+        std.debug.assert(rt.session.queue.retire(input_id) == .changed);
     }
     rt.active = slot;
     return slot;
@@ -364,7 +364,7 @@ pub fn resumePendingInputs(state: *State) !void {
     for (session_ids) |raw| {
         const session_id = ids.SessionId.bytes(raw);
         const rt = state.sessions.get(session_id) orelse return error.CorruptRuntime;
-        if (rt.active == null and rt.queue.depth() > 0) try startQueued(state, rt);
+        if (rt.active == null and rt.session.queue.depth() > 0) try startQueued(state, rt);
     }
 }
 
