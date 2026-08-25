@@ -26,12 +26,9 @@ const max_transcript_messages: usize = 1000;
 /// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
-    if (!slot.started_published) {
-        publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"run.started", .params = .{
-            .run_started_data = slot.handle.started,
-        } });
-        slot.started_published = true;
-    }
+    publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"run.started", .params = .{
+        .run_started_data = slot.handle.started,
+    } });
     const run_id = slot.handle.run_id;
     const session_id = slot.handle.started.session_id;
     slot.phase = .running;

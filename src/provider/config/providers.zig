@@ -115,7 +115,11 @@ pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
         gpa.free(scratch);
     }
     var fba = std.heap.FixedBufferAllocator.init(scratch);
-    const doc = std.json.parseFromSliceLeaky(FileDoc, fba.allocator(), bytes, .{ .allocate = .alloc_always }) catch |err| switch (err) {
+    const doc = std.json.parseFromSliceLeaky(FileDoc, fba.allocator(), bytes, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = false,
+        .duplicate_field_behavior = .@"error",
+    }) catch |err| switch (err) {
         error.OutOfMemory => return error.FileTooLarge, // the scratch is 8x the input; a denser doc is hostile
         else => |e| return e,
     };

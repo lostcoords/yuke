@@ -21,12 +21,6 @@ pub fn endpointUrl(gpa: std.mem.Allocator, p: ProviderInstance) std.mem.Allocato
     return std.mem.concat(gpa, u8, &.{ p.base_url, protocol_path.get(p.protocol) });
 }
 
-/// Returns the public model binding for `model_id`, or null.
-pub fn findModel(p: ProviderInstance, model_id: []const u8) ?instance.ModelBinding {
-    for (p.models) |m| if (std.mem.eql(u8, m.id, model_id)) return m;
-    return null;
-}
-
 /// Holds a credential from the configured source.
 pub const Secret = union(enum) {
     api_key: []const u8,

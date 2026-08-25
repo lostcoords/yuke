@@ -166,7 +166,6 @@ pub const Reducer = struct {
 
     fn onTextDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const id = try self.outputBlockId(try outputIndex(root), .text);
-        _ = try self.openBlock(id);
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
         try out.append(self.gpa, .{ .text_delta = .{ .block = id, .text = delta } });
     }

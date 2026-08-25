@@ -24,7 +24,6 @@ pub const Config = struct {
 pub const RunHandle = struct {
     run_id: wire.ids.RunId,
     input_id: wire.ids.InputId,
-    user_message_id: wire.ids.MessageId,
     assistant_message_id: wire.ids.MessageId,
     started: wire.run.RunStartedData,
 };
@@ -41,18 +40,20 @@ pub fn beginTurn(
 ) !RunHandle {
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    const input_id = try event_store.allocInputId(db, arena, session_id);
+    const run_id = try event_store.allocRunId(db, arena, session_id);
+    const user_message_id = try event_store.allocMessageId(db, arena, session_id);
     var handle: RunHandle = .{
-        .input_id = try event_store.allocInputId(db, arena, session_id),
-        .run_id = try event_store.allocRunId(db, arena, session_id),
-        .user_message_id = try event_store.allocMessageId(db, arena, session_id),
+        .input_id = input_id,
+        .run_id = run_id,
         .assistant_message_id = try event_store.allocMessageId(db, arena, session_id),
         .started = undefined,
     };
     const user_now = util.nowMillis(io);
     const user_message: wire.message.Message = .{ .user = .{
-        .id = handle.user_message_id,
+        .id = user_message_id,
         .content = input,
-        .input_id = handle.input_id,
+        .input_id = input_id,
         .time = .{ .created_at_ms = user_now },
     } };
     _ = try message_store.appendCommittedMessage(db, arena, session_id, util.newId(io), user_now, user_message);
@@ -69,7 +70,7 @@ pub fn beginTurn(
 }
 
 /// Tx1 for a queued drain: commit every durable queued input as one run.
-/// The returned handle uses the oldest input and its user message for the legacy slot fields.
+/// The returned handle uses the oldest input id and the run's assistant message id.
 pub fn beginQueuedTurn(
     db: *Database,
     io: std.Io,
@@ -86,13 +87,11 @@ pub fn beginQueuedTurn(
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const started_at_ms = util.nowMillis(io);
     var first_input_id: wire.ids.InputId = undefined;
-    var first_user_message_id: wire.ids.MessageId = undefined;
 
     for (queued, 0..) |entry, i| {
         const user_message_id = try event_store.allocMessageId(db, arena, session_id);
         if (i == 0) {
             first_input_id = entry.input.input_id;
-            first_user_message_id = user_message_id;
         }
         const user_message: wire.message.Message = .{ .user = .{
             .id = user_message_id,
@@ -124,7 +123,6 @@ pub fn beginQueuedTurn(
     return .{
         .run_id = run_id,
         .input_id = first_input_id,
-        .user_message_id = first_user_message_id,
         .assistant_message_id = assistant_message_id,
         .started = started,
     };

@@ -112,44 +112,14 @@ pub const ProviderInstance = struct {
     models: []const ModelBinding = &.{},
 };
 
-/// Defines the providers.json document for user and built-in configuration.
-pub const Config = struct {
-    providers: []const ProviderInstance = &.{},
-};
-
 const testing = std.testing;
-const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "decode an anthropic provider with an env api key" {
-    const json =
-        \\{"providers":[
-        \\  {"id":"anthropic","base_url":"https://api.anthropic.com/v1","protocol":"anthropic-messages",
-        \\   "auth":{"api_key":{"header":"x_api_key","source":{"env":"ANTHROPIC_API_KEY"}}},
-        \\   "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
-        \\   "cache":"ephemeral",
-        \\   "models":[{"id":"opus","upstream_id":"claude-opus-4-8","limits":{"context_window":200000,"max_output_tokens":16000},"cost":{"input":15,"output":75}}]}
-        \\]}
-    ;
-    const parsed = try std.json.parseFromSlice(Config, testing.allocator, json, parse_opts);
-    defer parsed.deinit();
-
-    const p = parsed.value.providers[0];
-    try testing.expectEqualStrings("anthropic", p.id);
-    try testing.expectEqual(Protocol.@"anthropic-messages", p.protocol);
-    try testing.expectEqual(ApiKeyHeader.x_api_key, p.auth.api_key.header);
-    try testing.expectEqualStrings("ANTHROPIC_API_KEY", p.auth.api_key.source.env);
-    try testing.expectEqualStrings("anthropic-version", p.headers[0].name);
-    try testing.expectEqual(CachePolicy.ephemeral, p.cache);
-    try testing.expectEqualStrings("claude-opus-4-8", p.models[0].upstream_id);
-    try testing.expectEqual(@as(u64, 16000), p.models[0].limits.max_output_tokens);
-}
 
 test "decode a model with behavioral flags" {
     const json =
         \\{"id":"deepseek-r1","upstream_id":"deepseek-reasoner","limits":{"context_window":65536,"max_output_tokens":8192},
         \\ "flags":{"reasoning_replay":"reasoning-content","thinking_format":"deepseek","max_tokens_field":"max-completion-tokens","supports_vision":true,"reasoning_budget_max":32000}}
     ;
-    const parsed = try std.json.parseFromSlice(ModelBinding, testing.allocator, json, parse_opts);
+    const parsed = try std.json.parseFromSlice(ModelBinding, testing.allocator, json, .{});
     defer parsed.deinit();
     const f = parsed.value.flags;
     try testing.expectEqual(ReasoningReplay.@"reasoning-content", f.reasoning_replay);
@@ -158,23 +128,6 @@ test "decode a model with behavioral flags" {
     try testing.expect(f.supports_vision);
     try testing.expect(f.supports_tools); // The default is true.
     try testing.expectEqual(@as(?u64, 32000), f.reasoning_budget_max);
-}
-
-test "decode a codex oauth provider" {
-    const json =
-        \\{"providers":[
-        \\  {"id":"openai-codex","base_url":"https://chatgpt.com/backend-api/codex","protocol":"openai-responses",
-        \\   "auth":{"codex_oauth":{"store":"chatgpt-oauth","account_store":"chatgpt-account-id"}}}
-        \\]}
-    ;
-    const parsed = try std.json.parseFromSlice(Config, testing.allocator, json, parse_opts);
-    defer parsed.deinit();
-
-    const p = parsed.value.providers[0];
-    try testing.expectEqual(Protocol.@"openai-responses", p.protocol);
-    try testing.expectEqualStrings("chatgpt-oauth", p.auth.codex_oauth.store);
-    try testing.expectEqual(CachePolicy.unsupported, p.cache); // The default is unsupported.
-    try testing.expectEqual(@as(usize, 0), p.models.len);
 }
 
 test "a provider round-trips through JSON" {
@@ -188,7 +141,7 @@ test "a provider round-trips through JSON" {
     defer buf.deinit();
     try std.json.Stringify.value(provider, .{ .emit_null_optional_fields = false }, &buf.writer);
 
-    const parsed = try std.json.parseFromSlice(ProviderInstance, testing.allocator, buf.written(), parse_opts);
+    const parsed = try std.json.parseFromSlice(ProviderInstance, testing.allocator, buf.written(), .{});
     defer parsed.deinit();
     try testing.expectEqualStrings("acme", parsed.value.id);
     try testing.expectEqual(ApiKeyHeader.authorization_bearer, parsed.value.auth.api_key.header);

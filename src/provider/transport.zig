@@ -52,40 +52,6 @@ pub const ResponseBody = struct {
     }
 };
 
-/// Pull the whole response body and reduce it to StreamEvents. `reducer` is the provider reducer.
-/// The provider reducer defines the payload lifetimes; keep the scratch arena and reducer alive.
-pub fn drain(
-    gpa: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    body: ResponseBody,
-    reducer: anytype,
-    out: *std.ArrayList(event.StreamEvent),
-) !void {
-    var parser: sse.Sse = .init(gpa);
-    defer parser.deinit();
-    var frames: std.ArrayList([]const u8) = .empty; // the arena owns the frame slices
-    defer frames.deinit(arena);
-
-    var buf: [4096]u8 = undefined;
-    var total: usize = 0;
-    while (true) {
-        const n = try body.read(&buf);
-        if (n == 0) break;
-        total += n;
-        if (total > max_response_bytes) return error.ResponseTooLarge; // bound a long or hostile stream
-        frames.clearRetainingCapacity();
-        try parser.push(buf[0..n], arena, &frames);
-        for (frames.items) |data| try reducer.decode(data, arena, out);
-    }
-    frames.clearRetainingCapacity();
-    try parser.finish(arena, &frames);
-    for (frames.items) |data| try reducer.decode(data, arena, out);
-    try reducer.finish(out);
-
-    // A turn ends with a terminal `done`. A stream that ends before it is truncated.
-    if (out.items.len == 0 or out.items[out.items.len - 1] != .done) return error.IncompleteStream;
-}
-
 /// Pull the response and hand each StreamEvent to `onEvent`. Reset the scratch after each read, so parse
 /// trees do not accumulate for the whole turn. The callback must copy each borrowed slice before it returns.
 pub fn stream(
@@ -282,30 +248,6 @@ const canned_text_turn =
         \\{"type":"message_stop"}
     );
 
-test "drain reduces a fragmented mock SSE stream to StreamEvents" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    var reducer = anthropic.Reducer.init(testing.allocator);
-    defer reducer.deinit();
-    var out: std.ArrayList(event.StreamEvent) = .empty;
-    defer out.deinit(testing.allocator);
-
-    // A 7-byte chunk splits SSE events across reads, so the parser must hold cross-read state.
-    var mock = MockTransport.init(canned_text_turn, 7);
-    try drain(testing.allocator, arena.allocator(), mock.body(), &reducer, &out);
-
-    try testing.expectEqual(@as(usize, 5), out.items.len);
-    try testing.expectEqual(event.BlockKind.text, out.items[0].block_started.kind);
-    try testing.expectEqualStrings("Hel", out.items[1].text_delta.text);
-    try testing.expectEqualStrings("lo", out.items[2].text_delta.text);
-    try testing.expect(out.items[3].block_stopped.result == .text);
-    const done = out.items[4].done;
-    try testing.expectEqual(wire.enums.StopReason.stop, done.stop_reason);
-    try testing.expectEqual(@as(u64, 100), done.usage.input);
-    try testing.expectEqual(@as(u64, 5), done.usage.output);
-}
-
 const canned_truncated =
     frame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":100}}}
@@ -317,23 +259,15 @@ const canned_truncated =
         \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}
     );
 
-test "a stream that ends before done is truncated" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var reducer = anthropic.Reducer.init(testing.allocator);
-    defer reducer.deinit();
-    var out: std.ArrayList(event.StreamEvent) = .empty;
-    defer out.deinit(testing.allocator);
-
-    var mock = MockTransport.init(canned_truncated, 0);
-    try testing.expectError(error.IncompleteStream, drain(testing.allocator, arena.allocator(), mock.body(), &reducer, &out));
-}
-
 const StreamCollector = struct {
     gpa: std.mem.Allocator,
     kinds: std.ArrayList(std.meta.Tag(event.StreamEvent)) = .empty,
     text: std.ArrayList(u8) = .empty,
     stop: ?wire.enums.StopReason = null,
+    first_block_kind: ?event.BlockKind = null,
+    stop_result: ?std.meta.Tag(event.BlockResult) = null,
+    usage_input: ?u64 = null,
+    usage_output: ?u64 = null,
 
     fn deinit(self: *StreamCollector) void {
         self.kinds.deinit(self.gpa);
@@ -342,8 +276,16 @@ const StreamCollector = struct {
     fn on(self: *StreamCollector, ev: event.StreamEvent) !void {
         try self.kinds.append(self.gpa, std.meta.activeTag(ev));
         switch (ev) {
+            .block_started => |b| if (self.first_block_kind == null) {
+                self.first_block_kind = b.kind;
+            },
             .text_delta => |d| try self.text.appendSlice(self.gpa, d.text),
-            .done => |d| self.stop = d.stop_reason,
+            .block_stopped => |b| self.stop_result = std.meta.activeTag(b.result),
+            .done => |d| {
+                self.stop = d.stop_reason;
+                self.usage_input = d.usage.input;
+                self.usage_output = d.usage.output;
+            },
             else => {},
         }
     }
@@ -361,6 +303,10 @@ test "stream delivers each event to the callback across fragmented reads" {
 
     try testing.expectEqualStrings("Hello", collector.text.items);
     try testing.expectEqual(wire.enums.StopReason.stop, collector.stop.?);
+    try testing.expectEqual(event.BlockKind.text, collector.first_block_kind.?);
+    try testing.expectEqual(std.meta.Tag(event.BlockResult).text, collector.stop_result.?);
+    try testing.expectEqual(@as(u64, 100), collector.usage_input.?);
+    try testing.expectEqual(@as(u64, 5), collector.usage_output.?);
     // The order is block_started, two text_delta, block_stopped, done.
     try testing.expectEqual(@as(usize, 5), collector.kinds.items.len);
     try testing.expectEqual(std.meta.activeTag(event.StreamEvent{ .block_started = undefined }), collector.kinds.items[0]);

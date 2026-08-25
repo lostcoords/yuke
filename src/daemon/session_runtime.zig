@@ -17,7 +17,6 @@ pub const RunSlot = struct {
     config: run.Config,
     phase: Phase = .pending_start,
     protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // the run sets this when it resolves a provider
-    started_published: bool = false,
     cancel_requested: bool = false,
     // The RPC task sets this to interrupt the run. The run task waits on it and cancels its reader.
     cancel_event: zio.ResetEvent = .init,
@@ -151,7 +150,6 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     rt.active.?.bind(.{
         .run_id = 1,
         .input_id = 1,
-        .user_message_id = 1,
         .assistant_message_id = 2,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
     });
