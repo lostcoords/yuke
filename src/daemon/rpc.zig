@@ -627,7 +627,7 @@ test "session.history returns committed messages oldest-first with their configs
     try std.testing.expectEqual(@as(u64, 1), hist.messages[0].user.id); // The history lists the oldest message first.
     try std.testing.expectEqual(@as(u64, 2), hist.messages[1].assistant.id);
     try std.testing.expect(!hist.has_more);
-    // The assistant turn uses config_rev 0, so gatherConfigs resolves that exact revision.
+    // The assistant turn uses config revision 0. The history result resolves that revision.
     try std.testing.expectEqual(@as(usize, 1), hist.configs.len);
     try std.testing.expectEqual(@as(u64, 0), hist.configs[0].config_rev);
 }

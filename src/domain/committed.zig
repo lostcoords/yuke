@@ -58,13 +58,11 @@ pub const Window = struct {
     }
 
     /// Drop windowed messages with an id at or above `first_removed_id`. Truncation removes them.
+    /// The window stays oldest-first, so the removed messages form the tail.
     pub fn trimFrom(self: *Window, first_removed_id: ids.MessageId) void {
-        var i = self.list.items.len;
-        while (i > 0) : (i -= 1) {
-            const e = &self.list.items[i - 1];
-            if (e.message.id() < first_removed_id) break;
-            self.total_bytes -= e.bytes;
-            var removed = self.list.orderedRemove(i - 1);
+        while (self.list.items.len > 0 and self.list.items[self.list.items.len - 1].message.id() >= first_removed_id) {
+            var removed = self.list.pop().?;
+            self.total_bytes -= removed.bytes;
             removed.deinit();
         }
     }
@@ -120,25 +118,10 @@ pub const ConfigSet = struct {
     pub fn record(self: *ConfigSet, config: run.RunConfig) Error!void {
         const gop = try self.map.getOrPut(self.gpa, config.config_rev);
         if (gop.found_existing) return;
-        errdefer _ = self.map.remove(config.config_rev); // a failed clone must not leave a dead key
+        errdefer _ = self.map.remove(config.config_rev); // A failed clone must not leave a dead key.
         gop.value_ptr.* = try wire.dupe(self.arena.allocator(), config);
     }
-
-    /// Return the recorded configs sorted by revision. The slice borrows `scratch`.
-    /// The values live in the arena. A later record or deinit invalidates the returned view.
-    pub fn values(self: *const ConfigSet, scratch: std.mem.Allocator) Error![]const run.RunConfig {
-        const out = try scratch.alloc(run.RunConfig, self.map.count());
-        var it = self.map.valueIterator();
-        var i: usize = 0;
-        while (it.next()) |v| : (i += 1) out[i] = v.*;
-        std.mem.sort(run.RunConfig, out, {}, lessByRev);
-        return out;
-    }
 };
-
-fn lessByRev(_: void, a: run.RunConfig, b: run.RunConfig) bool {
-    return a.config_rev < b.config_rev;
-}
 
 /// Return the serialized byte size of a committed message. The window bounds itself by this size.
 fn messageBytes(gpa: std.mem.Allocator, m: message.Message) Error!usize {
@@ -148,7 +131,6 @@ fn messageBytes(gpa: std.mem.Allocator, m: message.Message) Error!usize {
 }
 
 const testing = std.testing;
-const zero_session: ids.SessionId = .bytes(@splat(0));
 
 fn userMessage(id: ids.MessageId, comptime text: []const u8) message.Message {
     return .{ .user = .{ .id = id, .content = &.{.{ .text = .{ .text = text } }}, .input_id = id, .time = .{ .created_at_ms = 1 } } };
@@ -219,19 +201,15 @@ test "a message over the soft byte bound stays as the only entry" {
     try testing.expectEqual(@as(?ids.MessageId, 2), w.newestId());
 }
 
-test "the config set records one value per revision and sorts by revision" {
+test "the config set keeps the first value for a revision" {
     var c = ConfigSet.init(testing.allocator);
     defer c.deinit();
-    try c.record(.{ .config_rev = 2, .model = "sonnet", .reasoning = "off" });
     try c.record(.{ .config_rev = 1, .model = "opus", .reasoning = "high" });
-    try c.record(.{ .config_rev = 1, .model = "changed", .reasoning = "low" }); // ignored: same revision
-
-    var scratch = std.heap.ArenaAllocator.init(testing.allocator);
-    defer scratch.deinit();
-    const out = try c.values(scratch.allocator());
-    try testing.expectEqual(@as(usize, 2), out.len);
-    try testing.expectEqual(@as(ids.ConfigRev, 1), out[0].config_rev); // sorted ascending
-    try testing.expectEqualStrings("opus", c.get(1).?.model); // the first value stays
+    try c.record(.{ .config_rev = 1, .model = "changed", .reasoning = "low" }); // The record keeps the first value.
+    try c.record(.{ .config_rev = 2, .model = "sonnet", .reasoning = "off" });
+    try testing.expectEqualStrings("opus", c.get(1).?.model);
+    try testing.expect(c.get(2) != null);
+    try testing.expect(c.get(3) == null);
 }
 
 test "record removes the key when the clone fails" {

@@ -35,6 +35,18 @@ pub const Started = struct {
     user_commits: []const wire.message.MessageCommittedData,
 };
 
+/// Append the `run.started` event for a turn. Both turn paths share this record shape.
+fn appendRunStarted(db: *Database, arena: std.mem.Allocator, io: std.Io, session_id: [16]u8, run_id: wire.ids.RunId, config_rev: wire.ids.ConfigRev, started_at_ms: u64) !wire.run.RunStartedData {
+    return run_store.appendStarted(db, arena, util.newId(io), started_at_ms, .{
+        .session_id = .bytes(session_id),
+        .seq = 0,
+        .run_id = run_id,
+        .kind = .turn,
+        .config_rev = config_rev,
+        .started_at_ms = started_at_ms,
+    });
+}
+
 /// Tx1 allocates the IDs and commits the user message in one transaction. The daemon runs Tx1 before it spawns the run.
 /// Therefore, send_input returns the run ID at once. `input` borrows `arena`.
 pub fn beginTurn(
@@ -67,14 +79,7 @@ pub fn beginTurn(
     // Build the commit slice before COMMIT, so a late allocation failure cannot orphan the durable run.
     const commits = try arena.alloc(wire.message.MessageCommittedData, 1);
     commits[0] = .{ .session_id = .bytes(session_id), .seq = user_seq, .message = user_message };
-    handle.started = try run_store.appendStarted(db, arena, util.newId(io), user_now, .{
-        .session_id = .bytes(session_id),
-        .seq = 0,
-        .run_id = handle.run_id,
-        .kind = .turn,
-        .config_rev = config_rev,
-        .started_at_ms = user_now,
-    });
+    handle.started = try appendRunStarted(db, arena, io, session_id, handle.run_id, config_rev, user_now);
     try db.conn.execNoArgs("COMMIT");
     return .{ .handle = handle, .user_commits = commits };
 }
@@ -123,14 +128,7 @@ pub fn beginQueuedTurn(
     }
 
     const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
-    const started = try run_store.appendStarted(db, arena, util.newId(io), started_at_ms, .{
-        .session_id = .bytes(session_id),
-        .seq = 0,
-        .run_id = run_id,
-        .kind = .turn,
-        .config_rev = config_rev,
-        .started_at_ms = started_at_ms,
-    });
+    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
     try db.conn.execNoArgs("COMMIT");
     return .{ .handle = .{
         .run_id = run_id,

@@ -1,5 +1,5 @@
 //! Daemon-global state. One reactor executor owns it for the daemon lifetime.
-//! Keep per-connection state separate. Add connection identity later.
+//! Keep the per-connection state separate.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -46,7 +46,7 @@ pub const BroadcastTap = struct {
     }
 };
 
-/// The daemon uses this configuration directly for now.
+/// The daemon stores its configuration here.
 pub const Config = struct {
     listen: zio.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",
@@ -96,7 +96,7 @@ pub fn hydrateSession(self: *State, session: *domain_session.Session) !void {
     const sid = session.id.raw;
     const hw = (try database.event.highWater(&self.db, a, sid)) orelse return; // No session row exists.
     const page = try database.message.historyPage(&self.db, a, sid, 0, committed.default_max_messages);
-    const configs = try gatherWindowConfigs(self, a, sid, page.messages);
+    const configs = try database.config.forMessages(&self.db, a, sid, page.messages);
     const finalized: u64 = if (page.messages.len > 0) page.messages[page.messages.len - 1].id() else 0;
     try session.installSnapshot(.{
         .base_seq = hw.seq_high,
@@ -111,23 +111,6 @@ pub fn hydrateSession(self: *State, session: *domain_session.Session) !void {
         const applied = try session.queue.onQueued(.{ .session_id = session.id, .seq = entry.seq, .input = entry.input });
         std.debug.assert(applied == .changed);
     }
-}
-
-/// Return one config for each revision the window messages reference. The daemon seeds the config set.
-fn gatherWindowConfigs(self: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
-    var out: std.ArrayList(wire.run.RunConfig) = .empty;
-    for (messages) |m| switch (m) {
-        .assistant => |asst| {
-            for (out.items) |seen| {
-                if (seen.config_rev == asst.config_rev) break;
-            } else {
-                const config = (try database.config.byRevision(&self.db, arena, session_id, asst.config_rev)) orelse return error.CorruptLog;
-                try out.append(arena, config);
-            }
-        },
-        else => {},
-    };
-    return out.items;
 }
 
 const RecoveryEventIds = struct {

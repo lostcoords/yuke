@@ -1,5 +1,5 @@
 //! Per-session live state. The reactor owns each SessionRuntime. The `Sessions` registry holds a stable pointer.
-//! The session later attaches a run coroutine and a live draft.
+//! The projection owns the live draft. The run task borrows it.
 
 const std = @import("std");
 const zio = @import("zio");
@@ -76,7 +76,7 @@ pub const SessionRuntime = struct {
         self.gpa.destroy(self);
     }
 
-    /// A runtime is idle when it has no active run and no queued input. A later check also requires no subscriber.
+    /// A runtime is idle when it has no active run, no queued input, and no fault.
     pub fn idle(self: *const SessionRuntime) bool {
         return self.active == null and self.session.queue.depth() == 0 and !self.faulted;
     }

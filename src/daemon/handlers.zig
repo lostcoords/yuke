@@ -148,8 +148,7 @@ fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionList
     };
 }
 
-/// Handle session.list from durable state. The active view needs the reactor live-session set.
-/// Later code adds that set.
+/// Handle session.list from durable state. Each item reports idle activity.
 pub fn sessionList(state: *State, arena: std.mem.Allocator, params: wire.session.SessionListParams) !wire.session.SessionListResult {
     const sel = sessionSelector(params);
     const requested_limit = params.limit orelse wire.meta.limits.default_session_list_page_size;
@@ -237,7 +236,7 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
     return .{
         .session_id = params.session_id,
         .messages = page.messages,
-        .configs = try gatherConfigs(state, arena, sid, page.messages),
+        .configs = try config_store.forMessages(&state.db, arena, sid, page.messages),
         .has_more = page.has_more,
     };
 }
@@ -299,10 +298,10 @@ fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, sessi
     // The live config set only tracks config.changed events, so it can miss a live commit.
     var configs: std.ArrayList(wire.run.RunConfig) = .empty;
     for (messages) |m| switch (m) {
-        .assistant => |asst| try appendConfigOnce(state, arena, &configs, snap.id, asst.config_rev),
+        .assistant => |asst| try config_store.ensureRevision(&state.db, arena, &configs, snap.id, asst.config_rev),
         else => {},
     };
-    if (session.active) |*d| try appendConfigOnce(state, arena, &configs, snap.id, d.config_rev);
+    if (session.active) |*d| try config_store.ensureRevision(&state.db, arena, &configs, snap.id, d.config_rev);
 
     const active: ?wire.message.ActiveDraft = if (session.active) |*d| try wire.dupe(arena, try d.toActiveDraft(arena)) else null;
 
@@ -326,13 +325,6 @@ fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, sessi
 /// A truncation or a discard can raise this above the newest committed id.
 fn finalizedHighWater(session: *domain_session.Session) ?wire.ids.MessageId {
     return if (session.finalized_message_id == 0) null else session.finalized_message_id;
-}
-
-/// Append the config for a revision once. Fetch it from SQLite. A missing revision is a corrupt log.
-fn appendConfigOnce(state: *State, arena: std.mem.Allocator, configs: *std.ArrayList(wire.run.RunConfig), session_id: [16]u8, rev: wire.ids.ConfigRev) !void {
-    for (configs.items) |c| if (c.config_rev == rev) return;
-    const cfg = (try config_store.byRevision(&state.db, arena, session_id, rev)) orelse return error.CorruptLog;
-    try configs.append(arena, cfg);
 }
 
 /// Accept input for an RPC and return its prepared run to the response gate.
@@ -439,28 +431,9 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs };
 }
 
-/// Collect the distinct configs the assistant messages reference, in first-reference order.
-/// A referenced revision that is absent signals log corruption. The wire request remains valid.
-fn gatherConfigs(state: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
-    var out: std.ArrayList(wire.run.RunConfig) = .empty;
-    for (messages) |message| switch (message) {
-        .assistant => |a| {
-            for (out.items) |seen| {
-                if (seen.config_rev == a.config_rev) break;
-            } else {
-                const config = (try config_store.byRevision(&state.db, arena, session_id, a.config_rev)) orelse return error.CorruptLog;
-                try out.append(arena, config);
-            }
-        },
-        else => {},
-    };
-    return out.items;
-}
-
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
-/// Later code adds broadcast fan-out. This function returns only the result.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
-    // Use the raw path as the dedup key for now. A later workspace chunk adds canonicalization.
+    // Use the raw path as the workspace dedup key.
     const root = params.workspace_path orelse state.home;
     const base = std.fs.path.basename(root);
     const title = if (base.len == 0) root else base;

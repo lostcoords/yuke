@@ -89,8 +89,8 @@ pub const Part = union(enum) {
         }
     }
 
-    /// Build an owned part from a wire part. `gpa` backs stream buffers; `arena` backs write-once
-    /// data. `deinit` frees stream buffers; the caller keeps the arena.
+    /// Build an owned part from a wire part. `gpa` backs stream buffers. `arena` backs write-once data.
+    /// `deinit` frees the stream buffers. The caller keeps the arena.
     pub fn initFrom(gpa: std.mem.Allocator, arena: std.mem.Allocator, p: message.AssistantPart) Error!Part {
         switch (p) {
             .text => |t| {
@@ -111,7 +111,7 @@ pub const Part = union(enum) {
                 .data = try arena.dupe(u8, r.data),
             } },
             .tool => |t| {
-                // Seed output from an active snapshot; live parts start empty.
+                // Seed output from an active snapshot. A live part starts empty.
                 var output: std.ArrayList(u8) = .empty;
                 try output.appendSlice(gpa, toolOutputSeed(t.state));
                 errdefer output.deinit(gpa);
@@ -249,17 +249,6 @@ pub const Draft = struct {
         } };
     }
 
-    /// Check whether an activity locator matches the draft.
-    /// Treat states without a draft locator as consistent.
-    pub fn activityConsistent(self: *const Draft, state: activity.ActivityState) bool {
-        return switch (state) {
-            .running_tool => |s| self.toolLocatorMatches(s.part_id, s.tool_name, .running),
-            .waiting_permission => |s| self.toolLocatorMatches(s.part_id, s.tool_name, .waiting_permission),
-            .reasoning => |s| if (self.constPartAt(s.part_id)) |p| p.* == .reasoning else false,
-            .idle, .building, .running, .retrying, .compacting => true,
-        };
-    }
-
     /// Project the draft to a `wire.ActiveDraft` and share its part payloads.
     /// Encode the result before a change or deinit frees the draft.
     pub fn toActiveDraft(self: *const Draft, scratch: std.mem.Allocator) Error!message.ActiveDraft {
@@ -313,22 +302,6 @@ pub const Draft = struct {
         };
     }
 
-    fn toolLocatorMatches(self: *const Draft, part_id: ids.PartId, tool_name: []const u8, tag: std.meta.Tag(tool.ToolState)) bool {
-        const p = self.constPartAt(part_id) orelse return false;
-        return switch (p.*) {
-            .tool => |*t| std.mem.eql(u8, t.name, tool_name) and std.meta.activeTag(t.state) == tag,
-            else => false,
-        };
-    }
-
-    fn constPartAt(self: *const Draft, part_id: ids.PartId) ?*const Part {
-        const idx = std.math.cast(usize, part_id) orelse return null;
-        if (idx >= self.parts.items.len) return null;
-        const p = &self.parts.items[idx];
-        if (p.id() != part_id) return null;
-        return p;
-    }
-
     /// Resolve the append buffer for a stream text or reasoning part.
     fn streamBuffer(self: *Draft, part_id: ids.PartId) Error!*std.ArrayList(u8) {
         const part = try self.partAt(part_id);
@@ -360,11 +333,11 @@ pub const Draft = struct {
 
 /// Apply only a contiguous delta.
 /// Return `stale` for duplicates and `gap` for holes or cap overruns.
-fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes: []const u8, cap: ?usize) Error!DeltaOutcome {
+fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes: []const u8, cap: usize) Error!DeltaOutcome {
     const have = buf.items.len;
     if (offset > have) return .gap;
     if (offset < have) return .stale;
-    if (cap) |c| if (have > c or bytes.len > c - have) return .gap;
+    if (have > cap or bytes.len > cap - have) return .gap;
     try buf.appendSlice(gpa, bytes);
     return .applied;
 }
@@ -603,17 +576,6 @@ test "streaming state: trailing reasoning, else plain running" {
 
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } } });
     try testing.expect(d.deriveStreamingState(42) == .reasoning);
-}
-
-test "activityConsistent detects a drifted locator" {
-    var d = try Draft.init(testing.allocator, started("a"));
-    defer d.deinit();
-    try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 1 } }));
-
-    try testing.expect(d.activityConsistent(.{ .running_tool = .{ .run_id = 1, .message_id = 1, .part_id = 0, .tool_name = "bash", .started_at_ms = 1 } }));
-    try testing.expect(!d.activityConsistent(.{ .running_tool = .{ .run_id = 1, .message_id = 1, .part_id = 0, .tool_name = "python", .started_at_ms = 1 } }));
-    try testing.expect(!d.activityConsistent(.{ .reasoning = .{ .run_id = 1, .message_id = 1, .part_id = 0 } }));
-    try testing.expect(d.activityConsistent(.{ .idle = .{} }));
 }
 
 test "toActiveDraft then fromActiveDraft round-trips parts and streamed output" {

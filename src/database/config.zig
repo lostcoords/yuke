@@ -51,6 +51,23 @@ pub fn byRevision(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, c
     return .{ .config_rev = config_rev, .model = row.value.model, .reasoning = row.value.reasoning };
 }
 
+/// Append the config for a revision to `list` once. Fetch it from SQLite. A missing revision is corrupt.
+pub fn ensureRevision(db: *Database, arena: std.mem.Allocator, list: *std.ArrayList(wire.run.RunConfig), session_id: [16]u8, rev: u64) !void {
+    for (list.items) |c| if (c.config_rev == rev) return;
+    const config = (try byRevision(db, arena, session_id, rev)) orelse return error.CorruptLog;
+    try list.append(arena, config);
+}
+
+/// Return one config for each revision the assistant messages reference. The result borrows `arena`.
+pub fn forMessages(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
+    var list: std.ArrayList(wire.run.RunConfig) = .empty;
+    for (messages) |m| switch (m) {
+        .assistant => |a| try ensureRevision(db, arena, &list, session_id, a.config_rev),
+        else => {},
+    };
+    return list.items;
+}
+
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");

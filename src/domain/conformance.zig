@@ -137,7 +137,7 @@ fn compactionCommitted(seq: ids.Seq, message_id: ids.MessageId) BroadcastData {
 // The first half of the turn. It builds a rich draft with one part of every kind.
 // The durable sequence stays contiguous from 1.
 const turn_prefix = [_]BroadcastData{
-    // Two inputs queue before the run starts. The first input is canceled.
+    // Two inputs queue before the run starts. A cancel removes the first input.
     inputQueued(1, 100, "cancel me"),
     inputQueued(2, 101, "keep me"),
     inputCanceled(3, 100),

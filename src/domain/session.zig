@@ -247,7 +247,7 @@ pub const Session = struct {
             .gap => return .gap,
             .apply => {},
         }
-        // The daemon commits ids in increasing order. A stale id keeps the window oldest-first for trim.
+        // The daemon commits ids in order. A stale id keeps the window oldest-first for the trim.
         if (d.message.id() <= self.finalized_message_id) {
             std.debug.assert(mode == .checked);
             return error.Protocol;
@@ -515,7 +515,7 @@ test "a delta hole and a missing draft return a gap" {
 
     _ = try s.applyBroadcast(started(1));
     _ = try s.applyBroadcast(textPartAdded(1, 0));
-    // An offset past the buffer end is a gap; a stale offset is ignored.
+    // An offset past the buffer end is a gap. The fold ignores a stale offset.
     try testing.expectEqual(Applied.gap, try s.applyBroadcast(textDelta(1, 0, 5, "x")));
     _ = try s.applyBroadcast(textDelta(1, 0, 0, "ab"));
     try testing.expectEqual(Applied.ignored, try s.applyBroadcast(textDelta(1, 0, 0, "ab")));
