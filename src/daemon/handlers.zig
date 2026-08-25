@@ -8,6 +8,7 @@ const database = @import("../database/database.zig");
 const run = @import("../engine/run.zig");
 const run_task = @import("run_task.zig");
 const session_runtime = @import("session_runtime.zig");
+const domain_session = @import("../domain/session.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
@@ -75,7 +76,7 @@ fn sessionSelector(params: wire.session.SessionListParams) session_store.Selecto
 
 /// Map a durable session row to its origin. A row that breaks the schema invariants is corrupt. The
 /// boundary returns an error, so one request fails and the daemon stays alive.
-fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
+fn sessionOrigin(row: anytype) !wire.session.SessionOrigin {
     if (std.mem.eql(u8, row.origin, "root")) {
         if (row.parent_id != null or row.parent_message_id != null or row.parent_part_id != null or row.source_id != null)
             return error.CorruptDatabase;
@@ -98,7 +99,7 @@ fn sessionOrigin(row: session_store.PageRow) !wire.session.SessionOrigin {
     return error.CorruptDatabase;
 }
 
-fn sessionItem(arena: std.mem.Allocator, row: session_store.PageRow) !wire.session.SessionListItem {
+fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionListItem {
     const permission = std.meta.stringToEnum(wire.enums.PermissionMode, row.permission) orelse return error.CorruptDatabase;
 
     const created_by = if (row.created_by_name) |name| blk: {
@@ -238,6 +239,84 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
         .messages = page.messages,
         .configs = try gatherConfigs(state, arena, sid, page.messages),
         .has_more = page.has_more,
+    };
+}
+
+/// Handle session.resync: return the full session snapshot plus the live tail for a reconnect.
+/// A resident runtime serializes its live projection. An idle session hydrates a transient one.
+pub fn sessionResync(state: *State, arena: std.mem.Allocator, params: wire.session.SessionResyncParams) !wire.session.SessionResyncResult {
+    if (params.limit) |lim| {
+        if (lim == 0 or lim > wire.meta.limits.max_page_size) return error.BadRequest; // The daemon does not clamp.
+    }
+    const limit: usize = @intCast(params.limit orelse wire.meta.limits.default_page_size);
+    const sid = params.session_id.raw;
+    const snap = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
+
+    if (state.sessions.get(params.session_id)) |rt| {
+        const run_info: ?RunInfo = if (rt.active) |slot| .{ .run_id = slot.handle.run_id, .started_at_ms = slot.handle.started.started_at_ms } else null;
+        return serializeResync(state, arena, snap, &rt.session, run_info, limit);
+    }
+    // The session is idle. Hydrate a transient projection, serialize it, then release it.
+    var transient = domain_session.Session.init(state.gpa, params.session_id);
+    defer transient.deinit();
+    try state.hydrateSession(&transient);
+    return serializeResync(state, arena, snap, &transient, null, limit);
+}
+
+/// The active run identity for the resync activity state.
+const RunInfo = struct { run_id: wire.ids.RunId, started_at_ms: u64 };
+
+/// Serialize a session projection into the resync result. Deep-copy so a transient session can release.
+fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, session: *domain_session.Session, run_info: ?RunInfo, limit: usize) !wire.session.SessionResyncResult {
+    var item = try sessionItem(arena, snap);
+    item.activity.queued = session.queue.depth();
+
+    // Resolve the active draft config once. The cache may lack the current run's revision.
+    var active_config: ?wire.run.RunConfig = null;
+    if (session.active) |*d| {
+        const cached = session.configs.get(d.config_rev);
+        active_config = cached orelse (try config_store.byRevision(&state.db, arena, snap.id, d.config_rev)) orelse return error.CorruptLog;
+    }
+
+    // A draft reports the streaming state. A started run with no draft reports building. Idle reports idle.
+    if (session.active) |*d| {
+        std.debug.assert(run_info != null); // a live draft belongs to an active run
+        item.activity.state = try wire.dupe(arena, d.deriveStreamingState(run_info.?.started_at_ms));
+        item.activity.config = try wire.dupe(arena, active_config.?);
+    } else if (run_info) |r| {
+        item.activity.state = .{ .building = .{ .run_id = r.run_id, .started_at_ms = r.started_at_ms } };
+    } else {
+        item.activity.state = .{ .idle = .{} };
+    }
+
+    // The committed window returns its newest `limit` messages, oldest-first.
+    const all = try session.committed.messages(arena);
+    const start = if (all.len > limit) all.len - limit else 0;
+    const messages = try wire.dupe(arena, all[start..]);
+    const has_more = session.committed.has_more or start > 0;
+
+    // The result lists the window configs and the active draft config the cache lacked.
+    var configs: std.ArrayList(wire.run.RunConfig) = .empty;
+    for (try session.configs.values(arena)) |c| try configs.append(arena, try wire.dupe(arena, c));
+    if (session.active) |*d| if (session.configs.get(d.config_rev) == null) {
+        try configs.append(arena, try wire.dupe(arena, active_config.?));
+    };
+
+    const active: ?wire.message.ActiveDraft = if (session.active) |*d| try wire.dupe(arena, try d.toActiveDraft(arena)) else null;
+
+    const entries = session.queue.entries();
+    const queued = try arena.alloc(wire.misc.QueuedInput, entries.len);
+    for (entries, queued) |*e, *out| out.* = try wire.dupe(arena, wire.misc.QueuedInput{ .input_id = e.input_id, .content = e.content, .queued_at_ms = e.queued_at_ms });
+
+    return .{
+        .item = item,
+        .base_seq = session.base_seq,
+        .highest_finalized_message_id = session.committed.newestId(),
+        .messages = messages,
+        .has_more = has_more,
+        .configs = configs.items,
+        .active = active,
+        .queued = queued,
     };
 }
 

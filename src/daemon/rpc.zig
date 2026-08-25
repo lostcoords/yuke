@@ -119,12 +119,19 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_cancel_run_result = result } } };
         },
+        .@"session.resync" => {
+            const result = handlers.sessionResync(state, arena, request.params.session_resync_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.BadRequest => return errorResponse(request.id, .bad_request, "the resync limit is out of range"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .session_resync_result = result } } };
+        },
         .@"session.patch",
         .@"session.remove",
         .@"session.fork",
         .@"session.compact",
         .@"session.rewind",
-        .@"session.resync",
         .@"permission.decide",
         .@"catalog.list",
         .@"catalog.refresh",
@@ -888,6 +895,39 @@ fn assertDraftReachable(state: *State, sid: wire.ids.SessionId, entered: *zio.Re
     try launchUntilIdle(state, sid);
 }
 
+/// Resync during a parked run and assert the live draft is serialized. Then release the read.
+fn resyncWhileBlocked(state: *State, sid: wire.ids.SessionId, entered: *zio.ResetEvent, gate: *zio.ResetEvent) !void {
+    try entered.wait(); // The read parked. The run opened its draft.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try handlers.sessionResync(state, arena.allocator(), .{ .session_id = sid, .limit = null });
+    try std.testing.expect(result.active != null); // The live draft is present.
+    try std.testing.expect(result.item.activity.state != .idle); // A run streams.
+    gate.set(); // Let the read end so the run reaches its terminal state.
+    try launchUntilIdle(state, sid);
+}
+
+test "resync during a run serializes the live draft" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var interrupted = false;
+    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    fixture.state.transport = blocking.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-live", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var driver = try fixture.rt.spawn(resyncWhileBlocked, .{ &fixture.state, sid, &entered, &gate });
+    try driver.join();
+}
+
 test "the live draft is reachable from the runtime during a run" {
     var fixture = try TestState.init();
     defer fixture.deinit();
@@ -933,6 +973,73 @@ test "activation hydrates the committed window and the durable cursor" {
     try std.testing.expectEqual(hw.seq_high, rt.session.base_seq);
     try std.testing.expectEqual(@as(usize, 2), rt.session.committed.list.items.len);
     try std.testing.expect(rt.session.committed.newestId() != null);
+}
+
+test "resync of an idle session returns its committed window" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-idle", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    // The idle session was evicted. Resync hydrates a transient projection from SQLite.
+    try std.testing.expect(fixture.state.sessions.get(sid) == null);
+    const result = try handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = null });
+    try std.testing.expect(result.active == null);
+    try std.testing.expectEqual(@as(usize, 2), result.messages.len); // the user and the assistant message
+    try std.testing.expect(result.messages[0] == .user);
+    try std.testing.expectEqualStrings("hi", result.messages[0].user.content[0].text.text);
+    try std.testing.expect(result.messages[1] == .assistant);
+    try std.testing.expect(result.base_seq > 0);
+    try std.testing.expect(result.highest_finalized_message_id != null);
+    try std.testing.expect(!result.has_more);
+    try std.testing.expectEqual(@as(u64, 0), result.item.activity.queued);
+    try std.testing.expect(result.item.activity.state == .idle);
+}
+
+test "resync limits the window to the newest page" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-page", .model = "mock" });
+    const sid = created.session.id;
+    // Two turns commit four messages.
+    inline for (.{ "one", "two" }) |text| {
+        const content = [_]wire.content.ContentPart{.{ .text = .{ .text = text } }};
+        _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+        var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+        try launch.join();
+    }
+    const result = try handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = 2 });
+    try std.testing.expectEqual(@as(usize, 2), result.messages.len);
+    try std.testing.expect(result.has_more); // two older messages remain
+    try std.testing.expect(result.messages[0] == .user); // the newest page starts at the last user message
+    try std.testing.expectEqualStrings("two", result.messages[0].user.content[0].text.text);
+}
+
+test "resync validates the limit and the session id" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-bad", .model = "mock" });
+    const sid = created.session.id;
+    try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = 0 }));
+    try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = wire.meta.limits.max_page_size + 1 }));
+    const missing: wire.ids.SessionId = .bytes(@splat(9));
+    try std.testing.expectError(error.UnknownSession, handlers.sessionResync(&fixture.state, a, .{ .session_id = missing, .limit = null }));
 }
 
 // This reasoning turn has one thinking block, one signature, and a clean stop.

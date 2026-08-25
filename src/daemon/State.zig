@@ -7,6 +7,7 @@ const zqlite = @import("zqlite");
 const wire = @import("wire");
 const database = @import("../database/database.zig");
 const committed = @import("../domain/committed.zig");
+const domain_session = @import("../domain/session.zig");
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -62,24 +63,24 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
 pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.SessionRuntime {
     const rt = try self.sessions.getOrCreate(session_id);
     if (!rt.hydrated) {
-        try self.hydrate(rt);
+        try self.hydrateSession(&rt.session);
         rt.hydrated = true;
     }
     return rt;
 }
 
-/// Load the committed window, the configs, the durable cursors, and the pending inputs into a runtime.
+/// Load the committed window, the configs, the durable cursors, and the pending inputs into a session.
 /// SQLite stays authoritative. The daemon caches the recent tail so resync serializes the projection.
-fn hydrate(self: *State, rt: *session_runtime.SessionRuntime) !void {
+pub fn hydrateSession(self: *State, session: *domain_session.Session) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const sid = rt.session_id.raw;
+    const sid = session.id.raw;
     const hw = (try database.event.highWater(&self.db, a, sid)) orelse return; // No session row exists.
     const page = try database.message.historyPage(&self.db, a, sid, 0, committed.default_max_messages);
     const configs = try gatherWindowConfigs(self, a, sid, page.messages);
     const finalized: u64 = if (page.messages.len > 0) page.messages[page.messages.len - 1].id() else 0;
-    try rt.session.installSnapshot(.{
+    try session.installSnapshot(.{
         .base_seq = hw.seq_high,
         .finalized_message_id = finalized,
         .messages = page.messages,
@@ -89,7 +90,7 @@ fn hydrate(self: *State, rt: *session_runtime.SessionRuntime) !void {
     // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
     const pending = try database.input.list(&self.db, a, sid);
     for (pending) |entry| {
-        const applied = try rt.session.queue.onQueued(.{ .session_id = rt.session_id, .seq = entry.seq, .input = entry.input });
+        const applied = try session.queue.onQueued(.{ .session_id = session.id, .seq = entry.seq, .input = entry.input });
         std.debug.assert(applied == .changed);
     }
 }
