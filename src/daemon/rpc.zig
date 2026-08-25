@@ -210,10 +210,10 @@ const TestState = struct {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer rt.deinit();
         const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-        // A heap Connection keeps a stable channel address when the returned struct moves.
+        // A heap Connection keeps a stable queue address when the returned struct moves.
         const conn = try std.testing.allocator.create(connection.Connection);
         errdefer std.testing.allocator.destroy(conn);
-        conn.init(std.testing.allocator);
+        conn.init(std.testing.allocator, rt.io());
         errdefer conn.deinit();
         const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
         const db = try database.Database.open(sqlite);

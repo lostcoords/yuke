@@ -7,7 +7,9 @@ const wire = @import("wire");
 const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
 const State = @import("State.zig");
-const Connection = @import("connection.zig").Connection;
+const connection = @import("connection.zig");
+const Connection = connection.Connection;
+const OutboxItem = connection.OutboxItem;
 const run_task = @import("run_task.zig");
 
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
@@ -95,7 +97,7 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     try socket.output.flush();
 
     var conn: Connection = undefined;
-    conn.init(state.gpa);
+    conn.init(state.gpa, state.io);
     defer conn.deinit();
 
     var lifecycle: WebSocketLifecycle = .{};
@@ -151,7 +153,7 @@ fn readerTask(
     lifecycle: *WebSocketLifecycle,
 ) anyerror!void {
     defer {
-        conn.outbox.close(.graceful);
+        conn.close();
         lifecycle.close.set();
     }
     lifecycle.terminal_close_queued = try readerLoop(state, conn, input);
@@ -160,7 +162,7 @@ fn readerTask(
 /// Write queued WebSocket frames and signal teardown on exit.
 fn writerTask(conn: *Connection, output: *std.Io.Writer, lifecycle: *WebSocketLifecycle) void {
     defer {
-        conn.outbox.close(.graceful);
+        conn.close();
         lifecycle.close.set();
     }
     writerLoop(conn, output);
@@ -168,15 +170,26 @@ fn writerTask(conn: *Connection, output: *std.Io.Writer, lifecycle: *WebSocketLi
 
 /// Drain the outbox to socket.output. Stop after a terminal close frame. The task owns socket.output.
 fn writerLoop(conn: *Connection, output: *std.Io.Writer) void {
+    var pending: ?OutboxItem = null;
+    defer if (pending) |item| conn.gpa.free(item.bytes);
+
     while (true) {
-        const item = conn.outbox.receive() catch return; // closed and drained
+        const item = if (pending) |queued| blk: {
+            pending = null;
+            break :blk queued;
+        } else conn.outbox.getOne(conn.io) catch return; // closed and drained
         defer conn.gpa.free(item.bytes);
         // A stuck peer can block this write indefinitely. A proxy deadline or task cancel frees it.
         output.writeAll(item.bytes) catch return;
         output.flush() catch return;
         if (item.terminal) return;
-        // The outbox is empty. Send a resync marker for newly reported dropped deltas.
-        if (conn.outbox.isEmpty()) flushShedMarkers(conn, output) catch return;
+        // Prefetch one item to find the empty or closed boundary without a queue peek.
+        pending = conn.tryReceive() catch |err| {
+            std.debug.assert(err == error.Closed);
+            flushShedMarkers(conn, output) catch return;
+            return;
+        };
+        if (pending == null) flushShedMarkers(conn, output) catch return;
     }
 }
 
@@ -406,7 +419,7 @@ test "the user commit and run.started precede the send_input response" {
     defer state.deinit();
 
     var conn: Connection = undefined;
-    conn.init(testing.allocator);
+    conn.init(testing.allocator, rt.io());
     defer conn.deinit();
     try state.registry.register(&conn);
     defer state.registry.unregister(&conn);
@@ -435,7 +448,8 @@ test "the user commit and run.started precede the send_input response" {
     var saw_user_commit = false;
     var saw_run_started = false;
     var response_after_broadcasts = false;
-    while (conn.outbox.tryReceive()) |item| {
+    while (true) {
+        const item = (try conn.tryReceive()) orelse break;
         defer testing.allocator.free(item.bytes);
         if (std.mem.indexOf(u8, item.bytes, "\"id\":\"request-1\"") != null) {
             try testing.expect(saw_user_commit and saw_run_started); // The broadcasts precede the response.
@@ -446,7 +460,7 @@ test "the user commit and run.started precede the send_input response" {
         } else if (std.mem.indexOf(u8, item.bytes, "message.committed") != null and std.mem.indexOf(u8, item.bytes, "\"type\":\"user\"") != null) {
             saw_user_commit = true;
         }
-    } else |_| {}
+    }
     try testing.expect(saw_user_commit and saw_run_started and response_after_broadcasts);
 }
 
@@ -459,7 +473,7 @@ test "a queued drain publishes its commits and run.started before a send_input e
     defer state.deinit();
 
     var conn: Connection = undefined;
-    conn.init(testing.allocator);
+    conn.init(testing.allocator, rt.io());
     defer conn.deinit();
     try state.registry.register(&conn);
     defer state.registry.unregister(&conn);
@@ -495,21 +509,21 @@ test "a queued drain publishes its commits and run.started before a send_input e
     {
         const first_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old.input.input_id});
         const second_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old2.input.input_id});
-        const first = try conn.outbox.tryReceive();
+        const first = (try conn.tryReceive()).?;
         defer testing.allocator.free(first.bytes);
         try testing.expect(std.mem.indexOf(u8, first.bytes, "message.committed") != null and std.mem.indexOf(u8, first.bytes, first_id) != null);
-        const second = try conn.outbox.tryReceive();
+        const second = (try conn.tryReceive()).?;
         defer testing.allocator.free(second.bytes);
         try testing.expect(std.mem.indexOf(u8, second.bytes, "message.committed") != null and std.mem.indexOf(u8, second.bytes, second_id) != null);
-        const started = try conn.outbox.tryReceive();
+        const started = (try conn.tryReceive()).?;
         defer testing.allocator.free(started.bytes);
         try testing.expect(std.mem.indexOf(u8, started.bytes, "\"method\":\"run.started\"") != null);
     }
-    try testing.expectError(error.ChannelEmpty, conn.outbox.tryReceive());
+    try testing.expect((try conn.tryReceive()) == null);
 
     var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
     try launch.join();
-    const response_item = try conn.outbox.tryReceive();
+    const response_item = (try conn.tryReceive()).?;
     defer testing.allocator.free(response_item.bytes);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-error\"") != null);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"error\"") != null);

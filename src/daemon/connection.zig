@@ -2,7 +2,6 @@
 //! A reader task enqueues pre-framed WS bytes. The registry routes a session broadcast to every subscribed connection.
 
 const std = @import("std");
-const zio = @import("zio");
 const wire = @import("wire");
 const wss = @import("websocket").server;
 const ids = wire.ids;
@@ -43,19 +42,20 @@ const ShedState = struct {
 
 pub const Connection = struct {
     gpa: std.mem.Allocator,
+    io: std.Io,
     id: u64 = 0, // The registry assigns a nonzero id. Zero means unregistered.
     closing: bool = false, // A must-deliver overflow forces a close. The publish step skips this connection.
     teardown_context: ?*anyopaque = null,
     teardown_callback: ?*const fn (*anyopaque) void = null,
     buffer: [outbox_capacity]OutboxItem = undefined,
-    outbox: zio.Channel(OutboxItem) = undefined,
+    outbox: std.Io.Queue(OutboxItem) = undefined,
     subscribed: std.AutoHashMapUnmanaged(ids.SessionId, void) = .empty, // The sessions that this connection follows.
     shed: std.AutoHashMapUnmanaged(ids.SessionId, ShedState) = .empty, // The sessions with dropped deltas.
 
-    /// Initialize in place. The channel borrows `buffer`, so the Connection address must stay stable.
-    pub fn init(self: *Connection, gpa: std.mem.Allocator) void {
-        self.* = .{ .gpa = gpa };
-        self.outbox = zio.Channel(OutboxItem).init(self.buffer[0..]);
+    /// Initialize in place. The queue borrows `buffer`, so the Connection address must stay stable.
+    pub fn init(self: *Connection, gpa: std.mem.Allocator, io: std.Io) void {
+        self.* = .{ .gpa = gpa, .io = io };
+        self.outbox = std.Io.Queue(OutboxItem).init(self.buffer[0..]);
     }
 
     /// Register the callback that wakes the WebSocket supervisor. The callback must return at once.
@@ -72,7 +72,7 @@ pub const Connection = struct {
 
     /// Hand owned frame bytes to the writer. Free them when the outbox no longer accepts them.
     pub fn send(self: *Connection, item: OutboxItem) !void {
-        self.outbox.send(item) catch |err| {
+        self.outbox.putOne(self.io, item) catch |err| {
             self.gpa.free(item.bytes);
             return err;
         };
@@ -80,22 +80,44 @@ pub const Connection = struct {
 
     /// Try to enqueue owned bytes immediately. Return false and free them when the outbox is full.
     pub fn tryEnqueue(self: *Connection, item: OutboxItem) bool {
-        self.outbox.trySend(item) catch {
+        const n = self.outbox.putUncancelable(self.io, &.{item}, 0) catch {
             self.gpa.free(item.bytes);
             return false;
         };
-        return true;
+        std.debug.assert(n <= 1);
+        if (n == 1) return true;
+        self.gpa.free(item.bytes);
+        return false;
     }
 
     /// Drain and free every unsent frame, then close the outbox. Call after the writer joins.
     pub fn deinit(self: *Connection) void {
-        while (self.outbox.tryReceive()) |item| {
-            self.gpa.free(item.bytes);
-        } else |_| {}
-        self.outbox.close(.graceful);
+        while (true) {
+            const item = self.tryReceive() catch |err| {
+                std.debug.assert(err == error.Closed);
+                break;
+            };
+            const queued = item orelse break;
+            self.gpa.free(queued.bytes);
+        }
+        self.close();
         self.clearTeardown();
         self.subscribed.deinit(self.gpa);
         self.shed.deinit(self.gpa);
+    }
+
+    /// Try to receive one item without blocking. Null means the open queue is empty.
+    pub fn tryReceive(self: *Connection) error{Closed}!?OutboxItem {
+        var item: [1]OutboxItem = undefined;
+        const n = try self.outbox.getUncancelable(self.io, &item, 0);
+        if (n == 0) return null;
+        std.debug.assert(n == 1);
+        return item[0];
+    }
+
+    /// Close the outbox and let the writer drain its buffered items.
+    pub fn close(self: *Connection) void {
+        self.outbox.close(self.io);
     }
 
     /// Record one dropped delta for a session. Return false when the connection lacks shed capacity.
@@ -235,7 +257,7 @@ pub const Registry = struct {
     fn beginClose(conn: *Connection) void {
         if (conn.closing) return;
         conn.closing = true;
-        conn.outbox.close(.graceful);
+        conn.close();
         if (conn.teardown_callback) |callback| callback(conn.teardown_context.?);
     }
 
@@ -279,10 +301,10 @@ test "registry routes a broadcast only to subscribers" {
     defer registry.deinit();
 
     var a: Connection = undefined;
-    a.init(testing.allocator);
+    a.init(testing.allocator, testing.io);
     defer a.deinit();
     var b: Connection = undefined;
-    b.init(testing.allocator);
+    b.init(testing.allocator, testing.io);
     defer b.deinit();
     try registry.register(&a);
     try registry.register(&b);
@@ -293,15 +315,15 @@ test "registry routes a broadcast only to subscribers" {
 
     registry.publish(sid, "hello", .must_deliver);
     // Only connection a follows the session, so its outbox holds the frame.
-    const item_a = try a.outbox.tryReceive();
+    const item_a = (try a.tryReceive()).?;
     defer testing.allocator.free(item_a.bytes);
     try testing.expectEqualStrings("hello", item_a.bytes);
-    try testing.expectError(error.ChannelEmpty, b.outbox.tryReceive());
+    try testing.expect((try b.tryReceive()) == null);
 
     // Unregister removes connection a from the index, so a later publish reaches an empty subscriber set.
     registry.unregister(&a);
     registry.publish(sid, "again", .must_deliver);
-    try testing.expectError(error.ChannelEmpty, a.outbox.tryReceive());
+    try testing.expect((try a.tryReceive()) == null);
 }
 
 test "setSubscriptions replaces the previous set" {
@@ -309,7 +331,7 @@ test "setSubscriptions replaces the previous set" {
     defer registry.deinit();
 
     var c: Connection = undefined;
-    c.init(testing.allocator);
+    c.init(testing.allocator, testing.io);
     defer c.deinit();
     try registry.register(&c);
 
@@ -329,14 +351,15 @@ test "setSubscriptions replaces the previous set" {
     try c.drainShedMarkers(&markers.writer);
     try testing.expectEqual(@as(usize, 0), markers.written().len);
 
-    while (c.outbox.tryReceive()) |queued| {
+    while (true) {
+        const queued = (try c.tryReceive()) orelse break;
         testing.allocator.free(queued.bytes);
-    } else |_| {}
+    }
 
     registry.publish(one, "x", .must_deliver);
-    try testing.expectError(error.ChannelEmpty, c.outbox.tryReceive());
+    try testing.expect((try c.tryReceive()) == null);
     registry.publish(two, "y", .must_deliver);
-    const item = try c.outbox.tryReceive();
+    const item = (try c.tryReceive()).?;
     defer testing.allocator.free(item.bytes);
     try testing.expectEqualStrings("y", item.bytes);
 }
@@ -346,7 +369,7 @@ test "setSubscriptions rejects an oversized set and keeps the previous one" {
     defer registry.deinit();
 
     var c: Connection = undefined;
-    c.init(testing.allocator);
+    c.init(testing.allocator, testing.io);
     defer c.deinit();
     try registry.register(&c);
 
@@ -359,15 +382,15 @@ test "setSubscriptions rejects an oversized set and keeps the previous one" {
     try testing.expectError(error.TooManySubscriptions, registry.setSubscriptions(&c, &many));
 
     registry.publish(keep, "y", .must_deliver);
-    const item = try c.outbox.tryReceive();
+    const item = (try c.tryReceive()).?;
     defer testing.allocator.free(item.bytes);
     try testing.expectEqualStrings("y", item.bytes);
 }
 
 fn fillOutbox(conn: *Connection) !void {
-    while (!conn.outbox.isFull()) {
+    while (true) {
         const b = try testing.allocator.dupe(u8, "x");
-        try testing.expect(conn.tryEnqueue(.{ .bytes = b }));
+        if (!conn.tryEnqueue(.{ .bytes = b })) break;
     }
 }
 
@@ -380,7 +403,7 @@ test "a must-deliver overflow closes the connection" {
     var registry = Registry.init(testing.allocator);
     defer registry.deinit();
     var c: Connection = undefined;
-    c.init(testing.allocator);
+    c.init(testing.allocator, testing.io);
     defer c.deinit();
     try registry.register(&c);
     var teardown = false;
@@ -397,7 +420,7 @@ test "a must-deliver overflow closes the connection" {
 
 test "a terminal close aborts without waiting on a full outbox" {
     var c: Connection = undefined;
-    c.init(testing.allocator);
+    c.init(testing.allocator, testing.io);
     defer c.deinit();
 
     try fillOutbox(&c);
@@ -405,11 +428,29 @@ test "a terminal close aborts without waiting on a full outbox" {
     try testing.expect(!c.tryEnqueue(.{ .bytes = bytes, .terminal = true }));
 }
 
+test "a closed outbox drains its buffered items before it reports closed" {
+    var c: Connection = undefined;
+    c.init(testing.allocator, testing.io);
+    defer c.deinit();
+
+    try c.send(.{ .bytes = try testing.allocator.dupe(u8, "one") });
+    try c.send(.{ .bytes = try testing.allocator.dupe(u8, "two") });
+    c.close();
+
+    const one = (try c.tryReceive()).?;
+    defer testing.allocator.free(one.bytes);
+    try testing.expectEqualStrings("one", one.bytes);
+    const two = (try c.tryReceive()).?;
+    defer testing.allocator.free(two.bytes);
+    try testing.expectEqualStrings("two", two.bytes);
+    try testing.expectError(error.Closed, c.tryReceive());
+}
+
 test "a shed-able overflow drops the delta; the writer drains a resync marker" {
     var registry = Registry.init(testing.allocator);
     defer registry.deinit();
     var c: Connection = undefined;
-    c.init(testing.allocator);
+    c.init(testing.allocator, testing.io);
     defer c.deinit();
     try registry.register(&c);
     const sid: ids.SessionId = .bytes([_]u8{4} ** 16);
