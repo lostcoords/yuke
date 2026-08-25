@@ -270,7 +270,7 @@ pub const Reducer = struct {
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
         const status = json.childStr(response, "status") orelse return error.Protocol;
         if (!std.mem.eql(u8, status, "completed")) return error.Protocol;
-        self.recordUsage(response);
+        try self.recordUsage(response);
         self.stop_reason = .stop;
         try self.setRawStopReason("completed");
         try self.emitDone(out);
@@ -279,7 +279,7 @@ pub const Reducer = struct {
     fn onIncomplete(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         if (self.done_emitted) return error.Protocol;
         const response = json.fieldObj(root, "response") orelse return error.Protocol;
-        self.recordUsage(response);
+        try self.recordUsage(response);
 
         var reason: []const u8 = "incomplete";
         if (response.get("incomplete_details")) |details_value| {
@@ -299,16 +299,16 @@ pub const Reducer = struct {
         try self.emitDone(out);
     }
 
-    fn recordUsage(self: *Reducer, response: std.json.ObjectMap) void {
+    fn recordUsage(self: *Reducer, response: std.json.ObjectMap) Error!void {
         const usage = json.childObj(response, "usage") orelse return;
-        self.usage.input = json.countOf(usage, "input_tokens");
-        self.usage.output = json.countOf(usage, "output_tokens");
+        self.usage.input = try json.countOf(usage, "input_tokens");
+        self.usage.output = try json.countOf(usage, "output_tokens");
         if (json.childObj(usage, "input_tokens_details")) |details| {
-            self.usage.cache_read = json.countOf(details, "cached_tokens");
-            self.usage.cache_write = json.countOf(details, "cache_write_tokens");
+            self.usage.cache_read = try json.countOf(details, "cached_tokens");
+            self.usage.cache_write = try json.countOf(details, "cache_write_tokens");
         }
         if (json.childObj(usage, "output_tokens_details")) |details| {
-            self.usage.reasoning = json.countOf(details, "reasoning_tokens");
+            self.usage.reasoning = try json.countOf(details, "reasoning_tokens");
         }
     }
 

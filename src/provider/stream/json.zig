@@ -51,10 +51,13 @@ pub fn childStr(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
-pub fn countOf(o: std.json.ObjectMap, key: []const u8) u64 {
-    const n = switch (o.get(key) orelse return 0) {
-        .integer => |n| n,
-        else => return 0,
+/// Read a token count. An absent key is zero. A non-integer or negative value is malformed.
+/// A value above i64 max arrives as a number string, so parse the full u64 range.
+pub fn countOf(o: std.json.ObjectMap, key: []const u8) error{Protocol}!u64 {
+    const value = o.get(key) orelse return 0;
+    return switch (value) {
+        .integer => |n| std.math.cast(u64, n) orelse error.Protocol,
+        .number_string => |s| std.fmt.parseInt(u64, s, 10) catch error.Protocol,
+        else => error.Protocol,
     };
-    return std.math.cast(u64, n) orelse 0;
 }

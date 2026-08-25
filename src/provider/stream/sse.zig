@@ -1,7 +1,7 @@
 //! The SSE framer converts raw bytes into `data` payloads. A blank line emits a payload.
 //! It joins `data:` fields with a newline and ignores `event:` because providers encode the type in JSON.
 //!
-//! Line endings are LF and CRLF. A lone CR is data. Our providers never send a lone-CR ending.
+//! Line endings are LF, CRLF, and a lone CR, per the SSE specification.
 
 const std = @import("std");
 
@@ -19,6 +19,8 @@ pub const Sse = struct {
     data_seen: bool = false,
     /// True before the first complete line. The first line may start with a BOM.
     at_start: bool = true,
+    /// True when the previous byte was a CR. A following LF completes the CRLF ending.
+    saw_cr: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Sse {
         return .{ .gpa = gpa };
@@ -38,12 +40,22 @@ pub const Sse = struct {
         out: *std.ArrayList([]const u8),
     ) Error!void {
         for (bytes) |b| {
-            if (b == '\n') {
-                try self.completeLine(arena, out);
-            } else {
-                if (self.line.items.len >= max_bytes) return error.LineTooLong;
-                try self.line.append(self.gpa, b);
-                std.debug.assert(self.line.items.len <= max_bytes);
+            // A CR ends a line. A following LF is the second half of a CRLF ending.
+            if (self.saw_cr) {
+                self.saw_cr = false;
+                if (b == '\n') continue;
+            }
+            switch (b) {
+                '\r' => {
+                    self.saw_cr = true;
+                    try self.completeLine(arena, out);
+                },
+                '\n' => try self.completeLine(arena, out),
+                else => {
+                    if (self.line.items.len >= max_bytes) return error.LineTooLong;
+                    try self.line.append(self.gpa, b);
+                    std.debug.assert(self.line.items.len <= max_bytes);
+                },
             }
         }
     }
@@ -63,7 +75,6 @@ pub const Sse = struct {
         out: *std.ArrayList([]const u8),
     ) Error!void {
         var line: []const u8 = self.line.items;
-        if (line.len != 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
         if (self.at_start and std.mem.startsWith(u8, line, "\xEF\xBB\xBF")) line = line[3..];
         self.at_start = false;
 
@@ -146,6 +157,23 @@ test "split at every byte boundary, including CRLF" {
     try testing.expectEqual(@as(usize, 2), events.len);
     try testing.expectEqualStrings("{\"x\":1}", events[0]);
     try testing.expectEqualStrings("{\"y\":2}", events[1]);
+}
+
+test "a lone CR ends a line" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const events = try frame(&.{"data: {\"x\":1}\r\rdata: {\"y\":2}\r\r"}, arena.allocator());
+    try testing.expectEqual(@as(usize, 2), events.len);
+    try testing.expectEqualStrings("{\"x\":1}", events[0]);
+    try testing.expectEqualStrings("{\"y\":2}", events[1]);
+}
+
+test "a CR and LF split across pushes is one ending" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const events = try frame(&.{ "data: hi\r", "\n\r\n" }, arena.allocator());
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqualStrings("hi", events[0]);
 }
 
 test "multi-line data concatenates with newline" {

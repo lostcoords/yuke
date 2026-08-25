@@ -97,9 +97,9 @@ pub const Reducer = struct {
         if (self.started) return error.Protocol; // one message_start per stream
         self.started = true;
         const usage = json.fieldObj(json.fieldGet(root, "message") orelse return, "usage") orelse return;
-        self.usage.input = json.countOf(usage, "input_tokens");
-        self.usage.cache_read = json.countOf(usage, "cache_read_input_tokens");
-        self.usage.cache_write = json.countOf(usage, "cache_creation_input_tokens");
+        self.usage.input = try json.countOf(usage, "input_tokens");
+        self.usage.cache_read = try json.countOf(usage, "cache_read_input_tokens");
+        self.usage.cache_write = try json.countOf(usage, "cache_creation_input_tokens");
     }
 
     fn onBlockStart(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -203,14 +203,15 @@ pub const Reducer = struct {
         }
         // The final message_delta breaks out the thinking tokens as a subset of output_tokens.
         if (json.fieldObj(root, "usage")) |usage| {
-            self.usage.output = json.countOf(usage, "output_tokens");
-            if (json.childObj(usage, "output_tokens_details")) |d| self.usage.reasoning = json.countOf(d, "thinking_tokens");
+            self.usage.output = try json.countOf(usage, "output_tokens");
+            if (json.childObj(usage, "output_tokens_details")) |d| self.usage.reasoning = try json.countOf(d, "thinking_tokens");
         }
     }
 
     fn onMessageStop(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
         if (!self.started) return error.Protocol; // message_stop needs a prior message_start
         if (self.done_emitted) return error.Protocol;
+        for (self.blocks.items) |b| if (b.open and !b.ignored) return error.Protocol; // an emitted block closes before done
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
             .stop_reason = self.stop_reason,
@@ -448,6 +449,26 @@ test "a dropped leading block keeps the neutral ids dense from zero" {
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[1].text_delta.block);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
     try testing.expect(h.out.items[3] == .done);
+}
+
+test "message_stop with an open emitted block is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":1}}}
+        ,
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        ,
+        \\{"type":"message_stop"}
+    }));
+}
+
+test "a non-integer usage value is rejected" {
+    var h = Harness.init();
+    defer h.deinit();
+    try testing.expectError(error.Protocol, h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":"nope"}}}
+    }));
 }
 
 fn decodeAll(gpa: std.mem.Allocator, events: []const []const u8) !void {

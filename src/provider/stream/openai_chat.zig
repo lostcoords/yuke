@@ -163,10 +163,10 @@ pub const Reducer = struct {
 
     fn onUsage(self: *Reducer, root: std.json.Value) Error!void {
         const usage = json.fieldObj(root, "usage") orelse return;
-        self.usage.input = json.countOf(usage, "prompt_tokens");
-        self.usage.output = json.countOf(usage, "completion_tokens");
-        if (json.childObj(usage, "prompt_tokens_details")) |d| self.usage.cache_read = json.countOf(d, "cached_tokens");
-        if (json.childObj(usage, "completion_tokens_details")) |d| self.usage.reasoning = json.countOf(d, "reasoning_tokens");
+        self.usage.input = try json.countOf(usage, "prompt_tokens");
+        self.usage.output = try json.countOf(usage, "completion_tokens");
+        if (json.childObj(usage, "prompt_tokens_details")) |d| self.usage.cache_read = try json.countOf(d, "cached_tokens");
+        if (json.childObj(usage, "completion_tokens_details")) |d| self.usage.reasoning = try json.countOf(d, "reasoning_tokens");
     }
 
     fn startBlock(
