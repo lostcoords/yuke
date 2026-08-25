@@ -877,6 +877,41 @@ test "cancel run interrupts a blocked provider read" {
     try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
 }
 
+/// Assert the live draft is reachable from the runtime while a run streams. Then release the read.
+fn assertDraftReachable(state: *State, sid: wire.ids.SessionId, entered: *zio.ResetEvent, gate: *zio.ResetEvent) !void {
+    try entered.wait(); // The read parked. The run opened its draft.
+    const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+    try std.testing.expect(rt.active != null);
+    try std.testing.expect(rt.session.active != null);
+    try std.testing.expectEqual(rt.active.?.handle.assistant_message_id, rt.session.active.?.message_id);
+    gate.set(); // Let the read end so the run reaches its terminal state.
+    try launchUntilIdle(state, sid);
+}
+
+test "the live draft is reachable from the runtime during a run" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var interrupted = false;
+    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    fixture.state.transport = blocking.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/reach", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    // A driver inspects the runtime while the run parks in the provider read.
+    // The driver holds the reachability assertions. The leak check proves the draft is freed once.
+    var driver = try fixture.rt.spawn(assertDraftReachable, .{ &fixture.state, sid, &entered, &gate });
+    try driver.join();
+}
+
 /// This transport records the request and replays a fixed Anthropic reply.
 const CaptureTransport = struct {
     gpa: std.mem.Allocator,

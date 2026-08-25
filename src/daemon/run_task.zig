@@ -66,6 +66,9 @@ fn runSession(state: *State, slot: *RunSlot) void {
     const session_id = slot.handle.started.session_id;
     defer finishSlot(state, session_id, slot);
 
+    const rt = state.sessions.get(session_id) orelse unreachable;
+    std.debug.assert(rt.active == slot);
+
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -79,19 +82,26 @@ fn runSession(state: *State, slot: *RunSlot) void {
         .created_at_ms = created_at,
     };
 
-    var live = draft.Draft.init(state.gpa, started) catch |err| {
+    // The session owns the live draft. A synchronous resync can read it from the runtime.
+    std.debug.assert(rt.session.active == null); // one draft per session at a time
+    rt.session.active = draft.Draft.init(state.gpa, started) catch |err| {
         terminalize(state, arena, slot, created_at, null, null, .{ .failed = failure(err) }) catch |terminal_err| {
             faultSlot(state, session_id, slot, terminal_err);
         };
         return;
     };
-    defer live.deinit();
+    // Clear the draft before finishSlot drains a queued run. A later commit fold may null it first.
+    defer if (rt.session.active != null) {
+        rt.session.active.?.deinit();
+        rt.session.active = null;
+    };
+    const live = &rt.session.active.?;
     var streamer: Streamer = .{
         .state = state,
         .slot = slot,
         .session_id = session_id,
         .message_id = slot.handle.assistant_message_id,
-        .live = &live,
+        .live = live,
     };
     defer streamer.offsets.deinit(state.gpa);
     publishBestEffort(state, session_id, .{ .method = .@"message.started", .params = .{ .message_started_data = started } });
@@ -124,7 +134,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
         }
     };
 
-    terminalize(state, arena, slot, created_at, &live, streamer.usage, terminal) catch |err| {
+    terminalize(state, arena, slot, created_at, live, streamer.usage, terminal) catch |err| {
         faultSlot(state, session_id, slot, err);
     };
 }
