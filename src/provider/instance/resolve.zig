@@ -16,9 +16,10 @@ const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
     .@"openai-responses" = "/responses",
 });
 
-/// Builds the full URL in `gpa`.
+/// Builds the full URL in `gpa`. A trailing slash on the base gives one separator, not two.
 pub fn endpointUrl(gpa: std.mem.Allocator, p: ProviderInstance) std.mem.Allocator.Error![]u8 {
-    return std.mem.concat(gpa, u8, &.{ p.base_url, protocol_path.get(p.protocol) });
+    const base = std.mem.trimEnd(u8, p.base_url, "/");
+    return std.mem.concat(gpa, u8, &.{ base, protocol_path.get(p.protocol) });
 }
 
 /// Holds a credential from the configured source.
@@ -95,6 +96,17 @@ test "endpoint url appends the protocol path" {
     const url = try endpointUrl(testing.allocator, .{
         .id = "x",
         .base_url = "https://api.anthropic.com/v1",
+        .protocol = .@"anthropic-messages",
+        .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
+    });
+    defer testing.allocator.free(url);
+    try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
+}
+
+test "endpoint url collapses a trailing slash on the base" {
+    const url = try endpointUrl(testing.allocator, .{
+        .id = "x",
+        .base_url = "https://api.anthropic.com/v1/",
         .protocol = .@"anthropic-messages",
         .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
     });
