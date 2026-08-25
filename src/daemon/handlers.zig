@@ -295,12 +295,14 @@ fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, sessi
     const messages = try wire.dupe(arena, all[start..]);
     const has_more = session.committed.has_more or start > 0;
 
-    // The result lists the window configs and the active draft config the cache lacked.
+    // Gather a config for every assistant message in the window, plus the active draft, from SQLite.
+    // The live config set only tracks config.changed events, so it can miss a live commit.
     var configs: std.ArrayList(wire.run.RunConfig) = .empty;
-    for (try session.configs.values(arena)) |c| try configs.append(arena, try wire.dupe(arena, c));
-    if (session.active) |*d| if (session.configs.get(d.config_rev) == null) {
-        try configs.append(arena, try wire.dupe(arena, active_config.?));
+    for (messages) |m| switch (m) {
+        .assistant => |asst| try appendConfigOnce(state, arena, &configs, snap.id, asst.config_rev),
+        else => {},
     };
+    if (session.active) |*d| try appendConfigOnce(state, arena, &configs, snap.id, d.config_rev);
 
     const active: ?wire.message.ActiveDraft = if (session.active) |*d| try wire.dupe(arena, try d.toActiveDraft(arena)) else null;
 
@@ -311,13 +313,26 @@ fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, sessi
     return .{
         .item = item,
         .base_seq = session.base_seq,
-        .highest_finalized_message_id = session.committed.newestId(),
+        .highest_finalized_message_id = finalizedHighWater(session),
         .messages = messages,
         .has_more = has_more,
         .configs = configs.items,
         .active = active,
         .queued = queued,
     };
+}
+
+/// Return the finalized high-water for resync, or null for a session with no finalized message.
+/// A truncation or a discard can raise this above the newest committed id.
+fn finalizedHighWater(session: *domain_session.Session) ?wire.ids.MessageId {
+    return if (session.finalized_message_id == 0) null else session.finalized_message_id;
+}
+
+/// Append the config for a revision once. Fetch it from SQLite. A missing revision is a corrupt log.
+fn appendConfigOnce(state: *State, arena: std.mem.Allocator, configs: *std.ArrayList(wire.run.RunConfig), session_id: [16]u8, rev: wire.ids.ConfigRev) !void {
+    for (configs.items) |c| if (c.config_rev == rev) return;
+    const cfg = (try config_store.byRevision(&state.db, arena, session_id, rev)) orelse return error.CorruptLog;
+    try configs.append(arena, cfg);
 }
 
 /// Accept input for an RPC and return its prepared run to the response gate.

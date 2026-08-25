@@ -27,6 +27,24 @@ providers: ?provider.config.Loaded = null, // The daemon owns the loaded provide
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
 run_group: zio.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
+broadcast_tap: ?*BroadcastTap = null, // A conformance test records the published broadcasts here.
+
+/// A test hook. It records each published broadcast, so a conformance test refolds the daemon output.
+pub const BroadcastTap = struct {
+    arena: std.heap.ArenaAllocator,
+    events: std.ArrayList(wire.rpc.BroadcastData) = .empty,
+
+    pub fn init(gpa: std.mem.Allocator) BroadcastTap {
+        return .{ .arena = std.heap.ArenaAllocator.init(gpa) };
+    }
+    pub fn deinit(self: *BroadcastTap) void {
+        self.arena.deinit();
+    }
+    pub fn record(self: *BroadcastTap, params: wire.rpc.BroadcastData) !void {
+        const a = self.arena.allocator();
+        try self.events.append(a, try wire.dupe(a, params));
+    }
+};
 
 /// The daemon uses this configuration directly for now.
 pub const Config = struct {

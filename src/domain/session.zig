@@ -68,6 +68,24 @@ pub const Session = struct {
         self.finalized_message_id = snap.finalized_message_id;
     }
 
+    /// Install a resync snapshot into a fresh client session. Seed the window, the draft, and the queue.
+    /// The config set holds the window configs from the snapshot; a live fold cannot rebuild them.
+    pub fn installResync(self: *Session, r: wire.session.SessionResyncResult) Error!void {
+        if (!std.meta.eql(r.item.session.id, self.id)) return error.Protocol; // a snapshot for another session
+        try self.installSnapshot(.{
+            .base_seq = r.base_seq,
+            .finalized_message_id = r.highest_finalized_message_id orelse 0,
+            .messages = r.messages,
+            .configs = r.configs,
+            .has_more = r.has_more,
+        });
+        if (r.active) |ad| self.active = Draft.fromActiveDraft(self.gpa, ad) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.Protocol,
+        };
+        for (r.queued) |qi| _ = try self.queue.onQueued(.{ .session_id = self.id, .seq = 0, .input = qi });
+    }
+
     /// Client fold. Validate the durable seq and the part offsets. Return `gap` when the client
     /// missed an event. Malformed peer input returns `error.Protocol`.
     pub fn applyBroadcast(self: *Session, bc: BroadcastData) Error!Applied {
@@ -380,6 +398,7 @@ fn draftJson(scratch: std.mem.Allocator, d: *const Draft) Error![]u8 {
     return jsonOf(scratch, ad);
 }
 
+// The window byte total and the bounds derive from the messages, so this comparison omits them.
 fn windowEql(scratch: std.mem.Allocator, a: *const Window, b: *const Window) Error!bool {
     if (a.list.items.len != b.list.items.len or a.has_more != b.has_more) return false;
     for (a.list.items, b.list.items) |*ia, *ib| {

@@ -198,6 +198,7 @@ const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
 const provider = @import("../provider/provider.zig");
+const domain_session = @import("../domain/session.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -1076,6 +1077,132 @@ test "a reasoning block stop finalizes the signature into the committed message"
     try std.testing.expect(parts[0] == .reasoning);
     try std.testing.expectEqualStrings("because", parts[0].reasoning.text);
     try std.testing.expectEqualStrings("sig", parts[0].reasoning.signature); // The finalization event folded the signature.
+}
+
+// A prefix with three events: a message start, a text block, and one text delta. No stop event.
+const stream_prefix =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n";
+
+/// A transport that streams a prefix, then parks until the gate opens. The run holds a live draft.
+const StreamThenParkTransport = struct {
+    prefix: []const u8,
+    entered: *zio.ResetEvent,
+    gate: *zio.ResetEvent,
+
+    fn transportFor(self: *StreamThenParkTransport) transport.Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+    const vtable: transport.Transport.VTable = .{ .open = open };
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+        _ = request;
+        const self: *StreamThenParkTransport = @ptrCast(@alignCast(ctx));
+        const reader = try arena.create(Reader);
+        reader.* = .{ .prefix = self.prefix, .entered = self.entered, .gate = self.gate };
+        return .{ .ctx = reader, .vtable = &Reader.vtable };
+    }
+    const Reader = struct {
+        prefix: []const u8,
+        entered: *zio.ResetEvent,
+        gate: *zio.ResetEvent,
+        offset: usize = 0,
+        const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
+        fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+            const self: *Reader = @ptrCast(@alignCast(ctx));
+            if (self.offset < self.prefix.len) {
+                const n = @min(buf.len, self.prefix.len - self.offset);
+                @memcpy(buf[0..n], self.prefix[self.offset..][0..n]);
+                self.offset += n;
+                return n;
+            }
+            self.entered.set(); // The prefix streamed. The run holds a live draft now.
+            try self.gate.wait();
+            return 0; // EOF ends the stream after the test inspects the projection.
+        }
+        fn deinitNoop(_: *anyopaque) void {}
+    };
+};
+
+/// Fold the daemon's published broadcasts into a fresh client. Assert it matches the daemon session.
+fn conformAtPark(state: *State, sid: wire.ids.SessionId, entered: *zio.ResetEvent, gate: *zio.ResetEvent, tap: *State.BroadcastTap) !void {
+    try entered.wait();
+    var client = domain_session.Session.init(std.testing.allocator, sid);
+    defer client.deinit();
+    for (tap.events.items) |bc| try std.testing.expect(try client.applyBroadcast(bc) != .gap);
+    var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer scratch.deinit();
+    const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+    try std.testing.expect(try rt.session.eql(&client, scratch.allocator())); // no fold drift
+    gate.set();
+    try launchUntilIdle(state, sid);
+}
+
+/// Resync at the park and install the snapshot into a fresh client. Assert it rebuilds the live draft.
+fn resyncInstallAtPark(state: *State, sid: wire.ids.SessionId, entered: *zio.ResetEvent, gate: *zio.ResetEvent) !void {
+    try entered.wait();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try handlers.sessionResync(state, arena.allocator(), .{ .session_id = sid, .limit = null });
+    var client = domain_session.Session.init(std.testing.allocator, sid);
+    defer client.deinit();
+    try client.installResync(result);
+    const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+    // The snapshot rebuilds the streamed draft, the committed window, and the durable cursor.
+    try std.testing.expect(client.active != null);
+    try std.testing.expectEqual(rt.session.active.?.message_id, client.active.?.message_id);
+    try std.testing.expectEqual(rt.session.active.?.run_id, client.active.?.run_id);
+    try std.testing.expectEqual(@as(usize, 1), client.active.?.parts.items.len);
+    try std.testing.expect(client.active.?.parts.items[0] == .text);
+    try std.testing.expectEqualStrings("hello", client.active.?.parts.items[0].text.text.items);
+    try std.testing.expectEqual(rt.session.base_seq, client.base_seq);
+    try std.testing.expectEqual(rt.session.finalized_message_id, client.finalized_message_id);
+    try std.testing.expectEqual(rt.session.committed.list.items.len, client.committed.list.items.len);
+    gate.set();
+    try launchUntilIdle(state, sid);
+}
+
+test "a resync snapshot reconstructs the live draft" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
+    fixture.state.transport = transport_impl.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-live-draft", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var driver = try fixture.rt.spawn(resyncInstallAtPark, .{ &fixture.state, sid, &entered, &gate });
+    try driver.join();
+}
+
+test "a client fold of the published stream matches the daemon session" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var tap = State.BroadcastTap.init(std.testing.allocator);
+    defer tap.deinit();
+    fixture.state.broadcast_tap = &tap;
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
+    fixture.state.transport = transport_impl.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/conform", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var driver = try fixture.rt.spawn(conformAtPark, .{ &fixture.state, sid, &entered, &gate, &tap });
+    try driver.join();
 }
 
 /// This transport records the request and replays a fixed Anthropic reply.

@@ -504,6 +504,7 @@ pub fn publishBestEffort(state: *State, session_id: ids.SessionId, note: wire.rp
 fn publish(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) !void {
     const bytes = try connection.frameNotification(state.gpa, note);
     defer state.gpa.free(bytes);
+    if (state.broadcast_tap) |tap| try tap.record(note.params); // A conformance test records the published output.
     state.registry.publish(session_id, bytes, connection.classOf(note.method));
 }
 
