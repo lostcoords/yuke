@@ -102,7 +102,7 @@ pub const Queue = struct {
 const testing = std.testing;
 const zero_session: ids.SessionId = .bytes(@splat(0));
 
-// `text` is comptime so the content literal promotes to a static const. A runtime
+// `text` is comptime so the content literal promotes to a static const.
 // A runtime value would make `&.{...}` an invalid pointer to this frame.
 fn queued(input_id: ids.InputId, comptime text: []const u8) input.InputQueuedData {
     return .{

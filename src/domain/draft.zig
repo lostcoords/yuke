@@ -173,10 +173,11 @@ pub const Draft = struct {
     /// Clone a wire part. Check its ordinal and append it.
     fn appendPart(self: *Draft, p: message.AssistantPart) Error!void {
         const expected: ids.PartId = @intCast(self.parts.items.len);
+        // Check the ordinal before the clone, so a rejected event allocates nothing.
+        // Only a client that missed a part_added sees a mismatch. The daemon builds ids in order.
+        if (p.id() != expected) return error.PartOutOfOrder;
         var cloned = try Part.initFrom(self.gpa, self.arena.allocator(), p);
         errdefer cloned.deinit(self.gpa);
-        // Only a client that missed a part_added sees a mismatch. The daemon builds ids in order.
-        if (cloned.id() != expected) return error.PartOutOfOrder;
         try self.parts.append(self.gpa, cloned);
     }
 

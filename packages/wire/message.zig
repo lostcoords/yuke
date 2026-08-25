@@ -38,6 +38,13 @@ pub const AssistantPart = union(enum) {
     redacted_reasoning: RedactedReasoningPart,
     tool: ToolPart,
 
+    /// Return the part id. Each arm carries the same field.
+    pub fn id(self: @This()) ids.PartId {
+        return switch (self) {
+            inline else => |p| p.id,
+        };
+    }
+
     /// Decode a tagged wire union from JSON.
     pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
         return tagged.jsonParse(@This(), a, s, o);
@@ -67,6 +74,13 @@ pub const Message = union(enum) {
     user: UserMessage,
     assistant: AssistantMessage,
     compaction: CompactionMessage,
+
+    /// Return the message id. Each arm carries the same field.
+    pub fn id(self: @This()) ids.MessageId {
+        return switch (self) {
+            inline else => |m| m.id,
+        };
+    }
 
     /// Decode a tagged wire union from JSON.
     pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
