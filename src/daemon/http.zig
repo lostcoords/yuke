@@ -30,22 +30,22 @@ pub fn serve(state: *State) !void {
     defer listener.deinit(state.io);
     std.log.info("front door on http://{f}", .{listener.socket.address});
 
-    var group: zio.Group = .init;
-    defer group.cancel();
+    var group: std.Io.Group = .init;
+    defer group.cancel(state.io);
 
     while (true) {
         const stream = try listener.accept(state.io);
         errdefer stream.close(state.io);
-        try group.spawn(handleConnection, .{ state, stream });
+        try group.concurrent(state.io, handleConnection, .{ state, stream });
     }
 }
 
-fn handleConnection(state: *State, stream: std.Io.net.Stream) !void {
+fn handleConnection(state: *State, stream: std.Io.net.Stream) void {
     defer stream.close(state.io);
     dispatch(state, stream) catch |err| switch (err) {
         // Treat a clean keep-alive close, a dropped client, or shutdown as normal.
         error.HttpConnectionClosing, error.HttpRequestTruncated, error.Canceled => return,
-        else => return err,
+        else => std.log.err("connection task failed: {t}", .{err}),
     };
 }
 
@@ -79,15 +79,26 @@ fn dispatch(state: *State, stream: std.Io.net.Stream) !void {
     }
 }
 
-const ReaderTask = zio.JoinHandle(anyerror!void);
-const WriterTask = zio.JoinHandle(void);
-const close_drain_timeout = zio.Timeout.fromMilliseconds(250);
+const close_drain_timeout: std.Io.Timeout = .{ .duration = .{
+    .clock = .awake,
+    .raw = std.Io.Duration.fromMilliseconds(250),
+} };
 
 /// Track the persistent close signal and terminal drain state.
 const WebSocketLifecycle = struct {
-    close: zio.ResetEvent = .init,
+    io: std.Io,
+    close: std.Io.Event = .unset,
+    writer_done: std.Io.Event = .unset,
     // The daemon runtime uses one executor. The parent reads this after close wakes it.
     terminal_close_queued: bool = false,
+
+    fn init(io: std.Io) WebSocketLifecycle {
+        return .{ .io = io };
+    }
+
+    fn signalClose(self: *WebSocketLifecycle) void {
+        self.close.set(self.io);
+    }
 };
 
 /// Serve one WebSocket. Reader and writer tasks own socket.input and socket.output respectively.
@@ -100,49 +111,33 @@ fn serveWebSocket(state: *State, request: *std.http.Server.Request, key: []const
     conn.init(state.gpa, state.io);
     defer conn.deinit();
 
-    var lifecycle: WebSocketLifecycle = .{};
-    conn.setTeardown(&lifecycle.close, signalWebSocketClose);
+    var lifecycle = WebSocketLifecycle.init(state.io);
+    conn.setTeardown(&lifecycle, signalWebSocketClose);
     try state.registry.register(&conn);
     defer state.registry.unregister(&conn); // The defer runs before `conn.deinit`, so no publish targets a dead outbox.
 
-    var reader = try zio.spawn(readerTask, .{ state, &conn, socket.input, &lifecycle });
-    errdefer reader.cancel();
+    var reader = try state.io.concurrent(readerTask, .{ state, &conn, socket.input, &lifecycle });
+    errdefer reader.cancel(state.io) catch {};
 
-    var writer = try zio.spawn(writerTask, .{ &conn, socket.output, &lifecycle });
+    var writer = try state.io.concurrent(writerTask, .{ &conn, socket.output, &lifecycle });
 
-    superviseWebSocket(&reader, &writer, &lifecycle, close_drain_timeout);
-    reader.cancel();
-    writer.cancel();
+    superviseWebSocket(&lifecycle, close_drain_timeout);
+    reader.cancel(state.io) catch {};
+    writer.cancel(state.io);
 }
 
 /// Signal the persistent close event when the registry closes a connection.
 fn signalWebSocketClose(context: *anyopaque) void {
-    const close: *zio.ResetEvent = @ptrCast(@alignCast(context));
-    close.set();
+    const lifecycle: *WebSocketLifecycle = @ptrCast(@alignCast(context));
+    lifecycle.signalClose();
 }
 
 /// Wait for the first terminal condition. The parent owns all cancellation and joins.
-fn superviseWebSocket(
-    reader: *ReaderTask,
-    writer: *WriterTask,
-    lifecycle: *WebSocketLifecycle,
-    drain_timeout: zio.Timeout,
-) void {
-    const result = zio.select(.{
-        .reader = reader,
-        .writer = writer,
-        .close = &lifecycle.close,
-    }) catch return;
-
-    switch (result) {
-        .reader, .close => if (lifecycle.terminal_close_queued) {
-            _ = zio.select(.{
-                .writer = writer,
-                .timeout = drain_timeout,
-            }) catch {};
-        },
-        .writer => {},
-    }
+fn superviseWebSocket(lifecycle: *WebSocketLifecycle, drain_timeout: std.Io.Timeout) void {
+    lifecycle.close.wait(lifecycle.io) catch return;
+    if (!lifecycle.terminal_close_queued) return;
+    // A writer-first wake leaves writer_done set, so this wait returns at once.
+    lifecycle.writer_done.waitTimeout(lifecycle.io, drain_timeout) catch {};
 }
 
 /// Read WebSocket frames and signal teardown on exit.
@@ -154,7 +149,7 @@ fn readerTask(
 ) anyerror!void {
     defer {
         conn.close();
-        lifecycle.close.set();
+        lifecycle.signalClose();
     }
     lifecycle.terminal_close_queued = try readerLoop(state, conn, input);
 }
@@ -163,7 +158,8 @@ fn readerTask(
 fn writerTask(conn: *Connection, output: *std.Io.Writer, lifecycle: *WebSocketLifecycle) void {
     defer {
         conn.close();
-        lifecycle.close.set();
+        lifecycle.writer_done.set(lifecycle.io);
+        lifecycle.signalClose();
     }
     writerLoop(conn, output);
 }
@@ -360,12 +356,14 @@ fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !
     }
 }
 
-fn blockedReader(started: *zio.ResetEvent, release: *zio.ResetEvent) anyerror!void {
+fn blockedReader(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *bool) anyerror!void {
+    defer finished.* = true;
     started.set();
     try release.wait();
 }
 
-fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent) void {
+fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *bool) void {
+    defer finished.* = true;
     started.set();
     release.wait() catch return;
 }
@@ -374,40 +372,44 @@ test "websocket close signal supervises both tasks" {
     var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    var lifecycle: WebSocketLifecycle = .{};
+    var lifecycle = WebSocketLifecycle.init(rt.io());
     var reader_started: zio.ResetEvent = .init;
     var writer_started: zio.ResetEvent = .init;
     var release: zio.ResetEvent = .init;
-    var reader = try rt.spawn(blockedReader, .{ &reader_started, &release });
-    var writer = try rt.spawn(blockedWriter, .{ &writer_started, &release });
+    var reader_finished = false;
+    var writer_finished = false;
+    var reader = try rt.io().concurrent(blockedReader, .{ &reader_started, &release, &reader_finished });
+    var writer = try rt.io().concurrent(blockedWriter, .{ &writer_started, &release, &writer_finished });
     try reader_started.wait();
     try writer_started.wait();
 
-    signalWebSocketClose(&lifecycle.close);
-    superviseWebSocket(&reader, &writer, &lifecycle, close_drain_timeout);
-    reader.cancel();
-    writer.cancel();
-    try testing.expect(reader.hasResult());
-    try testing.expect(writer.hasResult());
+    signalWebSocketClose(&lifecycle);
+    superviseWebSocket(&lifecycle, close_drain_timeout);
+    reader.cancel(rt.io()) catch {};
+    writer.cancel(rt.io());
+    try testing.expect(reader_finished);
+    try testing.expect(writer_finished);
 }
-
-fn completedReader() anyerror!void {}
 
 test "websocket terminal drain stops at its timeout" {
     var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
-    var lifecycle: WebSocketLifecycle = .{};
+    var lifecycle = WebSocketLifecycle.init(rt.io());
     lifecycle.terminal_close_queued = true;
     var writer_started: zio.ResetEvent = .init;
     var release: zio.ResetEvent = .init;
-    var reader = try rt.spawn(completedReader, .{});
-    var writer = try rt.spawn(blockedWriter, .{ &writer_started, &release });
+    var writer_finished = false;
+    var writer = try rt.io().concurrent(blockedWriter, .{ &writer_started, &release, &writer_finished });
 
-    superviseWebSocket(&reader, &writer, &lifecycle, .fromMilliseconds(1));
-    try testing.expect(!writer.hasResult());
-    reader.cancel();
-    writer.cancel();
+    lifecycle.signalClose();
+    superviseWebSocket(&lifecycle, .{ .duration = .{
+        .clock = .awake,
+        .raw = std.Io.Duration.fromMilliseconds(1),
+    } });
+    try testing.expect(!writer_finished);
+    writer.cancel(rt.io());
+    try testing.expect(writer_finished);
 }
 
 test "the user commit and run.started precede the send_input response" {
