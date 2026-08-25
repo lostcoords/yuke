@@ -32,7 +32,7 @@ pub fn main(init: std.process.Init) !void {
     const db_path: [:0]const u8 = owned_db_path orelse ":memory:";
 
     const config: State.Config = .{
-        .listen = try zio.net.IpAddress.parseIp4("127.0.0.1", default_port),
+        .listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", default_port),
         .db_path = db_path,
     };
 

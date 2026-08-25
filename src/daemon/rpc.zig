@@ -209,7 +209,7 @@ const TestState = struct {
     fn init() !TestState {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
         errdefer rt.deinit();
-        const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+        const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
         // A heap Connection keeps a stable queue address when the returned struct moves.
         const conn = try std.testing.allocator.create(connection.Connection);
         errdefer std.testing.allocator.destroy(conn);

@@ -48,7 +48,7 @@ pub const BroadcastTap = struct {
 
 /// The daemon stores its configuration here.
 pub const Config = struct {
-    listen: zio.net.IpAddress,
+    listen: std.Io.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",
 };
 
@@ -152,7 +152,7 @@ pub fn newId(self: *const State) [16]u8 {
 test "init restores durable pending input into the runtime queue" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
-    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
     var db = try database.Database.open(sqlite);
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -188,7 +188,7 @@ test "init restores durable pending input into the runtime queue" {
 test "activation does not retain partial hydration after allocation failure" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
-    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
     var db = try database.Database.open(sqlite);
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);

@@ -26,22 +26,22 @@ const text_plain = [_]std.http.Header{
 /// Accept connections forever. Run each connection in its own task.
 pub fn serve(state: *State) !void {
     try run_task.resumePendingInputs(state);
-    const listener = try state.config.listen.listen(.{});
-    defer listener.close();
+    var listener = try state.config.listen.listen(state.io, .{});
+    defer listener.deinit(state.io);
     std.log.info("front door on http://{f}", .{listener.socket.address});
 
     var group: zio.Group = .init;
     defer group.cancel();
 
     while (true) {
-        const stream = try listener.accept(.{});
-        errdefer stream.close();
+        const stream = try listener.accept(state.io);
+        errdefer stream.close(state.io);
         try group.spawn(handleConnection, .{ state, stream });
     }
 }
 
-fn handleConnection(state: *State, stream: zio.net.Stream) !void {
-    defer stream.close();
+fn handleConnection(state: *State, stream: std.Io.net.Stream) !void {
+    defer stream.close(state.io);
     dispatch(state, stream) catch |err| switch (err) {
         // Treat a clean keep-alive close, a dropped client, or shutdown as normal.
         error.HttpConnectionClosing, error.HttpRequestTruncated, error.Canceled => return,
@@ -49,11 +49,11 @@ fn handleConnection(state: *State, stream: zio.net.Stream) !void {
     };
 }
 
-fn dispatch(state: *State, stream: zio.net.Stream) !void {
+fn dispatch(state: *State, stream: std.Io.net.Stream) !void {
     var head_buffer: [max_head_bytes]u8 = undefined;
-    var reader = stream.reader(&head_buffer);
+    var reader = stream.reader(state.io, &head_buffer);
     var write_buffer: [write_buffer_bytes]u8 = undefined;
-    var writer = stream.writer(&write_buffer);
+    var writer = stream.writer(state.io, &write_buffer);
     var server = std.http.Server.init(&reader.interface, &writer.interface);
 
     while (true) {
@@ -73,7 +73,7 @@ fn dispatch(state: *State, stream: zio.net.Stream) !void {
         }
         try route(&request);
         if (!request.head.keep_alive) {
-            try stream.shutdown(.both);
+            try stream.shutdown(state.io, .both);
             return;
         }
     }
@@ -413,7 +413,7 @@ test "websocket terminal drain stops at its timeout" {
 test "the user commit and run.started precede the send_input response" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
     var state = try State.init(testing.allocator, rt.io(), try database.Database.open(sqlite), .{ .listen = listen }, "/home/test");
     defer state.deinit();
@@ -467,7 +467,7 @@ test "the user commit and run.started precede the send_input response" {
 test "a queued drain publishes its commits and run.started before a send_input error" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
     var state = try State.init(testing.allocator, rt.io(), try database.Database.open(sqlite), .{ .listen = listen }, "/home/test");
     defer state.deinit();
