@@ -711,7 +711,7 @@ test "a durable queue starts before a new idle input" {
     const old = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), 100, &old_content, 100);
     try fixture.state.db.conn.execNoArgs("COMMIT");
     const runtime = try fixture.state.sessions.getOrCreate(sid);
-    try std.testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = sid, .input = old.input }));
+    try std.testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = sid, .seq = old.seq, .input = old.input }));
 
     const accepted = try sendInputDirect(&fixture.state, a, .{
         .session_id = sid,

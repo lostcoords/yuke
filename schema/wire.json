@@ -411,6 +411,12 @@
       "direction": "serverToClient"
     },
     {
+      "name": "message.part_finalized",
+      "doc": "The daemon attached final metadata to a stopped part.",
+      "params": "MessagePartFinalizedData",
+      "direction": "serverToClient"
+    },
+    {
       "name": "tool.state_changed",
       "doc": "A tool call's state changed.",
       "params": "ToolStateChangedData",
@@ -1463,6 +1469,11 @@
           "presence": "required"
         },
         {
+          "name": "seq",
+          "type": "Seq",
+          "presence": "required"
+        },
+        {
           "name": "input_id",
           "type": "InputId",
           "presence": "required"
@@ -1487,6 +1498,11 @@
         {
           "name": "session_id",
           "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "seq",
+          "type": "Seq",
           "presence": "required"
         },
         {
@@ -1700,6 +1716,32 @@
       ]
     },
     {
+      "name": "MessagePartFinalizedData",
+      "doc": "This payload describes `message.part_finalized`. The daemon sends it at block stop.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "final",
+          "type": "PartFinal",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "MessageStartedData",
       "doc": "This payload describes `message.started` when the daemon opens a draft.",
       "fields": [
@@ -1783,6 +1825,17 @@
       ]
     },
     {
+      "name": "ReasoningFinal",
+      "doc": "The daemon attaches the reasoning signature at block stop. An empty string means none.",
+      "fields": [
+        {
+          "name": "signature",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
       "name": "ReasoningPart",
       "doc": "This payload describes a reasoning part in an assistant message. Its fields borrow their data.",
       "fields": [
@@ -1798,6 +1851,17 @@
         },
         {
           "name": "signature",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "RedactedReasoningFinal",
+      "doc": "The daemon attaches the opaque redacted reasoning data at block stop.",
+      "fields": [
+        {
+          "name": "data",
           "type": "string",
           "presence": "required"
         }
@@ -3701,6 +3765,21 @@
       ]
     },
     {
+      "name": "PartFinal",
+      "doc": "The final metadata for a stopped reasoning part. Tool parts finalize through `tool.state_changed`.",
+      "discriminator": "type",
+      "arms": [
+        {
+          "tag": "reasoning",
+          "type": "ReasoningFinal"
+        },
+        {
+          "tag": "redacted_reasoning",
+          "type": "RedactedReasoningFinal"
+        }
+      ]
+    },
+    {
       "name": "PermissionDecision",
       "doc": "This type records who answered a permission request and how. Its fields borrow their data.",
       "discriminator": "type",
@@ -4072,6 +4151,9 @@
           "type": "MessagePartDeltaData"
         },
         {
+          "type": "MessagePartFinalizedData"
+        },
+        {
           "type": "ToolStateChangedData"
         },
         {
@@ -4229,6 +4311,11 @@
           "name": "message.part_delta",
           "wire": "message.part_delta",
           "doc": "The daemon sent more content for a message part."
+        },
+        {
+          "name": "message.part_finalized",
+          "wire": "message.part_finalized",
+          "doc": "The daemon attached final metadata to a stopped part."
         },
         {
           "name": "tool.state_changed",

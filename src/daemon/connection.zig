@@ -28,6 +28,13 @@ pub fn classOf(method: wire.enums.BroadcastName) DeliveryClass {
     };
 }
 
+test "only the two deltas are shed-able" {
+    try std.testing.expectEqual(DeliveryClass.shed_able, classOf(.@"message.part_delta"));
+    try std.testing.expectEqual(DeliveryClass.shed_able, classOf(.@"tool.output_delta"));
+    try std.testing.expectEqual(DeliveryClass.must_deliver, classOf(.@"message.part_finalized"));
+    try std.testing.expectEqual(DeliveryClass.must_deliver, classOf(.@"message.committed"));
+}
+
 /// Track shed counts for one session on one connection. A resync marker follows once the client catches up.
 const ShedState = struct {
     count: u64 = 0, // The total number of dropped deltas.

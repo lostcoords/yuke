@@ -45,6 +45,8 @@ pub const BroadcastName = enum {
     @"message.part_added",
     /// The daemon sent more content for a message part.
     @"message.part_delta",
+    /// The daemon attached final metadata to a stopped part.
+    @"message.part_finalized",
     /// A tool call's state changed.
     @"tool.state_changed",
     /// The daemon sent more output from a tool.

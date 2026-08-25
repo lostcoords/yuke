@@ -271,12 +271,12 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
     const queued = try input_store.enqueue(&state.db, arena, sid, state.newId(), now, content, now);
-    const applied = try rt.queue.onQueued(.{ .session_id = params.session_id, .input = queued.input });
+    const applied = try rt.queue.onQueued(.{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input });
     std.debug.assert(applied == .changed);
     errdefer std.debug.assert(rt.queue.retire(queued.input.input_id) == .changed);
     try state.db.conn.execNoArgs("COMMIT");
     run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.queued", .params = .{
-        .input_queued_data = .{ .session_id = params.session_id, .input = queued.input },
+        .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
     } });
     return .{ .queued = .{ .input_id = queued.input.input_id } };
 }
@@ -290,14 +290,14 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
     const now = state.nowMillis();
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
-    input_store.cancel(&state.db, arena, sid, state.newId(), now, params.input_id) catch |err| switch (err) {
+    const canceled = input_store.cancel(&state.db, arena, sid, state.newId(), now, params.input_id) catch |err| switch (err) {
         error.NoRow => return error.UnknownInput,
         else => return err,
     };
     try state.db.conn.execNoArgs("COMMIT");
-    std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .input_id = params.input_id }) == .changed);
+    std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id }) == .changed);
     run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
-        .input_canceled_data = .{ .session_id = params.session_id, .input_id = params.input_id },
+        .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
     } });
     state.sessions.evictIfIdle(params.session_id);
     return .{ .canceled_input = params.input_id };
@@ -318,18 +318,20 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     if (params.clear_queue orelse false) {
         const pending = try input_store.list(&state.db, arena, sid);
         cleared_inputs = try arena.alloc(wire.ids.InputId, pending.len);
+        const cleared_seqs = try arena.alloc(wire.ids.Seq, pending.len);
         const now = state.nowMillis();
         try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
         errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
         for (pending, 0..) |entry, i| {
             cleared_inputs[i] = entry.input.input_id;
-            try input_store.cancel(&state.db, arena, sid, state.newId(), now, entry.input.input_id);
+            const canceled = try input_store.cancel(&state.db, arena, sid, state.newId(), now, entry.input.input_id);
+            cleared_seqs[i] = canceled;
         }
         try state.db.conn.execNoArgs("COMMIT");
-        for (cleared_inputs) |input_id| {
-            std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .input_id = input_id }) == .changed);
+        for (cleared_inputs, cleared_seqs) |input_id, seq| {
+            std.debug.assert(rt.queue.onCanceled(.{ .session_id = params.session_id, .seq = seq, .input_id = input_id }) == .changed);
             run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
-                .input_canceled_data = .{ .session_id = params.session_id, .input_id = input_id },
+                .input_canceled_data = .{ .session_id = params.session_id, .seq = seq, .input_id = input_id },
             } });
         }
     }

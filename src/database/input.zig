@@ -34,6 +34,7 @@ pub fn enqueue(
     };
     const data: wire.input.InputQueuedData = .{
         .session_id = .bytes(session_id),
+        .seq = seq,
         .input = queued,
     };
     const event_payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
@@ -70,7 +71,7 @@ pub fn consume(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, inpu
     _ = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
 }
 
-/// Append input.canceled and delete one exact queued input in one transaction.
+/// Append input.canceled and delete one exact queued input in one transaction. Return the event seq.
 pub fn cancel(
     db: *Database,
     arena: std.mem.Allocator,
@@ -78,17 +79,20 @@ pub fn cancel(
     event_id: [16]u8,
     committed_at_ms: u64,
     input_id: u64,
-) !void {
+) !u64 {
     std.debug.assert(sql.inTransaction(db.conn));
     _ = try checkedPending(db, arena, session_id, input_id);
 
+    const seq = try event.allocSeq(db, arena, session_id);
     const data: wire.input.InputCanceledData = .{
         .session_id = .bytes(session_id),
+        .seq = seq,
         .input_id = input_id,
     };
     const payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
-    _ = try event.append(db, arena, session_id, event_id, committed_at_ms, "input.canceled", payload);
+    try event.appendAt(db, session_id, seq, event_id, committed_at_ms, "input.canceled", payload);
     _ = try db.queries.delete_pending_input.one(arena, .{ .session_id = session_id, .input_id = input_id });
+    return seq;
 }
 
 /// List sessions that have at least one pending input.
@@ -217,7 +221,7 @@ test "cancel appends the exact event and deletes the projection" {
     _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, textContent("hello"), 149);
     try db.conn.execNoArgs("COMMIT");
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try cancel(&db, a, sid, [_]u8{2} ** 16, 160, 1);
+    _ = try cancel(&db, a, sid, [_]u8{2} ** 16, 160, 1);
     try db.conn.execNoArgs("COMMIT");
 
     const pending_count = (try db.conn.row("SELECT count(*) FROM pending_inputs", .{})) orelse return error.NoRow;

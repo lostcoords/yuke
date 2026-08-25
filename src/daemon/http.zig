@@ -470,7 +470,7 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     );
     try state.db.conn.execNoArgs("COMMIT");
     const runtime = try state.sessions.getOrCreate(created.session.id);
-    try testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = created.session.id, .input = old.input }));
+    try testing.expectEqual(.changed, runtime.queue.onQueued(.{ .session_id = created.session.id, .seq = old.seq, .input = old.input }));
     try state.db.conn.execNoArgs(
         \\CREATE TRIGGER fail_new_input BEFORE INSERT ON events
         \\WHEN NEW.name = 'input.queued'

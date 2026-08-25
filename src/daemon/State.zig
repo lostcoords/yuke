@@ -55,7 +55,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         const rt = try self.sessions.getOrCreate(.bytes(session_id));
         const entries = try database.input.list(&self.db, arena.allocator(), session_id);
         for (entries) |entry| {
-            const applied = try rt.queue.onQueued(.{ .session_id = .bytes(session_id), .input = entry.input });
+            const applied = try rt.queue.onQueued(.{ .session_id = .bytes(session_id), .seq = entry.seq, .input = entry.input });
             std.debug.assert(applied == .changed);
         }
     }

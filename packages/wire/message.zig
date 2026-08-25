@@ -137,6 +137,41 @@ pub const MessagePartDeltaData = PartDelta;
 /// The broadcast uses this shared tool-output delta payload.
 pub const ToolOutputDeltaData = PartDelta;
 
+/// The final metadata for a stopped reasoning part. Tool parts finalize through `tool.state_changed`.
+pub const PartFinal = union(enum) {
+    reasoning: ReasoningFinal,
+    redacted_reasoning: RedactedReasoningFinal,
+
+    /// Decode a tagged wire union from JSON.
+    pub fn jsonParse(a: std.mem.Allocator, s: anytype, o: std.json.ParseOptions) !@This() {
+        return tagged.jsonParse(@This(), a, s, o);
+    }
+    pub fn jsonParseFromValue(a: std.mem.Allocator, v: std.json.Value, o: std.json.ParseOptions) !@This() {
+        return tagged.fromValue(@This(), a, v, o);
+    }
+    pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
+        return tagged.stringify(@This(), self, jw);
+    }
+};
+
+/// The daemon attaches the reasoning signature at block stop. An empty string means none.
+pub const ReasoningFinal = struct {
+    signature: []const u8,
+};
+
+/// The daemon attaches the opaque redacted reasoning data at block stop.
+pub const RedactedReasoningFinal = struct {
+    data: []const u8,
+};
+
+/// This payload describes `message.part_finalized`. The daemon sends it at block stop.
+pub const MessagePartFinalizedData = struct {
+    session_id: ids.SessionId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+    final: PartFinal,
+};
+
 /// This payload describes a reasoning part in an assistant message. Its fields borrow their data.
 pub const ReasoningPart = struct {
     id: ids.PartId,
@@ -203,6 +238,36 @@ test "assistant part union round-trips" {
     try testing.expect(parsed.value == .text);
     try testing.expectEqual(@as(ids.PartId, 7), parsed.value.text.id);
     try testing.expectEqualStrings("hello", parsed.value.text.text);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}
+
+test "part final reasoning variant round-trips" {
+    const json =
+        \\{"type":"reasoning","signature":"sig"}
+    ;
+    const parsed = try std.json.parseFromSlice(PartFinal, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value == .reasoning);
+    try testing.expectEqualStrings("sig", parsed.value.reasoning.signature);
+
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try testing.expectEqualStrings(json, buf.written());
+}
+
+test "part final redacted variant round-trips" {
+    const json =
+        \\{"type":"redacted_reasoning","data":"opaque"}
+    ;
+    const parsed = try std.json.parseFromSlice(PartFinal, testing.allocator, json, opts);
+    defer parsed.deinit();
+    try testing.expect(parsed.value == .redacted_reasoning);
+    try testing.expectEqualStrings("opaque", parsed.value.redacted_reasoning.data);
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();

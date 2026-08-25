@@ -107,6 +107,7 @@ const zero_session: ids.SessionId = .bytes(@splat(0));
 fn queued(input_id: ids.InputId, comptime text: []const u8) input.InputQueuedData {
     return .{
         .session_id = zero_session,
+        .seq = 0,
         .input = .{
             .input_id = input_id,
             .content = &.{.{ .text = .{ .text = text } }},
@@ -116,7 +117,7 @@ fn queued(input_id: ids.InputId, comptime text: []const u8) input.InputQueuedDat
 }
 
 fn canceled(input_id: ids.InputId) input.InputCanceledData {
-    return .{ .session_id = zero_session, .input_id = input_id };
+    return .{ .session_id = zero_session, .seq = 0, .input_id = input_id };
 }
 
 test "onQueued clones content and appends; deinit frees it" {
