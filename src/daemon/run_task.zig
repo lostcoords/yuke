@@ -108,28 +108,26 @@ fn runSession(state: *State, slot: *RunSlot) void {
     // Stream on a child task and wait for it or a cancel signal. The child owns the body.
     // Child cancellation stops a blocked read and deinits the body before this run reaches its terminal state.
     const terminal: Terminal = blk: {
-        var reader = zio.spawn(streamChild, .{ state, arena, slot, &streamer }) catch |err| {
+        var reader = state.io.concurrent(streamChild, .{ state, arena, slot, &streamer }) catch |err| {
             break :blk .{ .failed = failure(err) };
         };
-        const winner = zio.select(.{ .reader = &reader, .cancel = &slot.cancel_event }) catch {
-            reader.cancel(); // Shutdown canceled this run task; stop the reader.
+        slot.wake_event.wait(state.io) catch {
+            reader.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the reader.
             break :blk .canceled;
         };
-        switch (winner) {
-            .reader => {
-                reader.join() catch |err| {
-                    if (err == error.Canceled or slot.cancel_requested) break :blk .canceled;
-                    break :blk .{ .failed = failure(err) };
-                };
-                if (slot.cancel_requested) break :blk .canceled;
-                break :blk .{ .success = streamer.stop_reason orelse {
-                    break :blk .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
-                } };
-            },
-            .cancel => {
-                reader.cancel(); // Request cancellation, then join the reader.
-                break :blk .canceled;
-            },
+        if (slot.cancel_requested) {
+            reader.cancel(state.io) catch {}; // Request cancellation, then join the reader.
+            break :blk .canceled;
+        }
+        const result = reader.await(state.io);
+        if (result) |_| {
+            if (slot.cancel_requested) break :blk .canceled;
+            break :blk .{ .success = streamer.stop_reason orelse {
+                break :blk .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
+            } };
+        } else |err| {
+            if (err == error.Canceled or slot.cancel_requested) break :blk .canceled;
+            break :blk .{ .failed = failure(err) };
         }
     };
 
@@ -141,7 +139,8 @@ fn runSession(state: *State, slot: *RunSlot) void {
 /// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
 /// The child owns the body and deinits it before it returns.
 fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !void {
-    try checkCanceled(slot);
+    defer slot.wake_event.set(state.io);
+    try checkCanceled(state.io, slot);
     const session_id = slot.handle.started.session_id;
     const transcript = (try message_store.historyPage(&state.db, arena, session_id.raw, 0, max_transcript_messages)).messages;
     const model = slot.config.model;
@@ -165,7 +164,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         slot.body = null;
         body.deinit();
     }
-    try checkCanceled(slot);
+    try checkCanceled(state.io, slot);
     try streamWithReducer(state, body, streamer, slot.protocol);
 }
 
@@ -249,8 +248,12 @@ fn terminalize(
 ) !void {
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
-    zio.beginShield();
-    defer zio.endShield();
+    const old_cancel_protection = state.io.swapCancelProtection(.blocked);
+    std.debug.assert(old_cancel_protection == .unblocked);
+    defer {
+        const restored_cancel_protection = state.io.swapCancelProtection(old_cancel_protection);
+        std.debug.assert(restored_cancel_protection == .blocked);
+    }
 
     const content = if (live) |value| (try value.toActiveDraft(arena)).message.content else &.{};
     const ended_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
@@ -373,8 +376,8 @@ pub fn resumePendingInputs(state: *State) !void {
     }
 }
 
-fn checkCanceled(slot: *const RunSlot) !void {
-    try zio.checkCancel();
+fn checkCanceled(io: std.Io, slot: *const RunSlot) !void {
+    try io.checkCancel();
     if (slot.cancel_requested) return error.Canceled;
 }
 
@@ -396,9 +399,9 @@ const Streamer = struct {
     }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
-        try checkCanceled(self.slot);
+        try checkCanceled(self.state.io, self.slot);
         try zio.maybeYield();
-        try checkCanceled(self.slot);
+        try checkCanceled(self.state.io, self.slot);
         switch (ev) {
             .block_started => |b| {
                 try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{

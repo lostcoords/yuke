@@ -2,7 +2,6 @@
 //! The projection owns the live draft. The run task borrows it.
 
 const std = @import("std");
-const zio = @import("zio");
 const wire = @import("wire");
 const Session = @import("../domain/session.zig").Session;
 const run = @import("../engine/run.zig");
@@ -18,8 +17,8 @@ pub const RunSlot = struct {
     phase: Phase = .pending_start,
     protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // The run sets this after provider resolution.
     cancel_requested: bool = false,
-    // The RPC task sets this to interrupt the run. The run task waits on it and cancels its reader.
-    cancel_event: zio.ResetEvent = .init,
+    // The RPC task and the reader set this event. The run task waits on it.
+    wake_event: std.Io.Event = .unset,
     body: ?transport.ResponseBody = null,
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };

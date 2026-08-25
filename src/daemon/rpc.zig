@@ -808,6 +808,7 @@ const BlockingTransport = struct {
     entered: *zio.ResetEvent,
     gate: *zio.ResetEvent,
     interrupted: *bool, // Set this flag when the parked read catches error.Canceled.
+    deinitialized: ?*bool = null,
 
     fn transportFor(self: *BlockingTransport) transport.Transport {
         return .{ .ctx = self, .vtable = &vtable };
@@ -819,7 +820,12 @@ const BlockingTransport = struct {
         _ = request;
         const self: *BlockingTransport = @ptrCast(@alignCast(ctx));
         const reader = try arena.create(Reader);
-        reader.* = .{ .entered = self.entered, .gate = self.gate, .interrupted = self.interrupted };
+        reader.* = .{
+            .entered = self.entered,
+            .gate = self.gate,
+            .interrupted = self.interrupted,
+            .deinitialized = self.deinitialized,
+        };
         return .{ .ctx = reader, .vtable = &Reader.vtable };
     }
 
@@ -827,8 +833,9 @@ const BlockingTransport = struct {
         entered: *zio.ResetEvent,
         gate: *zio.ResetEvent,
         interrupted: *bool,
+        deinitialized: ?*bool,
 
-        const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
+        const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinit };
 
         fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
             _ = buf;
@@ -840,7 +847,10 @@ const BlockingTransport = struct {
             };
             return 0;
         }
-        fn deinitNoop(_: *anyopaque) void {}
+        fn deinit(ctx: *anyopaque) void {
+            const self: *Reader = @ptrCast(@alignCast(ctx));
+            if (self.deinitialized) |deinitialized| deinitialized.* = true;
+        }
     };
 };
 
@@ -858,7 +868,13 @@ test "cancel run interrupts a blocked provider read" {
     var entered: zio.ResetEvent = .init;
     var gate: zio.ResetEvent = .init;
     var interrupted = false;
-    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    var deinitialized = false;
+    var blocking: BlockingTransport = .{
+        .entered = &entered,
+        .gate = &gate,
+        .interrupted = &interrupted,
+        .deinitialized = &deinitialized,
+    };
     fixture.state.transport = blocking.transportFor();
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -875,6 +891,7 @@ test "cancel run interrupts a blocked provider read" {
     try driver.join();
 
     try std.testing.expect(interrupted); // The cancel interrupted the parked read before it drained.
+    try std.testing.expect(deinitialized); // The reader joined and released the body before the run became idle.
     const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
     defer row.deinit();
     const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
