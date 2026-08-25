@@ -249,11 +249,7 @@ fn terminalize(
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
     const old_cancel_protection = state.io.swapCancelProtection(.blocked);
-    std.debug.assert(old_cancel_protection == .unblocked);
-    defer {
-        const restored_cancel_protection = state.io.swapCancelProtection(old_cancel_protection);
-        std.debug.assert(restored_cancel_protection == .blocked);
-    }
+    defer _ = state.io.swapCancelProtection(old_cancel_protection);
 
     const content = if (live) |value| (try value.toActiveDraft(arena)).message.content else &.{};
     const ended_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
