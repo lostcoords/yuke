@@ -45,8 +45,6 @@ pub const HttpTransport = struct {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
-        // The sendBodyComplete call uses the body as a writer buffer, so give it a mutable copy.
-        const body = try arena.dupe(u8, request.body);
         // The provider sends SSE, so request it. This Accept header overrides a caller Accept header.
         const extra = try arena.alloc(std.http.Header, request.headers.len + 1);
         extra[0] = .{ .name = "accept", .value = "text/event-stream" };
@@ -80,7 +78,7 @@ pub const HttpTransport = struct {
             hb.request.deinit();
         }
 
-        try hb.request.sendBodyComplete(body);
+        try hb.request.sendBodyComplete(request.body);
         hb.response = hb.request.receiveHead(&.{}) catch |err| switch (err) {
             error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
             else => return err,
@@ -292,7 +290,8 @@ fn runClient(out: *ClientOut) !void {
     var url_buf: [64]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/messages", .{out.port});
     const headers = [_]transport.Header{.{ .name = "x-api-key", .value = "test-key" }};
-    const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = "" });
+    var request_body: [0]u8 = .{};
+    const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body });
     defer body.deinit();
     var buf: [128]u8 = undefined;
     while (true) {

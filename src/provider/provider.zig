@@ -48,7 +48,7 @@ pub fn requestBody(
     protocol: wire.enums.ProviderProtocol,
     request: ir.Request,
     target: ?wire.message.TurnProvenance,
-) ![]const u8 {
+) ![]u8 {
     const request_ir = try build.build(arena, messages, .{ .target = target });
     var body: std.Io.Writer.Allocating = .init(arena);
     switch (protocol) {

@@ -51,7 +51,7 @@ pub const Window = struct {
         var arena = std.heap.ArenaAllocator.init(self.gpa);
         errdefer arena.deinit();
         const owned = try wire.dupe(arena.allocator(), m);
-        const size = try messageBytes(self.gpa, m);
+        const size = try messageBytes(m);
         try self.list.append(self.gpa, .{ .arena = arena, .message = owned, .bytes = size });
         self.total_bytes += size;
         self.evict();
@@ -124,10 +124,11 @@ pub const ConfigSet = struct {
 };
 
 /// Return the serialized byte size of a committed message. The window bounds itself by this size.
-fn messageBytes(gpa: std.mem.Allocator, m: message.Message) Error!usize {
-    const json = std.json.Stringify.valueAlloc(gpa, m, .{ .emit_null_optional_fields = false }) catch return error.OutOfMemory;
-    defer gpa.free(json);
-    return json.len;
+fn messageBytes(m: message.Message) Error!usize {
+    var buffer: [0]u8 = .{};
+    var discarding = std.Io.Writer.Discarding.init(&buffer);
+    std.json.Stringify.value(m, .{ .emit_null_optional_fields = false }, &discarding.writer) catch return error.OutOfMemory;
+    return std.math.cast(usize, discarding.fullCount()) orelse error.OutOfMemory;
 }
 
 const testing = std.testing;

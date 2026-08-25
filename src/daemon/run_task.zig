@@ -187,14 +187,12 @@ fn resolvedRequest(
     }, .{ .protocol = r.provider.protocol, .model = slot.config.model });
 
     const secret = try provider.config.resolveApiKey(r.provider, state.env);
-    var auth: std.ArrayList(provider.instance.Header) = .empty;
+    var auth: std.ArrayList(provider.transport.Header) = .empty;
     try provider.resolve.authHeaders(arena, r.provider, secret, &auth);
-    const headers = try arena.alloc(provider.transport.Header, auth.items.len);
-    for (auth.items, headers) |h, *out| out.* = .{ .name = h.name, .value = h.value };
 
     return .{
         .url = try provider.resolve.endpointUrl(arena, r.provider),
-        .headers = headers,
+        .headers = auth.items,
         .body = body_bytes,
     };
 }

@@ -2,6 +2,7 @@
 //! parser. The real client suspends on the socket; a mock replays canned bytes for tests.
 
 const std = @import("std");
+const instance = @import("instance/instance.zig");
 const sse = @import("stream/sse.zig");
 const event = @import("stream/event.zig");
 
@@ -9,11 +10,11 @@ const event = @import("stream/event.zig");
 const max_response_bytes = 16 * 1024 * 1024;
 
 /// The caller fills only `body`; the real client fills `url` and `headers` from `resolve`.
-pub const Header = struct { name: []const u8, value: []const u8 };
+pub const Header = instance.Header;
 pub const Request = struct {
     url: []const u8 = "",
     headers: []const Header = &.{},
-    body: []const u8,
+    body: []u8,
 };
 
 /// Open one provider response. The daemon injects this seam, so tests and the real client can vary the body.
