@@ -23,10 +23,10 @@ pub const Error = error{
 /// The daemon owns one shared client for its lifetime. It injects `transport()` into State.
 pub const HttpTransport = struct {
     client: std.http.Client,
-    idle_timeout: std.Io.Timeout,
+    idle_timeout: ?std.Io.Duration,
 
     /// The client dials and reads through `io`. Pass the zio reactor io so a cancel reaches the socket.
-    pub fn init(gpa: Allocator, io: std.Io, idle_timeout: std.Io.Timeout) HttpTransport {
+    pub fn init(gpa: Allocator, io: std.Io, idle_timeout: ?std.Io.Duration) HttpTransport {
         return .{ .client = .{ .allocator = gpa, .io = io }, .idle_timeout = idle_timeout };
     }
 
@@ -59,7 +59,10 @@ pub const HttpTransport = struct {
         errdefer self.client.allocator.destroy(hb);
         hb.* = .{
             .gpa = self.client.allocator,
-            .idle_timeout = zio.Timeout.fromStd(self.idle_timeout),
+            .idle_timeout = if (self.idle_timeout) |timeout| zio.Timeout.fromStd(.{ .duration = .{
+                .clock = .awake,
+                .raw = timeout,
+            } }) else .none,
             .request = undefined,
             .response = undefined,
             .transfer_buffer = undefined,
@@ -269,7 +272,7 @@ const ClientOut = struct {
     gpa: Allocator,
     io: std.Io,
     port: u16,
-    idle: std.Io.Timeout = .none,
+    idle: ?std.Io.Duration = null,
     release: ?*zio.ResetEvent = null, // Signal the stalled server to end after the read returns.
     bytes: std.ArrayList(u8) = .empty,
     err: ?anyerror = null,
@@ -357,7 +360,7 @@ test "a stalled stream returns a timeout" {
         .gpa = testing.allocator,
         .io = rt.io(),
         .port = port,
-        .idle = .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(50) } },
+        .idle = std.Io.Duration.fromMilliseconds(50),
         .release = &release,
     };
     defer out.bytes.deinit(testing.allocator);
