@@ -210,11 +210,14 @@ pub const Session = struct {
             .stale => return .ignored,
             .gap => return .gap,
         };
-        switch (d.final) {
+        const outcome = switch (d.final) {
             .reasoning => |r| dr.finalizeReasoning(d.part_id, r.signature) catch |err| return draftMiss(err, mode),
             .redacted_reasoning => |r| dr.finalizeRedacted(d.part_id, r.data) catch |err| return draftMiss(err, mode),
-        }
-        return .changed;
+        };
+        return switch (outcome) {
+            .applied => .changed,
+            .ignored_duplicate => .ignored,
+        };
     }
 
     fn onToolState(self: *Session, d: wire.tool.ToolStateChangedData, mode: Mode) Error!Applied {
@@ -341,6 +344,10 @@ pub const Session = struct {
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
             error.UnknownPart, error.PartOutOfOrder => miss(mode),
+            error.ConflictingFinalization => blk: {
+                std.debug.assert(mode == .checked);
+                break :blk error.Protocol;
+            },
             error.WrongPartKind => blk: {
                 std.debug.assert(mode == .checked); // the daemon never sends a wrong part kind
                 break :blk error.Protocol;
@@ -450,6 +457,12 @@ fn started(message_id: ids.MessageId) BroadcastData {
 fn textPartAdded(message_id: ids.MessageId, part_id: ids.PartId) BroadcastData {
     return .{ .message_part_added_data = .{ .session_id = sid, .message_id = message_id, .part = .{ .text = .{ .id = part_id, .text = "" } } } };
 }
+fn reasoningPartAdded(message_id: ids.MessageId, part_id: ids.PartId) BroadcastData {
+    return .{ .message_part_added_data = .{ .session_id = sid, .message_id = message_id, .part = .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } } } };
+}
+fn reasoningFinalized(message_id: ids.MessageId, part_id: ids.PartId, signature: []const u8) BroadcastData {
+    return .{ .message_part_finalized_data = .{ .session_id = sid, .message_id = message_id, .part_id = part_id, .final = .{ .reasoning = .{ .signature = signature } } } };
+}
 fn textDelta(message_id: ids.MessageId, part_id: ids.PartId, offset: u64, delta: []const u8) BroadcastData {
     return .{ .message_part_delta_data = .{ .session_id = sid, .message_id = message_id, .part_id = part_id, .delta = delta, .offset = offset } };
 }
@@ -519,6 +532,17 @@ test "a delta hole and a missing draft return a gap" {
     try testing.expectEqual(Applied.gap, try s.applyBroadcast(textDelta(1, 0, 5, "x")));
     _ = try s.applyBroadcast(textDelta(1, 0, 0, "ab"));
     try testing.expectEqual(Applied.ignored, try s.applyBroadcast(textDelta(1, 0, 0, "ab")));
+}
+
+test "a repeated finalization is ignored and a conflict is rejected" {
+    var s = Session.init(testing.allocator, sid);
+    defer s.deinit();
+
+    _ = try s.applyBroadcast(started(1));
+    _ = try s.applyBroadcast(reasoningPartAdded(1, 0));
+    try testing.expectEqual(Applied.changed, try s.applyBroadcast(reasoningFinalized(1, 0, "sig")));
+    try testing.expectEqual(Applied.ignored, try s.applyBroadcast(reasoningFinalized(1, 0, "sig")));
+    try testing.expectError(error.Protocol, s.applyBroadcast(reasoningFinalized(1, 0, "other")));
 }
 
 test "durable seq gates ignore duplicates and gap on a hole" {

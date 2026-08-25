@@ -20,6 +20,8 @@ pub const Error = error{
     WrongPartKind,
     /// Reject a `part_added` id that is not the next ordinal.
     PartOutOfOrder,
+    /// Reject a finalization that conflicts with the existing metadata.
+    ConflictingFinalization,
     OutOfMemory,
 };
 
@@ -39,6 +41,14 @@ pub const ToolOutcome = enum {
     applied,
     /// Ignore a non-terminal state after a terminal state.
     ignored_terminal,
+};
+
+/// Describe the result of a reasoning-part finalization.
+pub const FinalizationOutcome = enum {
+    /// Store the final metadata.
+    applied,
+    /// Ignore identical final metadata.
+    ignored_duplicate,
 };
 
 /// Own the stream buffers and arena fields for one draft part.
@@ -214,19 +224,37 @@ pub const Draft = struct {
     }
 
     /// Attach the reasoning signature at block stop. A signed block resends on a tool continuation.
-    pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, signature: []const u8) Error!void {
+    pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, signature: []const u8) Error!FinalizationOutcome {
+        return self.finalizeReasoningAlloc(part_id, signature, self.arena.allocator());
+    }
+
+    fn finalizeReasoningAlloc(self: *Draft, part_id: ids.PartId, signature: []const u8, a: std.mem.Allocator) Error!FinalizationOutcome {
         const part = try self.partAt(part_id);
         switch (part.*) {
-            .reasoning => |*r| r.signature = try self.arena.allocator().dupe(u8, signature),
+            .reasoning => |*r| {
+                if (std.mem.eql(u8, r.signature, signature)) return .ignored_duplicate;
+                if (r.signature.len != 0) return error.ConflictingFinalization;
+                r.signature = try a.dupe(u8, signature);
+                return .applied;
+            },
             else => return error.WrongPartKind,
         }
     }
 
     /// Attach the redacted reasoning data at block stop. The provider encrypts this block, so keep it opaque.
-    pub fn finalizeRedacted(self: *Draft, part_id: ids.PartId, data: []const u8) Error!void {
+    pub fn finalizeRedacted(self: *Draft, part_id: ids.PartId, data: []const u8) Error!FinalizationOutcome {
+        return self.finalizeRedactedAlloc(part_id, data, self.arena.allocator());
+    }
+
+    fn finalizeRedactedAlloc(self: *Draft, part_id: ids.PartId, data: []const u8, a: std.mem.Allocator) Error!FinalizationOutcome {
         const part = try self.partAt(part_id);
         switch (part.*) {
-            .redacted_reasoning => |*r| r.data = try self.arena.allocator().dupe(u8, data),
+            .redacted_reasoning => |*r| {
+                if (std.mem.eql(u8, r.data, data)) return .ignored_duplicate;
+                if (r.data.len != 0) return error.ConflictingFinalization;
+                r.data = try a.dupe(u8, data);
+                return .applied;
+            },
             else => return error.WrongPartKind,
         }
     }
@@ -501,8 +529,8 @@ test "streamed reasoning finalizes its signature and redacted data at block stop
 
     var sig = [_]u8{ 's', 'i', 'g' };
     var enc = [_]u8{ 'e', 'n', 'c' };
-    try d.finalizeReasoning(0, &sig);
-    try d.finalizeRedacted(1, &enc);
+    _ = try d.finalizeReasoning(0, &sig);
+    _ = try d.finalizeRedacted(1, &enc);
     @memset(&sig, 'x'); // The Draft owns its copies, so the overwrite is safe.
     @memset(&enc, 'x');
 
@@ -511,6 +539,25 @@ test "streamed reasoning finalizes its signature and redacted data at block stop
     try testing.expectEqualStrings("enc", d.parts.items[1].redacted_reasoning.data);
     try testing.expectError(error.WrongPartKind, d.finalizeReasoning(1, &sig));
     try testing.expectError(error.WrongPartKind, d.finalizeRedacted(0, &enc));
+}
+
+test "identical finalization is allocation-free and conflicts are rejected" {
+    var d = try Draft.init(testing.allocator, started("a"));
+    defer d.deinit();
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "" } } });
+
+    var no_storage: [0]u8 = .{};
+    var fba = std.heap.FixedBufferAllocator.init(&no_storage);
+    try testing.expectEqual(FinalizationOutcome.ignored_duplicate, try d.finalizeReasoningAlloc(0, "", fba.allocator()));
+    try testing.expectEqual(FinalizationOutcome.ignored_duplicate, try d.finalizeRedactedAlloc(1, "", fba.allocator()));
+
+    try testing.expectEqual(FinalizationOutcome.applied, try d.finalizeReasoning(0, "sig"));
+    try testing.expectEqual(FinalizationOutcome.applied, try d.finalizeRedacted(1, "data"));
+    try testing.expectEqual(FinalizationOutcome.ignored_duplicate, try d.finalizeReasoningAlloc(0, "sig", fba.allocator()));
+    try testing.expectEqual(FinalizationOutcome.ignored_duplicate, try d.finalizeRedactedAlloc(1, "data", fba.allocator()));
+    try testing.expectError(error.ConflictingFinalization, d.finalizeReasoningAlloc(0, "other", fba.allocator()));
+    try testing.expectError(error.ConflictingFinalization, d.finalizeRedactedAlloc(1, "other", fba.allocator()));
 }
 
 test "tool output streams; a text delta to a tool part is WrongPartKind" {
