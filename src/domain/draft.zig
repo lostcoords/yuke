@@ -199,12 +199,17 @@ pub const Draft = struct {
     /// Fold a `tool.state_changed` event.
     /// Ignore a non-terminal update after a terminal state.
     pub fn applyToolState(self: *Draft, d: tool.ToolStateChangedData) Error!ToolOutcome {
+        return self.applyToolStateAlloc(d, self.arena.allocator());
+    }
+
+    fn applyToolStateAlloc(self: *Draft, d: tool.ToolStateChangedData, a: std.mem.Allocator) Error!ToolOutcome {
         const t = try self.toolPart(d.part_id);
         if (isTerminal(t.state) and !isTerminal(d.state)) return .ignored_terminal;
-        const a = self.arena.allocator();
-        t.state = try dupeToolState(a, d.state);
+        const next_state = try dupeToolState(a, d.state);
+        const next_permission = if (d.permission_state) |ps| try wire.dupe(a, ps) else null;
+        t.state = next_state;
         // Leave the current permission state unchanged when `permission_state` is null.
-        if (d.permission_state) |ps| t.permission_state = try wire.dupe(a, ps);
+        if (next_permission) |ps| t.permission_state = ps;
         return .applied;
     }
 
@@ -547,6 +552,22 @@ test "completed tool state with a diff view clones the whole tree" {
     const cloned = d.parts.items[0].tool.state.completed;
     try testing.expectEqualStrings("x.zig", cloned.view.?[0].diff.files[0].path);
     try testing.expectEqualStrings("+b", cloned.view.?[0].diff.files[0].hunks[0].lines[2]);
+}
+
+test "a failed tool-state clone changes no field" {
+    var d = try Draft.init(testing.allocator, started("a"));
+    defer d.deinit();
+    try d.addPart(addTool(0, .{ .pending = .{} }));
+
+    const options = [_]permission.PermissionOption{.{ .id = "allow", .kind = .allow_once, .label = "Allow" }};
+    var change = toolStateChange(0, .{ .denied = .{ .reason = "no", .denied_by = .policy } });
+    change.permission_state = .{ .requested_at_ms = 1, .options = &options };
+
+    var storage: [2]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&storage);
+    try testing.expectError(error.OutOfMemory, d.applyToolStateAlloc(change, fba.allocator()));
+    try testing.expect(d.parts.items[0].tool.state == .pending);
+    try testing.expectEqual(null, d.parts.items[0].tool.permission_state);
 }
 
 test "delta to an unopened part is UnknownPart; out-of-order add is rejected" {

@@ -81,7 +81,12 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
 pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.SessionRuntime {
     const rt = try self.sessions.getOrCreate(session_id);
     if (!rt.hydrated) {
-        try self.hydrateSession(&rt.session);
+        var session = domain_session.Session.init(self.gpa, session_id);
+        errdefer session.deinit();
+        try self.hydrateSession(&session);
+        rt.session.deinit();
+        rt.session = session;
+        session = undefined;
         rt.hydrated = true;
     }
     return rt;
@@ -90,6 +95,9 @@ pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.
 /// Load the committed window, the configs, the durable cursors, and the pending inputs into a session.
 /// SQLite stays authoritative. The daemon caches the recent tail so resync serializes the projection.
 pub fn hydrateSession(self: *State, session: *domain_session.Session) !void {
+    std.debug.assert(session.active == null and session.queue.depth() == 0);
+    std.debug.assert(session.committed.list.items.len == 0 and session.configs.map.count() == 0);
+    std.debug.assert(session.base_seq == 0 and session.finalized_message_id == 0);
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -175,4 +183,62 @@ test "init restores durable pending input into the runtime queue" {
     const rt = state.sessions.get(.bytes(session_id)).?;
     try std.testing.expectEqual(@as(usize, 1), rt.session.queue.depth());
     try std.testing.expectEqual(queued.input.input_id, rt.session.queue.entries()[0].input_id);
+}
+
+test "activation does not retain partial hydration after allocation failure" {
+    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+    var db = try database.Database.open(sqlite);
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const workspace_id = [_]u8{4} ** 16;
+    const session_id = [_]u8{5} ** 16;
+    _ = try database.workspace.resolve(&db, arena, workspace_id, "/oom", "oom", null);
+    try database.session.create(&db, .{
+        .id = session_id,
+        .workspace_id = workspace_id,
+        .origin = "root",
+        .profile = "default",
+        .model = "mock",
+        .reasoning = "",
+        .config_rev = 0,
+        .permission = "normal",
+        .title = "oom",
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+    });
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try database.input.enqueue(&db, arena, session_id, [_]u8{6} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
+    try db.conn.execNoArgs("COMMIT");
+
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var state = try State.init(failing.allocator(), runtime.io(), db, .{ .listen = listen }, "/home/test");
+    defer state.deinit();
+    const rt = state.sessions.get(.bytes(session_id)).?;
+    const baseline = failing.alloc_index;
+    var saw_oom = false;
+
+    var fail_offset: usize = 0;
+    while (fail_offset < 128) : (fail_offset += 1) {
+        rt.session.deinit();
+        rt.session = domain_session.Session.init(failing.allocator(), .bytes(session_id));
+        rt.hydrated = false;
+        failing.alloc_index = baseline;
+        failing.fail_index = baseline + fail_offset;
+        failing.has_induced_failure = false;
+
+        _ = state.activate(.bytes(session_id)) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            saw_oom = true;
+            try std.testing.expect(!rt.hydrated);
+            try std.testing.expectEqual(@as(usize, 0), rt.session.queue.depth());
+            try std.testing.expectEqual(@as(usize, 0), rt.session.committed.list.items.len);
+            try std.testing.expectEqual(@as(u64, 0), rt.session.base_seq);
+            continue;
+        };
+    }
+    try std.testing.expect(saw_oom);
 }

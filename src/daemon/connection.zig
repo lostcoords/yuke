@@ -196,7 +196,10 @@ pub const Registry = struct {
 
         // Commit from the reserved storage. Remove the dropped sessions, add the new ones, then swap the set.
         var old = conn.subscribed.keyIterator();
-        while (old.next()) |sid| if (!next.contains(sid.*)) self.removeSubscriber(sid.*, conn.id);
+        while (old.next()) |sid| if (!next.contains(sid.*)) {
+            self.removeSubscriber(sid.*, conn.id);
+            _ = conn.shed.remove(sid.*);
+        };
         for (added[0..added_len]) |sid| self.subscribers.getPtr(sid).?.appendAssumeCapacity(conn.id);
         conn.subscribed.deinit(self.gpa);
         conn.subscribed = next;
@@ -313,7 +316,22 @@ test "setSubscriptions replaces the previous set" {
     const one: ids.SessionId = .bytes([_]u8{1} ** 16);
     const two: ids.SessionId = .bytes([_]u8{2} ** 16);
     try registry.setSubscriptions(&c, &.{ one, one, two }); // The duplicate collapses.
+
+    try fillOutbox(&c);
+    registry.publish(one, "delta", .shed_able);
+    try testing.expect(c.shed.contains(one));
+
     try registry.setSubscriptions(&c, &.{two}); // The set now contains only two.
+    try testing.expect(!c.shed.contains(one));
+
+    var markers: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer markers.deinit();
+    try c.drainShedMarkers(&markers.writer);
+    try testing.expectEqual(@as(usize, 0), markers.written().len);
+
+    while (c.outbox.tryReceive()) |queued| {
+        testing.allocator.free(queued.bytes);
+    } else |_| {}
 
     registry.publish(one, "x", .must_deliver);
     try testing.expectError(error.ChannelEmpty, c.outbox.tryReceive());
