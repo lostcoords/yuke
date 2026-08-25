@@ -25,7 +25,7 @@ registry: connection.Registry, // The registry tracks live connections and the r
 transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
-run_group: zio.Group = .init, // The group owns each launched run task until it returns.
+run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 broadcast_tap: ?*BroadcastTap = null, // A conformance test records the published broadcasts here.
 
@@ -132,7 +132,7 @@ const RecoveryEventIds = struct {
 /// Free the live sessions and the registry, then close the store.
 pub fn deinit(self: *State) void {
     self.shutting_down = true;
-    self.run_group.cancel();
+    self.run_group.cancel(self.io);
     self.registry.deinit();
     self.sessions.deinit();
     if (self.providers) |*p| p.deinit();

@@ -46,7 +46,7 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     const run_id = slot.handle.started.run_id;
     const session_id = slot.handle.started.session_id;
     slot.phase = .running;
-    state.run_group.spawn(runSession, .{ state, slot }) catch |err| {
+    state.run_group.concurrent(state.io, runSession, .{ state, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
         const created_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
         var terminal_arena = std.heap.ArenaAllocator.init(state.gpa);
