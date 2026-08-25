@@ -397,7 +397,7 @@ test "websocket terminal drain stops at its timeout" {
     writer.cancel();
 }
 
-test "a send_input response enters the outbox before run.started" {
+test "the user commit and run.started precede the send_input response" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
@@ -431,26 +431,26 @@ test "a send_input response enters the outbox before run.started" {
     var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
     try launch.join();
 
-    // Drain the outbox. The response enters before run.started. The user commit also precedes run.started.
-    var saw_response = false;
+    // Drain the outbox. The daemon folds and publishes each durable event in order, then the response.
     var saw_user_commit = false;
-    var response_before_started = false;
+    var saw_run_started = false;
+    var response_after_broadcasts = false;
     while (conn.outbox.tryReceive()) |item| {
         defer testing.allocator.free(item.bytes);
-        if (std.mem.indexOf(u8, item.bytes, "\"method\":\"run.started\"") != null) {
-            try testing.expect(saw_response and saw_user_commit); // both precede run.started
-            response_before_started = true;
-        } else if (std.mem.indexOf(u8, item.bytes, "\"id\":\"request-1\"") != null) {
+        if (std.mem.indexOf(u8, item.bytes, "\"id\":\"request-1\"") != null) {
+            try testing.expect(saw_user_commit and saw_run_started); // The broadcasts precede the response.
             try testing.expect(std.mem.indexOf(u8, item.bytes, "\"result\"") != null);
-            saw_response = true;
+            response_after_broadcasts = true;
+        } else if (std.mem.indexOf(u8, item.bytes, "\"method\":\"run.started\"") != null) {
+            saw_run_started = true;
         } else if (std.mem.indexOf(u8, item.bytes, "message.committed") != null and std.mem.indexOf(u8, item.bytes, "\"type\":\"user\"") != null) {
             saw_user_commit = true;
         }
     } else |_| {}
-    try testing.expect(saw_response and saw_user_commit and response_before_started);
+    try testing.expect(saw_user_commit and saw_run_started and response_after_broadcasts);
 }
 
-test "a send_input error enters the outbox before a prepared queued run starts" {
+test "a queued drain publishes its commits and run.started before a send_input error" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
@@ -473,9 +473,7 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     const old = try database.input.enqueue(&state.db, arena, created.session.id.raw, state.newId(), 100, &.{.{ .text = .{ .text = "old" } }}, 100);
     const old2 = try database.input.enqueue(&state.db, arena, created.session.id.raw, state.newId(), 100, &.{.{ .text = .{ .text = "old2" } }}, 101);
     try state.db.conn.execNoArgs("COMMIT");
-    const runtime = try state.sessions.getOrCreate(created.session.id);
-    try testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = created.session.id, .seq = old.seq, .input = old.input }));
-    try testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = created.session.id, .seq = old2.seq, .input = old2.input }));
+    // The durable inputs load into the queue when the runtime activates on the send below.
     try state.db.conn.execNoArgs(
         \\CREATE TRIGGER fail_new_input BEFORE INSERT ON events
         \\WHEN NEW.name = 'input.queued'
@@ -493,18 +491,19 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     const request_bytes = try std.json.Stringify.valueAlloc(arena, request, .{ .emit_null_optional_fields = false });
     const reply = try frameReply(&state, &conn, testing.allocator, request_bytes);
     try testing.expect(reply.launch != null);
-    // The queued drain committed both old inputs, so their broadcasts are already in the outbox in order.
+    // The queued drain folded both old commits and run.started, so they are already in the outbox in order.
     {
         const first_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old.input.input_id});
         const second_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old2.input.input_id});
         const first = try conn.outbox.tryReceive();
         defer testing.allocator.free(first.bytes);
-        try testing.expect(std.mem.indexOf(u8, first.bytes, "message.committed") != null);
-        try testing.expect(std.mem.indexOf(u8, first.bytes, first_id) != null);
+        try testing.expect(std.mem.indexOf(u8, first.bytes, "message.committed") != null and std.mem.indexOf(u8, first.bytes, first_id) != null);
         const second = try conn.outbox.tryReceive();
         defer testing.allocator.free(second.bytes);
-        try testing.expect(std.mem.indexOf(u8, second.bytes, "message.committed") != null);
-        try testing.expect(std.mem.indexOf(u8, second.bytes, second_id) != null);
+        try testing.expect(std.mem.indexOf(u8, second.bytes, "message.committed") != null and std.mem.indexOf(u8, second.bytes, second_id) != null);
+        const started = try conn.outbox.tryReceive();
+        defer testing.allocator.free(started.bytes);
+        try testing.expect(std.mem.indexOf(u8, started.bytes, "\"method\":\"run.started\"") != null);
     }
     try testing.expectError(error.ChannelEmpty, conn.outbox.tryReceive());
 
@@ -512,9 +511,6 @@ test "a send_input error enters the outbox before a prepared queued run starts" 
     try launch.join();
     const response_item = try conn.outbox.tryReceive();
     defer testing.allocator.free(response_item.bytes);
-    const started_item = try conn.outbox.tryReceive();
-    defer testing.allocator.free(started_item.bytes);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-error\"") != null);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"error\"") != null);
-    try testing.expect(std.mem.indexOf(u8, started_item.bytes, "\"method\":\"run.started\"") != null);
 }

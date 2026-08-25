@@ -4,7 +4,9 @@
 const std = @import("std");
 const zio = @import("zio");
 const zqlite = @import("zqlite");
+const wire = @import("wire");
 const database = @import("../database/database.zig");
+const committed = @import("../domain/committed.zig");
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -51,15 +53,62 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
     const recovered = try database.run.recoverOpen(&self.db, arena.allocator(), self.nowMillis(), &event_ids);
     if (recovered > 0) std.log.info("recovered {d} open runs as canceled", .{recovered});
     const pending_sessions = try database.input.sessionIds(&self.db, arena.allocator());
-    for (pending_sessions) |session_id| {
-        const rt = try self.sessions.getOrCreate(.bytes(session_id));
-        const entries = try database.input.list(&self.db, arena.allocator(), session_id);
-        for (entries) |entry| {
-            const applied = try rt.session.queue.onQueued(.{ .session_id = .bytes(session_id), .seq = entry.seq, .input = entry.input });
-            std.debug.assert(applied == .changed);
-        }
-    }
+    for (pending_sessions) |session_id| _ = try self.activate(.bytes(session_id));
     return self;
+}
+
+/// Return the live runtime for a session and seed its projection from SQLite once.
+/// The caller must know the session exists. A durable event then folds onto the hydrated cursors.
+pub fn activate(self: *State, session_id: wire.ids.SessionId) !*session_runtime.SessionRuntime {
+    const rt = try self.sessions.getOrCreate(session_id);
+    if (!rt.hydrated) {
+        try self.hydrate(rt);
+        rt.hydrated = true;
+    }
+    return rt;
+}
+
+/// Load the committed window, the configs, the durable cursors, and the pending inputs into a runtime.
+/// SQLite stays authoritative. The daemon caches the recent tail so resync serializes the projection.
+fn hydrate(self: *State, rt: *session_runtime.SessionRuntime) !void {
+    var arena = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = rt.session_id.raw;
+    const hw = (try database.event.highWater(&self.db, a, sid)) orelse return; // No session row exists.
+    const page = try database.message.historyPage(&self.db, a, sid, 0, committed.default_max_messages);
+    const configs = try gatherWindowConfigs(self, a, sid, page.messages);
+    const finalized: u64 = if (page.messages.len > 0) page.messages[page.messages.len - 1].id() else 0;
+    try rt.session.installSnapshot(.{
+        .base_seq = hw.seq_high,
+        .finalized_message_id = finalized,
+        .messages = page.messages,
+        .configs = configs,
+        .has_more = page.has_more,
+    });
+    // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
+    const pending = try database.input.list(&self.db, a, sid);
+    for (pending) |entry| {
+        const applied = try rt.session.queue.onQueued(.{ .session_id = rt.session_id, .seq = entry.seq, .input = entry.input });
+        std.debug.assert(applied == .changed);
+    }
+}
+
+/// Return one config for each revision the window messages reference. The daemon seeds the config set.
+fn gatherWindowConfigs(self: *State, arena: std.mem.Allocator, session_id: [16]u8, messages: []const wire.message.Message) ![]const wire.run.RunConfig {
+    var out: std.ArrayList(wire.run.RunConfig) = .empty;
+    for (messages) |m| switch (m) {
+        .assistant => |asst| {
+            for (out.items) |seen| {
+                if (seen.config_rev == asst.config_rev) break;
+            } else {
+                const config = (try database.config.byRevision(&self.db, arena, session_id, asst.config_rev)) orelse return error.CorruptLog;
+                try out.append(arena, config);
+            }
+        },
+        else => {},
+    };
+    return out.items;
 }
 
 const RecoveryEventIds = struct {

@@ -42,9 +42,7 @@ pub const Launch = struct {
 /// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
-    publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"run.started", .params = .{
-        .run_started_data = slot.handle.started,
-    } });
+    // The caller already folded and published run.started. This spawns the run task.
     const run_id = slot.handle.run_id;
     const session_id = slot.handle.started.session_id;
     slot.phase = .running;
@@ -287,17 +285,13 @@ fn terminalize(
         .canceled => .{ .canceled = .{} },
         .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
     };
+    // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
+    // Copy before the transaction, so an allocation failure consumes no durable sequence.
+    const owned = try wire.dupe(arena, committed);
 
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
-    const seq = try message_store.appendCommittedMessage(
-        &state.db,
-        arena,
-        slot.handle.started.session_id.raw,
-        state.newId(),
-        ended_at,
-        committed,
-    );
+    const seq = try message_store.appendCommittedMessage(&state.db, arena, slot.handle.started.session_id.raw, state.newId(), ended_at, owned);
     const done = try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
         .session_id = slot.handle.started.session_id,
         .seq = 0,
@@ -309,12 +303,12 @@ fn terminalize(
     try state.db.conn.execNoArgs("COMMIT");
     slot.phase = .terminalized;
 
-    publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"message.committed", .params = .{
-        .message_committed_data = .{ .session_id = slot.handle.started.session_id, .seq = seq, .message = committed },
+    const session_id = slot.handle.started.session_id;
+    const rt = state.sessions.get(session_id) orelse unreachable;
+    emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{
+        .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
-    publishBestEffort(state, slot.handle.started.session_id, .{ .method = .@"run.done", .params = .{
-        .run_done_data = done,
-    } });
+    emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
 }
 
 /// Preserve the open marker when Tx2 fails. Startup recovery closes the durable obligation.
@@ -361,13 +355,12 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     errdefer slot.destroy();
     const started = try run.beginQueuedTurn(&state.db, state.io, arena, rt.session_id.raw, snapshot.config_rev);
     slot.bind(started.handle);
-    // Publish each drained user message before run.started, so a fresh fold sees them first.
-    publishUserCommits(state, started.user_commits);
-    while (rt.session.queue.depth() > 0) {
-        const input_id = rt.session.queue.entries()[0].input_id;
-        std.debug.assert(rt.session.queue.retire(input_id) == .changed);
-    }
+    // Fold each durable event in sequence order: the drained user messages, then run.started.
+    // The commit fold retires each drained input from the queue.
+    publishUserCommits(state, rt, started.user_commits);
+    std.debug.assert(rt.session.queue.depth() == 0);
     rt.active = slot;
+    emitDurable(state, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
     return slot;
 }
 
@@ -487,9 +480,19 @@ fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) !message.AssistantPa
     };
 }
 
-/// Publish each committed user message as a broadcast. A publish failure leaves the durable event for client resync.
-pub fn publishUserCommits(state: *State, commits: []const wire.message.MessageCommittedData) void {
-    for (commits) |c| publishBestEffort(state, c.session_id, .{ .method = .@"message.committed", .params = .{ .message_committed_data = c } });
+/// Fold a durable daemon event into the session, then publish the same value. The daemon never folds its output.
+/// The session sequence must track the store. A fold failure leaves the cache behind the log, so fail fast.
+/// A restart rehydrates the projection from SQLite, which stays authoritative.
+pub fn emitDurable(state: *State, rt: *session_runtime.SessionRuntime, note: wire.rpc.Notification) void {
+    rt.session.applyAuthoritative(note.params) catch |err| {
+        std.debug.panic("cannot fold the durable event {t}: {t}", .{ note.method, err });
+    };
+    publishBestEffort(state, rt.session_id, note);
+}
+
+/// Fold and publish each committed user message. A publish failure leaves the durable event for client resync.
+pub fn publishUserCommits(state: *State, rt: *session_runtime.SessionRuntime, commits: []const wire.message.MessageCommittedData) void {
+    for (commits) |c| emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = c } });
 }
 
 pub fn publishBestEffort(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) void {

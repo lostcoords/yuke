@@ -710,8 +710,8 @@ test "a durable queue starts before a new idle input" {
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     const old = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), 100, &old_content, 100);
     try fixture.state.db.conn.execNoArgs("COMMIT");
+    // The durable input loads into the queue when the runtime activates on the send below.
     const runtime = try fixture.state.sessions.getOrCreate(sid);
-    try std.testing.expectEqual(.changed, runtime.session.queue.onQueued(.{ .session_id = sid, .seq = old.seq, .input = old.input }));
 
     const accepted = try sendInputDirect(&fixture.state, a, .{
         .session_id = sid,
@@ -910,6 +910,29 @@ test "the live draft is reachable from the runtime during a run" {
     // The driver holds the reachability assertions. The leak check proves the draft is freed once.
     var driver = try fixture.rt.spawn(assertDraftReachable, .{ &fixture.state, sid, &entered, &gate });
     try driver.join();
+}
+
+test "activation hydrates the committed window and the durable cursor" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/hydrate", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    // The turn committed a user message and an assistant message, then the idle runtime was evicted.
+    try std.testing.expect(fixture.state.sessions.get(sid) == null);
+    const rt = try fixture.state.activate(sid);
+    const hw = (try database.event.highWater(&fixture.state.db, a, sid.raw)).?;
+    try std.testing.expectEqual(hw.seq_high, rt.session.base_seq);
+    try std.testing.expectEqual(@as(usize, 2), rt.session.committed.list.items.len);
+    try std.testing.expect(rt.session.committed.newestId() != null);
 }
 
 // This reasoning turn has one thinking block, one signature, and a clean stop.

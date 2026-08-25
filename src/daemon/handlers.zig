@@ -250,7 +250,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     };
     const sid = params.session_id.raw;
     const snapshot = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
-    const rt = try state.sessions.getOrCreate(params.session_id);
+    const rt = try state.activate(params.session_id);
     if (rt.faulted) return error.RuntimeFailed;
     if (rt.active == null and rt.session.queue.depth() > 0) launch.* = .{ .slot = try run_task.prepareQueued(state, rt) };
 
@@ -262,8 +262,9 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
         slot.bind(started.handle);
         rt.active = slot;
         launch.* = .{ .slot = slot };
-        // Publish the user message before run.started, so a fresh fold sees the input first.
-        run_task.publishUserCommits(state, started.user_commits);
+        // Fold each durable event in sequence order: the user message, then run.started.
+        run_task.publishUserCommits(state, rt, started.user_commits);
+        run_task.emitDurable(state, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
         return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.run_id } };
     }
 
@@ -273,11 +274,8 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
     const queued = try input_store.enqueue(&state.db, arena, sid, state.newId(), now, content, now);
-    const applied = try rt.session.queue.onQueued(.{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input });
-    std.debug.assert(applied == .changed);
-    errdefer std.debug.assert(rt.session.queue.retire(queued.input.input_id) == .changed);
     try state.db.conn.execNoArgs("COMMIT");
-    run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.queued", .params = .{
+    run_task.emitDurable(state, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
     } });
     return .{ .queued = .{ .input_id = queued.input.input_id } };
@@ -287,7 +285,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
 pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.session.SessionCancelInputParams) !wire.session.SessionCancelInputResult {
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
-    const rt = try state.sessions.getOrCreate(params.session_id);
+    const rt = try state.activate(params.session_id);
 
     const now = state.nowMillis();
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -297,8 +295,7 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
         else => return err,
     };
     try state.db.conn.execNoArgs("COMMIT");
-    std.debug.assert(rt.session.queue.onCanceled(.{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id }) == .changed);
-    run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
+    run_task.emitDurable(state, rt, .{ .method = .@"input.canceled", .params = .{
         .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
     } });
     state.sessions.evictIfIdle(params.session_id);
@@ -309,7 +306,7 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
 pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.session.SessionCancelRunParams) !wire.session.SessionCancelRunResult {
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
-    const rt = try state.sessions.getOrCreate(params.session_id);
+    const rt = try state.activate(params.session_id);
 
     const active = rt.active;
     if (params.run_id) |expected| {
@@ -331,8 +328,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
         }
         try state.db.conn.execNoArgs("COMMIT");
         for (cleared_inputs, cleared_seqs) |input_id, seq| {
-            std.debug.assert(rt.session.queue.onCanceled(.{ .session_id = params.session_id, .seq = seq, .input_id = input_id }) == .changed);
-            run_task.publishBestEffort(state, params.session_id, .{ .method = .@"input.canceled", .params = .{
+            run_task.emitDurable(state, rt, .{ .method = .@"input.canceled", .params = .{
                 .input_canceled_data = .{ .session_id = params.session_id, .seq = seq, .input_id = input_id },
             } });
         }

@@ -58,10 +58,11 @@ pub const RunSlot = struct {
 pub const SessionRuntime = struct {
     gpa: std.mem.Allocator,
     session_id: ids.SessionId,
-    // The projection owns the input queue. Later slices use the draft and the cursor fields.
+    // The projection owns the input queue, the live draft, the committed window, and the cursors.
     session: Session,
     active: ?*RunSlot = null,
     faulted: bool = false,
+    hydrated: bool = false, // The daemon seeds the projection from SQLite once on activation.
 
     fn create(gpa: std.mem.Allocator, session_id: ids.SessionId) !*SessionRuntime {
         const self = try gpa.create(SessionRuntime);
