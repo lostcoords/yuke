@@ -152,19 +152,49 @@ pub const Registry = struct {
         conn.id = 0;
     }
 
-    /// Replace the connection's subscription set with `sessions`.
+    /// Replace the connection's subscription set with `sessions`. Reject an oversized set. Reserve
+    /// every allocation first, so the swap cannot fail. Any failure leaves the old state unchanged.
     pub fn setSubscriptions(self: *Registry, conn: *Connection, sessions: []const ids.SessionId) !void {
-        var it = conn.subscribed.keyIterator();
-        while (it.next()) |sid| self.removeSubscriber(sid.*, conn.id);
-        conn.subscribed.clearRetainingCapacity();
+        if (sessions.len > wire.meta.limits.max_subscriptions) return error.TooManySubscriptions;
 
-        for (sessions) |sid| {
-            const gop = try conn.subscribed.getOrPut(self.gpa, sid);
-            if (gop.found_existing) continue; // ignore a duplicate in the request
+        // Build the deduplicated new set on the side. A duplicate in the request collapses.
+        var next: std.AutoHashMapUnmanaged(ids.SessionId, void) = .empty;
+        errdefer next.deinit(self.gpa);
+        for (sessions) |sid| try next.put(self.gpa, sid, {});
+
+        // Collect the added sessions. The set is bounded, so a stack array holds them.
+        var added: [wire.meta.limits.max_subscriptions]ids.SessionId = undefined;
+        var added_len: usize = 0;
+        var scan = next.keyIterator();
+        while (scan.next()) |sid| if (!conn.subscribed.contains(sid.*)) {
+            added[added_len] = sid.*;
+            added_len += 1;
+        };
+
+        // Reserve one reverse-index slot for each added session. Drop a created entry on failure.
+        var reserved: usize = 0;
+        errdefer while (reserved > 0) {
+            reserved -= 1;
+            const list = self.subscribers.getPtr(added[reserved]).?;
+            if (list.items.len == 0) {
+                list.deinit(self.gpa);
+                _ = self.subscribers.remove(added[reserved]);
+            }
+        };
+        for (added[0..added_len]) |sid| {
             const list = try self.subscribers.getOrPut(self.gpa, sid);
             if (!list.found_existing) list.value_ptr.* = .empty;
-            try list.value_ptr.append(self.gpa, conn.id);
+            reserved += 1; // count the entry before ensureUnusedCapacity, so the rollback covers it
+            try list.value_ptr.ensureUnusedCapacity(self.gpa, 1);
         }
+
+        // Commit with no allocation. Remove the dropped sessions, add the new ones, then swap the set.
+        var old = conn.subscribed.keyIterator();
+        while (old.next()) |sid| if (!next.contains(sid.*)) self.removeSubscriber(sid.*, conn.id);
+        for (added[0..added_len]) |sid| self.subscribers.getPtr(sid).?.appendAssumeCapacity(conn.id);
+        conn.subscribed.deinit(self.gpa);
+        conn.subscribed = next;
+        next = .empty;
     }
 
     /// Fan out framed bytes to every subscriber of a session. Copy the bytes per connection.
@@ -282,6 +312,29 @@ test "setSubscriptions replaces the previous set" {
     registry.publish(one, "x", .must_deliver);
     try testing.expectError(error.ChannelEmpty, c.outbox.tryReceive());
     registry.publish(two, "y", .must_deliver);
+    const item = try c.outbox.tryReceive();
+    defer testing.allocator.free(item.bytes);
+    try testing.expectEqualStrings("y", item.bytes);
+}
+
+test "setSubscriptions rejects an oversized set and keeps the previous one" {
+    var registry = Registry.init(testing.allocator);
+    defer registry.deinit();
+
+    var c: Connection = undefined;
+    c.init(testing.allocator);
+    defer c.deinit();
+    try registry.register(&c);
+
+    const keep: ids.SessionId = .bytes([_]u8{7} ** 16);
+    try registry.setSubscriptions(&c, &.{keep});
+
+    // A set past the wire limit is rejected, and the previous subscription stays intact.
+    var many: [wire.meta.limits.max_subscriptions + 1]ids.SessionId = undefined;
+    for (&many, 0..) |*sid, i| sid.* = .bytes([_]u8{@intCast(i)} ** 16);
+    try testing.expectError(error.TooManySubscriptions, registry.setSubscriptions(&c, &many));
+
+    registry.publish(keep, "y", .must_deliver);
     const item = try c.outbox.tryReceive();
     defer testing.allocator.free(item.bytes);
     try testing.expectEqualStrings("y", item.bytes);

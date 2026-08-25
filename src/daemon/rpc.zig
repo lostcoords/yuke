@@ -34,7 +34,9 @@ pub fn handleRequest(state: *State, conn: *connection.Connection, out: *std.Io.W
     if (requestMethod(value) == null)
         return .{ .outcome = try respond(arena, out, errorResponse(request_id, .unknown_method, "unknown method")) };
 
-    const request = wire.rpc.Request.jsonParseFromValue(arena, value, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
+    // The wire request parser owns the unknown-field policy. It ignores unknown fields for forward
+    // compatibility, so the call options stay default.
+    const request = wire.rpc.Request.jsonParseFromValue(arena, value, .{}) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => return .{ .outcome = try respond(arena, out, errorResponse(request_id, .bad_request, "bad request")) },
     };
@@ -85,7 +87,10 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             return .{ .ok = .{ .id = request.id, .result = .{ .session_history_result = result } } };
         },
         .@"subscription.set" => {
-            try state.registry.setSubscriptions(conn, request.params.subscription_set_params.sessions);
+            state.registry.setSubscriptions(conn, request.params.subscription_set_params.sessions) catch |err| switch (err) {
+                error.TooManySubscriptions => return errorResponse(request.id, .bad_request, "too many subscriptions"),
+                else => return err,
+            };
             return .{ .ok = .{ .id = request.id, .result = .{ .empty = .{} } } };
         },
         .@"session.send_input" => {

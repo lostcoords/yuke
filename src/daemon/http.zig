@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const zio = @import("zio");
+const wire = @import("wire");
 const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
 const State = @import("State.zig");
@@ -12,8 +13,8 @@ const run_task = @import("run_task.zig");
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
 const write_buffer_bytes = 4096;
-// Limit each WebSocket message to 1 MiB.
-const max_ws_message_bytes = 1 << 20;
+// Bound each WebSocket message with the wire frame limit, the single source of truth.
+const max_ws_message_bytes: usize = @intCast(wire.meta.limits.max_frame_bytes);
 
 const text_plain = [_]std.http.Header{
     .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
@@ -334,7 +335,6 @@ const testing = std.testing;
 const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const handlers = @import("handlers.zig");
-const wire = @import("wire");
 
 fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !void {
     var launch = reply.launch;
