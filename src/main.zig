@@ -11,7 +11,10 @@ const provider = @import("provider/provider.zig");
 const State = @import("daemon/State.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
-const provider_idle_timeout = zio.Timeout.fromMilliseconds(60_000);
+const provider_idle_timeout: std.Io.Timeout = .{ .duration = .{
+    .clock = .awake,
+    .raw = std.Io.Duration.fromMilliseconds(60_000),
+} };
 
 // zio.debug_io breaks the WebSocket upgrade in zio v0.16.0. Keep it disabled.
 
