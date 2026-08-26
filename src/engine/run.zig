@@ -1,5 +1,5 @@
 //! Start a run. Commit the user inputs and write the durable run-start record in one transaction.
-//! The daemon streams and commits the assistant reply later through its live terminalizer.
+//! The daemon streams and commits the assistant reply later in the run task.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -29,7 +29,7 @@ pub const RunHandle = struct {
 pub const RoundState = struct {
     number: u64,
     message_id: wire.ids.MessageId,
-    created_at_ms: u64 = 0, // The run fills this at stream start.
+    created_at_ms: u64 = 0, // The run task fills this before it commits the round.
     stop_reason: ?wire.enums.StopReason = null,
 };
 

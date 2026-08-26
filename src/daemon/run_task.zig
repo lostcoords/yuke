@@ -1,4 +1,4 @@
-//! Own daemon run tasks. Each exit commits one assistant message and one terminal run event.
+//! Own daemon run tasks. Each round commits one assistant message. The final round also commits run.done.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -48,13 +48,14 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     slot.phase = .running;
     state.run_group.concurrent(state.io, runSession, .{ state, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
-        const created_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
+        // The run task never ran, so set the round timestamp here before the commit.
+        slot.progress.current.?.created_at_ms = @max(state.nowMillis(), slot.handle.started.started_at_ms);
         var terminal_arena = std.heap.ArenaAllocator.init(state.gpa);
         defer terminal_arena.deinit();
-        terminalize(state, terminal_arena.allocator(), slot, created_at, null, null, .{ .failed = .{
+        commitRound(state, terminal_arena.allocator(), slot, null, null, .{ .failed = .{
             .code = .internal,
             .message = "the daemon could not launch the run task",
-        } }) catch |terminal_err| faultSlot(state, session_id, slot, terminal_err);
+        } }, .final) catch |terminal_err| faultSlot(state, session_id, slot, terminal_err);
         finishSlot(state, session_id, slot);
         return err;
     };
@@ -89,7 +90,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
     const started_note: wire.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = started } };
     // Fold the start into the session, then publish the same value. The fold opens the draft.
     rt.session.applyAuthoritative(started_note.params) catch |err| {
-        terminalize(state, arena, slot, created_at, null, null, .{ .failed = failure(err) }) catch |terminal_err| {
+        commitRound(state, arena, slot, null, null, .{ .failed = failure(err) }, .final) catch |terminal_err| {
             faultSlot(state, session_id, slot, terminal_err);
         };
         return;
@@ -134,7 +135,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
         }
     };
 
-    terminalize(state, arena, slot, created_at, live, streamer.usage, terminal) catch |err| {
+    commitRound(state, arena, slot, live, streamer.usage, terminal, .final) catch |err| {
         faultSlot(state, session_id, slot, err);
     };
 }
@@ -240,14 +241,20 @@ fn failure(err: anyerror) Failure {
     };
 }
 
-fn terminalize(
+/// A round is intermediate (a tool round; the run continues) or final (the run ends).
+const RoundCompletion = enum { intermediate, final };
+
+/// Commit the current round's assistant message. A final round also appends run.done in the same
+/// transaction, emits it after COMMIT, and terminalizes the slot. An intermediate round keeps the run
+/// open (phase `.running`).
+fn commitRound(
     state: *State,
     arena: std.mem.Allocator,
     slot: *RunSlot,
-    created_at: u64,
     live: ?*const draft.Draft,
     usage: ?message.TokenUsage,
     terminal: Terminal,
+    completion: RoundCompletion,
 ) !void {
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
@@ -255,6 +262,7 @@ fn terminalize(
     const old_cancel_protection = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(old_cancel_protection);
 
+    const round = &slot.progress.current.?;
     const content = if (live) |value| (try value.toActiveDraft(arena)).message.content else &.{};
     const ended_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
     const finish: wire.enums.StopReason = switch (terminal) {
@@ -267,7 +275,7 @@ fn terminalize(
         else => null,
     };
     const committed: message.Message = .{ .assistant = .{
-        .id = slot.progress.current.?.message_id,
+        .id = round.message_id,
         .run_id = slot.handle.started.run_id,
         .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
@@ -275,11 +283,11 @@ fn terminalize(
         .finish = finish,
         .tokens = usage,
         .cost = null,
-        .time = .{ .created_at_ms = created_at, .completed_at_ms = ended_at },
+        .time = .{ .created_at_ms = round.created_at_ms, .completed_at_ms = ended_at },
         .@"error" = message_error,
         .provenance = .{ .protocol = slot.protocol, .model = slot.config.model },
     } };
-    slot.progress.rounds_committed += 1; // This round's assistant message commits below.
+    slot.progress.rounds_committed += 1;
     const outcome: wire.run.RunOutcome = switch (terminal) {
         .success => |reason| .{ .turn = .{ .finish = reason, .rounds = slot.progress.rounds_committed } },
         .canceled => .{ .canceled = .{} },
@@ -288,27 +296,27 @@ fn terminalize(
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     // Copy before the transaction, so an allocation failure consumes no durable sequence.
     const owned = try wire.dupe(arena, committed);
+    const session_id = slot.handle.started.session_id;
 
     try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
     errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
-    const seq = try message_store.appendCommittedMessage(&state.db, arena, slot.handle.started.session_id.raw, state.newId(), ended_at, owned);
-    const done = try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
-        .session_id = slot.handle.started.session_id,
+    const seq = try message_store.appendCommittedMessage(&state.db, arena, session_id.raw, state.newId(), ended_at, owned);
+    const done: ?wire.run.RunDoneData = if (completion == .final) try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
+        .session_id = session_id,
         .seq = 0,
         .run_id = slot.handle.started.run_id,
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
-    });
+    }) else null;
     try state.db.conn.execNoArgs("COMMIT");
-    slot.phase = .terminalized;
+    if (completion == .final) slot.phase = .terminalized;
 
-    const session_id = slot.handle.started.session_id;
     const rt = state.sessions.get(session_id) orelse unreachable;
     emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
-    emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
+    if (done) |run_done| emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = run_done } });
 }
 
 /// Preserve the open marker when Tx2 fails. Startup recovery closes the durable obligation.
