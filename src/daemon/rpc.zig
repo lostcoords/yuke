@@ -956,7 +956,7 @@ fn assertDraftReachable(state: *State, sid: wire.ids.SessionId, entered: *zio.Re
     const rt = state.sessions.get(sid) orelse return error.NoRuntime;
     try std.testing.expect(rt.active != null);
     try std.testing.expect(rt.session.active != null);
-    try std.testing.expectEqual(rt.active.?.handle.assistant_message_id, rt.session.active.?.message_id);
+    try std.testing.expectEqual(rt.active.?.progress.current.?.message_id, rt.session.active.?.message_id);
     gate.set(); // Let the read end so the run reaches its terminal state.
     try launchUntilIdle(state, sid);
 }

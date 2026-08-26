@@ -346,7 +346,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
         const slot = try session_runtime.RunSlot.prepare(state.gpa, snapshot.model, stored_prompt orelse "");
         errdefer slot.destroy();
         const started = try run.beginTurn(&state.db, state.io, arena, sid, content, snapshot.config_rev);
-        slot.bind(started.handle);
+        slot.bind(started.handle, started.first_round);
         rt.active = slot;
         launch.* = .{ .slot = slot };
         // Fold each durable event in sequence order: the user message, then run.started.

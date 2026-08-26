@@ -13,6 +13,7 @@ const ids = wire.ids;
 pub const RunSlot = struct {
     gpa: std.mem.Allocator,
     handle: run.RunHandle,
+    progress: run.RunProgress = .{},
     config: run.Config,
     phase: Phase = .pending_start,
     protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // The run sets this after provider resolution.
@@ -39,9 +40,13 @@ pub const RunSlot = struct {
         return self;
     }
 
-    /// Bind the committed run handle. Call once after Tx1 and before launch.
-    pub fn bind(self: *RunSlot, handle: run.RunHandle) void {
+    /// Bind the committed run handle and open the first round. Call once after Tx1 and before launch.
+    pub fn bind(self: *RunSlot, handle: run.RunHandle, first_round: run.RoundState) void {
+        std.debug.assert(self.phase == .pending_start);
+        std.debug.assert(self.progress.current == null); // bind runs once
+        std.debug.assert(first_round.number == 1);
         self.handle = handle;
+        self.progress = .{ .rounds_started = 1, .current = first_round };
     }
 
     pub fn destroy(self: *RunSlot) void {
@@ -148,9 +153,8 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     rt.active = try RunSlot.prepare(testing.allocator, "model", "");
     rt.active.?.bind(.{
         .input_id = 1,
-        .assistant_message_id = 2,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },
-    });
+    }, .{ .number = 1, .message_id = 2 });
     try testing.expect(!rt.idle());
     sessions.evictIfIdle(sid);
     try testing.expect(sessions.get(sid) == rt); // The runtime remains present.

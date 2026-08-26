@@ -22,14 +22,29 @@ pub const Config = struct {
 /// These IDs belong to the started run. session.send_input returns run_id and input_id together.
 pub const RunHandle = struct {
     input_id: wire.ids.InputId,
-    assistant_message_id: wire.ids.MessageId,
     started: wire.run.RunStartedData,
+};
+
+/// One assistant round. The run allocates a fresh message id per round.
+pub const RoundState = struct {
+    number: u64,
+    message_id: wire.ids.MessageId,
+    created_at_ms: u64 = 0, // The run fills this at stream start.
+    stop_reason: ?wire.enums.StopReason = null,
+};
+
+/// The live progress of a run across rounds. The database usage summary is the durable aggregate.
+pub const RunProgress = struct {
+    rounds_started: u64 = 0,
+    rounds_committed: u64 = 0,
+    current: ?RoundState = null,
 };
 
 /// A started run and the user messages it committed. The daemon publishes each commit before run.started.
 /// The commit content borrows `arena`. The caller must publish before it frees the arena.
 pub const Started = struct {
     handle: RunHandle,
+    first_round: RoundState,
     user_commits: []const wire.message.MessageCommittedData,
 };
 
@@ -60,9 +75,9 @@ pub fn beginTurn(
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const user_message_id = try event_store.allocMessageId(db, arena, session_id);
+    const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
     var handle: RunHandle = .{
         .input_id = input_id,
-        .assistant_message_id = try event_store.allocMessageId(db, arena, session_id),
         .started = undefined,
     };
     const user_now = util.nowMillis(io);
@@ -78,11 +93,15 @@ pub fn beginTurn(
     commits[0] = .{ .session_id = .bytes(session_id), .seq = user_seq, .message = user_message };
     handle.started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
     try db.conn.execNoArgs("COMMIT");
-    return .{ .handle = handle, .user_commits = commits };
+    return .{
+        .handle = handle,
+        .first_round = .{ .number = 1, .message_id = assistant_message_id },
+        .user_commits = commits,
+    };
 }
 
 /// Tx1 for a queued drain commits every durable queued input as one run.
-/// The returned handle uses the oldest input id and the run's assistant message id.
+/// The handle uses the oldest input id; `first_round` carries the run's assistant message id.
 pub fn beginQueuedTurn(
     db: *Database,
     io: std.Io,
@@ -127,11 +146,11 @@ pub fn beginQueuedTurn(
     const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
     try db.conn.execNoArgs("COMMIT");
-    return .{ .handle = .{
-        .input_id = first_input_id,
-        .assistant_message_id = assistant_message_id,
-        .started = started,
-    }, .user_commits = commits };
+    return .{
+        .handle = .{ .input_id = first_input_id, .started = started },
+        .first_round = .{ .number = 1, .message_id = assistant_message_id },
+        .user_commits = commits,
+    };
 }
 
 const testing = std.testing;
@@ -185,7 +204,7 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     const handle = started.handle;
     try testing.expectEqual(@as(u64, 1), handle.started.run_id);
     try testing.expectEqual(@as(u64, 1), handle.input_id);
-    try testing.expectEqual(@as(u64, 3), handle.assistant_message_id);
+    try testing.expectEqual(@as(u64, 3), started.first_round.message_id);
     // The drain returns one committed user message per input in FIFO order with contiguous sequences.
     try testing.expectEqual(@as(usize, 2), started.user_commits.len);
     try testing.expectEqual(@as(u64, 1), started.user_commits[0].message.user.id);

@@ -41,6 +41,7 @@ pub const Launch = struct {
 /// Launch one prepared run.
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
+    std.debug.assert(slot.progress.current != null); // bind must open round 1 before launch
     // The caller already folded and published run.started. This spawns the run task.
     const run_id = slot.handle.started.run_id;
     const session_id = slot.handle.started.session_id;
@@ -71,9 +72,12 @@ fn runSession(state: *State, slot: *RunSlot) void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const created_at = state.nowMillis();
+    std.debug.assert(slot.progress.current != null); // bind opened round 1
+    const round = &slot.progress.current.?;
+    round.created_at_ms = created_at;
     const started: message.MessageStartedData = .{
         .session_id = session_id,
-        .message_id = slot.handle.assistant_message_id,
+        .message_id = round.message_id,
         .run_id = slot.handle.started.run_id,
         .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
@@ -247,6 +251,7 @@ fn terminalize(
 ) !void {
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
+    std.debug.assert(slot.progress.current != null); // bind opened the round before launch
     const old_cancel_protection = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(old_cancel_protection);
 
@@ -262,7 +267,7 @@ fn terminalize(
         else => null,
     };
     const committed: message.Message = .{ .assistant = .{
-        .id = slot.handle.assistant_message_id,
+        .id = slot.progress.current.?.message_id,
         .run_id = slot.handle.started.run_id,
         .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
@@ -274,8 +279,9 @@ fn terminalize(
         .@"error" = message_error,
         .provenance = .{ .protocol = slot.protocol, .model = slot.config.model },
     } };
+    slot.progress.rounds_committed += 1; // This round's assistant message commits below.
     const outcome: wire.run.RunOutcome = switch (terminal) {
-        .success => |reason| .{ .turn = .{ .finish = reason, .rounds = 1 } },
+        .success => |reason| .{ .turn = .{ .finish = reason, .rounds = slot.progress.rounds_committed } },
         .canceled => .{ .canceled = .{} },
         .failed => |item| .{ .failed = .{ .code = item.code, .message = item.message } },
     };
@@ -349,7 +355,7 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "");
     errdefer slot.destroy();
     const started = try run.beginQueuedTurn(&state.db, state.io, arena, session_id.raw, snapshot.config_rev);
-    slot.bind(started.handle);
+    slot.bind(started.handle, started.first_round);
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
     publishUserCommits(state, rt, started.user_commits);
@@ -400,7 +406,7 @@ const Streamer = struct {
             .block_started => |b| {
                 try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
                     .session_id = self.slot.handle.started.session_id,
-                    .message_id = self.slot.handle.assistant_message_id,
+                    .message_id = self.slot.progress.current.?.message_id,
                     .part = try emptyPart(b.block, b.kind),
                 } } });
                 try self.offsets.append(self.state.gpa, 0);
@@ -433,7 +439,7 @@ const Streamer = struct {
         try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
         try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
             .session_id = self.slot.handle.started.session_id,
-            .message_id = self.slot.handle.assistant_message_id,
+            .message_id = self.slot.progress.current.?.message_id,
             .part_id = part_id,
             .delta = text,
             .offset = offset,
@@ -450,7 +456,7 @@ const Streamer = struct {
         try checkStreamCap(0, len);
         try self.emit(.{ .method = .@"message.part_finalized", .params = .{ .message_part_finalized_data = .{
             .session_id = self.slot.handle.started.session_id,
-            .message_id = self.slot.handle.assistant_message_id,
+            .message_id = self.slot.progress.current.?.message_id,
             .part_id = part_id,
             .final = final,
         } } });
