@@ -22,6 +22,7 @@ const message_store = database.message;
 const run_store = database.run;
 const session_store = database.session;
 const workspace_store = database.workspace;
+const event_store = database.event;
 const event = provider.event;
 
 const agent_name = "claude";
@@ -60,10 +61,10 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
         slot.progress.current.?.created_at_ms = @max(state.nowMillis(), slot.handle.started.started_at_ms);
         var terminal_arena = std.heap.ArenaAllocator.init(state.gpa);
         defer terminal_arena.deinit();
-        commitRound(state, terminal_arena.allocator(), slot, null, null, .{ .failed = .{
+        commitFinal(state, terminal_arena.allocator(), slot, null, null, .{ .failed = .{
             .code = .internal,
             .message = "the daemon could not launch the run task",
-        } }, .final) catch |terminal_err| faultSlot(state, session_id, slot, terminal_err);
+        } });
         finishSlot(state, session_id, slot);
         return err;
     };
@@ -80,114 +81,137 @@ fn runSession(state: *State, slot: *RunSlot) void {
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const created_at = state.nowMillis();
-    std.debug.assert(slot.progress.current != null); // bind opened round 1
-    const round = &slot.progress.current.?;
-    round.created_at_ms = created_at;
-    const started: message.MessageStartedData = .{
-        .session_id = session_id,
-        .message_id = round.message_id,
-        .run_id = slot.handle.started.run_id,
-        .config_rev = slot.handle.started.config_rev,
-        .agent = agent_name,
-        .created_at_ms = created_at,
-    };
 
-    // The session owns the live draft. A synchronous resync can read it from the runtime.
-    std.debug.assert(rt.session.active == null); // one draft per session at a time
-    const started_note: wire.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = started } };
-    // Fold the start into the session, then publish the same value. The fold opens the draft.
-    rt.session.applyAuthoritative(started_note.params) catch |err| {
-        commitRound(state, arena, slot, null, null, .{ .failed = failure(err) }, .final) catch |terminal_err| {
-            faultSlot(state, session_id, slot, terminal_err);
-        };
-        return;
-    };
-    // Clear the draft before finishSlot drains a queued run. A later commit fold may null it first.
+    // Clear a live draft on an early return. A commit fold nulls it first on the normal path.
     defer if (rt.session.active != null) {
         rt.session.active.?.deinit();
         rt.session.active = null;
     };
-    const live = &rt.session.active.?;
-    var streamer: Streamer = .{
-        .state = state,
-        .slot = slot,
-        .session = &rt.session,
-    };
-    defer streamer.offsets.deinit(state.gpa);
-    publishBestEffort(state, session_id, started_note);
 
-    // Load the model context once for the turn. Later rounds append to it in memory.
+    var streamer: Streamer = .{ .state = state, .slot = slot, .session = &rt.session };
+    defer streamer.offsets.deinit(state.gpa);
+
+    // Load the model context once for the turn. Each round appends its committed message.
     var ctx = turn_context.TurnContext.load(arena, &state.db, session_id.raw, context_budget, max_transcript_messages) catch |err| {
         const term: Terminal = if (slot.cancel_requested) .canceled else .{ .failed = failure(err) };
-        commitRound(state, arena, slot, live, streamer.usage, term, .final) catch |terminal_err| {
-            faultSlot(state, session_id, slot, terminal_err);
-        };
+        commitFinal(state, arena, slot, null, streamer.usage, term);
         return;
     };
 
-    // Stream on a child task and wait for it or a cancel signal. The child owns the body.
-    // Child cancellation stops a blocked read and deinits the body before this run reaches its terminal state.
-    const terminal: Terminal = blk: {
-        var reader = state.io.concurrent(streamChild, .{ state, arena, slot, &streamer, &ctx }) catch |err| {
-            break :blk .{ .failed = failure(err) };
+    while (true) {
+        // Open this round. message.started opens a fresh draft.
+        streamer.reset();
+        const created_at = state.nowMillis();
+        std.debug.assert(slot.progress.current != null); // bind or beginRound opened the round
+        slot.progress.current.?.created_at_ms = created_at;
+        std.debug.assert(rt.session.active == null); // one draft per round
+        const started_note: wire.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
+            .session_id = session_id,
+            .message_id = slot.progress.current.?.message_id,
+            .run_id = slot.handle.started.run_id,
+            .config_rev = slot.handle.started.config_rev,
+            .agent = agent_name,
+            .created_at_ms = created_at,
+        } } };
+        // Fold the start into the session, then publish. The fold opens the draft.
+        rt.session.applyAuthoritative(started_note.params) catch |err| {
+            commitFinal(state, arena, slot, null, streamer.usage, .{ .failed = failure(err) });
+            return;
         };
-        slot.wake_event.wait(state.io) catch {
-            reader.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the reader.
-            break :blk .canceled;
-        };
-        if (slot.cancel_requested) {
-            reader.cancel(state.io) catch {}; // Request cancellation, then join the reader.
-            break :blk .canceled;
-        }
-        const result = reader.await(state.io);
-        if (result) |_| {
-            if (slot.cancel_requested) break :blk .canceled;
-            break :blk .{ .success = streamer.stop_reason orelse {
-                break :blk .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
-            } };
-        } else |err| {
-            if (err == error.Canceled or slot.cancel_requested) break :blk .canceled;
-            break :blk .{ .failed = failure(err) };
-        }
-    };
+        const live = &rt.session.active.?;
+        publishBestEffort(state, session_id, started_note);
 
-    // Settle any tool parts into a terminal state before the commit. The request builder rejects a
-    // pending tool, so no pending part may reach message.committed.
-    if (hasToolPart(live)) {
-        // A tool part requires the tool_calls stop reason. Execute only then.
-        if (terminal == .success and terminal.success == .tool_calls) {
-            if (workspaceRoot(state, arena, session_id.raw)) |root| {
-                var host_backend: local_host.LocalHost = .{ .io = state.io, .root = root, .env = state.env };
-                settlePendingTools(state, arena, slot, &streamer, host_backend.host(), live) catch |err| {
+        const terminal = streamRound(state, arena, slot, &streamer, &ctx);
+
+        // Settle any tool parts into a terminal state. The request builder rejects a pending tool.
+        const has_tools = hasToolPart(live);
+        if (has_tools) {
+            if (terminal == .success and terminal.success == .tool_calls) {
+                if (workspaceRoot(state, arena, session_id.raw)) |root| {
+                    var host_backend: local_host.LocalHost = .{ .io = state.io, .root = root, .env = state.env };
+                    settlePendingTools(state, arena, slot, &streamer, host_backend.host(), live) catch |err| {
+                        faultSlot(state, session_id, slot, err);
+                        return;
+                    };
+                } else |_| {
+                    // A settle error leaves a pending part, so fault instead of a pending commit.
+                    settlePendingTools(state, arena, slot, &streamer, null, live) catch |err| {
+                        faultSlot(state, session_id, slot, err);
+                        return;
+                    };
+                    commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
+                    return;
+                }
+            } else {
+                // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
+                settlePendingTools(state, arena, slot, &streamer, null, live) catch |err| {
                     faultSlot(state, session_id, slot, err);
                     return;
                 };
-            } else |_| {
-                settlePendingTools(state, arena, slot, &streamer, null, live) catch {};
-                commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
-                return;
-            }
-        } else {
-            // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
-            settlePendingTools(state, arena, slot, &streamer, null, live) catch {};
-            if (terminal == .success) {
-                commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
-                return;
+                if (terminal == .success) {
+                    commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                    return;
+                }
             }
         }
-    }
 
-    // A cancel during tool execution wins over the streamed success terminal.
-    const commit_terminal: Terminal = if (slot.cancel_requested) .canceled else terminal;
-    commitFinal(state, arena, slot, live, streamer.usage, commit_terminal);
+        // A cancel forces the canceled terminal. A failed stream or a plain answer also ends the turn.
+        const commit_terminal: Terminal = if (slot.cancel_requested) .canceled else terminal;
+        if (commit_terminal != .success or !has_tools) {
+            commitFinal(state, arena, slot, live, streamer.usage, commit_terminal);
+            return;
+        }
+
+        // A tool round: commit it, append it to the context, and start the next round.
+        const committed = commitRound(state, arena, slot, live, streamer.usage, terminal, .intermediate) catch |err| {
+            faultSlot(state, session_id, slot, err);
+            return;
+        };
+        ctx.appendCommitted(committed) catch |err| {
+            faultSlot(state, session_id, slot, err);
+            return;
+        };
+        // A cancel at the round boundary ends the run without a new empty round.
+        if (slot.cancel_requested) {
+            finishRunCanceled(state, arena, slot) catch |err| faultSlot(state, session_id, slot, err);
+            return;
+        }
+        beginRound(state, slot) catch |err| {
+            faultSlot(state, session_id, slot, err);
+            return;
+        };
+    }
 }
 
 /// Commit the final round and fault the slot on a commit error.
-fn commitFinal(state: *State, arena: std.mem.Allocator, slot: *RunSlot, live: *const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
-    commitRound(state, arena, slot, live, usage, terminal, .final) catch |err| {
+fn commitFinal(state: *State, arena: std.mem.Allocator, slot: *RunSlot, live: ?*const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
+    _ = commitRound(state, arena, slot, live, usage, terminal, .final) catch |err| {
         faultSlot(state, slot.handle.started.session_id, slot, err);
+        return;
     };
+}
+
+/// Stream one round and return its terminal outcome. The child owns the body and cancellation.
+fn streamRound(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, ctx: *const turn_context.TurnContext) Terminal {
+    slot.wake_event.reset(); // A one-shot event; a later round waits again.
+    var reader = state.io.concurrent(streamChild, .{ state, arena, slot, streamer, ctx }) catch |err| return .{ .failed = failure(err) };
+    slot.wake_event.wait(state.io) catch {
+        reader.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the reader.
+        return .canceled;
+    };
+    if (slot.cancel_requested) {
+        reader.cancel(state.io) catch {}; // Request cancellation, then join the reader.
+        return .canceled;
+    }
+    const result = reader.await(state.io);
+    if (result) |_| {
+        if (slot.cancel_requested) return .canceled;
+        const reason = streamer.stop_reason orelse return .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
+        return .{ .success = reason };
+    } else |err| {
+        if (err == error.Canceled or slot.cancel_requested) return .canceled;
+        return .{ .failed = failure(err) };
+    }
 }
 
 /// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
@@ -293,9 +317,8 @@ fn failure(err: anyerror) Failure {
 /// A round is intermediate (a tool round; the run continues) or final (the run ends).
 const RoundCompletion = enum { intermediate, final };
 
-/// Commit the current round's assistant message. A final round also appends run.done in the same
-/// transaction, emits it after COMMIT, and terminalizes the slot. An intermediate round keeps the run
-/// open (phase `.running`).
+/// Commit the current round's assistant message. A final round also appends run.done and terminalizes
+/// the slot. An intermediate round keeps the run open (phase `.running`).
 fn commitRound(
     state: *State,
     arena: std.mem.Allocator,
@@ -304,7 +327,7 @@ fn commitRound(
     usage: ?message.TokenUsage,
     terminal: Terminal,
     completion: RoundCompletion,
-) !void {
+) !message.Message {
     std.debug.assert(slot.phase == .running);
     std.debug.assert(slot.body == null);
     std.debug.assert(slot.progress.current != null); // bind opened the round before launch
@@ -366,6 +389,44 @@ fn commitRound(
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
     if (done) |run_done| emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = run_done } });
+    return owned;
+}
+
+/// Close an open run as canceled at a round boundary. The last round is already committed.
+fn finishRunCanceled(state: *State, arena: std.mem.Allocator, slot: *RunSlot) !void {
+    std.debug.assert(slot.phase == .running);
+    const old_cancel_protection = state.io.swapCancelProtection(.blocked);
+    defer _ = state.io.swapCancelProtection(old_cancel_protection);
+
+    const session_id = slot.handle.started.session_id;
+    const ended_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
+    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    const done = try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
+        .session_id = session_id,
+        .seq = 0,
+        .run_id = slot.handle.started.run_id,
+        .kind = slot.handle.started.kind,
+        .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
+        .outcome = .{ .canceled = .{} },
+    });
+    try state.db.conn.execNoArgs("COMMIT");
+    slot.phase = .terminalized;
+
+    const rt = state.sessions.get(session_id) orelse unreachable;
+    emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
+}
+
+/// Allocate the next round: allocate a message id, then advance the progress state.
+fn beginRound(state: *State, slot: *RunSlot) !void {
+    var arena_state = std.heap.ArenaAllocator.init(state.gpa);
+    defer arena_state.deinit();
+    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
+    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    const message_id = try event_store.allocMessageId(&state.db, arena_state.allocator(), slot.handle.started.session_id.raw);
+    try state.db.conn.execNoArgs("COMMIT");
+    slot.progress.rounds_started += 1;
+    slot.progress.current = .{ .number = slot.progress.rounds_started, .message_id = message_id };
 }
 
 /// Preserve the open marker when Tx2 fails. Startup recovery closes the durable obligation.
@@ -450,6 +511,14 @@ const Streamer = struct {
     stop_reason: ?wire.enums.StopReason = null,
     usage: ?message.TokenUsage = null,
 
+    /// Reset the per-round stream state before a new round.
+    fn reset(self: *Streamer) void {
+        self.offsets.clearRetainingCapacity();
+        self.open = 0;
+        self.stop_reason = null;
+        self.usage = null;
+    }
+
     /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
     fn emit(self: *Streamer, note: wire.rpc.Notification) !void {
         try self.session.applyAuthoritative(note.params);
@@ -525,8 +594,7 @@ const Streamer = struct {
     }
 
     /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
-    /// The part stays pending until the run settles it into a terminal state. The daemon does not yet
-    /// advertise tools, so a real provider does not send one until then.
+    /// The part stays pending until the run settles it into a terminal state.
     fn emitToolPart(self: *Streamer, part_id: event.BlockId, call: event.ToolCall) !void {
         try checkStreamCap(0, call.name.len);
         try checkStreamCap(0, call.call_id.len);

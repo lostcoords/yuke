@@ -1153,14 +1153,26 @@ const tool_use_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
-test "a tool_use block executes the read tool and commits a completed part" {
+// A final text turn: one text block with a streamed delta, then an end-turn stop.
+const final_text_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
+test "a tool_use round commits, then a second round streams the final answer" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var canned: provider.transport.CannedTransport = .{ .bytes = tool_use_reply };
-    fixture.state.transport = canned.transport();
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+
+    // Round 1 asks for the read tool; round 2 answers with text. Capture each request body.
+    const replies = [_][]const u8{ tool_use_reply, final_text_reply };
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies, .capture = a };
+    fixture.state.transport = seq.transport();
 
     // The read tool resolves its path against the session workspace.
     var tmp = std.testing.tmpDir(.{});
@@ -1177,14 +1189,38 @@ test "a tool_use block executes the read tool and commits a completed part" {
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
 
+    // Two assistant messages: the tool round and the final answer, plus the user message.
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
-    try std.testing.expectEqual(@as(usize, 2), history.len);
-    const parts = history[1].assistant.content;
-    try std.testing.expectEqual(@as(usize, 1), parts.len);
-    try std.testing.expect(parts[0] == .tool);
-    try std.testing.expectEqualStrings("read", parts[0].tool.name);
-    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed);
-    try std.testing.expectEqualStrings("1: hello", parts[0].tool.state.completed.output);
+    try std.testing.expectEqual(@as(usize, 3), history.len);
+
+    const tool_parts = history[1].assistant.content;
+    try std.testing.expectEqual(@as(usize, 1), tool_parts.len);
+    try std.testing.expect(tool_parts[0] == .tool);
+    try std.testing.expectEqualStrings("read", tool_parts[0].tool.name);
+    try std.testing.expectEqual(std.meta.activeTag(tool_parts[0].tool.state), .completed);
+    try std.testing.expectEqualStrings("1: hello", tool_parts[0].tool.state.completed.output);
+
+    const final_parts = history[2].assistant.content;
+    try std.testing.expectEqual(@as(usize, 1), final_parts.len);
+    try std.testing.expect(final_parts[0] == .text);
+    try std.testing.expectEqualStrings("done", final_parts[0].text.text);
+
+    // The transport opened once for each round, and the second request carries the tool call plus its
+    // derived tool_result so the model sees the read output.
+    try std.testing.expectEqual(@as(usize, 2), seq.index);
+    try std.testing.expectEqual(@as(usize, 2), seq.requests.items.len);
+    const round_two = seq.requests.items[1];
+    try std.testing.expect(std.mem.indexOf(u8, round_two, "tool_use") != null);
+    try std.testing.expect(std.mem.indexOf(u8, round_two, "tool_result") != null);
+    try std.testing.expect(std.mem.indexOf(u8, round_two, "1: hello") != null);
+
+    // Exactly one run.done ends the turn, and it counts both rounds.
+    try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "run.done"));
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .turn);
+    try std.testing.expectEqual(@as(u64, 2), done.outcome.turn.rounds);
 }
 
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.

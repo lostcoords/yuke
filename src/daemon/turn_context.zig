@@ -15,32 +15,36 @@ pub const TurnContext = struct {
     arena: std.mem.Allocator,
     budget: Budget,
     messages: std.ArrayList(Message) = .empty, // oldest -> newest
+    turn_start: usize = 0, // index of the current turn; trimming never crosses it
     bytes: u64 = 0,
     estimated_tokens: u64 = 0,
 
     /// Load the committed history once. Keep the newest messages that fit the budget and trim the oldest.
-    /// Always keep the last message (the current user input). `max_messages` caps the transient load; the
-    /// budget then bounds the model request. The result borrows `arena`.
+    /// The last message is the current user input; it and each later round message stay. `max_messages`
+    /// caps the transient load. The result borrows `arena`.
     pub fn load(arena: std.mem.Allocator, db: *Database, session_id: [16]u8, budget: Budget, max_messages: usize) !TurnContext {
         var ctx: TurnContext = .{ .arena = arena, .budget = budget };
         const all = (try message_store.historyPage(db, arena, session_id, 0, max_messages)).messages;
-        const kept = keptRange(all, budget);
+        const pin = all.len -| 1; // the user input is the newest committed message
+        const kept = keptRange(all, budget, pin);
         try ctx.messages.appendSlice(arena, all[kept.first..]);
+        ctx.turn_start = pin - kept.first;
         ctx.bytes = kept.bytes;
         ctx.estimated_tokens = kept.tokens;
         return ctx;
     }
 
-    /// Append a committed round message, then re-fit the budget by trimming the oldest (the newest stays).
-    /// The message is duplicated into the arena.
+    /// Append a committed round message, then trim pre-turn history to re-fit the budget. The current
+    /// turn never trims. The message is duplicated into the arena.
     pub fn appendCommitted(self: *TurnContext, msg: Message) !void {
         const owned = try wire.dupe(self.arena, msg);
         try self.messages.append(self.arena, owned);
-        const kept = keptRange(self.messages.items, self.budget);
+        const kept = keptRange(self.messages.items, self.budget, self.turn_start);
         if (kept.first > 0) {
             const keep = self.messages.items[kept.first..];
             std.mem.copyForwards(Message, self.messages.items[0..keep.len], keep);
             self.messages.shrinkRetainingCapacity(keep.len);
+            self.turn_start -= kept.first;
         }
         self.bytes = kept.bytes;
         self.estimated_tokens = kept.tokens;
@@ -54,17 +58,17 @@ pub const TurnContext = struct {
 
 const Kept = struct { first: usize, bytes: u64, tokens: u64 };
 
-/// Walk newest -> oldest and keep messages while they fit the budget. Never drop the newest message.
-/// Return the oldest kept index and the kept totals.
-fn keptRange(all: []const Message, budget: Budget) Kept {
+/// Walk newest -> oldest and keep messages while they fit the budget. Always keep `all[pin..]`, the
+/// current turn. Return the oldest kept index and the kept totals.
+fn keptRange(all: []const Message, budget: Budget, pin: usize) Kept {
     var kept: Kept = .{ .first = all.len, .bytes = 0, .tokens = 0 };
     var i: usize = all.len;
     while (i > 0) {
         i -= 1;
         const b = messageBytes(all[i]);
         const t = tokensFor(b);
-        const newest = i == all.len - 1;
-        if (!newest and (kept.bytes + b > budget.max_bytes or kept.tokens + t > budget.max_tokens)) break;
+        const must_keep = i >= pin;
+        if (!must_keep and (kept.bytes + b > budget.max_bytes or kept.tokens + t > budget.max_tokens)) break;
         kept.bytes += b;
         kept.tokens += t;
         kept.first = i;
@@ -94,17 +98,18 @@ fn userMessage(id: u64) Message {
 test "keptRange trims the oldest to fit the byte budget and always keeps the newest" {
     const msgs = [_]Message{ userMessage(1), userMessage(2), userMessage(3) };
     const per = messageBytes(msgs[0]);
+    const pin = msgs.len - 1; // pin the newest only
 
     // A budget for about two messages keeps the two newest and trims the oldest.
-    const two = keptRange(&msgs, .{ .max_bytes = per * 2, .max_tokens = 1 << 30 });
+    const two = keptRange(&msgs, .{ .max_bytes = per * 2, .max_tokens = 1 << 30 }, pin);
     try testing.expectEqual(@as(usize, 1), two.first);
 
     // A generous budget keeps every message.
-    const all = keptRange(&msgs, .{ .max_bytes = 1 << 30, .max_tokens = 1 << 30 });
+    const all = keptRange(&msgs, .{ .max_bytes = 1 << 30, .max_tokens = 1 << 30 }, pin);
     try testing.expectEqual(@as(usize, 0), all.first);
 
     // A tiny budget still keeps the newest message.
-    const tiny = keptRange(&msgs, .{ .max_bytes = 1, .max_tokens = 1 });
+    const tiny = keptRange(&msgs, .{ .max_bytes = 1, .max_tokens = 1 }, pin);
     try testing.expectEqual(@as(usize, 2), tiny.first);
 }
 
@@ -120,16 +125,35 @@ test "appendCommitted accumulates bytes and tokens" {
     try testing.expect(ctx.estimated_tokens > 0);
 }
 
-test "appendCommitted trims the oldest to stay within budget" {
+test "appendCommitted trims pre-turn history but keeps the current turn" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+    const a = arena.allocator();
 
     const per = messageBytes(userMessage(1));
-    var ctx: TurnContext = .{ .arena = arena.allocator(), .budget = .{ .max_bytes = per * 2, .max_tokens = 1 << 30 } };
-    try ctx.appendCommitted(userMessage(1));
-    try ctx.appendCommitted(userMessage(2));
-    try ctx.appendCommitted(userMessage(3)); // The third message trims the oldest.
+    // One pre-turn message, then the user input at turn_start = 1.
+    var ctx: TurnContext = .{ .arena = a, .budget = .{ .max_bytes = per * 2, .max_tokens = 1 << 30 }, .turn_start = 1 };
+    try ctx.messages.append(a, userMessage(10)); // pre-turn history
+    try ctx.messages.append(a, userMessage(20)); // the current user input
+    try ctx.appendCommitted(userMessage(30)); // a round message; the budget trims the pre-turn message
     try testing.expectEqual(@as(usize, 2), ctx.slice().len);
-    try testing.expectEqual(@as(u64, 2), ctx.slice()[0].user.id); // id 1 was trimmed
-    try testing.expectEqual(@as(u64, 3), ctx.slice()[1].user.id); // the newest stays
+    try testing.expectEqual(@as(u64, 20), ctx.slice()[0].user.id); // id 10 was trimmed
+    try testing.expectEqual(@as(u64, 30), ctx.slice()[1].user.id);
+    try testing.expectEqual(@as(usize, 0), ctx.turn_start); // shifted down after the trim
+}
+
+test "appendCommitted keeps the current turn even over budget" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const per = messageBytes(userMessage(1));
+    // A budget for one message. The turn (user input plus round message) still stays whole.
+    var ctx: TurnContext = .{ .arena = a, .budget = .{ .max_bytes = per, .max_tokens = 1 << 30 }, .turn_start = 1 };
+    try ctx.messages.append(a, userMessage(10)); // pre-turn history
+    try ctx.messages.append(a, userMessage(20)); // the current user input
+    try ctx.appendCommitted(userMessage(30)); // a round message; the user input must not trim
+    try testing.expectEqual(@as(usize, 2), ctx.slice().len);
+    try testing.expectEqual(@as(u64, 20), ctx.slice()[0].user.id); // the user input stays
+    try testing.expectEqual(@as(u64, 30), ctx.slice()[1].user.id);
 }

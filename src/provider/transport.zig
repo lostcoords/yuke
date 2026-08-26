@@ -215,6 +215,31 @@ const CannedReader = struct {
     fn deinitNoop(_: *anyopaque) void {}
 };
 
+/// This transport returns one canned reply per `open`, in order. It drives multi-round turns. It records
+/// each request body when `capture` holds an allocator, so a test can inspect the built request.
+pub const SequenceTransport = struct {
+    replies: []const []const u8,
+    index: usize = 0,
+    capture: ?std.mem.Allocator = null,
+    requests: std.ArrayList([]const u8) = .empty,
+
+    pub fn transport(self: *SequenceTransport) Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    const vtable: Transport.VTable = .{ .open = open };
+
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
+        const self: *SequenceTransport = @ptrCast(@alignCast(ctx));
+        if (self.index >= self.replies.len) return error.NoMoreReplies;
+        if (self.capture) |alloc| try self.requests.append(alloc, try alloc.dupe(u8, request.body));
+        const reader = try arena.create(CannedReader);
+        reader.* = .{ .bytes = self.replies[self.index] };
+        self.index += 1;
+        return .{ .ctx = reader, .vtable = &CannedReader.vtable };
+    }
+};
+
 var placeholder_instance = CannedTransport{ .bytes = placeholder_reply };
 
 /// This is the default daemon transport until startup connects a real adapter.
