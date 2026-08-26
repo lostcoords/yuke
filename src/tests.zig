@@ -8,6 +8,11 @@ test {
     _ = @import("provider/provider.zig");
     _ = @import("database/database.zig");
     _ = @import("paths/paths.zig");
+    _ = @import("tools/tool.zig");
+    _ = @import("tools/read.zig");
+    _ = @import("tools/registry.zig");
+    _ = @import("tools/local.zig");
+    _ = @import("tools/batch.zig");
     _ = @import("daemon/http.zig");
     _ = @import("daemon/rpc.zig");
     _ = @import("daemon/session_runtime.zig");
