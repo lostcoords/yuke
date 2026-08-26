@@ -1311,6 +1311,110 @@ test "a tool round runs its calls concurrently and keeps provider order" {
     try std.testing.expectEqualStrings("1: beta", parts[1].tool.state.completed.output); // read "b" second
 }
 
+// Wait until the active draft's tool part at `index` reaches the completed state.
+fn yieldUntilCompleted(state: *State, sid: wire.ids.SessionId, index: usize) !void {
+    var attempts: usize = 0;
+    while (attempts < 10_000) : (attempts += 1) {
+        const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+        if (rt.session.active) |d| {
+            if (index < d.parts.items.len and d.parts.items[index] == .tool and
+                std.meta.activeTag(d.parts.items[index].tool.state) == .completed) return;
+        }
+        try zio.yield();
+    }
+    return error.NotCompleted;
+}
+
+// Cancel the run while both tool legs park in their reads.
+fn cancelBlockedBatchDriver(state: *State, sid: wire.ids.SessionId, run_id: u64, gates: *BatchGates) !void {
+    try gates.entered_a.wait();
+    try gates.entered_b.wait(); // Both legs park in the read.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
+    try launchUntilIdle(state, sid);
+}
+
+test "cancel run cancels every blocked tool leg" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const replies = [_][]const u8{two_tool_reply};
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    var gated: GatedHost = .{ .gates = &gates }; // Neither gate opens; both legs stay blocked.
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-cancel", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+
+    var driver = try fixture.rt.spawn(cancelBlockedBatchDriver, .{ &fixture.state, sid, started.run_id, &gates });
+    try driver.join(); // The run must reach idle: every leg joined.
+
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .canceled);
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    const parts = history[1].assistant.content;
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .canceled);
+    try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled);
+}
+
+// Let one tool finish, then cancel the run while the other still parks in its read.
+fn cancelOneDoneDriver(state: *State, sid: wire.ids.SessionId, run_id: u64, gates: *BatchGates) !void {
+    try gates.entered_a.wait();
+    try gates.entered_b.wait(); // Both legs park in the read.
+    gates.release_a.set(); // Let leg a finish its read and commit its result.
+    try yieldUntilCompleted(state, sid, 0);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
+    try launchUntilIdle(state, sid);
+}
+
+test "cancel run keeps a finished tool and cancels a blocked one" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const replies = [_][]const u8{two_tool_reply};
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens; gate b stays blocked.
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-mixed", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+
+    var driver = try fixture.rt.spawn(cancelOneDoneDriver, .{ &fixture.state, sid, started.run_id, &gates });
+    try driver.join();
+
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .canceled);
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    const parts = history[1].assistant.content;
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed); // leg a finished
+    try std.testing.expectEqualStrings("1: alpha", parts[0].tool.state.completed.output);
+    try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled); // leg b was blocked
+}
+
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.
 const stream_prefix =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
