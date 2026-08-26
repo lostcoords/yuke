@@ -11,6 +11,9 @@ const draft = @import("../domain/draft.zig");
 const Session = @import("../domain/session.zig").Session;
 const database = @import("../database/database.zig");
 const turn_context = @import("turn_context.zig");
+const tools = @import("../tools/tool.zig");
+const tool_registry = @import("../tools/registry.zig");
+const local_host = @import("../tools/local.zig");
 
 const ids = wire.ids;
 const message = wire.message;
@@ -18,6 +21,7 @@ const RunSlot = session_runtime.RunSlot;
 const message_store = database.message;
 const run_store = database.run;
 const session_store = database.session;
+const workspace_store = database.workspace;
 const event = provider.event;
 
 const agent_name = "claude";
@@ -148,8 +152,41 @@ fn runSession(state: *State, slot: *RunSlot) void {
         }
     };
 
-    commitRound(state, arena, slot, live, streamer.usage, terminal, .final) catch |err| {
-        faultSlot(state, session_id, slot, err);
+    // Settle any tool parts into a terminal state before the commit. The request builder rejects a
+    // pending tool, so no pending part may reach message.committed.
+    if (hasToolPart(live)) {
+        // A tool part requires the tool_calls stop reason. Execute only then.
+        if (terminal == .success and terminal.success == .tool_calls) {
+            if (workspaceRoot(state, arena, session_id.raw)) |root| {
+                var host_backend: local_host.LocalHost = .{ .io = state.io, .root = root, .env = state.env };
+                settlePendingTools(state, arena, slot, &streamer, host_backend.host(), live) catch |err| {
+                    faultSlot(state, session_id, slot, err);
+                    return;
+                };
+            } else |_| {
+                settlePendingTools(state, arena, slot, &streamer, null, live) catch {};
+                commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
+                return;
+            }
+        } else {
+            // Cancel any pending tool part; a canceled/failed stream or a malformed tool_use lands here.
+            settlePendingTools(state, arena, slot, &streamer, null, live) catch {};
+            if (terminal == .success) {
+                commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .protocol, .message = "a tool part without a tool_calls stop reason" } });
+                return;
+            }
+        }
+    }
+
+    // A cancel during tool execution wins over the streamed success terminal.
+    const commit_terminal: Terminal = if (slot.cancel_requested) .canceled else terminal;
+    commitFinal(state, arena, slot, live, streamer.usage, commit_terminal);
+}
+
+/// Commit the final round and fault the slot on a commit error.
+fn commitFinal(state: *State, arena: std.mem.Allocator, slot: *RunSlot, live: *const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
+    commitRound(state, arena, slot, live, usage, terminal, .final) catch |err| {
+        faultSlot(state, slot.handle.started.session_id, slot, err);
     };
 }
 
@@ -488,8 +525,8 @@ const Streamer = struct {
     }
 
     /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
-    /// The part stays pending until execution terminalizes it (a later slice); the daemon does not yet
-    /// advertise tools, so a real provider never sends one until then.
+    /// The part stays pending until the run settles it into a terminal state. The daemon does not yet
+    /// advertise tools, so a real provider does not send one until then.
     fn emitToolPart(self: *Streamer, part_id: event.BlockId, call: event.ToolCall) !void {
         try checkStreamCap(0, call.name.len);
         try checkStreamCap(0, call.call_id.len);
@@ -506,7 +543,67 @@ const Streamer = struct {
             } },
         } } });
     }
+
+    /// Fold and publish a tool state transition for one part.
+    fn emitToolState(self: *Streamer, part_id: wire.ids.PartId, state: wire.tool.ToolState) !void {
+        try self.emit(.{ .method = .@"tool.state_changed", .params = .{ .tool_state_changed_data = .{
+            .session_id = self.slot.handle.started.session_id,
+            .message_id = self.slot.progress.current.?.message_id,
+            .part_id = part_id,
+            .state = state,
+        } } });
+    }
 };
+
+/// A native tool result mapped for a tool state. `is_error` selects the completed or error state.
+const ToolExec = struct { output: []const u8, view: ?[]const wire.view.View = null, is_error: bool };
+
+/// Run one built-in tool. An invalid argument, an unknown tool, or a handler error becomes a tool error.
+fn runTool(arena: std.mem.Allocator, host: tools.ToolHost, name: []const u8, arguments: []const u8) ToolExec {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, arguments, .{}) catch
+        return .{ .output = "invalid tool arguments", .is_error = true };
+    const t = tool_registry.find(name) orelse return .{ .output = "unknown tool", .is_error = true };
+    const res = t.execute(arena, host, parsed) catch |err| return .{ .output = @errorName(err), .is_error = true };
+    return .{ .output = res.text, .view = res.view, .is_error = false };
+}
+
+/// Return the canonical workspace root for a session. The built-in tools resolve paths against it.
+fn workspaceRoot(state: *State, arena: std.mem.Allocator, session_id: [16]u8) ![]const u8 {
+    const snap = (try session_store.snapshot(&state.db, arena, session_id)) orelse return error.UnknownSession;
+    const ws = (try workspace_store.byId(&state.db, arena, snap.workspace_id)) orelse return error.UnknownSession;
+    return ws.root;
+}
+
+/// True when the draft holds any tool part.
+fn hasToolPart(live: *const draft.Draft) bool {
+    for (live.parts.items) |*p| if (p.* == .tool) return true;
+    return false;
+}
+
+/// Settle every pending tool part into a terminal state. When `host` is present and the run is not
+/// canceled, run each tool and emit running then completed or error. Otherwise emit canceled. Every
+/// event folds then publishes. The fold mutates a part's state in place, so the iteration stays valid.
+fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: ?tools.ToolHost, live: *const draft.Draft) !void {
+    for (live.parts.items) |*p| {
+        if (p.* != .tool or std.meta.activeTag(p.tool.state) != .pending) continue;
+        const part_id = p.tool.id;
+        if (host) |h| {
+            if (!slot.cancel_requested) {
+                const started = state.nowMillis();
+                try streamer.emitToolState(part_id, .{ .running = .{ .started_at_ms = started } });
+                const res = runTool(arena, h, p.tool.name, p.tool.arguments);
+                const duration = state.nowMillis() -| started; // Saturate; the wall clock can move backward.
+                if (res.is_error) {
+                    try streamer.emitToolState(part_id, .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } });
+                } else {
+                    try streamer.emitToolState(part_id, .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } });
+                }
+                continue;
+            }
+        }
+        try streamer.emitToolState(part_id, .{ .canceled = .{} });
+    }
+}
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.
 fn checkStreamCap(offset: u64, len: usize) error{ResponseTooLarge}!void {

@@ -1144,7 +1144,7 @@ test "a reasoning block stop finalizes the signature into the committed message"
     try std.testing.expectEqualStrings("sig", parts[0].reasoning.signature); // The finalization event folded the signature.
 }
 
-// A tool-use turn: one tool_use block with a streamed argument, then a clean tool_calls stop.
+// A tool-use turn: one tool_use block with a streamed argument, then a clean tool_use stop.
 const tool_use_reply =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
     "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read\",\"input\":{}}}\n\n" ++
@@ -1153,7 +1153,7 @@ const tool_use_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
-test "a tool_use block opens a pending tool part in the committed message" {
+test "a tool_use block executes the read tool and commits a completed part" {
     var fixture = try TestState.init();
     defer fixture.deinit();
     var canned: provider.transport.CannedTransport = .{ .bytes = tool_use_reply };
@@ -1162,7 +1162,14 @@ test "a tool_use block opens a pending tool part in the committed message" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/tooluse", .model = "mock" });
+    // The read tool resolves its path against the session workspace.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "x", .data = "hello\n" });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = root, .model = "mock" });
     const sid = created.session.id;
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
     _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
@@ -1176,9 +1183,8 @@ test "a tool_use block opens a pending tool part in the committed message" {
     try std.testing.expectEqual(@as(usize, 1), parts.len);
     try std.testing.expect(parts[0] == .tool);
     try std.testing.expectEqualStrings("read", parts[0].tool.name);
-    try std.testing.expectEqualStrings("toolu_1", parts[0].tool.call_id.?);
-    try std.testing.expect(parts[0].tool.state == .pending); // Execution lands in a later slice.
-    try std.testing.expect(std.mem.indexOf(u8, parts[0].tool.arguments, "path") != null); // The streamed argument survives.
+    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed);
+    try std.testing.expectEqualStrings("1: hello", parts[0].tool.state.completed.output);
 }
 
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.
