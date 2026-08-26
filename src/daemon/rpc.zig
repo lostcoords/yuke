@@ -1555,6 +1555,113 @@ test "the queue rejects input past the max" {
     try launch.join(); // Drain cleanly.
 }
 
+test "a finite max_rounds ends the turn after the capped tool round" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Round 1 asks for a tool. The cap of 1 ends the turn before a second round. A sentinel second
+    // reply would let a leaked round complete, so the capture proves only one request opened.
+    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply };
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies, .capture = a };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    gates.release_a.set(); // The read never blocks.
+    var gated: GatedHost = .{ .gates = &gates };
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds", .model = "mock", .max_rounds = 1 });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    try std.testing.expectEqual(@as(usize, 1), seq.requests.items.len); // Only one request opened.
+    try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "run.done"));
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .failed);
+    try std.testing.expectEqual(wire.enums.RunErrorCode.max_rounds, done.outcome.failed.code);
+    try std.testing.expect((try database.session.snapshot(&fixture.state.db, a, sid.raw)).?.open_run_id == null);
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    try std.testing.expectEqual(wire.enums.StopReason.tool_calls, history[1].assistant.finish.?);
+    try std.testing.expect(history[1].assistant.content[0] == .tool);
+    try std.testing.expectEqual(std.meta.activeTag(history[1].assistant.content[0].tool.state), .completed);
+}
+
+test "max_rounds of 2 allows a tool round then a final answer" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A tool round then a final answer is two rounds, so the cap of 2 does not fire.
+    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply };
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    gates.release_a.set();
+    var gated: GatedHost = .{ .gates = &gates };
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds-2", .model = "mock", .max_rounds = 2 });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .turn); // The turn ends normally, not capped.
+    try std.testing.expectEqual(@as(u64, 2), done.outcome.turn.rounds);
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 3), history.len);
+    try std.testing.expectEqualStrings("done", history[2].assistant.content[0].text.text);
+}
+
+test "max_rounds of 1 does not cap a plain text turn" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A plain text answer is one round through the final path, so the cap never applies.
+    const replies = [_][]const u8{final_text_reply};
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds-text", .model = "mock", .max_rounds = 1 });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try std.testing.expect(done.outcome == .turn);
+    try std.testing.expectEqual(@as(u64, 1), done.outcome.turn.rounds);
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 2), history.len);
+    try std.testing.expectEqualStrings("done", history[1].assistant.content[0].text.text);
+}
+
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.
 const stream_prefix =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++

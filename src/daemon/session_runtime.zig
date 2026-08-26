@@ -26,7 +26,7 @@ pub const RunSlot = struct {
 
     /// Allocate the slot and own copies of `model` and `system_prompt`. Bind the handle after Tx1.
     /// The caller allocates before the run transaction, so a late failure cannot orphan an open run.
-    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, system_prompt: []const u8) !*RunSlot {
+    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, system_prompt: []const u8, max_rounds: ?u64) !*RunSlot {
         const model_copy = try gpa.dupe(u8, model);
         errdefer gpa.free(model_copy);
         const prompt_copy = try gpa.dupe(u8, system_prompt);
@@ -35,7 +35,7 @@ pub const RunSlot = struct {
         self.* = .{
             .gpa = gpa,
             .handle = undefined,
-            .config = .{ .model = model_copy, .system_prompt = prompt_copy },
+            .config = .{ .model = model_copy, .system_prompt = prompt_copy, .max_rounds = max_rounds },
         };
         return self;
     }
@@ -150,7 +150,7 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     try testing.expect(rt.idle());
 
     // A live run pins the runtime.
-    rt.active = try RunSlot.prepare(testing.allocator, "model", "");
+    rt.active = try RunSlot.prepare(testing.allocator, "model", "", null);
     rt.active.?.bind(.{
         .input_id = 1,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },

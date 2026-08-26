@@ -17,6 +17,7 @@ const run_store = database.run;
 pub const Config = struct {
     model: []const u8,
     system_prompt: []const u8,
+    max_rounds: ?u64 = null, // null means unlimited rounds. A finite cap ends the turn with an error.
 };
 
 /// These IDs belong to the started run. session.send_input returns run_id and input_id together.

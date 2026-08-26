@@ -170,8 +170,15 @@ fn runSession(state: *State, slot: *RunSlot) void {
         };
         // A cancel at the round boundary ends the run without a new empty round.
         if (slot.cancel_requested) {
-            finishRunCanceled(state, arena, slot) catch |err| faultSlot(state, session_id, slot, err);
+            finishRunOpen(state, arena, slot, .{ .canceled = .{} }) catch |err| faultSlot(state, session_id, slot, err);
             return;
+        }
+        // A finite max_rounds ends the turn after the capped tool round. null is unlimited.
+        if (slot.config.max_rounds) |cap| {
+            if (slot.progress.rounds_committed >= cap) {
+                finishRunOpen(state, arena, slot, .{ .failed = .{ .code = .max_rounds, .message = "the run reached its max_rounds limit" } }) catch |err| faultSlot(state, session_id, slot, err);
+                return;
+            }
         }
         beginRound(state, slot) catch |err| {
             faultSlot(state, session_id, slot, err);
@@ -389,8 +396,8 @@ fn commitRound(
     return owned;
 }
 
-/// Close an open run as canceled at a round boundary. The last round is already committed.
-fn finishRunCanceled(state: *State, arena: std.mem.Allocator, slot: *RunSlot) !void {
+/// Close an open run at a round boundary with `outcome`. The last round is already committed.
+fn finishRunOpen(state: *State, arena: std.mem.Allocator, slot: *RunSlot, outcome: wire.run.RunOutcome) !void {
     std.debug.assert(slot.phase == .running);
     const old_cancel_protection = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(old_cancel_protection);
@@ -405,7 +412,7 @@ fn finishRunCanceled(state: *State, arena: std.mem.Allocator, slot: *RunSlot) !v
         .run_id = slot.handle.started.run_id,
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
-        .outcome = .{ .canceled = .{} },
+        .outcome = outcome,
     });
     try state.db.conn.execNoArgs("COMMIT");
     slot.phase = .terminalized;
@@ -467,7 +474,7 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     const session_id = rt.session.id;
     const snapshot = (try session_store.snapshot(&state.db, arena, session_id.raw)) orelse return error.UnknownSession;
     const prompt = try session_store.prompt(&state.db, arena, session_id.raw);
-    const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "");
+    const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "", snapshot.max_rounds);
     errdefer slot.destroy();
     const started = try run.beginQueuedTurn(&state.db, state.io, arena, session_id.raw, snapshot.config_rev);
     slot.bind(started.handle, started.first_round);
