@@ -50,6 +50,8 @@ pub fn main(init: std.process.Init) !void {
         paths.homeDir(init.environ_map) orelse "/",
     );
     defer state.deinit();
+    // The environment is always needed (a `~` in a workspace path), not only when providers load.
+    state.env = init.environ_map;
 
     // @Todo(xyaman): load these stuff on daemon, not on main.
     // Load the user providers. An invalid file fails startup. An absent file keeps the placeholder.
@@ -59,7 +61,6 @@ pub fn main(init: std.process.Init) !void {
         var loaded = try provider.config.load(init.gpa, io, path);
         if (loaded.providers.len > 0) {
             state.providers = loaded;
-            state.env = init.environ_map;
             state.transport = http_transport.transportFor();
             std.log.info("loaded {d} provider(s) from providers.json", .{loaded.providers.len});
         } else loaded.deinit();

@@ -9,6 +9,7 @@ const run = @import("../engine/run.zig");
 const run_task = @import("run_task.zig");
 const session_runtime = @import("session_runtime.zig");
 const domain_session = @import("../domain/session.zig");
+const paths = @import("../paths/paths.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
@@ -433,8 +434,8 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
 
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
-    // Use the raw path as the workspace dedup key.
-    const root = params.workspace_path orelse state.home;
+    // Normalize the path so one directory maps to one workspace.
+    const root = try paths.canonicalizeWorkspace(arena, state.env, params.workspace_path orelse state.home);
     const base = std.fs.path.basename(root);
     const title = if (base.len == 0) root else base;
     const profile = params.profile orelse "default";

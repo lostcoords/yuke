@@ -61,7 +61,10 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             return .{ .ok = .{ .id = request.id, .result = .{ .initialize_result = result } } };
         },
         .@"session.create" => {
-            const result = try handlers.sessionCreate(state, arena, request.params.create_session);
+            const result = handlers.sessionCreate(state, arena, request.params.create_session) catch |err| switch (err) {
+                error.RootNotAbsolute => return errorResponse(request.id, .bad_request, "the workspace path must be absolute"),
+                else => return err,
+            };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_result = result } } };
         },
         .@"session.list" => {
@@ -610,6 +613,35 @@ test "session.create records the initial config as revision 0" {
     const cfg = try handlers.sessionConfig(&fixture.state, a, .{ .session_id = created.session.id, .config_rev = 0 });
     try std.testing.expectEqual(@as(u64, 0), cfg.config.config_rev);
     try std.testing.expectEqualStrings("opus", cfg.config.model);
+}
+
+test "session.create canonicalizes the workspace so path spellings dedup to one workspace" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Three spellings of the same directory share one workspace id.
+    const one = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/home/u/proj" });
+    const two = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/home/u/proj/" });
+    const three = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/home/u/x/../proj" });
+    try std.testing.expectEqualSlices(u8, &one.session.workspace_id.raw, &two.session.workspace_id.raw);
+    try std.testing.expectEqualSlices(u8, &one.session.workspace_id.raw, &three.session.workspace_id.raw);
+
+    // A genuinely different directory gets its own workspace.
+    const other = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/home/u/other" });
+    try std.testing.expect(!std.mem.eql(u8, &one.session.workspace_id.raw, &other.session.workspace_id.raw));
+}
+
+test "session.create rejects a relative workspace path" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try std.testing.expectError(error.RootNotAbsolute, handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "relative/dir" }));
 }
 
 test "session.history returns committed messages oldest-first with their configs" {

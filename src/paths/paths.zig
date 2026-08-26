@@ -121,6 +121,19 @@ pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) !
     return std.fs.path.join(alloc, &.{ home, rest });
 }
 
+pub const WorkspaceError = error{RootNotAbsolute};
+
+/// Normalize a workspace root: expand a leading `~`, then resolve `.`/`..`.
+/// Reject a relative or empty root with `RootNotAbsolute`. The result is lexical. The caller frees it.
+pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: ?*const Map, path: []const u8) (WorkspaceError || std.mem.Allocator.Error)![]u8 {
+    const expanded = if (env) |e| try expandHome(alloc, e, path) else try alloc.dupe(u8, path);
+    defer alloc.free(expanded);
+    const resolved = try std.fs.path.resolve(alloc, &.{expanded});
+    errdefer alloc.free(resolved);
+    if (!std.fs.path.isAbsolute(resolved)) return WorkspaceError.RootNotAbsolute;
+    return resolved;
+}
+
 const testing = std.testing;
 
 /// Build an environment map from key/value pairs for the resolver tests.
@@ -225,4 +238,27 @@ test "expandHome substitutes a leading tilde" {
     const c = try expandHome(testing.allocator, &env, "~");
     defer testing.allocator.free(c);
     try testing.expectEqualStrings("/home/u", c);
+}
+
+test "canonicalizeWorkspace folds equivalent forms to one root" {
+    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
+    defer env.deinit();
+
+    // Every form resolves to the same root.
+    const forms = [_][]const u8{ "/home/u/proj", "/home/u/proj/", "/home/u/proj/.", "/home/u/x/../proj", "~/proj" };
+    for (forms) |form| {
+        const got = try canonicalizeWorkspace(testing.allocator, &env, form);
+        defer testing.allocator.free(got);
+        try testing.expectEqualStrings("/home/u/proj", got);
+    }
+}
+
+test "canonicalizeWorkspace rejects a relative or empty root" {
+    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
+    defer env.deinit();
+
+    // A relative root, an empty root, and an unexpandable `~` are not absolute.
+    try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, &env, "relative/dir"));
+    try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, &env, ""));
+    try testing.expectError(WorkspaceError.RootNotAbsolute, canonicalizeWorkspace(testing.allocator, null, "~/proj"));
 }
