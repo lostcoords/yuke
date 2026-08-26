@@ -1224,6 +1224,15 @@ test "a tool_use round commits, then a second round streams the final answer" {
     try std.testing.expectEqual(@as(u64, 2), done.outcome.turn.rounds);
 }
 
+// One tool_use block in a round: read "a".
+const one_tool_reply_a =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read\",\"input\":{}}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a\\\"}\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
 // Two sequential tool_use blocks in one round: read "a", then read "b".
 const two_tool_reply =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
@@ -1415,6 +1424,137 @@ test "cancel run keeps a finished tool and cancels a blocked one" {
     try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled); // leg b was blocked
 }
 
+// Steer a new input while the tool leg parks, then release it. The input must queue, not start.
+fn steerWhileToolRuns(state: *State, sid: wire.ids.SessionId, gates: *BatchGates) !void {
+    try gates.entered_a.wait(); // The tool leg parks in the read, so the run is active.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const steer = [_]wire.content.ContentPart{.{ .text = .{ .text = "steer" } }};
+    // A run is active, so the input queues.
+    try std.testing.expect((try sendInputDirect(state, arena.allocator(), .{ .session_id = sid, .input = .{ .content = .{ .content = &steer } } })) == .queued);
+    try std.testing.expectEqual(@as(usize, 1), state.sessions.get(sid).?.session.queue.depth());
+    gates.release_a.set(); // Let the tool finish. The turn then completes and drains the queue.
+    try launchUntilIdle(state, sid);
+}
+
+test "an input queued while tools run drains only after the turn commits" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Turn 1: a tool round then a final answer. Turn 2 (steered): a final answer.
+    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply, final_text_reply };
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    var gated: GatedHost = .{ .gates = &gates };
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/steer", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })) == .started);
+
+    var driver = try fixture.rt.spawn(steerWhileToolRuns, .{ &fixture.state, sid, &gates });
+    try driver.join();
+
+    // Two runs: the tool turn, then the steered turn. The queue drained only after the first turn.
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.started"));
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.done"));
+    try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "input.queued"));
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 5), history.len);
+    try std.testing.expectEqualStrings("hi", history[0].user.content[0].text.text);
+    try std.testing.expect(history[1].assistant.content[0] == .tool); // the tool round
+    try std.testing.expectEqual(std.meta.activeTag(history[1].assistant.content[0].tool.state), .completed);
+    try std.testing.expectEqualStrings("done", history[2].assistant.content[0].text.text); // turn 1 answer
+    try std.testing.expectEqualStrings("steer", history[3].user.content[0].text.text); // the queued input
+    try std.testing.expectEqualStrings("done", history[4].assistant.content[0].text.text); // turn 2 answer
+}
+
+// Close the parked text block and end the turn. It follows `stream_prefix`.
+const stream_finish_suffix =
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
+// Steer a new input while the provider stream parks, then release it. The input must queue.
+fn steerWhileStreaming(state: *State, sid: wire.ids.SessionId, entered: *zio.ResetEvent, gate: *zio.ResetEvent) !void {
+    try entered.wait(); // The stream parked mid-reply, so the run is active.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const steer = [_]wire.content.ContentPart{.{ .text = .{ .text = "steer" } }};
+    // A run is active, so the input queues.
+    try std.testing.expect((try sendInputDirect(state, arena.allocator(), .{ .session_id = sid, .input = .{ .content = .{ .content = &steer } } })) == .queued);
+    try std.testing.expectEqual(@as(usize, 1), state.sessions.get(sid).?.session.queue.depth());
+    gate.set(); // Let the stream finish. The turn then completes and drains the queue.
+    try launchUntilIdle(state, sid);
+}
+
+test "an input queued while the provider streams drains after the turn" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .suffix = stream_finish_suffix, .entered = &entered, .gate = &gate };
+    fixture.state.transport = transport_impl.transportFor();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/steer-stream", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })) == .started);
+
+    var driver = try fixture.rt.spawn(steerWhileStreaming, .{ &fixture.state, sid, &entered, &gate });
+    try driver.join();
+
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.started"));
+    try std.testing.expectEqual(@as(i64, 2), try countNamedEvents(&fixture.state.db, "run.done"));
+    try std.testing.expectEqual(@as(i64, 1), try countNamedEvents(&fixture.state.db, "input.queued"));
+
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 4), history.len);
+    try std.testing.expectEqualStrings("hi", history[0].user.content[0].text.text);
+    try std.testing.expectEqualStrings("hello", history[1].assistant.content[0].text.text); // turn 1 answer
+    try std.testing.expectEqualStrings("steer", history[2].user.content[0].text.text); // the queued input
+    try std.testing.expect(history[3] == .assistant); // turn 2 answer
+}
+
+test "the queue rejects input past the max" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/queue-full", .model = "mock" });
+    const sid = created.session.id;
+    // Start a run; it stays active while the test fills the queue synchronously.
+    const first = [_]wire.content.ContentPart{.{ .text = .{ .text = "0" } }};
+    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &first } } })) == .started);
+
+    const cap: usize = @intCast(wire.meta.limits.max_queued_inputs);
+    var i: usize = 0;
+    while (i < cap) : (i += 1) {
+        const c = [_]wire.content.ContentPart{.{ .text = .{ .text = "q" } }};
+        try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &c } } })) == .queued);
+    }
+    try std.testing.expectEqual(cap, fixture.state.sessions.get(sid).?.session.queue.depth());
+
+    // One input past the limit is rejected and adds no event.
+    const over = [_]wire.content.ContentPart{.{ .text = .{ .text = "over" } }};
+    try std.testing.expectError(error.QueueFull, sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &over } } }));
+    try std.testing.expectEqual(cap, fixture.state.sessions.get(sid).?.session.queue.depth());
+
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join(); // Drain cleanly.
+}
+
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.
 const stream_prefix =
     "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
@@ -1424,6 +1564,7 @@ const stream_prefix =
 /// A transport that streams a prefix, then parks until the gate opens. The run holds a live draft.
 const StreamThenParkTransport = struct {
     prefix: []const u8,
+    suffix: []const u8 = "", // The stream emits this after the gate opens, then ends.
     entered: *zio.ResetEvent,
     gate: *zio.ResetEvent,
 
@@ -1435,14 +1576,16 @@ const StreamThenParkTransport = struct {
         _ = request;
         const self: *StreamThenParkTransport = @ptrCast(@alignCast(ctx));
         const reader = try arena.create(Reader);
-        reader.* = .{ .prefix = self.prefix, .entered = self.entered, .gate = self.gate };
+        reader.* = .{ .prefix = self.prefix, .suffix = self.suffix, .entered = self.entered, .gate = self.gate };
         return .{ .ctx = reader, .vtable = &Reader.vtable };
     }
     const Reader = struct {
         prefix: []const u8,
+        suffix: []const u8 = "",
         entered: *zio.ResetEvent,
         gate: *zio.ResetEvent,
         offset: usize = 0,
+        parked: bool = false,
         const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
         fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
             const self: *Reader = @ptrCast(@alignCast(ctx));
@@ -1452,9 +1595,19 @@ const StreamThenParkTransport = struct {
                 self.offset += n;
                 return n;
             }
-            self.entered.set(); // The prefix streamed. The run holds a live draft now.
-            try self.gate.wait();
-            return 0; // EOF ends the stream after the test inspects the projection.
+            if (!self.parked) {
+                self.entered.set(); // The prefix streamed. The run holds a live draft now.
+                try self.gate.wait();
+                self.parked = true;
+            }
+            const suffix_off = self.offset - self.prefix.len;
+            if (suffix_off < self.suffix.len) {
+                const n = @min(buf.len, self.suffix.len - suffix_off);
+                @memcpy(buf[0..n], self.suffix[suffix_off..][0..n]);
+                self.offset += n;
+                return n;
+            }
+            return 0; // EOF ends the stream after the suffix, if any.
         }
         fn deinitNoop(_: *anyopaque) void {}
     };
