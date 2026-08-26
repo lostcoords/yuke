@@ -127,18 +127,15 @@ fn runSession(state: *State, slot: *RunSlot) void {
         const has_tools = hasToolPart(live);
         if (has_tools) {
             if (terminal == .success and terminal.success == .tool_calls) {
-                if (workspaceRoot(state, arena, session_id.raw)) |root| {
-                    var host_backend: local_host.LocalHost = .{ .io = state.io, .root = root, .env = state.env };
-                    settlePendingTools(state, arena, slot, &streamer, host_backend.host(), live) catch |err| {
-                        faultSlot(state, session_id, slot, err);
-                        return;
-                    };
-                } else |_| {
-                    // A settle error leaves a pending part, so fault instead of a pending commit.
-                    settlePendingTools(state, arena, slot, &streamer, null, live) catch |err| {
-                        faultSlot(state, session_id, slot, err);
-                        return;
-                    };
+                // Acquire the tool host. A test injects one; production resolves the workspace root.
+                var host_backend: local_host.LocalHost = undefined;
+                const host: ?tools.ToolHost = state.tool_host orelse resolveHost(state, arena, session_id.raw, &host_backend);
+                // A null host settles every part canceled; the run then faults on the unresolved workspace.
+                settlePendingTools(state, arena, slot, &streamer, host, live) catch |err| {
+                    faultSlot(state, session_id, slot, err);
+                    return;
+                };
+                if (host == null) {
                     commitFinal(state, arena, slot, live, streamer.usage, .{ .failed = .{ .code = .internal, .message = "cannot resolve the workspace" } });
                     return;
                 }
@@ -635,6 +632,13 @@ fn runTool(arena: std.mem.Allocator, host: tools.ToolHost, name: []const u8, arg
     return .{ .output = res.text, .view = res.view, .is_error = false };
 }
 
+/// Build a local tool host for the session workspace. Return null when the workspace lookup fails.
+fn resolveHost(state: *State, arena: std.mem.Allocator, session_id: [16]u8, backend: *local_host.LocalHost) ?tools.ToolHost {
+    const root = workspaceRoot(state, arena, session_id) catch return null;
+    backend.* = .{ .io = state.io, .root = root, .env = state.env };
+    return backend.host();
+}
+
 /// Return the canonical workspace root for a session. The built-in tools resolve paths against it.
 fn workspaceRoot(state: *State, arena: std.mem.Allocator, session_id: [16]u8) ![]const u8 {
     const snap = (try session_store.snapshot(&state.db, arena, session_id)) orelse return error.UnknownSession;
@@ -648,29 +652,58 @@ fn hasToolPart(live: *const draft.Draft) bool {
     return false;
 }
 
-/// Settle every pending tool part into a terminal state. When `host` is present and the run is not
-/// canceled, run each tool and emit running then completed or error. Otherwise emit canceled. Every
-/// event folds then publishes. The fold mutates a part's state in place, so the iteration stays valid.
+/// One pending tool call. The draft parts array is stable, so a snapshot frees a leg from it.
+const PendingTool = struct { part_id: wire.ids.PartId, name: []const u8, arguments: []const u8 };
+
+/// Settle every pending tool part into a terminal state. With a host and no cancel, run the tools
+/// concurrently; each leg emits its own running -> terminal lifecycle. Otherwise settle each canceled.
 fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: ?tools.ToolHost, live: *const draft.Draft) !void {
+    var pending: std.ArrayList(PendingTool) = .empty;
     for (live.parts.items) |*p| {
         if (p.* != .tool or std.meta.activeTag(p.tool.state) != .pending) continue;
-        const part_id = p.tool.id;
-        if (host) |h| {
-            if (!slot.cancel_requested) {
-                const started = state.nowMillis();
-                try streamer.emitToolState(part_id, .{ .running = .{ .started_at_ms = started } });
-                const res = runTool(arena, h, p.tool.name, p.tool.arguments);
-                const duration = state.nowMillis() -| started; // Saturate; the wall clock can move backward.
-                if (res.is_error) {
-                    try streamer.emitToolState(part_id, .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } });
-                } else {
-                    try streamer.emitToolState(part_id, .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } });
-                }
-                continue;
-            }
-        }
-        try streamer.emitToolState(part_id, .{ .canceled = .{} });
+        try pending.append(arena, .{ .part_id = p.tool.id, .name = p.tool.name, .arguments = p.tool.arguments });
     }
+    if (pending.items.len == 0) return;
+
+    // No host, or a cancel before the batch: settle every part canceled. No tool runs.
+    if (host == null or slot.cancel_requested) {
+        for (pending.items) |pt| try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
+        return;
+    }
+
+    // Run every tool concurrently. The single executor interleaves the legs at their io await points.
+    // The Group drops non-cancel leg errors, so each leg records its emit error in a slot.
+    const errors = try arena.alloc(?anyerror, pending.items.len);
+    @memset(errors, null);
+    var group: std.Io.Group = .init;
+    defer group.cancel(state.io);
+    for (pending.items, errors) |pt, *err_slot| {
+        try group.concurrent(state.io, runToolLeg, .{ state, arena, streamer, host.?, pt, err_slot });
+    }
+    try group.await(state.io);
+
+    // Fault on a leg emit error first. That error can leave a non-terminal part, so it wins over a cancel.
+    for (errors) |err_slot| if (err_slot) |err| return err;
+    // Every part is terminal now. A cancel during the batch commits the canceled terminal in the run loop.
+    if (slot.cancel_requested) return;
+}
+
+/// Run one tool and emit its running -> terminal lifecycle. Capture an emit error; the Group drops it.
+fn runToolLeg(state: *State, arena: std.mem.Allocator, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool, err_slot: *?anyerror) void {
+    const started = state.nowMillis();
+    streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } }) catch |err| {
+        err_slot.* = err;
+        return;
+    };
+    const res = runTool(arena, host, pt.name, pt.arguments);
+    const duration = state.nowMillis() -| started; // Saturate; the wall clock can move backward.
+    const settled: wire.tool.ToolState = if (res.is_error)
+        .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
+    else
+        .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } };
+    streamer.emitToolState(pt.part_id, settled) catch |err| {
+        err_slot.* = err;
+    };
 }
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.

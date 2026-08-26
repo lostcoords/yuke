@@ -202,6 +202,7 @@ const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
 const provider = @import("../provider/provider.zig");
 const domain_session = @import("../domain/session.zig");
+const tools = @import("../tools/tool.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -1221,6 +1222,93 @@ test "a tool_use round commits, then a second round streams the final answer" {
     const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
     try std.testing.expect(done.outcome == .turn);
     try std.testing.expectEqual(@as(u64, 2), done.outcome.turn.rounds);
+}
+
+// Two sequential tool_use blocks in one round: read "a", then read "b".
+const two_tool_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read\",\"input\":{}}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a\\\"}\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_2\",\"name\":\"read\",\"input\":{}}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"b\\\"}\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":1}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
+// Four gates drive two concurrent tool legs. A test releases them in reverse provider order.
+const BatchGates = struct {
+    entered_a: zio.ResetEvent = .init,
+    entered_b: zio.ResetEvent = .init,
+    release_a: zio.ResetEvent = .init,
+    release_b: zio.ResetEvent = .init,
+};
+
+// This host gates each read on its path, so a test controls the completion order.
+const GatedHost = struct {
+    gates: *BatchGates,
+
+    const vtable: tools.ToolHost.VTable = .{ .readFile = readFile };
+    fn host(self: *GatedHost) tools.ToolHost {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+    fn readFile(ctx: *anyopaque, arena: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) anyerror![]const u8 {
+        _ = start;
+        _ = end;
+        const self: *GatedHost = @ptrCast(@alignCast(ctx));
+        if (std.mem.eql(u8, path, "a")) {
+            self.gates.entered_a.set();
+            try self.gates.release_a.wait();
+            return arena.dupe(u8, "alpha\n");
+        }
+        self.gates.entered_b.set();
+        try self.gates.release_b.wait();
+        return arena.dupe(u8, "beta\n");
+    }
+};
+
+// Wait for both legs to enter, then release them in reverse order, then drive the run to idle.
+fn gatedBatchDriver(state: *State, sid: wire.ids.SessionId, gates: *BatchGates) !void {
+    try gates.entered_a.wait();
+    try gates.entered_b.wait(); // Both legs run before either completes: the batch is concurrent.
+    gates.release_b.set(); // Release b before a; the result order still follows the parts, not the release.
+    gates.release_a.set();
+    try launchUntilIdle(state, sid);
+}
+
+test "a tool round runs its calls concurrently and keeps provider order" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Round 1 asks for two reads; round 2 answers with text.
+    const replies = [_][]const u8{ two_tool_reply, final_text_reply };
+    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    fixture.state.transport = seq.transport();
+    var gates: BatchGates = .{};
+    var gated: GatedHost = .{ .gates = &gates };
+    fixture.state.tool_host = gated.host();
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var driver = try fixture.rt.spawn(gatedBatchDriver, .{ &fixture.state, sid, &gates });
+    try driver.join();
+
+    // The tool round holds both parts in provider order, each with its own read output.
+    const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
+    try std.testing.expectEqual(@as(usize, 3), history.len);
+    const parts = history[1].assistant.content;
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    try std.testing.expect(parts[0] == .tool and parts[1] == .tool);
+    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed);
+    try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .completed);
+    try std.testing.expectEqualStrings("1: alpha", parts[0].tool.state.completed.output); // read "a" first
+    try std.testing.expectEqualStrings("1: beta", parts[1].tool.state.completed.output); // read "b" second
 }
 
 // A prefix with three events: a message start, a text block, and one text delta. No stop event.

@@ -1,7 +1,8 @@
-//! Test aggregate root for all src layers. wire, sql, and websocket self-test as packages.
+//! Test aggregate root for all src layers. wire, sql, and websocket self-test as lib modules.
 //! A referenced import runs a file's tests; a function call alone does not.
 
 test {
+    _ = @import("cli.zig");
     _ = @import("util.zig");
     _ = @import("engine/run.zig");
     _ = @import("domain/domain.zig");
@@ -12,7 +13,6 @@ test {
     _ = @import("tools/read.zig");
     _ = @import("tools/registry.zig");
     _ = @import("tools/local.zig");
-    _ = @import("tools/batch.zig");
     _ = @import("daemon/http.zig");
     _ = @import("daemon/rpc.zig");
     _ = @import("daemon/session_runtime.zig");

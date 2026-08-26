@@ -10,6 +10,7 @@ const committed = @import("../domain/committed.zig");
 const domain_session = @import("../domain/session.zig");
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
+const tools = @import("../tools/tool.zig");
 const session_runtime = @import("session_runtime.zig");
 const connection = @import("connection.zig");
 const daemon_config = @import("config.zig");
@@ -31,6 +32,7 @@ env: ?*const std.process.Environ.Map = null, // This pointer borrows the process
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 broadcast_tap: ?*BroadcastTap = null, // A conformance test records the published broadcasts here.
+tool_host: ?tools.ToolHost = null, // A test injects a tool host; production builds a LocalHost per run.
 
 /// A test hook. It records each published broadcast, so a conformance test refolds the daemon output.
 pub const BroadcastTap = struct {
