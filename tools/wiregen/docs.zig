@@ -73,7 +73,7 @@ pub fn load(a: std.mem.Allocator, io: std.Io) !DocMap {
     var docs = DocMap.init(a);
     errdefer docs.deinit();
 
-    var dir = try std.Io.Dir.cwd().openDir(io, "packages/wire", .{ .iterate = true });
+    var dir = try std.Io.Dir.cwd().openDir(io, "lib/wire", .{ .iterate = true });
     defer dir.close(io);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {

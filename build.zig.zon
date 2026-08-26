@@ -16,15 +16,15 @@
             .url = "git+https://github.com/xyaman/zig-quickjs#2b117935faf481f844a155bcc447b73ccf998b12",
             .hash = "quickjs-0.2.0-pXITarHJAQC62-aJ-RyBlrD-UbPC-lE8v-h6PWgdRNXV",
         },
-        .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis#c060d314930c5552b99a89278a6a695baf0352da",
-            .hash = "vaxis-0.6.0-BWNV_LC4CwBka_bJk8SOXqzCM-nyQH00jzdL0kUhGwRE",
+        .uucode = .{
+            .url = "git+https://github.com/jacobsandlund/uucode#2826a37a4562284fdacd8fa029d49509cc9bffcd",
+            .hash = "uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "packages",
+        "lib",
         "schema",
         "src",
         "tools",

@@ -1,31 +1,50 @@
 const std = @import("std");
-const vaxis = @import("vaxis");
+const builtin = @import("builtin");
+const xvaxis = @import("xvaxis/main.zig");
+const Tty = @import("tty.zig").Tty;
 
-pub const Event = vaxis.Event;
-pub const Key = vaxis.Key;
+pub const Event = xvaxis.Event;
+pub const Key = xvaxis.Key;
 
-/// A byte-to-event decoder over the libvaxis parser. The caller pushes terminal
-/// bytes, then drains events.
+/// Decode terminal bytes into events.
 pub const Input = struct {
-    parser: vaxis.Parser = .{},
+    parser: xvaxis.Parser = .{},
     buffer: [capacity]u8 = undefined,
     len: usize = 0,
-    /// Owns key text so it survives buffer compaction and the next parse.
+    /// Keep key text across buffer compaction.
     text_buf: [128]u8 = undefined,
-    /// Set this allocator for OSC 52 paste. A null value drops the paste text.
+    /// Set the allocator for OSC 52 paste. A null allocator drops the paste text.
     paste_allocator: ?std.mem.Allocator = null,
 
     pub const capacity = 4096;
 
-    /// Append bytes to the input buffer. Return error.Overflow when it is full.
+    /// Append bytes. Return `error.Overflow` when the buffer is full.
     pub fn push(self: *Input, bytes: []const u8) error{Overflow}!void {
         if (bytes.len > self.buffer.len - self.len) return error.Overflow;
         @memcpy(self.buffer[self.len..][0..bytes.len], bytes);
         self.len += bytes.len;
     }
 
-    /// Return the next event, or null when the buffer holds no complete event.
-    /// It skips an unknown sequence and keeps an incomplete tail.
+    /// Read the next event from the TTY. The reactor waits when no event exists.
+    pub fn readEvent(self: *Input, tty: *Tty) !Event {
+        switch (builtin.os.tag) {
+            .windows => {
+                const event = try tty.nextEvent(&self.parser, self.paste_allocator);
+                return self.stabilizeText(event);
+            },
+            else => {
+                while (true) {
+                    if (try self.next()) |event| return event;
+                    var buf: [512]u8 = undefined;
+                    const n = try tty.read(&buf);
+                    if (n == 0) return error.EndOfStream;
+                    try self.push(buf[0..n]);
+                }
+            },
+        }
+    }
+
+    /// Return the next complete event. Skip unknown sequences and keep incomplete bytes.
     pub fn next(self: *Input) !?Event {
         while (self.len > 0) {
             const result = try self.parser.parse(self.buffer[0..self.len], self.paste_allocator);
@@ -38,8 +57,7 @@ pub const Input = struct {
         return null;
     }
 
-    /// Copy borrowed key text into the owned buffer. The parser points key text
-    /// into the input, so a copy must precede buffer compaction.
+    /// Copy key text before buffer compaction. The parser borrows this text.
     fn stabilizeText(self: *Input, event: Event) Event {
         const key: Key = switch (event) {
             .key_press, .key_release => |k| k,

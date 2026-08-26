@@ -3,181 +3,175 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const host = b.graph.host;
 
-    const zqlite = b.dependency("zqlite", .{
+    const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = optimize });
+    const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = optimize });
+    const zio = b.dependency("zio", .{ .target = target, .optimize = optimize });
+    const uucode = b.dependency("uucode", .{
         .target = target,
         .optimize = optimize,
+        .fields = @as([]const []const u8, &.{
+            "east_asian_width",
+            "grapheme_break",
+            "general_category",
+            "is_emoji_presentation",
+        }),
     });
-    const zio = b.dependency("zio", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const vaxis = b.dependency("vaxis", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const quickjs = b.dependency("quickjs", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    const quickjs = b.dependency("quickjs", .{ .target = target, .optimize = optimize });
+
     const sql = b.addModule("sql", .{
-        .root_source_file = b.path("packages/sql/sql.zig"),
+        .root_source_file = b.path("lib/sql/sql.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
+        },
     });
-    sql.addImport("zqlite", zqlite.module("zqlite"));
-    const sql_tests = b.addTest(.{
-        .root_module = sql,
-    });
-    const run_sql_tests = b.addRunArtifact(sql_tests);
-    const test_sql_step = b.step("test-sql", "Run SQL package tests");
-    test_sql_step.dependOn(&run_sql_tests.step);
+    const run_sql_tests = addTestRun(b, "sql", "Run SQL module tests", sql);
 
     const sqlgen = b.createModule(.{
         .root_source_file = b.path("tools/sqlgen/sqlgen.zig"),
-        .target = target,
+        .target = host,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zqlite", .module = zqlite_host.module("zqlite") },
+        },
     });
-    sqlgen.addImport("zqlite", zqlite.module("zqlite"));
-    const sqlgen_tests = b.addTest(.{
-        .root_module = sqlgen,
-    });
-    const run_sqlgen_tests = b.addRunArtifact(sqlgen_tests);
+    const run_sqlgen_tests = addTestRun(b, "sqlgen", "Run SQL generator tests", sqlgen);
 
-    const sqlgen_cli = b.createModule(.{
-        .root_source_file = b.path("tools/sqlgen/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    sqlgen_cli.addImport("sqlgen", sqlgen);
-    sqlgen_cli.addImport("zqlite", zqlite.module("zqlite"));
     const sqlgen_exe = b.addExecutable(.{
         .name = "yuke-sqlgen",
-        .root_module = sqlgen_cli,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/sqlgen/main.zig"),
+            .target = host,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sqlgen", .module = sqlgen },
+                .{ .name = "zqlite", .module = zqlite_host.module("zqlite") },
+            },
+        }),
     });
     const run_sqlgen = b.addRunArtifact(sqlgen_exe);
     if (b.args) |args| run_sqlgen.addArgs(args);
     const sqlgen_step = b.step("sqlgen", "Validate SQL and generate typed queries");
     sqlgen_step.dependOn(&run_sqlgen.step);
 
-    const test_sqlgen_step = b.step("test-sqlgen", "Run SQL generator tests");
-    test_sqlgen_step.dependOn(&run_sqlgen_tests.step);
-
-    // The wire package: the authoritative protocol types. Standalone, no deps.
     const wire = b.addModule("wire", .{
-        .root_source_file = b.path("packages/wire/wire.zig"),
+        .root_source_file = b.path("lib/wire/wire.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const wire_tests = b.addTest(.{
-        .root_module = wire,
-    });
-    const run_wire_tests = b.addRunArtifact(wire_tests);
-    const test_wire_step = b.step("test-wire", "Run wire package tests");
-    test_wire_step.dependOn(&run_wire_tests.step);
+    const run_wire_tests = addTestRun(b, "wire", "Run wire module tests", wire);
 
-    // The WebSocket package implements sans-IO RFC 6455 framing and has no dependencies.
     const websocket = b.addModule("websocket", .{
-        .root_source_file = b.path("packages/websocket/websocket.zig"),
+        .root_source_file = b.path("lib/websocket/websocket.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const websocket_tests = b.addTest(.{
-        .root_module = websocket,
-    });
-    const run_websocket_tests = b.addRunArtifact(websocket_tests);
-    const test_websocket_step = b.step("test-websocket", "Run websocket package tests");
-    test_websocket_step.dependOn(&run_websocket_tests.step);
+    const run_websocket_tests = addTestRun(b, "websocket", "Run websocket module tests", websocket);
 
     const term = b.addModule("term", .{
-        .root_source_file = b.path("packages/term/term.zig"),
+        .root_source_file = b.path("lib/term/term.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "uucode", .module = uucode.module("uucode") },
+            .{ .name = "zio", .module = zio.module("zio") },
+        },
     });
-    term.addImport("vaxis", vaxis.module("vaxis"));
-    term.addImport("zio", zio.module("zio"));
-    const term_tests = b.addTest(.{
-        .root_module = term,
-    });
-    const run_term_tests = b.addRunArtifact(term_tests);
-    const test_term_step = b.step("test-term", "Run term package tests");
-    test_term_step.dependOn(&run_term_tests.step);
+    const run_term_tests = addTestRun(b, "term", "Run term module tests", term);
 
     const js_mod = b.createModule(.{
-        .root_source_file = b.path("src/js/host.zig"),
+        .root_source_file = b.path("src/tui/host.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+            .{ .name = "zio", .module = zio.module("zio") },
+            .{ .name = "term", .module = term },
+        },
     });
-    js_mod.addImport("quickjs", quickjs.module("quickjs"));
-    js_mod.addImport("zio", zio.module("zio"));
-    const js_tests = b.addTest(.{
-        .root_module = js_mod,
-    });
-    const run_js_tests = b.addRunArtifact(js_tests);
-    const test_js_step = b.step("test-js", "Run JS host tests");
-    test_js_step.dependOn(&run_js_tests.step);
+    const run_js_tests = addTestRun(b, "js", "Run JS host tests", js_mod);
 
     const tests = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wire", .module = wire },
+            .{ .name = "sql", .module = sql },
+            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
+            .{ .name = "zio", .module = zio.module("zio") },
+            .{ .name = "websocket", .module = websocket },
+        },
     });
-    tests.addImport("wire", wire);
-    tests.addImport("sql", sql);
-    tests.addImport("zqlite", zqlite.module("zqlite"));
-    tests.addImport("zio", zio.module("zio"));
-    tests.addImport("websocket", websocket);
-    const layer_tests = b.addTest(.{
+    const run_layer_tests = b.addRunArtifact(b.addTest(.{
+        .name = "src",
         .root_module = tests,
-    });
-    const run_layer_tests = b.addRunArtifact(layer_tests);
+    }));
 
     // Fail the build if the committed queries drift from the SQL sources.
     const database_sqlgen_check = b.addRunArtifact(sqlgen_exe);
-    database_sqlgen_check.addArgs(&.{
-        "--migrations",  "src/database/migrations",
-        "--queries",     "src/database/queries",
-        "--queries-out", "src/database/queries_gen.zig",
-        "--check",
-    });
-    database_sqlgen_check.setCwd(b.path("."));
+    database_sqlgen_check.addArg("--check");
+    database_sqlgen_check.addArg("--migrations");
+    addSqlDir(b, database_sqlgen_check, "src/database/migrations");
+    database_sqlgen_check.addArg("--queries");
+    addSqlDir(b, database_sqlgen_check, "src/database/queries");
+    database_sqlgen_check.addArg("--queries-out");
+    database_sqlgen_check.addFileArg(b.path("src/database/queries_gen.zig"));
+    // Capture stdout so this Run has an output and can cache. File args hash the inputs.
+    _ = database_sqlgen_check.captureStdOut(.{});
 
-    const wiregen = b.createModule(.{
-        .root_source_file = b.path("tools/wiregen/gen.zig"),
-        .target = target,
+    const wire_host = b.createModule(.{
+        .root_source_file = b.path("lib/wire/wire.zig"),
+        .target = host,
         .optimize = optimize,
     });
-    wiregen.addImport("wire", wire);
-
     const gen_schema = b.addExecutable(.{
         .name = "gen-schema",
-        .root_module = wiregen,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/wiregen/gen.zig"),
+            .target = host,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "wire", .module = wire_host },
+            },
+        }),
     });
     const run_gen_schema = b.addRunArtifact(gen_schema);
     run_gen_schema.setCwd(b.path("."));
 
-    // Use src/main.zig as the daemon root. Relative imports reach the src layers.
-    const daemon_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+    const exe = b.addExecutable(.{
+        .name = "yuke",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zio", .module = zio.module("zio") },
+                .{ .name = "websocket", .module = websocket },
+                .{ .name = "wire", .module = wire },
+                .{ .name = "sql", .module = sql },
+                .{ .name = "zqlite", .module = zqlite.module("zqlite") },
+                .{ .name = "term", .module = term },
+                .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+            },
+        }),
     });
-    daemon_mod.addImport("zio", zio.module("zio"));
-    daemon_mod.addImport("websocket", websocket);
-    daemon_mod.addImport("wire", wire);
-    daemon_mod.addImport("sql", sql);
-    daemon_mod.addImport("zqlite", zqlite.module("zqlite"));
-    const daemon_exe = b.addExecutable(.{
-        .name = "yuked",
-        .root_module = daemon_mod,
-    });
-    b.installArtifact(daemon_exe);
-    const run_daemon = b.addRunArtifact(daemon_exe);
+    b.installArtifact(exe);
+
+    const run_exe = b.addRunArtifact(exe);
+    if (b.args) |args| run_exe.addArgs(args);
+    const run_step = b.step("run", "Run yuke (TUI by default)");
+    run_step.dependOn(&run_exe.step);
+
+    const run_daemon = b.addRunArtifact(exe);
+    run_daemon.addArg("--daemon");
     if (b.args) |args| run_daemon.addArgs(args);
     const run_daemon_step = b.step("run-daemon", "Run the yuke daemon");
     run_daemon_step.dependOn(&run_daemon.step);
 
-    // The src test root imports the daemon files, so one artifact runs each src-layer test once.
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
@@ -188,9 +182,40 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);
 
-    // Regenerate schema/wire.json in place from the Zig wire types.
     const write_schema = b.addUpdateSourceFiles();
     write_schema.addCopyFileToSource(run_gen_schema.captureStdOut(.{}), "schema/wire.json");
     const gen_schema_step = b.step("gen-schema", "Regenerate schema/wire.json from the wire types");
     gen_schema_step.dependOn(&write_schema.step);
+}
+
+fn addTestRun(
+    b: *std.Build,
+    name: []const u8,
+    description: []const u8,
+    root_module: *std.Build.Module,
+) *std.Build.Step.Run {
+    const unit_tests = b.addTest(.{
+        .name = name,
+        .root_module = root_module,
+    });
+    const run = b.addRunArtifact(unit_tests);
+    const step = b.step(b.fmt("test-{s}", .{name}), description);
+    step.dependOn(&run.step);
+    return run;
+}
+
+/// Pass `dir_path` as a directory argument and hash every `.sql` file inside it.
+fn addSqlDir(b: *std.Build, run: *std.Build.Step.Run, dir_path: []const u8) void {
+    run.addDirectoryArg(b.path(dir_path));
+    const io = b.graph.io;
+    var dir = b.build_root.handle.openDir(io, dir_path, .{ .iterate = true }) catch |err| {
+        std.debug.panic("open {s}: {s}", .{ dir_path, @errorName(err) });
+    };
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch |err| std.debug.panic("iterate {s}: {s}", .{ dir_path, @errorName(err) })) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".sql")) continue;
+        run.addFileInput(b.path(b.fmt("{s}/{s}", .{ dir_path, entry.name })));
+    }
 }

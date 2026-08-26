@@ -1,18 +1,42 @@
 const std = @import("std");
 const posix = std.posix;
-const vaxis = @import("vaxis");
+const xvaxis = @import("xvaxis/main.zig");
+const zio = @import("zio");
 
-pub const Winsize = vaxis.Winsize;
+pub const Winsize = xvaxis.Winsize;
 
-/// A raw-mode handle to the controlling terminal. It reads and writes through
-/// the reactor io.
+fn winchKind() zio.SignalKind {
+    comptime std.debug.assert(@intFromEnum(posix.SIG.WINCH) <= std.math.maxInt(u8));
+    return @enumFromInt(@intFromEnum(posix.SIG.WINCH));
+}
+
+/// A reactor-owned SIGWINCH watcher.
+pub const WinsizeWatch = struct {
+    signal: zio.Signal,
+
+    pub fn init() !WinsizeWatch {
+        return .{ .signal = try zio.Signal.init(winchKind()) };
+    }
+
+    pub fn deinit(self: *WinsizeWatch) void {
+        self.signal.deinit();
+        self.* = undefined;
+    }
+
+    /// Wait for SIGWINCH, then read the TTY size.
+    pub fn wait(self: *WinsizeWatch, tty: *const Tty) !Winsize {
+        try self.signal.wait();
+        return tty.getWinsize();
+    }
+};
+
+/// A raw-mode handle for the controlling TTY.
 pub const Tty = struct {
     io: std.Io,
     file: std.Io.File,
     original: posix.termios,
 
-    /// Open the /dev/tty device and enter raw mode. The deinit call restores the
-    /// saved termios.
+    /// Open `/dev/tty` and enter raw mode. `deinit` restores termios.
     pub fn open(io: std.Io) !Tty {
         var file = try std.Io.Dir.openFileAbsolute(io, "/dev/tty", .{ .mode = .read_write });
         errdefer file.close(io);
@@ -21,7 +45,10 @@ pub const Tty = struct {
         return .{ .io = io, .file = file, .original = original };
     }
 
-    /// Restore the saved termios and close the terminal.
+    /// POSIX reads use zio cancellation.
+    pub fn shutdownInput(_: *Tty) void {}
+
+    /// Restore termios and close the TTY.
     pub fn deinit(self: *Tty) void {
         posix.tcsetattr(self.file.handle, .FLUSH, self.original) catch |err| {
             std.log.scoped(.term).err("restore terminal failed: {}", .{err});
@@ -29,18 +56,17 @@ pub const Tty = struct {
         self.file.close(self.io);
     }
 
-    /// Read bytes into the buffer. The reactor suspends the task when the read
-    /// has no data.
+    /// Read bytes. The reactor waits when no data exists.
     pub fn read(self: *Tty, buffer: []u8) !usize {
         return self.file.readStreaming(self.io, &.{buffer});
     }
 
-    /// Build a buffered writer over the terminal. The caller owns the buffer.
+    /// Build a buffered TTY writer. The caller owns the buffer.
     pub fn writerStreaming(self: *Tty, buffer: []u8) std.Io.File.Writer {
         return self.file.writerStreaming(self.io, buffer);
     }
 
-    /// Read the terminal size with the TIOCGWINSZ ioctl.
+    /// Read the TTY size with `TIOCGWINSZ`.
     pub fn getWinsize(self: *const Tty) !Winsize {
         var ws: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
         const rc = posix.system.ioctl(self.file.handle, posix.T.IOCGWINSZ, @intFromPtr(&ws));
@@ -49,8 +75,7 @@ pub const Tty = struct {
     }
 };
 
-/// Compute the raw-mode termios from the saved state. It clears the echo,
-/// canonical, and transform flags.
+/// Build raw-mode termios from the saved state. Clear echo, canonical, and transform flags.
 fn rawTermios(state: posix.termios) posix.termios {
     var raw = state;
     raw.iflag.IGNBRK = false;
@@ -90,4 +115,33 @@ test "rawTermios clears echo and canonical flags" {
     try std.testing.expect(!raw.oflag.OPOST);
     try std.testing.expectEqual(@as(u8, 1), raw.cc[@intFromEnum(posix.V.MIN)]);
     try std.testing.expectEqual(@as(u8, 0), raw.cc[@intFromEnum(posix.V.TIME)]);
+}
+
+test "WinsizeWatch waits for SIGWINCH" {
+    var rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    var watch = try WinsizeWatch.init();
+    defer watch.deinit();
+
+    const Wait = struct {
+        fn run(w: *WinsizeWatch, done: *bool) !void {
+            try w.signal.wait();
+            done.* = true;
+        }
+    };
+    const Send = struct {
+        fn run(r: *zio.Runtime) !void {
+            try r.sleep(.fromMilliseconds(10));
+            try posix.raise(posix.SIG.WINCH);
+        }
+    };
+
+    var done = false;
+    var group: zio.Group = .init;
+    defer group.cancel();
+    try group.spawn(Wait.run, .{ &watch, &done });
+    try group.spawn(Send.run, .{rt});
+    try group.wait();
+    try std.testing.expect(done);
 }
