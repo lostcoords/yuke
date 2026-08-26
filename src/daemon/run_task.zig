@@ -424,24 +424,29 @@ const Streamer = struct {
         try checkCanceled(self.state.io, self.slot);
         switch (ev) {
             .block_started => |b| {
-                try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
+                // Blocks are sequential; a new block requires the previous one to stop. This keeps the
+                // deferred tool part_added in ascending id order, so a peer never trips the fold assert.
+                if (self.open != 0) return error.Protocol;
+                // A tool block has no metadata yet. Open its part at block_stopped instead.
+                if (b.kind != .tool) try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
                     .session_id = self.slot.handle.started.session_id,
                     .message_id = self.slot.progress.current.?.message_id,
-                    .part = try emptyPart(b.block, b.kind),
+                    .part = emptyPart(b.block, b.kind),
                 } } });
                 try self.offsets.append(self.state.gpa, 0);
                 self.open += 1;
             },
             .text_delta => |d| try self.partDelta(d.block, d.text),
             .reasoning_delta => |d| try self.partDelta(d.block, d.text),
-            .tool_input_delta => return error.ToolUnsupported,
+            .tool_input_delta => {}, // The reducer joins fragments; the whole call arrives at block_stopped.
             .block_stopped => |b| {
                 if (self.open == 0) return error.Protocol;
                 self.open -= 1;
                 switch (b.result) {
                     .reasoning => |r| try self.emitFinalized(b.block, .{ .reasoning = .{ .signature = r.signature } }),
                     .redacted_reasoning => |r| try self.emitFinalized(b.block, .{ .redacted_reasoning = .{ .data = r.data } }),
-                    .text, .tool => {},
+                    .text => {},
+                    .tool => |call| try self.emitToolPart(b.block, call),
                 }
             },
             .done => |d| {
@@ -481,6 +486,26 @@ const Streamer = struct {
             .final = final,
         } } });
     }
+
+    /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
+    /// The part stays pending until execution terminalizes it (a later slice); the daemon does not yet
+    /// advertise tools, so a real provider never sends one until then.
+    fn emitToolPart(self: *Streamer, part_id: event.BlockId, call: event.ToolCall) !void {
+        try checkStreamCap(0, call.name.len);
+        try checkStreamCap(0, call.call_id.len);
+        try checkStreamCap(0, call.arguments.len);
+        try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
+            .session_id = self.slot.handle.started.session_id,
+            .message_id = self.slot.progress.current.?.message_id,
+            .part = .{ .tool = .{
+                .id = part_id,
+                .call_id = call.call_id,
+                .name = call.name,
+                .arguments = call.arguments,
+                .state = .{ .pending = .{} },
+            } },
+        } } });
+    }
 };
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.
@@ -489,12 +514,12 @@ fn checkStreamCap(offset: u64, len: usize) error{ResponseTooLarge}!void {
     if (offset > cap or len > cap - offset) return error.ResponseTooLarge;
 }
 
-fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) !message.AssistantPart {
+fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) message.AssistantPart {
     return switch (kind) {
         .text => .{ .text = .{ .id = part_id, .text = "" } },
         .reasoning => .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } },
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
-        .tool => error.ToolUnsupported,
+        .tool => unreachable, // A tool part opens at block_stopped, not block_started.
     };
 }
 
