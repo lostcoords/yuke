@@ -463,7 +463,8 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
         .created_at_ms = now,
         .updated_at_ms = now,
     });
-    if (params.system_prompt) |sys| try session_store.setPrompt(&state.db, id, sys);
+    const system_prompt = params.system_prompt orelse state.defaults.system_prompt;
+    if (system_prompt) |sys| try session_store.setPrompt(&state.db, id, sys);
     try config_store.recordInitial(&state.db, id, model, reasoning);
     try state.db.conn.execNoArgs("COMMIT");
 

@@ -8,6 +8,7 @@ const http = @import("daemon/http.zig");
 const database = @import("database/database.zig");
 const paths = @import("paths/paths.zig");
 const provider = @import("provider/provider.zig");
+const daemon_config = @import("daemon/config.zig");
 const State = @import("daemon/State.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
@@ -50,8 +51,9 @@ pub fn main(init: std.process.Init) !void {
     );
     defer state.deinit();
 
+    // @Todo(xyaman): load these stuff on daemon, not on main.
     // Load the user providers. An invalid file fails startup. An absent file keeps the placeholder.
-    const providers_path = try resolveProvidersPath(init.gpa, init.environ_map);
+    const providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
     defer if (providers_path) |path| init.gpa.free(path);
     if (providers_path) |path| {
         var loaded = try provider.config.load(init.gpa, io, path);
@@ -63,15 +65,26 @@ pub fn main(init: std.process.Init) !void {
         } else loaded.deinit();
     }
 
+    // Load the daemon defaults. An invalid file fails startup. A missing file uses built-in defaults.
+    // The daemon trusts the values. A client validates a model selector before it sends the request.
+    const yuked_path = try configFilePath(init.gpa, init.environ_map, "yuked.json");
+    defer if (yuked_path) |path| init.gpa.free(path);
+    if (yuked_path) |path| {
+        const loaded = try daemon_config.load(init.gpa, io, path);
+        state.defaults = loaded.defaults;
+        state.config_owner = loaded;
+    }
+
     std.log.info("daemon store at {s}", .{config.db_path});
     try http.serve(&state);
 }
 
-/// Return the `providers.json` path. `configDir` already ends with the app directory. The caller owns it.
-fn resolveProvidersPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
+/// Join a file name under the config directory. `configDir` already ends with the app directory.
+/// Return null when no config directory exists. The caller owns the result.
+fn configFilePath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]u8 {
     const base = try paths.configDir(gpa, env) orelse return null;
     defer gpa.free(base);
-    return try std.fs.path.join(gpa, &.{ base, "providers.json" });
+    return try std.fs.path.join(gpa, &.{ base, name });
 }
 
 /// Resolve the SQLite path inside the data directory.

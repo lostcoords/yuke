@@ -459,6 +459,22 @@ test "session.create defaults the workspace to home and stacks sessions" {
     try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
 }
 
+test "session.create seeds the system prompt from the yuked.json default" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    fixture.state.defaults = .{ .system_prompt = "be terse" };
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    // No request prompt uses the daemon default; a request prompt overrides it.
+    const seeded = try handlers.sessionCreate(&fixture.state, arena.allocator(), .{});
+    const seeded_config = try handlers.sessionConfig(&fixture.state, arena.allocator(), .{ .session_id = seeded.session.id });
+    try std.testing.expectEqualStrings("be terse", seeded_config.system_prompt.?);
+    const overridden = try handlers.sessionCreate(&fixture.state, arena.allocator(), .{ .system_prompt = "be expansive" });
+    const overridden_config = try handlers.sessionConfig(&fixture.state, arena.allocator(), .{ .session_id = overridden.session.id });
+    try std.testing.expectEqualStrings("be expansive", overridden_config.system_prompt.?);
+}
+
 test "session.list returns created sessions newest-first" {
     var fixture = try TestState.init();
     defer fixture.deinit();

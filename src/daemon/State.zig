@@ -12,6 +12,7 @@ const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const session_runtime = @import("session_runtime.zig");
 const connection = @import("connection.zig");
+const daemon_config = @import("config.zig");
 
 const State = @This();
 
@@ -24,6 +25,8 @@ sessions: session_runtime.Sessions, // The daemon stores live per-session state,
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
 transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
+defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
+config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
@@ -136,6 +139,7 @@ pub fn deinit(self: *State) void {
     self.registry.deinit();
     self.sessions.deinit();
     if (self.providers) |*p| p.deinit();
+    if (self.config_owner) |*c| c.deinit();
     self.db.deinit();
 }
 
