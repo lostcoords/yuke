@@ -10,6 +10,7 @@ const provider = @import("../provider/provider.zig");
 const draft = @import("../domain/draft.zig");
 const Session = @import("../domain/session.zig").Session;
 const database = @import("../database/database.zig");
+const turn_context = @import("turn_context.zig");
 
 const ids = wire.ids;
 const message = wire.message;
@@ -22,6 +23,9 @@ const event = provider.event;
 const agent_name = "claude";
 const max_output_tokens: u32 = 8192;
 const max_transcript_messages: usize = 1000;
+// The model context is loaded once per turn and bounded. These defaults are generous; a model-window
+// aware budget can refine them later.
+const context_budget: turn_context.Budget = .{ .max_bytes = 8 * 1024 * 1024, .max_tokens = 1_000_000 };
 
 /// The response gate must launch a prepared run exactly once. Callers hold the token as `?Launch`.
 /// `release` clears the token before launch. `launchSlot` asserts the slot phase to catch a re-launch.
@@ -109,10 +113,19 @@ fn runSession(state: *State, slot: *RunSlot) void {
     defer streamer.offsets.deinit(state.gpa);
     publishBestEffort(state, session_id, started_note);
 
+    // Load the model context once for the turn. Later rounds append to it in memory.
+    var ctx = turn_context.TurnContext.load(arena, &state.db, session_id.raw, context_budget, max_transcript_messages) catch |err| {
+        const term: Terminal = if (slot.cancel_requested) .canceled else .{ .failed = failure(err) };
+        commitRound(state, arena, slot, live, streamer.usage, term, .final) catch |terminal_err| {
+            faultSlot(state, session_id, slot, terminal_err);
+        };
+        return;
+    };
+
     // Stream on a child task and wait for it or a cancel signal. The child owns the body.
     // Child cancellation stops a blocked read and deinits the body before this run reaches its terminal state.
     const terminal: Terminal = blk: {
-        var reader = state.io.concurrent(streamChild, .{ state, arena, slot, &streamer }) catch |err| {
+        var reader = state.io.concurrent(streamChild, .{ state, arena, slot, &streamer, &ctx }) catch |err| {
             break :blk .{ .failed = failure(err) };
         };
         slot.wake_event.wait(state.io) catch {
@@ -142,11 +155,10 @@ fn runSession(state: *State, slot: *RunSlot) void {
 
 /// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
 /// The child owns the body and deinits it before it returns.
-fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) !void {
+fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, ctx: *const turn_context.TurnContext) !void {
     defer slot.wake_event.set(state.io);
     try checkCanceled(state.io, slot);
-    const session_id = slot.handle.started.session_id;
-    const transcript = (try message_store.historyPage(&state.db, arena, session_id.raw, 0, max_transcript_messages)).messages;
+    const transcript = ctx.slice();
     const model = slot.config.model;
 
     const resolved = if (state.providers) |*p| provider.config.resolveModel(p, model) else null;
