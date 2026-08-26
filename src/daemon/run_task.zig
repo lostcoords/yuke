@@ -1,7 +1,6 @@
 //! Own daemon run tasks. Each exit commits one assistant message and one terminal run event.
 
 const std = @import("std");
-const zio = @import("zio");
 const wire = @import("wire");
 const State = @import("State.zig");
 const connection = @import("connection.zig");
@@ -395,8 +394,7 @@ const Streamer = struct {
     }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
-        try checkCanceled(self.state.io, self.slot);
-        try zio.maybeYield();
+        // Check cancellation after each SSE event.
         try checkCanceled(self.state.io, self.slot);
         switch (ev) {
             .block_started => |b| {

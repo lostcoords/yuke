@@ -160,7 +160,7 @@ fn frame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }
 
-/// This is the placeholder response until the real HTTP adapter arrives.
+/// The no-providers fallback and tests use this canned reply. The real path uses `HttpTransport`.
 pub const placeholder_reply =
     frame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
@@ -176,7 +176,7 @@ pub const placeholder_reply =
         \\{"type":"message_stop"}
     );
 
-/// Replay fixed bytes. Use this transport until the real HTTP adapter arrives.
+/// The mock transport and the no-providers fallback replay these fixed bytes.
 pub const CannedTransport = struct {
     bytes: []const u8,
 

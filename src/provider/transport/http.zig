@@ -59,10 +59,11 @@ pub const HttpTransport = struct {
         errdefer self.client.allocator.destroy(hb);
         hb.* = .{
             .gpa = self.client.allocator,
-            .idle_timeout = if (self.idle_timeout) |timeout| zio.Timeout.fromStd(.{ .duration = .{
+            .io = self.client.io,
+            .idle_timeout = if (self.idle_timeout) |timeout| .{ .duration = .{
                 .clock = .awake,
                 .raw = timeout,
-            } }) else .none,
+            } } else .none,
             .request = undefined,
             .response = undefined,
             .transfer_buffer = undefined,
@@ -99,7 +100,8 @@ pub const HttpTransport = struct {
 /// This response owns the request and the transfer buffer until the caller invokes deinit.
 const HttpBody = struct {
     gpa: Allocator,
-    idle_timeout: zio.Timeout,
+    io: std.Io,
+    idle_timeout: std.Io.Timeout,
     request: std.http.Client.Request,
     response: std.http.Client.Response,
     transfer_buffer: [4096]u8,
@@ -110,13 +112,39 @@ const HttpBody = struct {
     fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
         std.debug.assert(buf.len > 0);
         const self: *HttpBody = @ptrCast(@alignCast(ctx));
+        return self.readWithIdleTimeout(buf);
+    }
 
-        // Bound each read. The timer cancels this task. The ac.check call distinguishes a timeout from user cancellation.
-        var ac: zio.AutoCancel = .init;
-        ac.set(self.idle_timeout);
-        defer ac.clear();
+    /// Bound each read with the idle deadline. A read past the deadline maps to Error.Timeout.
+    /// A run cancel yields error.Canceled. The child read separates it from the deadline.
+    fn readWithIdleTimeout(self: *HttpBody, buf: []u8) anyerror!usize {
+        switch (self.idle_timeout) {
+            .none => return self.readRaw(buf),
+            else => {},
+        }
+        // The reader holds a full chunk. Read it directly.
+        if (self.reader.bufferedLen() >= buf.len) return self.readRaw(buf);
 
-        // The readSliceShort call returns 0 only at end of stream, which matches the ResponseBody contract.
+        var done: std.Io.Event = .unset;
+        var future = try self.io.concurrent(readLeg, .{ self, buf, &done });
+        done.waitTimeout(self.io, self.idle_timeout) catch |err| {
+            _ = future.cancel(self.io) catch 0; // Cancel joins the child before this function returns, so the child cannot access buf.
+            return switch (err) {
+                error.Timeout => Error.Timeout,
+                else => err,
+            };
+        };
+        return future.await(self.io);
+    }
+
+    /// Read one chunk in a child task. Set `done` after the read.
+    fn readLeg(self: *HttpBody, buf: []u8, done: *std.Io.Event) anyerror!usize {
+        defer done.set(self.io);
+        return self.readRaw(buf);
+    }
+
+    /// Return zero only at end of stream, as ResponseBody requires.
+    fn readRaw(self: *HttpBody, buf: []u8) anyerror!usize {
         return self.reader.readSliceShort(buf) catch |err| switch (err) {
             error.ReadFailed => {
                 // A malformed or truncated body sets bodyErr without a socket error. Return it as a peer error.
@@ -126,10 +154,7 @@ const HttpBody = struct {
                 }
                 // A socket failure sets the read error. The getReadError call can now unwrap it safely.
                 const cause = if (self.request.connection) |c| c.getReadError() else null;
-                if (cause) |ce| {
-                    if (ce == error.Canceled) return if (ac.check(error.Canceled)) Error.Timeout else error.Canceled;
-                    return ce;
-                }
+                if (cause) |ce| return ce;
                 return error.ReadFailed;
             },
             else => |e| return e,
@@ -157,19 +182,10 @@ fn mapStatus(status: std.http.Status) Error {
 /// Propagate a user cancel. Use a rate limit when the body is missing or unreadable.
 fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
-    var ac: zio.AutoCancel = .init;
-    ac.set(hb.idle_timeout);
-    defer ac.clear();
     var buf: [2048]u8 = undefined;
-    const n = hb.reader.readSliceShort(&buf) catch |err| {
-        // A user cancel propagates. Default to a rate limit for a malformed body, idle timeout, or other failure.
-        // Check bodyErr first, so getReadError only runs for a real socket failure.
-        if (err == error.ReadFailed and hb.response.bodyErr() == null) {
-            if (hb.request.connection) |c| if (c.getReadError()) |ce| {
-                if (ce == error.Canceled and !ac.check(error.Canceled)) return error.Canceled;
-            };
-        }
-        return Error.RateLimited;
+    const n = hb.readWithIdleTimeout(&buf) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return Error.RateLimited, // A timeout, malformed body, or transport failure defaults to a rate limit.
     };
     return if (bodyIsQuota(arena, buf[0..n])) Error.QuotaExhausted else Error.RateLimited;
 }
