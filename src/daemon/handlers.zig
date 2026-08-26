@@ -47,12 +47,12 @@ fn encodeCursor(arena: std.mem.Allocator, sel: session_store.Selector, cursor: s
     return encoded;
 }
 
-fn decodeCursor(arena: std.mem.Allocator, sel: session_store.Selector, encoded: []const u8) !session_store.Cursor {
+fn decodeCursor(sel: session_store.Selector, encoded: []const u8) !session_store.Cursor {
     const decoded_size = std.base64.url_safe_no_pad.Decoder.calcSizeForSlice(encoded) catch return error.BadCursor;
     if (decoded_size != cursor_raw_size) return error.BadCursor;
 
-    const raw = try arena.alloc(u8, cursor_raw_size);
-    std.base64.url_safe_no_pad.Decoder.decode(raw, encoded) catch return error.BadCursor;
+    var raw: [cursor_raw_size]u8 = undefined;
+    std.base64.url_safe_no_pad.Decoder.decode(&raw, encoded) catch return error.BadCursor;
     if (raw[0] != cursor_version) return error.BadCursor;
     if (std.mem.readInt(u64, raw[1..9], .big) != selectorFingerprint(sel)) return error.BadCursor;
 
@@ -153,8 +153,8 @@ fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionList
 pub fn sessionList(state: *State, arena: std.mem.Allocator, params: wire.session.SessionListParams) !wire.session.SessionListResult {
     const sel = sessionSelector(params);
     const requested_limit = params.limit orelse wire.meta.limits.default_session_list_page_size;
-    const effective_limit = @min(@max(requested_limit, 1), wire.meta.limits.max_session_list_page_size);
-    const cursor = if (params.cursor) |encoded| try decodeCursor(arena, sel, encoded) else null;
+    const effective_limit = std.math.clamp(requested_limit, 1, wire.meta.limits.max_session_list_page_size);
+    const cursor = if (params.cursor) |encoded| try decodeCursor(sel, encoded) else null;
     const rows = try session_store.list(&state.db, arena, sel, cursor, @intCast(effective_limit + 1));
     const has_next = rows.len > effective_limit;
     const kept = rows[0..@min(rows.len, @as(usize, @intCast(effective_limit)))];
@@ -184,13 +184,13 @@ test "session list cursor round-trips and binds to its selector" {
     };
     const expected: session_store.Cursor = .{ .updated_at_ms = 123, .id = [_]u8{3} ** 16 };
     const encoded = try encodeCursor(a, selector, expected);
-    const actual = try decodeCursor(a, selector, encoded);
+    const actual = try decodeCursor(selector, encoded);
     try std.testing.expectEqual(expected.updated_at_ms, actual.updated_at_ms);
     try std.testing.expectEqualSlices(u8, &expected.id, &actual.id);
 
     var different = selector;
     different.top_level = false;
-    try std.testing.expectError(error.BadCursor, decodeCursor(a, different, encoded));
+    try std.testing.expectError(error.BadCursor, decodeCursor(different, encoded));
 }
 
 /// Handle initialize: report the daemon snapshot. The session revision starts at 0 each run because
@@ -232,7 +232,7 @@ pub fn sessionHistory(state: *State, arena: std.mem.Allocator, params: wire.sess
     const sid = params.session_id.raw;
     if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
     const requested = params.limit orelse wire.meta.limits.default_page_size;
-    const limit: usize = @intCast(@min(@max(requested, 1), wire.meta.limits.max_page_size));
+    const limit: usize = @intCast(std.math.clamp(requested, 1, wire.meta.limits.max_page_size));
     const page = try message_store.historyPage(&state.db, arena, sid, params.before_message_id, limit);
     return .{
         .session_id = params.session_id,

@@ -72,10 +72,8 @@ pub const Connection = struct {
 
     /// Hand owned frame bytes to the writer. Free them when the outbox no longer accepts them.
     pub fn send(self: *Connection, item: OutboxItem) !void {
-        self.outbox.putOne(self.io, item) catch |err| {
-            self.gpa.free(item.bytes);
-            return err;
-        };
+        errdefer self.gpa.free(item.bytes);
+        try self.outbox.putOne(self.io, item);
     }
 
     /// Try to enqueue owned bytes immediately. Return false and free them when the outbox is full.

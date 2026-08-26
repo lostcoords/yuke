@@ -78,10 +78,7 @@ fn readFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
 
     var buf: [4096]u8 = undefined;
     var reader = file.reader(io, &buf);
-    const raw = try gpa.alloc(u8, @intCast(st.size));
-    errdefer gpa.free(raw);
-    try reader.interface.readSliceAll(raw);
-    return raw;
+    return reader.interface.readAlloc(gpa, @intCast(st.size));
 }
 
 const testing = std.testing;

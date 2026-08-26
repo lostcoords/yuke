@@ -297,16 +297,21 @@ fn responsePayload(bytes: []const u8) ![]const u8 {
     return bytes[offset .. offset + payload_len];
 }
 
-fn responseNextCursor(arena: std.mem.Allocator, bytes: []const u8) !?[]const u8 {
+/// Parse a response frame and return its `result` object. Tests call this function.
+fn responseResult(arena: std.mem.Allocator, bytes: []const u8) !std.json.ObjectMap {
     const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, try responsePayload(bytes), .{});
     const object = switch (value) {
         .object => |object| object,
         else => return error.InvalidResponse,
     };
-    const result = switch (object.get("result") orelse return error.InvalidResponse) {
+    return switch (object.get("result") orelse return error.InvalidResponse) {
         .object => |result| result,
-        else => return error.InvalidResponse,
+        else => error.InvalidResponse,
     };
+}
+
+fn responseNextCursor(arena: std.mem.Allocator, bytes: []const u8) !?[]const u8 {
+    const result = try responseResult(arena, bytes);
     const cursor = result.get("next_cursor") orelse return null;
     return switch (cursor) {
         .string => |text| text,
@@ -318,15 +323,7 @@ fn responseNextCursor(arena: std.mem.Allocator, bytes: []const u8) !?[]const u8 
 fn responseItemCount(bytes: []const u8) !usize {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), try responsePayload(bytes), .{});
-    const object = switch (value) {
-        .object => |object| object,
-        else => return error.InvalidResponse,
-    };
-    const result = switch (object.get("result") orelse return error.InvalidResponse) {
-        .object => |result| result,
-        else => return error.InvalidResponse,
-    };
+    const result = try responseResult(arena.allocator(), bytes);
     return switch (result.get("items") orelse return error.InvalidResponse) {
         .array => |items| items.items.len,
         else => error.InvalidResponse,
@@ -336,15 +333,7 @@ fn responseItemCount(bytes: []const u8) !usize {
 fn responseUpdatedAt(bytes: []const u8) ![2]u64 {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), try responsePayload(bytes), .{});
-    const object = switch (value) {
-        .object => |object| object,
-        else => return error.InvalidResponse,
-    };
-    const result = switch (object.get("result") orelse return error.InvalidResponse) {
-        .object => |result| result,
-        else => return error.InvalidResponse,
-    };
+    const result = try responseResult(arena.allocator(), bytes);
     const items = switch (result.get("items") orelse return error.InvalidResponse) {
         .array => |items| items.items,
         else => return error.InvalidResponse,

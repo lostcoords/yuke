@@ -4,6 +4,7 @@
 const std = @import("std");
 const zio = @import("zio");
 const transport = @import("../transport.zig");
+const json = @import("../stream/json.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -193,12 +194,11 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
 /// Report whether the error body names an exhausted quota. OpenAI marks it in `error.code` or
 /// `error.type`. Anthropic marks a tier spend cap in `error.details.error_code`.
 fn bodyIsQuota(arena: Allocator, body: []const u8) bool {
-    const parsed = std.json.parseFromSlice(std.json.Value, arena, body, .{}) catch return false;
-    defer parsed.deinit();
-    const err = objField(parsed.value, "error") orelse return false;
-    if (strField(err, "code")) |code| if (isQuotaCode(code)) return true;
-    if (strField(err, "type")) |t| if (std.mem.eql(u8, t, "insufficient_quota")) return true;
-    if (objField(err, "details")) |details| if (strField(details, "error_code")) |dc| {
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
+    const err = json.fieldGet(value, "error") orelse return false;
+    if (json.fieldStr(err, "code")) |code| if (isQuotaCode(code)) return true;
+    if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "insufficient_quota")) return true;
+    if (json.fieldGet(err, "details")) |details| if (json.fieldStr(details, "error_code")) |dc| {
         if (std.mem.eql(u8, dc, "enforced_spend_limit_reached")) return true;
     };
     return false;
@@ -210,21 +210,6 @@ fn isQuotaCode(code: []const u8) bool {
     if (std.mem.eql(u8, code, "credit_balance_exhausted")) return true;
     if (std.mem.eql(u8, code, "organization_usage_limit_exceeded")) return true;
     return std.mem.endsWith(u8, code, "_spend_limit_exceeded");
-}
-
-fn objField(value: std.json.Value, name: []const u8) ?std.json.Value {
-    const obj = switch (value) {
-        .object => |o| o,
-        else => return null,
-    };
-    return obj.get(name);
-}
-
-fn strField(value: std.json.Value, name: []const u8) ?[]const u8 {
-    return switch (objField(value, name) orelse return null) {
-        .string => |s| s,
-        else => null,
-    };
 }
 
 const testing = std.testing;

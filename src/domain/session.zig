@@ -244,12 +244,17 @@ pub const Session = struct {
         return .ignored;
     }
 
+    /// Map the durable-sequence gate to an early-return outcome. Null means the caller applies the event.
+    fn gateApplied(self: *Session, seq: ids.Seq, mode: Mode) ?Applied {
+        return switch (self.gate(seq, mode)) {
+            .ignore => .ignored,
+            .gap => .gap,
+            .apply => null,
+        };
+    }
+
     fn onCommitted(self: *Session, d: message.MessageCommittedData, mode: Mode) Error!Applied {
-        switch (self.gate(d.seq, mode)) {
-            .ignore => return .ignored,
-            .gap => return .gap,
-            .apply => {},
-        }
+        if (self.gateApplied(d.seq, mode)) |gated| return gated;
         // The daemon commits ids in order. A stale id keeps the window oldest-first for the trim.
         if (d.message.id() <= self.finalized_message_id) {
             std.debug.assert(mode == .checked);
@@ -272,11 +277,7 @@ pub const Session = struct {
     }
 
     fn onConfig(self: *Session, d: wire.misc.ConfigChangedData, mode: Mode) Error!Applied {
-        switch (self.gate(d.seq, mode)) {
-            .ignore => return .ignored,
-            .gap => return .gap,
-            .apply => {},
-        }
+        if (self.gateApplied(d.seq, mode)) |gated| return gated;
         // A config revision is immutable. A conflicting value for a known revision is malformed.
         if (self.configs.get(d.config.config_rev)) |existing| {
             if (!configEql(existing, d.config)) {
@@ -291,33 +292,21 @@ pub const Session = struct {
     }
 
     fn onQueued(self: *Session, d: wire.input.InputQueuedData, mode: Mode) Error!Applied {
-        switch (self.gate(d.seq, mode)) {
-            .ignore => return .ignored,
-            .gap => return .gap,
-            .apply => {},
-        }
+        if (self.gateApplied(d.seq, mode)) |gated| return gated;
         const applied = try self.queue.onQueued(d);
         self.base_seq = d.seq;
         return if (applied == .changed) .changed else .ignored;
     }
 
     fn onCanceled(self: *Session, d: wire.input.InputCanceledData, mode: Mode) Applied {
-        switch (self.gate(d.seq, mode)) {
-            .ignore => return .ignored,
-            .gap => return .gap,
-            .apply => {},
-        }
+        if (self.gateApplied(d.seq, mode)) |gated| return gated;
         const applied = self.queue.onCanceled(d);
         self.base_seq = d.seq;
         return if (applied == .changed) .changed else .ignored;
     }
 
     fn onTruncated(self: *Session, d: wire.misc.TranscriptTruncatedData, mode: Mode) Applied {
-        switch (self.gate(d.seq, mode)) {
-            .ignore => return .ignored,
-            .gap => return .gap,
-            .apply => {},
-        }
+        if (self.gateApplied(d.seq, mode)) |gated| return gated;
         self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
         self.committed.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
         self.base_seq = d.seq;
@@ -325,14 +314,9 @@ pub const Session = struct {
     }
 
     fn onCursor(self: *Session, seq: ids.Seq, mode: Mode) Applied {
-        return switch (self.gate(seq, mode)) {
-            .ignore => .ignored,
-            .gap => .gap,
-            .apply => blk: {
-                self.base_seq = seq;
-                break :blk .changed;
-            },
-        };
+        if (self.gateApplied(seq, mode)) |gated| return gated;
+        self.base_seq = seq;
+        return .changed;
     }
 
     fn raiseFinalized(self: *Session, message_id: ids.MessageId) void {
@@ -344,12 +328,8 @@ pub const Session = struct {
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
             error.UnknownPart, error.PartOutOfOrder => miss(mode),
-            error.ConflictingFinalization => blk: {
-                std.debug.assert(mode == .checked);
-                break :blk error.Protocol;
-            },
-            error.WrongPartKind => blk: {
-                std.debug.assert(mode == .checked); // the daemon never sends a wrong part kind
+            error.ConflictingFinalization, error.WrongPartKind => blk: {
+                std.debug.assert(mode == .checked); // the daemon never sends a conflicting or wrong part
                 break :blk error.Protocol;
             },
         };

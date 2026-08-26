@@ -234,6 +234,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         break :fallback provider.transport.Request{ .body = try provider.requestBody(arena, transcript, .@"anthropic-messages", .{
             .model = model,
             .system = slot.config.system_prompt,
+            .tools = try tool_registry.declarations(arena),
             .max_output_tokens = max_output_tokens,
         }, .{ .protocol = .@"anthropic-messages", .model = model }) };
     };
@@ -261,6 +262,7 @@ fn resolvedRequest(
     const body_bytes = try provider.requestBody(arena, transcript, r.provider.protocol, .{
         .model = r.binding.upstream_id,
         .system = slot.config.system_prompt,
+        .tools = try tool_registry.declarations(arena),
         .max_output_tokens = std.math.cast(u32, r.binding.limits.max_output_tokens) orelse max_output_tokens,
     }, .{ .protocol = r.provider.protocol, .model = slot.config.model });
 

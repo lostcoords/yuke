@@ -77,10 +77,6 @@ pub fn beginTurn(
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const user_message_id = try event_store.allocMessageId(db, arena, session_id);
     const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
-    var handle: RunHandle = .{
-        .input_id = input_id,
-        .started = undefined,
-    };
     const user_now = util.nowMillis(io);
     const user_message: wire.message.Message = .{ .user = .{
         .id = user_message_id,
@@ -92,10 +88,10 @@ pub fn beginTurn(
     // Build the commit slice before COMMIT, so a late allocation failure cannot orphan the durable run.
     const commits = try arena.alloc(wire.message.MessageCommittedData, 1);
     commits[0] = .{ .session_id = .bytes(session_id), .seq = user_seq, .message = user_message };
-    handle.started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
+    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
     try db.conn.execNoArgs("COMMIT");
     return .{
-        .handle = handle,
+        .handle = .{ .input_id = input_id, .started = started },
         .first_round = .{ .number = 1, .message_id = assistant_message_id },
         .user_commits = commits,
     };
@@ -118,14 +114,11 @@ pub fn beginQueuedTurn(
 
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const started_at_ms = util.nowMillis(io);
-    var first_input_id: wire.ids.InputId = undefined;
+    const first_input_id = queued[0].input.input_id;
     const commits = try arena.alloc(wire.message.MessageCommittedData, queued.len);
 
     for (queued, 0..) |entry, i| {
         const user_message_id = try event_store.allocMessageId(db, arena, session_id);
-        if (i == 0) {
-            first_input_id = entry.input.input_id;
-        }
         const user_message: wire.message.Message = .{ .user = .{
             .id = user_message_id,
             .content = entry.input.content,

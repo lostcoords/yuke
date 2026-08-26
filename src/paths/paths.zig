@@ -42,11 +42,10 @@ pub fn homeDir(env: *const Map) ?[]const u8 {
 
 /// Return true for a directory name with no separator that is not `.` or `..`.
 pub fn appNameValid(name: []const u8) bool {
-    if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
-    for (name) |ch| {
-        if (ch == '/' or ch == '\\' or ch == 0) return false;
-    }
-    return true;
+    return name.len != 0 and
+        !std.mem.eql(u8, name, ".") and
+        !std.mem.eql(u8, name, "..") and
+        std.mem.findAny(u8, name, "/\\\x00") == null;
 }
 
 pub const Error = error{InvalidAppName};
