@@ -42,7 +42,8 @@ pub fn appendOpenDone(
     return stored;
 }
 
-/// Close every run left open by a prior process. Return the durable terminal events.
+/// Close every run that a prior process left open. Write run.done(canceled) and clear the marker.
+/// The committed rounds stay. A restart cannot restore the live draft. Recovery replays no provider or tool.
 pub fn recoverOpen(
     db: *Database,
     arena: std.mem.Allocator,
@@ -70,6 +71,7 @@ pub fn recoverOpen(
 const testing = std.testing;
 const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
+const message = @import("message.zig");
 
 fn testDb() !Database {
     const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
@@ -311,6 +313,76 @@ test "recovery cancels each open run and clears its triad atomically" {
     try testing.expect(payload.outcome == .canceled);
     try testing.expectEqual(@as(?u64, 120), payload.timing.started_at_ms);
     try testing.expectEqual(@as(u64, 200), payload.timing.ended_at_ms);
+}
+
+test "recovery cancels an open run and keeps its committed rounds" {
+    var db = try testDb();
+    defer db.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = [_]u8{1} ** 16;
+    try seedSession(&db, a, sid);
+
+    // Open a run and commit one intermediate tool round, as a multi-round turn does before a crash.
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    try event.bumpIds(&db, a, sid, .{ .run_id_high = 1 });
+    _ = try appendStarted(&db, a, [_]u8{9} ** 16, 120, .{
+        .session_id = .bytes(sid),
+        .seq = 0,
+        .run_id = 1,
+        .kind = .turn,
+        .config_rev = 0,
+        .started_at_ms = 120,
+    });
+    try db.conn.execNoArgs("COMMIT");
+
+    const round: wire.message.Message = .{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &.{.{ .tool = .{ .id = 1, .call_id = "toolu_1", .name = "read", .arguments = "{}", .state = .{ .completed = .{ .output = "1: x", .duration_ms = 4 } } } }},
+        .finish = .tool_calls,
+        .tokens = .{ .input = 10, .output = 20, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+        .time = .{ .created_at_ms = 130, .completed_at_ms = 140 },
+        .provenance = .{ .protocol = .@"anthropic-messages", .model = "opus" },
+    } };
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try message.appendCommittedMessage(&db, a, sid, [_]u8{10} ** 16, 130, round);
+    try db.conn.execNoArgs("COMMIT");
+
+    // Recovery closes the open run as canceled without replay; the committed round survives.
+    var ids: TestIds = .{ .value = 20 };
+    try testing.expectEqual(@as(usize, 1), try recoverOpen(&db, a, 200, &ids));
+    try testing.expect((try session.snapshot(&db, a, sid)).?.open_run_id == null);
+
+    // The committed tool round is preserved field-for-field.
+    const history = (try message.historyPage(&db, a, sid, 0, 10)).messages;
+    try testing.expectEqual(@as(usize, 1), history.len);
+    const kept = history[0].assistant;
+    try testing.expectEqual(@as(u64, 1), kept.id);
+    try testing.expectEqual(@as(u64, 1), kept.run_id);
+    try testing.expectEqual(wire.enums.StopReason.tool_calls, kept.finish.?);
+    try testing.expectEqual(@as(?u64, 140), kept.time.completed_at_ms);
+    try testing.expectEqual(@as(u64, 20), kept.tokens.?.output);
+    try testing.expect(kept.content[0] == .tool);
+    try testing.expectEqualStrings("read", kept.content[0].tool.name);
+    try testing.expectEqualStrings("1: x", kept.content[0].tool.state.completed.output);
+
+    // Recovery adds only run.done. The one message event stays, so no replay occurred.
+    try testing.expectEqual(@as(u64, 1), try countEvents(&db, "run.started"));
+    try testing.expectEqual(@as(u64, 1), try countEvents(&db, "message.committed"));
+    try testing.expectEqual(@as(u64, 1), try countEvents(&db, "run.done"));
+    const row = (try db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
+    defer row.deinit();
+    const done = try std.json.parseFromSliceLeaky(wire.run.RunDoneData, a, row.text(0), .{});
+    try testing.expect(done.outcome == .canceled);
+    try testing.expectEqual(@as(u64, 3), done.seq); // after run.started (1) and message.committed (2)
+    try testing.expectEqual(@as(u64, 1), done.run_id);
+    try testing.expect(done.kind == .turn);
+    try testing.expectEqual(@as(?u64, 120), done.timing.started_at_ms);
+    try testing.expectEqual(@as(u64, 200), done.timing.ended_at_ms);
 }
 
 test "a recovery failure leaves the remaining run recoverable" {
