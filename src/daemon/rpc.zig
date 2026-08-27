@@ -1234,7 +1234,7 @@ const two_tool_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
-// Four gates drive two concurrent tool legs. A test releases them in reverse provider order.
+// Four gates drive two tool calls. A test controls when each call enters and when it returns.
 const BatchGates = struct {
     entered_a: zio.ResetEvent = .init,
     entered_b: zio.ResetEvent = .init,
@@ -1242,7 +1242,7 @@ const BatchGates = struct {
     release_b: zio.ResetEvent = .init,
 };
 
-// This host gates each read on its path, so a test controls the completion order.
+// This host gates each read on its path. A test controls when each read returns.
 const GatedHost = struct {
     gates: *BatchGates,
 
@@ -1265,16 +1265,17 @@ const GatedHost = struct {
     }
 };
 
-// Wait for both legs to enter, then release them in reverse order, then drive the run to idle.
+// Release each tool call in turn. The second call must not enter before the first one returns.
 fn gatedBatchDriver(state: *State, sid: wire.ids.SessionId, gates: *BatchGates) !void {
     try gates.entered_a.wait();
-    try gates.entered_b.wait(); // Both legs run before either completes: the batch is concurrent.
-    gates.release_b.set(); // Release b before a; the result order still follows the parts, not the release.
+    try std.testing.expect(!gates.entered_b.isSet()); // The second call waits for the first one.
     gates.release_a.set();
+    try gates.entered_b.wait();
+    gates.release_b.set();
     try launchUntilIdle(state, sid);
 }
 
-test "a tool round runs its calls concurrently and keeps provider order" {
+test "a tool round runs its calls one at a time in provider order" {
     var fixture = try TestState.init();
     defer fixture.deinit();
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -1323,17 +1324,16 @@ fn yieldUntilCompleted(state: *State, sid: wire.ids.SessionId, index: usize) !vo
     return error.NotCompleted;
 }
 
-// Cancel the run while both tool legs park in their reads.
+// Cancel the run while the first tool call parks in its read. The second call never enters.
 fn cancelBlockedBatchDriver(state: *State, sid: wire.ids.SessionId, run_id: u64, gates: *BatchGates) !void {
     try gates.entered_a.wait();
-    try gates.entered_b.wait(); // Both legs park in the read.
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
     try launchUntilIdle(state, sid);
 }
 
-test "cancel run cancels every blocked tool leg" {
+test "cancel run cancels the blocked tool call and every pending one" {
     var fixture = try TestState.init();
     defer fixture.deinit();
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -1344,7 +1344,7 @@ test "cancel run cancels every blocked tool leg" {
     var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
-    var gated: GatedHost = .{ .gates = &gates }; // Neither gate opens; both legs stay blocked.
+    var gated: GatedHost = .{ .gates = &gates }; // No gate opens, so the first call stays blocked.
     fixture.state.tool_host = gated.host();
 
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-cancel", .model = "mock" });
@@ -1353,7 +1353,7 @@ test "cancel run cancels every blocked tool leg" {
     const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
 
     var driver = try fixture.rt.spawn(cancelBlockedBatchDriver, .{ &fixture.state, sid, started.run_id, &gates });
-    try driver.join(); // The run must reach idle: every leg joined.
+    try driver.join(); // The run must reach idle: the blocked call returned.
 
     const row = (try fixture.state.db.conn.row("SELECT payload FROM events WHERE name = 'run.done'", .{})) orelse return error.NoRow;
     defer row.deinit();
@@ -1367,19 +1367,19 @@ test "cancel run cancels every blocked tool leg" {
     try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled);
 }
 
-// Let one tool finish, then cancel the run while the other still parks in its read.
+// Let the first tool finish, then cancel the run while the second parks in its read.
 fn cancelOneDoneDriver(state: *State, sid: wire.ids.SessionId, run_id: u64, gates: *BatchGates) !void {
     try gates.entered_a.wait();
-    try gates.entered_b.wait(); // Both legs park in the read.
-    gates.release_a.set(); // Let leg a finish its read and commit its result.
+    gates.release_a.set(); // Let the first call finish its read and record its result.
     try yieldUntilCompleted(state, sid, 0);
+    try gates.entered_b.wait(); // The second call now parks in its read.
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
     try launchUntilIdle(state, sid);
 }
 
-test "cancel run keeps a finished tool and cancels a blocked one" {
+test "cancel run keeps a finished tool and cancels the blocked one" {
     var fixture = try TestState.init();
     defer fixture.deinit();
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -1390,7 +1390,7 @@ test "cancel run keeps a finished tool and cancels a blocked one" {
     var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
-    var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens; gate b stays blocked.
+    var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens, so the second call blocks.
     fixture.state.tool_host = gated.host();
 
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-mixed", .model = "mock" });
@@ -1408,14 +1408,14 @@ test "cancel run keeps a finished tool and cancels a blocked one" {
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
     const parts = history[1].assistant.content;
     try std.testing.expectEqual(@as(usize, 2), parts.len);
-    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed); // leg a finished
+    try std.testing.expectEqual(std.meta.activeTag(parts[0].tool.state), .completed); // the first call finished
     try std.testing.expectEqualStrings("1: alpha", parts[0].tool.state.completed.output);
-    try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled); // leg b was blocked
+    try std.testing.expectEqual(std.meta.activeTag(parts[1].tool.state), .canceled); // the second call blocked
 }
 
 // Steer a new input while the tool leg parks, then release it. The input must queue, not start.
 fn steerWhileToolRuns(state: *State, sid: wire.ids.SessionId, gates: *BatchGates) !void {
-    try gates.entered_a.wait(); // The tool leg parks in the read, so the run is active.
+    try gates.entered_a.wait(); // The tool call parks in the read, so the run is active.
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const steer = [_]wire.content.ContentPart{.{ .text = .{ .text = "steer" } }};

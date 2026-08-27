@@ -686,72 +686,53 @@ fn hasToolPart(live: *const draft.Draft) bool {
     return false;
 }
 
-/// One pending tool call. The draft parts array is stable, so a snapshot frees a leg from it.
+/// One pending tool call. A snapshot frees the tool call from the draft parts array.
 const PendingTool = struct { part_id: wire.ids.PartId, name: []const u8, arguments: []const u8 };
 
-/// Settle every pending tool part into a terminal state. With a host and no cancel, run the tools
-/// concurrently in a child task, so a cancel interrupts a blocked leg. Otherwise settle each canceled.
+/// Settle every pending tool part into a terminal state. The tools run ONE AT A TIME in provider
+/// order. Without a host, and after a cancel, each remaining part settles canceled and no tool runs.
 fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: ?tools.ToolHost, live: *const draft.Draft) !void {
     var pending: std.ArrayList(PendingTool) = .empty;
     for (live.parts.items) |*p| {
         if (p.* != .tool or std.meta.activeTag(p.tool.state) != .pending) continue;
         try pending.append(arena, .{ .part_id = p.tool.id, .name = p.tool.name, .arguments = p.tool.arguments });
     }
-    if (pending.items.len == 0) return;
-
-    // No host, or a cancel before the batch: settle every part canceled. No tool runs.
-    if (host == null or slot.cancel_requested) {
-        for (pending.items) |pt| try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
-        return;
+    for (pending.items) |pt| {
+        if (host == null or slot.cancel_requested) {
+            try streamer.emitToolState(pt.part_id, .{ .canceled = .{} });
+            continue;
+        }
+        try runOneTool(state, arena, slot, streamer, host.?, pt);
     }
+}
 
-    // The Group drops non-cancel leg errors, so each leg records its emit error here.
-    const errors = try arena.alloc(?anyerror, pending.items.len);
-    @memset(errors, null);
-    // Run the batch in a child. The child or a cancel_run wakes the run task. On a cancel the run task
-    // cancels the child, so the cancel reaches each blocked leg.
-    slot.wake_event.reset();
-    var child = try state.io.concurrent(runBatch, .{ state, arena, slot, streamer, host.?, pending.items, errors });
+/// Run one tool in a child task, so a cancel can interrupt a blocked call. The run task cannot see
+/// `cancel_requested` while it runs the tool itself, so the child owns the call and wakes the run task.
+fn runOneTool(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool) !void {
+    slot.wake_event.reset(); // A one-shot event; the next tool waits again.
+    var child = try state.io.concurrent(toolChild, .{ state, arena, slot, streamer, host, pt });
     slot.wake_event.wait(state.io) catch {
-        _ = child.cancel(state.io); // Shutdown: cancel the batch and join every leg.
+        child.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the tool.
         return error.Canceled;
     };
     if (slot.cancel_requested) {
-        _ = child.cancel(state.io); // Interrupt any blocked leg; each leg settles its part and joins.
-    } else {
-        _ = child.await(state.io);
+        child.cancel(state.io) catch {}; // Interrupt a blocked call; the child settles its part canceled.
+        return;
     }
-
-    // A leg emit error leaves a non-terminal part, so fault. The run loop commits a cancel terminal.
-    for (errors) |err_slot| if (err_slot) |err| return err;
+    return child.await(state.io);
 }
 
-/// Run every pending tool concurrently and wake the run task when every leg joins. A cancel from the
-/// run task propagates through the group to each leg.
-fn runBatch(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pending: []const PendingTool, errors: []?anyerror) void {
-    std.debug.assert(pending.len == errors.len); // one error slot per leg
+/// Run one tool and emit its running -> terminal lifecycle. A cancel during the call settles the part
+/// canceled. Each state emit blocks cancelation, so exactly one terminal state lands.
+fn toolChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool) !void {
+    std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
+    std.debug.assert(slot.progress.current != null); // the round opened the message
     defer slot.wake_event.set(state.io);
-    var group: std.Io.Group = .init;
-    defer group.cancel(state.io);
-    for (pending, errors) |pt, *err_slot| {
-        group.concurrent(state.io, runToolLeg, .{ state, arena, slot, streamer, host, pt, err_slot }) catch |err| {
-            err_slot.* = err;
-        };
-    }
-    group.await(state.io) catch {}; // A cancel propagates to the legs; each leg settles its own part.
-}
-
-/// Run one tool and emit its running -> terminal lifecycle. A cancel during the tool settles the part
-/// canceled. Each state emit blocks cancelation, so exactly one terminal lands. Capture an emit error.
-fn runToolLeg(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool, err_slot: *?anyerror) void {
     const started = state.nowMillis();
     {
         const old = state.io.swapCancelProtection(.blocked);
         defer _ = state.io.swapCancelProtection(old);
-        streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } }) catch |err| {
-            err_slot.* = err;
-            return;
-        };
+        try streamer.emitToolState(pt.part_id, .{ .running = .{ .started_at_ms = started } });
     }
     // The `scratch` allocator holds the file bytes and the decoded arguments. It frees per call.
     // The `out` allocator keeps the result for the turn.
@@ -767,9 +748,7 @@ fn runToolLeg(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer:
         .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
     else
         .{ .completed = .{ .output = res.output, .view = res.view, .duration_ms = duration } };
-    streamer.emitToolState(pt.part_id, settled) catch |err| {
-        err_slot.* = err;
-    };
+    try streamer.emitToolState(pt.part_id, settled);
 }
 
 /// Reject a provider payload that would exceed the stream cap. This is peer input. Return an error.
