@@ -1246,22 +1246,21 @@ const BatchGates = struct {
 const GatedHost = struct {
     gates: *BatchGates,
 
-    const vtable: tools.ToolHost.VTable = .{ .readFile = readFile };
+    const vtable: tools.ToolHost.VTable = .{ .readRange = readRange };
     fn host(self: *GatedHost) tools.ToolHost {
         return .{ .ctx = self, .vtable = &vtable };
     }
-    fn readFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) tools.HostError![]const u8 {
-        _ = start;
-        _ = end;
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: tools.Range, limits: tools.ReadLimits) tools.HostError!tools.RangeRead {
+        _ = .{ range, limits };
         const self: *GatedHost = @ptrCast(@alignCast(ctx));
         if (std.mem.eql(u8, path, "a")) {
             self.gates.entered_a.set();
             self.gates.release_a.wait() catch return error.Canceled;
-            return scratch.dupe(u8, "alpha\n");
+            return .{ .text = try scratch.dupe(u8, "alpha\n") };
         }
         self.gates.entered_b.set();
         self.gates.release_b.wait() catch return error.Canceled;
-        return scratch.dupe(u8, "beta\n");
+        return .{ .text = try scratch.dupe(u8, "beta\n") };
     }
 };
 

@@ -37,6 +37,27 @@ pub const ToolResult = struct {
     view: ?[]const wire.view.View = null,
 };
 
+/// A 1-indexed inclusive line range. A null bound selects the first or the last line.
+pub const Range = struct { start: ?u32 = null, end: ?u32 = null };
+
+/// The bounds a range read must respect. These limits bound the read itself. The backend must not
+/// load the whole file. `max_bytes` bounds the file text; a caller adds its own numbering on top.
+pub const ReadLimits = struct {
+    max_lines: u32,
+    max_line_bytes: u32,
+    max_bytes: u32,
+};
+
+/// The result of a bounded range read. `text` holds whole lines, each with a newline. The first line
+/// is always `Range.start`, so the caller already knows it.
+pub const RangeRead = struct {
+    text: []const u8,
+    /// The first line the read did NOT return, or null when it reached the range or the file end.
+    next_line: ?u32 = null,
+    /// The number of lines the backend cut at `max_line_bytes`.
+    long_lines: u32 = 0,
+};
+
 /// A ToolHost provides the native primitives a handler calls. The backend decides where they run.
 /// The `ctx` and its borrowed data, for example the workspace root, must outlive every call.
 pub const ToolHost = struct {
@@ -44,13 +65,13 @@ pub const ToolHost = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Read a file. Use `start`/`end` for a 1-indexed line range. A null range reads the whole file.
-        /// The result comes from `scratch`. The handler must copy the data it keeps into `out`.
-        readFile: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) HostError![]const u8,
+        /// Read a bounded line range. The result comes from `scratch`. The handler must copy the data
+        /// it keeps into `out`. The backend rejects a RETURNED line that is not valid UTF-8.
+        readRange: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead,
     };
 
-    pub fn readFile(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) HostError![]const u8 {
-        return self.vtable.readFile(self.ctx, scratch, path, start, end);
+    pub fn readRange(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead {
+        return self.vtable.readRange(self.ctx, scratch, path, range, limits);
     }
 };
 
@@ -100,42 +121,7 @@ fn argError(err: std.json.ParseError(std.json.Scanner)) ToolError {
     };
 }
 
-/// Return lines `start`..`end` (1-indexed, inclusive). A null start or end selects the first or last
-/// line. A start past the last line returns an empty slice. The result borrows `text`.
-pub fn sliceLines(text: []const u8, start: ?usize, end: ?usize) []const u8 {
-    if (start == null and end == null) return text;
-    const from = start orelse 1;
-    var begin: usize = 0;
-    var line: usize = 1;
-    while (line < from) : (line += 1) {
-        const nl = std.mem.indexOfScalarPos(u8, text, begin, '\n') orelse return "";
-        begin = nl + 1;
-    }
-    const last = end orelse return text[begin..];
-    if (last < from) return "";
-    var stop: usize = begin;
-    line = from;
-    while (true) : (line += 1) {
-        const nl = std.mem.indexOfScalarPos(u8, text, stop, '\n') orelse return text[begin..];
-        stop = nl + 1;
-        if (line == last) return text[begin..stop];
-    }
-}
-
 const testing = std.testing;
-
-test "sliceLines selects an inclusive 1-indexed range" {
-    const text = "a\nb\nc\nd\n";
-    try testing.expectEqualStrings(text, sliceLines(text, null, null));
-    try testing.expectEqualStrings("b\nc\n", sliceLines(text, 2, 3));
-    try testing.expectEqualStrings("c\nd\n", sliceLines(text, 3, null));
-    try testing.expectEqualStrings("a\n", sliceLines(text, null, 1));
-    try testing.expectEqualStrings("", sliceLines(text, 10, null)); // A start past the last line is empty.
-    try testing.expectEqualStrings("", sliceLines(text, 3, 1)); // A start after the end is empty.
-
-    // A file without a final newline still yields its last line.
-    try testing.expectEqualStrings("y", sliceLines("x\ny", 2, 2));
-}
 
 test "define derives the schema from the argument struct" {
     const Args = struct { path: schema.Str, keep: ?bool = null };
