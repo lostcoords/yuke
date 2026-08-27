@@ -28,6 +28,7 @@ pub const ToolError = HostError || error{
     InvalidArg,
     NoMatch,
     Ambiguous,
+    NoChange,
 };
 
 /// A handler result carries model-visible `text` and an optional display `view`, for example a diff.

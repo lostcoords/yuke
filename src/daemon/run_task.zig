@@ -659,6 +659,7 @@ fn toolErrorMessage(out: std.mem.Allocator, t: tools.Tool, err: tools.ToolError)
         error.InvalidUtf8 => "the file holds invalid UTF-8",
         error.NoMatch => "the file lacks old_string",
         error.Ambiguous => "old_string appears more than one time. You must add context or set replace_all",
+        error.NoChange => "old_string and new_string match. The edit changes nothing",
         error.Canceled => "cancellation stopped the call",
         error.HostFailure => "the tool host returned an error",
         error.OutOfMemory => "memory allocation failed",
