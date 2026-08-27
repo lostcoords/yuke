@@ -711,6 +711,49 @@ test "yuke:core RootView paints and q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
+test "wrap keeps an unsplittable grapheme on its own line" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { wrap } from "yuke:core";
+        \\const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        \\globalThis.result = (
+        \\  eq(wrap("abcd", 1), ["a", "b", "c", "d"]) &&
+        \\  eq(wrap("ab\u4e2dcd", 3), ["ab", "\u4e2dc", "d"]) &&
+        \\  eq(wrap("\u4e2d\u4e2d", 1), ["\u4e2d", "\u4e2d"]) &&
+        \\  eq(wrap("\ud83d\udc69\u200d\ud83d\udcbb", 1), ["\ud83d\udc69\u200d\ud83d\udcbb"])
+        \\) ? 1 : 0;
+    , "wrap.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
+}
+
+test "a style link cycle falls back instead of spinning" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { style } from "yuke:core";
+        \\style.groups.Cycle = { link: "Pong" };
+        \\style.groups.Pong = { link: "Cycle" };
+        \\style.groups.Selfie = { link: "Selfie" };
+        \\style.groups.Dangling = { link: "Missing" };
+        \\style.invalidate();
+        \\const normal = style.resolve("Normal");
+        \\globalThis.result = (
+        \\  style.resolve("Cycle").fg === normal.fg &&
+        \\  style.resolve("Selfie").fg === normal.fg &&
+        \\  style.resolve("Dangling").fg === normal.fg &&
+        \\  style.resolve("YukeHeader").fg === "dark_gray"
+        \\) ? 1 : 0;
+    , "cycle.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
+}
+
 test "an overlay without a hook is consumed, not a fault" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

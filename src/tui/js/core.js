@@ -1,5 +1,8 @@
 import { term } from "yuke:term";
 
+// Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
+const link_depth_max = 100;
+
 // Define highlight groups over the palette. Call `invalidate()` after changes.
 export const style = {
   palette: {
@@ -31,7 +34,8 @@ export const style = {
     if (cached) return cached;
 
     let def = this.groups[name];
-    while (def && def.link) def = this.groups[def.link];
+    for (let i = 0; def && def.link && i < link_depth_max; i++) def = this.groups[def.link];
+    if (def && def.link) def = null;
 
     const out = {};
     if (def) {
@@ -80,7 +84,8 @@ export function clip(s, max) {
   return s.slice(0, cut) + (ell ? "…" : "");
 }
 
-// Wrap `s` to `width` cells. Newlines break lines; wide words break by grapheme.
+// Wrap `s` to `width` cells. A newline breaks the line. A word wider than `width` breaks by grapheme.
+// A grapheme wider than `width` keeps its own line. That line is wider than `width`.
 export function wrap(s, width) {
   s = String(s);
   if (width <= 0) return [""];
