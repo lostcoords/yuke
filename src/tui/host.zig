@@ -911,6 +911,66 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.get("bad"));
         \\}
         \\
+        \\// A child scope disposes with its parent, newest first.
+        \\{
+        \\  const order = [];
+        \\  const parent = new Scope("p");
+        \\  parent.effect(() => () => order.push("parent"));
+        \\  const kid = parent.child("kid");
+        \\  kid.effect(() => () => order.push("kid"));
+        \\  parent.dispose();
+        \\  check("scope-child", order.join(",") === "kid,parent" && !kid.alive);
+        \\}
+        \\
+        \\// An effect on a disposed scope throws.
+        \\{
+        \\  const s = new Scope("dead");
+        \\  s.dispose();
+        \\  let threw = false;
+        \\  try { s.effect(() => {}); } catch (e) { threw = true; }
+        \\  check("scope-dead-effect", threw);
+        \\}
+        \\
+        \\// filterArgs rewrites the arguments that the original and `after` both see.
+        \\{
+        \\  const obj = { log: [], f(a, b) { this.log.push("orig:" + a + b); return a + b; } };
+        \\  const off = advice.advise(obj, "f", "filterArgs", (as) => [as[0] * 2, as[1] * 2], { owner: "o", name: "fa" });
+        \\  const seen = [];
+        \\  const off2 = advice.advise(obj, "f", "after", (a, b) => seen.push(a + "," + b), { owner: "o", name: "af" });
+        \\  const out = obj.f(1, 2);
+        \\  off(); off2();
+        \\  check("advice-filter-args", out === 6 && obj.log.join(",") === "orig:24" && seen.join(",") === "2,4");
+        \\}
+        \\
+        \\// An accessor is not a method, so advise refuses it.
+        \\{
+        \\  const obj = { get g() { return () => 1; } };
+        \\  let threw = false;
+        \\  const want = "is an accessor";
+        \\  try { advice.advise(obj, "g", "before", () => {}); } catch (e) { threw = e instanceof TypeError && e.message.indexOf(want) >= 0; }
+        \\  check("advice-accessor", threw);
+        \\}
+        \\
+        \\// A Context forces its own id as the advice owner and keeps a qualified name intact.
+        \\{
+        \\  const s = new Scope("t7");
+        \\  const ctx = new Context(s, "p7");
+        \\  const obj = { f() { return 1; } };
+        \\  ctx.advise(obj, "f", "filterReturn", (r) => r + 1, { name: "inc" });
+        \\  const owned = advice.list(obj, "f")[0];
+        \\  ctx.command(null, { bare: () => {}, "other:kept": () => {} });
+        \\  ctx.keymap({ "ctrl+y": "p7:bare" });
+        \\  ctx.provide("svc7", 42);
+        \\  const ok = owned.owner === "p7" && obj.f() === 2 &&
+        \\    !!command.map["p7:bare"] && !!command.map["other:kept"] &&
+        \\    !!keymap.map["ctrl+y"] && ctx.use("svc7") === 42;
+        \\  s.dispose();
+        \\  const gone = !command.map["p7:bare"] && !command.map["other:kept"] &&
+        \\    !keymap.map["ctrl+y"] && services.get("svc7") === undefined &&
+        \\    obj.f() === 1 && advice.list(obj, "f").length === 0;
+        \\  check("context-surface", ok && gone);
+        \\}
+        \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});

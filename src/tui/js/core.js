@@ -465,7 +465,10 @@ export class Emitter {
       try {
         fn(...args);
       } catch (e) {
-        callHook(this, "onError", e, name);
+        // A throwing `onError` must not stop the listeners that remain.
+        try {
+          callHook(this, "onError", e, name);
+        } catch (_ignored) {}
       }
     }
   }

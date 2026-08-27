@@ -71,6 +71,10 @@ function adviceRecord(obj, prop) {
 
   let rec = byProp[prop];
   if (!rec) {
+    // An accessor is not a method. Assigning the wrapper would call its setter.
+    const desc = findDescriptor(obj, prop);
+    if (desc && !("value" in desc)) throw new TypeError("advise: " + prop + " is an accessor");
+
     const original = obj[prop];
     if (typeof original !== "function") throw new Error("advise: " + prop + " is not a method");
 
@@ -84,39 +88,38 @@ function adviceRecord(obj, prop) {
   return rec;
 }
 
+// Find the property descriptor on `obj` or the first prototype that owns it.
+function findDescriptor(obj, prop) {
+  let holder = obj;
+  while (holder) {
+    const desc = Object.getOwnPropertyDescriptor(holder, prop);
+    if (desc) return desc;
+    holder = Object.getPrototypeOf(holder);
+  }
+  return undefined;
+}
+
 // Fold the advice around one call: filterArgs, before, the around chain, filterReturn, after.
 // The first-listed `around` is outermost, so the chain wraps in reverse.
 function applyAdvice(rec, self, args) {
   const list = rec.list;
 
-  for (const a of list) if (a.where === "filterArgs") args = a.fn.call(self, args) || args;
-  for (const a of list) if (a.where === "before") a.fn.apply(self, args);
+  for (const a of list) if (a.where === "filterArgs") args = Reflect.apply(a.fn, self, [args]) || args;
+  for (const a of list) if (a.where === "before") Reflect.apply(a.fn, self, args);
 
-  // Most advice never wraps, so skip the chain and its closures when no `around` exists.
-  let around = false;
-  for (const a of list) {
-    if (a.where === "around") {
-      around = true;
-      break;
-    }
+  let call = (...as) => Reflect.apply(rec.original, self, as);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].where !== "around") continue;
+
+    const inner = call;
+    const fn = list[i].fn;
+    call = (...as) => Reflect.apply(fn, self, [inner, ...as]);
   }
 
-  let result;
-  if (!around) result = rec.original.apply(self, args);
-  else {
-    let call = (...as) => rec.original.apply(self, as);
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].where !== "around") continue;
+  let result = call(...args);
 
-      const inner = call;
-      const fn = list[i].fn;
-      call = (...as) => fn.call(self, inner, ...as);
-    }
-    result = call(...args);
-  }
-
-  for (const a of list) if (a.where === "filterReturn") result = a.fn.call(self, result);
-  for (const a of list) if (a.where === "after") a.fn.apply(self, args);
+  for (const a of list) if (a.where === "filterReturn") result = Reflect.apply(a.fn, self, [result]);
+  for (const a of list) if (a.where === "after") Reflect.apply(a.fn, self, args);
 
   return result;
 }
@@ -128,13 +131,14 @@ export const advice = {
     if (!WHERE[where]) throw new Error("advise: unknown kind " + where);
     if (typeof fn !== "function") throw new Error("advise: fn must be a function");
 
-    const rec = adviceRecord(obj, prop);
     const owner = (opts && opts.owner) || "anon";
     const name = (opts && opts.name) || fn.name || "advice";
     const order = opts && typeof opts.order === "number" ? opts.order : 0;
     const key = owner + "\x00" + name;
 
+    // Build the entry before the record, so a throwing option getter installs no wrapper.
     const entry = { owner, name, key, where, fn, order };
+    const rec = adviceRecord(obj, prop);
     const at = rec.list.findIndex((a) => a.key === key);
     if (at >= 0) rec.list[at] = entry;
     else rec.list.push(entry);
@@ -227,8 +231,9 @@ export class Context {
   }
 
   advise(obj, prop, where, fn, opts) {
-    const owned = Object.assign({}, opts, { owner: this.id });
-    return this.scope.effect(() => advice.advise(obj, prop, where, fn, owned));
+    return this.scope.effect(() =>
+      advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
+    );
   }
 
   provide(name, value) {
