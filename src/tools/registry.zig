@@ -1,4 +1,4 @@
-//! The built-in tool registry. It lists the daemon's native tools and builds their provider declarations.
+//! The built-in tool registry. It lists the daemon's native tools and their provider declarations.
 
 const std = @import("std");
 const t = @import("tool.zig");
@@ -17,12 +17,17 @@ pub fn find(name: []const u8) ?t.Tool {
     return null;
 }
 
-/// Build the provider declarations for the built-in tools. The caller owns the slice.
-pub fn declarations(arena: std.mem.Allocator) ![]const ir.Tool {
-    const out = try arena.alloc(ir.Tool, builtins.len);
-    for (builtins, 0..) |tool, i| out[i] = .{ .name = tool.name, .description = tool.description, .input_schema = tool.input_schema };
-    return out;
-}
+/// The provider declarations. The compiler builds this static table once.
+pub const declarations: []const ir.Tool = &decl_table;
+
+const decl_table = blk: {
+    var out: [builtins.len]ir.Tool = undefined;
+    for (&out, builtins) |*decl, tool| {
+        decl.* = .{ .name = tool.name, .description = tool.description, .input_schema = tool.input_schema };
+    }
+    const frozen = out;
+    break :blk frozen;
+};
 
 const testing = std.testing;
 
@@ -31,11 +36,7 @@ test "find returns a built-in by name" {
     try testing.expect(find("nope") == null);
 }
 
-test "declarations mirror the built-ins" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const decls = try declarations(arena.allocator());
-    try testing.expectEqual(builtins.len, decls.len);
-    try testing.expectEqualStrings("read", decls[0].name);
+test "declarations carry each built-in schema" {
+    try testing.expectEqual(builtins.len, declarations.len);
+    try testing.expectEqualStrings(read.tool.input_schema, declarations[0].input_schema);
 }

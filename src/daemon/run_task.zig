@@ -234,7 +234,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         break :fallback provider.transport.Request{ .body = try provider.requestBody(arena, transcript, .@"anthropic-messages", .{
             .model = model,
             .system = slot.config.system_prompt,
-            .tools = try tool_registry.declarations(arena),
+            .tools = tool_registry.declarations,
             .max_output_tokens = max_output_tokens,
         }, .{ .protocol = .@"anthropic-messages", .model = model }) };
     };
@@ -262,7 +262,7 @@ fn resolvedRequest(
     const body_bytes = try provider.requestBody(arena, transcript, r.provider.protocol, .{
         .model = r.binding.upstream_id,
         .system = slot.config.system_prompt,
-        .tools = try tool_registry.declarations(arena),
+        .tools = tool_registry.declarations,
         .max_output_tokens = std.math.cast(u32, r.binding.limits.max_output_tokens) orelse max_output_tokens,
     }, .{ .protocol = r.provider.protocol, .model = slot.config.model });
 
@@ -632,13 +632,38 @@ const Streamer = struct {
 /// A native tool result mapped for a tool state. `is_error` selects the completed or error state.
 const ToolExec = struct { output: []const u8, view: ?[]const wire.view.View = null, is_error: bool };
 
-/// Run one built-in tool. An invalid argument, an unknown tool, or a handler error becomes a tool error.
-fn runTool(arena: std.mem.Allocator, host: tools.ToolHost, name: []const u8, arguments: []const u8) ToolExec {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, arguments, .{}) catch
-        return .{ .output = "invalid tool arguments", .is_error = true };
-    const t = tool_registry.find(name) orelse return .{ .output = "unknown tool", .is_error = true };
-    const res = t.execute(arena, host, parsed) catch |err| return .{ .output = @errorName(err), .is_error = true };
+/// Run one built-in tool. The `scratch` allocator holds temporary data. The `out` allocator holds
+/// the result for the turn. A tool error gives the model a correction for the next round.
+fn runTool(out: std.mem.Allocator, scratch: std.mem.Allocator, host: tools.ToolHost, name: []const u8, arguments: []const u8) ToolExec {
+    const t = tool_registry.find(name) orelse return .{
+        .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
+        .is_error = true,
+    };
+    const res = t.execute(out, scratch, host, arguments) catch |err| return .{ .output = toolErrorMessage(out, t, err), .is_error = true };
     return .{ .output = res.text, .view = res.view, .is_error = false };
+}
+
+/// Map a `ToolError` to model text. The switch is exhaustive, so every new error needs a message.
+/// The request already carries the schema, so the message does not repeat it.
+fn toolErrorMessage(out: std.mem.Allocator, t: tools.Tool, err: tools.ToolError) []const u8 {
+    const text: []const u8 = switch (err) {
+        error.MalformedArgs => "the arguments hold invalid JSON",
+        error.MissingArg => "the request lacks a required argument",
+        error.UnknownArg => "the schema lacks the argument",
+        error.DuplicateArg => "an argument appears two times",
+        error.InvalidArg => "the argument has the wrong type or range",
+        error.NotFound => "the path does not exist",
+        error.NotAFile => "the path names a directory or a special file",
+        error.AccessDenied => "the file system denied access to the path",
+        error.TooLarge => "the file exceeds the size limit",
+        error.InvalidUtf8 => "the file holds invalid UTF-8",
+        error.NoMatch => "the file lacks old_string",
+        error.Ambiguous => "old_string appears more than one time. You must add context or set replace_all",
+        error.Canceled => "cancellation stopped the call",
+        error.HostFailure => "the tool host returned an error",
+        error.OutOfMemory => "memory allocation failed",
+    };
+    return std.fmt.allocPrint(out, "{s}: {s}", .{ t.name, text }) catch text;
 }
 
 /// Build a local tool host for the session workspace. Return null when the workspace lookup fails.
@@ -728,7 +753,11 @@ fn runToolLeg(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer:
             return;
         };
     }
-    const res = runTool(arena, host, pt.name, pt.arguments); // The cancel point; a blocked read unblocks here.
+    // The `scratch` allocator holds the file bytes and the decoded arguments. It frees per call.
+    // The `out` allocator keeps the result for the turn.
+    var scratch = std.heap.ArenaAllocator.init(state.gpa);
+    defer scratch.deinit();
+    const res = runTool(arena, scratch.allocator(), host, pt.name, pt.arguments); // The cancel point.
     const duration = state.nowMillis() -| started; // Saturate; the wall clock can move backward.
     const old = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(old);

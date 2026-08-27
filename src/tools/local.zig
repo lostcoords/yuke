@@ -21,21 +21,41 @@ pub const LocalHost = struct {
 
     const vtable: t.ToolHost.VTable = .{ .readFile = readFile };
 
-    fn readFile(ctx: *anyopaque, arena: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) anyerror![]const u8 {
+    fn readFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) t.HostError![]const u8 {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
-        const full = try self.resolve(arena, path);
-        const text = try std.Io.Dir.cwd().readFileAlloc(self.io, full, arena, .limited(max_file_bytes));
+        const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        const text = std.Io.Dir.cwd().readFileAlloc(self.io, full, scratch, .limited(max_file_bytes)) catch |err| return mapError(err);
+        // A replacement character corrupts a later exact edit, so refuse text the daemon cannot decode.
+        if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
         return t.sliceLines(text, start, end);
     }
 
     /// Expand an initial `~` and resolve a relative path against the workspace root. An absolute path or a
     /// `..` escape is allowed (no confinement). The caller owns the result.
-    fn resolve(self: *LocalHost, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
-        const expanded = if (self.env) |e| try paths.expandHome(arena, e, path) else path;
-        if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(arena, &.{expanded});
-        return std.fs.path.resolve(arena, &.{ self.root, expanded });
+    fn resolve(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) FsError![]const u8 {
+        const expanded = if (self.env) |e| try paths.expandHome(scratch, e, path) else path;
+        if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(scratch, &.{expanded});
+        return std.fs.path.resolve(scratch, &.{ self.root, expanded });
     }
 };
+
+const ExpandError = @typeInfo(@typeInfo(@TypeOf(paths.expandHome)).@"fn".return_type.?).error_union.error_set;
+
+/// Every native error the local backend can raise. `mapError` covers this set, not `anyerror`.
+const FsError = ExpandError || std.mem.Allocator.Error || std.Io.Dir.ReadFileAllocError;
+
+/// Map a native file-system error to `HostError`. Map an unlisted error to `HostFailure`.
+fn mapError(err: FsError) t.HostError {
+    return switch (err) {
+        error.FileNotFound, error.NotDir => error.NotFound,
+        error.IsDir => error.NotAFile,
+        error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.AccessDenied,
+        error.StreamTooLong, error.FileTooBig => error.TooLarge,
+        error.Canceled => error.Canceled,
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.HostFailure,
+    };
+}
 
 const testing = std.testing;
 

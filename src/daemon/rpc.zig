@@ -1250,18 +1250,18 @@ const GatedHost = struct {
     fn host(self: *GatedHost) tools.ToolHost {
         return .{ .ctx = self, .vtable = &vtable };
     }
-    fn readFile(ctx: *anyopaque, arena: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) anyerror![]const u8 {
+    fn readFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, start: ?usize, end: ?usize) tools.HostError![]const u8 {
         _ = start;
         _ = end;
         const self: *GatedHost = @ptrCast(@alignCast(ctx));
         if (std.mem.eql(u8, path, "a")) {
             self.gates.entered_a.set();
-            try self.gates.release_a.wait();
-            return arena.dupe(u8, "alpha\n");
+            self.gates.release_a.wait() catch return error.Canceled;
+            return scratch.dupe(u8, "alpha\n");
         }
         self.gates.entered_b.set();
-        try self.gates.release_b.wait();
-        return arena.dupe(u8, "beta\n");
+        self.gates.release_b.wait() catch return error.Canceled;
+        return scratch.dupe(u8, "beta\n");
     }
 };
 
