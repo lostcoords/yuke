@@ -30,6 +30,7 @@ pub const Error = error{
 
 pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:core", .source = @embedFile("js/core.js") },
+    .{ .name = "yuke:ext", .source = @embedFile("js/ext.js") },
 };
 
 pub const Options = struct {
@@ -736,6 +737,187 @@ test "wrap keeps an unsplittable grapheme on its own line" {
         \\) ? 1 : 0;
     , "wrap.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
+}
+
+test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { command, keymap, events, Emitter } from "yuke:core";
+        \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// A scope reverts its effects newest first.
+        \\{
+        \\  const order = [];
+        \\  const s = new Scope("t");
+        \\  s.effect(() => { order.push("a-set"); return () => order.push("a"); });
+        \\  s.effect(() => { order.push("b-set"); return () => order.push("b"); });
+        \\  s.effect(() => { order.push("c-set"); return () => order.push("c"); });
+        \\  s.dispose();
+        \\  check("lifo", order.join(",") === "a-set,b-set,c-set,c,b,a");
+        \\}
+        \\
+        \\// A disposer cleans up once, by hand or through dispose.
+        \\{
+        \\  let n = 0;
+        \\  const s = new Scope("t2");
+        \\  const off = s.effect(() => () => n++);
+        \\  off(); off();
+        \\  s.dispose();
+        \\  check("effect-idempotent", n === 1);
+        \\}
+        \\
+        \\// A throwing teardown reports on the bus and never stops the rest.
+        \\{
+        \\  const seen = [];
+        \\  const off = events.on("ext:error", (e, name) => seen.push(name));
+        \\  const s = new Scope("t3");
+        \\  s.effect(() => () => { throw new Error("boom"); });
+        \\  s.effect(() => () => seen.push("after"));
+        \\  s.dispose();
+        \\  off();
+        \\  check("dispose-isolate", seen.join(",") === "after,t3");
+        \\}
+        \\
+        \\// emit runs every listener and isolates a throwing one.
+        \\{
+        \\  const em = new Emitter();
+        \\  em.onError = () => {};
+        \\  let hits = 0;
+        \\  em.on("x", () => { hits++; throw new Error("boom"); });
+        \\  em.on("x", () => { hits++; });
+        \\  em.emit("x");
+        \\  check("emit-isolate", hits === 2);
+        \\}
+        \\
+        \\// bail stops at the first listener that claims the event.
+        \\{
+        \\  const em = new Emitter();
+        \\  const seen = [];
+        \\  em.on("k", () => { seen.push(1); });
+        \\  em.on("k", () => { seen.push(2); return "claimed"; });
+        \\  em.on("k", () => { seen.push(3); });
+        \\  check("bail", em.bail("k") === "claimed" && seen.join(",") === "1,2");
+        \\}
+        \\
+        \\// Context.on subscribes on the shared bus and goes away with its scope.
+        \\{
+        \\  const s = new Scope("t5");
+        \\  const ctx = new Context(s, "p5");
+        \\  let got = 0;
+        \\  ctx.on("evt5", () => got++);
+        \\  events.emit("evt5");
+        \\  s.dispose();
+        \\  events.emit("evt5");
+        \\  check("ctx-on-dispose", got === 1);
+        \\}
+        \\
+        \\// command.add returns a disposer that removes exactly what it added.
+        \\{
+        \\  const off = command.add(null, { "test:cmd6": () => {} });
+        \\  const present = !!command.map["test:cmd6"];
+        \\  off();
+        \\  check("command-dispose", present && !command.map["test:cmd6"]);
+        \\}
+        \\
+        \\// keymap.add removes the bind and clears a prefix nothing uses.
+        \\{
+        \\  const off = keymap.add({ "ctrl+x g": () => true });
+        \\  const hadPrefix = keymap.prefixes["ctrl+x"] === true;
+        \\  off();
+        \\  check("keymap-dispose", hadPrefix && !keymap.map["ctrl+x g"] && !keymap.prefixes["ctrl+x"]);
+        \\}
+        \\
+        \\// advice folds before, around, filterReturn, and after, then restores on removal.
+        \\{
+        \\  const obj = { hits: [], greet(n) { this.hits.push("orig:" + n); return "hi " + n; } };
+        \\  const original = obj.greet;
+        \\  const offs = [
+        \\    advice.advise(obj, "greet", "before", function (n) { this.hits.push("before:" + n); }, { owner: "o", name: "b" }),
+        \\    advice.advise(obj, "greet", "after", function (n) { this.hits.push("after:" + n); }, { owner: "o", name: "a" }),
+        \\    advice.advise(obj, "greet", "around", function (orig, n) { return orig(n.toUpperCase()); }, { owner: "o", name: "ar" }),
+        \\    advice.advise(obj, "greet", "filterReturn", function (r) { return r + "!"; }, { owner: "o", name: "f" }),
+        \\  ];
+        \\  const out = obj.greet("bob");
+        \\  check("advice-compose", out === "hi BOB!" && obj.hits.join(",") === "before:bob,orig:BOB,after:bob");
+        \\  for (const off of offs) off();
+        \\  check("advice-restore", obj.greet === original);
+        \\}
+        \\
+        \\// Advice with no `around` still folds the other kinds.
+        \\{
+        \\  const obj = { log: [], f(n) { this.log.push("orig:" + n); return n; } };
+        \\  const off = advice.advise(obj, "f", "filterReturn", (r) => r * 2, { owner: "o", name: "d" });
+        \\  check("advice-no-around", obj.f(3) === 6 && obj.log.join(",") === "orig:3");
+        \\  off();
+        \\}
+        \\
+        \\// The same owner and name replaces in place rather than stacking.
+        \\{
+        \\  const obj = { log: [], f() { this.log.push("orig"); } };
+        \\  advice.advise(obj, "f", "before", function () { this.log.push("v1"); }, { owner: "o", name: "n" });
+        \\  const off2 = advice.advise(obj, "f", "before", function () { this.log.push("v2"); }, { owner: "o", name: "n" });
+        \\  const replaced = advice.list(obj, "f").length === 1;
+        \\  obj.f();
+        \\  off2();
+        \\  check("advice-replace", replaced && obj.log.join(",") === "v2,orig" && advice.list(obj, "f").length === 0);
+        \\}
+        \\
+        \\// A service announces its arrival and its withdrawal.
+        \\{
+        \\  const seen = [];
+        \\  const off = events.on("service:svc", (v) => seen.push(v === undefined ? "gone" : v));
+        \\  const drop = services.provide("svc", "here");
+        \\  const got = services.get("svc");
+        \\  drop();
+        \\  off();
+        \\  check("service", got === "here" && seen.join(",") === "here,gone" && services.get("svc") === undefined);
+        \\}
+        \\
+        \\// A plugin registers on use, reverts on dispose, and comes back on reload.
+        \\{
+        \\  const p = { name: "demo9", apply(ctx) { ctx.command(null, { act: () => {} }); } };
+        \\  plugins.use(p);
+        \\  const present = !!command.map["demo9:act"];
+        \\  plugins.dispose("demo9");
+        \\  const gone = !command.map["demo9:act"];
+        \\  plugins.use(p);
+        \\  const back = !!command.map["demo9:act"];
+        \\  plugins.dispose("demo9");
+        \\  check("plugin-lifecycle", present && gone && back);
+        \\}
+        \\
+        \\// A second use of a live name disposes the first, so nothing stacks on reload.
+        \\{
+        \\  let disposals = 0;
+        \\  const p = { name: "dup", apply(ctx) { ctx.effect(() => () => disposals++); } };
+        \\  plugins.use(p);
+        \\  plugins.use(p);
+        \\  const once = disposals === 1;
+        \\  plugins.dispose("dup");
+        \\  check("plugin-reload-disposes", once && disposals === 2 && plugins.names().indexOf("dup") < 0);
+        \\}
+        \\
+        \\// A throwing apply reverts what it already registered and leaves no live plugin.
+        \\{
+        \\  const bad = { name: "bad", apply(ctx) { ctx.command(null, { act: () => {} }); throw new Error("nope"); } };
+        \\  let threw = false;
+        \\  try { plugins.use(bad); } catch (e) { threw = true; }
+        \\  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.get("bad"));
+        \\}
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "ext.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
 }
 
 test "a style link cycle falls back instead of spinning" {
