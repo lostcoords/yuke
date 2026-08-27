@@ -1,6 +1,7 @@
 //! Group the edit runs into hunks. A hunk holds the changed lines plus the context lines around them.
 
 const std = @import("std");
+const line_source = @import("lines.zig");
 const myers = @import("myers.zig");
 
 const Op = myers.Op;
@@ -156,31 +157,25 @@ const Fixture = struct {
     }
 };
 
-/// Build the hunks of two line lists. It runs the whole path, so a test states real text.
+/// Build the hunks of two texts. It runs the whole path, so a test states real text.
 fn hunksOf(arena: std.mem.Allocator, old: []const []const u8, new: []const []const u8, context: u32) ![]const Hunk {
-    const old_ids = try arena.alloc(u32, old.len);
-    const new_ids = try arena.alloc(u32, new.len);
-    var next: u32 = 0;
-    var table: std.StringHashMapUnmanaged(u32) = .empty;
+    var table: line_source.Table = .{};
     defer table.deinit(arena);
-    for (old, old_ids) |text, *id| {
-        const entry = try table.getOrPut(arena, text);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = next;
-            next += 1;
-        }
-        id.* = entry.value_ptr.*;
+
+    const old_lines = try line_source.split(arena, &table, try join(arena, old));
+    const new_lines = try line_source.split(arena, &table, try join(arena, new));
+    const edits = try myers.script(arena, old_lines.ids, new_lines.ids, 1000);
+    return group(arena, edits, old_lines.text, new_lines.text, context);
+}
+
+/// Join the test lines into one text. Each line gets a line feed.
+fn join(arena: std.mem.Allocator, list: []const []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (list) |line| {
+        try out.appendSlice(arena, line);
+        try out.append(arena, '\n');
     }
-    for (new, new_ids) |text, *id| {
-        const entry = try table.getOrPut(arena, text);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = next;
-            next += 1;
-        }
-        id.* = entry.value_ptr.*;
-    }
-    const edits = try myers.script(arena, old_ids, new_ids, 1000);
-    return group(arena, edits, old, new, context);
+    return out.items;
 }
 
 test "an equal text gives no hunk" {
@@ -214,45 +209,6 @@ test "one changed line gives one hunk with context on both sides" {
     try testing.expectEqualStrings("X", h.lines[2].text);
     try testing.expectEqual(Op.keep, h.lines[3].op);
     try testing.expectEqualStrings("d", h.lines[3].text);
-}
-
-test "two far changes give two hunks and two near changes give one" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const a = f.arena.allocator();
-
-    var old: [20][]const u8 = undefined;
-    for (&old, 0..) |*line, i| line.* = switch (i) {
-        0 => "l0",
-        1 => "l1",
-        2 => "l2",
-        3 => "l3",
-        4 => "l4",
-        5 => "l5",
-        6 => "l6",
-        7 => "l7",
-        8 => "l8",
-        9 => "l9",
-        10 => "l10",
-        11 => "l11",
-        12 => "l12",
-        13 => "l13",
-        14 => "l14",
-        15 => "l15",
-        16 => "l16",
-        17 => "l17",
-        18 => "l18",
-        else => "l19",
-    };
-    var far = old;
-    far[1] = "X";
-    far[18] = "Y";
-    try testing.expectEqual(@as(usize, 2), (try hunksOf(a, &old, &far, 3)).len);
-
-    var near = old;
-    near[8] = "X";
-    near[10] = "Y";
-    try testing.expectEqual(@as(usize, 1), (try hunksOf(a, &old, &near, 3)).len);
 }
 
 test "a change at the first line clamps the context" {

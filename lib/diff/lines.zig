@@ -50,16 +50,6 @@ pub fn split(gpa: std.mem.Allocator, table: *Table, text: []const u8) !Lines {
     return .{ .text = out_text.items, .ids = out_ids.items };
 }
 
-/// Count the lines of `text` without an allocation. `split` returns the same count.
-pub fn count(text: []const u8) usize {
-    if (text.len == 0) return 0;
-    var n: usize = 1;
-    for (text) |c| {
-        if (c == '\n') n += 1;
-    }
-    return if (text[text.len - 1] == '\n') n - 1 else n;
-}
-
 const testing = std.testing;
 
 test "split returns one line per line feed and drops the final empty line" {
@@ -131,20 +121,6 @@ test "the table gives one identifier to equal lines across both texts" {
     try testing.expectEqual(old.ids[0], new.ids[1]);
     try testing.expectEqual(old.ids[1], new.ids[0]);
     try testing.expect(old.ids[0] != old.ids[1]);
-}
-
-test "count matches the split line count" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    var table: Table = .{};
-    defer table.deinit(a);
-
-    for ([_][]const u8{ "", "\n", "a", "a\n", "a\nb", "a\nb\n", "\n\n" }) |text| {
-        const lines = try split(a, &table, text);
-        try testing.expectEqual(lines.text.len, count(text));
-    }
 }
 
 test "a text of line feeds gives one empty line for each feed" {
