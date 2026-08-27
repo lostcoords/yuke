@@ -11,6 +11,7 @@ const domain_session = @import("../domain/session.zig");
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const tools = @import("../tools/tool.zig");
+const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
 const connection = @import("connection.zig");
 const daemon_config = @import("config.zig");
@@ -32,7 +33,9 @@ env: ?*const std.process.Environ.Map = null, // This pointer borrows the process
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
 broadcast_tap: ?*BroadcastTap = null, // A conformance test records the published broadcasts here.
-tool_host: ?tools.ToolHost = null, // A test injects a tool host; production builds a LocalHost per run.
+tool_host: ?tools.ToolHost = null,
+retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
+retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
 
 /// A test hook. It records each published broadcast, so a conformance test refolds the daemon output.
 pub const BroadcastTap = struct {
@@ -153,6 +156,17 @@ pub fn nowMillis(self: *const State) u64 {
 /// Mint a fresh UUIDv7 for a session, workspace, or event.
 pub fn newId(self: *const State) [16]u8 {
     return util.newId(self.io);
+}
+
+/// Draw a jitter value in [0, 1) for one retry delay.
+/// A UUIDv7 pins its version and variant bits, so this reads only bytes that stay random.
+pub fn jitter(self: *const State) f64 {
+    const id = self.newId();
+    // Bytes 9..16 hold 56 random bits. Byte 8 carries the variant, so it must not take part.
+    var raw: u64 = 0;
+    for (id[9..16]) |b| raw = (raw << 8) | b;
+    const bits = raw >> 3; // 53 bits fit an f64 exactly
+    return @as(f64, @floatFromInt(bits)) / @as(f64, @floatFromInt(@as(u64, 1) << 53));
 }
 
 test "init restores durable pending input into the runtime queue" {

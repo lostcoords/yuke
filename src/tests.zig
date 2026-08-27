@@ -9,6 +9,7 @@ test {
     _ = @import("provider/provider.zig");
     _ = @import("database/database.zig");
     _ = @import("paths/paths.zig");
+    _ = @import("provider/retry.zig");
     _ = @import("tools/tool.zig");
     _ = @import("tools/read.zig");
     _ = @import("tools/registry.zig");

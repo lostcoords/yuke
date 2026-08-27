@@ -13,6 +13,7 @@ const database = @import("../database/database.zig");
 const turn_context = @import("turn_context.zig");
 const tools = @import("../tools/tool.zig");
 const tool_registry = @import("../tools/registry.zig");
+const retry = @import("../provider/retry.zig");
 const local_host = @import("../tools/local.zig");
 
 const ids = wire.ids;
@@ -51,6 +52,7 @@ pub const Launch = struct {
 pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.phase == .pending_start);
     std.debug.assert(slot.progress.current != null); // bind must open round 1 before launch
+    slot.retry_budget = state.retry_budget; // The budget covers this run, not one request.
     // The caller already folded and published run.started. This spawns the run task.
     const run_id = slot.handle.started.run_id;
     const session_id = slot.handle.started.session_id;
@@ -195,32 +197,130 @@ fn commitFinal(state: *State, arena: std.mem.Allocator, slot: *RunSlot, live: ?*
     };
 }
 
-/// Stream one round and return its terminal outcome. The child owns the body and cancellation.
+/// Stream one round, and repeat the request while the classifier allows it. A repeat uses a fresh
+/// body and a fresh reducer. `docs/plan.md` "Retry / backoff policy" holds the rules.
 fn streamRound(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, ctx: *const turn_context.TurnContext) Terminal {
-    slot.wake_event.reset(); // A one-shot event; a later round waits again.
-    var reader = state.io.concurrent(streamChild, .{ state, arena, slot, streamer, ctx }) catch |err| return .{ .failed = failure(err) };
+    var number: u8 = 1;
+    while (true) : (number += 1) {
+        streamer.reset();
+        var info: provider.transport.AttemptInfo = .{};
+        const outcome = streamAttempt(state, arena, slot, streamer, ctx, &info);
+        const err = switch (outcome) {
+            .failed => |e| e,
+            else => return outcome.terminal,
+        };
+
+        const decision = retry.decide(state.retry_policy, .{
+            .err = err,
+            .should_retry = info.should_retry,
+            .retry_after_ms = info.retry_after_ms,
+            .delivery = switch (info.delivery) {
+                .definitely_unsent => .definitely_unsent,
+                .possibly_sent => .possibly_sent,
+            },
+            // A published event outranks every other gate. The client already folded that output.
+            .saw_semantic = streamer.saw_semantic,
+            .number = number,
+            .budget_left = slot.retry_budget,
+        }, state.jitter());
+        const delay_ms = switch (decision) {
+            .stop => return .{ .failed = failure(err) },
+            .retry_in_ms => |ms| ms,
+        };
+
+        std.debug.assert(slot.retry_budget > 0); // the classifier refuses a retry at zero
+        slot.retry_budget -= 1;
+        publishRetrying(state, slot, number, err, delay_ms);
+        defer slot.retry_state = null;
+        // Wait on the slot event, NOT on a plain sleep. `cancel_run` sets this event, and a plain
+        // sleep would hold the run for the whole delay because the flag alone never wakes it.
+        slot.wake_event.reset();
+        const waited: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(@intCast(delay_ms)), .clock = .awake };
+        if (slot.wake_event.waitTimeout(state.io, .{ .duration = waited })) |_| {
+            return .canceled; // The event fired, so a cancel arrived during the delay.
+        } else |wait_err| switch (wait_err) {
+            error.Timeout => {}, // The delay elapsed. Open the next attempt.
+            error.Canceled => return .canceled,
+        }
+        if (slot.cancel_requested) return .canceled;
+    }
+}
+
+/// Record the wait on the slot, then tell every client. A resync reads the same state, so a client
+/// that reconnects during the wait sees the retry instead of a silent pause.
+fn publishRetrying(state: *State, slot: *RunSlot, number: u8, err: anyerror, delay_ms: u64) void {
+    // @todo(xyaman): log one line per attempt. Record the attempt number, provider, model, status, the
+    // normalized code, the provider request id, the delivery state, the delay source, and the budget
+    // left. Never log the API key. A user report of odd retry behavior has nothing to read today.
+    const detail = failure(err);
+    slot.retry_state = .{
+        .run_id = slot.handle.started.run_id,
+        .attempt = number,
+        .max_attempts = state.retry_policy.max_attempts,
+        .next_at_ms = state.nowMillis() + delay_ms,
+        .code = detail.code,
+        .message = detail.message,
+    };
+    publishBestEffort(state, slot.handle.started.session_id, .{
+        .method = .@"session.activity_changed",
+        .params = .{ .session_activity_changed_data = .{
+            .session_id = slot.handle.started.session_id,
+            .activity = .{
+                .state = .{ .retrying = slot.retry_state.? },
+                .config = null,
+                .queued = 0,
+                .context_usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+                .pending_compaction = null,
+            },
+        } },
+    });
+}
+
+/// The outcome of one attempt. A failure carries its error for the classifier.
+const AttemptOutcome = union(enum) {
+    terminal: Terminal,
+    failed: anyerror,
+
+    fn ok(t: Terminal) AttemptOutcome {
+        return .{ .terminal = t };
+    }
+};
+
+/// Run one attempt. The child owns the body and cancellation.
+fn streamAttempt(
+    state: *State,
+    arena: std.mem.Allocator,
+    slot: *RunSlot,
+    streamer: *Streamer,
+    ctx: *const turn_context.TurnContext,
+    info: *provider.transport.AttemptInfo,
+) AttemptOutcome {
+    slot.wake_event.reset(); // A one-shot event; a later attempt waits again.
+    var reader = state.io.concurrent(streamChild, .{ state, arena, slot, streamer, ctx, info }) catch |err|
+        return .{ .failed = err };
     slot.wake_event.wait(state.io) catch {
         reader.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the reader.
-        return .canceled;
+        return .ok(.canceled);
     };
     if (slot.cancel_requested) {
         reader.cancel(state.io) catch {}; // Request cancellation, then join the reader.
-        return .canceled;
+        return .ok(.canceled);
     }
     const result = reader.await(state.io);
     if (result) |_| {
-        if (slot.cancel_requested) return .canceled;
-        const reason = streamer.stop_reason orelse return .{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } };
-        return .{ .success = reason };
+        if (slot.cancel_requested) return .ok(.canceled);
+        const reason = streamer.stop_reason orelse
+            return .ok(.{ .failed = .{ .code = .protocol, .message = "the provider stream has no stop reason" } });
+        return .ok(.{ .success = reason });
     } else |err| {
-        if (err == error.Canceled or slot.cancel_requested) return .canceled;
-        return .{ .failed = failure(err) };
+        if (err == error.Canceled or slot.cancel_requested) return .ok(.canceled);
+        return .{ .failed = err };
     }
 }
 
 /// Open the response and stream it into the draft. The run task uses a child so cancellation can interrupt a blocked read.
 /// The child owns the body and deinits it before it returns.
-fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, ctx: *const turn_context.TurnContext) !void {
+fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, ctx: *const turn_context.TurnContext, info: *provider.transport.AttemptInfo) !void {
     defer slot.wake_event.set(state.io);
     try checkCanceled(state.io, slot);
     const transcript = ctx.slice();
@@ -239,7 +339,7 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         }, .{ .protocol = .@"anthropic-messages", .model = model }) };
     };
 
-    const body = try state.transport.open(arena, request);
+    const body = try state.transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {
@@ -310,7 +410,7 @@ fn failure(err: anyerror) Failure {
         error.RateLimited => .{ .code = .rate_limited, .message = "the provider rate limit was reached" },
         error.RateLimitUnknown => .{ .code = .rate_limited, .message = "the provider returned a 429 the daemon could not classify" },
         error.QuotaExhausted => .{ .code = .quota_exhausted, .message = "the provider account quota is exhausted" },
-        error.Timeout => .{ .code = .timeout, .message = "the provider stream timed out" },
+        error.Timeout, error.IdleTimeout => .{ .code = .timeout, .message = "the provider stream timed out" },
         error.ServerError => .{ .code = .provider, .message = "the provider returned a server error" },
         error.BadStatus => .{ .code = .provider, .message = "the provider returned an unexpected status" },
         error.BadUrl => .{ .code = .provider, .message = "the provider endpoint URL is invalid" },
@@ -513,6 +613,19 @@ fn checkCanceled(io: std.Io, slot: *const RunSlot) !void {
 
 /// Map each provider StreamEvent to a canonical broadcast. Fold it into the session, then publish it.
 /// The reducer is the peer boundary. It emits dense, ordered, kind-checked events. So the fold trusts them.
+/// Report whether an event carries model output. An empty delta carries none, so it does not close
+/// the retry window.
+fn isSemantic(ev: event.StreamEvent) bool {
+    return switch (ev) {
+        .block_started, .block_stopped => true,
+        // A completed stream must not repeat either. A later body fault would duplicate the round.
+        .done => true,
+        .text_delta => |d| d.text.len != 0,
+        .reasoning_delta => |d| d.text.len != 0,
+        .tool_input_delta => |d| d.partial_json.len != 0,
+    };
+}
+
 const Streamer = struct {
     state: *State,
     slot: *RunSlot,
@@ -521,6 +634,8 @@ const Streamer = struct {
     open: usize = 0,
     stop_reason: ?wire.enums.StopReason = null,
     usage: ?message.TokenUsage = null,
+    /// A semantic event reached the client. A repeat of the request would duplicate it.
+    saw_semantic: bool = false,
 
     /// Reset the per-round stream state before a new round.
     fn reset(self: *Streamer) void {
@@ -528,6 +643,7 @@ const Streamer = struct {
         self.open = 0;
         self.stop_reason = null;
         self.usage = null;
+        self.saw_semantic = false;
     }
 
     /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
@@ -539,6 +655,8 @@ const Streamer = struct {
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
         // Check cancellation after each SSE event.
         try checkCanceled(self.state.io, self.slot);
+        // Latch the boundary before the emit below. The latch then blocks a replay of this output.
+        if (isSemantic(ev)) self.saw_semantic = true;
         switch (ev) {
             .block_started => |b| {
                 // Blocks are sequential; a new block requires the previous one to stop. This keeps the

@@ -842,6 +842,11 @@ test "cancel input and cancel run preserve exact durable outcomes" {
     try std.testing.expectEqual(wire.enums.StopReason.canceled, history[1].assistant.finish.?);
 }
 
+/// A terminal SSE reply. The parked reader returns it, so the stream ends the way a real one ends.
+const parked_done =
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
 /// A transport parks its read until the reader task cancels it. `entered` signals the parked read.
 const BlockingTransport = struct {
     entered: *zio.ResetEvent,
@@ -855,8 +860,9 @@ const BlockingTransport = struct {
 
     const vtable: transport.Transport.VTable = .{ .open = open };
 
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
         _ = request;
+        _ = info;
         const self: *BlockingTransport = @ptrCast(@alignCast(ctx));
         const reader = try arena.create(Reader);
         reader.* = .{
@@ -873,18 +879,22 @@ const BlockingTransport = struct {
         gate: *zio.ResetEvent,
         interrupted: *bool,
         deinitialized: ?*bool,
+        sent: bool = false,
 
         const vtable: transport.ResponseBody.VTable = .{ .read = read, .deinit = deinit };
 
         fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-            _ = buf;
             const self: *Reader = @ptrCast(@alignCast(ctx));
+            if (self.sent) return 0;
             self.entered.set(); // The read parks here, so the canceler can now fire.
             self.gate.wait() catch |err| { // Park until the reader task cancels this read.
                 if (err == error.Canceled) self.interrupted.* = true;
                 return err;
             };
-            return 0;
+            // A complete stream ends the round. A truncated one would ask the retry loop to repeat.
+            self.sent = true;
+            @memcpy(buf[0..parked_done.len], parked_done);
+            return parked_done.len;
         }
         fn deinit(ctx: *anyopaque) void {
             const self: *Reader = @ptrCast(@alignCast(ctx));
@@ -1672,7 +1682,8 @@ const StreamThenParkTransport = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
     const vtable: transport.Transport.VTable = .{ .open = open };
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
+        _ = info;
         _ = request;
         const self: *StreamThenParkTransport = @ptrCast(@alignCast(ctx));
         const reader = try arena.create(Reader);
@@ -1814,7 +1825,8 @@ const CaptureTransport = struct {
 
     const vtable: transport.Transport.VTable = .{ .open = open };
 
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
+        _ = info;
         const self: *CaptureTransport = @ptrCast(@alignCast(ctx));
         try self.url.appendSlice(self.gpa, request.url);
         try self.body.appendSlice(self.gpa, request.body);
@@ -1880,4 +1892,257 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
     try std.testing.expectEqual(wire.enums.ProviderProtocol.@"anthropic-messages", history[1].assistant.provenance.?.protocol);
     try std.testing.expectEqualStrings("acme/fast", history[1].assistant.provenance.?.model);
+}
+
+// A stream prefix that reaches the client. It opens a text block and sends one delta.
+const started_text =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n";
+
+/// Run one turn against a scripted provider and return the session id.
+fn runScripted(fixture: *TestState, a: std.mem.Allocator, name: []const u8, script: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
+    fixture.state.transport = script.transport();
+    fixture.state.retry_policy = .{ .base_ms = 0, .cap_ms = 0 }; // No test waits for a real delay.
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = name, .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    try launchUntilIdle(&fixture.state, sid);
+    return sid;
+}
+
+/// Return the finish reason of the last committed assistant message.
+fn lastFinish(state: *State, a: std.mem.Allocator, sid: wire.ids.SessionId) !wire.enums.StopReason {
+    const history = (try database.message.historyPage(&state.db, a, sid.raw, 0, 10)).messages;
+    return history[history.len - 1].assistant.finish.?;
+}
+
+test "a failed attempt repeats and the next attempt succeeds" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    const sid = try runScripted(&fixture, a, "/retry-ok", &script);
+
+    try std.testing.expectEqual(@as(usize, 2), script.opens); // the loop repeated the request
+    try std.testing.expectEqual(wire.enums.StopReason.stop, try lastFinish(&fixture.state, a, sid));
+}
+
+test "output that reached the client stops a repeat" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The client already folded this text. A repeat would show it twice.
+    const steps = [_]provider.transport.Step{
+        .{ .body_then_error = .{ .prefix = started_text, .err = error.ConnectionResetByPeer } },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    _ = try runScripted(&fixture, a, "/retry-semantic", &script);
+
+    try std.testing.expectEqual(@as(usize, 1), script.opens);
+}
+
+test "a finished stream stops a repeat after a later read failure" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The whole answer arrived. A repeat would ask for work the provider already did.
+    const steps = [_]provider.transport.Step{
+        .{ .body_then_error = .{ .prefix = final_text_reply, .err = error.ConnectionResetByPeer } },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    _ = try runScripted(&fixture, a, "/retry-done", &script);
+
+    try std.testing.expectEqual(@as(usize, 1), script.opens);
+}
+
+test "a request that may already be held stops a repeat" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // No idempotency key exists for either provider, so a repeat could bill the same work twice.
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionResetByPeer },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps, .delivery = .possibly_sent };
+    const sid = try runScripted(&fixture, a, "/retry-delivery", &script);
+
+    try std.testing.expectEqual(@as(usize, 1), script.opens);
+    try std.testing.expectEqual(wire.enums.StopReason.@"error", try lastFinish(&fixture.state, a, sid));
+}
+
+test "the attempt limit ends the run" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionRefused },
+        .{ .open_error = error.ConnectionRefused },
+        .{ .open_error = error.ConnectionRefused },
+        .{ .open_error = error.ConnectionRefused },
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    const sid = try runScripted(&fixture, a, "/retry-limit", &script);
+
+    // Five attempts, then the run fails. The sixth step must stay unused.
+    try std.testing.expectEqual(@as(usize, 5), script.opens);
+    try std.testing.expectEqual(wire.enums.StopReason.@"error", try lastFinish(&fixture.state, a, sid));
+}
+
+/// Yield until the run records a waiting retry, then resync and report the activity state.
+fn resyncDuringRetry(state: *State, sid: wire.ids.SessionId) !void {
+    var attempts: usize = 0;
+    while (attempts < 100_000) : (attempts += 1) {
+        const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+        if (rt.active) |slot| if (slot.retry_state != null) break;
+        try zio.yield();
+    } else return error.NoRetryState;
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try handlers.sessionResync(state, arena.allocator(), .{ .session_id = sid, .limit = null });
+    // The stream already stopped, so a draft state would tell the client the model is still writing.
+    try std.testing.expect(result.item.activity.state == .retrying);
+    try std.testing.expectEqual(@as(u64, 1), result.item.activity.state.retrying.attempt);
+    try std.testing.expectEqual(@as(u64, 5), result.item.activity.state.retrying.max_attempts);
+    // A yield loop starves the timer, so wait for the delay before driving the run to idle.
+    try zio.sleep(.fromMilliseconds(300));
+    try launchUntilIdle(state, sid);
+}
+
+test "a resync during a retry delay reports the retry" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    fixture.state.transport = script.transport();
+    // A real delay keeps the retry state observable while the driver resyncs.
+    fixture.state.retry_policy = .{ .base_ms = 200, .cap_ms = 200 };
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/retry-activity", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+
+    var driver = try fixture.rt.spawn(resyncDuringRetry, .{ &fixture.state, sid });
+    try driver.join();
+    try std.testing.expectEqual(@as(usize, 2), script.opens);
+}
+
+test "the retry budget covers the whole run, not one request" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Two rounds, each with one failure. One permit covers the first failure only.
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = one_tool_reply_a },
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    fixture.state.retry_budget = 1;
+    var host: EchoHost = .{};
+    fixture.state.tool_host = host.host();
+    const sid = try runScripted(&fixture, a, "/retry-budget", &script);
+
+    // Attempt 1 fails and spends the only permit. Round 2 fails and stops, so step 4 stays unused.
+    try std.testing.expectEqual(@as(usize, 3), script.opens);
+    try std.testing.expectEqual(wire.enums.StopReason.@"error", try lastFinish(&fixture.state, a, sid));
+}
+
+/// A tool host that answers every read with fixed bytes, so a tool round can reach its next request.
+const EchoHost = struct {
+    const vtable: tools.ToolHost.VTable = blk: {
+        var v = test_host.unsupported;
+        v.readRange = readRange;
+        break :blk v;
+    };
+
+    fn host(self: *EchoHost) tools.ToolHost {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: tools.Range, limits: tools.ReadLimits) tools.HostError!tools.RangeRead {
+        _ = .{ ctx, path, range, limits };
+        return .{ .text = try scratch.dupe(u8, "x\n") };
+    }
+};
+
+/// Cancel the run while it waits for its next attempt.
+fn cancelDuringRetryDelay(state: *State, sid: wire.ids.SessionId, run_id: u64) !void {
+    var attempts: usize = 0;
+    while (attempts < 100_000) : (attempts += 1) {
+        const rt = state.sessions.get(sid) orelse return error.NoRuntime;
+        if (rt.active) |slot| if (slot.retry_state != null) break;
+        try zio.yield();
+    } else return error.NoRetryState;
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try handlers.sessionCancelRun(state, arena.allocator(), .{ .session_id = sid, .run_id = run_id });
+    try launchUntilIdle(state, sid);
+}
+
+test "a cancel during a retry delay stops before the next attempt" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const steps = [_]provider.transport.Step{
+        .{ .open_error = error.ConnectionRefused },
+        .{ .body = final_text_reply },
+    };
+    var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    fixture.state.transport = script.transport();
+    // A long delay proves the cancel interrupts the wait instead of outliving it.
+    fixture.state.retry_policy = .{ .base_ms = 30_000, .cap_ms = 30_000 };
+
+    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/retry-cancel", .model = "mock" });
+    const sid = created.session.id;
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
+    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+
+    var driver = try fixture.rt.spawn(cancelDuringRetryDelay, .{ &fixture.state, sid, started.run_id });
+    try driver.join(); // A cancel that did not interrupt the sleep would hold this for 30 seconds.
+
+    try std.testing.expectEqual(@as(usize, 1), script.opens); // the second attempt never opened
+    try std.testing.expectEqual(wire.enums.StopReason.canceled, try lastFinish(&fixture.state, a, sid));
 }

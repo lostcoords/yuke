@@ -253,7 +253,7 @@ pub fn sessionResync(state: *State, arena: std.mem.Allocator, params: wire.sessi
     const snap = (try session_store.snapshot(&state.db, arena, sid)) orelse return error.UnknownSession;
 
     if (state.sessions.get(params.session_id)) |rt| {
-        const run_info: ?RunInfo = if (rt.active) |slot| .{ .run_id = slot.handle.started.run_id, .started_at_ms = slot.handle.started.started_at_ms } else null;
+        const run_info: ?RunInfo = if (rt.active) |slot| .{ .run_id = slot.handle.started.run_id, .started_at_ms = slot.handle.started.started_at_ms, .retry = slot.retry_state } else null;
         return serializeResync(state, arena, snap, &rt.session, run_info, limit);
     }
     // The session is idle. Hydrate a transient projection, serialize it, then release it.
@@ -264,7 +264,7 @@ pub fn sessionResync(state: *State, arena: std.mem.Allocator, params: wire.sessi
 }
 
 /// The active run identity for the resync activity state.
-const RunInfo = struct { run_id: wire.ids.RunId, started_at_ms: u64 };
+const RunInfo = struct { run_id: wire.ids.RunId, started_at_ms: u64, retry: ?wire.activity.ActivityStateRetrying = null };
 
 /// Serialize a session projection into the resync result. Deep-copy so a transient session can release.
 fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, session: *domain_session.Session, run_info: ?RunInfo, limit: usize) !wire.session.SessionResyncResult {
@@ -278,8 +278,12 @@ fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, sessi
         active_config = cached orelse (try config_store.byRevision(&state.db, arena, snap.id, d.config_rev)) orelse return error.CorruptLog;
     }
 
-    // A draft reports the streaming state. A started run with no draft reports building. Idle reports idle.
-    if (session.active) |*d| {
+    // A waiting retry outranks the draft. The stream already stopped, so a draft state would mislead.
+    const waiting: ?wire.activity.ActivityStateRetrying = if (run_info) |r| r.retry else null;
+    if (waiting) |state_retry| {
+        item.activity.state = try wire.dupe(arena, wire.activity.ActivityState{ .retrying = state_retry });
+        if (session.active != null) item.activity.config = try wire.dupe(arena, active_config.?);
+    } else if (session.active) |*d| {
         std.debug.assert(run_info != null); // a live draft belongs to an active run
         item.activity.state = try wire.dupe(arena, d.deriveStreamingState(run_info.?.started_at_ms));
         item.activity.config = try wire.dupe(arena, active_config.?);

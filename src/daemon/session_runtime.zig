@@ -18,6 +18,11 @@ pub const RunSlot = struct {
     phase: Phase = .pending_start,
     protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // The run sets this after provider resolution.
     cancel_requested: bool = false,
+    /// Retry permits left for the whole run. `max_attempts` bounds one request.
+    /// A null `max_rounds` would otherwise let the rounds multiply the retries.
+    retry_budget: u8 = 8,
+    /// The run waits for its next attempt. A resync reports this instead of the draft state.
+    retry_state: ?wire.activity.ActivityStateRetrying = null,
     // The RPC task and the reader set this event. The run task waits on it.
     wake_event: std.Io.Event = .unset,
     body: ?transport.ResponseBody = null,

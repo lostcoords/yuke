@@ -17,7 +17,8 @@ pub const Error = error{
     RateLimitUnknown, // 429 the daemon could not read or decode
     ServerError, // 5xx
     BadStatus, // Any other non-200 status.
-    Timeout, // 408, 504, or an idle read past the deadline
+    Timeout, // 408 or 504. The provider answered.
+    IdleTimeout, // The read stalled past the deadline. The request may already be held.
     RedirectRefused, // The client must not follow a 3xx response.
     BadUrl,
 };
@@ -43,7 +44,7 @@ pub const HttpTransport = struct {
 
     const vtable: transport.Transport.VTable = .{ .open = open };
 
-    fn open(ctx: *anyopaque, arena: Allocator, request: transport.Request) anyerror!transport.ResponseBody {
+    fn open(ctx: *anyopaque, arena: Allocator, request: transport.Request, info: *transport.AttemptInfo) anyerror!transport.ResponseBody {
         const self: *HttpTransport = @ptrCast(@alignCast(ctx));
         const uri = std.Uri.parse(request.url) catch return Error.BadUrl;
 
@@ -84,11 +85,14 @@ pub const HttpTransport = struct {
             hb.request.deinit();
         }
 
+        // The provider may hold the request from this point. A later transport fault is ambiguous.
+        info.delivery = .possibly_sent;
         try hb.request.sendBodyComplete(request.body);
         hb.response = hb.request.receiveHead(&.{}) catch |err| switch (err) {
             error.TooManyHttpRedirects => return Error.RedirectRefused, // Never follow a redirect.
             else => return err,
         };
+        readRetryHeaders(hb.response.head, info); // The reader below invalidates these slices.
         if (hb.response.head.status != .ok) {
             if (@intFromEnum(hb.response.head.status) == 429) return classify429(hb, arena);
             return mapStatus(hb.response.head.status);
@@ -132,7 +136,7 @@ const HttpBody = struct {
         done.waitTimeout(self.io, self.idle_timeout) catch |err| {
             _ = future.cancel(self.io) catch 0; // Cancel joins the child before this function returns, so the child cannot access buf.
             return switch (err) {
-                error.Timeout => Error.Timeout,
+                error.Timeout => Error.IdleTimeout,
                 else => err,
             };
         };
@@ -170,9 +174,33 @@ const HttpBody = struct {
     }
 };
 
+/// Map a non-200 status to a stable class. A 429 never reaches here; `classify429` reads its body.
+/// The 505...599 range covers Anthropic's 529 overloaded status, which must stay repeatable.
+/// Read the retry headers into `info`. The caller must call this before `response.reader()`.
+/// That call invalidates every head string slice.
+fn readRetryHeaders(head: std.http.Client.Response.Head, info: *transport.AttemptInfo) void {
+    var it = head.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "retry-after-ms")) {
+            // The millisecond form wins. Both SDK families read it first.
+            if (std.fmt.parseInt(u64, std.mem.trim(u8, h.value, " "), 10)) |ms| info.retry_after_ms = ms else |_| {}
+        } else if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
+            if (info.retry_after_ms != null) continue;
+            if (std.fmt.parseInt(u64, std.mem.trim(u8, h.value, " "), 10)) |secs| {
+                info.retry_after_ms = secs *| 1000;
+            } else |_| {} // An HTTP-date form needs a clock, so the caller uses its own delay.
+        } else if (std.ascii.eqlIgnoreCase(h.name, "x-should-retry")) {
+            const v = std.mem.trim(u8, h.value, " ");
+            if (std.ascii.eqlIgnoreCase(v, "true")) info.should_retry = true;
+            if (std.ascii.eqlIgnoreCase(v, "false")) info.should_retry = false;
+        }
+    }
+}
+
 fn mapStatus(status: std.http.Status) Error {
     return switch (@intFromEnum(status)) {
         401 => Error.AuthFailed,
+        402 => Error.QuotaExhausted,
         403 => Error.PermissionDenied,
         408, 504 => Error.Timeout,
         500...503, 505...599 => Error.ServerError,
@@ -190,12 +218,21 @@ fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
         else => return Error.RateLimitUnknown,
     };
     if (bodyIsQuota(arena, buf[0..n])) return Error.QuotaExhausted;
-    if (n == 0) return Error.RateLimitUnknown; // An empty body names no class.
-    return Error.RateLimited;
+    // A rate limit must PROVE itself. A body the daemon cannot decode may still name a spend cap.
+    return if (bodyIsRateLimit(arena, buf[0..n])) Error.RateLimited else Error.RateLimitUnknown;
 }
 
 /// Report whether the error body names an exhausted quota. OpenAI marks it in `error.code` or
 /// `error.type`. Anthropic marks a tier spend cap in `error.details.error_code`.
+/// Report whether the error body names a temporary rate limit. Absence of proof is not proof.
+fn bodyIsRateLimit(arena: Allocator, body: []const u8) bool {
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
+    const err = json.fieldGet(value, "error") orelse return false;
+    if (json.fieldStr(err, "code")) |code| if (std.mem.eql(u8, code, "rate_limit_exceeded")) return true;
+    if (json.fieldStr(err, "type")) |t| if (std.mem.eql(u8, t, "rate_limit_error")) return true;
+    return false;
+}
+
 fn bodyIsQuota(arena: Allocator, body: []const u8) bool {
     const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return false;
     const err = json.fieldGet(value, "error") orelse return false;
@@ -298,7 +335,8 @@ fn runClient(out: *ClientOut) !void {
     const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/messages", .{out.port});
     const headers = [_]transport.Header{.{ .name = "x-api-key", .value = "test-key" }};
     var request_body: [0]u8 = .{};
-    const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body });
+    var info: transport.AttemptInfo = .{};
+    const body = try http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
     defer body.deinit();
     var buf: [128]u8 = undefined;
     while (true) {
@@ -351,7 +389,7 @@ test "a non-200 status maps to a transport error" {
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
 }
 
-test "a stalled stream returns a timeout" {
+test "a stalled stream returns an idle timeout" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
@@ -376,7 +414,7 @@ test "a stalled stream returns a timeout" {
     client.join();
     server.join();
 
-    try testing.expectEqual(@as(?anyerror, Error.Timeout), out.err);
+    try testing.expectEqual(@as(?anyerror, Error.IdleTimeout), out.err);
 }
 
 test "a redirect is rejected without following it" {

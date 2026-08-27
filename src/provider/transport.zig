@@ -17,6 +17,18 @@ pub const Request = struct {
     body: []u8,
 };
 
+/// What one attempt learned. The adapter fills it; the retry classifier reads it after a failure.
+pub const AttemptInfo = struct {
+    /// A parsed `retry-after-ms`, or `retry-after` converted to milliseconds.
+    retry_after_ms: ?u64 = null,
+    /// `x-should-retry`. A false value vetoes a retry.
+    should_retry: ?bool = null,
+    /// The adapter sets this before the first body write. A later transport fault is then ambiguous.
+    delivery: Delivery = .definitely_unsent,
+
+    pub const Delivery = enum { definitely_unsent, possibly_sent };
+};
+
 /// Open one provider response. The daemon injects this seam, so tests and the real client can vary the body.
 /// The run's reader child calls open. The returned body borrows `arena` for the turn.
 pub const Transport = struct {
@@ -24,11 +36,11 @@ pub const Transport = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        open: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody,
+        open: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody,
     };
 
-    pub fn open(self: Transport, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
-        return self.vtable.open(self.ctx, arena, request);
+    pub fn open(self: Transport, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
+        return self.vtable.open(self.ctx, arena, request, info);
     }
 };
 
@@ -135,7 +147,8 @@ pub const MockTransport = struct {
     }
 
     /// Replay the canned response. The run loop calls this seam.
-    pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request) !ResponseBody {
+    pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) !ResponseBody {
+        _ = info;
         _ = arena;
         _ = request;
         return self.body();
@@ -187,7 +200,8 @@ pub const CannedTransport = struct {
     const vtable: Transport.VTable = .{ .open = open };
 
     /// Allocate a fresh reader in `arena`. Concurrent runs then share no offset state.
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
+        _ = info;
         _ = request;
         const self: *CannedTransport = @ptrCast(@alignCast(ctx));
         const reader = try arena.create(CannedReader);
@@ -229,7 +243,8 @@ pub const SequenceTransport = struct {
 
     const vtable: Transport.VTable = .{ .open = open };
 
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request) anyerror!ResponseBody {
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
+        _ = info;
         const self: *SequenceTransport = @ptrCast(@alignCast(ctx));
         if (self.index >= self.replies.len) return error.NoMoreReplies;
         if (self.capture) |alloc| try self.requests.append(alloc, try alloc.dupe(u8, request.body));
@@ -237,6 +252,85 @@ pub const SequenceTransport = struct {
         reader.* = .{ .bytes = self.replies[self.index] };
         self.index += 1;
         return .{ .ctx = reader, .vtable = &CannedReader.vtable };
+    }
+};
+
+/// One scripted attempt.
+pub const Step = union(enum) {
+    /// The open call fails. No body arrives.
+    open_error: anyerror,
+    /// The open call succeeds and the body streams these bytes.
+    body: []const u8,
+    /// The body streams `prefix`, then the read fails.
+    body_then_error: struct { prefix: []const u8, err: anyerror },
+};
+
+/// A transport that plays scripted attempts. A test drives the retry loop with it and counts the
+/// opens, so a loop that never repeats fails the test.
+pub const ScriptedTransport = struct {
+    steps: []const Step,
+    index: usize = 0,
+    /// The number of open calls the loop made.
+    opens: usize = 0,
+    /// The adapter reports this for every attempt.
+    delivery: AttemptInfo.Delivery = .definitely_unsent,
+    retry_after_ms: ?u64 = null,
+    /// A test sets this to observe the first open.
+    opened: ?*bool = null,
+
+    pub fn transport(self: *ScriptedTransport) Transport {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    const vtable: Transport.VTable = .{ .open = open };
+
+    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
+        _ = request;
+        const self: *ScriptedTransport = @ptrCast(@alignCast(ctx));
+        self.opens += 1;
+        if (self.opened) |flag| flag.* = true;
+        info.delivery = self.delivery;
+        info.retry_after_ms = self.retry_after_ms;
+        if (self.index >= self.steps.len) return error.NoMoreReplies;
+        const step = self.steps[self.index];
+        self.index += 1;
+        switch (step) {
+            .open_error => |err| return err,
+            .body => |bytes| {
+                const reader = try arena.create(ScriptedReader);
+                reader.* = .{ .bytes = bytes };
+                return .{ .ctx = reader, .vtable = &ScriptedReader.vtable };
+            },
+            .body_then_error => |b| {
+                const reader = try arena.create(ScriptedReader);
+                reader.* = .{ .bytes = b.prefix, .after = b.err };
+                return .{ .ctx = reader, .vtable = &ScriptedReader.vtable };
+            },
+        }
+    }
+};
+
+/// A reader that streams its bytes once, then ends or fails.
+const ScriptedReader = struct {
+    bytes: []const u8,
+    sent: bool = false,
+    after: ?anyerror = null,
+
+    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinit };
+
+    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
+        const self: *ScriptedReader = @ptrCast(@alignCast(ctx));
+        if (!self.sent) {
+            self.sent = true;
+            const n = @min(buf.len, self.bytes.len);
+            @memcpy(buf[0..n], self.bytes[0..n]);
+            if (n != 0) return n;
+        }
+        if (self.after) |err| return err;
+        return 0;
+    }
+    fn deinit(ctx: *anyopaque) void {
+        _ = ctx;
     }
 };
 
