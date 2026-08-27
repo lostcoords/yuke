@@ -1,4 +1,4 @@
-//! Resolve the daemon's XDG paths and the files under them.
+//! Resolve the XDG paths for the daemon and the TUI, and the files under them.
 //! Return owned paths. The caller frees them. Treat an empty environment value as unset under XDG rules.
 
 const std = @import("std");

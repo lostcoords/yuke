@@ -16,30 +16,38 @@ const Winsize = term_pkg.Winsize;
 pub fn start(host: *Host) Error!void {
     std.debug.assert(host.phase == .open);
     const obj = try objectType(host.ctx, "start");
-    try dispatch(host, obj);
+    _ = try dispatch(host, obj);
 }
 
 /// Process one parser event on the owner.
 pub fn step(host: *Host, ev: Event) Error!void {
     std.debug.assert(host.phase == .open);
     switch (ev) {
-        .key_press => |k| try stepKey(host, k, "press"),
-        .key_release => |k| try stepKey(host, k, "release"),
+        .key_press => |k| try stepKey(host, k, .press),
+        .key_release => |k| try stepKey(host, k, .release),
         .winsize => |ws| try stepResize(host, ws),
         else => {},
     }
 }
 
-fn stepKey(host: *Host, key: Key, kind: []const u8) Error!void {
-    if (!hasOnEvent(host)) {
-        if (std.mem.eql(u8, kind, "press") and (key.codepoint == 'q' or key.codepoint == 'Q')) {
-            host.paint.needs_tick = false;
-            host.paint.quit_requested = true;
-        }
-        return;
+/// A key press or release. The name reaches JavaScript as `ev.event`.
+const KeyKind = enum {
+    press,
+    release,
+
+    fn name(self: KeyKind) []const u8 {
+        return @tagName(self);
     }
+};
+
+/// Dispatch a key. Without `onEvent`, `q` quits so a boot failure leaves an exit.
+fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
     const obj = try keyObject(host.ctx, key, kind);
-    try dispatch(host, obj);
+    if (try dispatch(host, obj)) return;
+    if (kind == .press and (key.codepoint == 'q' or key.codepoint == 'Q')) {
+        host.paint.needs_tick = false;
+        host.paint.quit_requested = true;
+    }
 }
 
 fn stepResize(host: *Host, ws: Winsize) Error!void {
@@ -54,10 +62,11 @@ fn stepResize(host: *Host, ws: Winsize) Error!void {
         ctx.freeValue(obj);
         return error.JavaScriptFault;
     };
-    try dispatch(host, obj);
+    _ = try dispatch(host, obj);
 }
 
-fn dispatch(host: *Host, obj: Value) Error!void {
+/// Call `globalThis.onEvent` with `obj`. Return false when no handler exists.
+fn dispatch(host: *Host, obj: Value) Error!bool {
     const ctx = host.ctx;
     defer ctx.freeValue(obj);
 
@@ -65,9 +74,8 @@ fn dispatch(host: *Host, obj: Value) Error!void {
     defer ctx.freeValue(global);
     const handler = ctx.getPropertyStr(global, "onEvent");
     defer ctx.freeValue(handler);
-    if (!ctx.isFunction(handler)) return;
+    if (!ctx.isFunction(handler)) return false;
 
-    host.fault_pending = false;
     host.enterSlice();
     const result = ctx.call(handler, quickjs.UNDEFINED, &.{obj});
     if (ctx.isException(result)) {
@@ -78,15 +86,7 @@ fn dispatch(host: *Host, obj: Value) Error!void {
     ctx.freeValue(result);
     try host.drainJobs();
     term_mod.commitIfDirty(host);
-}
-
-fn hasOnEvent(host: *Host) bool {
-    const ctx = host.ctx;
-    const global = ctx.getGlobalObject();
-    defer ctx.freeValue(global);
-    const handler = ctx.getPropertyStr(global, "onEvent");
-    defer ctx.freeValue(handler);
-    return ctx.isFunction(handler);
+    return true;
 }
 
 fn objectType(ctx: Context, typ: []const u8) Error!Value {
@@ -99,7 +99,7 @@ fn objectType(ctx: Context, typ: []const u8) Error!Value {
     return obj;
 }
 
-fn keyObject(ctx: Context, key: Key, kind: []const u8) Error!Value {
+fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     const obj = try objectType(ctx, "key");
     errdefer ctx.freeValue(obj);
 
@@ -110,7 +110,7 @@ fn keyObject(ctx: Context, key: Key, kind: []const u8) Error!Value {
     const char_s: []const u8 = if (std.mem.eql(u8, code, "char")) encode(key.codepoint, &char_buf) else "";
     const bits: u8 = @bitCast(key.mods);
     put(ctx, obj, "code", ctx.newString(code));
-    put(ctx, obj, "event", ctx.newString(kind));
+    put(ctx, obj, "event", ctx.newString(kind.name()));
     put(ctx, obj, "char", ctx.newString(char_s));
     put(ctx, obj, "shifted", ctx.newString(encode(key.shifted_codepoint orelse 0, &shifted_buf)));
     put(ctx, obj, "baseLayout", ctx.newString(encode(key.base_layout_codepoint orelse 0, &base_buf)));
@@ -216,7 +216,7 @@ test "onEvent throw is a JavaScriptFault" {
     defer host.destroy();
     try host.eval("globalThis.onEvent = function(ev) { throw new Error('nope'); };", "onEvent.js");
     try std.testing.expectError(error.JavaScriptFault, start(host));
-    try std.testing.expect(host.fault_pending);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "nope") != null);
     try std.testing.expect(!host.paint.needs_tick);
 }
 

@@ -4,11 +4,24 @@ const term_pkg = @import("term");
 const host_mod = @import("host.zig");
 const Host = host_mod.Host;
 const tui_loop = @import("loop.zig");
+const report = @import("report.zig");
 
 const Event = term_pkg.Event;
 const Channel = zio.Channel(Msg);
 
 const frame_buf_bytes = 256 * 1024;
+
+/// The user entry file inside the config directory.
+pub const user_entry = "index.js";
+
+pub const Options = struct {
+    /// The config directory holds `index.js`.
+    /// A null value skips the user entry.
+    config_dir: ?[]const u8 = null,
+    /// Skip the user entry file.
+    /// `--safe-mode` sets `safe_mode` to `true`.
+    safe_mode: bool = false,
+};
 
 /// An event with owned key text. The copy survives the next parse.
 const Msg = struct {
@@ -40,13 +53,13 @@ const Msg = struct {
 };
 
 /// Open the TTY, enter the alternate screen, and run until quit.
-pub fn run(gpa: std.mem.Allocator, env: *std.process.Environ.Map) !void {
+pub fn run(gpa: std.mem.Allocator, env: *std.process.Environ.Map, opts: Options) !void {
     var rt = try zio.Runtime.init(gpa, .{ .executors = .exact(1) });
     defer rt.deinit();
-    try runIo(gpa, rt.io(), env);
+    try runIo(gpa, rt.io(), env, opts);
 }
 
-fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map) !void {
+fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts: Options) !void {
     var tty = try term_pkg.Tty.open(io);
     defer tty.deinit();
 
@@ -81,26 +94,88 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map) !voi
     }
 
     try host.evalModule("import \"yuke:core\";", "boot.js");
+    if (!opts.safe_mode) try absorbScriptFault(host, evalUserEntry(host, opts.config_dir));
     try serve(host, &ch);
+}
+
+/// Evaluate `<config_dir>/index.js`. A missing directory or file is not an error.
+/// The path is joined on the heap, so no path length can silently drop the entry.
+fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
+    const dir = config_dir orelse return;
+    const path = try std.fs.path.joinZ(host.gpa, &.{ dir, user_entry });
+    defer host.gpa.free(path);
+    _ = try host.evalFile(path);
+}
+
+test "a user entry file evaluates and a missing one is not an error" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = user_entry,
+        .data = "globalThis.result = 5;\n",
+    });
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
+    const dir = dir_buf[0..dir_len];
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try evalUserEntry(host, dir);
+    try std.testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.result"));
+
+    try evalUserEntry(host, null);
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    var empty_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const empty_len = try empty.dir.realPath(std.testing.io, &empty_buf);
+    try evalUserEntry(host, empty_buf[0..empty_len]);
+}
+
+test "a throwing user entry is a JavaScriptFault the loop absorbs" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = user_entry,
+        .data = "throw new Error('bad config');\n",
+    });
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(
+        error.JavaScriptFault,
+        evalUserEntry(host, dir_buf[0..dir_len]),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad config") != null);
+    try absorbScriptFault(host, evalUserEntry(host, dir_buf[0..dir_len]));
 }
 
 /// Run `start`, then process queued events with `step`.
 /// A script error keeps the alternate screen. Native quit ends the loop.
 pub fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);
-    try absorbScriptFault(tui_loop.start(host));
+    try absorbScriptFault(host, tui_loop.start(host));
     while (!host.paint.quit_requested) {
         var msg = ch.receive() catch |err| switch (err) {
             error.ChannelClosed, error.Canceled => break,
             else => |e| return e,
         };
-        try absorbScriptFault(tui_loop.step(host, msg.event()));
+        try absorbScriptFault(host, tui_loop.step(host, msg.event()));
     }
 }
 
-fn absorbScriptFault(result: host_mod.Error!void) host_mod.Error!void {
+/// Absorb a `JavaScriptFault` and keep the loop.
+/// Paint the fault row when the function absorbs a `JavaScriptFault`.
+fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!void {
     result catch |err| switch (err) {
-        error.JavaScriptFault => {},
+        error.JavaScriptFault => report.paintFault(host),
         else => |e| return e,
     };
 }

@@ -1,8 +1,14 @@
 const std = @import("std");
 
-pub const usage = "usage: yuke [--tui | --daemon]";
+pub const usage = "usage: yuke [--tui | --daemon] [--safe-mode]";
 
 pub const Mode = enum { tui, daemon };
+
+pub const Cli = struct {
+    mode: Mode = .tui,
+    /// Skip the user entry file. The daemon ignores this flag.
+    safe_mode: bool = false,
+};
 
 pub const ParseError = error{
     Help,
@@ -11,7 +17,8 @@ pub const ParseError = error{
 };
 
 /// Parse argv after the program name. Default mode is the TUI.
-pub fn parseMode(args: []const []const u8) ParseError!Mode {
+pub fn parse(args: []const []const u8) ParseError!Cli {
+    var out: Cli = .{};
     var mode: ?Mode = null;
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--tui")) {
@@ -20,25 +27,34 @@ pub fn parseMode(args: []const []const u8) ParseError!Mode {
         } else if (std.mem.eql(u8, arg, "--daemon")) {
             if (mode == .tui) return error.Conflict;
             mode = .daemon;
+        } else if (std.mem.eql(u8, arg, "--safe-mode")) {
+            out.safe_mode = true;
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             return error.Help;
         } else {
             return error.UnknownFlag;
         }
     }
-    return mode orelse .tui;
+    out.mode = mode orelse .tui;
+    return out;
 }
 
-test "parseMode defaults to tui" {
-    try std.testing.expectEqual(Mode.tui, try parseMode(&.{}));
-    try std.testing.expectEqual(Mode.tui, try parseMode(&.{"--tui"}));
-    try std.testing.expectEqual(Mode.daemon, try parseMode(&.{"--daemon"}));
+test "parse defaults to tui" {
+    try std.testing.expectEqual(Mode.tui, (try parse(&.{})).mode);
+    try std.testing.expectEqual(Mode.tui, (try parse(&.{"--tui"})).mode);
+    try std.testing.expectEqual(Mode.daemon, (try parse(&.{"--daemon"})).mode);
 }
 
-test "parseMode rejects a conflict and an unknown flag" {
-    try std.testing.expectError(error.Conflict, parseMode(&.{ "--tui", "--daemon" }));
-    try std.testing.expectError(error.Conflict, parseMode(&.{ "--daemon", "--tui" }));
-    try std.testing.expectError(error.UnknownFlag, parseMode(&.{"--foo"}));
-    try std.testing.expectError(error.Help, parseMode(&.{"--help"}));
-    try std.testing.expectError(error.Help, parseMode(&.{"-h"}));
+test "parse reads safe mode and keeps the default off" {
+    try std.testing.expect(!(try parse(&.{"--tui"})).safe_mode);
+    try std.testing.expect((try parse(&.{"--safe-mode"})).safe_mode);
+    try std.testing.expectEqual(Mode.tui, (try parse(&.{"--safe-mode"})).mode);
+}
+
+test "parse rejects a conflict and an unknown flag" {
+    try std.testing.expectError(error.Conflict, parse(&.{ "--tui", "--daemon" }));
+    try std.testing.expectError(error.Conflict, parse(&.{ "--daemon", "--tui" }));
+    try std.testing.expectError(error.UnknownFlag, parse(&.{"--foo"}));
+    try std.testing.expectError(error.Help, parse(&.{"--help"}));
+    try std.testing.expectError(error.Help, parse(&.{"-h"}));
 }

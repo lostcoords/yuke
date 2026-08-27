@@ -4,11 +4,12 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const daemon_app = @import("daemon/app.zig");
 const tui_app = @import("tui/app.zig");
+const paths = @import("paths/paths.zig");
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     std.debug.assert(args.len >= 1);
-    const mode = cli.parseMode(args[1..]) catch |err| switch (err) {
+    const opts = cli.parse(args[1..]) catch |err| switch (err) {
         error.Help => {
             var buf: [128]u8 = undefined;
             var stdout = std.Io.File.stdout().writer(init.io, &buf);
@@ -26,8 +27,16 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(2);
         },
     };
-    switch (mode) {
-        .tui => try tui_app.run(init.gpa, init.environ_map),
+    switch (opts.mode) {
+        .tui => {
+            // A null directory is not an error. The baked UI still runs without a config file.
+            const config_dir = try paths.configDir(init.gpa, init.environ_map);
+            defer if (config_dir) |dir| init.gpa.free(dir);
+            try tui_app.run(init.gpa, init.environ_map, .{
+                .config_dir = config_dir,
+                .safe_mode = opts.safe_mode,
+            });
+        },
         .daemon => try daemon_app.run(init),
     }
 }

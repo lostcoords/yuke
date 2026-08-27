@@ -17,11 +17,15 @@ pub const stack_limit: usize = 1 * 1024 * 1024;
 pub const job_budget: u32 = 1024;
 /// Set the default time slice for one evaluation or callback.
 pub const default_slice_ns: u64 = 50 * std.time.ns_per_ms;
+/// Limit the fault text that the Host stores.
+/// A fixed buffer lets `captureFault` run without an allocation.
+pub const fault_text_max: usize = 512;
+/// Report this when QuickJS gives no readable text for the exception.
+pub const unknown_fault = "script fault with no message";
 
 pub const Error = error{
     OutOfMemory,
     JavaScriptFault,
-    InvalidConfigRoot,
 };
 
 pub const default_baked = [_]loader_mod.BakedModule{
@@ -29,7 +33,6 @@ pub const default_baked = [_]loader_mod.BakedModule{
 };
 
 pub const Options = struct {
-    config_root: []const u8 = &.{},
     /// An empty slice uses `default_baked`. A non-empty slice replaces it.
     baked: []const loader_mod.BakedModule = &.{},
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
@@ -62,7 +65,9 @@ pub const Host = struct {
     slice_ns: u64,
     deadline_ns: u64,
     budget: u32,
-    fault_pending: bool,
+    /// Hold the last script fault text. The Host owns these bytes and `report.zig` paints them.
+    fault_text: [fault_text_max]u8,
+    fault_text_len: usize,
     paint: Paint,
 
     pub const Phase = enum { open, closing, drained, destroyed };
@@ -88,10 +93,7 @@ pub const Host = struct {
         errdefer ctx.deinit();
 
         const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) &default_baked else opts.baked;
-        var ld = loader_mod.Loader.init(gpa, io, opts.config_root, baked, opts.max_file_bytes) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.NotAbsolute => return error.InvalidConfigRoot,
-        };
+        var ld = loader_mod.Loader.init(gpa, io, baked, opts.max_file_bytes);
         errdefer ld.deinit();
 
         self.* = .{
@@ -103,7 +105,8 @@ pub const Host = struct {
             .slice_ns = default_slice_ns,
             .deadline_ns = std.math.maxInt(u64),
             .budget = job_budget,
-            .fault_pending = false,
+            .fault_text = undefined,
+            .fault_text_len = 0,
             .paint = .{ .glyphs = .init(gpa) },
         };
         errdefer self.paint.glyphs.deinit();
@@ -222,9 +225,8 @@ pub const Host = struct {
     }
 
     /// Evaluate source on the owner, then drain jobs.
-    pub fn eval(self: *Host, source: []const u8, filename: [:0]const u8) Error!void {
+    pub fn eval(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
-        self.fault_pending = false;
         self.enterSlice();
         const value = self.ctx.eval(source, filename, .{}) catch {
             self.noteFault();
@@ -235,22 +237,51 @@ pub const Host = struct {
     }
 
     /// Evaluate a module on the owner, then drain jobs.
-    pub fn evalModule(self: *Host, source: []const u8, filename: [:0]const u8) Error!void {
+    /// Module evaluation returns a promise, so a top-level throw becomes a rejection.
+    pub fn evalModule(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
-        self.fault_pending = false;
         self.enterSlice();
         const value = self.ctx.eval(source, filename, .{ .type = .module }) catch {
             self.noteFault();
             return error.JavaScriptFault;
         };
-        self.ctx.freeValue(value);
+        defer self.ctx.freeValue(value);
         try self.drainJobs();
+        try self.checkModulePromise(value);
+    }
+
+    /// Turn a rejected module promise into a fault. QuickJS never throws it at the caller.
+    /// No host function returns a promise yet, so a pending module cannot settle later.
+    fn checkModulePromise(self: *Host, value: quickjs.Value) Error!void {
+        if (!self.ctx.isPromise(value)) return;
+        switch (self.ctx.promiseState(value)) {
+            .Fulfilled => return,
+            .Rejected => {
+                const reason = self.ctx.promiseResult(value);
+                defer self.ctx.freeValue(reason);
+                self.fault_text_len = 0;
+                self.captureFault(reason);
+            },
+            .Pending => {
+                self.fault_text_len = 0;
+                self.appendFaultText("module did not settle: a top-level await cannot complete");
+            },
+        }
+        return error.JavaScriptFault;
+    }
+
+    /// Evaluate a module file from disk. Return false when the loader cannot read the file.
+    pub fn evalFile(self: *Host, path: [:0]const u8) Error!bool {
+        std.debug.assert(self.phase == .open);
+        const source = (try self.loader.readModule(path)) orelse return false;
+        defer self.gpa.free(source);
+        try self.evalModule(source, path);
+        return true;
     }
 
     /// Evaluate source and return its result as `i32`. Tests use this helper.
-    pub fn evalInt(self: *Host, source: []const u8) Error!i32 {
+    pub fn evalInt(self: *Host, source: [:0]const u8) Error!i32 {
         std.debug.assert(self.phase == .open);
-        self.fault_pending = false;
         self.enterSlice();
         const value = self.ctx.eval(source, "evalInt.js", .{}) catch {
             self.noteFault();
@@ -291,10 +322,85 @@ pub const Host = struct {
     }
 
     pub fn noteFault(self: *Host) void {
-        self.fault_pending = true;
+        self.fault_text_len = 0;
+        if (!self.ctx.hasException()) return;
+        const exc = self.ctx.getException();
+        defer self.ctx.freeValue(exc);
+        self.captureFault(exc);
+        // QuickJS can return a string and still leave an exception. Handle it; do not assert it.
+        self.dropPendingException();
+    }
+
+    /// Copy the exception text into the fixed buffer.
+    /// The Host allocates no memory after an out-of-memory fault.
+    fn captureFault(self: *Host, exc: quickjs.Value) void {
+        std.debug.assert(self.fault_text_len == 0);
+        // A conversion can call a user `toString`. An expired deadline stops it at the first
+        // bytecode instruction, while a built-in C conversion still runs.
+        const saved = self.deadline_ns;
+        defer self.deadline_ns = saved;
+        self.deadline_ns = 0;
+
+        _ = self.appendFaultValue(exc);
+        self.appendStack(exc);
+        // A fault always carries text, so `faultText` alone reports that a fault happened.
+        if (self.fault_text_len == 0) self.appendFaultText(unknown_fault);
+        std.debug.assert(self.fault_text_len != 0);
+    }
+
+    /// Append the first line of `.stack` after a separator. A plain `throw` carries no `.stack`.
+    fn appendStack(self: *Host, exc: quickjs.Value) void {
+        if (self.fault_text_len == 0) return;
+        const stack = self.ctx.getPropertyStr(exc, "stack");
+        defer self.ctx.freeValue(stack);
+        if (self.ctx.isException(stack)) return self.dropPendingException();
+        if (!self.ctx.isString(stack)) return;
+        const mark = self.fault_text_len;
+        self.appendFaultText(" ");
+        if (!self.appendFaultValue(stack)) self.fault_text_len = mark;
+    }
+
+    /// Append the first line of the string form of `val`. Return true when it appends bytes.
+    fn appendFaultValue(self: *Host, val: quickjs.Value) bool {
+        const s = self.ctx.toCStringLen(val) catch {
+            self.dropPendingException();
+            return false;
+        };
+        defer self.ctx.freeCString(s.ptr);
+        const line = firstLine(s);
+        if (line.len == 0) return false;
+        self.appendFaultText(line);
+        return true;
+    }
+
+    /// Append `text` until the buffer has no space. Cut on a UTF-8 boundary.
+    fn appendFaultText(self: *Host, text: []const u8) void {
+        std.debug.assert(self.fault_text_len <= self.fault_text.len);
+        const room = self.fault_text.len - self.fault_text_len;
+        const n = utf8PrefixLen(text, room);
+        std.debug.assert(n <= room);
+        @memcpy(self.fault_text[self.fault_text_len..][0..n], text[0..n]);
+        self.fault_text_len += n;
+    }
+
+    /// Drop a pending exception before the next owner turn.
+    fn dropPendingException(self: *Host) void {
         if (!self.ctx.hasException()) return;
         const exc = self.ctx.getException();
         self.ctx.freeValue(exc);
+    }
+
+    /// Return the last script fault text.
+    /// Return an empty slice when the Host has no fault.
+    pub fn faultText(self: *const Host) []const u8 {
+        std.debug.assert(self.fault_text_len <= self.fault_text.len);
+        return self.fault_text[0..self.fault_text_len];
+    }
+
+    /// Clear the fault text.
+    /// The next successful frame calls `clearFault`.
+    pub fn clearFault(self: *Host) void {
+        self.fault_text_len = 0;
     }
 
     fn finishDrain(self: *Host) void {
@@ -308,6 +414,20 @@ pub const Host = struct {
 
 fn nowNs() u64 {
     return zio.time.Timestamp.now(.awake).toNanoseconds();
+}
+
+/// Return the longest prefix of `text` that fits in `max` bytes and ends a UTF-8 sequence.
+fn utf8PrefixLen(text: []const u8, max: usize) usize {
+    if (text.len <= max) return text.len;
+    var n = max;
+    while (n > 0 and std.unicode.utf8ByteSequenceLength(text[n]) == error.Utf8InvalidStartByte) n -= 1;
+    return n;
+}
+
+/// Return the text before the first line break. A fault line uses one row.
+fn firstLine(text: []const u8) []const u8 {
+    const end = std.mem.indexOfAny(u8, text, "\r\n") orelse text.len;
+    return std.mem.trim(u8, text[0..end], " \t");
 }
 
 test "eval returns an integer" {
@@ -343,7 +463,7 @@ test "a syntax error is a JavaScriptFault" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try std.testing.expectError(error.JavaScriptFault, host.eval("this is not js", "bad.js"));
-    try std.testing.expect(host.fault_pending);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "bad.js:1") != null);
     try host.eval("globalThis.n = 1", "after.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.n"));
 }
@@ -366,7 +486,7 @@ test "an infinite loop hits the interrupt deadline" {
     defer host.destroy();
     host.slice_ns = 0;
     try std.testing.expectError(error.JavaScriptFault, host.eval("while (true) {}", "spin.js"));
-    try std.testing.expect(host.fault_pending);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
 
 test "close interrupts a leftover spinning job" {
@@ -410,7 +530,7 @@ test "drainJobs yields when the budget is hit" {
         \\Promise.resolve().then(() => { globalThis.n++; }).then(() => { globalThis.n++; });
     , "budget.js");
     try std.testing.expect(host.runtime.isJobPending());
-    try std.testing.expect(!host.fault_pending);
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
     try host.drainJobs();
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.n"));
 }
@@ -428,7 +548,65 @@ test "a memory-limit hit is a catchable fault" {
         error.JavaScriptFault,
         host.eval("globalThis.s = 'x'.repeat(2 * 1024 * 1024)", "oom.js"),
     );
-    try std.testing.expect(host.fault_pending);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "out of memory") != null);
+}
+
+test "a module that never settles is a fault" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(
+        error.JavaScriptFault,
+        host.evalModule("await new Promise(() => {});", "hang.js"),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "did not settle") != null);
+}
+
+test "a rejected module reports the reason" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(
+        error.JavaScriptFault,
+        host.evalModule("throw new Error('top level');", "reject.js"),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "top level") != null);
+}
+
+test "fault text truncates on a UTF-8 boundary" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(
+        error.JavaScriptFault,
+        host.eval("throw new Error('あ'.repeat(400));", "wide.js"),
+    );
+    const text = host.faultText();
+    try std.testing.expect(text.len > 0);
+    try std.testing.expect(text.len <= fault_text_max);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(text));
+}
+
+test "a throwing toString still leaves the context clean" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try std.testing.expectError(error.JavaScriptFault, host.eval(
+        "throw { toString() { throw new Error('nested'); } };",
+        "nasty.js",
+    ));
+    try std.testing.expectEqualStrings(unknown_fault, host.faultText());
+    try std.testing.expect(!host.ctx.hasException());
+    try host.eval("globalThis.n = 3;", "after.js");
+    try std.testing.expectEqual(@as(i32, 3), try host.evalInt("globalThis.n"));
 }
 
 test "an unknown yuke module is a JavaScriptFault" {
@@ -533,7 +711,7 @@ test "yuke:core RootView paints and q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
-test "import a file inside the config root" {
+test "import a file beside the entry" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
@@ -544,16 +722,16 @@ test "import a file inside the config root" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{ .config_root = root });
+    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
 
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/app.js", .{root});
+    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     try host.evalModule("import { n } from './util.js'; globalThis.result = n;", entry);
     try std.testing.expectEqual(@as(i32, 9), try host.evalInt("globalThis.result"));
 }
 
-test "a sibling directory file does not load" {
+test "a file outside the entry directory loads" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
@@ -561,23 +739,26 @@ test "a sibling directory file does not load" {
     defer inside.cleanup();
     var outside = std.testing.tmpDir(.{});
     defer outside.cleanup();
-    try outside.dir.writeFile(std.testing.io, .{ .sub_path = "secret.js", .data = "export const n = 1;\n" });
+    try outside.dir.writeFile(std.testing.io, .{ .sub_path = "shared.js", .data = "export const n = 4;\n" });
 
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root_len = try inside.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
-    var secret_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const secret_len = try outside.dir.realPathFile(std.testing.io, "secret.js", &secret_buf);
-    const secret = secret_buf[0..secret_len];
+    var shared_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
+    const shared = shared_buf[0..shared_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{ .config_root = root });
+    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{});
     defer host.destroy();
+    var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     var src_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    const src = try std.fmt.bufPrint(&src_buf, "import {{ n }} from '{s}';", .{secret});
-    try std.testing.expectError(error.JavaScriptFault, host.evalModule(src, "entry.js"));
+    const src = try std.fmt.bufPrintZ(&src_buf, "import {{ n }} from '{s}'; globalThis.result = n;", .{shared});
+    try host.evalModule(src, entry);
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.result"));
 }
 
-test "an oversize config file does not load" {
+test "an oversize module file does not load" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
@@ -591,13 +772,10 @@ test "an oversize config file does not load" {
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
-    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{
-        .config_root = root,
-        .max_file_bytes = 8,
-    });
+    const host = try Host.createWith(gpa.allocator(), std.testing.io, .{ .max_file_bytes = 8 });
     defer host.destroy();
     var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/app.js", .{root});
+    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("import { n } from './big.js';", entry),
@@ -607,4 +785,5 @@ test "an oversize config file does not load" {
 test {
     _ = @import("loop.zig");
     _ = @import("app.zig");
+    _ = @import("report.zig");
 }

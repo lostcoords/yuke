@@ -295,6 +295,8 @@ fn commitFrame(host: *Host) void {
     render.render(writer) catch return;
     host.paint.dirty = false;
     host.paint.in_frame = false;
+    // A successful frame replaces the fault row, so `clearFault` clears the fault text.
+    host.clearFault();
 }
 
 /// Commit an open frame when the script omits `endFrame`.
@@ -482,7 +484,7 @@ fn modsProp(ctx: Context, v: Value) error{Exception}!Modifiers {
     return modsFromBits(bits);
 }
 
-fn evalOk(host: *Host, src: []const u8) !i32 {
+fn evalOk(host: *Host, src: [:0]const u8) !i32 {
     try host.evalModule(src, "term.js");
     return host.evalInt("globalThis.result");
 }
