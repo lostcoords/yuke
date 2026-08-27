@@ -59,6 +59,35 @@ pub const RangeRead = struct {
     long_lines: u32 = 0,
 };
 
+/// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
+pub const ExecSpec = struct {
+    command: []const u8,
+    cwd: ?[]const u8 = null,
+    timeout_ms: u32,
+    /// The cap for each stream. The backend stops the read at this size and reports the cut.
+    max_stream_bytes: u32,
+};
+
+/// How one command ended. The union makes an impossible pair unrepresentable.
+pub const ExecOutcome = union(enum) {
+    /// The command ended on its own with this code.
+    exited: u8,
+    /// A signal ended the command. The value is the signal number.
+    signaled: u8,
+    /// The deadline expired. The backend killed the process group.
+    timed_out,
+};
+
+/// What one command produced. `stdout` and `stderr` come from `scratch`.
+pub const ExecResult = struct {
+    stdout: []const u8,
+    stderr: []const u8,
+    outcome: ExecOutcome,
+    /// The bytes each stream dropped between its head and its tail. Zero means nothing was lost.
+    stdout_dropped: u64 = 0,
+    stderr_dropped: u64 = 0,
+};
+
 /// A ToolHost provides the native primitives a handler calls. The backend decides where they run.
 /// The `ctx` and its borrowed data, for example the workspace root, must outlive every call.
 pub const ToolHost = struct {
@@ -77,6 +106,10 @@ pub const ToolHost = struct {
         /// Replace a file with `content`. The backend keeps the permissions and replaces atomically.
         /// The backend rejects a symlink, a hard link, or a special file.
         writeFile: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, content: []const u8) HostError!void,
+
+        /// Run one command through a shell. The backend puts it in its OWN process group and kills
+        /// the whole group on a deadline or a cancel, so no descendant survives the call.
+        exec: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, spec: ExecSpec) HostError!ExecResult,
     };
 
     pub fn readRange(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead {
@@ -89,6 +122,10 @@ pub const ToolHost = struct {
 
     pub fn writeFile(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, content: []const u8) HostError!void {
         return self.vtable.writeFile(self.ctx, scratch, path, content);
+    }
+
+    pub fn exec(self: ToolHost, scratch: std.mem.Allocator, spec: ExecSpec) HostError!ExecResult {
+        return self.vtable.exec(self.ctx, scratch, spec);
     }
 };
 

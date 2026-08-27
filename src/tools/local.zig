@@ -4,6 +4,7 @@
 const std = @import("std");
 const t = @import("tool.zig");
 const paths = @import("../paths/paths.zig");
+const exec_local = @import("exec_local.zig");
 
 const Map = std.process.Environ.Map;
 
@@ -16,7 +17,7 @@ pub const LocalHost = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    const vtable: t.ToolHost.VTable = .{ .readRange = readRange, .readAll = readAll, .writeFile = writeFile };
+    const vtable: t.ToolHost.VTable = .{ .readRange = readRange, .readAll = readAll, .writeFile = writeFile, .exec = exec };
 
     fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: t.Range, limits: t.ReadLimits) t.HostError!t.RangeRead {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
@@ -81,6 +82,11 @@ pub const LocalHost = struct {
         if (stat.kind != .file) return error.NotAFile;
         if (stat.nlink > 1) return error.NotAFile; // A rename removes this name. The other links remain.
         return stat.permissions;
+    }
+
+    fn exec(ctx: *anyopaque, scratch: std.mem.Allocator, spec: t.ExecSpec) t.HostError!t.ExecResult {
+        const self: *LocalHost = @ptrCast(@alignCast(ctx));
+        return exec_local.run(self.io, self.root, self.env, scratch, spec);
     }
 
     /// Expand an initial `~` and resolve a relative path against the workspace root. An absolute path or a

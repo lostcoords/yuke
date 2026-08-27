@@ -6,9 +6,10 @@ const ir = @import("../provider/request/ir.zig");
 const read = @import("read.zig");
 const write = @import("write.zig");
 const edit = @import("edit.zig");
+const exec = @import("exec.zig");
 
 /// The built-in tools appear in advertisement order.
-const builtins = [_]t.Tool{ read.tool, write.tool, edit.tool };
+const builtins = [_]t.Tool{ read.tool, write.tool, edit.tool, exec.tool };
 
 /// Return the built-in with `name`, or null.
 pub fn find(name: []const u8) ?t.Tool {
@@ -36,6 +37,7 @@ test "find returns a built-in by name" {
     try testing.expect(find("read") != null);
     try testing.expect(find("write") != null);
     try testing.expect(find("edit") != null);
+    try testing.expect(find("exec") != null);
     try testing.expect(find("nope") == null);
 }
 

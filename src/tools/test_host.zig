@@ -21,6 +21,11 @@ pub const unsupported: t.ToolHost.VTable = .{
             return error.HostFailure;
         }
     }.f,
+    .exec = struct {
+        fn f(_: *anyopaque, _: std.mem.Allocator, _: t.ExecSpec) t.HostError!t.ExecResult {
+            return error.HostFailure;
+        }
+    }.f,
 };
 
 /// A host over one in-memory file. Set `content` to null to report a missing file. Set `read_error`
