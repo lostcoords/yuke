@@ -115,8 +115,8 @@ fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     put(ctx, obj, "shifted", ctx.newString(encode(key.shifted_codepoint orelse 0, &shifted_buf)));
     put(ctx, obj, "baseLayout", ctx.newString(encode(key.base_layout_codepoint orelse 0, &base_buf)));
     put(ctx, obj, "text", ctx.newString(key.text orelse ""));
+    // Drop `caps_lock` and `num_lock`. A lock state must not change the binding that matches.
     put(ctx, obj, "mods", ctx.newInt32(bits & 0x3f));
-    put(ctx, obj, "locks", ctx.newInt32(0));
     if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
@@ -227,6 +227,21 @@ test "q with no handler requests quit" {
     defer host.destroy();
     try step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(host.paint.quit_requested);
+}
+
+test "a key reports the modifiers and no lock state" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
+    try step(host, .{ .key_press = .{
+        .codepoint = 'a',
+        .mods = .{ .ctrl = true, .caps_lock = true, .num_lock = true },
+    } });
+    // `mods` carries ctrl only. The lock bits never reach JavaScript.
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.mods"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("'locks' in globalThis.ev ? 0 : 1"));
 }
 
 test "resize updates term.width before JS reads ev.w" {
