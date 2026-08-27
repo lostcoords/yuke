@@ -12,8 +12,9 @@ const Allocator = std.mem.Allocator;
 pub const Error = error{
     AuthFailed, // 401
     PermissionDenied, // 403
-    RateLimited, // 429 without a quota signal
+    RateLimited, // 429 with a body and no quota code
     QuotaExhausted, // 429 with a quota or spend code
+    RateLimitUnknown, // 429 the daemon could not read or decode
     ServerError, // 5xx
     BadStatus, // Any other non-200 status.
     Timeout, // 408, 504, or an idle read past the deadline
@@ -180,15 +181,17 @@ fn mapStatus(status: std.http.Status) Error {
 }
 
 /// Classify a 429 as a rate limit or a quota error. Bound the body read with the idle timeout.
-/// Propagate a user cancel. Use a rate limit when the body is missing or unreadable.
+/// An unreadable body gives `RateLimitUnknown`. A spend cap and a rate limit share the status.
 fn classify429(hb: *HttpBody, arena: Allocator) anyerror {
     hb.reader = hb.response.reader(&hb.transfer_buffer);
     var buf: [2048]u8 = undefined;
     const n = hb.readWithIdleTimeout(&buf) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
-        else => return Error.RateLimited, // A timeout, malformed body, or transport failure defaults to a rate limit.
+        else => return Error.RateLimitUnknown,
     };
-    return if (bodyIsQuota(arena, buf[0..n])) Error.QuotaExhausted else Error.RateLimited;
+    if (bodyIsQuota(arena, buf[0..n])) return Error.QuotaExhausted;
+    if (n == 0) return Error.RateLimitUnknown; // An empty body names no class.
+    return Error.RateLimited;
 }
 
 /// Report whether the error body names an exhausted quota. OpenAI marks it in `error.code` or
@@ -438,6 +441,27 @@ test "an Anthropic spend-cap 429 maps to QuotaExhausted" {
     server.join();
 
     try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
+}
+
+test "a 429 with an empty body maps to RateLimitUnknown" {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try addr.listen(.{});
+    defer listener.close();
+    const port = listener.socket.address.ip.getPort();
+
+    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    defer out.bytes.deinit(testing.allocator);
+    var srv: Server = .{ .listener = &listener, .body = "", .status = .too_many_requests };
+
+    var server = try rt.spawn(serveOnce, .{&srv});
+    var client = try rt.spawn(clientTask, .{&out});
+    client.join();
+    server.join();
+
+    // A guess of RateLimited would retry a spend cap that can never succeed.
+    try testing.expectEqual(@as(?anyerror, Error.RateLimitUnknown), out.err);
 }
 
 test "a 429 without a quota code maps to RateLimited" {

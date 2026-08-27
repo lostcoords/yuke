@@ -308,13 +308,18 @@ fn failure(err: anyerror) Failure {
         error.AuthFailed => .{ .code = .auth, .message = "the provider rejected the API key" },
         error.PermissionDenied => .{ .code = .auth, .message = "the provider denied permission for this request" },
         error.RateLimited => .{ .code = .rate_limited, .message = "the provider rate limit was reached" },
+        error.RateLimitUnknown => .{ .code = .rate_limited, .message = "the provider returned a 429 the daemon could not classify" },
         error.QuotaExhausted => .{ .code = .quota_exhausted, .message = "the provider account quota is exhausted" },
         error.Timeout => .{ .code = .timeout, .message = "the provider stream timed out" },
         error.ServerError => .{ .code = .provider, .message = "the provider returned a server error" },
         error.BadStatus => .{ .code = .provider, .message = "the provider returned an unexpected status" },
         error.BadUrl => .{ .code = .provider, .message = "the provider endpoint URL is invalid" },
         error.RedirectRefused => .{ .code = .protocol, .message = "the provider attempted a redirect" },
-        error.IncompleteStream, error.Protocol, error.InvalidCharacter, error.HttpChunkTruncated, error.HttpChunkInvalid => .{ .code = .protocol, .message = "the provider stream was malformed" },
+        // A parse error never repeats. Keep it apart from a truncation.
+        error.Protocol, error.InvalidCharacter, error.HttpChunkInvalid => .{ .code = .protocol, .message = "the provider stream was malformed" },
+        // A stream without its terminal event is a transport failure. A retry classifier must
+        // separate it from a malformed stream.
+        error.IncompleteStream, error.HttpChunkTruncated => .{ .code = .network, .message = "the provider stream ended early" },
         error.ConnectionRefused, error.ConnectionResetByPeer, error.EndOfStream => .{ .code = .network, .message = "the provider connection failed" },
         else => .{ .code = .provider, .message = "the provider request failed" },
     };
