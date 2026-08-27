@@ -711,6 +711,77 @@ test "yuke:core RootView paints and q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
+test "an overlay without a hook is consumed, not a fault" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 2, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    // The overlay implements `draw` and no other hook.
+    try host.evalModule(
+        \\import { View, root, text } from "yuke:core";
+        \\globalThis.seen = 0;
+        \\class Base extends View {
+        \\  get name() { return "base"; }
+        \\  draw() { text(0, 0, "b", "Normal"); }
+        \\  onKey(ev) { globalThis.seen++; return true; }
+        \\}
+        \\root.setActive(new Base());
+        \\root.pushOverlay({ draw() { text(0, 1, "o", "Normal"); } });
+        \\globalThis.root = root;
+    , "overlay.js");
+
+    const loop = @import("loop.zig");
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.seen"));
+
+    try host.eval("globalThis.root.popOverlay();", "pop.js");
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen"));
+}
+
+test "an unusable view or layer is rejected at the call" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { View, root } from "yuke:core";
+        \\class Ok extends View { draw() {} }
+        \\const reject = (fn, want) => {
+        \\  try { fn(); } catch (e) {
+        \\    if (e instanceof TypeError && e.message === want) globalThis.threw++;
+        \\  }
+        \\};
+        \\globalThis.threw = 0;
+        \\const view = "a view needs a draw method";
+        \\const layer = "pushOverlay needs a layer with a draw method";
+        \\for (const bad of [{}, { draw: 1 }]) reject(() => root.setActive(bad), view);
+        \\root.setActive(new Ok());
+        \\reject(() => root.split("row", {}), view);
+        \\for (const bad of [null, {}, { draw: true }]) reject(() => root.pushOverlay(bad), layer);
+        \\root.setActive(null);
+        \\globalThis.cleared = root.active === null ? 1 : 0;
+    , "reject.js");
+    try std.testing.expectEqual(@as(i32, 6), try host.evalInt("globalThis.threw"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.cleared"));
+}
+
 test "import a file beside the entry" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);

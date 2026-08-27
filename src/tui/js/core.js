@@ -321,6 +321,18 @@ function normalizeStroke(stroke) {
   return joinStroke(mods, token);
 }
 
+// A layer implements only the hooks it needs.
+function callHook(obj, name, ...args) {
+  const fn = obj && obj[name];
+  // `Reflect.apply` keeps the receiver even when the hook shadows `Function.prototype.apply`.
+  return typeof fn === "function" ? Reflect.apply(fn, obj, args) : undefined;
+}
+
+// `draw` runs every frame. A layer or a view without `draw` never appears.
+function requireDraw(obj, message) {
+  if (!obj || typeof obj.draw !== "function") throw new TypeError(message);
+}
+
 function deleteWordBack(s, caret) {
   let i = caret;
   while (i > 0 && s[i - 1] === " ") i--;
@@ -366,7 +378,7 @@ export class TextInput {
   _splice(from, to, ins) {
     this.text = this.text.slice(0, from) + ins + this.text.slice(to);
     this.caret = from + ins.length;
-    if (this.onChange) this.onChange();
+    callHook(this, "onChange");
   }
 
   onKey(ev) {
@@ -448,7 +460,7 @@ export class Emitter {
       try {
         fn(...args);
       } catch (e) {
-        if (this.onError) this.onError(e, name);
+        callHook(this, "onError", e, name);
       }
     }
   }
@@ -492,6 +504,7 @@ export class View {
 
 export class Node {
   constructor(view) {
+    if (view != null) requireDraw(view, "a view needs a draw method");
     this.type = "leaf";
     this.parent = null;
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -552,8 +565,8 @@ export class Node {
     if (this.type === "leaf") {
       const v = this.view;
       if (!v) return;
-      if (v.update) v.update();
-      v.draw(this === activeLeaf);
+      callHook(v, "update");
+      callHook(v, "draw", this === activeLeaf);
       return;
     }
     this.a.draw(activeLeaf);
@@ -587,13 +600,13 @@ export class RootView {
   }
 
   setRoot(node) {
-    this.root_node = node;
     if (node) node.parent = null;
+    this.root_node = node;
     this.activeLeaf = node ? node.leaves()[0] : null;
   }
 
   setActive(view) {
-    this.setRoot(view ? new Node(view) : null);
+    this.setRoot(view == null ? null : new Node(view));
   }
 
   focusLeaf(leaf) {
@@ -659,7 +672,7 @@ export class RootView {
 
   addService(svc) {
     this.services.push(svc);
-    if (this._started && svc.onStart) svc.onStart();
+    if (this._started) callHook(svc, "onStart");
     this.syncTick();
     return svc;
   }
@@ -669,6 +682,7 @@ export class RootView {
   }
 
   pushOverlay(layer) {
+    requireDraw(layer, "pushOverlay needs a layer with a draw method");
     this.overlays.push(layer);
     this.draw();
     return layer;
@@ -701,11 +715,10 @@ export class RootView {
       this.root_node.draw(this.activeLeaf);
     }
     for (const layer of this.overlays) {
-      if (layer.update) layer.update();
-      layer.draw();
+      callHook(layer, "update");
+      callHook(layer, "draw");
     }
-    const f = this.focused;
-    const c = f && f.cursor ? f.cursor() : null;
+    const c = callHook(this.focused, "cursor");
     if (c && c.visible) term.cursor(c.x, c.y, true);
     else term.cursor(0, 0, false);
     term.endFrame();
@@ -715,8 +728,7 @@ export class RootView {
   syncTick() {
     let period = null;
     this._forEachTickable((layer) => {
-      if (!layer.needsTick) return;
-      const t = layer.needsTick();
+      const t = callHook(layer, "needsTick");
       if (!t) return;
       const ms = t.periodMs;
       period = period == null ? ms : Math.min(period, ms);
@@ -727,8 +739,7 @@ export class RootView {
 
   tickLayers() {
     this._forEachTickable((layer) => {
-      if (!layer.needsTick || !layer.tick) return;
-      if (layer.needsTick()) layer.tick();
+      if (callHook(layer, "needsTick")) callHook(layer, "tick");
     });
   }
 
@@ -742,7 +753,7 @@ export class RootView {
     if (ev.type === "start" || ev.type === "resize") {
       if (ev.type === "start" && !this._started) {
         this._started = true;
-        for (const svc of this.services) if (svc.onStart) svc.onStart();
+        for (const svc of this.services) callHook(svc, "onStart");
       }
       this.draw();
       return;
@@ -753,19 +764,20 @@ export class RootView {
       return;
     }
     const top = this.overlays.length ? this.overlays[this.overlays.length - 1] : null;
+    // A modal overlay consumes the event even when the overlay has no requested hook.
     const consumedByOverlay = (method) => {
       if (!top) return false;
-      const handled = top[method](ev);
-      return top.modal !== false || handled;
+      const handled = callHook(top, method, ev);
+      return top.modal !== false || !!handled;
     };
     if (ev.type === "key") {
       if (ev.event === "release") return;
       if (!consumedByOverlay("onKey")) {
-        const viewTakes = !keymap.pending && this.active && this.active.onKey && this.active.onKey(ev);
+        const viewTakes = !keymap.pending && callHook(this.active, "onKey", ev);
         if (!viewTakes) keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {
-      if (!consumedByOverlay("onMouse") && this.active) this.active.onMouse(ev);
+      if (!consumedByOverlay("onMouse")) callHook(this.active, "onMouse", ev);
     }
     this.draw();
   }
