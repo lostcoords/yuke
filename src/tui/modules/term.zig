@@ -8,7 +8,6 @@ const Value = quickjs.Value;
 const Module = Context.Module;
 const Modifiers = term_pkg.Key.Modifiers;
 
-pub const tick_ms_default: u32 = 450;
 pub const tick_ms_min: u32 = 50;
 pub const tick_ms_max: u32 = 2000;
 
@@ -285,7 +284,7 @@ fn startFrame(host: *Host) void {
     host.paint.dirty = true;
 }
 
-fn commitFrame(host: *Host) void {
+pub fn commitFrame(host: *Host) void {
     const render = host.paint.render orelse return;
     const writer = host.paint.writer orelse return;
     if (!host.paint.dirty) {
@@ -297,11 +296,6 @@ fn commitFrame(host: *Host) void {
     host.paint.in_frame = false;
     // A successful frame replaces the fault row, so `clearFault` clears the fault text.
     host.clearFault();
-}
-
-/// Commit an open frame when the script omits `endFrame`.
-pub fn commitIfDirty(host: *Host) void {
-    commitFrame(host);
 }
 
 fn ensureFrame(host: *Host) void {
@@ -346,23 +340,22 @@ fn parseStyle(ctx: Context, maybe: ?Value) error{Exception}!term_pkg.Style {
     const st = maybe orelse return style;
     if (!ctx.isObject(st)) return style;
 
-    const fg = ctx.getPropertyStr(st, "fg");
-    defer ctx.freeValue(fg);
-    if (ctx.isException(fg)) return error.Exception;
-    if (!ctx.isUndefined(fg)) {
-        if (try parseColor(ctx, fg)) |c| style.fg = c;
-    }
-    const bg = ctx.getPropertyStr(st, "bg");
-    defer ctx.freeValue(bg);
-    if (ctx.isException(bg)) return error.Exception;
-    if (!ctx.isUndefined(bg)) {
-        if (try parseColor(ctx, bg)) |c| style.bg = c;
-    }
+    if (try colorProp(ctx, st, "fg")) |c| style.fg = c;
+    if (try colorProp(ctx, st, "bg")) |c| style.bg = c;
     style.bold = try boolProp(ctx, st, "bold");
     style.dim = try boolProp(ctx, st, "dim");
     style.italic = try boolProp(ctx, st, "italic");
     if (try boolProp(ctx, st, "underline")) style.ul_style = .single;
     return style;
+}
+
+/// Read a color property. Return null when the property is absent or unusable.
+fn colorProp(ctx: Context, obj: Value, name: [*:0]const u8) error{Exception}!?term_pkg.Color {
+    const v = ctx.getPropertyStr(obj, name);
+    defer ctx.freeValue(v);
+    if (ctx.isException(v)) return error.Exception;
+    if (ctx.isUndefined(v)) return null;
+    return parseColor(ctx, v);
 }
 
 fn boolProp(ctx: Context, obj: Value, name: [*:0]const u8) error{Exception}!bool {
@@ -574,6 +567,8 @@ test "beginFrame without a renderer throws" {
         \\globalThis.term = term;
     , "term.js");
     try std.testing.expectError(error.JavaScriptFault, host.eval("term.beginFrame()", "bad.js"));
+    // A missing binding would raise a different TypeError, so name the one `beginFrame` raises.
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "term.beginFrame: no host") != null);
 }
 
 test "paint copies graphemes, skips negative coords, and diffs" {

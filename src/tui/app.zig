@@ -11,6 +11,9 @@ const Channel = zio.Channel(Msg);
 
 const frame_buf_bytes = 256 * 1024;
 
+/// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
+const send_tries_max = 100;
+
 /// The user entry file inside the config directory.
 pub const user_entry = "index.js";
 
@@ -202,24 +205,19 @@ fn inputTask(tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
 }
 
 /// Watch SIGWINCH. Skip a size when ioctl fails.
-/// Windows sends resize events in-band.
+/// `runIo` spawns this task only when the terminal does not send resize events in-band.
 fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
-    if (comptime term_pkg.resize_in_band) {
-        ch.close(.graceful);
-        return;
-    } else {
-        var watch = try term_pkg.WinsizeWatch.init();
-        defer watch.deinit();
-        while (true) {
-            const ws = watch.wait(tty) catch |err| switch (err) {
-                error.Canceled => {
-                    ch.close(.graceful);
-                    return;
-                },
-                else => continue,
-            };
-            ch.send(Msg.from(.{ .winsize = ws })) catch return;
-        }
+    var watch = try term_pkg.WinsizeWatch.init();
+    defer watch.deinit();
+    while (true) {
+        const ws = watch.wait(tty) catch |err| switch (err) {
+            error.Canceled => {
+                ch.close(.graceful);
+                return;
+            },
+            else => continue,
+        };
+        ch.send(Msg.from(.{ .winsize = ws })) catch return;
     }
 }
 
@@ -260,11 +258,16 @@ test "a closed channel unblocks serve" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
 
+    try host.eval("globalThis.seen = 0; globalThis.onEvent = () => { globalThis.seen++; };", "count.js");
+
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
-    var producer = try rt.spawn(closeChannel, .{&ch});
+    var producer = try rt.spawn(sendThenClose, .{&ch});
     try serve(host, &ch);
     producer.join();
+    // `serve` handled `start` plus the key, then the close ended the loop rather than a quit.
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.seen"));
+    try std.testing.expect(!host.paint.quit_requested);
 }
 
 test "serve keeps the loop after onEvent throw" {
@@ -297,10 +300,28 @@ fn sendQuit(ch: *Channel) !void {
 }
 
 fn sendThrowThenQuit(ch: *Channel) !void {
-    try ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'x' } }));
-    try ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
+    try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'x' } }));
+    try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
 }
 
-fn closeChannel(ch: *Channel) void {
+/// Send with a bound. A stalled consumer fails the test instead of parking the producer forever.
+/// The owner channel holds one message, so a second send blocks when `serve` stops.
+fn sendBounded(ch: *Channel, msg: Msg) !void {
+    var tries: u8 = 0;
+    while (true) : (tries += 1) {
+        ch.trySend(msg) catch |err| switch (err) {
+            error.ChannelFull => {
+                if (tries == send_tries_max) return error.ConsumerStalled;
+                try zio.sleep(.fromMilliseconds(10));
+                continue;
+            },
+            else => |e| return e,
+        };
+        return;
+    }
+}
+
+fn sendThenClose(ch: *Channel) void {
+    ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'a' } })) catch {};
     ch.close(.graceful);
 }

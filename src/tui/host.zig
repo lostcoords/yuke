@@ -93,7 +93,12 @@ pub const Host = struct {
         errdefer ctx.deinit();
 
         const baked: []const loader_mod.BakedModule = if (opts.baked.len == 0) &default_baked else opts.baked;
-        var ld = loader_mod.Loader.init(gpa, io, baked, opts.max_file_bytes);
+        var ld: loader_mod.Loader = .{
+            .gpa = gpa,
+            .io = io,
+            .baked = baked,
+            .max_file_bytes = opts.max_file_bytes,
+        };
         errdefer ld.deinit();
 
         self.* = .{
@@ -161,24 +166,20 @@ pub const Host = struct {
         std.debug.assert(self.phase == .open);
         if (winsize.cols == 0 or winsize.rows == 0) return;
         if (self.paint.width == winsize.cols and self.paint.height == winsize.rows) return;
+        // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
+        var resize_dirty = false;
         if (self.paint.render) |render| {
             const writer = self.paint.writer orelse return;
             render.resize(writer, winsize) catch {
                 if (render.window().width != winsize.cols or render.window().height != winsize.rows)
                     return;
-                render.vx.screen.width_method = .unicode;
-                self.paint.width = winsize.cols;
-                self.paint.height = winsize.rows;
-                self.paint.in_frame = false;
-                self.paint.dirty = true;
-                self.syncSizeProps();
-                return;
+                resize_dirty = true;
             };
             render.vx.screen.width_method = .unicode;
         }
         self.paint.width = winsize.cols;
         self.paint.height = winsize.rows;
-        self.paint.dirty = false;
+        self.paint.dirty = resize_dirty;
         self.paint.in_frame = false;
         self.syncSizeProps();
     }
@@ -501,6 +502,9 @@ test "close interrupts a leftover spinning job" {
     host.budget = job_budget;
     host.slice_ns = 0;
     try std.testing.expectError(error.JavaScriptFault, host.close());
+    // The host stopped inside the drain, so it never reached `drained`.
+    try std.testing.expectEqual(Host.Phase.closing, host.phase);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
 
 test "close drains then destroy frees the runtime" {
@@ -588,7 +592,9 @@ test "fault text truncates on a UTF-8 boundary" {
         host.eval("throw new Error('あ'.repeat(400));", "wide.js"),
     );
     const text = host.faultText();
-    try std.testing.expect(text.len > 0);
+    // The buffer holds the real message, not the fallback, and the cut keeps it valid.
+    try std.testing.expect(!std.mem.eql(u8, text, unknown_fault));
+    try std.testing.expect(text.len > fault_text_max - 4);
     try std.testing.expect(text.len <= fault_text_max);
     try std.testing.expect(std.unicode.utf8ValidateSlice(text));
 }
@@ -672,6 +678,8 @@ test "resize keeps unicode width after a write fail" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     host.bindRender(&render, &fail);
+    // Only `resize` can put the method back, so the assertion cannot pass on `bindRender` alone.
+    render.vx.screen.width_method = .wcwidth;
     host.resize(.{ .rows = 3, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
     try std.testing.expectEqual(term_pkg.gwidth.Method.unicode, render.vx.screen.width_method);
     try std.testing.expectEqual(@as(u16, 8), host.paint.width);

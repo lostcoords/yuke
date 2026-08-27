@@ -38,20 +38,6 @@ pub const Loader = struct {
     baked: []const BakedModule,
     max_file_bytes: usize,
 
-    pub fn init(
-        gpa: std.mem.Allocator,
-        io: std.Io,
-        baked: []const BakedModule,
-        max_file_bytes: usize,
-    ) Loader {
-        return .{
-            .gpa = gpa,
-            .io = io,
-            .baked = baked,
-            .max_file_bytes = max_file_bytes,
-        };
-    }
-
     pub fn deinit(self: *Loader) void {
         self.* = undefined;
     }

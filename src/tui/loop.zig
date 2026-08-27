@@ -30,15 +30,8 @@ pub fn step(host: *Host, ev: Event) Error!void {
     }
 }
 
-/// A key press or release. The name reaches JavaScript as `ev.event`.
-const KeyKind = enum {
-    press,
-    release,
-
-    fn name(self: KeyKind) []const u8 {
-        return @tagName(self);
-    }
-};
+/// A key press or release. The tag name reaches JavaScript as `ev.event`.
+const KeyKind = enum { press, release };
 
 /// Dispatch a key. Without `onEvent`, `q` quits so a boot failure leaves an exit.
 fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
@@ -85,7 +78,7 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
     }
     ctx.freeValue(result);
     try host.drainJobs();
-    term_mod.commitIfDirty(host);
+    term_mod.commitFrame(host);
     return true;
 }
 
@@ -110,7 +103,7 @@ fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     const char_s: []const u8 = if (std.mem.eql(u8, code, "char")) encode(key.codepoint, &char_buf) else "";
     const bits: u8 = @bitCast(key.mods);
     put(ctx, obj, "code", ctx.newString(code));
-    put(ctx, obj, "event", ctx.newString(kind.name()));
+    put(ctx, obj, "event", ctx.newString(@tagName(kind)));
     put(ctx, obj, "char", ctx.newString(char_s));
     put(ctx, obj, "shifted", ctx.newString(encode(key.shifted_codepoint orelse 0, &shifted_buf)));
     put(ctx, obj, "baseLayout", ctx.newString(encode(key.base_layout_codepoint orelse 0, &base_buf)));
