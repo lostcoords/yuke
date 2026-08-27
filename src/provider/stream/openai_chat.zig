@@ -57,7 +57,8 @@ pub const Reducer = struct {
         out: *std.ArrayList(StreamEvent),
     ) Error!void {
         if (std.mem.eql(u8, data, "[DONE]")) return self.onDone(out);
-        if (self.done_emitted) return error.Protocol;
+        // Some gateways send an extra frame after `[DONE]`. Ignore it.
+        if (self.done_emitted) return;
 
         const root = std.json.parseFromSliceLeaky(std.json.Value, scratch, data, .{}) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
