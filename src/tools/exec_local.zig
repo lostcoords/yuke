@@ -139,13 +139,10 @@ fn joinGroup(io: std.Io, group: *std.Io.Group, done: *std.Io.Event) void {
     done.set(io);
 }
 
-/// Resolve the working directory. A relative `cwd` resolves against the workspace root. The rules
-/// match the file tools, so a leading `~` expands the same way in every tool.
+/// Resolve the working directory. A null `cwd` uses the workspace root itself.
 fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: ?*const std.process.Environ.Map, cwd: ?[]const u8) t.HostError![]const u8 {
     const rel = cwd orelse return root;
-    const expanded = if (env) |e| paths.expandHome(scratch, e, rel) catch return error.OutOfMemory else rel;
-    if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(scratch, &.{expanded}) catch error.OutOfMemory;
-    return std.fs.path.resolve(scratch, &.{ root, expanded }) catch error.OutOfMemory;
+    return paths.anchorAt(scratch, env, root, rel) catch error.OutOfMemory;
 }
 
 fn mapDrainError(err: anyerror) t.HostError {

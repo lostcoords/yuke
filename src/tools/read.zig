@@ -66,34 +66,7 @@ fn render(out: std.mem.Allocator, got: t.RangeRead, first_line: u32) error{OutOf
 }
 
 const testing = std.testing;
-
-/// This host returns a fixed result for handler tests without a file system. It records the request.
-const FakeHost = struct {
-    result: t.RangeRead,
-    seen: ?t.Range = null,
-    seen_limits: ?t.ReadLimits = null,
-
-    const vtable: t.ToolHost.VTable = blk: {
-        var v = test_host.unsupported;
-        v.readRange = readRange;
-        break :blk v;
-    };
-
-    fn host(self: *FakeHost) t.ToolHost {
-        return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: t.Range, lim: t.ReadLimits) t.HostError!t.RangeRead {
-        _ = path;
-        const self: *FakeHost = @ptrCast(@alignCast(ctx));
-        self.seen = range;
-        self.seen_limits = lim;
-        // The real backend returns text that borrows `scratch`, so the fake must do the same.
-        var copy = self.result;
-        copy.text = try scratch.dupe(u8, self.result.text);
-        return copy;
-    }
-};
+const FakeHost = test_host.RangeHost;
 
 fn run(a: std.mem.Allocator, fake: *FakeHost, args: []const u8) t.ToolError![]const u8 {
     return (try tool.execute(a, a, fake.host(), args)).text;

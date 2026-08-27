@@ -1171,8 +1171,8 @@ test "a tool_use round commits, then a second round streams the final answer" {
     const a = arena.allocator();
 
     // Round 1 asks for the read tool; round 2 answers with text. Capture each request body.
-    const replies = [_][]const u8{ tool_use_reply, final_text_reply };
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies, .capture = a };
+    const steps = provider.transport.replies(&.{ tool_use_reply, final_text_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps, .capture = a };
     fixture.state.transport = seq.transport();
 
     // The read tool resolves its path against the session workspace.
@@ -1297,8 +1297,8 @@ test "a tool round runs its calls one at a time in provider order" {
     const a = arena.allocator();
 
     // Round 1 asks for two reads; round 2 answers with text.
-    const replies = [_][]const u8{ two_tool_reply, final_text_reply };
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{ two_tool_reply, final_text_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates };
@@ -1354,8 +1354,8 @@ test "cancel run cancels the blocked tool call and every pending one" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const replies = [_][]const u8{two_tool_reply};
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{two_tool_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates }; // No gate opens, so the first call stays blocked.
@@ -1400,8 +1400,8 @@ test "cancel run keeps a finished tool and cancels the blocked one" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const replies = [_][]const u8{two_tool_reply};
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{two_tool_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens, so the second call blocks.
@@ -1448,8 +1448,8 @@ test "an input queued while tools run drains only after the turn commits" {
     const a = arena.allocator();
 
     // Turn 1: a tool round then a final answer. Turn 2 (steered): a final answer.
-    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply, final_text_reply };
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply, final_text_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates };
@@ -1567,8 +1567,8 @@ test "a finite max_rounds ends the turn after the capped tool round" {
 
     // Round 1 asks for a tool. The cap of 1 ends the turn before a second round. A sentinel second
     // reply would let a leaked round complete, so the capture proves only one request opened.
-    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply };
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies, .capture = a };
+    const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps, .capture = a };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     gates.release_a.set(); // The read never blocks.
@@ -1607,8 +1607,8 @@ test "max_rounds of 2 allows a tool round then a final answer" {
     const a = arena.allocator();
 
     // A tool round then a final answer is two rounds, so the cap of 2 does not fire.
-    const replies = [_][]const u8{ one_tool_reply_a, final_text_reply };
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
     var gates: BatchGates = .{};
     gates.release_a.set();
@@ -1642,8 +1642,8 @@ test "max_rounds of 1 does not cap a plain text turn" {
     const a = arena.allocator();
 
     // A plain text answer is one round through the final path, so the cap never applies.
-    const replies = [_][]const u8{final_text_reply};
-    var seq: provider.transport.SequenceTransport = .{ .replies = &replies };
+    const steps = provider.transport.replies(&.{final_text_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
 
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds-text", .model = "mock", .max_rounds = 1 });

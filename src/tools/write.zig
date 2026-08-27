@@ -36,7 +36,8 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost,
     // Build the whole result BEFORE the write. A failure after the write would report an error for a
     // file that already changed, and the model would repeat the write.
     const rendered: view.Rendered = if (old) |text| try view.diffView(out, scratch, path, text, content) else .{};
-    const text = if (rendered.changed_lines == 0)
+    // A null view has no honest line count, because the daemon could not map the change.
+    const text = if (rendered.views == null)
         try std.fmt.allocPrint(out, "The tool wrote {d} bytes.", .{content.len})
     else
         try std.fmt.allocPrint(out, "The tool wrote {d} bytes and changed {d} line(s).", .{ content.len, rendered.changed_lines });

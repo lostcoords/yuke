@@ -120,6 +120,13 @@ pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) !
     return std.fs.path.join(alloc, &.{ home, rest });
 }
 
+/// Anchor a tool path: expand an initial `~`, then resolve it against `root`. There is no confinement.
+pub fn anchorAt(alloc: std.mem.Allocator, env: ?*const Map, root: []const u8, path: []const u8) ![]const u8 {
+    const expanded = if (env) |e| try expandHome(alloc, e, path) else path;
+    if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(alloc, &.{expanded});
+    return std.fs.path.resolve(alloc, &.{ root, expanded });
+}
+
 pub const WorkspaceError = error{RootNotAbsolute};
 
 /// Normalize a workspace root: expand a leading `~`, then resolve `.`/`..`.

@@ -81,29 +81,7 @@ fn endLine(out: std.mem.Allocator, buf: *std.ArrayList(u8)) error{OutOfMemory}!v
 }
 
 const testing = std.testing;
-
-/// This host returns a fixed result. It records the request.
-const FakeHost = struct {
-    result: t.ExecResult,
-    seen: ?t.ExecSpec = null,
-
-    const vtable: t.ToolHost.VTable = blk: {
-        var v = @import("test_host.zig").unsupported;
-        v.exec = run;
-        break :blk v;
-    };
-
-    fn host(self: *FakeHost) t.ToolHost {
-        return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    fn run(ctx: *anyopaque, scratch: std.mem.Allocator, spec: t.ExecSpec) t.HostError!t.ExecResult {
-        _ = scratch;
-        const self: *FakeHost = @ptrCast(@alignCast(ctx));
-        self.seen = spec;
-        return self.result;
-    }
-};
+const FakeHost = @import("test_host.zig").ExecHost;
 
 test "exec reports the output and the exit code" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

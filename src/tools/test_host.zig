@@ -1,4 +1,4 @@
-//! A ToolHost for tool tests. It holds one file in memory and records the last write.
+//! The test doubles for the ToolHost. Each double serves one seam and records the request.
 
 const std = @import("std");
 const t = @import("tool.zig");
@@ -57,5 +57,56 @@ pub const FileHost = struct {
         _ = path;
         const self: *FileHost = @ptrCast(@alignCast(ctx));
         self.written = try scratch.dupe(u8, content);
+    }
+};
+
+/// A host over one bounded range read. It returns a fixed result and records the request.
+pub const RangeHost = struct {
+    result: t.RangeRead,
+    seen: ?t.Range = null,
+    seen_limits: ?t.ReadLimits = null,
+
+    const vtable: t.ToolHost.VTable = blk: {
+        var v = unsupported;
+        v.readRange = readRange;
+        break :blk v;
+    };
+
+    pub fn host(self: *RangeHost) t.ToolHost {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: t.Range, lim: t.ReadLimits) t.HostError!t.RangeRead {
+        _ = path;
+        const self: *RangeHost = @ptrCast(@alignCast(ctx));
+        self.seen = range;
+        self.seen_limits = lim;
+        // The real backend returns text that borrows `scratch`, so the double must do the same.
+        var copy = self.result;
+        copy.text = try scratch.dupe(u8, self.result.text);
+        return copy;
+    }
+};
+
+/// A host over one command. It returns a fixed result and records the request.
+pub const ExecHost = struct {
+    result: t.ExecResult,
+    seen: ?t.ExecSpec = null,
+
+    const vtable: t.ToolHost.VTable = blk: {
+        var v = unsupported;
+        v.exec = run;
+        break :blk v;
+    };
+
+    pub fn host(self: *ExecHost) t.ToolHost {
+        return .{ .ctx = self, .vtable = &vtable };
+    }
+
+    fn run(ctx: *anyopaque, scratch: std.mem.Allocator, spec: t.ExecSpec) t.HostError!t.ExecResult {
+        _ = scratch;
+        const self: *ExecHost = @ptrCast(@alignCast(ctx));
+        self.seen = spec;
+        return self.result;
     }
 };

@@ -2,10 +2,8 @@
 //! `docs/plan.md` "Retry / backoff policy" holds the reasoning and the sources.
 
 const std = @import("std");
-const http = @import("transport/http.zig");
-
-/// Whether the provider may already hold the request. A pre-output failure does not prove refusal.
-pub const Delivery = enum { definitely_unsent, possibly_sent };
+const failure = @import("failure.zig");
+const transport = @import("transport.zig");
 
 /// The reason a run must stop instead of repeating the request.
 pub const Stop = enum {
@@ -44,11 +42,8 @@ pub const Policy = struct {
 /// One failed attempt. The caller collects these facts; this module only decides.
 pub const Attempt = struct {
     err: anyerror,
-    /// `x-should-retry`. A false value vetoes a retry.
-    should_retry: ?bool = null,
-    /// A parsed `retry-after-ms`, or `retry-after` converted to milliseconds.
-    retry_after_ms: ?u64 = null,
-    delivery: Delivery = .definitely_unsent,
+    /// What the transport learned during the attempt: the retry headers and the delivery state.
+    info: transport.AttemptInfo = .{},
     /// The stream published a semantic event before it failed.
     saw_semantic: bool = false,
     /// The 1-based number of the attempt that just failed.
@@ -66,15 +61,15 @@ pub fn decide(policy: Policy, attempt: Attempt, jitter: f64) Decision {
     // Order matters. Each gate below answers a different question, and an earlier gate outranks a
     // later one. A published event outranks everything: the client already saw the output.
     if (attempt.saw_semantic) return .{ .stop = .output_started };
-    if (attempt.should_retry) |allowed| if (!allowed) return .{ .stop = .server_veto };
-    const class = classOf(attempt.err);
+    if (attempt.info.should_retry) |allowed| if (!allowed) return .{ .stop = .server_veto };
+    const class = failure.classify(attempt.err).class;
     if (class == .permanent) return .{ .stop = .permanent };
     // A provider answer proves the request arrived. The gate covers a transport fault only.
-    if (class == .transport and attempt.delivery == .possibly_sent) return .{ .stop = .delivery_unknown };
+    if (class == .transport and attempt.info.delivery == .possibly_sent) return .{ .stop = .delivery_unknown };
     if (attempt.number >= policy.max_attempts) return .{ .stop = .attempts };
     if (attempt.budget_left == 0) return .{ .stop = .budget };
 
-    if (attempt.retry_after_ms) |asked| {
+    if (attempt.info.retry_after_ms) |asked| {
         if (asked > policy.retry_after_cap_ms) return .{ .stop = .retry_after_long };
         return .{ .retry_in_ms = asked }; // A server delay takes no jitter.
     }
@@ -90,36 +85,8 @@ fn backoff(policy: Policy, number: u8, jitter: f64) u64 {
     return @intFromFloat(capped * (1.0 - jitter * 0.25));
 }
 
-/// How an error class behaves. One switch drives both questions, so the two cannot disagree.
-const Class = enum {
-    /// The provider answered and named a temporary condition. The request certainly arrived.
-    answered_transient,
-    /// The connection failed. The delivery gate decides whether a repeat is safe.
-    transport,
-    /// The error can never succeed.
-    permanent,
-};
-
-fn classOf(err: anyerror) Class {
-    return switch (err) {
-        http.Error.RateLimited, http.Error.ServerError, http.Error.Timeout => .answered_transient,
-        error.ConnectionRefused,
-        error.ConnectionResetByPeer,
-        error.ConnectionTimedOut,
-        error.NetworkUnreachable,
-        error.TemporaryNameServerFailure,
-        error.NameServerFailure,
-        error.HostLacksNetworkAddresses,
-        error.EndOfStream,
-        error.IncompleteStream,
-        error.HttpChunkTruncated,
-        http.Error.IdleTimeout,
-        => .transport,
-        else => .permanent,
-    };
-}
-
 const testing = std.testing;
+const http = @import("transport/http.zig"); // The tests name concrete provider errors.
 const default: Policy = .{};
 
 fn failed(err: anyerror, number: u8) Attempt {
@@ -150,6 +117,8 @@ test "a permanent class never repeats" {
         http.Error.RedirectRefused,
         error.Protocol,
         error.HttpChunkInvalid,
+        error.UnknownModel,
+        error.OutOfMemory,
     }) |err| {
         try testing.expectEqual(Stop.permanent, decide(default, failed(err, 1), 0.0).stop);
     }
@@ -158,44 +127,44 @@ test "a permanent class never repeats" {
 test "a published event outranks every other gate" {
     var a = failed(http.Error.RateLimited, 1);
     a.saw_semantic = true;
-    a.retry_after_ms = 10;
-    a.should_retry = true;
+    a.info.retry_after_ms = 10;
+    a.info.should_retry = true;
     try testing.expectEqual(Stop.output_started, decide(default, a, 0.0).stop);
 }
 
 test "the server veto outranks a repeatable class" {
     var a = failed(http.Error.ServerError, 1);
-    a.should_retry = false;
+    a.info.should_retry = false;
     try testing.expectEqual(Stop.server_veto, decide(default, a, 0.0).stop);
 
     // A true value promotes nothing. It leaves a permanent class permanent.
     var b = failed(http.Error.QuotaExhausted, 1);
-    b.should_retry = true;
+    b.info.should_retry = true;
     try testing.expectEqual(Stop.permanent, decide(default, b, 0.0).stop);
 }
 
 test "an ambiguous delivery stops a transport failure only" {
     var cut = failed(error.ConnectionResetByPeer, 1);
-    cut.delivery = .possibly_sent;
+    cut.info.delivery = .possibly_sent;
     // No idempotency key exists for either provider, so a repeat could bill the same work twice.
     try testing.expectEqual(Stop.delivery_unknown, decide(default, cut, 0.0).stop);
 
-    cut.delivery = .definitely_unsent;
+    cut.info.delivery = .definitely_unsent;
     try testing.expectEqual(@as(u64, 500), decide(default, cut, 0.0).retry_in_ms);
 
     // A 429 is a provider ANSWER, so the request certainly arrived and the gate does not apply.
     var answered = failed(http.Error.RateLimited, 1);
-    answered.delivery = .possibly_sent;
+    answered.info.delivery = .possibly_sent;
     try testing.expectEqual(@as(u64, 500), decide(default, answered, 0.0).retry_in_ms);
 }
 
 test "a server delay replaces the computed delay and takes no jitter" {
     var a = failed(http.Error.RateLimited, 1);
-    a.retry_after_ms = 2_500;
+    a.info.retry_after_ms = 2_500;
     try testing.expectEqual(@as(u64, 2_500), decide(default, a, 0.999).retry_in_ms);
 
     // Above the cap the run stops. It must not fall back to a shorter local delay.
-    a.retry_after_ms = default.retry_after_cap_ms + 1;
+    a.info.retry_after_ms = default.retry_after_cap_ms + 1;
     try testing.expectEqual(Stop.retry_after_long, decide(default, a, 0.0).stop);
 }
 
@@ -216,7 +185,7 @@ test "a stalled read repeats only when the request never left" {
     // An idle read stall is a transport fault, unlike an HTTP 408 or 504 that the provider answered.
     try testing.expectEqual(@as(u64, 500), decide(default, failed(http.Error.IdleTimeout, 1), 0.0).retry_in_ms);
     var stalled = failed(http.Error.IdleTimeout, 1);
-    stalled.delivery = .possibly_sent;
+    stalled.info.delivery = .possibly_sent;
     try testing.expectEqual(Stop.delivery_unknown, decide(default, stalled, 0.0).stop);
 }
 

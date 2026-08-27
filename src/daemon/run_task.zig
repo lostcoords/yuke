@@ -101,8 +101,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
     };
 
     while (true) {
-        // Open this round. message.started opens a fresh draft.
-        streamer.reset();
+        // Open this round. message.started opens a fresh draft. streamRound resets the streamer.
         const created_at = state.nowMillis();
         std.debug.assert(slot.progress.current != null); // bind or beginRound opened the round
         slot.progress.current.?.created_at_ms = created_at;
@@ -212,12 +211,7 @@ fn streamRound(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
 
         const decision = retry.decide(state.retry_policy, .{
             .err = err,
-            .should_retry = info.should_retry,
-            .retry_after_ms = info.retry_after_ms,
-            .delivery = switch (info.delivery) {
-                .definitely_unsent => .definitely_unsent,
-                .possibly_sent => .possibly_sent,
-            },
+            .info = info,
             // A published event outranks every other gate. The client already folded that output.
             .saw_semantic = streamer.saw_semantic,
             .number = number,
@@ -286,6 +280,31 @@ const AttemptOutcome = union(enum) {
     }
 };
 
+/// What a cancelable child produced. A run cancel keeps the run alive. A canceled run task unwinds.
+const ChildResult = union(enum) {
+    /// The child returned. The payload holds its result.
+    returned: anyerror!void,
+    /// `cancel_run` reached the slot. The child stopped.
+    canceled,
+    /// A cancel stopped the run task, so the caller must unwind.
+    aborted,
+};
+
+/// Run `f` in a child task, so a cancel can interrupt a blocked call.
+fn runChild(state: *State, slot: *RunSlot, comptime f: anytype, args: anytype) ChildResult {
+    slot.wake_event.reset(); // A one-shot event. The next child waits again.
+    var child = state.io.concurrent(f, args) catch |err| return .{ .returned = err };
+    slot.wake_event.wait(state.io) catch {
+        child.cancel(state.io) catch {}; // Shutdown canceled this run task. Stop the child.
+        return .aborted;
+    };
+    if (slot.cancel_requested) {
+        child.cancel(state.io) catch {}; // Interrupt a blocked call, then join the child.
+        return .canceled;
+    }
+    return .{ .returned = child.await(state.io) };
+}
+
 /// Run one attempt. The child owns the body and cancellation.
 fn streamAttempt(
     state: *State,
@@ -295,18 +314,10 @@ fn streamAttempt(
     ctx: *const turn_context.TurnContext,
     info: *provider.transport.AttemptInfo,
 ) AttemptOutcome {
-    slot.wake_event.reset(); // A one-shot event; a later attempt waits again.
-    var reader = state.io.concurrent(streamChild, .{ state, arena, slot, streamer, ctx, info }) catch |err|
-        return .{ .failed = err };
-    slot.wake_event.wait(state.io) catch {
-        reader.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the reader.
-        return .ok(.canceled);
+    const result = switch (runChild(state, slot, streamChild, .{ state, arena, slot, streamer, ctx, info })) {
+        .canceled, .aborted => return .ok(.canceled),
+        .returned => |r| r,
     };
-    if (slot.cancel_requested) {
-        reader.cancel(state.io) catch {}; // Request cancellation, then join the reader.
-        return .ok(.canceled);
-    }
-    const result = reader.await(state.io);
     if (result) |_| {
         if (slot.cancel_requested) return .ok(.canceled);
         const reason = streamer.stop_reason orelse
@@ -399,30 +410,10 @@ const Failure = struct {
     message: []const u8,
 };
 
-/// Map a run failure to a wire error code and one short sentence. The wire message exposes no
-/// internal error name. Each message stays well under `wire.meta.limits.max_error_message_bytes`.
+/// Map a run failure to its wire code and sentence. `provider.failure` holds the one error table.
 fn failure(err: anyerror) Failure {
-    return switch (err) {
-        error.OutOfMemory => .{ .code = .internal, .message = "the daemon ran out of memory" },
-        error.UnknownModel => .{ .code = .unknown_model, .message = "the model is not configured" },
-        error.AuthFailed => .{ .code = .auth, .message = "the provider rejected the API key" },
-        error.PermissionDenied => .{ .code = .auth, .message = "the provider denied permission for this request" },
-        error.RateLimited => .{ .code = .rate_limited, .message = "the provider rate limit was reached" },
-        error.RateLimitUnknown => .{ .code = .rate_limited, .message = "the provider returned a 429 the daemon could not classify" },
-        error.QuotaExhausted => .{ .code = .quota_exhausted, .message = "the provider account quota is exhausted" },
-        error.Timeout, error.IdleTimeout => .{ .code = .timeout, .message = "the provider stream timed out" },
-        error.ServerError => .{ .code = .provider, .message = "the provider returned a server error" },
-        error.BadStatus => .{ .code = .provider, .message = "the provider returned an unexpected status" },
-        error.BadUrl => .{ .code = .provider, .message = "the provider endpoint URL is invalid" },
-        error.RedirectRefused => .{ .code = .protocol, .message = "the provider attempted a redirect" },
-        // A parse error never repeats. Keep it apart from a truncation.
-        error.Protocol, error.InvalidCharacter, error.HttpChunkInvalid => .{ .code = .protocol, .message = "the provider stream was malformed" },
-        // A stream without its terminal event is a transport failure. A retry classifier must
-        // separate it from a malformed stream.
-        error.IncompleteStream, error.HttpChunkTruncated => .{ .code = .network, .message = "the provider stream ended early" },
-        error.ConnectionRefused, error.ConnectionResetByPeer, error.EndOfStream => .{ .code = .network, .message = "the provider connection failed" },
-        else => .{ .code = .provider, .message = "the provider request failed" },
-    };
+    const detail = provider.failure.classify(err);
+    return .{ .code = detail.code, .message = detail.message };
 }
 
 /// A round is intermediate (a tool round; the run continues) or final (the run ends).
@@ -830,20 +821,13 @@ fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, s
     }
 }
 
-/// Run one tool in a child task, so a cancel can interrupt a blocked call. The run task cannot see
-/// `cancel_requested` while it runs the tool itself, so the child owns the call and wakes the run task.
+/// Run one tool in a child task, so a cancel can interrupt a blocked call.
 fn runOneTool(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool) !void {
-    slot.wake_event.reset(); // A one-shot event; the next tool waits again.
-    var child = try state.io.concurrent(toolChild, .{ state, arena, slot, streamer, host, pt });
-    slot.wake_event.wait(state.io) catch {
-        child.cancel(state.io) catch {}; // Shutdown canceled this run task; stop the tool.
-        return error.Canceled;
+    return switch (runChild(state, slot, toolChild, .{ state, arena, slot, streamer, host, pt })) {
+        .canceled => {}, // The child settled its part canceled. The next part still settles.
+        .aborted => error.Canceled,
+        .returned => |result| result,
     };
-    if (slot.cancel_requested) {
-        child.cancel(state.io) catch {}; // Interrupt a blocked call; the child settles its part canceled.
-        return;
-    }
-    return child.await(state.io);
 }
 
 /// Run one tool and emit its running -> terminal lifecycle. A cancel during the call settles the part

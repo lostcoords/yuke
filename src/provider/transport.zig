@@ -131,36 +131,27 @@ fn emit(
     }
 }
 
-/// Replay canned response bytes. `chunk_size` splits the stream to test partial reads and cross-read SSE state.
-/// A value of 0 delivers the whole body in one read.
-pub const MockTransport = struct {
+/// Replay canned bytes as one response body. A `chunk_size` of 0 fills the caller buffer.
+pub const ReplayReader = struct {
     bytes: []const u8,
-    chunk_size: usize,
+    chunk_size: usize = 0,
     offset: usize = 0,
+    /// The read fails with this error after it delivers every byte.
+    after: ?anyerror = null,
 
-    pub fn init(bytes: []const u8, chunk_size: usize) MockTransport {
-        return .{ .bytes = bytes, .chunk_size = if (chunk_size == 0) bytes.len else chunk_size };
-    }
-
-    pub fn body(self: *MockTransport) ResponseBody {
+    pub fn body(self: *ReplayReader) ResponseBody {
         return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    /// Replay the canned response. The run loop calls this seam.
-    pub fn open(self: *MockTransport, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) !ResponseBody {
-        _ = info;
-        _ = arena;
-        _ = request;
-        return self.body();
     }
 
     const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
 
     fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
         std.debug.assert(buf.len > 0); // The seam never reads into an empty buffer.
-        const self: *MockTransport = @ptrCast(@alignCast(ctx));
+        const self: *ReplayReader = @ptrCast(@alignCast(ctx));
         const remaining = self.bytes[self.offset..];
-        const n = @min(@min(buf.len, self.chunk_size), remaining.len);
+        if (remaining.len == 0) return self.after orelse 0;
+        const limit = if (self.chunk_size == 0) buf.len else @min(buf.len, self.chunk_size);
+        const n = @min(limit, remaining.len);
         @memcpy(buf[0..n], remaining[0..n]);
         self.offset += n;
         return n;
@@ -189,7 +180,7 @@ pub const placeholder_reply =
         \\{"type":"message_stop"}
     );
 
-/// The mock transport and the no-providers fallback replay these fixed bytes.
+/// Replay one fixed reply for every open. The no-providers fallback uses it.
 pub const CannedTransport = struct {
     bytes: []const u8,
 
@@ -201,57 +192,11 @@ pub const CannedTransport = struct {
 
     /// Allocate a fresh reader in `arena`. Concurrent runs then share no offset state.
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
-        _ = info;
-        _ = request;
+        _ = .{ request, info };
         const self: *CannedTransport = @ptrCast(@alignCast(ctx));
-        const reader = try arena.create(CannedReader);
+        const reader = try arena.create(ReplayReader);
         reader.* = .{ .bytes = self.bytes };
-        return .{ .ctx = reader, .vtable = &CannedReader.vtable };
-    }
-};
-
-/// This value represents one in-flight replay of canned bytes. The turn arena owns it.
-const CannedReader = struct {
-    bytes: []const u8,
-    offset: usize = 0,
-
-    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinitNoop };
-
-    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-        std.debug.assert(buf.len > 0);
-        const self: *CannedReader = @ptrCast(@alignCast(ctx));
-        const remaining = self.bytes[self.offset..];
-        const n = @min(buf.len, remaining.len);
-        @memcpy(buf[0..n], remaining[0..n]);
-        self.offset += n;
-        return n;
-    }
-    fn deinitNoop(_: *anyopaque) void {}
-};
-
-/// This transport returns one canned reply per `open`, in order. It drives multi-round turns. It records
-/// each request body when `capture` holds an allocator, so a test can inspect the built request.
-pub const SequenceTransport = struct {
-    replies: []const []const u8,
-    index: usize = 0,
-    capture: ?std.mem.Allocator = null,
-    requests: std.ArrayList([]const u8) = .empty,
-
-    pub fn transport(self: *SequenceTransport) Transport {
-        return .{ .ctx = self, .vtable = &vtable };
-    }
-
-    const vtable: Transport.VTable = .{ .open = open };
-
-    fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
-        _ = info;
-        const self: *SequenceTransport = @ptrCast(@alignCast(ctx));
-        if (self.index >= self.replies.len) return error.NoMoreReplies;
-        if (self.capture) |alloc| try self.requests.append(alloc, try alloc.dupe(u8, request.body));
-        const reader = try arena.create(CannedReader);
-        reader.* = .{ .bytes = self.replies[self.index] };
-        self.index += 1;
-        return .{ .ctx = reader, .vtable = &CannedReader.vtable };
+        return reader.body();
     }
 };
 
@@ -265,18 +210,21 @@ pub const Step = union(enum) {
     body_then_error: struct { prefix: []const u8, err: anyerror },
 };
 
-/// A transport that plays scripted attempts. A test drives the retry loop with it and counts the
-/// opens, so a loop that never repeats fails the test.
+/// Play one scripted attempt per open, in order. It counts the opens and can capture each request.
 pub const ScriptedTransport = struct {
     steps: []const Step,
     index: usize = 0,
     /// The number of open calls the loop made.
     opens: usize = 0,
+    /// Split each body across reads. A value of 0 fills the caller buffer.
+    chunk_size: usize = 0,
     /// The adapter reports this for every attempt.
     delivery: AttemptInfo.Delivery = .definitely_unsent,
     retry_after_ms: ?u64 = null,
     /// A test sets this to observe the first open.
     opened: ?*bool = null,
+    capture: ?std.mem.Allocator = null,
+    requests: std.ArrayList([]const u8) = .empty,
 
     pub fn transport(self: *ScriptedTransport) Transport {
         return .{ .ctx = self, .vtable = &vtable };
@@ -285,54 +233,31 @@ pub const ScriptedTransport = struct {
     const vtable: Transport.VTable = .{ .open = open };
 
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: Request, info: *AttemptInfo) anyerror!ResponseBody {
-        _ = request;
         const self: *ScriptedTransport = @ptrCast(@alignCast(ctx));
         self.opens += 1;
         if (self.opened) |flag| flag.* = true;
         info.delivery = self.delivery;
         info.retry_after_ms = self.retry_after_ms;
+        if (self.capture) |alloc| try self.requests.append(alloc, try alloc.dupe(u8, request.body));
         if (self.index >= self.steps.len) return error.NoMoreReplies;
         const step = self.steps[self.index];
         self.index += 1;
-        switch (step) {
+        const reader = try arena.create(ReplayReader);
+        reader.* = switch (step) {
             .open_error => |err| return err,
-            .body => |bytes| {
-                const reader = try arena.create(ScriptedReader);
-                reader.* = .{ .bytes = bytes };
-                return .{ .ctx = reader, .vtable = &ScriptedReader.vtable };
-            },
-            .body_then_error => |b| {
-                const reader = try arena.create(ScriptedReader);
-                reader.* = .{ .bytes = b.prefix, .after = b.err };
-                return .{ .ctx = reader, .vtable = &ScriptedReader.vtable };
-            },
-        }
+            .body => |bytes| .{ .bytes = bytes, .chunk_size = self.chunk_size },
+            .body_then_error => |b| .{ .bytes = b.prefix, .chunk_size = self.chunk_size, .after = b.err },
+        };
+        return reader.body();
     }
 };
 
-/// A reader that streams its bytes once, then ends or fails.
-const ScriptedReader = struct {
-    bytes: []const u8,
-    sent: bool = false,
-    after: ?anyerror = null,
-
-    const vtable: ResponseBody.VTable = .{ .read = read, .deinit = deinit };
-
-    fn read(ctx: *anyopaque, buf: []u8) anyerror!usize {
-        const self: *ScriptedReader = @ptrCast(@alignCast(ctx));
-        if (!self.sent) {
-            self.sent = true;
-            const n = @min(buf.len, self.bytes.len);
-            @memcpy(buf[0..n], self.bytes[0..n]);
-            if (n != 0) return n;
-        }
-        if (self.after) |err| return err;
-        return 0;
-    }
-    fn deinit(ctx: *anyopaque) void {
-        _ = ctx;
-    }
-};
+/// Build a body-only script: one plain reply per open.
+pub fn replies(comptime list: []const []const u8) [list.len]Step {
+    var out: [list.len]Step = undefined;
+    for (&out, list) |*step, bytes| step.* = .{ .body = bytes };
+    return out;
+}
 
 var placeholder_instance = CannedTransport{ .bytes = placeholder_reply };
 
@@ -417,8 +342,8 @@ test "stream delivers each event to the callback across fragmented reads" {
     defer collector.deinit();
 
     // A 7-byte chunk splits SSE events across reads, so the parser holds cross-read state.
-    var mock = MockTransport.init(canned_text_turn, 7);
-    try stream(testing.allocator, mock.body(), &reducer, &collector, StreamCollector.on);
+    var replay: ReplayReader = .{ .bytes = canned_text_turn, .chunk_size = 7 };
+    try stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on);
 
     try testing.expectEqualStrings("Hello", collector.text.items);
     try testing.expectEqual(wire.enums.StopReason.stop, collector.stop.?);
@@ -438,8 +363,8 @@ test "stream reports a truncated stream" {
     var collector: StreamCollector = .{ .gpa = testing.allocator };
     defer collector.deinit();
 
-    var mock = MockTransport.init(canned_truncated, 0);
-    try testing.expectError(error.IncompleteStream, stream(testing.allocator, mock.body(), &reducer, &collector, StreamCollector.on));
+    var replay: ReplayReader = .{ .bytes = canned_truncated };
+    try testing.expectError(error.IncompleteStream, stream(testing.allocator, replay.body(), &reducer, &collector, StreamCollector.on));
 }
 
 const wire = @import("wire");

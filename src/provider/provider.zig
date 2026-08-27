@@ -21,6 +21,8 @@ pub const config = @import("config/providers.zig");
 
 pub const transport = @import("transport.zig");
 pub const http_transport = @import("transport/http.zig");
+pub const failure = @import("failure.zig");
+pub const retry = @import("retry.zig");
 
 /// Return the protocol's request serializer and stream reducer. A new protocol needs one arm here.
 pub fn Adapter(comptime protocol: wire.enums.ProviderProtocol) type {

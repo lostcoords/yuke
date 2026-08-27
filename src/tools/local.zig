@@ -89,12 +89,9 @@ pub const LocalHost = struct {
         return exec_local.run(self.io, self.root, self.env, scratch, spec);
     }
 
-    /// Expand an initial `~` and resolve a relative path against the workspace root. An absolute path or a
-    /// `..` escape is allowed (no confinement). The caller owns the result.
+    /// Anchor a tool path at the workspace root. `paths.anchorAt` holds the rules for every tool.
     fn resolve(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) FsError![]const u8 {
-        const expanded = if (self.env) |e| try paths.expandHome(scratch, e, path) else path;
-        if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(scratch, &.{expanded});
-        return std.fs.path.resolve(scratch, &.{ self.root, expanded });
+        return paths.anchorAt(scratch, self.env, self.root, path);
     }
 };
 
