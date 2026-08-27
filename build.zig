@@ -64,6 +64,13 @@ pub fn build(b: *std.Build) void {
     });
     const run_wire_tests = addTestRun(b, "wire", "Run wire module tests", wire);
 
+    const diff = b.addModule("diff", .{
+        .root_source_file = b.path("lib/diff/diff.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_diff_tests = addTestRun(b, "diff", "Run diff module tests", diff);
+
     const websocket = b.addModule("websocket", .{
         .root_source_file = b.path("lib/websocket/websocket.zig"),
         .target = target,
@@ -176,6 +183,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sql_tests.step);
     test_step.dependOn(&run_sqlgen_tests.step);
     test_step.dependOn(&run_wire_tests.step);
+    test_step.dependOn(&run_diff_tests.step);
     test_step.dependOn(&run_websocket_tests.step);
     test_step.dependOn(&run_term_tests.step);
     test_step.dependOn(&run_js_tests.step);
