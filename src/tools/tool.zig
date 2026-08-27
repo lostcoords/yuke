@@ -68,10 +68,26 @@ pub const ToolHost = struct {
         /// Read a bounded line range. The result comes from `scratch`. The handler must copy the data
         /// it keeps into `out`. The backend rejects a RETURNED line that is not valid UTF-8.
         readRange: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead,
+
+        /// Read the exact bytes of a whole file. `max_bytes` limits the result.
+        /// The result comes from `scratch`. The backend rejects invalid UTF-8.
+        readAll: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) HostError![]const u8,
+
+        /// Replace a file with `content`. The backend keeps the permissions and replaces atomically.
+        /// The backend rejects a symlink, a hard link, or a special file.
+        writeFile: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, content: []const u8) HostError!void,
     };
 
     pub fn readRange(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead {
         return self.vtable.readRange(self.ctx, scratch, path, range, limits);
+    }
+
+    pub fn readAll(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) HostError![]const u8 {
+        return self.vtable.readAll(self.ctx, scratch, path, max_bytes);
+    }
+
+    pub fn writeFile(self: ToolHost, scratch: std.mem.Allocator, path: []const u8, content: []const u8) HostError!void {
+        return self.vtable.writeFile(self.ctx, scratch, path, content);
     }
 };
 

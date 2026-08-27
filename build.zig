@@ -107,6 +107,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "wire", .module = wire },
+            .{ .name = "diff", .module = diff },
             .{ .name = "sql", .module = sql },
             .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             .{ .name = "zio", .module = zio.module("zio") },
@@ -159,6 +160,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zio", .module = zio.module("zio") },
                 .{ .name = "websocket", .module = websocket },
                 .{ .name = "wire", .module = wire },
+                .{ .name = "diff", .module = diff },
                 .{ .name = "sql", .module = sql },
                 .{ .name = "zqlite", .module = zqlite.module("zqlite") },
                 .{ .name = "term", .module = term },

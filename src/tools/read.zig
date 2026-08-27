@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const t = @import("tool.zig");
+const test_host = @import("test_host.zig");
 
 /// A line number fits in u32. The bound also keeps `number` clear of an unsigned overflow.
 const max_line = std.math.maxInt(u32);
@@ -72,7 +73,11 @@ const FakeHost = struct {
     seen: ?t.Range = null,
     seen_limits: ?t.ReadLimits = null,
 
-    const vtable: t.ToolHost.VTable = .{ .readRange = readRange };
+    const vtable: t.ToolHost.VTable = blk: {
+        var v = test_host.unsupported;
+        v.readRange = readRange;
+        break :blk v;
+    };
 
     fn host(self: *FakeHost) t.ToolHost {
         return .{ .ctx = self, .vtable = &vtable };

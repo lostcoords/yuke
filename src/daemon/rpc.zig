@@ -203,6 +203,7 @@ const transport = @import("../provider/transport.zig");
 const provider = @import("../provider/provider.zig");
 const domain_session = @import("../domain/session.zig");
 const tools = @import("../tools/tool.zig");
+const test_host = @import("../tools/test_host.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 const TestState = struct {
@@ -1246,7 +1247,11 @@ const BatchGates = struct {
 const GatedHost = struct {
     gates: *BatchGates,
 
-    const vtable: tools.ToolHost.VTable = .{ .readRange = readRange };
+    const vtable: tools.ToolHost.VTable = blk: {
+        var v = test_host.unsupported; // The gated tests call only readRange.
+        v.readRange = readRange;
+        break :blk v;
+    };
     fn host(self: *GatedHost) tools.ToolHost {
         return .{ .ctx = self, .vtable = &vtable };
     }

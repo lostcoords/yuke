@@ -16,11 +16,12 @@ pub const LocalHost = struct {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    const vtable: t.ToolHost.VTable = .{ .readRange = readRange };
+    const vtable: t.ToolHost.VTable = .{ .readRange = readRange, .readAll = readAll, .writeFile = writeFile };
 
     fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: t.Range, limits: t.ReadLimits) t.HostError!t.RangeRead {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        try requireRegularFile(self.io, full);
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         // One buffered line at a time. The scan never holds the whole file, whatever its size.
@@ -33,6 +34,53 @@ pub const LocalHost = struct {
             // The open call accepts a directory on POSIX. The first read reports this case.
             error.ReadFailed => if (reader.err) |e| mapError(e) else error.HostFailure,
         };
+    }
+
+    fn readAll(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) t.HostError![]const u8 {
+        const self: *LocalHost = @ptrCast(@alignCast(ctx));
+        const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        try requireRegularFile(self.io, full);
+        const text = std.Io.Dir.cwd().readFileAlloc(self.io, full, scratch, .limited(max_bytes)) catch |err| return mapError(err);
+        // A caller may write the returned bytes. The backend must validate every byte.
+        if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
+        return text;
+    }
+
+    fn writeFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, content: []const u8) t.HostError!void {
+        const self: *LocalHost = @ptrCast(@alignCast(ctx));
+        const full = self.resolve(scratch, path) catch |err| return mapError(err);
+        // The root has no parent and names a directory, so it can never accept a write.
+        const parent = std.fs.path.dirname(full) orelse return error.NotAFile;
+        const base = std.fs.path.basename(full);
+        if (base.len == 0) return error.NotAFile;
+
+        var dir = std.Io.Dir.cwd().openDir(self.io, parent, .{}) catch |err| return mapError(err);
+        defer dir.close(self.io);
+        const permissions = try targetPermissions(dir, self.io, base);
+
+        // `File.Atomic` writes a temporary file beside the target, then renames it over the target.
+        // Its `deinit` removes that temporary file after a failure.
+        var atomic = dir.createFileAtomic(self.io, base, .{ .permissions = permissions, .replace = true }) catch |err| return mapError(err);
+        defer atomic.deinit(self.io);
+        // `openat` applies the process umask, so restore the permissions on the temporary file itself.
+        atomic.file.setPermissions(self.io, permissions) catch |err| return mapError(err);
+        var buffer: [4096]u8 = undefined;
+        var writer = atomic.file.writer(self.io, &buffer);
+        writer.interface.writeAll(content) catch return mapError(writer.err orelse error.Unexpected);
+        writer.interface.flush() catch return mapError(writer.err orelse error.Unexpected);
+        atomic.replace(self.io) catch |err| return mapError(err);
+    }
+
+    /// Return the permissions for a replacement. Use the default permissions for a missing target.
+    /// Reject a symlink, a hard link, or a special file.
+    fn targetPermissions(dir: std.Io.Dir, io: std.Io, base: []const u8) t.HostError!std.Io.File.Permissions {
+        const stat = dir.statFile(io, base, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => return .default_file,
+            else => return mapError(err),
+        };
+        if (stat.kind != .file) return error.NotAFile;
+        if (stat.nlink > 1) return error.NotAFile; // A rename removes this name. The other links remain.
+        return stat.permissions;
     }
 
     /// Expand an initial `~` and resolve a relative path against the workspace root. An absolute path or a
@@ -152,7 +200,9 @@ const ExpandError = @typeInfo(@typeInfo(@TypeOf(paths.expandHome)).@"fn".return_
 
 /// Every native error the local backend can raise. `mapError` covers this set, not `anyerror`.
 const FsError = ExpandError || std.mem.Allocator.Error || std.Io.File.OpenError;
-const NativeError = FsError || std.Io.File.Reader.Error;
+const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatFileError ||
+    std.Io.Dir.OpenError || std.Io.Dir.CreateFileAtomicError || std.Io.File.Writer.Error ||
+    std.Io.File.SetPermissionsError || std.Io.Dir.RenameError;
 
 /// Map a native file-system error to `HostError`. Map an unlisted error to `HostFailure`. The open
 /// call accepts a directory on POSIX. The first read reports that case.
@@ -161,10 +211,19 @@ fn mapError(err: NativeError) t.HostError {
         error.FileNotFound, error.NotDir => error.NotFound,
         error.IsDir => error.NotAFile,
         error.AccessDenied, error.PermissionDenied => error.AccessDenied,
+        // `readFileAlloc` reports the byte limit this way. The caller must see the size, not a fault.
+        error.StreamTooLong, error.FileTooBig => error.TooLarge,
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         else => error.HostFailure,
     };
+}
+
+/// Reject a path that does not name a regular file. A read of a FIFO or a device blocks forever, so
+/// every read must check first. A read follows a symlink; a write must not.
+fn requireRegularFile(io: std.Io, path: []const u8) t.HostError!void {
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return mapError(err);
+    if (stat.kind != .file) return error.NotAFile;
 }
 
 const testing = std.testing;
@@ -386,4 +445,88 @@ test "LocalHost does not confine reads to the workspace" {
     // An absolute path outside the workspace reads freely (no confinement).
     const got = try local.host().readRange(a, outside, .{}, test_limits);
     try testing.expectEqualStrings("secret\n", got.text);
+}
+
+test "LocalHost readAll returns exact bytes and reports the size limit" {
+    var f: Fixture = undefined;
+    try f.init("one\ntwo");
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    const h = local.host();
+
+    // The bytes must be exact. `readRange` cuts long lines, so a write-back needs this path.
+    try testing.expectEqualStrings("one\ntwo", try h.readAll(a, "a.txt", 1024));
+    // `readFileAlloc` reports the limit as StreamTooLong. The caller must see the size.
+    try testing.expectError(error.TooLarge, h.readAll(a, "a.txt", 3));
+    try testing.expectError(error.NotFound, h.readAll(a, "nope.txt", 1024));
+    try testing.expectError(error.NotAFile, h.readAll(a, ".", 1024));
+}
+
+test "LocalHost readAll refuses a file it cannot decode as UTF-8" {
+    var f: Fixture = undefined;
+    try f.init("\xff\xfe\n");
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    try testing.expectError(error.InvalidUtf8, local.host().readAll(arena.allocator(), "a.txt", 1024));
+}
+
+test "LocalHost writeFile replaces a file and keeps its permissions" {
+    var f: Fixture = undefined;
+    try f.init("old\n");
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Mark the file executable. A replacement must keep that bit through the umask.
+    var handle = try f.tmp.dir.openFile(testing.io, "a.txt", .{ .mode = .read_write });
+    try handle.setPermissions(testing.io, .executable_file);
+    handle.close(testing.io);
+
+    const before = (try f.tmp.dir.statFile(testing.io, "a.txt", .{})).permissions;
+
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    try local.host().writeFile(a, "a.txt", "new content\n");
+    try testing.expectEqualStrings("new content\n", try local.host().readAll(a, "a.txt", 1024));
+
+    // The replacement keeps the old permissions. `openat` applies the umask, so the write restores them.
+    const after = (try f.tmp.dir.statFile(testing.io, "a.txt", .{})).permissions;
+    try testing.expectEqual(before, after);
+}
+
+test "LocalHost writeFile creates a file that does not exist" {
+    var f: Fixture = undefined;
+    try f.init("unused\n");
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    try local.host().writeFile(a, "fresh.txt", "hello\n");
+    try testing.expectEqualStrings("hello\n", try local.host().readAll(a, "fresh.txt", 1024));
+}
+
+test "LocalHost writeFile refuses a target that is not a regular file" {
+    var f: Fixture = undefined;
+    try f.init("target\n");
+    defer f.deinit();
+    try f.tmp.dir.symLink(testing.io, "a.txt", "link.txt", .{});
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
+    const h = local.host();
+    // A rename replaces the link itself, so a write through a symlink would change the wrong object.
+    try testing.expectError(error.NotAFile, h.writeFile(a, "link.txt", "x"));
+    try testing.expectError(error.NotAFile, h.writeFile(a, ".", "x"));
+    try testing.expectError(error.NotAFile, h.writeFile(a, "/", "x"));
+    // The target keeps its content.
+    try testing.expectEqualStrings("target\n", try h.readAll(a, "a.txt", 1024));
 }
