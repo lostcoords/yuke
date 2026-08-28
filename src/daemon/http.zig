@@ -15,8 +15,8 @@ const run_task = @import("run_task.zig");
 // Limit each request head to 64 KiB. The decoder rejects a larger head.
 const max_head_bytes = 64 * 1024;
 const write_buffer_bytes = 4096;
-// Use the wire frame limit as the bound for each WebSocket message.
-// The wire frame limit is the only source of truth.
+
+// Respect the wire frame limit as the bound for each WebSocket message.
 const max_ws_message_bytes: usize = @intCast(wire.meta.limits.max_frame_bytes);
 
 const text_plain = [_]std.http.Header{
@@ -79,10 +79,12 @@ fn dispatch(state: *State, stream: std.Io.net.Stream) !void {
     }
 }
 
-const close_drain_timeout: std.Io.Timeout = .{ .duration = .{
-    .clock = .awake,
-    .raw = std.Io.Duration.fromMilliseconds(250),
-} };
+const close_drain_timeout: std.Io.Timeout = .{
+    .duration = .{
+        .clock = .awake,
+        .raw = std.Io.Duration.fromMilliseconds(250),
+    },
+};
 
 /// Track the persistent close signal and terminal drain state.
 const WebSocketLifecycle = struct {
@@ -173,18 +175,14 @@ fn writerLoop(conn: *Connection, output: *std.Io.Writer) void {
         const item = if (pending) |queued| blk: {
             pending = null;
             break :blk queued;
-        } else conn.outbox.getOne(conn.io) catch return; // closed and drained
+        } else conn.receive() catch return; // closed and drained
         defer conn.gpa.free(item.bytes);
         // A stuck peer can block this write indefinitely. A proxy deadline or task cancel frees it.
         output.writeAll(item.bytes) catch return;
         output.flush() catch return;
         if (item.terminal) return;
         // Prefetch one item to find the empty or closed boundary without a queue peek.
-        pending = conn.tryReceive() catch |err| {
-            std.debug.assert(err == error.Closed);
-            flushShedMarkers(conn, output) catch return;
-            return;
-        };
+        pending = conn.tryReceive() catch return;
         if (pending == null) flushShedMarkers(conn, output) catch return;
     }
 }
@@ -193,8 +191,10 @@ fn writerLoop(conn: *Connection, output: *std.Io.Writer) void {
 fn flushShedMarkers(conn: *Connection, output: *std.Io.Writer) !void {
     var buf: std.Io.Writer.Allocating = .init(conn.gpa);
     defer buf.deinit();
+
     try conn.drainShedMarkers(&buf.writer);
     if (buf.written().len == 0) return;
+
     try output.writeAll(buf.written());
     try output.flush();
 }

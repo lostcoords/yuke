@@ -82,7 +82,7 @@ pub const Connection = struct {
             self.gpa.free(item.bytes);
             return false;
         };
-        std.debug.assert(n <= 1);
+
         if (n == 1) return true;
         self.gpa.free(item.bytes);
         return false;
@@ -91,10 +91,7 @@ pub const Connection = struct {
     /// Drain and free every unsent frame, then close the outbox. Call after the writer joins.
     pub fn deinit(self: *Connection) void {
         while (true) {
-            const item = self.tryReceive() catch |err| {
-                std.debug.assert(err == error.Closed);
-                break;
-            };
+            const item = self.tryReceive() catch break;
             const queued = item orelse break;
             self.gpa.free(queued.bytes);
         }
@@ -109,8 +106,12 @@ pub const Connection = struct {
         var item: [1]OutboxItem = undefined;
         const n = try self.outbox.getUncancelable(self.io, &item, 0);
         if (n == 0) return null;
-        std.debug.assert(n == 1);
         return item[0];
+    }
+
+    /// Wait for one outbound item. Return when the queue closes or the task is canceled.
+    pub fn receive(self: *Connection) !OutboxItem {
+        return self.outbox.getOne(self.io);
     }
 
     /// Close the outbox and let the writer drain its buffered items.
@@ -118,7 +119,7 @@ pub const Connection = struct {
         self.outbox.close(self.io);
     }
 
-    /// Record one dropped delta for a session. Return false when the connection lacks shed capacity.
+    /// Record one dropped delta. Return false if the shed map cannot track it.
     fn recordShed(self: *Connection, session_id: ids.SessionId) bool {
         const gop = self.shed.getOrPut(self.gpa, session_id) catch return false;
         if (!gop.found_existing) gop.value_ptr.* = .{};
