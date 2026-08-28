@@ -58,6 +58,12 @@ pub const Database = struct {
         return .{ .conn = conn, .queries = try queries_gen.Queries.prepareAll(conn) };
     }
 
+    /// Begin a write transaction. The caller defers `deinit` and then calls `commit`.
+    pub fn begin(self: *Database) !Transaction {
+        try self.conn.execNoArgs("BEGIN IMMEDIATE");
+        return .{ .conn = self.conn };
+    }
+
     /// Open a migrated in-memory database. Tests in every module call this.
     pub fn openTest() !Database {
         return open(try zqlite.open(":memory:", test_flags));
@@ -66,6 +72,24 @@ pub const Database = struct {
     pub fn deinit(self: *Database) void {
         self.queries.deinit();
         self.conn.close();
+        self.* = undefined;
+    }
+};
+
+/// One open write transaction. `commit` ends it; `deinit` rolls back an uncommitted one.
+pub const Transaction = struct {
+    conn: sql.Connection,
+    open: bool = true,
+
+    pub fn commit(self: *Transaction) !void {
+        std.debug.assert(self.open);
+        try self.conn.execNoArgs("COMMIT");
+        self.open = false;
+    }
+
+    /// Roll back the transaction. A commit makes this a no-op.
+    pub fn deinit(self: *Transaction) void {
+        if (self.open) self.conn.execNoArgs("ROLLBACK") catch {};
         self.* = undefined;
     }
 };

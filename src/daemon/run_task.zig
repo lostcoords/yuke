@@ -54,8 +54,8 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
     std.debug.assert(slot.progress.current != null); // bind must open round 1 before launch
     slot.retry_budget = state.retry_budget; // The budget covers this run, not one request.
     // The caller already folded and published run.started. This spawns the run task.
-    const run_id = slot.handle.started.run_id;
-    const session_id = slot.handle.started.session_id;
+    const run_id = slot.runId();
+    const session_id = slot.sessionId();
     slot.phase = .running;
     state.run_group.concurrent(state.io, runSession, .{ state, slot }) catch |err| {
         std.log.err("cannot launch run {d}: {t}", .{ run_id, err });
@@ -74,7 +74,7 @@ pub fn launchSlot(state: *State, slot: *RunSlot) !void {
 
 /// Run one turn. The State task group owns this task. The session owns `slot` until cleanup.
 fn runSession(state: *State, slot: *RunSlot) void {
-    const session_id = slot.handle.started.session_id;
+    const session_id = slot.sessionId();
     defer finishSlot(state, session_id, slot);
 
     const rt = state.sessions.get(session_id) orelse unreachable;
@@ -109,7 +109,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
         const started_note: wire.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
             .session_id = session_id,
             .message_id = slot.progress.current.?.message_id,
-            .run_id = slot.handle.started.run_id,
+            .run_id = slot.runId(),
             .config_rev = slot.handle.started.config_rev,
             .agent = agent_name,
             .created_at_ms = created_at,
@@ -191,7 +191,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
 /// Commit the final round and fault the slot on a commit error.
 fn commitFinal(state: *State, arena: std.mem.Allocator, slot: *RunSlot, live: ?*const draft.Draft, usage: ?message.TokenUsage, terminal: Terminal) void {
     _ = commitRound(state, arena, slot, live, usage, terminal, .final) catch |err| {
-        faultSlot(state, slot.handle.started.session_id, slot, err);
+        faultSlot(state, slot.sessionId(), slot, err);
         return;
     };
 }
@@ -248,17 +248,17 @@ fn publishRetrying(state: *State, slot: *RunSlot, number: u8, err: anyerror, del
     // left. Never log the API key. A user report of odd retry behavior has nothing to read today.
     const detail = failure(err);
     slot.retry_state = .{
-        .run_id = slot.handle.started.run_id,
+        .run_id = slot.runId(),
         .attempt = number,
         .max_attempts = state.retry_policy.max_attempts,
         .next_at_ms = state.nowMillis() + delay_ms,
         .code = detail.code,
         .message = detail.message,
     };
-    publishBestEffort(state, slot.handle.started.session_id, .{
+    publishBestEffort(state, slot.sessionId(), .{
         .method = .@"session.activity_changed",
         .params = .{ .session_activity_changed_data = .{
-            .session_id = slot.handle.started.session_id,
+            .session_id = slot.sessionId(),
             .activity = .{
                 .state = .{ .retrying = slot.retry_state.? },
                 .config = null,
@@ -450,7 +450,7 @@ fn commitRound(
     };
     const committed: message.Message = .{ .assistant = .{
         .id = round.message_id,
-        .run_id = slot.handle.started.run_id,
+        .run_id = slot.runId(),
         .config_rev = slot.handle.started.config_rev,
         .agent = agent_name,
         .content = content,
@@ -470,20 +470,20 @@ fn commitRound(
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     // Copy before the transaction, so an allocation failure consumes no durable sequence.
     const owned = try wire.dupe(arena, committed);
-    const session_id = slot.handle.started.session_id;
+    const session_id = slot.sessionId();
 
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try state.db.begin();
+    defer tx.deinit();
     const seq = try message_store.appendCommittedMessage(&state.db, arena, session_id.raw, state.newId(), ended_at, owned);
     const done: ?wire.run.RunDoneData = if (completion == .final) try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
         .session_id = session_id,
         .seq = 0,
-        .run_id = slot.handle.started.run_id,
+        .run_id = slot.runId(),
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
     }) else null;
-    try state.db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     if (completion == .final) slot.phase = .terminalized;
 
     const rt = state.sessions.get(session_id) orelse unreachable;
@@ -500,19 +500,19 @@ fn finishRunOpen(state: *State, arena: std.mem.Allocator, slot: *RunSlot, outcom
     const old_cancel_protection = state.io.swapCancelProtection(.blocked);
     defer _ = state.io.swapCancelProtection(old_cancel_protection);
 
-    const session_id = slot.handle.started.session_id;
+    const session_id = slot.sessionId();
     const ended_at = @max(state.nowMillis(), slot.handle.started.started_at_ms);
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try state.db.begin();
+    defer tx.deinit();
     const done = try run_store.appendOpenDone(&state.db, arena, state.newId(), ended_at, .{
         .session_id = session_id,
         .seq = 0,
-        .run_id = slot.handle.started.run_id,
+        .run_id = slot.runId(),
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
     });
-    try state.db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     slot.phase = .terminalized;
 
     const rt = state.sessions.get(session_id) orelse unreachable;
@@ -523,10 +523,10 @@ fn finishRunOpen(state: *State, arena: std.mem.Allocator, slot: *RunSlot, outcom
 fn beginRound(state: *State, slot: *RunSlot) !void {
     var arena_state = std.heap.ArenaAllocator.init(state.gpa);
     defer arena_state.deinit();
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
-    const message_id = try event_store.allocMessageId(&state.db, arena_state.allocator(), slot.handle.started.session_id.raw);
-    try state.db.conn.execNoArgs("COMMIT");
+    var tx = try state.db.begin();
+    defer tx.deinit();
+    const message_id = try event_store.allocMessageId(&state.db, arena_state.allocator(), slot.sessionId().raw);
+    try tx.commit();
     slot.progress.rounds_started += 1;
     slot.progress.current = .{ .number = slot.progress.rounds_started, .message_id = message_id };
 }
@@ -535,7 +535,7 @@ fn beginRound(state: *State, slot: *RunSlot) !void {
 fn faultSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot, err: anyerror) void {
     slot.phase = .faulted;
     if (state.sessions.get(session_id)) |rt| rt.faulted = true;
-    std.log.err("run {d} could not commit its terminal state: {t}", .{ slot.handle.started.run_id, err });
+    std.log.err("run {d} could not commit its terminal state: {t}", .{ slot.runId(), err });
 }
 
 fn finishSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot) void {
@@ -640,7 +640,7 @@ const Streamer = struct {
     /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
     fn emit(self: *Streamer, note: wire.rpc.Notification) !void {
         try self.session.applyAuthoritative(note.params);
-        try publish(self.state, self.slot.handle.started.session_id, note);
+        try publish(self.state, self.slot.sessionId(), note);
     }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
@@ -655,7 +655,7 @@ const Streamer = struct {
                 if (self.open != 0) return error.Protocol;
                 // A tool block has no metadata yet. Open its part at block_stopped instead.
                 if (b.kind != .tool) try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
-                    .session_id = self.slot.handle.started.session_id,
+                    .session_id = self.slot.sessionId(),
                     .message_id = self.slot.progress.current.?.message_id,
                     .part = emptyPart(b.block, b.kind),
                 } } });
@@ -689,7 +689,7 @@ const Streamer = struct {
         const offset = self.offsets.items[index];
         try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
         try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
-            .session_id = self.slot.handle.started.session_id,
+            .session_id = self.slot.sessionId(),
             .message_id = self.slot.progress.current.?.message_id,
             .part_id = part_id,
             .delta = text,
@@ -706,7 +706,7 @@ const Streamer = struct {
         };
         try checkStreamCap(0, len);
         try self.emit(.{ .method = .@"message.part_finalized", .params = .{ .message_part_finalized_data = .{
-            .session_id = self.slot.handle.started.session_id,
+            .session_id = self.slot.sessionId(),
             .message_id = self.slot.progress.current.?.message_id,
             .part_id = part_id,
             .final = final,
@@ -720,7 +720,7 @@ const Streamer = struct {
         try checkStreamCap(0, call.call_id.len);
         try checkStreamCap(0, call.arguments.len);
         try self.emit(.{ .method = .@"message.part_added", .params = .{ .message_part_added_data = .{
-            .session_id = self.slot.handle.started.session_id,
+            .session_id = self.slot.sessionId(),
             .message_id = self.slot.progress.current.?.message_id,
             .part = .{ .tool = .{
                 .id = part_id,
@@ -735,7 +735,7 @@ const Streamer = struct {
     /// Fold and publish a tool state transition for one part.
     fn emitToolState(self: *Streamer, part_id: wire.ids.PartId, state: wire.tool.ToolState) !void {
         try self.emit(.{ .method = .@"tool.state_changed", .params = .{ .tool_state_changed_data = .{
-            .session_id = self.slot.handle.started.session_id,
+            .session_id = self.slot.sessionId(),
             .message_id = self.slot.progress.current.?.message_id,
             .part_id = part_id,
             .state = state,

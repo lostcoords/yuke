@@ -47,8 +47,8 @@ pub fn replace(
     model_rows: []const CatalogModel,
     etag_value: []const u8,
 ) !void {
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try db.begin();
+    defer tx.deinit();
 
     try db.queries.delete_models.exec(.{});
     try db.queries.delete_providers.exec(.{});
@@ -65,7 +65,7 @@ pub fn replace(
     }
     try db.queries.set_etag.exec(.{ .v = etag_value });
 
-    try db.conn.execNoArgs("COMMIT");
+    try tx.commit();
 }
 
 /// Load providers into `arena` in id order. The result borrows `arena`.

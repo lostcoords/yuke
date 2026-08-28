@@ -71,8 +71,8 @@ pub fn beginTurn(
     input: []const wire.content.ContentPart,
     config_rev: wire.ids.ConfigRev,
 ) !Started {
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try db.begin();
+    defer tx.deinit();
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const user_message_id = try event_store.allocMessageId(db, arena, session_id);
@@ -89,7 +89,7 @@ pub fn beginTurn(
     const commits = try arena.alloc(wire.message.MessageCommittedData, 1);
     commits[0] = .{ .session_id = .bytes(session_id), .seq = user_seq, .message = user_message };
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, user_now);
-    try db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     return .{
         .handle = .{ .input_id = input_id, .started = started },
         .first_round = .{ .number = 1, .message_id = assistant_message_id },
@@ -106,8 +106,8 @@ pub fn beginQueuedTurn(
     session_id: [16]u8,
     config_rev: wire.ids.ConfigRev,
 ) !Started {
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try db.begin();
+    defer tx.deinit();
 
     const queued = try input_store.list(db, arena, session_id);
     if (queued.len == 0) return error.NoRow;
@@ -139,7 +139,7 @@ pub fn beginQueuedTurn(
 
     const assistant_message_id = try event_store.allocMessageId(db, arena, session_id);
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, started_at_ms);
-    try db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     return .{
         .handle = .{ .input_id = first_input_id, .started = started },
         .first_round = .{ .number = 1, .message_id = assistant_message_id },

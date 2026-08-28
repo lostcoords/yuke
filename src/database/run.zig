@@ -53,8 +53,8 @@ pub fn recoverOpen(
     const open = try session.openRuns(db, arena);
     for (open) |item| {
         const kind = std.meta.stringToEnum(wire.enums.RunKind, item.kind) orelse return error.CorruptDatabase;
-        try db.conn.execNoArgs("BEGIN IMMEDIATE");
-        errdefer db.conn.execNoArgs("ROLLBACK") catch {};
+        var tx = try db.begin();
+        defer tx.deinit();
         _ = try appendOpenDone(db, arena, try event_ids.next(), @max(ended_at_ms, item.started_at_ms), .{
             .session_id = .bytes(item.session_id),
             .seq = 0,
@@ -63,7 +63,7 @@ pub fn recoverOpen(
             .timing = .{ .started_at_ms = item.started_at_ms, .ended_at_ms = @max(ended_at_ms, item.started_at_ms) },
             .outcome = .{ .canceled = .{} },
         });
-        try db.conn.execNoArgs("COMMIT");
+        try tx.commit();
     }
     return open.len;
 }

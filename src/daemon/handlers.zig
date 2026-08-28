@@ -362,10 +362,10 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     // A run is active. Persist and fold the queued input before the response.
     if (rt.session.queue.depth() >= wire.meta.limits.max_queued_inputs) return error.QueueFull;
     const now = state.nowMillis();
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try state.db.begin();
+    defer tx.deinit();
     const queued = try input_store.enqueue(&state.db, arena, sid, state.newId(), now, content, now);
-    try state.db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     run_task.emitDurable(state, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
     } });
@@ -379,13 +379,13 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
     const rt = try state.activate(params.session_id);
 
     const now = state.nowMillis();
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try state.db.begin();
+    defer tx.deinit();
     const canceled = input_store.cancel(&state.db, arena, sid, state.newId(), now, params.input_id) catch |err| switch (err) {
         error.NoRow => return error.UnknownInput,
         else => return err,
     };
-    try state.db.conn.execNoArgs("COMMIT");
+    try tx.commit();
     run_task.emitDurable(state, rt, .{ .method = .@"input.canceled", .params = .{
         .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
     } });
@@ -410,14 +410,14 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
         cleared_inputs = try arena.alloc(wire.ids.InputId, pending.len);
         const cleared_seqs = try arena.alloc(wire.ids.Seq, pending.len);
         const now = state.nowMillis();
-        try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-        errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+        var tx = try state.db.begin();
+        defer tx.deinit();
         for (pending, 0..) |entry, i| {
             cleared_inputs[i] = entry.input.input_id;
             const canceled = try input_store.cancel(&state.db, arena, sid, state.newId(), now, entry.input.input_id);
             cleared_seqs[i] = canceled;
         }
-        try state.db.conn.execNoArgs("COMMIT");
+        try tx.commit();
         for (cleared_inputs, cleared_seqs) |input_id, seq| {
             run_task.emitDurable(state, rt, .{ .method = .@"input.canceled", .params = .{
                 .input_canceled_data = .{ .session_id = params.session_id, .seq = seq, .input_id = input_id },
@@ -451,8 +451,8 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     const workspace_id = state.newId();
     const id = state.newId();
 
-    try state.db.conn.execNoArgs("BEGIN IMMEDIATE");
-    errdefer state.db.conn.execNoArgs("ROLLBACK") catch {};
+    var tx = try state.db.begin();
+    defer tx.deinit();
     const workspace = try workspace_store.resolve(&state.db, arena, workspace_id, root, title, root);
     try session_store.create(&state.db, .{
         .id = id,
@@ -471,7 +471,7 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     const system_prompt = params.system_prompt orelse state.defaults.system_prompt;
     if (system_prompt) |sys| try session_store.setPrompt(&state.db, id, sys);
     try config_store.recordInitial(&state.db, id, model, reasoning);
-    try state.db.conn.execNoArgs("COMMIT");
+    try tx.commit();
 
     return .{ .session = .{
         .id = .bytes(id),

@@ -45,6 +45,16 @@ pub const RunSlot = struct {
         return self;
     }
 
+    /// The session that owns this run. Valid after `bind`.
+    pub fn sessionId(self: *const RunSlot) wire.ids.SessionId {
+        return self.handle.started.session_id;
+    }
+
+    /// The durable run id. Valid after `bind`.
+    pub fn runId(self: *const RunSlot) wire.ids.RunId {
+        return self.handle.started.run_id;
+    }
+
     /// Bind the committed run handle and open the first round. Call once after Tx1 and before launch.
     pub fn bind(self: *RunSlot, handle: run.RunHandle, first_round: run.RoundState) void {
         std.debug.assert(self.phase == .pending_start);
