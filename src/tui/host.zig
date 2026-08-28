@@ -114,7 +114,7 @@ pub const Host = struct {
         };
         errdefer ld.deinit();
 
-        const cl = client_module.Client.create(gpa) catch return error.OutOfMemory;
+        const cl = client_module.Client.create(gpa, io) catch return error.OutOfMemory;
         errdefer cl.destroy();
 
         self.* = .{
@@ -164,6 +164,8 @@ pub const Host = struct {
     pub fn close(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
         self.phase = .closing;
+        // Phase 1: reject pending client promises and free their roots before the final drain.
+        self.client.shutdown(self);
         var rounds: u32 = 0;
         while (self.runtime.isJobPending()) {
             try self.drainJobs();
@@ -1223,7 +1225,7 @@ test "yuke:client wraps the native and rejects an unimplemented connect" {
         \\  "sessionSendInput", "sessionCancelRun", "workspaceBrowse"].every((k) => typeof client[k] === "function");
         \\let code = "";
         \\try { await client.connect({}); } catch (e) { code = e.code; }
-        \\globalThis.result = surface && code === "not_implemented" && client.connectionState("local") === "disconnected" ? "ok" : "fail";
+        \\globalThis.result = surface && code === "bad_options" && client.connectionState("local") === "disconnected" ? "ok" : "fail";
     , "c.js");
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(out);
@@ -1458,5 +1460,6 @@ test {
     _ = @import("loop.zig");
     _ = @import("app.zig");
     _ = @import("report.zig");
+    _ = @import("owner.zig");
     _ = @import("modules/client.zig");
 }

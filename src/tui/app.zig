@@ -5,9 +5,11 @@ const host_mod = @import("host.zig");
 const Host = host_mod.Host;
 const tui_loop = @import("loop.zig");
 const report = @import("report.zig");
+const owner = @import("owner.zig");
 
 const Event = term_pkg.Event;
-const Channel = zio.Channel(Msg);
+const Msg = owner.Msg;
+const Channel = owner.Channel;
 
 const frame_buf_bytes = 256 * 1024;
 
@@ -24,45 +26,6 @@ pub const Options = struct {
     /// Skip the user entry file.
     /// `--safe-mode` sets `safe_mode` to `true`.
     safe_mode: bool = false,
-};
-
-/// One owner message: a parser event with owned key text, or a synthetic tick.
-const Msg = union(enum) {
-    event: EventBuf,
-    tick,
-
-    fn from(ev: Event) Msg {
-        return .{ .event = EventBuf.from(ev) };
-    }
-};
-
-/// A parser event plus a copy of its key text. The copy survives the next parse.
-const EventBuf = struct {
-    ev: Event,
-    text: [128]u8 = undefined,
-    n: u8 = 0,
-
-    fn from(ev: Event) EventBuf {
-        var m: EventBuf = .{ .ev = ev };
-        const key = switch (ev) {
-            .key_press, .key_release => |k| k,
-            else => return m,
-        };
-        const t = key.text orelse return m;
-        m.n = @intCast(@min(t.len, m.text.len));
-        @memcpy(m.text[0..m.n], t[0..m.n]);
-        return m;
-    }
-
-    fn event(self: *EventBuf) Event {
-        if (self.n == 0) return self.ev;
-        var ev = self.ev;
-        switch (ev) {
-            .key_press, .key_release => |*k| k.text = self.text[0..self.n],
-            else => {},
-        }
-        return ev;
-    }
 };
 
 /// Open the TTY, enter the alternate screen, and run until quit.
@@ -97,12 +60,16 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     var input: term_pkg.Input = .{};
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
+    host.client.bind(&ch);
     var group: zio.Group = .init;
     defer {
+        // Stop the daemon readers first, so no reader sends into the channel while it drains.
+        host.client.stopReaders();
         ch.close(.immediate);
         tty.shutdownInput();
         tick_wake.set();
         group.cancel();
+        drainChannel(gpa, &ch);
     }
 
     try group.spawn(inputTask, .{ &tty, &input, &ch });
@@ -191,8 +158,20 @@ pub fn serve(host: *Host, ch: *Channel) !void {
         switch (msg) {
             .tick => try absorbScriptFault(host, tui_loop.stepTick(host)),
             .event => |*e| try absorbScriptFault(host, tui_loop.step(host, e.event())),
+            .daemon => |*d| {
+                defer msg.deinit(host.gpa);
+                try absorbScriptFault(host, host.client.onDaemon(host, d));
+            },
         }
     }
+}
+
+/// Free every message the owner never received. `stopReaders` must run first, so no reader sends.
+fn drainChannel(gpa: std.mem.Allocator, ch: *Channel) void {
+    while (ch.tryReceive()) |m| {
+        var msg = m;
+        msg.deinit(gpa);
+    } else |_| {}
 }
 
 /// The tick task enqueues plain messages. It never calls QuickJS.
@@ -261,15 +240,6 @@ fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
         };
         ch.send(Msg.from(.{ .winsize = ws })) catch return;
     }
-}
-
-test "queued key text survives a later parse" {
-    var input: term_pkg.Input = .{};
-    try input.push("ab");
-    const first = (try input.next()).?;
-    var buf = EventBuf.from(first);
-    _ = try input.next();
-    try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }
 
 test "serve stops when q arrives" {

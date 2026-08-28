@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "quickjs", .module = quickjs.module("quickjs") },
             .{ .name = "zio", .module = zio.module("zio") },
             .{ .name = "term", .module = term },
+            .{ .name = "websocket", .module = websocket },
         },
     });
     const run_js_tests = addTestRun(b, "js", "Run JS host tests", js_mod);

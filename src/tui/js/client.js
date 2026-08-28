@@ -1,6 +1,10 @@
 // yuke:client — the typed client surface over the native `yuke:client-native` bridge. It wraps the
 // natives with error types and JSON decode; the native module owns the transport and the replicas.
 import { native } from "yuke:client-native";
+import { events } from "yuke:core";
+
+// The native emits connection events on the owner. Send them to the shared bus.
+native.setEventSink((ev) => events.emit(ev.type, ev));
 
 export class ClientError extends Error {
   constructor(code) {
@@ -48,10 +52,11 @@ export function devices() {
 
 // A JSON-RPC request. The native returns the response text; unwrap the result or throw an RpcError.
 function request(connKey, method, params) {
-  return native.request(connKey, method, params).then(
+  return native.request(connKey, method, JSON.stringify(params)).then(
     (text) => {
       const response = JSON.parse(text);
-      if (response.error) throw new RpcError(response.error.code, response.error.message);
+      if (response && response.error) throw new RpcError(response.error.code, response.error.message);
+      if (!response || !("result" in response)) throw new RpcError(-1, "malformed response");
       return response.result;
     },
     (reason) => {

@@ -7,7 +7,7 @@ export const config = {
   vim: false,
   daemon: {
     host: "127.0.0.1",
-    port: 9853,
+    port: 7880,
     autoConnect: true,
     retryMs: 5000,
     // Set a token for a protected daemon.
