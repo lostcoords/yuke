@@ -490,7 +490,7 @@ const sidebar = new SessionList({ onOpen: (connKey, id) => chatSession.open(conn
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
 // --- explorer -----------------------------------------------------------------------------
-// A floating directory navigator over the workspace.browse fixture, fuzzy-filtered as you type.
+// A floating directory navigator over the workspace.browse RPC, fuzzy-filtered as you type.
 // Enter/→ descends; ← goes to the parent; Esc closes.
 function openExplorer(startPath) {
   const state = { path: startPath || "", parent: null };

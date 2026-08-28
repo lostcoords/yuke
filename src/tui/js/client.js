@@ -55,8 +55,11 @@ function request(connKey, method, params) {
   return native.request(connKey, method, JSON.stringify(params)).then(
     (text) => {
       const response = JSON.parse(text);
-      if (response && response.error) throw new RpcError(response.error.code, response.error.message);
-      if (!response || !("result" in response)) throw new RpcError(-1, "malformed response");
+      if (typeof response !== "object" || response === null || Array.isArray(response)) {
+        throw new RpcError(-1, "malformed response");
+      }
+      if (response.error) throw new RpcError(response.error.code, response.error.message);
+      if (!("result" in response)) throw new RpcError(-1, "malformed response");
       return response.result;
     },
     (reason) => {
