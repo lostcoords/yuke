@@ -107,8 +107,11 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
         try group.spawn(winchTask, .{ &tty, &ch });
     }
 
-    try host.evalModule("import \"yuke:core\";", "boot.js");
+    // Boot compiles and runs the whole baked graph, so do not bound it. Bound the user callbacks.
+    host.interrupt_budget = std.math.maxInt(u32);
+    try host.evalModule("import \"yuke:core\";\nimport \"yuke:defaults\";", "boot.js");
     if (!opts.safe_mode) try absorbScriptFault(host, evalUserEntry(host, opts.config_dir));
+    host.interrupt_budget = host_mod.default_interrupt_budget;
     try serve(host, &ch);
 }
 

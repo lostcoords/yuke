@@ -94,6 +94,7 @@ export class List {
     this.dimGroup = opts.dimGroup || "UIDim";
     this.dimSelGroup = opts.dimSelGroup || "UIDimSel";
 
+    this.drawCursor = opts.drawCursor !== false; // an unfocused list can hide its cursor
     this.selectedKey = null;
     this.scroll = 0; // first visible item index
     this._page = PAGE_FALLBACK; // last visible item count, for page moves
@@ -220,7 +221,7 @@ export class List {
       // Clamp to the rect so a tall item in a short pane does not paint past it.
       const drawH = Math.min(this.itemHeight, y + h - sy);
       if (drawH <= 0) break;
-      const isSel = this.isSelectable(it) && this.key(it) === this.selectedKey;
+      const isSel = this.drawCursor && this.isSelectable(it) && this.key(it) === this.selectedKey;
       const cell = normalizeCell(this.format(it, i));
 
       if (isSel) fill(x, sy, w, drawH, this.selGroup);

@@ -12,7 +12,7 @@ pub const term = term_module;
 /// Limit the client heap. Scripts fail when they exceed this limit.
 pub const memory_limit: usize = 64 * 1024 * 1024;
 /// Limit the QuickJS stack below the zio coroutine stack.
-pub const stack_limit: usize = 1 * 1024 * 1024;
+pub const stack_limit: usize = 4 * 1024 * 1024;
 /// Limit jobs per drain so Promise chains do not starve the owner.
 pub const job_budget: u32 = 1024;
 /// Bound one evaluation or callback by interrupt polls, a coarse CPU proxy. Wall time is not used,
@@ -35,6 +35,8 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:md", .source = @embedFile("js/md.js") },
     .{ .name = "yuke:ui", .source = @embedFile("js/ui.js") },
     .{ .name = "yuke:client", .source = @embedFile("js/client.js") },
+    .{ .name = "yuke:vim", .source = @embedFile("js/vim.js") },
+    .{ .name = "yuke:defaults", .source = @embedFile("js/defaults.js") },
 };
 
 pub const Options = struct {
@@ -1278,6 +1280,57 @@ test "yuke:client fixtures serve sessions and stream a reply over ticks" {
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(out);
     const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 24, .cols = 80, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.interrupt_budget = std.math.maxInt(u32); // the boot graph is CPU work, not a runaway script
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule("import \"yuke:core\";\nimport \"yuke:defaults\";", "boot.js");
+
+    const loop = @import("loop.zig");
+    // start dials the fake local client, which seeds the sidebar; a tick forces a fresh frame.
+    try loop.start(host);
+    try loop.stepTick(host);
+
+    // the sidebar shows the brand and a seeded, two-line session row.
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "yuke") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "markdown demo") != null);
+
+    // the command registry and the vim toggle are wired.
+    try host.evalModule(
+        \\import { command, root } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\const fail = [];
+        \\command.perform("ui:palette");
+        \\if (root.overlays.length !== 1) fail.push("palette");
+        \\root.popOverlay();
+        \\const before = !!plugins.get("vim");
+        \\command.perform("vim:toggle");
+        \\if (!!plugins.get("vim") === before) fail.push("vim-toggle");
+        \\command.perform("vim:toggle");
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "act.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
     defer host.ctx.freeCString(text.ptr);
     try std.testing.expectEqualStrings("ok", text);
 }
