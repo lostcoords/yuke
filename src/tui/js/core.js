@@ -1,5 +1,64 @@
 import { term } from "yuke:term";
 
+// --- config -------------------------------------------------------------------------------
+// Runtime configuration. Direct daemon writes bypass validation.
+export const config = {
+  plugins: Object.create(null),
+  vim: false,
+  daemon: {
+    host: "127.0.0.1",
+    port: 9853,
+    autoConnect: true,
+    retryMs: 5000,
+    // Set a token for a protected daemon.
+  },
+};
+
+// Merge a user config and return it for a default export.
+export function defineConfig(partial) {
+  if (partial == null || typeof partial !== "object" || Array.isArray(partial)) {
+    throw new TypeError("defineConfig expects a config object");
+  }
+  for (const key of Object.keys(partial)) {
+    if (key !== "daemon" && key !== "vim") throw new TypeError("defineConfig: unknown key " + key);
+  }
+  const vim = partial.vim;
+  const daemon = partial.daemon;
+  if (vim !== undefined && typeof vim !== "boolean") {
+    throw new TypeError("defineConfig: vim must be a boolean");
+  }
+  if (daemon !== undefined) applyDaemonConfig(daemon);
+  if (vim !== undefined) config.vim = vim;
+  return partial;
+}
+
+const DAEMON_FIELDS = {
+  host: (v) => (typeof v === "string" && v !== "") || "daemon.host must be a non-empty string",
+  port: (v) => (Number.isInteger(v) && v >= 1 && v <= 65535) || "daemon.port must be an integer 1..65535",
+  autoConnect: (v) => typeof v === "boolean" || "daemon.autoConnect must be a boolean",
+  retryMs: (v) => (Number.isInteger(v) && v >= 1) || "daemon.retryMs must be a positive integer",
+  token: (v) => typeof v === "string" || "daemon.token must be a string",
+};
+
+// Validate a daemon patch before it changes the config.
+function applyDaemonConfig(d) {
+  if (d == null || typeof d !== "object" || Array.isArray(d)) {
+    throw new TypeError("defineConfig.daemon expects an object");
+  }
+  const patch = {};
+  for (const key of Object.keys(d)) {
+    if (!Object.prototype.hasOwnProperty.call(DAEMON_FIELDS, key)) {
+      throw new TypeError("defineConfig.daemon: unknown key " + key);
+    }
+    const check = DAEMON_FIELDS[key];
+    if (d[key] === undefined) continue;
+    const ok = check(d[key]);
+    if (ok !== true) throw new TypeError(ok);
+    patch[key] = d[key];
+  }
+  Object.assign(config.daemon, patch);
+}
+
 // Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
 const link_depth_max = 100;
 
@@ -311,8 +370,16 @@ export function strokeOf(ev) {
   );
 }
 
+// Return committed text. Use the folded key only for an unmodified legacy event.
+export function textOf(ev) {
+  if (ev.code !== "char") return "";
+  if (ev.text) return ev.text;
+  if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
+  return ev.char || "";
+}
+
 export function isTextKey(ev) {
-  return ev.code === "char" && !!ev.char && ((ev.mods | 0) & ~MOD_SHIFT) === 0;
+  return textOf(ev) !== "";
 }
 
 function normalizeStroke(stroke) {
@@ -422,8 +489,9 @@ export class TextInput {
         if (this.caret > 0) this._splice(0, this.caret, "");
         return true;
     }
-    if (isTextKey(ev)) {
-      this._splice(this.caret, this.caret, ev.char);
+    const ins = textOf(ev);
+    if (ins) {
+      this._splice(this.caret, this.caret, ins);
       return true;
     }
     return false;

@@ -31,6 +31,7 @@ pub const Error = error{
 pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:core", .source = @embedFile("js/core.js") },
     .{ .name = "yuke:ext", .source = @embedFile("js/ext.js") },
+    .{ .name = "yuke:md", .source = @embedFile("js/md.js") },
 };
 
 pub const Options = struct {
@@ -976,6 +977,121 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "ext.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:core config validates and TextInput inserts committed text" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { config, defineConfig, TextInput } from "yuke:core";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
+        \\
+        \\// defineConfig merges values and rejects invalid fields.
+        \\defineConfig({ daemon: { host: "10.0.0.1", port: 1234 }, vim: true });
+        \\check("cfg-merge", config.daemon.host === "10.0.0.1" && config.daemon.port === 1234 && config.vim === true);
+        \\check("cfg-unknown-key", throws(() => defineConfig({ nope: 1 })));
+        \\check("cfg-prototype-key", throws(() => defineConfig({ daemon: { toString: undefined } })));
+        \\check("cfg-bad-port", throws(() => defineConfig({ daemon: { port: 0 } })));
+        \\check("cfg-bad-vim", throws(() => defineConfig({ vim: "yes" })));
+        \\// A bad patch changes no config value.
+        \\const before = config.daemon.host;
+        \\const beforeVim = config.vim;
+        \\throws(() => defineConfig({ vim: false, daemon: { host: "9.9.9.9", retryMs: -1 } }));
+        \\check("cfg-atomic", config.daemon.host === before && config.vim === beforeVim);
+        \\
+        \\// TextInput uses committed text before the folded key.
+        \\const key = (o) => Object.assign({ type: "key", code: "char", event: "press", char: "", text: "", mods: 0 }, o);
+        \\const insert = (evs) => { const ti = new TextInput(); for (const e of evs) ti.onKey(e); return ti.text; };
+        \\check("upper", insert([key({ char: "a", text: "A", mods: 1 }), key({ char: "b", text: "B", mods: 1 })]) === "AB");
+        \\check("shifted-symbol", insert([key({ char: "1", text: "!", mods: 1 })]) === "!");
+        \\check("ime-cjk", insert([key({ char: "あ", text: "あ", mods: 0 })]) === "あ");
+        \\check("ime-zwj", insert([key({ char: "👨", text: "👨‍👩‍👧", mods: 0 })]) === "👨‍👩‍👧");
+        \\check("fallback-char", insert([key({ char: "x", text: "", mods: 1 })]) === "x");
+        \\check("altgr-text", insert([key({ char: "q", text: "@", mods: 6 })]) === "@");
+        \\// A command has no committed text.
+        \\check("ctrl-no-insert", insert([key({ char: "z", text: "", mods: 4 })]) === "");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "cfg.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:md renders the GFM subset and caches finalized blocks" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { renderRows, Document } from "yuke:md";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const has = (rows, group, text) => rows.some((r) => r.segments.some((s) => s.group === group && s.text === text));
+        \\
+        \\check("inline", has(renderRows("hello **bold** and `code`", 80), "MdStrong", "bold") &&
+        \\  has(renderRows("x `y` z", 80), "MdCode", "y"));
+        \\check("emphasis", has(renderRows("an *word* here", 80), "MdEm", "word"));
+        \\check("heading", has(renderRows("# Title", 80), "MdHeading", "Title"));
+        \\check("code", has(renderRows("```js\nx=1\n```", 80), "MdCodeBlock", "x=1"));
+        \\check("hr", renderRows("---", 80).some((r) => r.segments.some((s) => s.group === "MdRule")));
+        \\check("list", has(renderRows("- a\n- b", 80), "MdListMark", "• "));
+        \\check("quote", renderRows("> hi", 80).some((r) => r.segments.some((s) => s.group === "MdQuote")));
+        \\const noGroup = (rows, group) => !rows.some((r) => r.segments.some((s) => s.group === group));
+        \\// An underscore inside a word is not emphasis (code identifiers stay literal).
+        \\check("intraword-underscore", noGroup(renderRows("call foo_bar_baz now", 80), "MdEm"));
+        \\// A backslash escapes a marker, so it stays literal text.
+        \\check("escape", noGroup(renderRows("not \\*bold\\* here", 80), "MdStrong"));
+        \\// A link shows its text, never the URL.
+        \\{
+        \\  const rows = renderRows("see [docs](http://x) ok", 80);
+        \\  check("link-text", has(rows, "MdText", "docs") &&
+        \\    !rows.some((r) => r.segments.some((s) => s.text.indexOf("http") >= 0)));
+        \\}
+        \\// Double backticks let inline code hold a backtick.
+        \\check("code-backtick", has(renderRows("use ``a`b`` now", 80), "MdCode", "a`b"));
+        \\// A table renders a column border.
+        \\check("table", renderRows("| a | b |\n|---|---|\n| 1 | 2 |", 80).some((r) => r.segments.some((s) => s.group === "MdTableBorder")));
+        \\
+        \\// A long paragraph wraps to width and keeps every word.
+        \\const wrapped = renderRows("alpha bravo charlie delta", 11);
+        \\check("wrap", wrapped.length > 1);
+        \\
+        \\// An unclosed fence stays provisional code and is never cached.
+        \\{
+        \\  const doc = new Document();
+        \\  doc.setText("# H\n\n```\nx=1");
+        \\  check("open-fence", has(doc.rows(80), "MdCodeBlock", "x=1"));
+        \\  check("open-uncached", !doc._cache.has("```\nx=1"));
+        \\  check("final-cached", doc._cache.has("# H"));
+        \\}
+        \\
+        \\// A finalized block keeps its cache entry when the open tail grows.
+        \\{
+        \\  const doc = new Document();
+        \\  doc.setText("# H\n\npara one");
+        \\  doc.rows(80);
+        \\  doc.setText("# H\n\npara one two");
+        \\  const rows = doc.rows(80);
+        \\  check("append-heading", has(rows, "MdHeading", "H") && doc._cache.has("# H"));
+        \\  check("append-tail", rows.some((r) => r.segments.some((s) => s.text.indexOf("two") >= 0)));
+        \\}
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "md.js");
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(out);
     const text = try host.ctx.toCStringLen(out);
