@@ -1,6 +1,6 @@
-// yuke:client — a FAKE client over in-JS fixtures, with the surface the daemon client will have.
-// The default shell folds its events without a daemon; a real transport replaces it later.
-import { events, root } from "yuke:core";
+// yuke:client — the typed client surface over the native `yuke:client-native` bridge. It wraps the
+// natives with error types and JSON decode; the native module owns the transport and the replicas.
+import { native } from "yuke:client-native";
 
 export class ClientError extends Error {
   constructor(code) {
@@ -18,265 +18,105 @@ export class RpcError extends Error {
   }
 }
 
-// --- fixtures -----------------------------------------------------------------------------
-const IDLE_ACTIVITY = { state: { type: "idle" }, queued: 0, context_usage: null, pending_compaction: null };
-const WORKING_ACTIVITY = { state: { type: "working" }, queued: 0, context_usage: null, pending_compaction: null };
-const NOW = Date.now();
-
-const WORKSPACES = [{ id: "ws1", title: "yuke" }];
-
-const SEED = [
-  {
-    id: "s1",
-    title: "markdown demo",
-    workspace_id: "ws1",
-    model: "opus",
-    updated_at_ms: NOW - 120000,
-    messages: [
-      { id: "m1", type: "user", text: "show me a list and some code" },
-      { id: "m2", type: "assistant", text: "Here you go:\n\n- **one**\n- two\n\n```js\nconst x = 1;\n```" },
-    ],
-  },
-  { id: "s2", title: "", workspace_id: "ws1", model: "sonnet", updated_at_ms: NOW - 300000, messages: [] },
-];
-
-const BROWSE = {
-  path: "/repo",
-  parent: null,
-  entries: [
-    { name: "src", path: "/repo/src", is_git_repo: false },
-    { name: "README.md", path: "/repo/README.md", is_git_repo: false },
-  ],
-  next_cursor: null,
-};
-
-const REPLY = "This is a **streamed** reply with `code` and a final point.".split(" ");
-
-// --- state --------------------------------------------------------------------------------
-// `store` is the daemon-side truth per session; it survives a mount close and a disconnect.
-// `mounted` holds the client replicas by "connKey|id". `streams` drives the tick pump.
-const conns = new Map(); // key -> { key, name, state }
-const store = new Map(); // "connKey|id" -> { rev, messages, draft, queue }
-const mounted = new Set(); // "connKey|id"
-const streams = []; // { connKey, sessionId, s, words, i }
-let nextUid = 100;
-
-function rkey(connKey, id) {
-  return connKey + "|" + id;
+function clientError(reason) {
+  return reason instanceof ClientError ? reason : new ClientError(reason);
 }
 
-function newId() {
-  return "x" + nextUid++;
-}
-
-function summaryOf(id, s) {
-  const fx = SEED.find((x) => x.id === id) || {};
-  return {
-    id,
-    title: fx.title !== undefined ? fx.title : "",
-    workspace_id: fx.workspace_id,
-    model: fx.model,
-    updated_at_ms: s ? s.updated_at_ms : fx.updated_at_ms,
-  };
-}
-
-// Each connection keeps its own store for a session id, so two connections never share a session.
-function ensureStore(connKey, id) {
-  const key = rkey(connKey, id);
-  let s = store.get(key);
-  if (!s) {
-    const fx = SEED.find((x) => x.id === id);
-    s = { rev: 0, messages: fx ? fx.messages.map((m) => ({ ...m })) : [], draft: null, queue: [], updated_at_ms: fx ? fx.updated_at_ms : NOW };
-    store.set(key, s);
-  }
-  return s;
-}
-
-function mountedStore(connKey, id) {
-  const key = rkey(connKey, id);
-  return mounted.has(key) ? store.get(key) || null : null;
-}
-
-// Tell the sidebar this session's activity changed.
-function setActivity(connKey, id, activity) {
-  events.emit("index", { connKey, method: "session.activity_changed", params: { session_id: id, activity } });
-}
-
-// --- streaming ----------------------------------------------------------------------------
-// The tick service grows each open draft one word per tick, then commits it. The daemon pushes real
-// deltas the same way, so the shell folds them through the same "session" events.
-function startStream(connKey, id, s) {
-  s.draft = { id: newId(), type: "assistant", text: "" };
-  s.rev++;
-  s.updated_at_ms = Date.now();
-  streams.push({ connKey, sessionId: id, s, words: REPLY.slice(), i: 0 });
-  setActivity(connKey, id, WORKING_ACTIVITY);
-}
-
-export function _pumpStreams() {
-  for (let k = streams.length - 1; k >= 0; k--) {
-    const st = streams[k];
-    const s = st.s;
-    if (st.i < st.words.length) {
-      s.draft.text += (st.i === 0 ? "" : " ") + st.words[st.i];
-      st.i++;
-      s.rev++;
-      events.emit("session", { connKey: st.connKey, sessionId: st.sessionId, kind: "active", id: s.draft.id });
-      continue;
-    }
-    s.messages.push(s.draft);
-    s.draft = null;
-    s.rev++;
-    streams.splice(k, 1);
-    if (s.queue.length) {
-      s.queue.shift();
-      startStream(st.connKey, st.sessionId, s);
-    } else {
-      setActivity(st.connKey, st.sessionId, IDLE_ACTIVITY);
-    }
-    events.emit("session", { connKey: st.connKey, sessionId: st.sessionId, kind: "reload" });
-  }
-  return streams.length > 0;
-}
-
-const streamService = {
-  needsTick() {
-    return streams.length ? { periodMs: 80 } : null;
-  },
-  tick() {
-    _pumpStreams();
-  },
-};
-root.addService(streamService);
-
-// --- connection ---------------------------------------------------------------------------
 export function connect(options) {
-  const key = (options && options.connKey) || "local";
-  conns.set(key, { key, name: key === "local" ? "local" : key, state: "ready" });
-  events.emit("conn", { key, kind: "ready", workspaces: WORKSPACES });
-  return Promise.resolve();
-}
-
-export function disconnect(connKey) {
-  conns.delete(connKey);
-  // Drop the client replicas and streams; the daemon-side store survives. A partial draft commits,
-  // so no session is left with a stream that nothing advances.
-  for (let k = streams.length - 1; k >= 0; k--) {
-    if (streams[k].connKey !== connKey) continue;
-    const s = streams[k].s;
-    if (s.draft) {
-      s.messages.push(s.draft);
-      s.draft = null;
-      s.rev++;
-    }
-    streams.splice(k, 1);
-  }
-  for (const key of Array.from(mounted)) if (key.indexOf(connKey + "|") === 0) mounted.delete(key);
-  events.emit("conn", { key: connKey, kind: "close" });
-}
-
-export function connectionState(connKey) {
-  const c = conns.get(connKey);
-  return c ? c.state : "disconnected";
-}
-
-export function connections() {
-  return Array.from(conns.values());
-}
-
-export function devices() {
-  return Promise.resolve([]); // local only; no remote roster
-}
-
-// --- sessions -----------------------------------------------------------------------------
-export function sessionList(connKey, _params = {}) {
-  return Promise.resolve({
-    items: SEED.map((fx) => ({ session: summaryOf(fx.id, store.get(rkey(connKey, fx.id))), activity: IDLE_ACTIVITY })),
+  return native.connect(options).catch((reason) => {
+    throw clientError(reason);
   });
 }
 
+export function disconnect(connKey) {
+  native.disconnect(connKey);
+}
+
+export function connectionState(connKey) {
+  return native.state(connKey);
+}
+
+export function connections() {
+  return native.connections();
+}
+
+export function devices() {
+  return native.devices().catch((reason) => {
+    throw clientError(reason);
+  });
+}
+
+// A JSON-RPC request. The native returns the response text; unwrap the result or throw an RpcError.
+function request(connKey, method, params) {
+  return native.request(connKey, method, params).then(
+    (text) => {
+      const response = JSON.parse(text);
+      if (response.error) throw new RpcError(response.error.code, response.error.message);
+      return response.result;
+    },
+    (reason) => {
+      throw clientError(reason);
+    },
+  );
+}
+
+export function sessionList(connKey, params = {}) {
+  return request(connKey, "session.list", {
+    scope: { type: "all" },
+    population: { type: "top_level" },
+    view: "active_recent",
+    ...params,
+  });
+}
+
+// Mount a replica for (connKey, sessionId). Idempotent. It needs a resync before it folds.
 export function sessionOpen(connKey, sessionId) {
-  ensureStore(connKey, sessionId);
-  mounted.add(rkey(connKey, sessionId));
+  native.sessionOpen(connKey, sessionId);
 }
 
 export function sessionClose(connKey, sessionId) {
-  mounted.delete(rkey(connKey, sessionId));
+  native.sessionClose(connKey, sessionId);
 }
 
+// The change counter for that pair, or -1 when it is not mounted.
 export function sessionRev(connKey, sessionId) {
-  const s = mountedStore(connKey, sessionId);
-  return s ? s.rev : -1;
+  return native.sessionRev(connKey, sessionId);
 }
 
+// Install the ordered cut, so broadcasts fold again for that pair.
 export function sessionResync(connKey, sessionId) {
-  return Promise.resolve();
+  return native.sessionResync(connKey, sessionId).catch((reason) => {
+    throw clientError(reason);
+  });
 }
 
-// The outline: committed message descriptors plus the active draft, or null when not mounted.
+// The transcript outline (message ids, roles, and the draft), or null when not mounted.
 export function sessionOutline(connKey, sessionId) {
-  const s = mountedStore(connKey, sessionId);
-  if (!s) return null;
-  return {
-    messages: s.messages.map((m) => ({ id: m.id, type: m.type })),
-    active: s.draft ? { id: s.draft.id, type: "assistant" } : null,
-  };
+  return JSON.parse(native.sessionOutline(connKey, sessionId));
 }
 
+// The concatenated text of one message (committed or the draft), "" when absent.
 export function sessionText(connKey, sessionId, messageId) {
-  const s = mountedStore(connKey, sessionId);
-  if (!s) return "";
-  if (s.draft && s.draft.id === messageId) return s.draft.text;
-  const m = s.messages.find((x) => x.id === messageId);
-  return m ? m.text : "";
+  return native.sessionText(connKey, sessionId, messageId);
 }
 
+// Send `text` into `id`. The daemon commits it and streams the reply as broadcasts the replica folds.
 export function sessionSendInput(connKey, id, text) {
-  const s = mountedStore(connKey, id);
-  if (!s) return Promise.reject(new ClientError("not_open"));
-  const inputId = newId();
-  s.messages.push({ id: newId(), type: "user", text });
-  s.rev++;
-  s.updated_at_ms = Date.now();
-  let type;
-  if (s.draft) {
-    // A reply is already streaming, so queue this turn's reply behind it.
-    s.queue.push(inputId);
-    type = "queued";
-  } else {
-    startStream(connKey, id, s);
-    type = "started";
-  }
-  events.emit("session", { connKey, sessionId: id, kind: "reload" });
-  return Promise.resolve({ type, input_id: inputId });
+  return request(connKey, "session.send_input", {
+    session_id: id,
+    input: { type: "content", content: [{ type: "text", text }] },
+  });
 }
 
+// Interrupt the open session's active run; clearQueue also drops every queued input.
 export function sessionCancelRun(connKey, id, clearQueue = false) {
-  const s = mountedStore(connKey, id);
-  if (!s) return Promise.reject(new ClientError("not_open"));
-  for (let k = streams.length - 1; k >= 0; k--) {
-    if (streams[k].connKey === connKey && streams[k].sessionId === id) streams.splice(k, 1);
-  }
-  let canceled = null;
-  if (s.draft) {
-    canceled = s.draft.id;
-    s.messages.push(s.draft);
-    s.draft = null;
-    s.rev++;
-  }
-  const clearedInputs = clearQueue ? s.queue.splice(0).length : 0;
-  // A hard stop clears the queue; otherwise the next queued input still runs.
-  if (!clearQueue && s.queue.length) {
-    s.queue.shift();
-    startStream(connKey, id, s);
-  } else {
-    setActivity(connKey, id, IDLE_ACTIVITY);
-  }
-  if (canceled) events.emit("session", { connKey, sessionId: id, kind: "reload" });
-  return Promise.resolve({ canceled_run: canceled, cleared_inputs: clearedInputs, cleared_compaction: null });
+  return request(connKey, "session.cancel_run", {
+    session_id: id,
+    ...(clearQueue ? { clear_queue: true } : {}),
+  });
 }
 
-// A stub browse: it returns one fixed listing. The explorer does not descend yet.
+// The subdirectories of `params.path` (the daemon's default root when omitted), one page.
 export function workspaceBrowse(connKey, params = {}) {
-  return Promise.resolve({ ...BROWSE, path: params.path || BROWSE.path });
+  return request(connKey, "workspace.browse", params);
 }

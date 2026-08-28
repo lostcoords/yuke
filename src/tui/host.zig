@@ -5,6 +5,7 @@ const zio = @import("zio");
 const term_pkg = @import("term");
 const loader_mod = @import("loader.zig");
 const term_module = @import("modules/term.zig");
+const client_module = @import("modules/client.zig");
 
 pub const loader = loader_mod;
 pub const term = term_module;
@@ -79,6 +80,8 @@ pub const Host = struct {
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
     paint: Paint,
+    /// Client state for `yuke:client-native`.
+    client: *client_module.Client,
 
     pub const Phase = enum { open, closing, drained, destroyed };
 
@@ -111,6 +114,9 @@ pub const Host = struct {
         };
         errdefer ld.deinit();
 
+        const cl = client_module.Client.create(gpa) catch return error.OutOfMemory;
+        errdefer cl.destroy();
+
         self.* = .{
             .gpa = gpa,
             .runtime = runtime,
@@ -123,6 +129,7 @@ pub const Host = struct {
             .fault_text = undefined,
             .fault_text_len = 0,
             .paint = .{ .glyphs = .init(gpa) },
+            .client = cl,
         };
         errdefer self.paint.glyphs.deinit();
         runtime.setRuntimeOpaque(self);
@@ -130,6 +137,7 @@ pub const Host = struct {
         runtime.setInterruptHandler(self);
         runtime.setModuleLoader(&self.loader);
         try term_module.install(self);
+        try client_module.install(self);
         return self;
     }
 
@@ -141,6 +149,7 @@ pub const Host = struct {
         }
         self.finishDrain();
         std.debug.assert(self.phase == .drained);
+        self.client.destroy();
         self.freePaintRoots();
         self.paint.glyphs.deinit();
         self.ctx.deinit();
@@ -1202,109 +1211,20 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "there") != null);
 }
 
-test "yuke:client fixtures serve sessions and stream a reply over ticks" {
+test "yuke:client wraps the native and rejects an unimplemented connect" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
-
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { events } from "yuke:core";
         \\import * as client from "yuke:client";
-        \\globalThis.result = "pending";
-        \\await (async () => {
-        \\  const fail = [];
-        \\  const check = (name, cond) => { if (!cond) fail.push(name); };
-        \\
-        \\  // an absent connection is dialable, so the shell will connect it.
-        \\  check("disconnected", client.connectionState("remote:x") === "disconnected");
-        \\
-        \\  // connect emits a ready conn event and exposes the connection.
-        \\  let ready = null;
-        \\  events.on("conn", (ev) => { if (ev.kind === "ready") ready = ev; });
-        \\  await client.connect();
-        \\  check("conn-ready", ready && ready.key === "local");
-        \\  check("state", client.connectionState("local") === "ready");
-        \\  check("connections", client.connections().length === 1);
-        \\
-        \\  // the session list returns the seeded summaries.
-        \\  const list = await client.sessionList("local");
-        \\  check("list", list.items.length === 2 && list.items[0].session.id === "s1");
-        \\
-        \\  // an opened session exposes its outline and text.
-        \\  client.sessionOpen("local", "s1");
-        \\  const o = client.sessionOutline("local", "s1");
-        \\  check("outline", o.messages.length === 2 && o.messages[0].type === "user" && o.active === null);
-        \\  check("text", client.sessionText("local", "s1", "m2").indexOf("**one**") >= 0);
-        \\  check("rev", client.sessionRev("local", "s1") === 0);
-        \\
-        \\  // send_input appends the user turn and starts a streaming draft.
-        \\  const sessionEvents = [];
-        \\  events.on("session", (ev) => sessionEvents.push(ev.kind));
-        \\  const activity = [];
-        \\  events.on("index", (ev) => { if (ev.method === "session.activity_changed") activity.push(ev.params.activity.state.type); });
-        \\  await client.sessionSendInput("local", "s1", "hi");
-        \\  const afterSend = client.sessionOutline("local", "s1");
-        \\  check("user-added", afterSend.messages.length === 3 && afterSend.active !== null);
-        \\
-        \\  // the tick pump grows the draft, then commits it.
-        \\  client._pumpStreams();
-        \\  check("draft-grows", client.sessionText("local", "s1", afterSend.active.id).length > 0);
-        \\  check("active-event", sessionEvents.indexOf("active") >= 0);
-        \\  let guard = 0;
-        \\  while (client._pumpStreams() && guard++ < 100);
-        \\  const done = client.sessionOutline("local", "s1");
-        \\  check("committed", done.active === null && done.messages.length === 4);
-        \\  check("reload-event", sessionEvents.indexOf("reload") >= 0);
-        \\
-        \\  // the stream reported working then idle to the sidebar.
-        \\  check("activity", activity.indexOf("working") >= 0 && activity.indexOf("idle") >= 0);
-        \\
-        \\  // session state survives a close and reopen.
-        \\  client.sessionClose("local", "s1");
-        \\  check("unmounted", client.sessionRev("local", "s1") === -1);
-        \\  client.sessionOpen("local", "s1");
-        \\  check("persisted", client.sessionOutline("local", "s1").messages.length === 4);
-        \\
-        \\  // a second send queues behind the active stream; both replies commit.
-        \\  client.sessionOpen("local", "s2");
-        \\  await client.sessionSendInput("local", "s2", "a");
-        \\  const queued = await client.sessionSendInput("local", "s2", "b");
-        \\  check("queued", queued.type === "queued");
-        \\  let g2 = 0;
-        \\  while (client._pumpStreams() && g2++ < 300);
-        \\  const s2o = client.sessionOutline("local", "s2");
-        \\  check("queue-drained", s2o.messages.length === 4 && s2o.active === null);
-        \\
-        \\  // cancel commits the partial draft and reports a canceled run.
-        \\  await client.sessionSendInput("local", "s1", "x");
-        \\  client._pumpStreams();
-        \\  const cancel = await client.sessionCancelRun("local", "s1", true);
-        \\  check("cancel", cancel.canceled_run !== null && client.sessionOutline("local", "s1").active === null);
-        \\
-        \\  // two connections never share a session id.
-        \\  client.sessionOpen("a", "s1");
-        \\  client.sessionOpen("b", "s1");
-        \\  await client.sessionSendInput("a", "s1", "only-a");
-        \\  check("isolation", client.sessionOutline("b", "s1").messages.length === 2 && client.sessionOutline("a", "s1").messages.length === 3);
-        \\
-        \\  // cancel without a queue clear runs the queued input next.
-        \\  client.sessionOpen("a", "s2");
-        \\  await client.sessionSendInput("a", "s2", "p");
-        \\  await client.sessionSendInput("a", "s2", "q");
-        \\  await client.sessionCancelRun("a", "s2", false);
-        \\  check("cancel-keeps-queue", client.sessionOutline("a", "s2").active !== null);
-        \\  let g3 = 0;
-        \\  while (client._pumpStreams() && g3++ < 300);
-        \\  check("cancel-queue-drained", client.sessionOutline("a", "s2").messages.length === 4);
-        \\
-        \\  // browse returns fixture entries.
-        \\  const browse = await client.workspaceBrowse("local", {});
-        \\  check("browse", browse.entries.length === 2);
-        \\
-        \\  globalThis.result = fail.length ? fail.join(",") : "ok";
-        \\})();
-    , "client.js");
+        \\const surface = ["connect", "disconnect", "connectionState", "connections", "devices", "sessionList",
+        \\  "sessionOpen", "sessionClose", "sessionRev", "sessionResync", "sessionOutline", "sessionText",
+        \\  "sessionSendInput", "sessionCancelRun", "workspaceBrowse"].every((k) => typeof client[k] === "function");
+        \\let code = "";
+        \\try { await client.connect({}); } catch (e) { code = e.code; }
+        \\globalThis.result = surface && code === "not_implemented" && client.connectionState("local") === "disconnected" ? "ok" : "fail";
+    , "c.js");
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(out);
     const text = try host.ctx.toCStringLen(out);
@@ -1334,13 +1254,10 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
     try host.evalModule("import \"yuke:core\";\nimport \"yuke:defaults\";", "boot.js");
 
     const loop = @import("loop.zig");
-    // start dials the fake local client, which seeds the sidebar; a tick forces a fresh frame.
+    // R0 has no transport, so boot renders only the shell chrome.
     try loop.start(host);
     try loop.stepTick(host);
-
-    // the sidebar shows the brand and a seeded, two-line session row.
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "yuke") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "markdown demo") != null);
 
     // the command registry and the vim toggle are wired.
     try host.evalModule(
@@ -1541,4 +1458,5 @@ test {
     _ = @import("loop.zig");
     _ = @import("app.zig");
     _ = @import("report.zig");
+    _ = @import("modules/client.zig");
 }
