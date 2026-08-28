@@ -200,7 +200,7 @@ const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
 const provider = @import("../provider/provider.zig");
-const domain_session = @import("../domain/session.zig");
+const domain_session = @import("domain").session;
 const tools = @import("../tools/tool.zig");
 const test_host = @import("../tools/test_host.zig");
 

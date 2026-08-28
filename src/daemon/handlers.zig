@@ -8,7 +8,7 @@ const database = @import("../database/database.zig");
 const run = @import("../engine/run.zig");
 const run_task = @import("run_task.zig");
 const session_runtime = @import("session_runtime.zig");
-const domain_session = @import("../domain/session.zig");
+const domain_session = @import("domain").session;
 const paths = @import("../paths/paths.zig");
 
 const session_store = database.session;

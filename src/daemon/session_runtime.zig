@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const wire = @import("wire");
-const Session = @import("../domain/session.zig").Session;
+const Session = @import("domain").session.Session;
 const run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
 

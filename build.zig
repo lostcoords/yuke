@@ -89,6 +89,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_term_tests = addTestRun(b, "term", "Run term module tests", term);
 
+    // The daemon and the client fold this projection. The library is next to wire.
+    const domain = b.addModule("domain", .{
+        .root_source_file = b.path("lib/domain/domain.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wire", .module = wire },
+        },
+    });
+    const run_domain_tests = addTestRun(b, "domain", "Run domain module tests", domain);
+
     const js_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/host.zig"),
         .target = target,
@@ -98,6 +109,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zio", .module = zio.module("zio") },
             .{ .name = "term", .module = term },
             .{ .name = "websocket", .module = websocket },
+            .{ .name = "wire", .module = wire },
+            .{ .name = "domain", .module = domain },
         },
     });
     const run_js_tests = addTestRun(b, "js", "Run JS host tests", js_mod);
@@ -113,6 +126,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             .{ .name = "zio", .module = zio.module("zio") },
             .{ .name = "websocket", .module = websocket },
+            .{ .name = "domain", .module = domain },
         },
     });
     const run_layer_tests = b.addRunArtifact(b.addTest(.{
@@ -166,6 +180,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zqlite", .module = zqlite.module("zqlite") },
                 .{ .name = "term", .module = term },
                 .{ .name = "quickjs", .module = quickjs.module("quickjs") },
+                .{ .name = "domain", .module = domain },
             },
         }),
     });
@@ -189,6 +204,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_diff_tests.step);
     test_step.dependOn(&run_websocket_tests.step);
     test_step.dependOn(&run_term_tests.step);
+    test_step.dependOn(&run_domain_tests.step);
     test_step.dependOn(&run_js_tests.step);
     test_step.dependOn(&run_layer_tests.step);
     test_step.dependOn(&database_sqlgen_check.step);

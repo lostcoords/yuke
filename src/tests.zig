@@ -5,7 +5,6 @@ test {
     _ = @import("cli.zig");
     _ = @import("util.zig");
     _ = @import("engine/run.zig");
-    _ = @import("domain/domain.zig");
     _ = @import("provider/provider.zig");
     _ = @import("database/database.zig");
     _ = @import("paths/paths.zig");

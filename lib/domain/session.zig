@@ -103,7 +103,7 @@ pub const Session = struct {
 
     fn dispatch(self: *Session, bc: BroadcastData, mode: Mode) Error!Applied {
         // An event for another session never touches this projection.
-        if (payloadSession(bc)) |s| if (!std.meta.eql(s, self.id)) {
+        if (replicaSession(bc)) |s| if (!std.meta.eql(s, self.id)) {
             std.debug.assert(mode == .checked); // the daemon routes only its own session
             return .ignored;
         };
@@ -350,7 +350,9 @@ pub const Session = struct {
     }
 };
 
-fn payloadSession(bc: BroadcastData) ?ids.SessionId {
+/// Return the session id for a broadcast that changes a replica, else null.
+/// The client routes a broadcast to the right replica before it folds.
+pub fn replicaSession(bc: BroadcastData) ?ids.SessionId {
     return switch (bc) {
         .message_started_data => |d| d.session_id,
         .message_part_added_data => |d| d.session_id,
