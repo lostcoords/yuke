@@ -196,7 +196,6 @@ fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
 }
 
 const zio = @import("zio");
-const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
@@ -210,6 +209,7 @@ const TestState = struct {
     rt: *zio.Runtime,
     state: State,
     conn: *connection.Connection,
+    arena: std.heap.ArenaAllocator,
 
     fn init() !TestState {
         const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
@@ -220,19 +220,36 @@ const TestState = struct {
         errdefer std.testing.allocator.destroy(conn);
         conn.init(std.testing.allocator, rt.io());
         errdefer conn.deinit();
-        const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-        const db = try database.Database.open(sqlite);
+        const db = try database.Database.openTest();
         const state = try State.init(std.testing.allocator, rt.io(), db, .{ .listen = listen }, "/home/test");
-        return .{ .rt = rt, .state = state, .conn = conn };
+        return .{ .rt = rt, .state = state, .conn = conn, .arena = .init(std.testing.allocator) };
+    }
+
+    /// One arena per test. It frees every handler result at `deinit`.
+    fn allocator(self: *TestState) std.mem.Allocator {
+        return self.arena.allocator();
     }
 
     fn deinit(self: *TestState) void {
+        self.arena.deinit();
         self.conn.deinit();
         std.testing.allocator.destroy(self.conn);
         self.state.deinit();
         self.rt.deinit();
     }
 };
+
+/// Create a session and return its id.
+fn createSession(fixture: *TestState, a: std.mem.Allocator, params: wire.misc.CreateSession) !wire.ids.SessionId {
+    const created = try handlers.sessionCreate(&fixture.state, a, params);
+    return created.session.id;
+}
+
+/// Send one text input through `sendInputDirect`.
+fn sendText(fixture: *TestState, a: std.mem.Allocator, sid: wire.ids.SessionId, text: []const u8) !wire.session.SessionSendInputResult {
+    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = text } }};
+    return sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+}
 
 fn call(fixture: *TestState, frame: []const u8, buffer: []u8) ![]const u8 {
     var out: std.Io.Writer = .fixed(buffer);
@@ -426,9 +443,7 @@ test "dispatch session.create persists and returns the session" {
     try std.testing.expect(std.mem.indexOf(u8, written, "\"model\":\"opus\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"type\":\"root\"") != null);
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    try std.testing.expectEqual(@as(u64, 1), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
+    try std.testing.expectEqual(@as(u64, 1), try database.session.count(&fixture.state.db, fixture.allocator(), .{}));
 }
 
 test "session.create defaults the workspace to home and stacks sessions" {
@@ -448,9 +463,7 @@ test "session.create defaults the workspace to home and stacks sessions" {
     var out2: std.Io.Writer = .fixed(&buf2);
     _ = try handleRequest(&fixture.state, fixture.conn, &out2, empty_params);
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, arena.allocator(), .{}));
+    try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, fixture.allocator(), .{}));
 }
 
 test "session.create seeds the system prompt from the yuked.json default" {
@@ -458,14 +471,12 @@ test "session.create seeds the system prompt from the yuked.json default" {
     defer fixture.deinit();
     fixture.state.defaults = .{ .system_prompt = "be terse" };
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
     // No request prompt uses the daemon default; a request prompt overrides it.
-    const seeded = try handlers.sessionCreate(&fixture.state, arena.allocator(), .{});
-    const seeded_config = try handlers.sessionConfig(&fixture.state, arena.allocator(), .{ .session_id = seeded.session.id });
+    const seeded = try handlers.sessionCreate(&fixture.state, fixture.allocator(), .{});
+    const seeded_config = try handlers.sessionConfig(&fixture.state, fixture.allocator(), .{ .session_id = seeded.session.id });
     try std.testing.expectEqualStrings("be terse", seeded_config.system_prompt.?);
-    const overridden = try handlers.sessionCreate(&fixture.state, arena.allocator(), .{ .system_prompt = "be expansive" });
-    const overridden_config = try handlers.sessionConfig(&fixture.state, arena.allocator(), .{ .session_id = overridden.session.id });
+    const overridden = try handlers.sessionCreate(&fixture.state, fixture.allocator(), .{ .system_prompt = "be expansive" });
+    const overridden_config = try handlers.sessionConfig(&fixture.state, fixture.allocator(), .{ .session_id = overridden.session.id });
     try std.testing.expectEqualStrings("be expansive", overridden_config.system_prompt.?);
 }
 
@@ -507,9 +518,7 @@ test "session.list pages with a selector-bound cursor" {
     , &first_buffer);
     try std.testing.expectEqual(@as(usize, 2), try responseItemCount(first));
 
-    var cursor_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer cursor_arena.deinit();
-    const cursor = (try responseNextCursor(cursor_arena.allocator(), first)) orelse return error.MissingCursor;
+    const cursor = (try responseNextCursor(fixture.allocator(), first)) orelse return error.MissingCursor;
     var second_frame: [8192]u8 = undefined;
     const second_request = try std.fmt.bufPrint(
         &second_frame,
@@ -519,7 +528,7 @@ test "session.list pages with a selector-bound cursor" {
     var second_buffer: [8192]u8 = undefined;
     const second = try call(&fixture, second_request, &second_buffer);
     try std.testing.expectEqual(@as(usize, 1), try responseItemCount(second));
-    try std.testing.expect((try responseNextCursor(cursor_arena.allocator(), second)) == null);
+    try std.testing.expect((try responseNextCursor(fixture.allocator(), second)) == null);
 
     // Each session appears on exactly one page. The cursor advances through each row once.
     inline for (.{ "one", "two", "three" }) |name| {
@@ -538,17 +547,15 @@ test "session.list workspace scope filters sessions" {
     _ = try createCall(&fixture, "1", "/scope/one", &create_one);
     _ = try createCall(&fixture, "2", "/scope/two", &create_two);
 
-    var id_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer id_arena.deinit();
     const workspace = try database.workspace.resolve(
         &fixture.state.db,
-        id_arena.allocator(),
+        fixture.allocator(),
         [_]u8{9} ** 16,
         "/scope/one",
         "one",
         "/scope/one",
     );
-    var scope_buffer: std.Io.Writer.Allocating = .init(id_arena.allocator());
+    var scope_buffer: std.Io.Writer.Allocating = .init(fixture.allocator());
     const scope = wire.scope.SessionScope{ .workspace = .{ .workspace_id = .bytes(workspace.id) } };
     try std.json.Stringify.value(scope, .{}, &scope_buffer.writer);
     var request: [8192]u8 = undefined;
@@ -576,9 +583,7 @@ test "session.list rejects a cursor from a different selector" {
     const first = try call(&fixture,
         \\{"id":"2","method":"session.list","params":{"limit":1}}
     , &first_buffer);
-    var cursor_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer cursor_arena.deinit();
-    const cursor = (try responseNextCursor(cursor_arena.allocator(), first)) orelse return error.MissingCursor;
+    const cursor = (try responseNextCursor(fixture.allocator(), first)) orelse return error.MissingCursor;
 
     var request: [8192]u8 = undefined;
     const frame = try std.fmt.bufPrint(
@@ -595,9 +600,7 @@ test "session.list rejects a cursor from a different selector" {
 test "session.create records the initial config as revision 0" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
     // Read the initial config by its revision and as the current config.
@@ -609,9 +612,7 @@ test "session.create records the initial config as revision 0" {
 test "session.create canonicalizes the workspace so path spellings dedup to one workspace" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Three spellings of the same directory share one workspace id.
     const one = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/home/u/proj" });
@@ -628,9 +629,7 @@ test "session.create canonicalizes the workspace so path spellings dedup to one 
 test "session.create rejects a relative workspace path" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     try std.testing.expectError(error.RootNotAbsolute, handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "relative/dir" }));
 }
@@ -638,12 +637,9 @@ test "session.create rejects a relative workspace path" {
 test "session.history returns committed messages oldest-first with their configs" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/p", .model = "opus", .reasoning = "high" });
 
     const user: wire.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 150 } } };
     const assistant: wire.message.Message = .{
@@ -674,9 +670,7 @@ test "session.history returns committed messages oldest-first with their configs
 test "session reads reject an unknown session and an unknown revision" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const missing: wire.ids.SessionId = .bytes([_]u8{9} ** 16);
     try std.testing.expectError(error.UnknownSession, handlers.sessionConfig(&fixture.state, a, .{ .session_id = missing }));
@@ -701,19 +695,13 @@ test "session.config dispatch maps an unknown session to its error code" {
 test "a completed run drains every queued input into one next run" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/drain", .model = "mock" });
-    const sid = created.session.id;
-    const one = [_]wire.content.ContentPart{.{ .text = .{ .text = "one" } }};
-    const two = [_]wire.content.ContentPart{.{ .text = .{ .text = "two" } }};
-    const three = [_]wire.content.ContentPart{.{ .text = .{ .text = "three" } }};
-    const first = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &one } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/drain", .model = "mock" });
+    const first = try sendText(&fixture, a, sid, "one");
     try std.testing.expect(first == .started);
-    const second = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &two } } });
-    const third = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &three } } });
+    const second = try sendText(&fixture, a, sid, "two");
+    const third = try sendText(&fixture, a, sid, "three");
     try std.testing.expect(second == .queued);
     try std.testing.expect(third == .queued);
     try std.testing.expectEqual(@as(usize, 2), fixture.state.sessions.get(sid).?.session.queue.depth());
@@ -746,12 +734,9 @@ test "a completed run drains every queued input into one next run" {
 test "a durable queue starts before a new idle input" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resume", .model = "mock" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resume", .model = "mock" });
     const old_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "old" } }};
     const new_content = [_]wire.content.ContentPart{.{ .text = .{ .text = "new" } }};
     try fixture.state.db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -781,12 +766,9 @@ test "a durable queue starts before a new idle input" {
 test "a faulted runtime retains the old open-run fence" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/fault", .model = "mock" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/fault", .model = "mock" });
     const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "first" } }};
     const old = try engine_run.beginTurn(&fixture.state.db, fixture.state.io, a, sid.raw, &content, 0);
     const rt = try fixture.state.sessions.getOrCreate(sid);
@@ -805,16 +787,12 @@ test "a faulted runtime retains the old open-run fence" {
 test "cancel input and cancel run preserve exact durable outcomes" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/cancel", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "input" } }};
-    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
-    const queued_one = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
-    const queued_two = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).queued;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/cancel", .model = "mock" });
+    const started = (try sendText(&fixture, a, sid, "input")).started;
+    const queued_one = (try sendText(&fixture, a, sid, "input")).queued;
+    const queued_two = (try sendText(&fixture, a, sid, "input")).queued;
 
     try std.testing.expectError(error.RunMismatch, handlers.sessionCancelRun(&fixture.state, a, .{ .session_id = sid, .run_id = started.run_id + 1 }));
     _ = try handlers.sessionCancelInput(&fixture.state, a, .{ .session_id = sid, .input_id = queued_one.input_id });
@@ -926,14 +904,10 @@ test "cancel run interrupts a blocked provider read" {
     };
     fixture.state.transport = blocking.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/block", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/block", .model = "mock" });
+    const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     // The run parks in the read. A separate task cancels it during the read.
     var driver = try fixture.rt.spawn(cancelWhenBlocked, .{ &fixture.state, sid, started.run_id, &entered });
@@ -983,13 +957,9 @@ test "resync during a run serializes the live draft" {
     var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
     fixture.state.transport = blocking.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-live", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const a = fixture.allocator();
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncWhileBlocked, .{ &fixture.state, sid, &entered, &gate });
     try driver.join();
@@ -1004,14 +974,10 @@ test "the live draft is reachable from the runtime during a run" {
     var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
     fixture.state.transport = blocking.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/reach", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reach", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     // A driver inspects the runtime while the run parks in the provider read.
     // The driver holds the reachability assertions. The leak check proves the draft is freed once.
@@ -1022,14 +988,10 @@ test "the live draft is reachable from the runtime during a run" {
 test "activation hydrates the committed window and the durable cursor" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/hydrate", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/hydrate", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
 
@@ -1045,14 +1007,10 @@ test "activation hydrates the committed window and the durable cursor" {
 test "resync of an idle session returns its committed window" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-idle", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-idle", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
 
@@ -1074,12 +1032,9 @@ test "resync of an idle session returns its committed window" {
 test "resync limits the window to the newest page" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-page", .model = "mock" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-page", .model = "mock" });
     // Two turns commit four messages.
     inline for (.{ "one", "two" }) |text| {
         const content = [_]wire.content.ContentPart{.{ .text = .{ .text = text } }};
@@ -1097,12 +1052,9 @@ test "resync limits the window to the newest page" {
 test "resync validates the limit and the session id" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-bad", .model = "mock" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-bad", .model = "mock" });
     try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = 0 }));
     try std.testing.expectError(error.BadRequest, handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = wire.meta.limits.max_page_size + 1 }));
     const missing: wire.ids.SessionId = .bytes(@splat(9));
@@ -1124,14 +1076,10 @@ test "a reasoning block stop finalizes the signature into the committed message"
     defer fixture.deinit();
     var canned: provider.transport.CannedTransport = .{ .bytes = reasoning_reply };
     fixture.state.transport = canned.transport();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/reason", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/reason", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1166,9 +1114,7 @@ const final_text_reply =
 test "a tool_use round commits, then a second round streams the final answer" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Round 1 asks for the read tool; round 2 answers with text. Capture each request body.
     const steps = provider.transport.replies(&.{ tool_use_reply, final_text_reply });
@@ -1182,10 +1128,8 @@ test "a tool_use round commits, then a second round streams the final answer" {
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = root, .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = root, .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1292,9 +1236,7 @@ fn gatedBatchDriver(state: *State, sid: wire.ids.SessionId, gates: *BatchGates) 
 test "a tool round runs its calls one at a time in provider order" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Round 1 asks for two reads; round 2 answers with text.
     const steps = provider.transport.replies(&.{ two_tool_reply, final_text_reply });
@@ -1304,10 +1246,8 @@ test "a tool round runs its calls one at a time in provider order" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(gatedBatchDriver, .{ &fixture.state, sid, &gates });
     try driver.join();
@@ -1350,9 +1290,7 @@ fn cancelBlockedBatchDriver(state: *State, sid: wire.ids.SessionId, run_id: u64,
 test "cancel run cancels the blocked tool call and every pending one" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = provider.transport.replies(&.{two_tool_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
@@ -1361,10 +1299,8 @@ test "cancel run cancels the blocked tool call and every pending one" {
     var gated: GatedHost = .{ .gates = &gates }; // No gate opens, so the first call stays blocked.
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-cancel", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-cancel", .model = "mock" });
+    const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelBlockedBatchDriver, .{ &fixture.state, sid, started.run_id, &gates });
     try driver.join(); // The run must reach idle: the blocked call returned.
@@ -1396,9 +1332,7 @@ fn cancelOneDoneDriver(state: *State, sid: wire.ids.SessionId, run_id: u64, gate
 test "cancel run keeps a finished tool and cancels the blocked one" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = provider.transport.replies(&.{two_tool_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
@@ -1407,10 +1341,8 @@ test "cancel run keeps a finished tool and cancels the blocked one" {
     var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens, so the second call blocks.
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/batch-mixed", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/batch-mixed", .model = "mock" });
+    const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelOneDoneDriver, .{ &fixture.state, sid, started.run_id, &gates });
     try driver.join();
@@ -1443,9 +1375,7 @@ fn steerWhileToolRuns(state: *State, sid: wire.ids.SessionId, gates: *BatchGates
 test "an input queued while tools run drains only after the turn commits" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Turn 1: a tool round then a final answer. Turn 2 (steered): a final answer.
     const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply, final_text_reply });
@@ -1455,10 +1385,8 @@ test "an input queued while tools run drains only after the turn commits" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/steer", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })) == .started);
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer", .model = "mock" });
+    try std.testing.expect((try sendText(&fixture, a, sid, "hi")) == .started);
 
     var driver = try fixture.rt.spawn(steerWhileToolRuns, .{ &fixture.state, sid, &gates });
     try driver.join();
@@ -1505,13 +1433,9 @@ test "an input queued while the provider streams drains after the turn" {
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .suffix = stream_finish_suffix, .entered = &entered, .gate = &gate };
     fixture.state.transport = transport_impl.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/steer-stream", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })) == .started);
+    const a = fixture.allocator();
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer-stream", .model = "mock" });
+    try std.testing.expect((try sendText(&fixture, a, sid, "hi")) == .started);
 
     var driver = try fixture.rt.spawn(steerWhileStreaming, .{ &fixture.state, sid, &entered, &gate });
     try driver.join();
@@ -1531,15 +1455,11 @@ test "an input queued while the provider streams drains after the turn" {
 test "the queue rejects input past the max" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/queue-full", .model = "mock" });
-    const sid = created.session.id;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/queue-full", .model = "mock" });
     // Start a run; it stays active while the test fills the queue synchronously.
-    const first = [_]wire.content.ContentPart{.{ .text = .{ .text = "0" } }};
-    try std.testing.expect((try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &first } } })) == .started);
+    try std.testing.expect((try sendText(&fixture, a, sid, "0")) == .started);
 
     const cap: usize = @intCast(wire.meta.limits.max_queued_inputs);
     var i: usize = 0;
@@ -1550,8 +1470,7 @@ test "the queue rejects input past the max" {
     try std.testing.expectEqual(cap, fixture.state.sessions.get(sid).?.session.queue.depth());
 
     // One input past the limit is rejected and adds no event.
-    const over = [_]wire.content.ContentPart{.{ .text = .{ .text = "over" } }};
-    try std.testing.expectError(error.QueueFull, sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &over } } }));
+    try std.testing.expectError(error.QueueFull, sendText(&fixture, a, sid, "over"));
     try std.testing.expectEqual(cap, fixture.state.sessions.get(sid).?.session.queue.depth());
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1561,9 +1480,7 @@ test "the queue rejects input past the max" {
 test "a finite max_rounds ends the turn after the capped tool round" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Round 1 asks for a tool. The cap of 1 ends the turn before a second round. A sentinel second
     // reply would let a leaked round complete, so the capture proves only one request opened.
@@ -1575,10 +1492,8 @@ test "a finite max_rounds ends the turn after the capped tool round" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds", .model = "mock", .max_rounds = 1 });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds", .model = "mock", .max_rounds = 1 });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1602,9 +1517,7 @@ test "a finite max_rounds ends the turn after the capped tool round" {
 test "max_rounds of 2 allows a tool round then a final answer" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // A tool round then a final answer is two rounds, so the cap of 2 does not fire.
     const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply });
@@ -1615,10 +1528,8 @@ test "max_rounds of 2 allows a tool round then a final answer" {
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds-2", .model = "mock", .max_rounds = 2 });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-2", .model = "mock", .max_rounds = 2 });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1637,19 +1548,15 @@ test "max_rounds of 2 allows a tool round then a final answer" {
 test "max_rounds of 1 does not cap a plain text turn" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // A plain text answer is one round through the final path, so the cap never applies.
     const steps = provider.transport.replies(&.{final_text_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
     fixture.state.transport = seq.transport();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/max-rounds-text", .model = "mock", .max_rounds = 1 });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-text", .model = "mock", .max_rounds = 1 });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1770,13 +1677,9 @@ test "a resync snapshot reconstructs the live draft" {
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
     fixture.state.transport = transport_impl.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/resync-live-draft", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const a = fixture.allocator();
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live-draft", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncInstallAtPark, .{ &fixture.state, sid, &entered, &gate });
     try driver.join();
@@ -1793,13 +1696,9 @@ test "a client fold of the published stream matches the daemon session" {
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
     fixture.state.transport = transport_impl.transportFor();
 
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/conform", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const a = fixture.allocator();
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/conform", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(conformAtPark, .{ &fixture.state, sid, &entered, &gate, &tap });
     try driver.join();
@@ -1859,9 +1758,7 @@ const CaptureTransport = struct {
 test "a provider-qualified model builds the real endpoint, headers, and body" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // State.deinit frees the loaded provider layer. Leave that layer for State.deinit.
     fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
@@ -1874,10 +1771,8 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     defer capture.deinit();
     fixture.state.transport = capture.transportFor();
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
     try launch.join();
@@ -1904,10 +1799,8 @@ const started_text =
 fn runScripted(fixture: *TestState, a: std.mem.Allocator, name: []const u8, script: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
     fixture.state.transport = script.transport();
     fixture.state.retry_policy = .{ .base_ms = 0, .cap_ms = 0 }; // No test waits for a real delay.
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = name, .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(fixture, a, .{ .workspace_path = name, .model = "mock" });
+    _ = try sendText(fixture, a, sid, "hi");
     try launchUntilIdle(&fixture.state, sid);
     return sid;
 }
@@ -1921,9 +1814,7 @@ fn lastFinish(state: *State, a: std.mem.Allocator, sid: wire.ids.SessionId) !wir
 test "a failed attempt repeats and the next attempt succeeds" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = [_]provider.transport.Step{
         .{ .open_error = error.ConnectionRefused },
@@ -1939,9 +1830,7 @@ test "a failed attempt repeats and the next attempt succeeds" {
 test "output that reached the client stops a repeat" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // The client already folded this text. A repeat would show it twice.
     const steps = [_]provider.transport.Step{
@@ -1957,9 +1846,7 @@ test "output that reached the client stops a repeat" {
 test "a finished stream stops a repeat after a later read failure" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // The whole answer arrived. A repeat would ask for work the provider already did.
     const steps = [_]provider.transport.Step{
@@ -1975,9 +1862,7 @@ test "a finished stream stops a repeat after a later read failure" {
 test "a request that may already be held stops a repeat" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // No idempotency key exists for either provider, so a repeat could bill the same work twice.
     const steps = [_]provider.transport.Step{
@@ -1994,9 +1879,7 @@ test "a request that may already be held stops a repeat" {
 test "the attempt limit ends the run" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = [_]provider.transport.Step{
         .{ .open_error = error.ConnectionRefused },
@@ -2038,9 +1921,7 @@ fn resyncDuringRetry(state: *State, sid: wire.ids.SessionId) !void {
 test "a resync during a retry delay reports the retry" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = [_]provider.transport.Step{
         .{ .open_error = error.ConnectionRefused },
@@ -2051,10 +1932,8 @@ test "a resync during a retry delay reports the retry" {
     // A real delay keeps the retry state observable while the driver resyncs.
     fixture.state.retry_policy = .{ .base_ms = 200, .cap_ms = 200 };
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/retry-activity", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    _ = try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } });
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-activity", .model = "mock" });
+    _ = try sendText(&fixture, a, sid, "hi");
 
     var driver = try fixture.rt.spawn(resyncDuringRetry, .{ &fixture.state, sid });
     try driver.join();
@@ -2064,9 +1943,7 @@ test "a resync during a retry delay reports the retry" {
 test "the retry budget covers the whole run, not one request" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     // Two rounds, each with one failure. One permit covers the first failure only.
     const steps = [_]provider.transport.Step{
@@ -2122,9 +1999,7 @@ fn cancelDuringRetryDelay(state: *State, sid: wire.ids.SessionId, run_id: u64) !
 test "a cancel during a retry delay stops before the next attempt" {
     var fixture = try TestState.init();
     defer fixture.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = fixture.allocator();
 
     const steps = [_]provider.transport.Step{
         .{ .open_error = error.ConnectionRefused },
@@ -2135,10 +2010,8 @@ test "a cancel during a retry delay stops before the next attempt" {
     // A long delay proves the cancel interrupts the wait instead of outliving it.
     fixture.state.retry_policy = .{ .base_ms = 30_000, .cap_ms = 30_000 };
 
-    const created = try handlers.sessionCreate(&fixture.state, a, .{ .workspace_path = "/retry-cancel", .model = "mock" });
-    const sid = created.session.id;
-    const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "hi" } }};
-    const started = (try sendInputDirect(&fixture.state, a, .{ .session_id = sid, .input = .{ .content = .{ .content = &content } } })).started;
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/retry-cancel", .model = "mock" });
+    const started = (try sendText(&fixture, a, sid, "hi")).started;
 
     var driver = try fixture.rt.spawn(cancelDuringRetryDelay, .{ &fixture.state, sid, started.run_id });
     try driver.join(); // A cancel that did not interrupt the sleep would hold this for 30 seconds.

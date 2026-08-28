@@ -90,15 +90,9 @@ pub fn etag(db: *Database, arena: std.mem.Allocator) !?[]const u8 {
 
 const testing = std.testing;
 const sql = @import("sql");
-const zqlite = @import("zqlite");
-
-fn memoryConn() !sql.Connection {
-    return zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-}
 
 test "a snapshot round-trips providers, models, and behavioral flags" {
-    const conn = try memoryConn();
-    var db = try Database.open(conn);
+    var db = try Database.openTest();
     defer db.deinit();
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -129,8 +123,7 @@ test "a snapshot round-trips providers, models, and behavioral flags" {
 }
 
 test "a second replace overwrites the prior snapshot" {
-    const conn = try memoryConn();
-    var db = try Database.open(conn);
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -146,8 +139,7 @@ test "a second replace overwrites the prior snapshot" {
 }
 
 test "an unsupported provider is stored but marked null" {
-    const conn = try memoryConn();
-    var db = try Database.open(conn);
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

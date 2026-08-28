@@ -130,11 +130,6 @@ const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const session = @import("session.zig");
 
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
-
 fn seedSession(db: *Database, arena: std.mem.Allocator, id: [16]u8) !void {
     const ws = try workspace.resolve(db, arena, [_]u8{7} ** 16, "/w", "w", "/w");
     try session.create(db, .{
@@ -157,7 +152,7 @@ fn textContent(comptime text: []const u8) []const wire.content.ContentPart {
 }
 
 test "enqueue writes the full event, projection, and sequence" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -181,7 +176,7 @@ test "enqueue writes the full event, projection, and sequence" {
 }
 
 test "list returns oldest-first owned entries and session ids" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -209,7 +204,7 @@ test "list returns oldest-first owned entries and session ids" {
 }
 
 test "cancel appends the exact event and deletes the projection" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -237,7 +232,7 @@ test "cancel appends the exact event and deletes the projection" {
 }
 
 test "consume removes an input without a cancellation event" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -261,7 +256,7 @@ test "consume removes an input without a cancellation event" {
 }
 
 test "missing cancel does not append an event" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -278,7 +273,7 @@ test "missing cancel does not append an event" {
 }
 
 test "pending projection enforces ownership and event foreign keys" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -308,7 +303,7 @@ test "pending projection enforces ownership and event foreign keys" {
 }
 
 test "list rejects a projection whose source event has the wrong name" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

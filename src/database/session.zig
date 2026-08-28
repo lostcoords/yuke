@@ -200,14 +200,8 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const event = @import("event.zig");
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 fn rootParams(id: [16]u8, workspace_id: [16]u8) CreateParams {
     return .{
@@ -226,7 +220,7 @@ fn rootParams(id: [16]u8, workspace_id: [16]u8) CreateParams {
 }
 
 test "create inserts a root session and exists finds it" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -247,7 +241,7 @@ test "create inserts a root session and exists finds it" {
 }
 
 test "a root session rejects a stray parent id" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -260,7 +254,7 @@ test "a root session rejects a stray parent id" {
 }
 
 test "a child session needs all three parent marks" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -293,7 +287,7 @@ test "a child session needs all three parent marks" {
 }
 
 test "fork needs a source id" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -312,7 +306,7 @@ test "fork needs a source id" {
 }
 
 test "create rejects a missing workspace" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     try testing.expectError(
         error.ConstraintForeignKey,
@@ -321,7 +315,7 @@ test "create rejects a missing workspace" {
 }
 
 test "prompt reads a set prompt and null when absent" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -337,7 +331,7 @@ test "prompt reads a set prompt and null when absent" {
 }
 
 test "an open run cannot exceed the run high-water mark" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -361,7 +355,7 @@ test "an open run cannot exceed the run high-water mark" {
 }
 
 test "list pages newest first and count matches" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -388,7 +382,7 @@ test "list pages newest first and count matches" {
 }
 
 test "an empty list and a negative limit" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -399,7 +393,7 @@ test "an empty list and a negative limit" {
 }
 
 test "the keyset tiebreaks equal timestamps by id descending" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -423,7 +417,7 @@ test "the keyset tiebreaks equal timestamps by id descending" {
 }
 
 test "top_level excludes a child session" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -448,7 +442,7 @@ test "top_level excludes a child session" {
 }
 
 test "the workspace and parent selectors filter and page" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -486,7 +480,7 @@ test "the workspace and parent selectors filter and page" {
 }
 
 test "each list variant seeks its index and never sorts" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
 
     try expectPlan(&db, queries_gen.SessionPageRecent.sql, "sessions_by_recent");

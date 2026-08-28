@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const sql = @import("sql");
+const zqlite = @import("zqlite");
 const queries_gen = @import("queries_gen.zig");
 
 pub const catalog = @import("catalog.zig");
@@ -13,6 +14,8 @@ pub const message = @import("message.zig");
 pub const config = @import("config.zig");
 pub const run = @import("run.zig");
 pub const input = @import("input.zig");
+
+const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
 /// A yuke database carries this id in the SQLite application_id header slot.
 const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
@@ -53,6 +56,11 @@ pub const Database = struct {
         errdefer conn.close();
         try migrate(conn);
         return .{ .conn = conn, .queries = try queries_gen.Queries.prepareAll(conn) };
+    }
+
+    /// Open a migrated in-memory database. Tests in every module call this.
+    pub fn openTest() !Database {
+        return open(try zqlite.open(":memory:", test_flags));
     }
 
     pub fn deinit(self: *Database) void {
@@ -165,9 +173,6 @@ fn setWal(conn: sql.Connection) !void {
 test {
     std.testing.refAllDecls(@This());
 }
-
-const zqlite = @import("zqlite");
-const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
 test "migrate applies the baseline and claims the database" {
     const conn = try zqlite.open(":memory:", test_flags);

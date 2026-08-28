@@ -112,14 +112,8 @@ pub fn highWater(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !?
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const session = @import("session.zig");
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 /// A distinct event id for a test. The event_id column is globally unique.
 fn eid(n: u8) [16]u8 {
@@ -144,7 +138,7 @@ fn seedSession(db: *Database, a: std.mem.Allocator, id: [16]u8) !void {
 }
 
 test "append allocates contiguous seqs and raises the high-water mark" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -163,7 +157,7 @@ test "append allocates contiguous seqs and raises the high-water mark" {
 }
 
 test "bumpIds only raises a mark" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -184,7 +178,7 @@ test "bumpIds only raises a mark" {
 }
 
 test "bumpIds rejects a missing session" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -196,7 +190,7 @@ test "bumpIds rejects a missing session" {
 }
 
 test "append rejects a missing session" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -208,7 +202,7 @@ test "append rejects a missing session" {
 }
 
 test "a rolled-back append leaves no seq hole" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -229,7 +223,7 @@ test "a rolled-back append leaves no seq hole" {
 }
 
 test "two sessions each start at seq 1" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -261,7 +255,7 @@ test "two sessions each start at seq 1" {
 }
 
 test "highWater returns zeros for a fresh session and null for a missing one" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

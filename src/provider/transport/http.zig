@@ -259,7 +259,7 @@ const canned_sse =
     "data: {\"type\":\"message_stop\"}\n\n";
 
 const Server = struct {
-    listener: *zio.net.Server,
+    listener: *zio.net.Server = undefined, // `exchange` binds this.
     body: []const u8,
     status: std.http.Status,
     location: ?[]const u8 = null, // A redirect target. The client must never follow it.
@@ -310,9 +310,9 @@ fn serveOnceInner(s: *Server) !void {
 }
 
 const ClientOut = struct {
-    gpa: Allocator,
-    io: std.Io,
-    port: u16,
+    gpa: Allocator = undefined, // `exchange` binds gpa, io, and port.
+    io: std.Io = undefined,
+    port: u16 = undefined,
     idle: ?std.Io.Duration = null,
     release: ?*zio.ResetEvent = null, // Signal the stalled server to end after the read returns.
     bytes: std.ArrayList(u8) = .empty,
@@ -346,22 +346,29 @@ fn runClient(out: *ClientOut) !void {
     }
 }
 
-test "streams an SSE response body over http" {
+/// Run one server and one client exchange on a private loopback port. The test reads `srv` and `out`.
+fn exchange(srv: *Server, out: *ClientOut) !void {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
     var listener = try addr.listen(.{});
     defer listener.close();
-    const port = listener.socket.address.ip.getPort();
+    srv.listener = &listener;
+    out.gpa = testing.allocator;
+    out.io = rt.io();
+    out.port = listener.socket.address.ip.getPort();
 
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
-    defer out.bytes.deinit(testing.allocator);
-    var srv: Server = .{ .listener = &listener, .body = canned_sse, .status = .ok };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
+    var server = try rt.spawn(serveOnce, .{srv});
+    var client = try rt.spawn(clientTask, .{out});
     client.join();
     server.join();
+}
+
+test "streams an SSE response body over http" {
+    var srv: Server = .{ .body = canned_sse, .status = .ok };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    try exchange(&srv, &out);
 
     if (srv.err) |err| return err;
     if (out.err) |err| return err;
@@ -369,71 +376,32 @@ test "streams an SSE response body over http" {
 }
 
 test "a non-200 status maps to a transport error" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    var srv: Server = .{ .body = "", .status = .unauthorized };
+    var out: ClientOut = .{};
     defer out.bytes.deinit(testing.allocator);
-    var srv: Server = .{ .listener = &listener, .body = "", .status = .unauthorized };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.AuthFailed), out.err);
     try testing.expectEqual(@as(usize, 0), out.bytes.items.len);
 }
 
 test "a stalled stream returns an idle timeout" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
     var release: zio.ResetEvent = .init;
-    var out: ClientOut = .{
-        .gpa = testing.allocator,
-        .io = rt.io(),
-        .port = port,
-        .idle = std.Io.Duration.fromMilliseconds(50),
-        .release = &release,
-    };
-    defer out.bytes.deinit(testing.allocator);
     // The server sends the head, then holds the stream open with no body until the client releases it.
-    var srv: Server = .{ .listener = &listener, .body = "", .status = .ok, .stall = true, .release = &release };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    var srv: Server = .{ .body = "", .status = .ok, .stall = true, .release = &release };
+    var out: ClientOut = .{ .idle = std.Io.Duration.fromMilliseconds(50), .release = &release };
+    defer out.bytes.deinit(testing.allocator);
+    try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.IdleTimeout), out.err);
 }
 
 test "a redirect is rejected without following it" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
-    defer out.bytes.deinit(testing.allocator);
     // The client must reject a 302 response to another origin to keep the key private.
-    var srv: Server = .{ .listener = &listener, .body = "", .status = .found, .location = "http://evil.example/steal" };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    var srv: Server = .{ .body = "", .status = .found, .location = "http://evil.example/steal" };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    try exchange(&srv, &out);
 
     // The receiveHead call rejects the 3xx, so the key stays on the original connection.
     try testing.expectEqual(@as(?anyerror, Error.RedirectRefused), out.err);
@@ -441,83 +409,39 @@ test "a redirect is rejected without following it" {
 }
 
 test "a 429 with a quota code maps to QuotaExhausted" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    var srv: Server = .{ .body = "{\"error\":{\"code\":\"insufficient_quota\"}}", .status = .too_many_requests };
+    var out: ClientOut = .{};
     defer out.bytes.deinit(testing.allocator);
-    var srv: Server = .{ .listener = &listener, .body = "{\"error\":{\"code\":\"insufficient_quota\"}}", .status = .too_many_requests };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
 }
 
 test "an Anthropic spend-cap 429 maps to QuotaExhausted" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
-    defer out.bytes.deinit(testing.allocator);
     const spend_cap = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"details\":{\"error_code\":\"enforced_spend_limit_reached\"}}}";
-    var srv: Server = .{ .listener = &listener, .body = spend_cap, .status = .too_many_requests };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    var srv: Server = .{ .body = spend_cap, .status = .too_many_requests };
+    var out: ClientOut = .{};
+    defer out.bytes.deinit(testing.allocator);
+    try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.QuotaExhausted), out.err);
 }
 
 test "a 429 with an empty body maps to RateLimitUnknown" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    var srv: Server = .{ .body = "", .status = .too_many_requests };
+    var out: ClientOut = .{};
     defer out.bytes.deinit(testing.allocator);
-    var srv: Server = .{ .listener = &listener, .body = "", .status = .too_many_requests };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    try exchange(&srv, &out);
 
     // A guess of RateLimited would retry a spend cap that can never succeed.
     try testing.expectEqual(@as(?anyerror, Error.RateLimitUnknown), out.err);
 }
 
 test "a 429 without a quota code maps to RateLimited" {
-    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const addr = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try addr.listen(.{});
-    defer listener.close();
-    const port = listener.socket.address.ip.getPort();
-
-    var out: ClientOut = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
+    var srv: Server = .{ .body = "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", .status = .too_many_requests };
+    var out: ClientOut = .{};
     defer out.bytes.deinit(testing.allocator);
-    var srv: Server = .{ .listener = &listener, .body = "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", .status = .too_many_requests };
-
-    var server = try rt.spawn(serveOnce, .{&srv});
-    var client = try rt.spawn(clientTask, .{&out});
-    client.join();
-    server.join();
+    try exchange(&srv, &out);
 
     try testing.expectEqual(@as(?anyerror, Error.RateLimited), out.err);
 }

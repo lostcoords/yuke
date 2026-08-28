@@ -186,14 +186,8 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const session = @import("session.zig");
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 fn seedSession(db: *Database, a: std.mem.Allocator, id: [16]u8) !void {
     const ws = try workspace.resolve(db, a, [_]u8{7} ** 16, "/w", "w", "/w");
@@ -219,7 +213,7 @@ fn scalar(db: *Database, query: []const u8) !i64 {
 }
 
 test "a committed user then assistant message advances the summary" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -266,7 +260,7 @@ test "a committed user then assistant message advances the summary" {
 }
 
 test "a later commit with an earlier timestamp does not regress recency" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -288,7 +282,7 @@ test "a later commit with an earlier timestamp does not regress recency" {
 }
 
 test "a rolled-back commit leaves no event, row, or seq advance" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -310,7 +304,7 @@ test "a rolled-back commit leaves no event, row, or seq advance" {
 }
 
 test "historyPage returns a page oldest-first with has_more" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -342,7 +336,7 @@ test "historyPage returns a page oldest-first with has_more" {
 }
 
 test "appendCommittedMessage rejects a missing session" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

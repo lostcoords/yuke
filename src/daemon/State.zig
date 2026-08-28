@@ -3,7 +3,6 @@
 
 const std = @import("std");
 const zio = @import("zio");
-const zqlite = @import("zqlite");
 const wire = @import("wire");
 const database = @import("../database/database.zig");
 const committed = @import("../domain/committed.zig");
@@ -173,8 +172,7 @@ test "init restores durable pending input into the runtime queue" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    var db = try database.Database.open(sqlite);
+    var db = try database.Database.openTest();
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -209,8 +207,7 @@ test "activation does not retain partial hydration after allocation failure" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    var db = try database.Database.open(sqlite);
+    var db = try database.Database.openTest();
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

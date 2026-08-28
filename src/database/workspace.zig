@@ -61,15 +61,9 @@ pub fn list(db: *Database, arena: std.mem.Allocator) ![]const Workspace {
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 test "resolve inserts a new workspace and byId reads it back" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -89,7 +83,7 @@ test "resolve inserts a new workspace and byId reads it back" {
 }
 
 test "resolve dedups a persistent root by stable_key" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -103,7 +97,7 @@ test "resolve dedups a persistent root by stable_key" {
 }
 
 test "list returns every workspace" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -126,7 +120,7 @@ test "list returns every workspace" {
 }
 
 test "resolve never dedups an ephemeral workspace" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

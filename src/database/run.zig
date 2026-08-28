@@ -73,11 +73,6 @@ const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const message = @import("message.zig");
 
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
-
 fn seedSession(db: *Database, arena: std.mem.Allocator, id: [16]u8) !void {
     const ws = try workspace.resolve(db, arena, [_]u8{7} ** 16, "/w", "w", "/w");
     try session.create(db, .{
@@ -123,7 +118,7 @@ fn countEvents(db: *Database, name: []const u8) !u64 {
 }
 
 test "start and done events move the open-run triad in their transactions" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -175,7 +170,7 @@ test "start and done events move the open-run triad in their transactions" {
 }
 
 test "a terminal event must match the complete open-run marker" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -224,7 +219,7 @@ test "a terminal event must match the complete open-run marker" {
 }
 
 test "an open-run terminal rejects absent or backwards start timing" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -271,7 +266,7 @@ test "an open-run terminal rejects absent or backwards start timing" {
 }
 
 test "recovery cancels each open run and clears its triad atomically" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -316,7 +311,7 @@ test "recovery cancels each open run and clears its triad atomically" {
 }
 
 test "recovery cancels an open run and keeps its committed rounds" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
@@ -386,7 +381,7 @@ test "recovery cancels an open run and keeps its committed rounds" {
 }
 
 test "a recovery failure leaves the remaining run recoverable" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();

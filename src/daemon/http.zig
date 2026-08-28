@@ -342,7 +342,6 @@ fn route(request: *std.http.Server.Request) !void {
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const handlers = @import("handlers.zig");
 
@@ -416,8 +415,7 @@ test "the user commit and run.started precede the send_input response" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    var state = try State.init(testing.allocator, rt.io(), try database.Database.open(sqlite), .{ .listen = listen }, "/home/test");
+    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
     defer state.deinit();
 
     var conn: Connection = undefined;
@@ -470,8 +468,7 @@ test "a queued drain publishes its commits and run.started before a send_input e
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    const sqlite = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    var state = try State.init(testing.allocator, rt.io(), try database.Database.open(sqlite), .{ .listen = listen }, "/home/test");
+    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
     defer state.deinit();
 
     var conn: Connection = undefined;

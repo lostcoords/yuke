@@ -149,13 +149,7 @@ pub fn beginQueuedTurn(
 
 const testing = std.testing;
 const zio = @import("zio");
-const zqlite = @import("zqlite");
 const workspace_store = database.workspace;
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 fn eventCount(db: *Database, name: []const u8) !i64 {
     const row = (try db.conn.row("SELECT count(*) FROM events WHERE name = ?1", .{name})) orelse return error.NoRow;
@@ -166,7 +160,7 @@ fn eventCount(db: *Database, name: []const u8) !i64 {
 test "beginQueuedTurn drains all durable inputs in FIFO order" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

@@ -69,14 +69,8 @@ pub fn forMessages(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 }
 
 const testing = std.testing;
-const zqlite = @import("zqlite");
 const workspace = @import("workspace.zig");
 const session = @import("session.zig");
-
-fn testDb() !Database {
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
-    return Database.open(conn);
-}
 
 fn scalarText(db: *Database, arena: std.mem.Allocator, query: []const u8) ![]const u8 {
     const row = (try db.conn.row(query, .{})) orelse return error.NoRow;
@@ -85,7 +79,7 @@ fn scalarText(db: *Database, arena: std.mem.Allocator, query: []const u8) ![]con
 }
 
 test "a config change stores a revision and sets the current config" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -123,7 +117,7 @@ test "a config change stores a revision and sets the current config" {
 }
 
 test "byRevision reads a stored revision and misses an absent one" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -156,7 +150,7 @@ test "byRevision reads a stored revision and misses an absent one" {
 }
 
 test "appendConfig rejects a missing session" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -168,7 +162,7 @@ test "appendConfig rejects a missing session" {
 }
 
 test "appendConfig keeps the current config monotonic" {
-    var db = try testDb();
+    var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
