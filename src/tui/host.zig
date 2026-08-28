@@ -179,7 +179,9 @@ pub const Host = struct {
         // A failed write after the grid swapped keeps the frame dirty, so the next commit flushes.
         var resize_dirty = false;
         if (self.paint.render) |render| {
-            const writer = self.paint.writer orelse return;
+            // `bindRender` sets the render and the writer together, so a render implies a writer.
+            std.debug.assert(self.paint.writer != null);
+            const writer = self.paint.writer.?;
             render.resize(writer, winsize) catch {
                 if (render.window().width != winsize.cols or render.window().height != winsize.rows)
                     return;
@@ -1066,6 +1068,15 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\}
         \\// Double backticks let inline code hold a backtick.
         \\check("code-backtick", has(renderRows("use ``a`b`` now", 80), "MdCode", "a`b"));
+        \\// Triple markers are strong and emphasis together.
+        \\check("strong-em", has(renderRows("***wow***", 80), "MdStrongEm", "wow"));
+        \\// Nested emphasis: the inner strong span keeps the outer emphasis.
+        \\{
+        \\  const rows = renderRows("*x **y** z*", 80);
+        \\  check("nested-emph", has(rows, "MdStrongEm", "y") && has(rows, "MdEm", "x") && has(rows, "MdEm", "z"));
+        \\}
+        \\// A malformed link (a space in the destination) stays literal, not dropped.
+        \\check("bad-link", renderRows("[foo](bad url)", 80).some((r) => r.segments.some((s) => s.text.indexOf("bad") >= 0)));
         \\// A table renders a column border.
         \\check("table", renderRows("| a | b |\n|---|---|\n| 1 | 2 |", 80).some((r) => r.segments.some((s) => s.group === "MdTableBorder")));
         \\
@@ -1145,7 +1156,7 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
         \\check("user-band", rows.some((r) => r.marker === "⟩" && r.bg === "TxUser"));
         \\check("assistant-md", rows.some((r) => r.segments && r.segments.some((s) => s.group === "MdStrong" && s.text === "bold")));
         \\
-        \\// A streaming draft re-renders through yuke:md.
+        \\// A draft delta re-renders the assistant turn through yuke:md.
         \\texts.a2 = "streamed";
         \\t.setActive("a2");
         \\const rows2 = t.rows(40, 0, 100);
@@ -1270,6 +1281,22 @@ test "yuke:client fixtures serve sessions and stream a reply over ticks" {
         \\  client._pumpStreams();
         \\  const cancel = await client.sessionCancelRun("local", "s1", true);
         \\  check("cancel", cancel.canceled_run !== null && client.sessionOutline("local", "s1").active === null);
+        \\
+        \\  // two connections never share a session id.
+        \\  client.sessionOpen("a", "s1");
+        \\  client.sessionOpen("b", "s1");
+        \\  await client.sessionSendInput("a", "s1", "only-a");
+        \\  check("isolation", client.sessionOutline("b", "s1").messages.length === 2 && client.sessionOutline("a", "s1").messages.length === 3);
+        \\
+        \\  // cancel without a queue clear runs the queued input next.
+        \\  client.sessionOpen("a", "s2");
+        \\  await client.sessionSendInput("a", "s2", "p");
+        \\  await client.sessionSendInput("a", "s2", "q");
+        \\  await client.sessionCancelRun("a", "s2", false);
+        \\  check("cancel-keeps-queue", client.sessionOutline("a", "s2").active !== null);
+        \\  let g3 = 0;
+        \\  while (client._pumpStreams() && g3++ < 300);
+        \\  check("cancel-queue-drained", client.sessionOutline("a", "s2").messages.length === 4);
         \\
         \\  // browse returns fixture entries.
         \\  const browse = await client.workspaceBrowse("local", {});

@@ -62,7 +62,7 @@ function applyDaemonConfig(d) {
 // Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
 const link_depth_max = 100;
 
-// Highlight groups over the palette. yuke is monochrome: emphasis is weight and inversion, not hue.
+// The highlight groups use the palette. yuke is monochrome: emphasis is weight and inversion, not hue.
 // `Normal` is `reset`, so the terminal background shows through. `danger` is the only color.
 export const style = {
   palette: {
@@ -532,7 +532,7 @@ export class Emitter {
       try {
         fn(...args);
       } catch (e) {
-        // A throwing `onError` must not stop the listeners that remain.
+        // If `onError` throws, the remaining listeners still run.
         try {
           callHook(this, "onError", e, name);
         } catch (_ignored) {}

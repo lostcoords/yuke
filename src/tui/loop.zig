@@ -164,7 +164,7 @@ fn keyCode(cp: u21) []const u8 {
     };
 }
 
-test "start delivers type start" {
+test "start and stepTick deliver their event type" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = try Host.create(gpa.allocator());
@@ -172,14 +172,6 @@ test "start delivers type start" {
     try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
     try start(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen === 'start' ? 1 : 0"));
-}
-
-test "stepTick delivers type tick" {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const host = try Host.create(gpa.allocator());
-    defer host.destroy();
-    try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
     try stepTick(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen === 'tick' ? 1 : 0"));
 }

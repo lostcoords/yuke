@@ -4,7 +4,7 @@ import { term } from "yuke:term";
 import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, style } from "yuke:core";
 import { Document } from "yuke:md";
 
-// The kit seeds its highlight groups over the core palette. It seeds each missing group only, so a
+// The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
 // theme that set one first keeps it, and a second import does not re-seed.
 const UI_GROUPS = {
   // A panel fills with spaces over the terminal background, so it is opaque behind its border.
@@ -577,7 +577,7 @@ export const borders = {
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
 
-// A floating, bordered, titled window centered over the screen — an overlay-stack layer. The
+// A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
 // interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
 export class Window {
   constructor(opts = {}) {
@@ -620,7 +620,8 @@ export class Window {
     const x = Math.max(0, Math.floor((W - w) / 2));
     const y = Math.max(0, Math.floor((H - h) / 2));
     this.rect = { x, y, w, h };
-    this.inner = pad ? { x: x + 1, y: y + 1, w: w - 2, h: h - 2 } : { x, y, w, h };
+    // The inner rect never goes negative, so a window smaller than its border has an empty interior.
+    this.inner = pad ? { x: x + 1, y: y + 1, w: Math.max(0, w - 2), h: Math.max(0, h - 2) } : { x, y, w, h };
   }
 
   winText(lx, ly, s, group) {
@@ -995,7 +996,8 @@ export class Picker {
   }
 
   cursor(win) {
-    const { x, y, w } = win.inner;
+    const { x, y, w, h } = win.inner;
+    if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
     const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
     return { x: x + Math.max(0, col), y, visible: true };
   }

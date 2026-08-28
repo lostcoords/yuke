@@ -7,6 +7,7 @@ if (!style.groups.MdText) {
     MdText: { link: "Normal" },
     MdStrong: { fg: "fg", bold: true },
     MdEm: { fg: "fg", italic: true },
+    MdStrongEm: { fg: "fg", bold: true, italic: true },
     MdCode: { fg: "fg", dim: true },
     MdHeading: { fg: "fg", bold: true },
     MdQuote: { fg: "fg", dim: true },
@@ -208,153 +209,214 @@ function isEscaped(text, index) {
 const ESCAPABLE = "\\`*{}[]()#+-.!_>~|";
 
 function isSpace(c) {
-  return c === " " || c === "\t" || c === "\n" || c === "\r";
-}
-
-function isWord(c) {
-  return c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  return c === undefined || /\s/u.test(c);
 }
 
 function isPunctuation(c) {
   return c !== undefined && /[\p{P}\p{S}]/u.test(c);
 }
 
-function canOpen(text, i, length, marker) {
-  const before = text[i - 1];
-  const after = text[i + length];
-  const left = after !== undefined && !isSpace(after) && (!isPunctuation(after) || before === undefined || isSpace(before) || isPunctuation(before));
-  if (!left) return false;
-  return marker !== "_" || !isWord(before) || !isWord(after);
+// The emphasis group for a bold and italic depth.
+function emphGroup(bold, italic) {
+  if (bold && italic) return "MdStrongEm";
+  if (bold) return "MdStrong";
+  if (italic) return "MdEm";
+  return null;
 }
 
-function canClose(text, i, length, marker) {
-  const before = text[i - 1];
-  const after = text[i + length];
-  const right = before !== undefined && !isSpace(before) && (!isPunctuation(before) || after === undefined || isSpace(after) || isPunctuation(after));
-  if (!right) return false;
-  return marker !== "_" || !isWord(before) || !isWord(after);
+// Flanking: a delimiter run opens or closes emphasis by the chars around it (CommonMark rules).
+function scanDelims(cps, i, marker) {
+  let count = 0;
+  while (cps[i + count] === marker) count++;
+  const before = i === 0 ? " " : cps[i - 1];
+  const after = cps[i + count] === undefined ? " " : cps[i + count];
+  const beforeWs = isSpace(before);
+  const afterWs = isSpace(after);
+  const beforeP = isPunctuation(before);
+  const afterP = isPunctuation(after);
+  const leftFlank = !afterWs && (!afterP || beforeWs || beforeP);
+  const rightFlank = !beforeWs && (!beforeP || afterWs || afterP);
+  let canOpen = leftFlank;
+  let canClose = rightFlank;
+  if (marker === "_") {
+    canOpen = leftFlank && (!rightFlank || beforeP);
+    canClose = rightFlank && (!leftFlank || afterP);
+  }
+  return { count, canOpen, canClose };
 }
 
-function findDelimiter(text, start, marker, length) {
-  const delimiter = marker.repeat(length);
-  for (let i = text.indexOf(delimiter, start); i >= 0; i = text.indexOf(delimiter, i + 1)) {
-    if (canClose(text, i, length, marker)) return i;
+// Find the closing backtick run of exactly `n`, so an inner shorter run stays literal.
+function closeCodeSpan(cps, start, n) {
+  let j = start;
+  while (j < cps.length) {
+    if (cps[j] !== "`") {
+      j++;
+      continue;
+    }
+    let m = 0;
+    while (cps[j + m] === "`") m++;
+    if (m === n) return j;
+    j += m;
   }
   return -1;
 }
 
-function findLinkEnd(text, start) {
+// Read a `[label](dest)` link. Return the label and the end index, or null when it is not a link.
+// A destination holds no space, so a malformed link stays literal.
+function scanLink(cps, open) {
   let depth = 0;
-  for (let i = start; i < text.length; i++) {
-    if (text[i] === "\\") {
-      i++;
+  let close = -1;
+  for (let j = open + 1; j < cps.length; j++) {
+    const c = cps[j];
+    if (c === "\\") {
+      j++;
       continue;
     }
-    if (text[i] === "(") depth++;
-    if (text[i] === ")") {
-      if (depth === 0) return i;
+    if (c === "[") depth++;
+    else if (c === "]") {
+      if (depth === 0) {
+        close = j;
+        break;
+      }
       depth--;
     }
   }
-  return -1;
+  if (close < 0 || cps[close + 1] !== "(") return null;
+  let paren = 1;
+  let end = -1;
+  for (let j = close + 2; j < cps.length; j++) {
+    const c = cps[j];
+    if (c === "\\") {
+      j++;
+      continue;
+    }
+    if (isSpace(c)) return null;
+    if (c === "(") paren++;
+    else if (c === ")") {
+      paren--;
+      if (paren === 0) {
+        end = j;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
+  return { label: cps.slice(open + 1, close).join(""), end };
 }
 
+// Parse inline text into styled segments. Code spans and links resolve first; a delimiter stack
+// then folds emphasis, so nested and triple runs (**a *b* c**, ***x***) render correctly.
 function parseInline(text, baseGroup) {
   const base = baseGroup || "MdText";
-  const out = [];
-  let buf = "";
+  const cps = Array.from(text);
+  const nodes = []; // { kind:"text"|"seg", text, group?, marker?, count?, canOpen?, canClose? }
+  const delims = []; // indices into nodes of open/close delimiter runs
+
   let i = 0;
-  const flush = (group) => {
-    if (buf) out.push({ text: buf, group: group || base });
-    buf = "";
-  };
-
-  while (i < text.length) {
-    const c = text[i];
-
-    if (c === "\\" && text[i + 1] && ESCAPABLE.indexOf(text[i + 1]) >= 0) {
-      buf += text[i + 1];
+  while (i < cps.length) {
+    const c = cps[i];
+    if (c === "\\" && i + 1 < cps.length && ESCAPABLE.indexOf(cps[i + 1]) >= 0) {
+      nodes.push({ kind: "text", text: cps[i + 1] });
       i += 2;
       continue;
     }
-
     if (c === "`") {
-      let length = 1;
-      while (text[i + length] === "`") length++;
-      const delimiter = "`".repeat(length);
-      const end = text.indexOf(delimiter, i + length);
-      if (end >= i + length) {
-        flush();
-        let code = text.slice(i + length, end).replace(/[\r\n]/g, " ");
-        if (code.length > 1 && code[0] === " " && code[code.length - 1] === " " && /[^ ]/.test(code)) code = code.slice(1, -1);
-        out.push({ text: code, group: "MdCode" });
-        i = end + length;
+      let n = 1;
+      while (cps[i + n] === "`") n++;
+      const close = closeCodeSpan(cps, i + n, n);
+      if (close >= 0) {
+        let code = cps.slice(i + n, close).join("").replace(/[\r\n]/g, " ");
+        if (code.length > 2 && code[0] === " " && code[code.length - 1] === " " && /[^ ]/.test(code)) code = code.slice(1, -1);
+        nodes.push({ kind: "seg", text: code, group: "MdCode" });
+        i = close + n;
         continue;
       }
-      buf += delimiter;
-      i += length;
+      nodes.push({ kind: "text", text: "`".repeat(n) });
+      i += n;
       continue;
     }
-
-    if ((c === "*" || c === "_") && text[i + 1] === c) {
-      if (canOpen(text, i, 2, c)) {
-        const close = findDelimiter(text, i + 2, c, 2);
-        if (close >= i + 3) {
-          flush();
-          out.push({ text: text.slice(i + 2, close), group: "MdStrong" });
-          i = close + 2;
-          continue;
-        }
-      }
-      buf += c + c;
-      i += 2;
-      continue;
-    }
-
-    if ((c === "*" || c === "_") && canOpen(text, i, 1, c)) {
-      const close = findDelimiter(text, i + 1, c, 1);
-      if (close >= i + 2) {
-        flush();
-        out.push({ text: text.slice(i + 1, close), group: "MdEm" });
-        i = close + 1;
-        continue;
-      }
-    }
-
     if (c === "[") {
-      let depth = 0;
-      let bar = -1;
-      for (let j = i + 1; j < text.length; j++) {
-        if (text[j] === "\\") {
-          j++;
-          continue;
-        }
-        if (text[j] === "[") depth++;
-        if (text[j] === "]") {
-          if (depth === 0) {
-            bar = j;
-            break;
-          }
-          depth--;
-        }
-      }
-      if (bar > i && text[bar + 1] === "(") {
-        const paren = findLinkEnd(text, bar + 2);
-        if (paren > bar) {
-          flush();
-          for (const segment of parseInline(text.slice(i + 1, bar), base)) {
-            if (segment.text) out.push(segment);
-          }
-          i = paren + 1;
-          continue;
-        }
+      const link = scanLink(cps, i);
+      if (link) {
+        for (const s of parseInline(link.label, base)) if (s.text) nodes.push({ kind: "seg", text: s.text, group: s.group });
+        i = link.end + 1;
+        continue;
       }
     }
-
-    buf += c;
+    if (c === "*" || c === "_") {
+      const d = scanDelims(cps, i, c);
+      nodes.push({ kind: "delim", text: c.repeat(d.count), marker: c, count: d.count, canOpen: d.canOpen, canClose: d.canClose });
+      delims.push(nodes.length - 1);
+      i += d.count;
+      continue;
+    }
+    nodes.push({ kind: "text", text: c });
     i++;
   }
-  flush();
+
+  foldEmphasis(nodes, delims);
+  return flattenInline(nodes, base);
+}
+
+// The delimiter stack. For each closer, match the nearest compatible opener and record a strong or
+// emphasis pair on the two runs. Unused delimiters stay literal.
+function foldEmphasis(nodes, delims) {
+  for (let ci = 0; ci < delims.length; ci++) {
+    const closer = nodes[delims[ci]];
+    if (closer.kind !== "delim" || !closer.canClose) continue;
+    while (closer.count > 0) {
+      let matched = false;
+      for (let oi = ci - 1; oi >= 0; oi--) {
+        const opener = nodes[delims[oi]];
+        if (opener.kind !== "delim" || opener.marker !== closer.marker || !opener.canOpen || opener.count === 0) continue;
+        // The rule of three: an open-and-close run matches only when the lengths allow it.
+        const oddMatch = (closer.canOpen || opener.canClose) && (opener.count + closer.count) % 3 === 0 && !(opener.count % 3 === 0 && closer.count % 3 === 0);
+        if (oddMatch) continue;
+        const use = opener.count >= 2 && closer.count >= 2 ? 2 : 1;
+        opener.count -= use;
+        closer.count -= use;
+        if (use === 2) {
+          opener.openStrong = (opener.openStrong || 0) + 1;
+          closer.closeStrong = (closer.closeStrong || 0) + 1;
+        } else {
+          opener.openEm = (opener.openEm || 0) + 1;
+          closer.closeEm = (closer.closeEm || 0) + 1;
+        }
+        matched = true;
+        break;
+      }
+      if (!matched) break;
+    }
+  }
+}
+
+// Walk the folded nodes and emit segments, tracking the bold and emphasis depth per position.
+// Adjacent same-group text merges into one segment.
+function flattenInline(nodes, base) {
+  const out = [];
+  let bold = 0;
+  let italic = 0;
+  const emit = (text, group) => {
+    if (!text) return;
+    const last = out[out.length - 1];
+    if (last && last.group === group) last.text += text;
+    else out.push({ text, group });
+  };
+  for (const n of nodes) {
+    if (n.kind === "seg") {
+      emit(n.text, n.group);
+      continue;
+    }
+    if (n.kind === "delim") {
+      bold -= n.closeStrong || 0;
+      italic -= n.closeEm || 0;
+      if (n.count > 0) emit(n.marker.repeat(n.count), emphGroup(bold > 0, italic > 0) || base);
+      bold += n.openStrong || 0;
+      italic += n.openEm || 0;
+      continue;
+    }
+    emit(n.text, emphGroup(bold > 0, italic > 0) || base);
+  }
   return out.length ? out : [{ text: "", group: base }];
 }
 

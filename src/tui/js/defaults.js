@@ -843,7 +843,7 @@ function connectionLabel() {
 plugins.use({
   name: "app-keys",
   apply(ctx) {
-    // Interrupt lists and fires only with a session open.
+    // The interrupt command is available only with a session open.
     ctx.command(() => chatSession.sessionId != null, {
       "session:interrupt": () => chatSession.interrupt(),
     });

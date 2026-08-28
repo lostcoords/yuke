@@ -56,7 +56,7 @@ const REPLY = "This is a **streamed** reply with `code` and a final point.".spli
 // `store` is the daemon-side truth per session; it survives a mount close and a disconnect.
 // `mounted` holds the client replicas by "connKey|id". `streams` drives the tick pump.
 const conns = new Map(); // key -> { key, name, state }
-const store = new Map(); // id -> { rev, messages, draft, queue }
+const store = new Map(); // "connKey|id" -> { rev, messages, draft, queue }
 const mounted = new Set(); // "connKey|id"
 const streams = []; // { connKey, sessionId, s, words, i }
 let nextUid = 100;
@@ -80,18 +80,21 @@ function summaryOf(id, s) {
   };
 }
 
-function ensureStore(id) {
-  let s = store.get(id);
+// Each connection keeps its own store for a session id, so two connections never share a session.
+function ensureStore(connKey, id) {
+  const key = rkey(connKey, id);
+  let s = store.get(key);
   if (!s) {
     const fx = SEED.find((x) => x.id === id);
     s = { rev: 0, messages: fx ? fx.messages.map((m) => ({ ...m })) : [], draft: null, queue: [], updated_at_ms: fx ? fx.updated_at_ms : NOW };
-    store.set(id, s);
+    store.set(key, s);
   }
   return s;
 }
 
 function mountedStore(connKey, id) {
-  return mounted.has(rkey(connKey, id)) ? store.get(id) || null : null;
+  const key = rkey(connKey, id);
+  return mounted.has(key) ? store.get(key) || null : null;
 }
 
 // Tell the sidebar this session's activity changed.
@@ -156,9 +159,19 @@ export function connect(options) {
 
 export function disconnect(connKey) {
   conns.delete(connKey);
-  // Drop the client replicas and streams; the daemon-side store survives.
+  // Drop the client replicas and streams; the daemon-side store survives. A partial draft commits,
+  // so no session is left with a stream that nothing advances.
+  for (let k = streams.length - 1; k >= 0; k--) {
+    if (streams[k].connKey !== connKey) continue;
+    const s = streams[k].s;
+    if (s.draft) {
+      s.messages.push(s.draft);
+      s.draft = null;
+      s.rev++;
+    }
+    streams.splice(k, 1);
+  }
   for (const key of Array.from(mounted)) if (key.indexOf(connKey + "|") === 0) mounted.delete(key);
-  for (let k = streams.length - 1; k >= 0; k--) if (streams[k].connKey === connKey) streams.splice(k, 1);
   events.emit("conn", { key: connKey, kind: "close" });
 }
 
@@ -178,12 +191,12 @@ export function devices() {
 // --- sessions -----------------------------------------------------------------------------
 export function sessionList(connKey, _params = {}) {
   return Promise.resolve({
-    items: SEED.map((fx) => ({ session: summaryOf(fx.id, store.get(fx.id)), activity: IDLE_ACTIVITY })),
+    items: SEED.map((fx) => ({ session: summaryOf(fx.id, store.get(rkey(connKey, fx.id))), activity: IDLE_ACTIVITY })),
   });
 }
 
 export function sessionOpen(connKey, sessionId) {
-  ensureStore(sessionId);
+  ensureStore(connKey, sessionId);
   mounted.add(rkey(connKey, sessionId));
 }
 
@@ -252,10 +265,14 @@ export function sessionCancelRun(connKey, id, clearQueue = false) {
     s.rev++;
   }
   const clearedInputs = clearQueue ? s.queue.splice(0).length : 0;
-  if (canceled) {
+  // A hard stop clears the queue; otherwise the next queued input still runs.
+  if (!clearQueue && s.queue.length) {
+    s.queue.shift();
+    startStream(connKey, id, s);
+  } else {
     setActivity(connKey, id, IDLE_ACTIVITY);
-    events.emit("session", { connKey, sessionId: id, kind: "reload" });
   }
+  if (canceled) events.emit("session", { connKey, sessionId: id, kind: "reload" });
   return Promise.resolve({ canceled_run: canceled, cleared_inputs: clearedInputs, cleared_compaction: null });
 }
 

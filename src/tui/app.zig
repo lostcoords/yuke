@@ -26,16 +26,24 @@ pub const Options = struct {
     safe_mode: bool = false,
 };
 
-/// An event with owned key text. The copy survives the next parse.
-/// `tick` marks a synthetic event with no parser event.
-const Msg = struct {
+/// One owner message: a parser event with owned key text, or a synthetic tick.
+const Msg = union(enum) {
+    event: EventBuf,
+    tick,
+
+    fn from(ev: Event) Msg {
+        return .{ .event = EventBuf.from(ev) };
+    }
+};
+
+/// A parser event plus a copy of its key text. The copy survives the next parse.
+const EventBuf = struct {
     ev: Event,
     text: [128]u8 = undefined,
     n: u8 = 0,
-    tick: bool = false,
 
-    fn from(ev: Event) Msg {
-        var m: Msg = .{ .ev = ev };
+    fn from(ev: Event) EventBuf {
+        var m: EventBuf = .{ .ev = ev };
         const key = switch (ev) {
             .key_press, .key_release => |k| k,
             else => return m,
@@ -46,11 +54,7 @@ const Msg = struct {
         return m;
     }
 
-    fn tickMsg() Msg {
-        return .{ .ev = .{ .winsize = undefined }, .tick = true };
-    }
-
-    fn event(self: *Msg) Event {
+    fn event(self: *EventBuf) Event {
         if (self.n == 0) return self.ev;
         var ev = self.ev;
         switch (ev) {
@@ -107,11 +111,11 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
         try group.spawn(winchTask, .{ &tty, &ch });
     }
 
-    // Boot compiles and runs the whole baked graph, so do not bound it. Bound the user callbacks.
+    // The baked graph is trusted, so its compile and run are not bounded. The user entry is bounded.
     host.interrupt_budget = std.math.maxInt(u32);
     try host.evalModule("import \"yuke:core\";\nimport \"yuke:defaults\";", "boot.js");
-    if (!opts.safe_mode) try absorbScriptFault(host, evalUserEntry(host, opts.config_dir));
     host.interrupt_budget = host_mod.default_interrupt_budget;
+    if (!opts.safe_mode) try absorbScriptFault(host, evalUserEntry(host, opts.config_dir));
     try serve(host, &ch);
 }
 
@@ -184,10 +188,9 @@ pub fn serve(host: *Host, ch: *Channel) !void {
             error.ChannelClosed, error.Canceled => break,
             else => |e| return e,
         };
-        if (msg.tick) {
-            try absorbScriptFault(host, tui_loop.stepTick(host));
-        } else {
-            try absorbScriptFault(host, tui_loop.step(host, msg.event()));
+        switch (msg) {
+            .tick => try absorbScriptFault(host, tui_loop.stepTick(host)),
+            .event => |*e| try absorbScriptFault(host, tui_loop.step(host, e.event())),
         }
     }
 }
@@ -203,7 +206,7 @@ fn tickTask(host: *Host, ch: *Channel) !void {
             wake.timedWait(.fromMilliseconds(period)) catch |err| switch (err) {
                 error.Timeout => {
                     if (host.paint.needs_tick and !host.paint.quit_requested) {
-                        ch.send(Msg.tickMsg()) catch return;
+                        ch.send(.tick) catch return;
                     }
                 },
                 error.Canceled => return,
@@ -264,9 +267,9 @@ test "queued key text survives a later parse" {
     var input: term_pkg.Input = .{};
     try input.push("ab");
     const first = (try input.next()).?;
-    var msg = Msg.from(first);
+    var buf = EventBuf.from(first);
     _ = try input.next();
-    try std.testing.expectEqualStrings("a", msg.event().key_press.text.?);
+    try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }
 
 test "serve stops when q arrives" {
@@ -356,7 +359,7 @@ test "tickTask enqueues a tick while armed" {
     try group.spawn(tickTask, .{ host, &ch });
 
     const msg = try ch.receive();
-    try std.testing.expect(msg.tick);
+    try std.testing.expect(msg == .tick);
 
     host.paint.needs_tick = false;
     host.paint.quit_requested = true;
