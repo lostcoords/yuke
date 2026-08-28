@@ -95,9 +95,10 @@ const testing = std.testing;
 test "user text and image fold to user blocks" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+    const blob = wire.content.MediaBlob{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 1024 };
     const parts = [_]wire.content.ContentPart{
         .{ .text = .{ .text = "hi" } },
-        .{ .image = .{ .source = .{ .url = .{ .url = "http://x/y.png" } }, .detail = "high" } },
+        .{ .image = .{ .source = .{ .blob = blob }, .detail = "high" } },
     };
     const messages = [_]wire.message.Message{.{ .user = .{
         .id = 1,

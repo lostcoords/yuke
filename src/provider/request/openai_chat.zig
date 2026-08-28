@@ -204,8 +204,6 @@ fn writeImage(jw: *std.json.Stringify, source: wire.content.MediaSource) !void {
 fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !void {
     try jw.objectField("url");
     switch (source) {
-        .url => |url| try jw.write(url.url),
-        .base64 => |base64| try json.writeDataUrl(jw, base64.mime, base64.data),
         // The daemon resolves a blob to bytes before serialization.
         .blob => return error.UnsupportedContent,
     }
@@ -258,19 +256,18 @@ test "tools declare a raw input schema and strict mode" {
     );
 }
 
-test "a base64 image uses a data URL" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .image = .{ .source = .{ .base64 = .{ .mime = "image/png", .data = "aGk=" } } } } }};
-    try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,aGk="}}]}]}
-    ,
-        .{ .model = "gpt", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
-        .{},
-    );
+test "a blob image waits for blob resolution" {
+    const blocks = [_]ir.Block{.{
+        .role = .user,
+        .value = .{ .image = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 } } } },
+    }};
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
 }
 
 test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .url = .{ .url = "http://x/a.mp3" } } } } }};
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));

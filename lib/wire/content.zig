@@ -5,8 +5,6 @@ const tagged = @import("tagged.zig");
 
 /// This type identifies where media bytes live.
 pub const MediaSource = union(enum) {
-    url: MediaUrl,
-    base64: MediaBase64,
     blob: MediaBlob,
 
     /// Decode a tagged wire union from JSON.
@@ -19,17 +17,6 @@ pub const MediaSource = union(enum) {
     pub fn jsonStringify(self: @This(), jw: *std.json.Stringify) !void {
         return tagged.stringify(@This(), self, jw);
     }
-};
-
-/// The daemon fetches media from this remote URL.
-pub const MediaUrl = struct {
-    url: []const u8,
-};
-
-/// This source stores inline bytes in base64.
-pub const MediaBase64 = struct {
-    mime: []const u8,
-    data: []const u8,
 };
 
 /// The daemon fetches this content-addressed blob over HTTP.
@@ -84,15 +71,15 @@ pub const ContentFile = struct {
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
-test "content image with nested media union round-trips" {
+test "content image with nested blob union round-trips" {
     const json =
-        \\{"type":"image","source":{"type":"base64","mime":"image/png","data":"aGk="}}
+        \\{"type":"image","source":{"type":"blob","hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","mime":"image/png","bytes":1024}}
     ;
     const parsed = try std.json.parseFromSlice(ContentPart, testing.allocator, json, opts);
     defer parsed.deinit();
     try testing.expect(parsed.value == .image);
-    try testing.expect(parsed.value.image.source == .base64);
-    try testing.expectEqualStrings("image/png", parsed.value.image.source.base64.mime);
+    try testing.expect(parsed.value.image.source == .blob);
+    try testing.expectEqualStrings("image/png", parsed.value.image.source.blob.mime);
     try testing.expect(parsed.value.image.detail == null);
 
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);

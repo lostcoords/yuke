@@ -163,8 +163,6 @@ fn endMessage(jw: *std.json.Stringify) !void {
 fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !void {
     try jw.objectField("image_url");
     switch (source) {
-        .url => |url| try jw.write(url.url),
-        .base64 => |base64| try json.writeDataUrl(jw, base64.mime, base64.data),
         // The daemon resolves a blob to bytes before serialization.
         .blob => return error.UnsupportedContent,
     }
@@ -232,22 +230,18 @@ test "tools declare a flat raw schema with strict mode" {
     );
 }
 
-test "a base64 user image writes a data URL" {
+test "a blob user image waits for blob resolution" {
     const blocks = [_]ir.Block{.{
         .role = .user,
-        .value = .{ .image = .{ .source = .{ .base64 = .{ .mime = "image/png", .data = "aGk=" } } } },
+        .value = .{ .image = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "image/png", .bytes = 2 } } } },
     }};
-    try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGk="}]}]}
-    ,
-        .{ .model = "gpt-5", .max_output_tokens = 8 },
-        .{ .blocks = &blocks },
-        .{},
-    );
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer buf.deinit();
+    try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));
 }
 
 test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .url = .{ .url = "http://x/a.mp3" } } } } }};
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "gpt-5", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));

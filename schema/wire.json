@@ -16,8 +16,6 @@
     "max_catalog_models": 4096,
     "max_error_message_bytes": 4096,
     "max_frame_bytes": 8388608,
-    "max_inline_media_base64_bytes": 349528,
-    "max_inline_media_bytes": 262144,
     "max_input_parts": 256,
     "max_message_parts": 1024,
     "max_message_string_bytes": 1048576,
@@ -565,33 +563,6 @@
           "name": "filename",
           "type": "string",
           "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "MediaUrl",
-      "doc": "The daemon fetches media from this remote URL.",
-      "fields": [
-        {
-          "name": "url",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "MediaBase64",
-      "doc": "This source stores inline bytes in base64.",
-      "fields": [
-        {
-          "name": "mime",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "data",
-          "type": "string",
-          "presence": "required"
         }
       ]
     },
@@ -3605,14 +3576,6 @@
       "doc": "This type identifies where media bytes live.",
       "discriminator": "type",
       "arms": [
-        {
-          "tag": "url",
-          "type": "MediaUrl"
-        },
-        {
-          "tag": "base64",
-          "type": "MediaBase64"
-        },
         {
           "tag": "blob",
           "type": "MediaBlob"

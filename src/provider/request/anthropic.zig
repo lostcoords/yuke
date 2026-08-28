@@ -145,15 +145,6 @@ fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !
     try jw.objectField("source");
     try jw.beginObject();
     switch (source) {
-        .url => |u| {
-            try json.field(jw, "type", "url");
-            try json.field(jw, "url", u.url);
-        },
-        .base64 => |b| {
-            try json.field(jw, "type", "base64");
-            try json.field(jw, "media_type", b.mime);
-            try json.field(jw, "data", b.data);
-        },
         // The daemon must resolve blobs before serialization.
         .blob => return error.UnsupportedContent,
     }
@@ -256,7 +247,7 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
 }
 
 test "audio content is unsupported on this dialect" {
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .url = .{ .url = "http://x/a.mp3" } } } } }};
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .audio = .{ .source = .{ .blob = .{ .hash = std.mem.zeroes([64]u8), .mime = "audio/mpeg", .bytes = 2 } } } } }};
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
     try testing.expectError(error.UnsupportedContent, serialize(&buf.writer, .{ .model = "claude", .max_output_tokens = 8 }, .{ .blocks = &blocks }, .{}));

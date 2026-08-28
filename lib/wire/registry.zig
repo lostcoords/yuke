@@ -33,8 +33,6 @@ pub const structs = [_]TypeEntry{
     .{ .name = "ContentImage", .ty = content.ContentImage },
     .{ .name = "ContentAudio", .ty = content.ContentAudio },
     .{ .name = "ContentFile", .ty = content.ContentFile },
-    .{ .name = "MediaUrl", .ty = content.MediaUrl },
-    .{ .name = "MediaBase64", .ty = content.MediaBase64 },
     .{ .name = "MediaBlob", .ty = content.MediaBlob },
     .{ .name = "AuthCancelLoginParams", .ty = auth.AuthCancelLoginParams },
     .{ .name = "AuthChangedData", .ty = auth.AuthChangedData },
