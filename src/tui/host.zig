@@ -32,6 +32,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:core", .source = @embedFile("js/core.js") },
     .{ .name = "yuke:ext", .source = @embedFile("js/ext.js") },
     .{ .name = "yuke:md", .source = @embedFile("js/md.js") },
+    .{ .name = "yuke:ui", .source = @embedFile("js/ui.js") },
 };
 
 pub const Options = struct {
@@ -1097,6 +1098,98 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
     const text = try host.ctx.toCStringLen(out);
     defer host.ctx.freeCString(text.ptr);
     try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    // Compiling the imported graph is CPU work, not a runaway script. Give it a generous wall slice.
+    host.slice_ns = std.time.ns_per_s;
+    try host.evalModule(
+        \\import { List, fuzzyMatch, fuzzyRank, Transcript, Picker } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\// A two-line list shows floor(h / itemHeight) items and scrolls in item units.
+        \\const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
+        \\check("visible", l._visible(6) === 3);
+        \\l.moveToEdge(1);
+        \\check("sel-end", l.selectedIndex() === 5);
+        \\l.ensureVisible(6);
+        \\check("scroll-bottom", l.scroll === 3);
+        \\l.moveToEdge(-1);
+        \\l.ensureVisible(6);
+        \\check("scroll-top", l.scroll === 0 && l.selectedIndex() === 0);
+        \\
+        \\// fzy requires a subsequence and prefers a word boundary.
+        \\check("nomatch", fuzzyMatch("abc", "xyz") === null);
+        \\check("empty", fuzzyMatch("abc", "") === 0);
+        \\const ranked = fuzzyRank(["afboo", "foo_bar", "random"], "fb", String);
+        \\check("boundary-first", ranked[0] === "foo_bar");
+        \\const dog = fuzzyRank(["cat", "dog"], "og", String);
+        \\check("subsequence", dog.length === 1 && dog[0] === "dog");
+        \\check("over-long-cap", fuzzyMatch("a".repeat(1025), "a") === -Infinity);
+        \\// Assigning the query refilters the result list.
+        \\const p = new Picker({ items: ["apple", "banana"], filterText: String });
+        \\p.query = "ban";
+        \\check("picker-refilter", p.list.items.length === 1 && p.list.items[0] === "banana");
+        \\
+        \\// A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
+        \\const texts = { u1: "hello world", a1: "**bold** text" };
+        \\const t = new Transcript({ textOf: (id) => texts[id] || "" });
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
+        \\const rows = t.rows(40, 0, 100);
+        \\check("user-band", rows.some((r) => r.marker === "⟩" && r.bg === "TxUser"));
+        \\check("assistant-md", rows.some((r) => r.segments && r.segments.some((s) => s.group === "MdStrong" && s.text === "bold")));
+        \\
+        \\// A streaming draft re-renders through yuke:md.
+        \\texts.a2 = "streamed";
+        \\t.setActive("a2");
+        \\const rows2 = t.rows(40, 0, 100);
+        \\check("draft", rows2.some((r) => r.segments && r.segments.some((s) => s.text.indexOf("streamed") >= 0)));
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "ui.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui Transcript draws markdown segments through the pager" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 6, .cols = 24, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.slice_ns = std.time.ns_per_s;
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:ui";
+        \\const t = new Transcript({ textOf: () => "**hi** there" });
+        \\t.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\term.beginFrame();
+        \\t.draw({ x: 0, y: 0, w: 24, h: 6 });
+        \\term.endFrame();
+    , "draw.js");
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "hi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "there") != null);
 }
 
 test "a style link cycle falls back instead of spinning" {
