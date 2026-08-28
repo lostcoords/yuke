@@ -23,6 +23,8 @@ const write_buf_bytes = 16 * 1024;
 const max_message_bytes = 8 * 1024 * 1024;
 /// The daemon rejects an oversized subscription set, so cap it on the client.
 const max_subscriptions = wire.meta.limits.max_subscriptions;
+/// Retry a failed resync a few times before it waits for the next reconnect.
+const max_resync_attempts = 3;
 /// Bound the TCP dial. A finite handshake deadline waits for R4.
 const connect_timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(10_000) } };
 
@@ -48,10 +50,12 @@ const Replica = struct {
     rev: i32,
     sync: SyncState,
     resync_gen: u64,
+    resync_attempts: u32,
+    resync_pending: ?u64, // the request id of the in-flight resync, or null
 
     fn create(gpa: std.mem.Allocator, sid: SessionId) !*Replica {
         const self = try gpa.create(Replica);
-        self.* = .{ .session = domain.session.Session.init(gpa, sid), .rev = 0, .sync = .needs_resync, .resync_gen = 0 };
+        self.* = .{ .session = domain.session.Session.init(gpa, sid), .rev = 0, .sync = .needs_resync, .resync_gen = 0, .resync_attempts = 0, .resync_pending = null };
         return self;
     }
 
@@ -305,34 +309,41 @@ pub const Client = struct {
         const replica = conn.replicas.get(tag.sid) orelse return settleResolveVoid(ctx, p.resolve);
         // A newer resync or a reopen replaced this request.
         if (replica.sync != .resyncing or replica.resync_gen != tag.gen) return settleResolveVoid(ctx, p.resolve);
-        // A response carries a result or an error, never both. The error arm wins.
-        if (obj.get("error") != null) {
-            replica.sync = .needs_resync;
-            return rejectRoot(ctx, p.reject, "resync_failed");
+        // The daemon lost the session. Unmount the replica and tell the shell.
+        if (errorCode(obj)) |code| {
+            if (code == @intFromEnum(wire.enums.ErrorCode.unknown_session)) {
+                _ = conn.replicas.remove(tag.sid);
+                replica.destroy(self.gpa);
+                self.sendSubscriptions(conn);
+                self.emitSession(ctx, conn.key, tag.sid, "gone", null);
+                return rejectRoot(ctx, p.reject, "unknown_session");
+            }
+            return self.resyncFailed(ctx, conn, tag.sid, replica, p.reject);
         }
-        const result = obj.get("result") orelse {
-            replica.sync = .needs_resync;
-            return rejectRoot(ctx, p.reject, "resync_failed");
-        };
-        const rr = wire.rpc.resultFromValue(a, .@"session.resync", result, .{}) catch {
-            replica.sync = .needs_resync;
-            return rejectRoot(ctx, p.reject, "resync_failed");
-        };
+        const result = obj.get("result") orelse return self.resyncFailed(ctx, conn, tag.sid, replica, p.reject);
+        const rr = wire.rpc.resultFromValue(a, .@"session.resync", result, .{}) catch
+            return self.resyncFailed(ctx, conn, tag.sid, replica, p.reject);
         const sr = switch (rr) {
             .session_resync_result => |x| x,
-            else => {
-                replica.sync = .needs_resync;
-                return rejectRoot(ctx, p.reject, "resync_failed");
-            },
+            else => return self.resyncFailed(ctx, conn, tag.sid, replica, p.reject),
         };
-        replica.session.installResync(sr) catch {
-            replica.sync = .needs_resync;
-            return rejectRoot(ctx, p.reject, "resync_failed");
-        };
+        replica.session.installResync(sr) catch
+            return self.resyncFailed(ctx, conn, tag.sid, replica, p.reject);
         replica.sync = .synced;
+        replica.resync_attempts = 0;
         replica.rev +|= 1;
         self.emitSession(ctx, conn.key, tag.sid, "reload", null);
         settleResolveVoid(ctx, p.resolve);
+    }
+
+    /// A resync failed. Retry a few times on a live connection, else wait for the next reconnect.
+    fn resyncFailed(self: *Client, ctx: Context, conn: *Connection, sid: SessionId, replica: *Replica, reject: Value) void {
+        replica.sync = .needs_resync;
+        rejectRoot(ctx, reject, "resync_failed");
+        if (conn.state == .ready and replica.resync_attempts < max_resync_attempts) {
+            replica.resync_attempts += 1;
+            self.startResync(ctx, conn, sid, replica, quickjs.UNDEFINED, quickjs.UNDEFINED);
+        }
     }
 
     /// Fold one broadcast into its replica. R4 emits an index broadcast to JavaScript.
@@ -384,13 +395,24 @@ pub const Client = struct {
         self.sendSubscriptions(conn);
         var it = conn.replicas.iterator();
         while (it.next()) |e| {
-            if (e.value_ptr.*.sync == .needs_resync)
+            if (e.value_ptr.*.sync == .needs_resync) {
+                e.value_ptr.*.resync_attempts = 0; // a reconnect earns a fresh retry budget
                 self.startResync(ctx, conn, e.key_ptr.*, e.value_ptr.*, quickjs.UNDEFINED, quickjs.UNDEFINED);
+            }
         }
     }
 
     /// Reset the replica and send `session.resync`. `resolve`/`reject` are undefined for an auto-resync.
     fn startResync(self: *Client, ctx: Context, conn: *Connection, sid: SessionId, replica: *Replica, resolve: Value, reject: Value) void {
+        // Supersede an in-flight resync for this replica, so its roots do not linger.
+        if (replica.resync_pending) |old| {
+            if (conn.pending.fetchRemove(old)) |e| {
+                settleResolveVoid(ctx, e.value.resolve);
+                ctx.freeValue(e.value.resolve);
+                ctx.freeValue(e.value.reject);
+            }
+            replica.resync_pending = null;
+        }
         conn.resync_seq += 1;
         const gen = conn.resync_seq;
         replica.reset(gen);
@@ -406,8 +428,10 @@ pub const Client = struct {
             return;
         };
         conn.next_id += 1;
+        replica.resync_pending = id;
         sendFrame(conn, self.gpa, id, "session.resync", params) catch {
             replica.sync = .needs_resync;
+            replica.resync_pending = null;
             if (conn.pending.fetchRemove(id)) |e| {
                 rejectRoot(ctx, e.value.reject, "write_failed");
                 ctx.freeValue(e.value.resolve);
@@ -546,6 +570,21 @@ fn rejectRoot(ctx: Context, reject: Value, code: []const u8) void {
     }
     ctx.freeValue(ctx.call(reject, quickjs.UNDEFINED, &.{e}));
     ctx.freeValue(e);
+}
+
+/// Return the numeric `error.code` of a response, or null for a missing or invalid code.
+/// The wire serializes `ErrorCode` as its integer value (`unknown_session` = -31000).
+fn errorCode(obj: std.json.ObjectMap) ?i64 {
+    const err = obj.get("error") orelse return null;
+    const eobj = switch (err) {
+        .object => |o| o,
+        else => return null,
+    };
+    const code = eobj.get("code") orelse return null;
+    return switch (code) {
+        .integer => |n| n,
+        else => null,
+    };
 }
 
 /// Build a JSON-RPC envelope and write it as a masked text frame.
@@ -939,6 +978,7 @@ fn jsSessionResync(ctx: Context, _: Value, args: []const Value) Value {
     var funcs: [2]Value = undefined;
     const promise = ctx.newPromiseCapability(&funcs);
     if (ctx.isException(promise)) return promise;
+    replica.resync_attempts = 0; // a shell request earns a fresh retry budget
     client.startResync(ctx, conn, sid, replica, funcs[0], funcs[1]);
     return promise;
 }

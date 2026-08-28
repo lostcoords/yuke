@@ -435,11 +435,19 @@ const chatSession = {
     chat.setActive(id);
     root.invalidate();
   },
+
+  // The daemon lost the session. Clear the pane back to the placeholder.
+  close() {
+    this.sessionId = null;
+    chat.setOutline([], null);
+    root.invalidate();
+  },
 };
 
 events.on("session", (ev) => {
   if (!ev || ev.connKey !== chatSession.connKey || ev.sessionId !== chatSession.sessionId) return;
-  if (ev.kind === "active") chatSession.active(ev.id);
+  if (ev.kind === "gone") chatSession.close();
+  else if (ev.kind === "active") chatSession.active(ev.id);
   else chatSession.reload();
 });
 
