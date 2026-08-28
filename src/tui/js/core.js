@@ -62,30 +62,28 @@ function applyDaemonConfig(d) {
 // Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
 const link_depth_max = 100;
 
-// Define highlight groups over the palette. Call `invalidate()` after changes.
+// Highlight groups over the palette. yuke is monochrome: emphasis is weight and inversion, not hue.
+// `Normal` is `reset`, so the terminal background shows through. `danger` is the only color.
 export const style = {
   palette: {
-    bg: "black",
-    fg: "white",
-    muted: "dark_gray",
-    accent: "cyan",
-    sel: 238,
-    rule: 236,
+    fg: "reset",
+    bg: "reset",
+    danger: "red",
   },
   groups: {
     Normal: { fg: "fg", bg: "bg" },
-    Comment: { fg: "muted" },
-    YukeBrand: { fg: "accent", bold: true },
+    Comment: { fg: "fg", dim: true },
+    YukeBrand: { fg: "fg", bold: true },
     YukeHeader: { link: "Comment" },
     YukeFooter: { link: "Comment" },
-    YukeStatus: { fg: "muted" },
-    YukeRule: { fg: "rule", bg: "bg" },
+    YukeStatus: { fg: "fg", dim: true },
+    YukeRule: { fg: "fg", dim: true },
     YukeSession: { link: "Normal" },
-    YukeSessionSel: { fg: "fg", bg: "sel" },
-    YukeSessionMeta: { fg: "muted" },
-    YukeSessionMetaSel: { fg: "muted", bg: "sel" },
-    YukeEmpty: { fg: "muted" },
-    YukeHint: { fg: "muted" },
+    YukeSessionSel: { reverse: true },
+    YukeSessionMeta: { fg: "fg", dim: true },
+    YukeSessionMetaSel: { reverse: true },
+    YukeEmpty: { fg: "fg", dim: true },
+    YukeHint: { fg: "fg", dim: true },
   },
   _cache: Object.create(null),
   resolve(name) {
@@ -103,6 +101,7 @@ export const style = {
       if (def.dim) out.dim = true;
       if (def.italic) out.italic = true;
       if (def.underline) out.underline = true;
+      if (def.reverse) out.reverse = true;
     }
     const fg = def && def.fg !== undefined ? def.fg : "fg";
     out.fg = this.palette[fg] !== undefined ? this.palette[fg] : fg;

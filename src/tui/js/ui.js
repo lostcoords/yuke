@@ -7,20 +7,21 @@ import { Document } from "yuke:md";
 // The kit seeds its highlight groups over the core palette. It seeds each missing group only, so a
 // theme that set one first keeps it, and a second import does not re-seed.
 const UI_GROUPS = {
+  // A panel fills with spaces over the terminal background, so it is opaque behind its border.
   UIPanel: { fg: "fg", bg: "bg" },
-  UIBorder: { fg: "muted", bg: "bg" },
-  UITitle: { fg: "accent", bold: true },
+  UIBorder: { fg: "fg", dim: true },
+  UITitle: { fg: "fg", bold: true },
   UIItem: { fg: "fg" },
-  UIItemSel: { fg: "fg", bg: "sel" },
-  UIPrompt: { fg: "accent", bold: true },
+  UIItemSel: { reverse: true },
+  UIPrompt: { fg: "fg", bold: true },
   UIQuery: { fg: "fg" },
   UIComposer: { fg: "fg" },
-  UIDim: { fg: "muted" },
-  UIDimSel: { fg: "muted", bg: "sel" },
-  // A user turn gets a full-width tinted band; the assistant text is plain. The marker is a gutter cue.
+  UIDim: { fg: "fg", dim: true },
+  UIDimSel: { reverse: true },
+  // A user turn gets a full-width inverted band; the assistant text is plain. The marker is a gutter cue.
   TxText: { fg: "fg" },
-  TxUser: { fg: "fg", bg: "userbg" },
-  TxUserMarker: { fg: "accent", bg: "userbg" },
+  TxUser: { reverse: true },
+  TxUserMarker: { reverse: true, bold: true },
 };
 let seededGroups = false;
 for (const name in UI_GROUPS) {
@@ -29,7 +30,6 @@ for (const name in UI_GROUPS) {
     seededGroups = true;
   }
 }
-if (style.palette.userbg === undefined) style.palette.userbg = 236;
 if (seededGroups) style.invalidate();
 
 // Default page jump before a draw sets the real page height.

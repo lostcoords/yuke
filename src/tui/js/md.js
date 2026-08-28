@@ -7,13 +7,13 @@ if (!style.groups.MdText) {
     MdText: { link: "Normal" },
     MdStrong: { fg: "fg", bold: true },
     MdEm: { fg: "fg", italic: true },
-    MdCode: { fg: "muted" },
+    MdCode: { fg: "fg", dim: true },
     MdHeading: { fg: "fg", bold: true },
-    MdQuote: { fg: "muted" },
-    MdCodeBlock: { fg: "muted" },
-    MdRule: { fg: "rule" },
-    MdListMark: { fg: "muted" },
-    MdTableBorder: { fg: "rule" },
+    MdQuote: { fg: "fg", dim: true },
+    MdCodeBlock: { fg: "fg", dim: true },
+    MdRule: { fg: "fg", dim: true },
+    MdListMark: { fg: "fg", dim: true },
+    MdTableBorder: { fg: "fg", dim: true },
   });
   style.invalidate();
 }

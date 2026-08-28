@@ -659,10 +659,11 @@ test "yuke:core clip wrap and style.resolve" {
         \\  lines[2] === "" &&
         \\  lines[3] === "abcde" &&
         \\  lines[4] === "f" &&
-        \\  before === "white" &&
-        \\  stale === "white" &&
+        \\  before === "reset" &&
+        \\  stale === "reset" &&
         \\  style.resolve("Normal").fg === "red" &&
-        \\  style.resolve("YukeHeader").fg === "dark_gray" &&
+        \\  style.resolve("YukeHeader").fg === "red" &&
+        \\  style.resolve("YukeHeader").dim === true &&
         \\  style.resolve("YukeBrand").bold === true
         \\) ? 1 : 0;
     , "core.js");
@@ -1360,7 +1361,8 @@ test "a style link cycle falls back instead of spinning" {
         \\  style.resolve("Cycle").fg === normal.fg &&
         \\  style.resolve("Selfie").fg === normal.fg &&
         \\  style.resolve("Dangling").fg === normal.fg &&
-        \\  style.resolve("YukeHeader").fg === "dark_gray"
+        \\  style.resolve("YukeHeader").fg === "reset" &&
+        \\  style.resolve("YukeHeader").dim === true
         \\) ? 1 : 0;
     , "cycle.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));

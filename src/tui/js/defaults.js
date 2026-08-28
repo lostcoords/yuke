@@ -9,7 +9,7 @@ import { vim } from "yuke:vim";
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
 // alone, so a theme that set one first keeps it.
-const CMDLINE_GROUPS = { YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: 203, bold: true } };
+const CMDLINE_GROUPS = { YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } };
 let seededCmdline = false;
 for (const name in CMDLINE_GROUPS) {
   if (!(name in style.groups)) {

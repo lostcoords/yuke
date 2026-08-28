@@ -342,7 +342,8 @@ fn int32Array(ctx: Context, items: []const i32) Value {
 }
 
 fn parseStyle(ctx: Context, maybe: ?Value) error{Exception}!term_pkg.Style {
-    var style: term_pkg.Style = .{ .fg = .{ .index = 15 } };
+    // Omitted fg is the terminal default, so a reset theme reads correctly on a light terminal.
+    var style: term_pkg.Style = .{};
     const st = maybe orelse return style;
     if (!ctx.isObject(st)) return style;
 
@@ -351,6 +352,7 @@ fn parseStyle(ctx: Context, maybe: ?Value) error{Exception}!term_pkg.Style {
     style.bold = try boolProp(ctx, st, "bold");
     style.dim = try boolProp(ctx, st, "dim");
     style.italic = try boolProp(ctx, st, "italic");
+    style.reverse = try boolProp(ctx, st, "reverse");
     if (try boolProp(ctx, st, "underline")) style.ul_style = .single;
     return style;
 }
