@@ -1,4 +1,4 @@
-// yuke:vim — opt-in modal editing for the chat composer. Off by default; load via the `vim:toggle`
+// yuke:vim — an opt-in modal layer for the chat composer. Off by default; load via the `vim:toggle`
 // command or `config.vim`. Normal mode disables the composer text input, so bare keys reach the
 // keymap and scroll the transcript; insert mode types. It is a plugin, so it reverts on unload.
 import { command, root, events } from "yuke:core";

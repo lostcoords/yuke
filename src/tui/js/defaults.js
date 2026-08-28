@@ -7,14 +7,17 @@ import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
 import { vim } from "yuke:vim";
 
-// The ":" command line: the prompt links to Normal; an unmatched word shows in red.
-if (!style.groups.YukeCmdline) {
-  Object.assign(style.groups, {
-    YukeCmdline: { link: "Normal" },
-    YukeCmdlineErr: { fg: 203, bold: true },
-  });
-  style.invalidate();
+// The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
+// alone, so a theme that set one first keeps it.
+const CMDLINE_GROUPS = { YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: 203, bold: true } };
+let seededCmdline = false;
+for (const name in CMDLINE_GROUPS) {
+  if (!(name in style.groups)) {
+    style.groups[name] = CMDLINE_GROUPS[name];
+    seededCmdline = true;
+  }
 }
+if (seededCmdline) style.invalidate();
 
 // The sidebar's share of the width in the default row split.
 const SIDEBAR_RATIO = 0.28;
@@ -226,10 +229,11 @@ class SessionList {
     return false;
   }
 
-  // A two-line row: a mark and title over a faint workspace and model, the active pair marked "▸".
+  // A two-line row: an activity mark and title over a faint workspace and model. The active pair
+  // prefixes its title with "▸", so the mark and the active cue stay independent.
   _format(row) {
     const active = this.active && this.active.connKey === row.connKey && this.active.sessionId === row.id;
-    const mark = active ? "▸" : activityMark(row.activity);
+    const mark = activityMark(row.activity);
     return {
       lines: [
         {
@@ -237,7 +241,7 @@ class SessionList {
           markerGroup: "YukeSessionMeta",
           markerSelGroup: "YukeSessionMetaSel",
           indent: 2,
-          text: rowLabel(row),
+          text: (active ? "▸ " : "") + rowLabel(row),
           right: relTime(row.session.updated_at_ms),
           group: "YukeSession",
           selGroup: "YukeSessionSel",
@@ -788,7 +792,7 @@ const connection = {
           },
         );
       } catch (_e) {
-        // already connecting
+        // a connect attempt is active
       }
     }
   },
@@ -864,7 +868,7 @@ plugins.use({
     });
 
     // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
-    // ctrl+k prefix (works mid-typing), which leaves ctrl+w for the composer word-erase.
+    // ctrl+k prefix (it works during text entry), which leaves ctrl+w for the composer word-erase.
     ctx.keymap({
       "ctrl+p": "ui:palette",
       "ctrl+f": "ui:sessions",

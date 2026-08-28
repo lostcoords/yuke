@@ -1318,6 +1318,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
     try host.evalModule(
         \\import { command, root } from "yuke:core";
         \\import { plugins } from "yuke:ext";
+        \\import { SessionList } from "yuke:defaults";
         \\const fail = [];
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
@@ -1326,6 +1327,12 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\command.perform("vim:toggle");
         \\if (!!plugins.get("vim") === before) fail.push("vim-toggle");
         \\command.perform("vim:toggle");
+        \\// An active, working row keeps both the activity mark and the "▸" active cue.
+        \\const sl = new SessionList();
+        \\sl.active = { connKey: "local", sessionId: "z" };
+        \\const row = { connKey: "local", id: "z", session: { updated_at_ms: Date.now(), model: "m" }, activity: { state: { type: "working" } }, workspace: null };
+        \\const line0 = sl._format(row).lines[0];
+        \\if (line0.marker !== "●" || !line0.text.startsWith("▸ ")) fail.push("active-mark");
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");
     const res = try host.ctx.eval("globalThis.result", "r.js", .{});
