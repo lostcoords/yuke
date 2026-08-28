@@ -34,6 +34,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:ext", .source = @embedFile("js/ext.js") },
     .{ .name = "yuke:md", .source = @embedFile("js/md.js") },
     .{ .name = "yuke:ui", .source = @embedFile("js/ui.js") },
+    .{ .name = "yuke:client", .source = @embedFile("js/client.js") },
 };
 
 pub const Options = struct {
@@ -1185,6 +1186,100 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     , "draw.js");
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "hi") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "there") != null);
+}
+
+test "yuke:client fixtures serve sessions and stream a reply over ticks" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { events } from "yuke:core";
+        \\import * as client from "yuke:client";
+        \\globalThis.result = "pending";
+        \\await (async () => {
+        \\  const fail = [];
+        \\  const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\  // an absent connection is dialable, so the shell will connect it.
+        \\  check("disconnected", client.connectionState("remote:x") === "disconnected");
+        \\
+        \\  // connect emits a ready conn event and exposes the connection.
+        \\  let ready = null;
+        \\  events.on("conn", (ev) => { if (ev.kind === "ready") ready = ev; });
+        \\  await client.connect();
+        \\  check("conn-ready", ready && ready.key === "local");
+        \\  check("state", client.connectionState("local") === "ready");
+        \\  check("connections", client.connections().length === 1);
+        \\
+        \\  // the session list returns the seeded summaries.
+        \\  const list = await client.sessionList("local");
+        \\  check("list", list.items.length === 2 && list.items[0].session.id === "s1");
+        \\
+        \\  // an opened session exposes its outline and text.
+        \\  client.sessionOpen("local", "s1");
+        \\  const o = client.sessionOutline("local", "s1");
+        \\  check("outline", o.messages.length === 2 && o.messages[0].type === "user" && o.active === null);
+        \\  check("text", client.sessionText("local", "s1", "m2").indexOf("**one**") >= 0);
+        \\  check("rev", client.sessionRev("local", "s1") === 0);
+        \\
+        \\  // send_input appends the user turn and starts a streaming draft.
+        \\  const sessionEvents = [];
+        \\  events.on("session", (ev) => sessionEvents.push(ev.kind));
+        \\  const activity = [];
+        \\  events.on("index", (ev) => { if (ev.method === "session.activity_changed") activity.push(ev.params.activity.state.type); });
+        \\  await client.sessionSendInput("local", "s1", "hi");
+        \\  const afterSend = client.sessionOutline("local", "s1");
+        \\  check("user-added", afterSend.messages.length === 3 && afterSend.active !== null);
+        \\
+        \\  // the tick pump grows the draft, then commits it.
+        \\  client._pumpStreams();
+        \\  check("draft-grows", client.sessionText("local", "s1", afterSend.active.id).length > 0);
+        \\  check("active-event", sessionEvents.indexOf("active") >= 0);
+        \\  let guard = 0;
+        \\  while (client._pumpStreams() && guard++ < 100);
+        \\  const done = client.sessionOutline("local", "s1");
+        \\  check("committed", done.active === null && done.messages.length === 4);
+        \\  check("reload-event", sessionEvents.indexOf("reload") >= 0);
+        \\
+        \\  // the stream reported working then idle to the sidebar.
+        \\  check("activity", activity.indexOf("working") >= 0 && activity.indexOf("idle") >= 0);
+        \\
+        \\  // session state survives a close and reopen.
+        \\  client.sessionClose("local", "s1");
+        \\  check("unmounted", client.sessionRev("local", "s1") === -1);
+        \\  client.sessionOpen("local", "s1");
+        \\  check("persisted", client.sessionOutline("local", "s1").messages.length === 4);
+        \\
+        \\  // a second send queues behind the active stream; both replies commit.
+        \\  client.sessionOpen("local", "s2");
+        \\  await client.sessionSendInput("local", "s2", "a");
+        \\  const queued = await client.sessionSendInput("local", "s2", "b");
+        \\  check("queued", queued.type === "queued");
+        \\  let g2 = 0;
+        \\  while (client._pumpStreams() && g2++ < 300);
+        \\  const s2o = client.sessionOutline("local", "s2");
+        \\  check("queue-drained", s2o.messages.length === 4 && s2o.active === null);
+        \\
+        \\  // cancel commits the partial draft and reports a canceled run.
+        \\  await client.sessionSendInput("local", "s1", "x");
+        \\  client._pumpStreams();
+        \\  const cancel = await client.sessionCancelRun("local", "s1", true);
+        \\  check("cancel", cancel.canceled_run !== null && client.sessionOutline("local", "s1").active === null);
+        \\
+        \\  // browse returns fixture entries.
+        \\  const browse = await client.workspaceBrowse("local", {});
+        \\  check("browse", browse.entries.length === 2);
+        \\
+        \\  globalThis.result = fail.length ? fail.join(",") : "ok";
+        \\})();
+    , "client.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
 }
 
 test "a style link cycle falls back instead of spinning" {
