@@ -63,13 +63,13 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     host.client.bind(&ch);
     var group: zio.Group = .init;
     defer {
-        // Stop the daemon readers first, so no reader sends into the channel while it drains.
+        // Stop all producers, then drain the queued messages, then close the channel.
         host.client.stopReaders();
-        ch.close(.immediate);
         tty.shutdownInput();
         tick_wake.set();
         group.cancel();
         drainChannel(gpa, &ch);
+        ch.close(.immediate);
     }
 
     try group.spawn(inputTask, .{ &tty, &input, &ch });

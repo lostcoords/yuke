@@ -28,7 +28,7 @@ pub const Msg = union(enum) {
 };
 
 /// A frame the daemon reader delivered to the owner. `key` borrows the connection key, which stays
-/// valid until the connection frees. The owner frees the owned `message` body.
+/// valid until the connection frees. The owner frees the message or ping body.
 pub const Daemon = struct {
     key: []const u8,
     body: Body,
@@ -37,12 +37,13 @@ pub const Daemon = struct {
         connected,
         connect_failed: []const u8, // a static error code
         message: []u8, // owned JSON-RPC text
+        ping: []u8, // owned ping payload; the owner writes the pong then frees it
         closed,
     };
 
     fn deinit(self: *Daemon, gpa: std.mem.Allocator) void {
         switch (self.body) {
-            .message => |bytes| gpa.free(bytes),
+            .message, .ping => |bytes| gpa.free(bytes),
             else => {},
         }
     }

@@ -168,6 +168,8 @@ pub const Client = struct {
     }
 
     pub fn destroy(self: *Client) void {
+        // Join every task before the free, so no task holds a freed connection pointer.
+        self.stopReaders();
         var it = self.conns.valueIterator();
         while (it.next()) |conn| conn.*.destroy(self.gpa);
         self.conns.deinit(self.gpa);
@@ -228,15 +230,21 @@ pub const Client = struct {
         switch (d.body) {
             .connected => {
                 conn.state = .ready;
+                // A restore write can fail the connection, so resolve ready only when it holds.
                 self.restoreReplicas(ctx, conn);
-                self.resolveConnect(ctx, conn);
-                self.emitConn(ctx, conn.key, "ready");
+                if (conn.state == .ready) {
+                    self.resolveConnect(ctx, conn);
+                    self.emitConn(ctx, conn.key, "ready");
+                } else {
+                    self.rejectConnect(ctx, conn, "closed");
+                }
             },
             .connect_failed => |code| {
                 conn.state = .disconnected;
                 self.rejectConnect(ctx, conn, code);
             },
             .message => |bytes| self.onMessage(ctx, conn, bytes),
+            .ping => |payload| self.pong(conn, payload),
             .closed => {
                 self.rejectAll(ctx, conn, "closed");
                 self.staleReplicas(conn);
@@ -261,7 +269,7 @@ pub const Client = struct {
         if (obj.get("id")) |id_val| {
             self.onResponse(ctx, conn, a, obj, id_val, bytes);
         } else if (obj.contains("method")) {
-            self.foldBroadcast(ctx, conn, a, v);
+            if (!self.foldBroadcast(ctx, conn, a, v)) self.emitIndex(ctx, conn.key, bytes);
         }
     }
 
@@ -328,15 +336,16 @@ pub const Client = struct {
     }
 
     /// Fold one broadcast into its replica. R4 emits an index broadcast to JavaScript.
-    fn foldBroadcast(self: *Client, ctx: Context, conn: *Connection, a: std.mem.Allocator, v: std.json.Value) void {
-        const notif = wire.rpc.Notification.jsonParseFromValue(a, v, .{}) catch return;
-        const sid = domain.session.replicaSession(notif.params) orelse return;
-        const replica = conn.replicas.get(sid) orelse return;
+    /// Return true when the broadcast folds into a replica. Return false for an index event to forward.
+    fn foldBroadcast(self: *Client, ctx: Context, conn: *Connection, a: std.mem.Allocator, v: std.json.Value) bool {
+        const notif = wire.rpc.Notification.jsonParseFromValue(a, v, .{}) catch return true; // drop a malformed frame
+        const sid = domain.session.replicaSession(notif.params) orelse return false; // an index event
+        const replica = conn.replicas.get(sid) orelse return true;
         // The gate stays closed until a resync installs the cut.
-        if (replica.sync != .synced) return;
+        if (replica.sync != .synced) return true;
         const applied = replica.session.applyBroadcast(notif.params) catch {
             self.startResync(ctx, conn, sid, replica, quickjs.UNDEFINED, quickjs.UNDEFINED);
-            return;
+            return true;
         };
         switch (applied) {
             .changed => {
@@ -346,6 +355,27 @@ pub const Client = struct {
             .ignored => {},
             .gap => self.startResync(ctx, conn, sid, replica, quickjs.UNDEFINED, quickjs.UNDEFINED),
         }
+        return true;
+    }
+
+    /// Forward an index or workspace broadcast to JavaScript. The shell folds it into the sidebar.
+    fn emitIndex(self: *Client, ctx: Context, key: []const u8, bytes: []u8) void {
+        if (ctx.isUndefined(self.event_sink)) return;
+        const ev = ctx.parseJSON(bytes, "index");
+        if (ctx.isException(ev)) {
+            ctx.freeValue(ctx.getException());
+            return;
+        }
+        ctx.setPropertyStr(ev, "type", ctx.newString("index")) catch {};
+        ctx.setPropertyStr(ev, "connKey", ctx.newString(key)) catch {};
+        self.emitEvent(ctx, ev);
+    }
+
+    /// Call the JS sink with `ev`, then clear any exception a handler threw and free `ev`.
+    fn emitEvent(self: *Client, ctx: Context, ev: Value) void {
+        ctx.freeValue(ctx.call(self.event_sink, quickjs.UNDEFINED, &.{ev}));
+        ctx.freeValue(ctx.getException());
+        ctx.freeValue(ev);
     }
 
     /// After a reconnect, resend the subscriptions and resync every stale replica.
@@ -409,6 +439,16 @@ pub const Client = struct {
         sendFrame(conn, self.gpa, id, "subscription.set", buf.items) catch failConnection(self, conn);
     }
 
+    /// Reply to a server ping. The owner writes it, so socket writes stay serialized on one side.
+    /// A failed write leaves a partial frame, so it fails the connection.
+    fn pong(self: *Client, conn: *Connection, payload: []const u8) void {
+        if (!conn.has_transport) return;
+        var mask: [4]u8 = undefined;
+        zio.random(&mask);
+        websocket.writeFrame(&conn.writer.interface, true, .pong, payload, @bitCast(mask)) catch return failConnection(self, conn);
+        conn.writer.interface.flush() catch failConnection(self, conn);
+    }
+
     /// Mark every replica for a resync after the transport drops.
     fn staleReplicas(_: *Client, conn: *Connection) void {
         var it = conn.replicas.valueIterator();
@@ -450,8 +490,7 @@ pub const Client = struct {
         ctx.setPropertyStr(ev, "type", ctx.newString("conn")) catch {};
         ctx.setPropertyStr(ev, "key", ctx.newString(key)) catch {};
         ctx.setPropertyStr(ev, "kind", ctx.newString(kind)) catch {};
-        ctx.freeValue(ctx.call(self.event_sink, quickjs.UNDEFINED, &.{ev}));
-        ctx.freeValue(ev);
+        self.emitEvent(ctx, ev);
     }
 
     /// A structure change reloads the transcript. A draft delta refreshes the active message.
@@ -474,8 +513,7 @@ pub const Client = struct {
         ctx.setPropertyStr(ev, "sessionId", ctx.newString(hex[0..])) catch {};
         ctx.setPropertyStr(ev, "kind", ctx.newString(kind)) catch {};
         if (id) |mid| ctx.setPropertyStr(ev, "id", ctx.newFloat64(@floatFromInt(mid))) catch {};
-        ctx.freeValue(ctx.call(self.event_sink, quickjs.UNDEFINED, &.{ev}));
-        ctx.freeValue(ev);
+        self.emitEvent(ctx, ev);
     }
 };
 
@@ -587,13 +625,20 @@ fn readLoop(conn: *Connection) void {
                     return;
                 }
             },
+            // The owner writes the pong, so writes stay serialized on one side.
+            .ping => {
+                if (!deliverBody(conn, .{ .ping = msg.data })) {
+                    gpa.free(msg.data);
+                    return;
+                }
+            },
             // A binary frame is not a JSON response, so it fails the connection.
             .binary, .connection_close => {
                 gpa.free(msg.data);
                 deliver(conn, .closed);
                 return;
             },
-            else => gpa.free(msg.data), // ping and pong wait for R4.
+            else => gpa.free(msg.data), // a pong needs no reply
         }
     }
 }
@@ -607,11 +652,15 @@ fn deliverFail(conn: *Connection, code: []const u8) void {
     deliver(conn, .{ .connect_failed = code });
 }
 
-/// Hand an owned message to the owner. Return false when the owner is gone, so the caller frees it.
-fn deliverMessage(conn: *Connection, data: []u8) bool {
+/// Hand an owned body to the owner. Return false when the owner is gone, so the caller frees it.
+fn deliverBody(conn: *Connection, body: owner.Daemon.Body) bool {
     const ch = conn.client.owner_ch orelse return false;
-    ch.send(.{ .daemon = .{ .key = conn.key, .body = .{ .message = data } } }) catch return false;
+    ch.send(.{ .daemon = .{ .key = conn.key, .body = body } }) catch return false;
     return true;
+}
+
+fn deliverMessage(conn: *Connection, data: []u8) bool {
+    return deliverBody(conn, .{ .message = data });
 }
 
 fn writeRequest(conn: *Connection, payload: []const u8) !void {
@@ -770,6 +819,13 @@ fn jsDisconnect(ctx: Context, _: Value, args: []const Value) Value {
     const key = keyArg(ctx, args) orelse return quickjs.UNDEFINED;
     defer ctx.freeCString(key.ptr);
     const conn = client.conns.get(key) orelse return quickjs.UNDEFINED;
+    // A dial cannot cancel per connection yet, so a disconnect while connecting is a no-op.
+    if (conn.state == .connecting) return quickjs.UNDEFINED;
+    // A user disconnect abandons the open sessions and the in-flight requests.
+    var it = conn.replicas.valueIterator();
+    while (it.next()) |r| r.*.destroy(client.gpa);
+    conn.replicas.clearRetainingCapacity();
+    client.rejectAll(ctx, conn, "closed");
     failConnection(client, conn);
     return quickjs.UNDEFINED;
 }
