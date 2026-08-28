@@ -1007,6 +1007,28 @@ test "mount is idempotent and caps the subscription set" {
     try std.testing.expectEqual(@as(u32, @intCast(max_subscriptions)), conn.replicas.count());
 }
 
+test "the outline and text project a streaming draft" {
+    const gpa = std.testing.allocator;
+    const sid = SessionId.bytes([_]u8{0} ** 16);
+    var sess = domain.session.Session.init(gpa, sid);
+    defer sess.deinit();
+    // Fold a streaming assistant turn: start the message, add a text part, then stream two deltas.
+    _ = try sess.applyBroadcast(.{ .message_started_data = .{ .session_id = sid, .message_id = 1, .run_id = 1, .config_rev = 0, .agent = "claude", .created_at_ms = 1 } });
+    _ = try sess.applyBroadcast(.{ .message_part_added_data = .{ .session_id = sid, .message_id = 1, .part = .{ .text = .{ .id = 0, .text = "" } } } });
+    _ = try sess.applyBroadcast(.{ .message_part_delta_data = .{ .session_id = sid, .message_id = 1, .part_id = 0, .delta = "hi ", .offset = 0 } });
+    _ = try sess.applyBroadcast(.{ .message_part_delta_data = .{ .session_id = sid, .message_id = 1, .part_id = 0, .delta = "there", .offset = 3 } });
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeOutline(&aw.writer, &sess);
+    try std.testing.expectEqualStrings("{\"messages\":[],\"active\":{\"id\":1,\"type\":\"assistant\"}}", aw.written());
+
+    var tw: std.Io.Writer.Allocating = .init(gpa);
+    defer tw.deinit();
+    try writeMessageText(&tw.writer, &sess, 1);
+    try std.testing.expectEqualStrings("hi there", tw.written());
+}
+
 test "outline and text serialize a folded transcript" {
     const gpa = std.testing.allocator;
     var sess = domain.session.Session.init(gpa, SessionId.bytes([_]u8{0} ** 16));
