@@ -15,8 +15,9 @@ pub const memory_limit: usize = 64 * 1024 * 1024;
 pub const stack_limit: usize = 1 * 1024 * 1024;
 /// Limit jobs per drain so Promise chains do not starve the owner.
 pub const job_budget: u32 = 1024;
-/// Set the default time slice for one evaluation or callback.
-pub const default_slice_ns: u64 = 50 * std.time.ns_per_ms;
+/// Bound one evaluation or callback by interrupt polls, a coarse CPU proxy. Wall time is not used,
+/// so scheduling jitter never aborts a script. QuickJS polls about every 10000 bytecode operations.
+pub const default_interrupt_budget: u32 = 100_000;
 /// Limit the fault text that the Host stores.
 /// A fixed buffer lets `captureFault` run without an allocation.
 pub const fault_text_max: usize = 512;
@@ -68,8 +69,8 @@ pub const Host = struct {
     ctx: quickjs.Context,
     loader: loader_mod.Loader,
     phase: Phase,
-    slice_ns: u64,
-    deadline_ns: u64,
+    interrupt_budget: u32,
+    interrupt_count: u32,
     budget: u32,
     /// Hold the last script fault text. The Host owns these bytes and `report.zig` paints them.
     fault_text: [fault_text_max]u8,
@@ -113,8 +114,8 @@ pub const Host = struct {
             .ctx = ctx,
             .loader = ld,
             .phase = .open,
-            .slice_ns = default_slice_ns,
-            .deadline_ns = std.math.maxInt(u64),
+            .interrupt_budget = default_interrupt_budget,
+            .interrupt_count = 0,
             .budget = job_budget,
             .fault_text = undefined,
             .fault_text_len = 0,
@@ -321,11 +322,12 @@ pub const Host = struct {
     /// Apply the deadline in every live phase so close cannot hang.
     pub fn onInterrupt(self: *Host) bool {
         if (self.phase == .destroyed) return true;
-        return nowNs() >= self.deadline_ns;
+        self.interrupt_count = self.interrupt_count +| 1;
+        return self.interrupt_count > self.interrupt_budget;
     }
 
     pub fn enterSlice(self: *Host) void {
-        self.deadline_ns = nowNs() +| self.slice_ns;
+        self.interrupt_count = 0;
     }
 
     pub fn noteFault(self: *Host) void {
@@ -342,11 +344,11 @@ pub const Host = struct {
     /// The Host allocates no memory after an out-of-memory fault.
     fn captureFault(self: *Host, exc: quickjs.Value) void {
         std.debug.assert(self.fault_text_len == 0);
-        // A conversion can call a user `toString`. An expired deadline stops it at the first
-        // bytecode instruction, while a built-in C conversion still runs.
-        const saved = self.deadline_ns;
-        defer self.deadline_ns = saved;
-        self.deadline_ns = 0;
+        // A conversion can call a user `toString`. A zero budget stops it at the first poll, while
+        // a built-in C conversion still runs.
+        const saved = self.interrupt_budget;
+        defer self.interrupt_budget = saved;
+        self.interrupt_budget = 0;
 
         _ = self.appendFaultValue(exc);
         self.appendStack(exc);
@@ -419,10 +421,6 @@ pub const Host = struct {
     }
 };
 
-fn nowNs() u64 {
-    return zio.time.Timestamp.now(.awake).toNanoseconds();
-}
-
 /// Return the longest prefix of `text` that fits in `max` bytes and ends a UTF-8 sequence.
 fn utf8PrefixLen(text: []const u8, max: usize) usize {
     if (text.len <= max) return text.len;
@@ -485,13 +483,13 @@ test "drainJobs runs a then callback" {
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("globalThis.hit"));
 }
 
-test "an infinite loop hits the interrupt deadline" {
+test "an infinite loop hits the interrupt budget" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
-    host.slice_ns = 0;
+    host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.eval("while (true) {}", "spin.js"));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "interrupted") != null);
 }
@@ -506,7 +504,7 @@ test "close interrupts a leftover spinning job" {
     try host.eval("Promise.resolve().then(() => { while (true) {} })", "spin.js");
     try std.testing.expect(host.runtime.isJobPending());
     host.budget = job_budget;
-    host.slice_ns = 0;
+    host.interrupt_budget = 0;
     try std.testing.expectError(error.JavaScriptFault, host.close());
     // The host stopped inside the drain, so it never reached `drained`.
     try std.testing.expectEqual(Host.Phase.closing, host.phase);
@@ -1106,8 +1104,6 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
 
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
-    // Compiling the imported graph is CPU work, not a runaway script. Give it a generous wall slice.
-    host.slice_ns = std.time.ns_per_s;
     try host.evalModule(
         \\import { List, fuzzyMatch, fuzzyRank, Transcript, Picker } from "yuke:ui";
         \\const fail = [];
@@ -1176,7 +1172,6 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     defer out.deinit();
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
-    host.slice_ns = std.time.ns_per_s;
     host.bindRender(&render, &out.writer);
 
     try host.evalModule(
