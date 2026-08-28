@@ -989,7 +989,7 @@ fn replicaArg(ctx: Context, client: *Client, args: []const Value) ?*Replica {
     return conn.replicas.get(sid);
 }
 
-/// Serialize the message-id/role list and the draft descriptor for the shell.
+/// Serialize the message-id/role list, a failed message's error, and the draft descriptor.
 fn writeOutline(w: *std.Io.Writer, s: *domain.session.Session) !void {
     try w.writeAll("{\"messages\":[");
     for (s.committed.list.items, 0..) |entry, i| {
@@ -998,11 +998,27 @@ fn writeOutline(w: *std.Io.Writer, s: *domain.session.Session) !void {
             .user => "user",
             else => "assistant",
         };
-        try w.print("{{\"id\":{d},\"type\":\"{s}\"}}", .{ entry.message.id(), role });
+        try w.print("{{\"id\":{d},\"type\":\"{s}\"", .{ entry.message.id(), role });
+        if (messageError(entry.message)) |e| {
+            try w.writeAll(",\"error\":{\"type\":");
+            try std.json.Stringify.encodeJsonString(e.type, .{}, w);
+            try w.writeAll(",\"message\":");
+            try std.json.Stringify.encodeJsonString(e.message, .{}, w);
+            try w.writeByte('}');
+        }
+        try w.writeByte('}');
     }
     try w.writeAll("],\"active\":");
     if (s.active) |d| try w.print("{{\"id\":{d},\"type\":\"assistant\"}}", .{d.message_id}) else try w.writeAll("null");
     try w.writeByte('}');
+}
+
+/// Return the error from a failed assistant message, or null. The daemon sets it with `finish: "error"`.
+fn messageError(m: wire.message.Message) ?wire.message.MessageError {
+    return switch (m) {
+        .assistant => |a| a.@"error",
+        else => null,
+    };
 }
 
 /// Write the concatenated visible text of one message, from the draft or the committed window.
@@ -1061,6 +1077,31 @@ test "mount is idempotent and caps the subscription set" {
     std.mem.writeInt(u32, over[0..4], 9999, .little);
     try std.testing.expect(!client.mount(conn, SessionId.bytes(over)));
     try std.testing.expectEqual(@as(u32, @intCast(max_subscriptions)), conn.replicas.count());
+}
+
+test "the outline carries a failed message error" {
+    const gpa = std.testing.allocator;
+    var sess = domain.session.Session.init(gpa, SessionId.bytes([_]u8{0} ** 16));
+    defer sess.deinit();
+    const messages = [_]wire.message.Message{.{ .assistant = .{
+        .id = 2,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &.{},
+        .time = .{ .created_at_ms = 1 },
+        .finish = .@"error",
+        .@"error" = .{ .type = "rate_limited", .message = "429 \"too many\"" },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 2, .messages = &messages, .configs = &.{}, .has_more = false });
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeOutline(&aw.writer, &sess);
+    try std.testing.expectEqualStrings(
+        "{\"messages\":[{\"id\":2,\"type\":\"assistant\",\"error\":{\"type\":\"rate_limited\",\"message\":\"429 \\\"too many\\\"\"}}],\"active\":null}",
+        aw.written(),
+    );
 }
 
 test "the outline and text project a streaming draft" {

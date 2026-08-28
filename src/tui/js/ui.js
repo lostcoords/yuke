@@ -22,6 +22,8 @@ const UI_GROUPS = {
   TxText: { fg: "fg" },
   TxUser: { reverse: true },
   TxUserMarker: { reverse: true, bold: true },
+  // A failed turn shows its error in the danger color.
+  TxError: { fg: "danger", bold: true },
 };
 let seededGroups = false;
 for (const name in UI_GROUPS) {
@@ -407,6 +409,15 @@ function userRows(id, body, width) {
   return rows;
 }
 
+// Show a failed turn's error in the gutter with a warning marker and the danger color.
+function errorRows(id, error, width) {
+  const label = "⚠ " + (error.message || error.type || "run failed");
+  const contentW = Math.max(1, width - TX_GUTTER);
+  const rows = wrap(label, contentW).map((line) => ({ text: line, group: "TxError", indent: TX_GUTTER, key: id }));
+  rows.push({ text: "", key: id });
+  return rows;
+}
+
 // A virtualized transcript (the Pager's row source). It holds descriptors ({id, type}) plus a
 // wrapped-row cache. An assistant turn renders through yuke:md; only the streaming draft re-renders.
 export class Transcript {
@@ -446,7 +457,8 @@ export class Transcript {
     const c = this._rows.get(m.id);
     if (c && c.w === width) return c.rows;
 
-    const rows = m.type === "user" ? userRows(m.id, this.textOf(m.id), width) : this._assistantRows(m.id, width);
+    let rows = m.type === "user" ? userRows(m.id, this.textOf(m.id), width) : this._assistantRows(m.id, width);
+    if (m.error) rows = rows.concat(errorRows(m.id, m.error, width));
     this._rows.set(m.id, { w: width, rows });
     return rows;
   }
