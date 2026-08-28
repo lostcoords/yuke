@@ -50,6 +50,9 @@ pub const Paint = struct {
     needs_tick: bool = false,
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
+    /// The reactor tick task waits on this. `setNeedsTick` wakes it when a tick arms or the period changes.
+    /// Null outside `app.run` (tests do not run the tick task).
+    tick_wake: ?*zio.ResetEvent = null,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
     size_obj: quickjs.Value = quickjs.UNDEFINED,
     /// Own grapheme bytes for the open frame. Reset after the grid clears.

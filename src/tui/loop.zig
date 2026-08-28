@@ -30,6 +30,13 @@ pub fn step(host: *Host, ev: Event) Error!void {
     }
 }
 
+/// Dispatch a `tick` event on the reactor owner.
+pub fn stepTick(host: *Host) Error!void {
+    std.debug.assert(host.phase == .open);
+    const obj = try objectType(host.ctx, "tick");
+    _ = try dispatch(host, obj);
+}
+
 /// A key press or release. The tag name reaches JavaScript as `ev.event`.
 const KeyKind = enum { press, release };
 
@@ -165,6 +172,16 @@ test "start delivers type start" {
     try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
     try start(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen === 'start' ? 1 : 0"));
+}
+
+test "stepTick delivers type tick" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.onEvent = function(ev) { globalThis.seen = ev.type; };", "onEvent.js");
+    try stepTick(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen === 'tick' ? 1 : 0"));
 }
 
 test "a parser key paints and a missing endFrame still commits" {

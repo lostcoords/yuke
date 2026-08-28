@@ -27,10 +27,12 @@ pub const Options = struct {
 };
 
 /// An event with owned key text. The copy survives the next parse.
+/// `tick` marks a synthetic event with no parser event.
 const Msg = struct {
     ev: Event,
     text: [128]u8 = undefined,
     n: u8 = 0,
+    tick: bool = false,
 
     fn from(ev: Event) Msg {
         var m: Msg = .{ .ev = ev };
@@ -42,6 +44,10 @@ const Msg = struct {
         m.n = @intCast(@min(t.len, m.text.len));
         @memcpy(m.text[0..m.n], t[0..m.n]);
         return m;
+    }
+
+    fn tickMsg() Msg {
+        return .{ .ev = .{ .winsize = undefined }, .tick = true };
     }
 
     fn event(self: *Msg) Event {
@@ -81,6 +87,9 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     try render.resize(writer, ws);
     host.bindRender(&render, writer);
 
+    var tick_wake: zio.ResetEvent = .init;
+    host.paint.tick_wake = &tick_wake;
+
     var input: term_pkg.Input = .{};
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
@@ -88,10 +97,12 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     defer {
         ch.close(.immediate);
         tty.shutdownInput();
+        tick_wake.set();
         group.cancel();
     }
 
     try group.spawn(inputTask, .{ &tty, &input, &ch });
+    try group.spawn(tickTask, .{ host, &ch });
     if (!term_pkg.resize_in_band) {
         try group.spawn(winchTask, .{ &tty, &ch });
     }
@@ -170,7 +181,32 @@ pub fn serve(host: *Host, ch: *Channel) !void {
             error.ChannelClosed, error.Canceled => break,
             else => |e| return e,
         };
-        try absorbScriptFault(host, tui_loop.step(host, msg.event()));
+        if (msg.tick) {
+            try absorbScriptFault(host, tui_loop.stepTick(host));
+        } else {
+            try absorbScriptFault(host, tui_loop.step(host, msg.event()));
+        }
+    }
+}
+
+/// The tick task enqueues plain messages. It never calls QuickJS.
+fn tickTask(host: *Host, ch: *Channel) !void {
+    const wake = host.paint.tick_wake.?;
+    while (true) {
+        if (!host.paint.needs_tick) {
+            wake.wait() catch return;
+        } else {
+            const period = host.paint.tick_period_ms;
+            wake.timedWait(.fromMilliseconds(period)) catch |err| switch (err) {
+                error.Timeout => {
+                    if (host.paint.needs_tick and !host.paint.quit_requested) {
+                        ch.send(Msg.tickMsg()) catch return;
+                    }
+                },
+                error.Canceled => return,
+            };
+        }
+        wake.reset();
     }
 }
 
@@ -293,6 +329,35 @@ test "serve keeps the loop after onEvent throw" {
     try serve(host, &ch);
     producer.join() catch {};
     try std.testing.expect(host.paint.quit_requested);
+}
+
+test "tickTask enqueues a tick while armed" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+
+    var wake: zio.ResetEvent = .init;
+    host.paint.tick_wake = &wake;
+    host.paint.needs_tick = true;
+    host.paint.tick_period_ms = 50;
+
+    var slot: [1]Msg = undefined;
+    var ch = Channel.init(&slot);
+    var group: zio.Group = .init;
+    defer group.cancel();
+    try group.spawn(tickTask, .{ host, &ch });
+
+    const msg = try ch.receive();
+    try std.testing.expect(msg.tick);
+
+    host.paint.needs_tick = false;
+    host.paint.quit_requested = true;
+    wake.set();
 }
 
 fn sendQuit(ch: *Channel) !void {

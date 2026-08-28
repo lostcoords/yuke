@@ -239,8 +239,14 @@ fn setNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
         host.paint.needs_tick = false;
         return quickjs.UNDEFINED;
     }
+    const was_armed = host.paint.needs_tick;
+    const old_period = host.paint.tick_period_ms;
     host.paint.tick_period_ms = period;
     host.paint.needs_tick = enabled;
+    // Wake on a fresh arm or period change. A disable waits for the current timer.
+    if (enabled and (!was_armed or period != old_period)) {
+        if (host.paint.tick_wake) |wake| wake.set();
+    }
     return quickjs.UNDEFINED;
 }
 
