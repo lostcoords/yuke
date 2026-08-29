@@ -676,6 +676,13 @@ export class Transcript {
     this.selection = { anchor, cursor };
   }
 
+  // The markdown blocks of one message, oldest first. A plain turn has none.
+  blocksOf(id) {
+    this.rowsOf(id);
+    const doc = this._docs.get(id);
+    return doc ? doc.blocks() : [];
+  }
+
   // The rendered rows of one message at the drawn width.
   rowsOf(id) {
     const i = this._indexOf(id);

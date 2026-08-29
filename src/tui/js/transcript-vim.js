@@ -1,7 +1,7 @@
 // yuke:transcript-vim — an opt-in layer that gives the transcript a cursor. Tab moves the focus
 // between the composer and the transcript, and the motions then move a cursor, not the viewport.
 import { term } from "yuke:term";
-import { root, strokeOf, caretAtCol, prevGrapheme, nextGrapheme } from "yuke:core";
+import { root, command, strokeOf, caretAtCol, prevGrapheme, nextGrapheme } from "yuke:core";
 import { ChatView, rowText } from "yuke:ui";
 
 // Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map.
@@ -10,7 +10,7 @@ const panes = new WeakMap();
 function stateOf(view) {
   let s = panes.get(view);
   if (!s) {
-    s = { on: false, cursor: null, goal: null, gPending: false };
+    s = { on: false, cursor: null, anchor: null, visual: false, goal: null, gPending: false, yPending: false };
     panes.set(view, s);
   }
   return s;
@@ -84,6 +84,124 @@ function stepRow(t, s, d) {
   return true;
 }
 
+// Document order over two positions: message, then row, then column.
+function cmp(t, a, b) {
+  if (a.id !== b.id) {
+    const ids = idsOf(t);
+    return ids.indexOf(a.id) - ids.indexOf(b.id);
+  }
+  return a.row !== b.row ? a.row - b.row : a.col - b.col;
+}
+
+// Vim visual holds both ends, but the core selection is half open. Grow the later end by one
+// grapheme, so the character under the cursor stays inside.
+function syncSelection(t, s) {
+  if (!s.visual || !s.cursor || !s.anchor) return;
+  const grow = (p) => {
+    const body = rowOf(t, p);
+    return { id: p.id, row: p.row, col: Math.min(nextGrapheme(body, p.col), body.length) };
+  };
+  const after = cmp(t, s.cursor, s.anchor) >= 0;
+  t.selection = after ? { anchor: s.anchor, cursor: grow(s.cursor) } : { anchor: grow(s.anchor), cursor: s.cursor };
+}
+
+// A blank, a word character, or punctuation. A motion stops where the class changes.
+function classOf(g) {
+  if (!g || /\s/u.test(g)) return 0;
+  return /[\p{L}\p{N}_]/u.test(g) ? 1 : 2;
+}
+
+// The graphemes of a row with their class, so a word motion never lands inside a cluster.
+function cells(body) {
+  const gs = term.graphemes(body);
+  const out = [];
+  for (let k = 0; k < gs.length; k += 3) out.push({ at: gs[k], cls: classOf(body.slice(gs[k], gs[k] + gs[k + 1])) });
+  return out;
+}
+
+function cellAt(g, col) {
+  for (let i = 0; i < g.length; i++) if (g[i].at >= col) return i;
+  return g.length;
+}
+
+// Move to the start of the next word. The row edge steps to the next row, once.
+function wordFwd(t, s) {
+  const body = rowOf(t, s.cursor);
+  const g = cells(body);
+  let i = cellAt(g, s.cursor.col);
+  const cls = i < g.length ? g[i].cls : 0;
+  while (i < g.length && g[i].cls === cls && cls !== 0) i++;
+  while (i < g.length && g[i].cls === 0) i++;
+  if (i >= g.length) {
+    if (!stepRow(t, s, 1)) return false;
+    s.cursor = { ...s.cursor, col: 0 };
+    return true;
+  }
+  s.cursor = { ...s.cursor, col: g[i].at };
+  return true;
+}
+
+// Move to the start of the previous word.
+function wordBack(t, s) {
+  const body = rowOf(t, s.cursor);
+  const g = cells(body);
+  let i = cellAt(g, s.cursor.col) - 1;
+  while (i >= 0 && g[i].cls === 0) i--;
+  if (i < 0) {
+    if (!stepRow(t, s, -1)) return false;
+    const prev = rowOf(t, s.cursor);
+    s.cursor = { ...s.cursor, col: prev.length };
+    return true;
+  }
+  const cls = g[i].cls;
+  while (i > 0 && g[i - 1].cls === cls) i--;
+  s.cursor = { ...s.cursor, col: g[i].at };
+  return true;
+}
+
+// Move to the end of the word under or after the cursor.
+function wordEnd(t, s) {
+  const body = rowOf(t, s.cursor);
+  const g = cells(body);
+  let i = cellAt(g, s.cursor.col) + 1;
+  while (i < g.length && g[i].cls === 0) i++;
+  if (i >= g.length) {
+    if (!stepRow(t, s, 1)) return false;
+    s.cursor = { ...s.cursor, col: 0 };
+    return true;
+  }
+  const cls = g[i].cls;
+  while (i + 1 < g.length && g[i + 1].cls === cls) i++;
+  s.cursor = { ...s.cursor, col: g[i].at };
+  return true;
+}
+
+// Move to the next or the previous markdown block. The step counts blocks, not offsets, because a
+// block starts before the source under the cursor. A turn with no block steps over.
+function blockStep(t, s, d) {
+  const ids = idsOf(t);
+  let i = ids.indexOf(s.cursor.id);
+  if (i < 0) return false;
+
+  let blocks = t.blocksOf(ids[i]);
+  const here = t.sourceAt(s.cursor);
+  let k = -1;
+  for (let n = 0; n < blocks.length; n++) if (here >= blocks[n].at) k = n;
+  k += d;
+
+  while (k < 0 || k >= blocks.length) {
+    i += d;
+    if (i < 0 || i >= ids.length) return false;
+    blocks = t.blocksOf(ids[i]);
+    k = d > 0 ? 0 : blocks.length - 1;
+  }
+
+  const pos = t.posAtSource(ids[i], blocks[k].at);
+  if (!pos) return false;
+  s.cursor = pos;
+  return true;
+}
+
 // The first or the last position of the transcript.
 function toEnd(t, s, last) {
   const ids = idsOf(t);
@@ -124,8 +242,31 @@ function move(t, s, k) {
       return true;
     case "G":
       return toEnd(t, s, true);
+    case "w":
+      return wordFwd(t, s);
+    case "b":
+      return wordBack(t, s);
+    case "e":
+      return wordEnd(t, s);
+    case "}":
+      return blockStep(t, s, 1);
+    case "{":
+      return blockStep(t, s, -1);
   }
   return false;
+}
+
+// Copy through the core command, so the mouse and the keyboard take one path to the clipboard.
+// Without a selection the row under the cursor is the target, which is what `yy` means.
+function yank(t, s, name) {
+  if (!s.visual) {
+    const body = rowOf(t, s.cursor);
+    t.selection = { anchor: { ...s.cursor, col: 0 }, cursor: { ...s.cursor, col: body.length } };
+  }
+  command.perform(name);
+  s.visual = false;
+  s.anchor = null;
+  t.clearSelection();
 }
 
 export const transcriptVim = {
@@ -153,26 +294,71 @@ export const transcriptVim = {
 
       const t = this.transcript;
       const k = strokeOf(ev);
+      // "g" opens a two-key motion: "gg" to the top, "gy" to copy the markdown source.
       if (s.gPending) {
         s.gPending = false;
-        if (k === "g") {
-          if (toEnd(t, s, false)) t.ensureVisible(s.cursor);
+        if (k === "g" && toEnd(t, s, false)) {
+          syncSelection(t, s);
+          t.ensureVisible(s.cursor);
           root.invalidate();
           return true;
         }
+        if (k === "y") {
+          yank(t, s, "copy:source");
+          root.invalidate();
+          return true;
+        }
+        if (k === "g") return true;
+      }
+      // "y" waits for a second "y", the way vim waits for a motion.
+      if (s.yPending) {
+        s.yPending = false;
+        if (k === "y") {
+          yank(t, s, "copy:selection");
+          root.invalidate();
+        }
+        return true;
       }
       if (k === "g") {
         s.gPending = true;
         return true;
       }
+
       if (k === "esc") {
+        s.visual = false;
+        s.anchor = null;
         t.clearSelection();
+        root.invalidate();
+        return true;
+      }
+      if (k === "v") {
+        s.visual = !s.visual;
+        s.anchor = s.visual ? s.cursor : null;
+        if (s.visual) syncSelection(t, s);
+        else t.clearSelection();
+        root.invalidate();
+        return true;
+      }
+      // "o" puts the cursor on the other end, so a selection can grow from either side.
+      if (k === "o" && s.visual) {
+        const swap = s.anchor;
+        s.anchor = s.cursor;
+        s.cursor = swap;
+        syncSelection(t, s);
+        t.ensureVisible(s.cursor);
+        root.invalidate();
+        return true;
+      }
+      if (k === "y") {
+        if (s.visual) yank(t, s, "copy:selection");
+        else s.yPending = true;
         root.invalidate();
         return true;
       }
 
       if (k !== "j" && k !== "k" && k !== "up" && k !== "down") s.goal = null;
       if (!move(t, s, k)) return false;
+      syncSelection(t, s);
       t.ensureVisible(s.cursor);
       root.invalidate();
       return true;

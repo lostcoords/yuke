@@ -1498,7 +1498,7 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
     var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer sink.deinit();
     defer render.deinit(&sink.writer);
-    try render.resize(&sink.writer, .{ .rows = 10, .cols = 24, .x_pixel = 0, .y_pixel = 0 });
+    try render.resize(&sink.writer, .{ .rows = 20, .cols = 24, .x_pixel = 0, .y_pixel = 0 });
 
     var out: std.Io.Writer.Allocating = .init(gpa.allocator());
     defer out.deinit();
@@ -1512,15 +1512,18 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { transcriptVim } from "yuke:transcript-vim";
+        \\import "yuke:defaults";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
         \\
-        \\const body = { a1: "alpha bravo\ncharlie delta" };
+        \\const body = { a1: "alpha **bravo** charlie delta" };
+        \\let copied = null;
+        \\term.copy = (x) => { copied = x; return x.length; };
         \\const v = new ChatView({ textOf: (id) => body[id] || "" });
         \\v.setOutline([{ id: "a1", type: "assistant" }], null);
         \\root.setRoot(new Node(v));
-        \\v.rect = { x: 0, y: 0, w: 24, h: 8 };
+        \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
         \\const paint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
         \\paint();
         \\
@@ -1566,6 +1569,51 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\const r = v.transcript.pager.rect();
         \\v.onMouse({ type: "mouse", col: r.x + 4, row: r.y, button: "left", event: "press", mods: 0 });
         \\check("click-focus", v.cursor().y === r.y);
+        \\
+        \\// "v" starts a selection that the motions extend. Vim visual holds both ends, so the
+        \\// character under the cursor stays inside.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "v"));
+        \\v.onKey(key("char", "l"));
+        \\v.onKey(key("char", "l"));
+        \\check("visual-inclusive", v.transcript.selectedText() === "alp");
+        \\
+        \\// "o" puts the cursor on the other end, so the far end grows instead.
+        \\const far = v.cursor().x;
+        \\v.onKey(key("char", "o"));
+        \\check("swap-ends", v.cursor().x < far);
+        \\v.onKey(key("char", "o"));
+        \\check("swap-back", v.cursor().x === far);
+        \\
+        \\// "y" copies the rendered text and drops the selection.
+        \\v.onKey(key("char", "y"));
+        \\check("yank-visual", copied === "alp" && v.transcript.selection === null);
+        \\
+        \\// "y" alone waits for a second "y", the way vim waits for a motion.
+        \\copied = null;
+        \\v.onKey(key("char", "y"));
+        \\check("yank-pending", copied === null);
+        \\v.onKey(key("char", "y"));
+        \\check("yank-row", copied === "alpha bravo charlie");
+        \\
+        \\// "gy" copies the markdown source, so the markup between the ends survives.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "y"));
+        \\check("yank-source", copied === "alpha **bravo** charlie");
+        \\
+        \\// "}" and "{" step by markdown block.
+        \\body.a2 = "# Head\n\npara text\n\n- item";
+        \\v.setOutline([{ id: "a1", type: "assistant" }, { id: "a2", type: "assistant" }], null);
+        \\paint();
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\const seen = [];
+        \\for (let i = 0; i < 4; i++) { v.onKey(key("char", "}")); seen.push(v.cursor().y); }
+        \\check("block-forward", seen.length === 4 && seen[0] < seen[1] && seen[1] < seen[2]);
+        \\const back = seen[seen.length - 1];
+        \\v.onKey(key("char", "{"));
+        \\check("block-back", v.cursor().y < back);
         \\
         \\// An unload gives the caret back to the composer.
         \\off();
