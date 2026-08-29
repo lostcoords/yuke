@@ -122,13 +122,13 @@ export function text(x, y, s, group) {
   term.text(x, y, s, style.resolve(group));
 }
 
-// Limit `s` to `max` cells. Add an ellipsis when one cell remains.
-export function clip(s, max) {
+// Limit `s` to `max` cells. Add an ellipsis when one cell remains and `ellipsis` is true.
+export function clip(s, max, ellipsis = true) {
   if (max <= 0) return "";
   s = String(s);
   if (term.measure(s) <= max) return s;
 
-  const ell = max > 1 ? 1 : 0;
+  const ell = ellipsis && max > 1 ? 1 : 0;
   const budget = max - ell;
   const gs = term.graphemes(s);
   let cut = 0;
@@ -219,6 +219,79 @@ function wrapParagraph(para, width, out) {
     }
   }
   out.push(line);
+}
+
+// Wrap `s` in `width` cells and keep its UTF-16 offsets. A row holds [start, end) and a soft flag.
+// `wrap` rebuilds its lines and drops the space runs, so editable text uses this function.
+export function wrapOffsets(s, width) {
+  s = String(s);
+  if (width <= 0) return [{ start: 0, end: s.length, soft: false }];
+
+  const rows = [];
+  const gs = term.graphemes(s);
+  let start = 0; // where the row starts
+  let w = 0; // cells the row uses
+  let breakAt = -1; // after the last space of the row
+  let breakW = 0; // cells up to breakAt
+
+  for (let k = 0; k < gs.length; k += 3) {
+    const off = gs[k];
+    const ch = s.slice(off, off + gs[k + 1]);
+    if (ch === "\n") {
+      rows.push({ start, end: off, soft: false });
+      start = off + gs[k + 1];
+      w = 0;
+      breakAt = -1;
+      continue;
+    }
+
+    // A space hangs past the right edge, so a wrap never starts a row with the space it broke on.
+    // A row keeps one grapheme even when that grapheme is wider than the width.
+    if (ch !== " " && w + gs[k + 2] > width && off > start) {
+      if (breakAt > start) {
+        rows.push({ start, end: breakAt, soft: true });
+        w -= breakW;
+        start = breakAt;
+      } else {
+        rows.push({ start, end: off, soft: true });
+        w = 0;
+        start = off;
+      }
+      breakAt = -1;
+    }
+    w += gs[k + 2];
+    if (ch === " ") {
+      breakAt = off + gs[k + 1];
+      breakW = w;
+    }
+  }
+  rows.push({ start, end: s.length, soft: false });
+  return rows;
+}
+
+// Place `caret` in the rows of `wrapOffsets`. A caret on a soft break takes the next row, so the
+// caret stays on the screen instead of one cell past the right edge.
+export function caretRowCol(s, rows, caret) {
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (caret > r.end) continue;
+    if (caret === r.end && r.soft && i + 1 < rows.length) continue;
+    return { row: i, col: term.measure(s.slice(r.start, caret)) };
+  }
+  const last = rows[rows.length - 1];
+  return { row: rows.length - 1, col: term.measure(s.slice(last.start, last.end)) };
+}
+
+// Return the caret index in `row` closest to the cell column `col`.
+export function caretAtCol(s, row, col) {
+  const line = s.slice(row.start, row.end);
+  const gs = term.graphemes(line);
+  let w = 0;
+  for (let k = 0; k < gs.length; k += 3) {
+    if (w + gs[k + 2] > col) return row.start + gs[k];
+    w += gs[k + 2];
+  }
+  return row.end;
 }
 
 // A command has a predicate and an action. A string predicate matches the active view.
@@ -371,6 +444,7 @@ export function strokeOf(ev) {
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
 export function textOf(ev) {
+  if (ev.code === "paste") return ev.text || "";
   if (ev.code !== "char") return "";
   if (ev.text) return ev.text;
   if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
@@ -411,6 +485,9 @@ function deleteWordBack(s, caret) {
   return i;
 }
 
+// A caret step reads this many code units around the caret. No grapheme cluster is this long.
+const grapheme_window = 256;
+
 export class TextInput {
   constructor(opts = {}) {
     this.text = "";
@@ -421,35 +498,40 @@ export class TextInput {
   setText(s) {
     this.text = String(s);
     this.caret = this.text.length;
+    callHook(this, "onChange");
   }
 
   beforeCaret() {
     return this.text.slice(0, this.caret);
   }
 
+  // A step needs only the grapheme beside the caret, so it scans a window and not the whole text.
+  // A cluster longer than the window is not real text.
   _prev(caret) {
-    const gs = term.graphemes(this.text);
-    let p = 0;
-    for (let k = 0; k < gs.length; k += 3) {
-      if (gs[k] >= caret) break;
-      p = gs[k];
-    }
+    const from = Math.max(0, caret - grapheme_window);
+    const gs = term.graphemes(this.text.slice(from, caret));
+    let p = from;
+    for (let k = 0; k < gs.length; k += 3) p = from + gs[k];
     return p;
   }
 
   _next(caret) {
-    const gs = term.graphemes(this.text);
-    for (let k = 0; k < gs.length; k += 3) {
-      const end = gs[k] + gs[k + 1];
-      if (end > caret) return end;
-    }
-    return this.text.length;
+    const to = Math.min(this.text.length, caret + grapheme_window);
+    const gs = term.graphemes(this.text.slice(caret, to));
+    if (gs.length === 0) return this.text.length;
+    return caret + gs[0] + gs[1];
   }
 
   _splice(from, to, ins) {
     this.text = this.text.slice(0, from) + ins + this.text.slice(to);
     this.caret = from + ins.length;
     callHook(this, "onChange");
+  }
+
+  // Insert `s` at the caret with one edit. A paste and a newline key use this.
+  insert(s) {
+    s = String(s);
+    if (s !== "") this._splice(this.caret, this.caret, s);
   }
 
   onKey(ev) {
@@ -489,11 +571,9 @@ export class TextInput {
         return true;
     }
     const ins = textOf(ev);
-    if (ins) {
-      this._splice(this.caret, this.caret, ins);
-      return true;
-    }
-    return false;
+    if (ins === "") return false;
+    this.insert(ins);
+    return true;
   }
 }
 

@@ -683,6 +683,49 @@ test "yuke:core clip wrap and style.resolve" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
 }
 
+test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { wrapOffsets, caretRowCol } from "yuke:core";
+        \\const join = (s, rows) => rows.map((r) => s.slice(r.start, r.end)).join("|");
+        \\// A row plus its break covers the whole string, so no byte is lost.
+        \\const covers = (s, rows) => {
+        \\  let out = "";
+        \\  for (let i = 0; i < rows.length; i++) {
+        \\    out += s.slice(rows[i].start, rows[i].end);
+        \\    if (i + 1 < rows.length && !rows[i].soft) out += "\n";
+        \\  }
+        \\  return out === s;
+        \\};
+        \\const indent = "  keep   spaces";
+        \\const para = "hello world";
+        \\const rows = wrapOffsets(para, 5);
+        \\globalThis.result = (
+        \\  join(para, rows) === "hello |world" &&
+        \\  rows[0].soft === true &&
+        \\  covers(para, rows) &&
+        \\  covers(indent, wrapOffsets(indent, 7)) &&
+        \\  join(indent, wrapOffsets(indent, 7)) === "  keep   |spaces" &&
+        \\  join("abcdefghij", wrapOffsets("abcdefghij", 4)) === "abcd|efgh|ij" &&
+        \\  join("a\nb", wrapOffsets("a\nb", 9)) === "a|b" &&
+        \\  wrapOffsets("a\nb", 9)[0].soft === false &&
+        \\  covers("a\nb", wrapOffsets("a\nb", 9)) &&
+        \\  join("", wrapOffsets("", 5)) === "" &&
+        \\  covers("one\n\ntwo words", wrapOffsets("one\n\ntwo words", 4)) &&
+        \\  caretRowCol(para, rows, 0).row === 0 &&
+        \\  caretRowCol(para, rows, 3).col === 3 &&
+        \\  caretRowCol(para, rows, 6).row === 1 &&
+        \\  caretRowCol(para, rows, 6).col === 0 &&
+        \\  caretRowCol(para, rows, 11).row === 1 &&
+        \\  caretRowCol(para, rows, 11).col === 5
+        \\) ? 1 : 0;
+    , "wrap.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
+}
+
 test "resize keeps unicode width after a write fail" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -1182,6 +1225,90 @@ test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
     try std.testing.expectEqualStrings("ok", text);
 }
 
+test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { Composer } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code, extra) => Object.assign({ type: "key", code, char: "", text: "", mods: 0 }, extra);
+        \\const paste = (t) => key("paste", { text: t });
+        \\
+        \\// The prompt takes two cells, so a width of 12 wraps the text at 10.
+        \\const c = new Composer({ onSubmit: () => true });
+        \\c.rect = { x: 0, y: 0, w: 12, h: 4 };
+        \\check("empty-one-row", c.height(12) === 1);
+        \\
+        \\// One paste is one edit, and the text keeps its newline.
+        \\check("paste-taken", c.onKey(paste("hello world\nsecond")) === true);
+        \\check("paste-text", c.text === "hello world\nsecond");
+        \\check("paste-caret", c.input.caret === c.text.length);
+        \\check("grew", c.height(12) === 3);
+        \\
+        \\// A newline key adds a line. Enter still submits.
+        \\c.onKey(key("enter", { mods: 2 }));
+        \\check("alt-enter", c.text === "hello world\nsecond\n");
+        \\check("grew-again", c.height(12) === 4);
+        \\
+        \\// The composer never returns false for a vertical key, so the transcript never scrolls.
+        \\c.input.caret = c.text.length;
+        \\check("up-taken", c.onKey(key("up")) === true);
+        \\check("up-moved", c.input.caret < c.text.length);
+        \\const mid = c.input.caret;
+        \\check("down-taken", c.onKey(key("down")) === true);
+        \\check("down-moved", c.input.caret !== mid);
+        \\c.input.caret = 0;
+        \\c.onKey(key("up"));
+        \\check("up-at-top", c.input.caret === 0);
+        \\
+        \\// The height stops at maxRows for text the user typed.
+        \\const big = new Composer();
+        \\big.rect = { x: 0, y: 0, w: 12, h: 4 };
+        \\big.text = "a\n".repeat(20);
+        \\check("capped", big.height(12) === big.maxRows);
+        \\
+        \\// Submit clears the buffer, so the composer shrinks back to one row.
+        \\const sent = [];
+        \\const s = new Composer({ onSubmit: (t) => { sent.push(t); } });
+        \\s.rect = { x: 0, y: 0, w: 12, h: 4 };
+        \\s.onKey(paste("one\ntwo"));
+        \\s.onKey(key("enter"));
+        \\check("submitted", sent.length === 1 && sent[0] === "one\ntwo");
+        \\check("cleared", s.text === "" && s.height(12) === 1);
+        \\
+        \\// setText fires onChange, so a programmatic set never leaves a stale wrap.
+        \\s.text = "a\nb\nc";
+        \\check("set-text-rewrapped", s.height(12) === 3);
+        \\
+        \\// A vertical move holds the goal column across a short row, as vim and helix do.
+        \\const goal = new Composer();
+        \\goal.rect = { x: 0, y: 0, w: 12, h: 4 };
+        \\goal.text = "12345\nx\n12345";
+        \\goal.input.caret = 5;
+        \\goal.onKey(key("down"));
+        \\check("goal-short-row", goal.input.caret === 7);
+        \\goal.onKey(key("down"));
+        \\check("goal-restored", goal.input.caret === 13);
+        \\// A horizontal key drops the goal column.
+        \\goal.input.caret = 5;
+        \\goal.onKey(key("down"));
+        \\goal.onKey(key("left"));
+        \\goal.onKey(key("down"));
+        \\check("goal-dropped", goal.input.caret === 8);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "composer.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
 test "yuke:ui Transcript draws markdown segments through the pager" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -1211,6 +1338,50 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     , "draw.js");
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "hi") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "there") != null);
+}
+
+test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 4, .cols = 7, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    // The prompt takes two cells of the seven, so "hello world" wraps at five.
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Composer } from "yuke:ui";
+        \\const c = new Composer();
+        \\c.rect = { x: 0, y: 0, w: 7, h: 2 };
+        \\c.text = "hello world";
+        \\term.beginFrame();
+        \\c.draw(true);
+        \\const cur = c.cursor();
+        \\term.endFrame();
+        \\globalThis.result = cur.x === 2 + 5 - 1 && cur.y === 1 && cur.visible ? "ok" : "x=" + cur.x + " y=" + cur.y;
+    , "composer_draw.js");
+
+    // The hanging space must not turn the row into an ellipsis.
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "hello") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "world") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "…") == null);
+
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
 }
 
 test "yuke:client wraps the native and rejects an unimplemented connect" {

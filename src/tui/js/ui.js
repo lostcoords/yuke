@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, style } from "yuke:core";
+import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style } from "yuke:core";
 import { Document } from "yuke:md";
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
@@ -521,16 +521,45 @@ export class Transcript {
   }
 }
 
-// A single-line message input. Enter submits. The shared TextInput does the edits. Normal mode
-// disables input, so bare keys fall through to the keymap and the transcript.
+// A message input grows with its text. Enter submits and the newline keys add a line.
+// Normal mode passes a bare key to the keymap and the transcript.
 export class Composer {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.input = new TextInput();
+    this.input = new TextInput({ onChange: () => this._invalidate() });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
     this.mode = "insert"; // the opt-in vim layer flips to "normal"
+    this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
+    this.scroll = 0;
+    this.goalCol = null; // the column a vertical move holds across a short row
+    this._rows = null;
+    this._rowsW = -1;
+  }
+
+  // Drop the row cache after an edit, so the wrap runs once per edit and not per frame.
+  _invalidate() {
+    this._rows = null;
+    this.goalCol = null;
+  }
+
+  _textWidth(w) {
+    return Math.max(1, w - term.measure(this.prompt));
+  }
+
+  _rowsAt(width) {
+    if (this._rows && this._rowsW === width) return this._rows;
+    this._rowsW = width;
+    this._rows = wrapOffsets(this.input.text, width);
+    return this._rows;
+  }
+
+  // The rows the text needs. The caller caps this against the space it has.
+  height(w) {
+    if (w <= 0) return 0;
+    if (this.mode !== "insert" || this.input.text === "") return 1;
+    return Math.min(this.maxRows, this._rowsAt(this._textWidth(w)).length);
   }
 
   get name() {
@@ -555,11 +584,45 @@ export class Composer {
 
   onKey(ev) {
     if (this.mode !== "insert") return false;
-    if (strokeOf(ev) === "enter") {
+    const s = strokeOf(ev);
+    // The composer owns the vertical keys, so a wrapped line never scrolls the transcript.
+    if (s === "up") return this._moveRow(-1);
+    if (s === "down") return this._moveRow(1);
+
+    // Every other key edits or moves the caret across, so the goal column is stale.
+    this.goalCol = null;
+    if (s === "enter") {
       this.submit();
       return true;
     }
+    if (COMPOSER_NEWLINE[s]) {
+      this.input.insert("\n");
+      return true;
+    }
     return this.input.onKey(ev);
+  }
+
+  // Move the caret one row. The goal column survives a short row, as vim and helix do.
+  // The move stops at the first and the last row.
+  _moveRow(delta) {
+    const rows = this._rowsAt(this._textWidth(this.rect.w));
+    const s = this.input.text;
+    const here = caretRowCol(s, rows, this.input.caret);
+    const col = this.goalCol === null ? here.col : this.goalCol;
+    const next = here.row + delta;
+    if (next >= 0 && next < rows.length) {
+      this.input.caret = caretAtCol(s, rows[next], col);
+      this.goalCol = col;
+    }
+    return true;
+  }
+
+  // Scroll the smallest amount that keeps the caret row on the screen.
+  _scrollTo(rows, h) {
+    const { row } = caretRowCol(this.input.text, rows, this.input.caret);
+    this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
+    if (row < this.scroll) this.scroll = row;
+    else if (row >= this.scroll + h) this.scroll = row - h + 1;
   }
 
   draw(_focused) {
@@ -570,17 +633,44 @@ export class Composer {
       text(x, y, clip("-- " + this.mode.toUpperCase() + " --", w), "UIDim");
       return;
     }
-    const empty = this.text === "";
-    text(x, y, clip(this.prompt + (empty ? this.placeholder : this.text), w), empty ? "UIDim" : "UIComposer");
+    if (this.input.text === "") {
+      this.scroll = 0;
+      text(x, y, clip(this.prompt + this.placeholder, w), "UIDim");
+      return;
+    }
+
+    const tw = this._textWidth(w);
+    const rows = this._rowsAt(tw);
+    this._scrollTo(rows, h);
+    const pw = w - tw;
+    // The prompt marks the first row only. A later row aligns under it.
+    if (this.scroll === 0) text(x, y, this.prompt, "UIComposer");
+    for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
+      const r = rows[this.scroll + i];
+      text(x + pw, y + i, clip(this.input.text.slice(r.start, r.end), tw, false), "UIComposer");
+    }
   }
 
   cursor() {
     if (this.mode !== "insert") return null;
-    const { x, y, w } = this.rect;
-    const col = caretCol(w, this.prompt, this.input.beforeCaret());
-    return { x: x + Math.max(0, col), y, visible: true };
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) return null;
+    const tw = this._textWidth(w);
+    const rows = this._rowsAt(tw);
+    const { row, col } = caretRowCol(this.input.text, rows, this.input.caret);
+    const vy = row - this.scroll;
+    if (vy < 0 || vy >= h) return { x, y, visible: false };
+    // A space hangs past the right edge, so the caret column clamps to the last cell.
+    return { x: x + (w - tw) + Math.min(col, tw - 1), y: y + vy, visible: true };
   }
 }
+
+// The composer stops growing here, so the transcript keeps its room.
+const COMPOSER_ROWS_MAX = 10;
+
+// These strokes add a line instead of a submit.
+// Alt+Enter and Ctrl+J support a terminal with the legacy encoding.
+const COMPOSER_NEWLINE = { "shift+enter": true, "alt+enter": true, "ctrl+j": true };
 
 // Border glyph sets, keyed by name. Extend by adding an entry.
 export const borders = {
@@ -977,8 +1067,7 @@ export class Picker {
   }
 
   set query(s) {
-    this.input.setText(s);
-    this.refilter();
+    this.input.setText(s); // onChange refilters
   }
 
   setSource(items) {

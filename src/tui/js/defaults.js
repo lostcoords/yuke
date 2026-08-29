@@ -368,11 +368,17 @@ class ChatView {
 
   draw(focused) {
     const { x, y, w, h } = this.rect;
-    this.composer.rect = { x, y: y + Math.max(0, h - 1), w, h: h > 0 ? 1 : 0 };
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) {
+      this.composer.rect = { x, y, w: 0, h: 0 };
+      return;
+    }
 
-    if (h > 2) this.transcript.draw({ x, y, w, h: h - 2 });
-    if (h >= 2) text(x, y + h - 2, "─".repeat(w), "YukeRule");
+    // The composer grows with its text. It never takes more than half the pane.
+    const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
+    this.composer.rect = { x, y: y + h - rows, w, h: rows };
+    const rule = y + h - rows - 1;
+    if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
+    if (rule >= y) text(x, rule, "─".repeat(w), "YukeRule");
     this.composer.draw(focused);
   }
 
