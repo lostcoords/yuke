@@ -108,7 +108,7 @@ function put(c, after) {
   }
   const at = after ? Math.min(nextGrapheme(t.text, t.caret), lineAt(t.text, t.caret).end) : t.caret;
   t.replace(at, at, register.text);
-  return to(c, clamp(t.text, at + register.text.length));
+  return to(c, clamp(t.text, prevGrapheme(t.text, at + register.text.length)));
 }
 
 function enter(c, caret) {

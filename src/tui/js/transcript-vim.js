@@ -283,6 +283,7 @@ export const transcriptVim = {
       if (!s || !s.on) return inner(ev);
 
       const t = this.transcript;
+      if (!s.cursor) seed(this, s);
       reanchor(t, s);
       const k = modalKey(ev);
       // "g" opens a two-key motion: "gg" to the top, "gy" to copy the markdown source.
@@ -356,6 +357,7 @@ export const transcriptVim = {
     ctx.advise(ChatView.prototype, "cursor", "around", function (inner) {
       const s = panes.get(this);
       if (!s || !s.on) return inner();
+      if (!s.cursor) seed(this, s);
       reanchor(this.transcript, s);
       const at = s.cursor && this.transcript.screenAt(s.cursor);
       return at ? { x: at.x, y: at.y, visible: true } : { x: 0, y: 0, visible: false };
@@ -366,9 +368,13 @@ export const transcriptVim = {
     ctx.advise(ChatView.prototype, "onMouse", "around", function (inner, ev) {
       const taken = inner(ev);
       if (ev.event !== "press" || ev.button !== "left") return taken;
-      const pos = this.transcript.posAt(ev.col, ev.row, false);
-      if (!pos) return taken;
       const s = stateOf(this);
+      const pos = this.transcript.posAt(ev.col, ev.row, false);
+      if (!pos) {
+        s.visual = false;
+        s.anchor = null;
+        return taken;
+      }
       s.on = true;
       s.cursor = pos;
       s.goal = null;

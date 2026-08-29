@@ -1606,6 +1606,14 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\press("$p");
         \\check("put-char", t.text === "alpha bravo charli");
         \\
+        \\// "p" leaves the caret on the last character it put.
+        \\t.setText("abc");
+        \\v.composer.mode = "normal";
+        \\press("gg");
+        \\register.set("XY", false);
+        \\press("p");
+        \\check("put-caret", t.text === "aXYbc" && t.caret === 2);
+        \\
         \\// "dd" on the last line takes the newline before it, but the register keeps only the body.
         \\t.setText("one\ntwo");
         \\v.composer.mode = "normal";
