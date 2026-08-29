@@ -1,6 +1,6 @@
-// yuke:vim — an opt-in modal layer for the chat composer. Off by default; load via the `vim:toggle`
-// command or `config.vim`. Normal mode disables the composer text input, so bare keys reach the
-// keymap and scroll the transcript; insert mode types. It is a plugin, so it reverts on unload.
+// yuke:composer-vim — an opt-in modal layer for the chat composer. A user's index.js loads it, or
+// the `composer-vim:toggle` command does. Normal mode disables the composer text input, so bare
+// keys reach the keymap and scroll the transcript; insert mode types. It reverts on unload.
 import { command, root, events } from "yuke:core";
 
 // The focused chat pane's composer, or null when a non-chat view is focused.
@@ -14,7 +14,7 @@ function setFocusedMode(mode) {
   const c = chatComposer();
   if (!c || c.mode === mode) return;
   c.mode = mode;
-  events.emit("vim:mode", mode);
+  events.emit("composer-vim:mode", mode);
   root.invalidate();
 }
 
@@ -27,12 +27,12 @@ function setAllModes(mode) {
       if (v && v.name === "chat" && v.composer) v.composer.mode = mode;
     }
   }
-  events.emit("vim:mode", mode);
+  events.emit("composer-vim:mode", mode);
   root.invalidate();
 }
 
-export const vim = {
-  name: "vim",
+export const composerVim = {
+  name: "composer-vim",
   apply(ctx) {
     const inChat = () => chatComposer() != null;
 
@@ -45,10 +45,10 @@ export const vim = {
     });
 
     ctx.keymap({
-      esc: "vim:normal",
-      i: "vim:insert",
-      a: "vim:insert",
-      ":": "vim:cmdline",
+      esc: "composer-vim:normal",
+      i: "composer-vim:insert",
+      a: "composer-vim:insert",
+      ":": "composer-vim:cmdline",
     });
 
     // Neovim-style window chords. In insert the composer eats ctrl+w (word-erase), so these reach
@@ -69,7 +69,7 @@ export const vim = {
     });
 
     // Publish the mode so other plugins can gate their own normal-mode bindings on it.
-    ctx.provide("vim", {
+    ctx.provide("composer-vim", {
       mode: () => (chatComposer() ? chatComposer().mode : null),
       isNormal: () => inChat() && chatComposer().mode === "normal",
     });

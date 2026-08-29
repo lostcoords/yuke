@@ -36,7 +36,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:md", .source = @embedFile("js/md.js") },
     .{ .name = "yuke:ui", .source = @embedFile("js/ui.js") },
     .{ .name = "yuke:client", .source = @embedFile("js/client.js") },
-    .{ .name = "yuke:vim", .source = @embedFile("js/vim.js") },
+    .{ .name = "yuke:composer-vim", .source = @embedFile("js/composer-vim.js") },
     .{ .name = "yuke:defaults", .source = @embedFile("js/defaults.js") },
 };
 
@@ -1058,17 +1058,15 @@ test "yuke:core config validates and TextInput inserts committed text" {
         \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
         \\
         \\// defineConfig merges values and rejects invalid fields.
-        \\defineConfig({ daemon: { host: "10.0.0.1", port: 1234 }, vim: true });
-        \\check("cfg-merge", config.daemon.host === "10.0.0.1" && config.daemon.port === 1234 && config.vim === true);
+        \\defineConfig({ daemon: { host: "10.0.0.1", port: 1234 } });
+        \\check("cfg-merge", config.daemon.host === "10.0.0.1" && config.daemon.port === 1234);
         \\check("cfg-unknown-key", throws(() => defineConfig({ nope: 1 })));
         \\check("cfg-prototype-key", throws(() => defineConfig({ daemon: { toString: undefined } })));
         \\check("cfg-bad-port", throws(() => defineConfig({ daemon: { port: 0 } })));
-        \\check("cfg-bad-vim", throws(() => defineConfig({ vim: "yes" })));
         \\// A bad patch changes no config value.
         \\const before = config.daemon.host;
-        \\const beforeVim = config.vim;
-        \\throws(() => defineConfig({ vim: false, daemon: { host: "9.9.9.9", retryMs: -1 } }));
-        \\check("cfg-atomic", config.daemon.host === before && config.vim === beforeVim);
+        \\throws(() => defineConfig({ daemon: { host: "9.9.9.9", retryMs: -1 } }));
+        \\check("cfg-atomic", config.daemon.host === before);
         \\
         \\// TextInput uses committed text before the folded key.
         \\const key = (o) => Object.assign({ type: "key", code: "char", event: "press", char: "", text: "", mods: 0 }, o);
@@ -2153,10 +2151,10 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
         \\root.popOverlay();
-        \\const before = !!plugins.get("vim");
-        \\command.perform("vim:toggle");
-        \\if (!!plugins.get("vim") === before) fail.push("vim-toggle");
-        \\command.perform("vim:toggle");
+        \\const before = !!plugins.get("composer-vim");
+        \\command.perform("composer-vim:toggle");
+        \\if (!!plugins.get("composer-vim") === before) fail.push("vim-toggle");
+        \\command.perform("composer-vim:toggle");
         \\// An active, working row keeps both the activity mark and the "▸" active cue.
         \\const sl = new SessionList();
         \\sl.active = { connKey: "local", sessionId: "z" };

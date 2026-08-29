@@ -880,7 +880,7 @@ export class Composer {
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
-    this.mode = "insert"; // the opt-in vim layer flips to "normal"
+    this.mode = "insert"; // the opt-in composer-vim layer flips to "normal"
     this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
     this.scroll = 0;
     this.goalCol = null; // the column a vertical move holds across a short row

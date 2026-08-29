@@ -5,7 +5,7 @@ import { command, keymap, style, clip, fill, text, strokeOf, TextInput, caretCol
 import { plugins } from "yuke:ext";
 import { ui, List, Transcript, Composer } from "yuke:ui";
 import * as client from "yuke:client";
-import { vim } from "yuke:vim";
+import { composerVim } from "yuke:composer-vim";
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
 // alone, so a theme that set one first keeps it.
@@ -1001,7 +1001,7 @@ plugins.use({
       "copy:reply": () => copyText("reply", chat.transcript.textFor(chat.transcript.last("assistant"))),
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
-      "vim:toggle": () => (plugins.get("vim") ? plugins.dispose("vim") : plugins.use(vim)),
+      "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
     });
 
     // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
@@ -1029,11 +1029,5 @@ plugins.use({
 
 root.setRoot(workspace);
 root.addService(connection);
-
-// Load vim at start when the user opted in with `config.vim`. Read at "start", so an index.js that
-// sets it (index.js loads after this module) is honored; :vim / vim:toggle flips it at runtime.
-events.on("start", () => {
-  if (config.vim && !plugins.get("vim")) plugins.use(vim);
-});
 
 export { workspace, sidebar, chat, ChatView, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };

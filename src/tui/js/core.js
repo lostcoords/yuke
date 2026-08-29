@@ -3,8 +3,6 @@ import { term } from "yuke:term";
 // --- config -------------------------------------------------------------------------------
 // Runtime configuration. Direct daemon writes bypass validation.
 export const config = {
-  plugins: Object.create(null),
-  vim: false,
   // Mouse reporting is always on. `scrollLines` is a screen-line count, so a wheel step moves the
   // same distance in a transcript and in a list.
   mouse: {
@@ -27,19 +25,14 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "daemon" && key !== "vim" && key !== "mouse") {
+    if (key !== "daemon" && key !== "mouse") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
-  const vim = partial.vim;
   const daemon = partial.daemon;
   const mouse = partial.mouse;
-  if (vim !== undefined && typeof vim !== "boolean") {
-    throw new TypeError("defineConfig: vim must be a boolean");
-  }
   if (daemon !== undefined) applyDaemonConfig(daemon);
   if (mouse !== undefined) applyMouseConfig(mouse);
-  if (vim !== undefined) config.vim = vim;
   return partial;
 }
 
