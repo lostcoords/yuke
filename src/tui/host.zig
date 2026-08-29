@@ -45,6 +45,8 @@ pub const Options = struct {
     /// An empty slice uses `default_baked`. A non-empty slice replaces it.
     baked: []const loader_mod.BakedModule = &.{},
     max_file_bytes: usize = loader_mod.default_max_file_bytes,
+    /// The directory the TUI runs in. A new session takes it as the workspace root.
+    cwd: []const u8 = "",
 };
 
 /// State shared by the renderer and the `yuke:term` module.
@@ -85,6 +87,8 @@ pub const Host = struct {
     paint: Paint,
     /// Client state for `yuke:client-native`.
     client: *client_module.Client,
+    /// The directory the TUI runs in. The caller owns these bytes for the life of the host.
+    cwd: []const u8,
 
     pub const Phase = enum { open, closing, drained, destroyed };
 
@@ -133,6 +137,7 @@ pub const Host = struct {
             .fault_text_len = 0,
             .paint = .{ .glyphs = .init(gpa) },
             .client = cl,
+            .cwd = opts.cwd,
         };
         errdefer self.paint.glyphs.deinit();
         runtime.setRuntimeOpaque(self);
@@ -786,9 +791,10 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(!host.paint.quit_requested);
     try host.evalModule(
-        \\import { command } from "yuke:core";
-        \\command.perform("quit");
-    , "quit.js");
+        \\import { keymap } from "yuke:core";
+        \\keymap.add({ "ctrl+q": "quit" });
+    , "bind.js");
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'q', .mods = .{ .ctrl = true } } });
     try std.testing.expect(host.paint.quit_requested);
 }
 
@@ -1414,6 +1420,26 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
         \\t.setActive("a9");
         \\check("other-msg-kept", t.selection !== null);
         \\
+        \\// An edit before the selection moves the text under it, so the selection drops.
+        \\body.a7 = "alpha bravo";
+        \\t.setOutline([], { id: "a7", type: "assistant" });
+        \\paint();
+        \\t.onMouse(at(8, 0, "press"));
+        \\t.onMouse(at(13, 0, "drag"));
+        \\check("edit-before-sel", t.selectedText() === "bravo");
+        \\body.a7 = "xxx alpha bravo";
+        \\t.setActive("a7");
+        \\check("edit-clears", t.selection === null);
+        \\// An append after it keeps the same words.
+        \\body.a8 = "alpha bravo";
+        \\t.setOutline([], { id: "a8", type: "assistant" });
+        \\paint();
+        \\t.onMouse(at(8, 0, "press"));
+        \\t.onMouse(at(13, 0, "drag"));
+        \\body.a8 = "alpha bravo charlie";
+        \\t.setActive("a8");
+        \\check("append-keeps", t.selectedText() === "bravo");
+        \\
         \\// A user turn is plain text with no source map, so a rewrap drops its selection.
         \\t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
         \\paint();
@@ -1570,11 +1596,13 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\press("$p");
         \\check("put-char", t.text === "alpha bravo charli");
         \\
-        \\// "dd" takes the whole line, and "p" puts it back on its own line.
-        \\press("dd");
-        \\check("dd", t.text === "" && register.linewise);
+        \\// "dd" on the last line takes the newline before it, but the register keeps only the body.
+        \\t.setText("one\ntwo");
+        \\v.composer.mode = "normal";
+        \\press("$dd");
+        \\check("dd-last", t.text === "one" && register.text === "two" && register.linewise);
         \\press("p");
-        \\check("put-line", t.text === "\nalpha bravo charli");
+        \\check("put-line", t.text === "one\ntwo");
         \\
         \\// A bare letter never reaches the keymap, so no stray key runs a command.
         \\check("swallow", v.composer.onKey(key("z")) === true);
@@ -1749,6 +1777,38 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
     const text = try host.ctx.toCStringLen(res);
     defer host.ctx.freeCString(text.ptr);
     try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui a transcript with no message shows its placeholder" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 8, .cols = 30, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:ui";
+        \\const t = new Transcript({ textOf: () => "", empty: () => [{ text: "new chat" }] });
+        \\t.setOutline([], null);
+        \\globalThis.count = t.rowCount(30);
+        \\term.beginFrame();
+        \\t.draw({ x: 0, y: 0, w: 30, h: 8 });
+        \\term.endFrame();
+    , "empty.js");
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.count"));
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "new chat") != null);
 }
 
 test "yuke:md renders the GFM subset and caches finalized blocks" {

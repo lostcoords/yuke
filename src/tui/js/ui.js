@@ -117,6 +117,17 @@ export class List {
     this._clampScroll(this._page);
   }
 
+  // Put the cursor on the item that `k` names. Return false when the list holds no such item.
+  selectKey(k) {
+    if (k == null) return false;
+    for (const it of this.items) {
+      if (!this.isSelectable(it) || this.key(it) !== k) continue;
+      this.selectedKey = k;
+      return true;
+    }
+    return false;
+  }
+
   _selectable() {
     const out = [];
     for (let i = 0; i < this.items.length; i++) if (this.isSelectable(this.items[i])) out.push(i);
@@ -610,6 +621,8 @@ export class Transcript {
     this.selection = null;
     this._dragging = false;
     this.onSelect = opts.onSelect || null;
+    // Lines to show while the transcript holds no message, so an empty pane still says something.
+    this.empty = opts.empty || null;
   }
 
   clearSelection() {
@@ -654,6 +667,11 @@ export class Transcript {
     if (this.selection) this._reanchor(anchors);
   }
 
+  _sourceOf(id) {
+    const doc = this._docs.get(id);
+    return doc ? doc.sourceText() : "";
+  }
+
   // The selection as source offsets. Return null when either end carries no source.
   _anchors() {
     const sel = this.selection;
@@ -661,14 +679,23 @@ export class Transcript {
     const a = this.sourceAt(sel.anchor);
     const b = this.sourceAt(sel.cursor);
     if (a < 0 || b < 0) return null;
-    return { a: { id: sel.anchor.id, off: a }, b: { id: sel.cursor.id, off: b } };
+    return {
+      a: { id: sel.anchor.id, off: a, was: this._sourceOf(sel.anchor.id) },
+      b: { id: sel.cursor.id, off: b, was: this._sourceOf(sel.cursor.id) },
+    };
+  }
+
+  // An edit before the anchor moves the text under it, so the offset no longer names it.
+  _posAtAnchor(a) {
+    if (this._sourceOf(a.id).slice(0, a.off) !== a.was.slice(0, a.off)) return null;
+    return this.posAtSource(a.id, a.off);
   }
 
   // Put the selection back on the same source text. A missing end clears it, so a selection never
   // moves to text the user did not choose.
   _reanchor(anchors) {
-    const anchor = anchors && this.posAtSource(anchors.a.id, anchors.a.off);
-    const cursor = anchors && this.posAtSource(anchors.b.id, anchors.b.off);
+    const anchor = anchors && this._posAtAnchor(anchors.a);
+    const cursor = anchors && this._posAtAnchor(anchors.b);
     if (!anchor || !cursor) {
       this.clearSelection();
       return;
@@ -881,9 +908,18 @@ export class Transcript {
     return out.join("\n");
   }
 
+  // The placeholder rows, or null when a message exists or no placeholder is set.
+  _emptyRows() {
+    if (!this.empty || this._messages.length > 0 || this._active) return null;
+    const lines = this.empty();
+    return lines && lines.length ? lines.map((l) => ({ text: l.text == null ? String(l) : l.text, group: l.group || "YukeEmpty", indent: TX_GUTTER })) : null;
+  }
+
   rowCount(width) {
     if (width <= 0) return 0;
     this._invalidate(width);
+    const blank = this._emptyRows();
+    if (blank) return blank.length;
     let n = 0;
     for (let i = 0; ; i++) {
       const m = this._at(i);
@@ -896,6 +932,8 @@ export class Transcript {
   rows(width, top, height) {
     if (width <= 0 || height <= 0) return [];
     this._invalidate(width);
+    const blank = this._emptyRows();
+    if (blank) return blank.slice(top, top + height);
     const range = this._range();
     const out = [];
     let base = 0;
@@ -1318,7 +1356,7 @@ export const borders = {
 export class ChatView {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect });
+    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
   }
 
@@ -1526,6 +1564,10 @@ export class PickerContent {
 
   setItems(items) {
     this.list.setItems(items);
+  }
+
+  selectKey(k) {
+    return this.list.selectKey(k);
   }
 
   selected() {
