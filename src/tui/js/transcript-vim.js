@@ -1,7 +1,7 @@
 // yuke:transcript-vim — an opt-in layer that gives the transcript a cursor. Tab moves the focus
 // between the composer and the transcript, and the motions then move a cursor, not the viewport.
 import { term } from "yuke:term";
-import { root, command, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
+import { root, copy, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView, rowText } from "yuke:ui";
 
 // Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map, and
@@ -12,7 +12,7 @@ const touched = [];
 function stateOf(view) {
   let s = panes.get(view);
   if (!s) {
-    s = { on: false, cursor: null, anchor: null, visual: false, goal: null, gPending: false, yPending: false };
+    s = { on: false, cursor: null, src: -1, anchor: null, visual: false, goal: null, gPending: false, yPending: false };
     panes.set(view, s);
     touched.push(view);
   }
@@ -36,6 +36,25 @@ function idsOf(t) {
   return t.messages().map((m) => m.id);
 }
 
+// Hold the cursor on its source character. A rewrap moves every row index, so the offset recorded
+// with the cursor is what survives.
+function anchor(t, s) {
+  if (s.cursor) s.src = t.sourceAt(s.cursor);
+}
+
+// One exit for a consumed key: record the source under the cursor, then ask for a frame.
+function done(t, s) {
+  anchor(t, s);
+  root.invalidate();
+  return true;
+}
+
+function reanchor(t, s) {
+  if (!s.cursor || s.src < 0 || t.sourceAt(s.cursor) === s.src) return;
+  const pos = t.posAtSource(s.cursor.id, s.src);
+  if (pos) s.cursor = pos;
+}
+
 // Put the cursor back where it was. A stale position takes the lowest drawn row, as tmux does.
 // The pane bottom can hold no row, so the scan walks up to the last one that does.
 function seed(view, s) {
@@ -46,10 +65,12 @@ function seed(view, s) {
     const pos = t.posAt(r.x, y, false);
     if (pos && rowOf(t, pos) !== "") {
       s.cursor = pos;
+      anchor(t, s);
       return;
     }
   }
   toEnd(t, s, true);
+  anchor(t, s);
 }
 
 // Step one grapheme along the row. A step never leaves the row, as `h` and `l` do in vim.
@@ -211,16 +232,17 @@ function expandLines(t, s) {
   t.selection = { anchor: { ...lo, col: 0 }, cursor: { ...hi, col: rowOf(t, hi).length } };
 }
 
-// Copy through the core command, so the mouse and the keyboard take one path to the clipboard.
-// Without a selection the row under the cursor is the target, which is what `yy` means.
-function yank(t, s, name, linewise) {
+// Copy through the core, so a yank works with or without the bundled shell loaded. Without a
+// selection the row under the cursor is the target, which is what `yy` means.
+function yank(t, s, source, linewise) {
   if (!s.cursor) return;
   if (!s.visual) {
     const body = rowOf(t, s.cursor);
     t.selection = { anchor: { ...s.cursor, col: 0 }, cursor: { ...s.cursor, col: body.length } };
   }
-  register.set(name === "copy:source" ? t.selectedSource() : t.selectedText(), linewise !== false && !s.visual);
-  command.perform(name);
+  const text = source ? t.selectedSource() : t.selectedText();
+  register.set(text, linewise !== false && !s.visual);
+  copy(text, source ? "source" : "selection");
   s.visual = false;
   s.anchor = null;
   t.clearSelection();
@@ -250,6 +272,7 @@ export const transcriptVim = {
       if (!s || !s.on) return inner(ev);
 
       const t = this.transcript;
+      reanchor(t, s);
       const k = modalKey(ev);
       // "g" opens a two-key motion: "gg" to the top, "gy" to copy the markdown source.
       if (s.gPending) {
@@ -257,24 +280,19 @@ export const transcriptVim = {
         if (k === "g" && toEnd(t, s, false)) {
           syncSelection(t, s);
           t.ensureVisible(s.cursor);
-          root.invalidate();
-          return true;
+          return done(t, s);
         }
         if (k === "y") {
-          yank(t, s, "copy:source");
-          root.invalidate();
-          return true;
+          yank(t, s, true);
+          return done(t, s);
         }
         if (k === "g") return true;
       }
       // "y" waits for a second "y", the way vim waits for a motion.
       if (s.yPending) {
         s.yPending = false;
-        if (k === "y") {
-          yank(t, s, "copy:selection");
-          root.invalidate();
-        }
-        return true;
+        if (k === "y") yank(t, s, false);
+        return done(t, s);
       }
       if (k === "g") {
         s.gPending = true;
@@ -285,16 +303,14 @@ export const transcriptVim = {
         s.visual = false;
         s.anchor = null;
         t.clearSelection();
-        root.invalidate();
-        return true;
+        return done(t, s);
       }
       if (k === "v") {
         s.visual = !s.visual;
         s.anchor = s.visual ? s.cursor : null;
         if (s.visual) syncSelection(t, s);
         else t.clearSelection();
-        root.invalidate();
-        return true;
+        return done(t, s);
       }
       // "o" puts the cursor on the other end, so a selection can grow from either side.
       if (k === "o" && s.visual) {
@@ -303,35 +319,32 @@ export const transcriptVim = {
         s.cursor = swap;
         syncSelection(t, s);
         t.ensureVisible(s.cursor);
-        root.invalidate();
-        return true;
+        return done(t, s);
       }
       // "Y" takes whole rows, as vim's visual Y does.
       if (k === "Y") {
         if (s.visual) expandLines(t, s);
-        yank(t, s, "copy:selection", true);
-        root.invalidate();
-        return true;
+        yank(t, s, false, true);
+        return done(t, s);
       }
       if (k === "y") {
-        if (s.visual) yank(t, s, "copy:selection", false);
+        if (s.visual) yank(t, s, false, false);
         else s.yPending = true;
-        root.invalidate();
-        return true;
+        return done(t, s);
       }
 
       if (k !== "j" && k !== "k" && k !== "up" && k !== "down") s.goal = null;
       if (!move(t, s, k)) return false;
       syncSelection(t, s);
       t.ensureVisible(s.cursor);
-      root.invalidate();
-      return true;
+      return done(t, s);
     });
 
     // The caret shows where the cursor is. A cursor scrolled off the pane hides it.
     ctx.advise(ChatView.prototype, "cursor", "around", function (inner) {
       const s = panes.get(this);
       if (!s || !s.on) return inner();
+      reanchor(this.transcript, s);
       const at = s.cursor && this.transcript.screenAt(s.cursor);
       return at ? { x: at.x, y: at.y, visible: true } : { x: 0, y: 0, visible: false };
     });
@@ -347,6 +360,7 @@ export const transcriptVim = {
       s.on = true;
       s.cursor = pos;
       s.goal = null;
+      anchor(this.transcript, s);
       s.visual = false;
       s.anchor = null;
       s.gPending = false;

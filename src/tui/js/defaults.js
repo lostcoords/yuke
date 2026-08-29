@@ -1,7 +1,7 @@
 // yuke:defaults — the bundled UI: a sidebar | chat split shell with a local connect, a command
 // palette, a ":" line, and a stub explorer. A user's index.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, status, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
+import { command, keymap, style, status, copy, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, ChatView, List } from "yuke:ui";
 import * as client from "yuke:client";
@@ -343,17 +343,14 @@ events.on("key", (ev) => {
   if (ev.event === "press") notice.clear();
 });
 
-// Send text to the system clipboard and report the outcome. OSC 52 has no acknowledgement, so a
-// byte count means the sequence left this process, not that the terminal accepted it.
-function copyText(what, text) {
-  if (!text) {
-    notice.show("nothing to copy");
-    return;
-  }
-  const n = term.copy(text);
-  if (n < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
-  else notice.show("copied " + what + " · " + n + " bytes");
-}
+// Report every copy, wherever it came from. OSC 52 has no acknowledgement, so a byte count means
+// the sequence left this process, not that the terminal accepted it.
+events.on("copy", (e) => {
+  if (!e) return;
+  if (e.text === "") notice.show("nothing to copy");
+  else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
+  else notice.show("copied " + e.what + " · " + e.bytes + " bytes");
+});
 
 // The focused chat pane, or the default one when another view holds the focus.
 function activeChat() {
@@ -434,7 +431,7 @@ const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
   onSelect: (text) => {
-    if (config.mouse.copyOnSelect) copyText("selection", text);
+    if (config.mouse.copyOnSelect) copy(text, "selection");
   },
 });
 
@@ -698,7 +695,7 @@ function openMessagePicker() {
     key: (r) => r.m.id,
     filterText: (r) => r.text,
     format: (r) => ({ text: firstLine(r.text) || "(empty)", right: r.m.type }),
-    onAccept: (r) => copyText(r.m.type + " message", r.text),
+    onAccept: (r) => copy(r.text, r.m.type + " message"),
   });
 }
 
@@ -719,7 +716,7 @@ function openCodePicker() {
     key: (b) => b.i,
     filterText: (b) => b.lang + " " + b.text,
     format: (b) => ({ text: firstLine(b.text) || "(empty)", right: b.lang }),
-    onAccept: (b) => copyText(b.lang ? b.lang + " block" : "code block", b.text),
+    onAccept: (b) => copy(b.text, b.lang ? b.lang + " block" : "code block"),
   });
 }
 
@@ -977,9 +974,9 @@ plugins.use({
       "window:split-down": () => root.split("col", new MainPane()),
       "window:close": () => root.close(),
       "ui:cmdline": () => openCommandLine(),
-      "copy:reply": () => copyText("reply", chat.transcript.textFor(chat.transcript.last("assistant"))),
-      "copy:selection": () => copyText("selection", activeChat().transcript.selectedText()),
-      "copy:source": () => copyText("source", activeChat().transcript.selectedSource()),
+      "copy:reply": () => copy(chat.transcript.textFor(chat.transcript.last("assistant")), "reply"),
+      "copy:selection": () => copy(activeChat().transcript.selectedText(), "selection"),
+      "copy:source": () => copy(activeChat().transcript.selectedSource(), "source"),
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),

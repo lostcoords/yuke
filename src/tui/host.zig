@@ -1598,11 +1598,11 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { transcriptVim } from "yuke:transcript-vim";
-        \\import "yuke:defaults";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
         \\
+        \\// The shell is not loaded, so a yank must reach the clipboard through the core alone.
         \\const body = { a1: "alpha **bravo** charlie delta" };
         \\let copied = null;
         \\term.copy = (x) => { copied = x; return x.length; };
@@ -1701,6 +1701,20 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\const back = seen[seen.length - 1];
         \\v.onKey(key("char", "{"));
         \\check("block-back", v.cursor().y < back);
+        \\
+        \\// A rewrap moves every row index, so the cursor holds its source character instead.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\// Row 1 holds different words at each width, so its row index alone is not the same text.
+        \\v.onKey(key("char", "j"));
+        \\const srcAt = () => v.transcript.sourceAt(v.transcript.posAt(v.cursor().x, v.cursor().y, false));
+        \\const srcBefore = srcAt();
+        \\v.rect = { x: 0, y: 0, w: 14, h: 18 };
+        \\paint();
+        \\const srcAfter = srcAt();
+        \\check("cursor-survives-rewrap", srcBefore >= 0 && srcAfter === srcBefore);
+        \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
+        \\paint();
         \\
         \\// An unload gives the caret back to the composer.
         \\off();

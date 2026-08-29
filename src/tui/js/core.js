@@ -475,6 +475,15 @@ export function strokeOf(ev) {
   );
 }
 
+// Write `text` to the system clipboard and report the byte count, or -1 when it is too large.
+// The `copy` event carries the outcome, so the app owns the message the user reads.
+export function copy(text, what) {
+  const s = text == null ? "" : String(text);
+  const bytes = s === "" ? 0 : term.copy(s);
+  events.emit("copy", { what: what || "text", text: s, bytes });
+  return bytes;
+}
+
 // The unnamed register. A yank or a delete fills it and `p` reads it. OSC 52 is write only, so a
 // paste can never read the terminal's own clipboard.
 export const register = {
