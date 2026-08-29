@@ -1166,6 +1166,68 @@ export const borders = {
 
 // A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
 // interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
+// The chat pane: a transcript above a composer in one leaf. setOutline feeds the transcript (text
+// via textOf); the composer calls onSubmit(text); an unconsumed key scrolls the transcript.
+export class ChatView {
+  constructor(opts = {}) {
+    this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect });
+    this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
+    this.status = opts.status || (() => "");
+  }
+
+  get name() {
+    return "chat";
+  }
+
+  setOutline(messages, active) {
+    this.transcript.setOutline(messages, active);
+  }
+
+  setActive(id) {
+    this.transcript.setActive(id);
+  }
+
+  onKey(ev) {
+    return this.composer.onKey(ev) || this.transcript.onKey(ev);
+  }
+
+  // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
+  // A captured drag still reaches the transcript, because only a press hits this test.
+  onMouse(ev) {
+    const r = this.transcript.pager.rect();
+    const inside = r && ev.col >= r.x && ev.col < r.x + r.w && ev.row >= r.y && ev.row < r.y + r.h;
+    if (inside || ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
+    return false;
+  }
+
+  draw(focused) {
+    const { x, y, w, h } = this.rect;
+    if (w <= 0 || h <= 0) {
+      this.composer.rect = { x, y, w: 0, h: 0 };
+      this.transcript.hide();
+      return;
+    }
+
+    // The composer grows with its text. It never takes more than half the pane.
+    const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
+    this.composer.rect = { x, y: y + h - rows, w, h: rows };
+    const rule = y + h - rows - 1;
+    if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
+    else this.transcript.hide();
+    if (rule >= y) {
+      const status = this.status();
+      if (status) text(x, rule, clip(status, w), "YukeStatus");
+      else text(x, rule, "─".repeat(w), "YukeRule");
+    }
+    this.composer.draw(focused);
+  }
+
+  cursor() {
+    return this.composer.cursor();
+  }
+}
+
 export class Window {
   constructor(opts = {}) {
     this.opts = opts;

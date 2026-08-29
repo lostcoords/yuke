@@ -3,7 +3,7 @@
 import { term } from "yuke:term";
 import { command, keymap, style, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { ui, List, Transcript, Composer } from "yuke:ui";
+import { ui, ChatView, List } from "yuke:ui";
 import * as client from "yuke:client";
 import { composerVim } from "yuke:composer-vim";
 
@@ -390,70 +390,11 @@ class MainPane {
   }
 }
 
-// The chat pane: a transcript above a composer in one leaf. setOutline feeds the transcript (text
-// via textOf); the composer calls onSubmit(text); an unconsumed key scrolls the transcript.
-class ChatView {
-  constructor(opts = {}) {
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect });
-    this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
-  }
-
-  get name() {
-    return "chat";
-  }
-
-  setOutline(messages, active) {
-    this.transcript.setOutline(messages, active);
-  }
-
-  setActive(id) {
-    this.transcript.setActive(id);
-  }
-
-  onKey(ev) {
-    return this.composer.onKey(ev) || this.transcript.onKey(ev);
-  }
-
-  // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
-  // A captured drag still reaches the transcript, because only a press hits this test.
-  onMouse(ev) {
-    const r = this.transcript.pager.rect();
-    const inside = r && ev.col >= r.x && ev.col < r.x + r.w && ev.row >= r.y && ev.row < r.y + r.h;
-    if (inside || ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
-    return false;
-  }
-
-  draw(focused) {
-    const { x, y, w, h } = this.rect;
-    if (w <= 0 || h <= 0) {
-      this.composer.rect = { x, y, w: 0, h: 0 };
-      this.transcript.hide();
-      return;
-    }
-
-    // The composer grows with its text. It never takes more than half the pane.
-    const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
-    this.composer.rect = { x, y: y + h - rows, w, h: rows };
-    const rule = y + h - rows - 1;
-    if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
-    else this.transcript.hide();
-    if (rule >= y) {
-      if (notice.text) text(x, rule, clip(notice.text, w), "YukeStatus");
-      else text(x, rule, "─".repeat(w), "YukeRule");
-    }
-    this.composer.draw(focused);
-  }
-
-  cursor() {
-    return this.composer.cursor();
-  }
-}
-
 // --- default layout -----------------------------------------------------------------------
 const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
+  status: () => notice.text,
   onSelect: (text) => {
     if (config.mouse.copyOnSelect) copyText("selection", text);
   },
@@ -1030,4 +971,4 @@ plugins.use({
 root.setRoot(workspace);
 root.addService(connection);
 
-export { workspace, sidebar, chat, ChatView, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
+export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
