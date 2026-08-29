@@ -526,7 +526,10 @@ export class Transcript {
 export class Composer {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.input = new TextInput({ onChange: () => this._invalidate() });
+    this.input = new TextInput({
+      onChange: () => this._invalidate(),
+      onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
+    });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
@@ -534,14 +537,87 @@ export class Composer {
     this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
     this.scroll = 0;
     this.goalCol = null; // the column a vertical move holds across a short row
+    // A collapsed paste. `start` and `end` index the text; the label replaces them on the screen
+    // only. The text keeps the paste, so a submit sends it even when a span is lost.
+    this.spans = [];
+    this.nextPaste = 1;
     this._rows = null;
     this._rowsW = -1;
+    this._proj = null;
   }
 
-  // Drop the row cache after an edit, so the wrap runs once per edit and not per frame.
+  // Drop the projection and the row cache after an edit, so both rebuild once per edit.
   _invalidate() {
     this._rows = null;
+    this._proj = null;
     this.goalCol = null;
+  }
+
+  // Move a span the edit did not touch. An edit inside a span drops the span and shows the paste.
+  _shiftSpans(from, to, ins) {
+    if (this.spans.length === 0) return;
+    const delta = ins - (to - from);
+    this.spans = this.spans.filter((sp) => {
+      if (sp.end <= from) return true;
+      if (sp.start >= to) {
+        sp.start += delta;
+        sp.end += delta;
+        return true;
+      }
+      return false;
+    });
+    this._invalidate();
+  }
+
+  // The text as the screen shows it: each collapsed span becomes its label.
+  _projection() {
+    if (this._proj) return this._proj;
+    const s = this.input.text;
+    if (this.spans.length === 0) {
+      this._proj = { text: s, parts: [] };
+      return this._proj;
+    }
+    const spans = this.spans.slice().sort((a, b) => a.start - b.start);
+    const parts = [];
+    let out = "";
+    let at = 0;
+    for (const sp of spans) {
+      // A span is internal state. An overlap or a bad offset makes the caret map ambiguous.
+      if (sp.start < at || sp.end <= sp.start || sp.end > s.length) throw new Error("bad composer span");
+      out += s.slice(at, sp.start);
+      // `delta` is what the label adds to every offset after it.
+      const start = out.length;
+      parts.push({ span: sp, start, end: start + sp.label.length, delta: sp.label.length - (sp.end - sp.start) });
+      out += sp.label;
+      at = sp.end;
+    }
+    this._proj = { text: out + s.slice(at), parts };
+    return this._proj;
+  }
+
+  // The caret never rests inside a span, so the map adds the delta of every label before it.
+  _toDisplay(caret) {
+    let d = caret;
+    for (const p of this._projection().parts) if (caret >= p.span.end) d += p.delta;
+    return d;
+  }
+
+  // Map back, and push a caret that landed inside a label to its nearer edge.
+  _toText(disp) {
+    let t = disp;
+    for (const p of this._projection().parts) {
+      if (disp > p.start && disp < p.end) return disp - p.start < p.end - disp ? p.span.start : p.span.end;
+      if (disp >= p.end) t -= p.delta;
+    }
+    return t;
+  }
+
+  _spanEndingAt(caret) {
+    return this.spans.find((sp) => sp.end === caret) || null;
+  }
+
+  _spanStartingAt(caret) {
+    return this.spans.find((sp) => sp.start === caret) || null;
   }
 
   _textWidth(w) {
@@ -551,7 +627,7 @@ export class Composer {
   _rowsAt(width) {
     if (this._rows && this._rowsW === width) return this._rows;
     this._rowsW = width;
-    this._rows = wrapOffsets(this.input.text, width);
+    this._rows = wrapOffsets(this._projection().text, width);
     return this._rows;
   }
 
@@ -574,11 +650,14 @@ export class Composer {
     this.input.setText(s);
   }
 
+  // Submit the text and not the projection, so a lost span can never send a label.
   submit() {
     const t = this.input.text.trim();
     if (t === "") return;
     // The owner may reject synchronously (returns false): keep the text rather than blank it.
     if (this.onSubmit && this.onSubmit(t) === false) return;
+    this.spans = [];
+    this.nextPaste = 1;
     this.input.setText("");
   }
 
@@ -591,6 +670,7 @@ export class Composer {
 
     // Every other key edits or moves the caret across, so the goal column is stale.
     this.goalCol = null;
+    if (s === "paste") return this._paste(ev.text || "");
     if (s === "enter") {
       this.submit();
       return true;
@@ -599,19 +679,53 @@ export class Composer {
       this.input.insert("\n");
       return true;
     }
+    // A collapsed span deletes and steps as one unit. `ctrl+w` must not eat a word inside it.
+    if (s === "backspace" || s === "ctrl+w" || s === "delete") {
+      const sp = s === "delete" ? this._spanStartingAt(this.input.caret) : this._spanEndingAt(this.input.caret);
+      if (sp) {
+        this.input.replace(sp.start, sp.end, "");
+        return true;
+      }
+    }
+    if (s === "left" || s === "right") {
+      const sp = s === "left" ? this._spanEndingAt(this.input.caret) : this._spanStartingAt(this.input.caret);
+      if (sp) {
+        this.input.caret = s === "left" ? sp.start : sp.end;
+        return true;
+      }
+    }
     return this.input.onKey(ev);
+  }
+
+  // Collapse a large paste to a label. The same paste beside its label expands it again.
+  _paste(t) {
+    if (t === "") return true;
+    const sides = [this._spanEndingAt(this.input.caret), this._spanStartingAt(this.input.caret)];
+    const near = sides.find((sp) => sp && this.input.text.slice(sp.start, sp.end) === t);
+    if (near) {
+      this.spans = this.spans.filter((sp) => sp !== near);
+      this._invalidate();
+      return true;
+    }
+    const from = this.input.caret;
+    this.input.insert(t);
+    if (pasteCollapses(t)) {
+      this.spans.push({ start: from, end: from + t.length, label: pasteLabel(this.nextPaste++, t) });
+      this._invalidate();
+    }
+    return true;
   }
 
   // Move the caret one row. The goal column survives a short row, as vim and helix do.
   // The move stops at the first and the last row.
   _moveRow(delta) {
     const rows = this._rowsAt(this._textWidth(this.rect.w));
-    const s = this.input.text;
-    const here = caretRowCol(s, rows, this.input.caret);
+    const proj = this._projection().text;
+    const here = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
     const col = this.goalCol === null ? here.col : this.goalCol;
     const next = here.row + delta;
     if (next >= 0 && next < rows.length) {
-      this.input.caret = caretAtCol(s, rows[next], col);
+      this.input.caret = this._toText(caretAtCol(proj, rows[next], col));
       this.goalCol = col;
     }
     return true;
@@ -619,7 +733,7 @@ export class Composer {
 
   // Scroll the smallest amount that keeps the caret row on the screen.
   _scrollTo(rows, h) {
-    const { row } = caretRowCol(this.input.text, rows, this.input.caret);
+    const { row } = caretRowCol(this._projection().text, rows, this._toDisplay(this.input.caret));
     this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
     if (row < this.scroll) this.scroll = row;
     else if (row >= this.scroll + h) this.scroll = row - h + 1;
@@ -641,13 +755,14 @@ export class Composer {
 
     const tw = this._textWidth(w);
     const rows = this._rowsAt(tw);
+    const proj = this._projection().text;
     this._scrollTo(rows, h);
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
     if (this.scroll === 0) text(x, y, this.prompt, "UIComposer");
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = rows[this.scroll + i];
-      text(x + pw, y + i, clip(this.input.text.slice(r.start, r.end), tw, false), "UIComposer");
+      text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
     }
   }
 
@@ -657,7 +772,7 @@ export class Composer {
     if (w <= 0 || h <= 0) return null;
     const tw = this._textWidth(w);
     const rows = this._rowsAt(tw);
-    const { row, col } = caretRowCol(this.input.text, rows, this.input.caret);
+    const { row, col } = caretRowCol(this._projection().text, rows, this._toDisplay(this.input.caret));
     const vy = row - this.scroll;
     if (vy < 0 || vy >= h) return { x, y, visible: false };
     // A space hangs past the right edge, so the caret column clamps to the last cell.
@@ -667,6 +782,29 @@ export class Composer {
 
 // The composer stops growing here, so the transcript keeps its room.
 const COMPOSER_ROWS_MAX = 10;
+
+// A paste over one of these collapses to a label, as OpenCode does.
+const COMPOSER_PASTE_LINES = 3;
+const COMPOSER_PASTE_CHARS = 150;
+
+function pasteCollapses(t) {
+  return t.length > COMPOSER_PASTE_CHARS || lineCount(t) >= COMPOSER_PASTE_LINES;
+}
+
+// A newline at the end closes the last line. It does not open an empty one.
+function lineCount(t) {
+  const end = t.length > 0 && t[t.length - 1] === "\n" ? t.length - 1 : t.length;
+  let n = 1;
+  for (let i = t.indexOf("\n"); i >= 0 && i < end; i = t.indexOf("\n", i + 1)) n++;
+  return n;
+}
+
+// Count lines for a multiline paste. Count characters for a single-line paste.
+function pasteLabel(id, t) {
+  const lines = lineCount(t);
+  const what = lines >= COMPOSER_PASTE_LINES ? lines + " lines" : t.length + " chars";
+  return "[Pasted text #" + id + " +" + what + "]";
+}
 
 // These strokes add a line instead of a submit.
 // Alt+Enter and Ctrl+J support a terminal with the legacy encoding.

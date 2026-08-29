@@ -493,11 +493,16 @@ export class TextInput {
     this.text = "";
     this.caret = 0;
     this.onChange = opts.onChange || null;
+    // onEdit(from, to, insertedLength) reports the range an edit replaced. An owner that keeps
+    // offsets into the text uses this hook. TextInput never learns what those offsets mean.
+    this.onEdit = opts.onEdit || null;
   }
 
   setText(s) {
+    const had = this.text.length;
     this.text = String(s);
     this.caret = this.text.length;
+    callHook(this, "onEdit", 0, had, this.text.length);
     callHook(this, "onChange");
   }
 
@@ -525,7 +530,13 @@ export class TextInput {
   _splice(from, to, ins) {
     this.text = this.text.slice(0, from) + ins + this.text.slice(to);
     this.caret = from + ins.length;
+    callHook(this, "onEdit", from, to, ins.length);
     callHook(this, "onChange");
+  }
+
+  // Replace [from, to) with `s`. The caret lands after the new text.
+  replace(from, to, s) {
+    this._splice(from, to, String(s));
   }
 
   // Insert `s` at the caret with one edit. A paste and a newline key use this.
