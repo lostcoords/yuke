@@ -1347,15 +1347,15 @@ export class ChatView {
     // The composer grows with its text. It never takes more than half the pane.
     const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
     this.composer.rect = { x, y: y + h - rows, w, h: rows };
-    const rule = y + h - rows - 1;
+    // A status takes its own row over the composer. The rule stays whole under the transcript.
+    const status = this.status();
+    const noteY = y + h - rows - 1;
+    const note = status && noteY - 1 > y ? 1 : 0;
+    const rule = noteY - note;
     if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
     else this.transcript.hide();
-    // The rule always divides the pane. A status inlays into it, so it never reads as composer text.
-    if (rule >= y) {
-      text(x, rule, "─".repeat(w), "YukeRule");
-      const status = this.status();
-      if (status && w > 8) text(x + 2, rule, " " + clip(status, w - 6) + " ", "YukeStatus");
-    }
+    if (rule >= y) text(x, rule, "─".repeat(w), "YukeRule");
+    if (note) text(x, noteY, clip(status, w), "YukeStatus");
     this.composer.draw(focused);
   }
 
