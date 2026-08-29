@@ -905,7 +905,13 @@ export const status = {
     const out = [];
     for (const seg of this._list) {
       if (seg.side !== which) continue;
-      const t = seg.render();
+      // One bad provider must not take the frame with it.
+      let t = "";
+      try {
+        t = seg.render();
+      } catch (e) {
+        events.emit("status:error", e);
+      }
       if (t) out.push(String(t));
     }
     return out.join(" · ");

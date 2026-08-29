@@ -55,7 +55,12 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     // Mouse reporting is always on. The in-app selection replaces the selection of the terminal.
     try render.setMouseMode(writer, true);
 
-    const host = try Host.createWith(gpa, io, .{});
+    // A new session takes this directory as its workspace root. The reactor owns the resolve, so
+    // it runs here and not in `main`.
+    var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
+
+    const host = try Host.createWith(gpa, io, .{ .cwd = cwd_buf[0..cwd_len] });
     defer host.destroy();
 
     const ws = try tty.getWinsize();

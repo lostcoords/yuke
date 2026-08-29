@@ -54,7 +54,12 @@ export function devices() {
 function request(connKey, method, params) {
   return native.request(connKey, method, JSON.stringify(params)).then(
     (text) => {
-      const response = JSON.parse(text);
+      let response;
+      try {
+        response = JSON.parse(text);
+      } catch (e) {
+        throw new RpcError(-1, "malformed response");
+      }
       if (typeof response !== "object" || response === null || Array.isArray(response)) {
         throw new RpcError(-1, "malformed response");
       }
@@ -125,6 +130,16 @@ export function sessionCancelRun(connKey, id, clearQueue = false) {
 }
 
 // The subdirectories of `params.path` (the daemon's default root when omitted), one page.
+// Create a session. An unset model or reasoning lets the daemon use its profile default.
+export function sessionCreate(connKey, params) {
+  return request(connKey, "session.create", params);
+}
+
+// The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
+export function catalogList(connKey, sinceRev) {
+  return request(connKey, "catalog.list", sinceRev ? { since_rev: sinceRev } : {});
+}
+
 export function workspaceBrowse(connKey, params = {}) {
   return request(connKey, "workspace.browse", params);
 }

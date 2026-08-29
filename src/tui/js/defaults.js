@@ -74,6 +74,9 @@ class DeviceFeed {
       case "session.summary_changed":
         this._upsert(p.session);
         break;
+      case "catalog.changed":
+        catalogOf(this.connKey).rev = null;
+        break;
       case "session.activity_changed": {
         const existing = this.items.get(p.session_id);
         if (existing) this.items.set(p.session_id, { session: existing.session, activity: p.activity });
