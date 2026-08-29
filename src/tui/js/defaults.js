@@ -358,6 +358,72 @@ function activeChat() {
   return v && v.name === "chat" ? v : chat;
 }
 
+// One catalog per connection. `catalog.list` answers "unchanged" while the revision holds, so a
+// reopened picker costs no round trip.
+const catalogs = new Map();
+
+function catalogOf(connKey) {
+  let c = catalogs.get(connKey);
+  if (!c) {
+    c = { rev: null, models: [], providers: [], loading: false };
+    catalogs.set(connKey, c);
+  }
+  return c;
+}
+
+function loadCatalog(connKey) {
+  const c = catalogOf(connKey);
+  if (c.loading) return Promise.resolve(c);
+  c.loading = true;
+  return client
+    .catalogList(connKey, c.rev)
+    .then((r) => {
+      if (r && r.type === "full") {
+        c.rev = r.catalog_rev;
+        c.models = r.models || [];
+        c.providers = r.providers || [];
+      }
+    })
+    .catch(() => {})
+    .then(() => {
+      c.loading = false;
+      root.invalidate();
+      return c;
+    });
+}
+
+// The context window of one model, or 0 when the catalog does not name it.
+function contextWindowOf(connKey, modelId) {
+  if (!modelId) return 0;
+  const m = catalogOf(connKey).models.find((x) => x.provider + "/" + x.id === modelId);
+  return m && m.context_window ? m.context_window : 0;
+}
+
+// The model a new chat starts with. `session.patch` is not implemented, so a choice cannot move an
+// open session yet.
+const chatDefaults = { model: null, reasoning: "" };
+
+function chooseModel(model, reasoning) {
+  chatDefaults.model = model.provider + "/" + model.id;
+  chatDefaults.reasoning = reasoning || "";
+  notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
+  root.invalidate();
+}
+
+// Without a choice this run, the newest session names the model, so a restart keeps working.
+function defaultModel() {
+  if (chatDefaults.model) return chatDefaults;
+  for (const r of mergedRows()) {
+    if (r.connKey === LOCAL && r.session && r.session.model) return { model: r.session.model, reasoning: "" };
+  }
+  return chatDefaults;
+}
+
+function restoreInput(text) {
+  const now = chat.composer.text;
+  chat.composer.text = now === "" ? text : text + "\n" + now;
+}
+
 // The chat's live entry, or null with no open session.
 function chatEntry() {
   if (!chatSession.sessionId) return null;
@@ -377,7 +443,8 @@ status.add({
   order: 10,
   render: () => {
     const e = chatEntry();
-    return e && e.session ? e.session.model : "";
+    if (e && e.session && e.session.model) return e.session.model;
+    return defaultModel().model || "";
   },
 });
 status.add({
@@ -386,7 +453,9 @@ status.add({
   render: () => {
     const e = chatEntry();
     const u = e && e.activity ? e.activity.context_usage : null;
-    return u && u.input ? tokenLabel(u.input) + " ctx" : "";
+    if (!u || !u.input) return "";
+    const win = contextWindowOf(chatSession.connKey, e.session && e.session.model);
+    return win ? Math.round((u.input / win) * 100) + "% ctx" : tokenLabel(u.input) + " ctx";
   },
 });
 
@@ -427,18 +496,30 @@ class MainPane {
 }
 
 // --- default layout -----------------------------------------------------------------------
+const newChatLines = () => {
+  const m = defaultModel().model;
+  return [
+    { text: "new chat", group: "YukeBrand" },
+    { text: m ? "model · " + m : "no model yet · :model:pick", group: "YukeEmpty" },
+    { text: "type a message to start the session", group: "YukeEmpty" },
+  ];
+};
+
 const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
   onSelect: (text) => {
     if (config.mouse.copyOnSelect) copy(text, "selection");
   },
+  empty: () => (chatSession.sessionId ? null : newChatLines()),
 });
 
 // Drive one mounted pair into the chat pane: open and resync, then react to each "session" event.
 const chatSession = {
   connKey: LOCAL,
   sessionId: null,
+  creating: false,
+  gen: 0,
 
   open(connKey, id) {
     if (id == null) {
@@ -458,9 +539,10 @@ const chatSession = {
   // Send composer text into the open session. It returns false with no session, so the composer
   // keeps the text; the message appears through the "session" fold, not optimistically.
   send(text) {
-    if (!this.sessionId) return false;
-    client.sessionSendInput(this.connKey, this.sessionId, text).catch(() => {
-      if (chat.composer.text === "") chat.composer.text = text;
+    if (!this.sessionId) return this.startChat(text);
+    client.sessionSendInput(this.connKey, this.sessionId, text).catch((e) => {
+      restoreInput(text);
+      notice.show("send failed · " + ((e && e.message) || "unknown"));
       root.invalidate();
     });
     return true;
@@ -481,6 +563,57 @@ const chatSession = {
   // A draft delta: re-wrap only the streaming message `id`.
   active(id) {
     chat.setActive(id);
+    root.invalidate();
+  },
+
+  // Create the session, mount it, then send the first message. The daemon makes a session only
+  // once a chat has something to say.
+  startChat(text) {
+    if (this.creating) return false;
+    if (this.connKey !== LOCAL) {
+      notice.show("a new chat needs the local daemon");
+      return false;
+    }
+    if (!term.cwd) {
+      notice.show("no workspace directory");
+      return false;
+    }
+    const connKey = this.connKey;
+    const d = defaultModel();
+    const params = { workspace_path: term.cwd };
+    if (d.model) params.model = d.model;
+    if (d.reasoning) params.reasoning = d.reasoning;
+    const token = ++this.gen;
+    this.creating = true;
+    client
+      .sessionCreate(connKey, params)
+      .then((r) => {
+        if (token !== this.gen) return null;
+        this.open(connKey, r.session.id);
+        return client.sessionSendInput(connKey, r.session.id, text);
+      })
+      .catch((e) => {
+        restoreInput(text);
+        notice.show("new chat failed · " + ((e && e.message) || "unknown"));
+        root.invalidate();
+      })
+      .then(() => {
+        if (token === this.gen) this.creating = false;
+      });
+    return true;
+  },
+
+  // Leave the open session and show an empty pane. The daemon makes the session on the first
+  // message, so nothing is created until the user sends one.
+  newChat() {
+    this.gen++;
+    this.creating = false;
+    if (this.sessionId) client.sessionClose(this.connKey, this.sessionId);
+    this.sessionId = null;
+    this.connKey = LOCAL;
+    chat.setOutline([], null);
+    sidebar.active = null;
+    root.focusView(chat);
     root.invalidate();
   },
 
@@ -510,6 +643,7 @@ events.on("index", (ev) => {
 events.on("conn", (ev) => {
   if (!ev || !ev.key) return;
   if (ev.kind === "ready") {
+    loadCatalog(ev.key);
     const f = feedOf(ev.key);
     const info = client.connections().find((c) => c.key === ev.key);
     f.name = (info && info.name) || (ev.key === LOCAL ? "local" : f.name);
@@ -700,6 +834,57 @@ function openMessagePicker() {
 }
 
 // Pick any fenced code block in the transcript and copy its body.
+function openModelPicker() {
+  const connKey = chatSession.connKey;
+  const current = chatEntry();
+  const currentId = current && current.session ? current.session.model : null;
+  const show = () => {
+    const models = catalogOf(connKey).models.slice().sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+    if (models.length === 0) {
+      notice.show("no model in the catalog");
+      return null;
+    }
+    const qualified = (m) => m.provider + "/" + m.id;
+    const p = ui.pick({
+      title: "select a model",
+      footer: "type to filter · ↵ select · esc close",
+      border: "rounded",
+      width: 0.6,
+      height: 0.6,
+      items: models,
+      key: qualified,
+      filterText: (m) => m.provider + " " + m.name + " " + m.id,
+      format: (m) => ({ text: m.name, right: m.provider }),
+      onAccept: (m) => pickReasoning(connKey, m),
+    });
+    p.content.selectKey(currentId);
+    return p;
+  };
+  loadCatalog(connKey).then(show);
+  return null;
+}
+
+// A model with one level needs no second step, so the pick ends there.
+function pickReasoning(connKey, model) {
+  const levels = model.reasoning_levels || [];
+  if (levels.length < 2) {
+    chooseModel(model, model.default_reasoning || levels[0] || "");
+    return;
+  }
+  ui.pick({
+    title: model.name + " · effort",
+    footer: "↵ select · esc close",
+    border: "rounded",
+    width: 0.4,
+    height: 0.4,
+    items: levels.map((id) => ({ id })),
+    key: (l) => l.id,
+    filterText: (l) => l.id,
+    format: (l) => ({ text: l.id }),
+    onAccept: (l) => chooseModel(model, l.id),
+  }).content.selectKey(model.default_reasoning || levels[0]);
+}
+
 function openCodePicker() {
   const blocks = chat.transcript.codeBlocks();
   if (blocks.length === 0) {
@@ -979,6 +1164,8 @@ plugins.use({
       "copy:source": () => copy(activeChat().transcript.selectedSource(), "source"),
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
+      "model:pick": () => openModelPicker(),
+      "chat:new": () => chatSession.newChat(),
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
       "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
     });
@@ -986,6 +1173,7 @@ plugins.use({
     // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
     // ctrl+k prefix (it works during text entry), which leaves ctrl+w for the composer word-erase.
     ctx.keymap({
+      "ctrl+n": "chat:new",
       "ctrl+p": "ui:palette",
       "ctrl+f": "ui:sessions",
       "ctrl+c": "session:interrupt",
@@ -1008,5 +1196,6 @@ plugins.use({
 
 root.setRoot(workspace);
 root.addService(connection);
+root.focusView(chat);
 
 export { workspace, sidebar, chat, SessionList, MainPane, DeviceFeed, openExplorer, openPalette, openSessionFinder, openCommandLine, connection };
