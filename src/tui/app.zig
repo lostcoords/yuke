@@ -46,6 +46,8 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     var render = try term_pkg.Render.init(io, gpa, env, .{});
     defer render.deinit(writer);
     try render.enterAltScreen(writer);
+    // The terminal wraps pasted text in start and end markers.
+    try render.setBracketedPaste(writer, true);
 
     const host = try Host.createWith(gpa, io, .{});
     defer host.destroy();

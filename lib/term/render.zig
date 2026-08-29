@@ -38,6 +38,12 @@ pub const Render = struct {
         try self.vx.exitAltScreen(writer);
     }
 
+    /// Turn bracketed paste on or off. The terminal wraps pasted text in markers.
+    /// `deinit` tries to turn the mode off again.
+    pub fn setBracketedPaste(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
+        try self.vx.setBracketedPaste(writer, enable);
+    }
+
     pub fn queueRefresh(self: *Render) void {
         self.vx.queueRefresh();
     }
@@ -60,6 +66,26 @@ pub const Render = struct {
         std.debug.assert(!self.vx.refresh);
     }
 };
+
+test "bracketed paste sets the mode and deinit resets it" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    {
+        var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+        defer r.deinit(&out.writer);
+
+        try r.setBracketedPaste(&out.writer, true);
+        try std.testing.expectEqualStrings("\x1b[?2004h", out.written());
+        out.clearRetainingCapacity();
+    }
+
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1b[?2004l") != null);
+}
 
 test "init stores a 0x0 back-buffer and render writes nothing" {
     const io = std.testing.io;
