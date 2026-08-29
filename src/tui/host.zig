@@ -1451,8 +1451,8 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  const doc = new Document();
         \\  doc.setText("# H\n\n```\nx=1");
         \\  check("open-fence", has(doc.rows(80), "MdCodeBlock", "x=1"));
-        \\  check("open-uncached", !doc._cache.has("```\nx=1"));
-        \\  check("final-cached", doc._cache.has("# H"));
+        \\  check("open-uncached", !doc._cache.has(5));
+        \\  check("final-cached", doc._cache.has(0));
         \\}
         \\
         \\// A finalized block keeps its cache entry when the open tail grows.
@@ -1462,7 +1462,7 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  doc.rows(80);
         \\  doc.setText("# H\n\npara one two");
         \\  const rows = doc.rows(80);
-        \\  check("append-heading", has(rows, "MdHeading", "H") && doc._cache.has("# H"));
+        \\  check("append-heading", has(rows, "MdHeading", "H") && doc._cache.has(0));
         \\  check("append-tail", rows.some((r) => r.segments.some((s) => s.text.indexOf("two") >= 0)));
         \\}
         \\
@@ -1471,6 +1471,251 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
     const out = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(out);
     const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:md maps a rendered row back to its markdown source" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { renderRows, Document } from "yuke:md";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const segsOf = (rows) => { const out = []; for (const r of rows) for (const s of r.segments) out.push(s); return out; };
+        \\const find = (rows, group, text) => segsOf(rows).find((s) => s.group === group && s.text === text);
+        \\
+        \\// Every span stays inside the source and holds the text it rendered. A mark hides its markup,
+        \\// so it is the one segment whose span does not contain the text.
+        \\const mapsBack = (src, rows) => {
+        \\  for (const s of segsOf(rows)) {
+        \\    if (s.src == null) continue;
+        \\    if (s.src < 0 || s.srcEnd <= s.src || s.srcEnd > src.length) return false;
+        \\    if (s.mark) continue;
+        \\    const span = src.slice(s.src, s.srcEnd);
+        \\    if (span !== s.text && span.indexOf(s.text) < 0) return false;
+        \\  }
+        \\  return true;
+        \\};
+        \\const corpus = [
+        \\  "hello **bold** and `code`",
+        \\  "# Title\n\npara one\npara two",
+        \\  "> one\n> two",
+        \\  "- alpha\n- bravo",
+        \\  "1. one\n2. two",
+        \\  "| a | b |\n|---|---|\n| 1 | 2 |",
+        \\  "| a\\|b | c |\n|---|---|\n| 1 | 2 |",
+        \\  "```js\nlet x = 1;\n```",
+        \\  "not \\*bold\\* here",
+        \\  "see [docs](http://x) ok",
+        \\  "***wow*** and *x **y** z*",
+        \\  "---",
+        \\  "Setext\n======",
+        \\];
+        \\for (const src of corpus) {
+        \\  const doc = new Document();
+        \\  doc.setText(src);
+        \\  for (const w of [80, 24, 7]) check("maps-back:" + w + ":" + src.slice(0, 8), mapsBack(src, doc.rows(w)));
+        \\}
+        \\
+        \\// A rendered word maps to the word, and a span still holds the markup between its ends.
+        \\{
+        \\  const src = "hello **bold** and `code`";
+        \\  const rows = renderRows(src, 80);
+        \\  const b = find(rows, "MdStrong", "bold");
+        \\  const c = find(rows, "MdCode", "code");
+        \\  check("strong-src", b && src.slice(b.src, b.srcEnd) === "bold");
+        \\  check("code-src", c && src.slice(c.src, c.srcEnd) === "code");
+        \\  check("span-keeps-markup", b && c && src.slice(b.src, c.srcEnd) === "bold** and `code");
+        \\}
+        \\
+        \\// An escape renders one character over two, so it keeps the whole markup.
+        \\{
+        \\  const src = "a \\*b\\* c";
+        \\  const star = segsOf(renderRows(src, 80)).find((s) => s.text === "*");
+        \\  check("escape-atomic", star && star.srcEnd - star.src === 2 && src.slice(star.src, star.srcEnd) === "\\*");
+        \\}
+        \\
+        \\{
+        \\  const src = "alpha bravo charlie delta";
+        \\  const rows = renderRows(src, 12);
+        \\  const d = find(rows, "MdText", "delta");
+        \\  check("wrap-rows", rows.length > 1);
+        \\  check("wrap-src", d && d.src === src.indexOf("delta"));
+        \\}
+        \\
+        \\// A paragraph joins its lines with one space, so the second line keeps its offsets.
+        \\{
+        \\  const src = "one two\nthree four";
+        \\  const t = find(renderRows(src, 80), "MdText", "three");
+        \\  check("para-line-2", t && t.src === src.indexOf("three"));
+        \\}
+        \\
+        \\// A quote drops the "> " of each line, so a segment splits at the line edge.
+        \\{
+        \\  const src = "> one\n> two";
+        \\  const rows = renderRows(src, 80);
+        \\  const t = find(rows, "MdQuote", "two");
+        \\  const bar = find(rows, "MdQuote", "▏ ");
+        \\  const flat = rows.map((r) => r.segments.map((g) => g.text).join("")).join("");
+        \\  // A soft line break is a word gap, so no row ever holds a line feed.
+        \\  check("quote-one-line", flat === "▏ one two");
+        \\  check("quote-line-2", t && t.src === src.indexOf("two"));
+        \\  check("quote-bar", bar && src.slice(bar.src, bar.srcEnd) === "> ");
+        \\}
+        \\
+        \\// A list marker takes the span of the source marker.
+        \\{
+        \\  const src = "- alpha\n- bravo";
+        \\  const rows = renderRows(src, 80);
+        \\  const b = find(rows, "MdText", "bravo");
+        \\  const mark = segsOf(rows).find((s) => s.group === "MdListMark" && s.src === src.indexOf("- bravo"));
+        \\  check("list-item", b && b.src === src.indexOf("bravo"));
+        \\  check("list-mark", mark && src.slice(mark.src, mark.srcEnd) === "- ");
+        \\}
+        \\
+        \\check("fence-src", (() => {
+        \\  const src = "```js\nlet x = 1;\n```";
+        \\  const c = find(renderRows(src, 80), "MdCodeBlock", "let x = 1;");
+        \\  return c && src.slice(c.src, c.srcEnd) === "let x = 1;";
+        \\})());
+        \\check("hr-src", (() => {
+        \\  const r = renderRows("---", 10)[0].segments[0];
+        \\  return r.src === 0 && r.srcEnd === 3;
+        \\})());
+        \\
+        \\// An escaped pipe renders as one character and keeps the whole markup, like any escape.
+        \\{
+        \\  const src = "| a\\|b | c |\n|---|---|\n| 1 | 2 |";
+        \\  const rows = renderRows(src, 80);
+        \\  const one = find(rows, "MdText", "1");
+        \\  const pipe = segsOf(rows).find((s) => s.text === "|");
+        \\  check("table-cell", one && one.src === src.indexOf("| 1 |") + 2);
+        \\  check("table-escape", pipe && src.slice(pipe.src, pipe.srcEnd) === "\\|");
+        \\}
+        \\
+        \\// A closer consumes its run from the start, so the leftover marker keeps the true offset.
+        \\{
+        \\  const src = "**x***";
+        \\  const star = segsOf(renderRows(src, 80)).find((s) => s.text === "*");
+        \\  check("leftover-delim", star && star.src === 5);
+        \\}
+        \\
+        \\// A hard break by grapheme keeps each piece on its own offset.
+        \\{
+        \\  const wide = segsOf(renderRows("日本語", 2)).filter((s) => s.src != null);
+        \\  check("grapheme-rows", wide.length === 3);
+        \\  check("grapheme-offsets", wide.every((s, k) => s.src === k && s.srcEnd === k + 1));
+        \\  const src = "a𝄞b";
+        \\  const astral = segsOf(renderRows(src, 1)).filter((s) => s.src != null);
+        \\  check("astral-pieces", astral.length === 3);
+        \\  check("astral-offsets", astral.every((s) => src.slice(s.src, s.srcEnd) === s.text));
+        \\}
+        \\
+        \\// Two blocks can hold the same text, so the second one keeps its own source position.
+        \\{
+        \\  const src = "hi\n\nbye\n\nhi\n\nend";
+        \\  const doc = new Document();
+        \\  doc.setText(src);
+        \\  const his = segsOf(doc.rows(80)).filter((s) => s.text === "hi");
+        \\  check("dup-blocks", his.length === 2 && his[0].src === 0 && his[1].src === src.lastIndexOf("hi"));
+        \\}
+        \\
+        \\{
+        \\  const doc = new Document();
+        \\  doc.setText("# H\n\npara one");
+        \\  doc.rows(80);
+        \\  doc.setText("# H\n\npara one two");
+        \\  const h = find(doc.rows(80), "MdHeading", "H");
+        \\  check("stream-offsets", h && h.src === 2);
+        \\}
+        \\
+        \\// The offsets index the normalized text, so a CRLF source reads through sourceText.
+        \\{
+        \\  const doc = new Document();
+        \\  doc.setText("one two\r\nthree");
+        \\  const t = find(doc.rows(80), "MdText", "three");
+        \\  check("crlf-src", t && doc.sourceText().slice(t.src, t.srcEnd) === "three");
+        \\}
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "mdsrc.js");
+    const out = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(out);
+    const text = try host.ctx.toCStringLen(out);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui a selection maps back to the markdown source" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 12, .cols = 40, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript, rowText } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
+        \\
+        \\const body = { u1: "plain user text", a1: "hello **bold** and `code`", a2: "- alpha" };
+        \\const t = new Transcript({ textOf: (id) => body[id] || "" });
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }, { id: "a2", type: "assistant" }], null);
+        \\term.beginFrame();
+        \\t.draw({ x: 0, y: 0, w: 40, h: 12 });
+        \\term.endFrame();
+        \\
+        \\// Take the columns from the drawn rows, so the test does not depend on the layout.
+        \\const rows = t.rows(40, 0, 12);
+        \\const colOf = (row, s) => (rows[row].indent || 0) + rowText(rows[row]).indexOf(s);
+        \\const endOf = (row) => (rows[row].indent || 0) + rowText(rows[row]).length;
+        \\
+        \\check("no-selection", t.selectedSource() === "");
+        \\
+        \\// Row 2 is the assistant paragraph, past the user turn and its blank row.
+        \\t.onMouse(at(colOf(2, "bold"), 2, "press"));
+        \\t.onMouse(at(endOf(2), 2, "drag"));
+        \\check("rendered-text", t.selectedText() === "bold and code");
+        \\// The copy keeps the rendered text; the source keeps the markup between the two ends.
+        \\check("source-text", t.selectedSource() === "bold** and `code");
+        \\
+        \\// One word inside a code span maps to that word, not to the backticks.
+        \\t.onMouse(at(colOf(2, "code"), 2, "press"));
+        \\t.onMouse(at(endOf(2), 2, "drag"));
+        \\check("inside-code", t.selectedText() === "code" && t.selectedSource() === "code");
+        \\
+        \\// A bullet hides its markup, so one character of it still maps to the whole marker.
+        \\t.onMouse(at(colOf(4, "•"), 4, "press"));
+        \\t.onMouse(at(colOf(4, "•") + 1, 4, "drag"));
+        \\check("mark-whole", t.selectedText() === "•" && t.selectedSource() === "- ");
+        \\
+        \\// A user turn is plain text, so its source is what it renders.
+        \\t.onMouse(at(colOf(0, "plain"), 0, "press"));
+        \\t.onMouse(at(colOf(0, "plain") + 5, 0, "drag"));
+        \\check("user-plain", t.selectedText() === "plain" && t.selectedSource() === "plain");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "selsrc.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
     defer host.ctx.freeCString(text.ptr);
     try std.testing.expectEqualStrings("ok", text);
 }

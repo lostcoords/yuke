@@ -21,11 +21,11 @@ if (!style.groups.MdText) {
 
 const FENCE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
-const HEADING = /^( {0,3})(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
+const HEADING = /^( {0,3})(#{1,6})(?:([ \t]+)(.*?))?[ \t]*$/;
 const HR = /^( {0,3})(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-const QUOTE = /^( {0,3})>[ \t]?(.*)$/;
-const UL_ITEM = /^( {0,3})([-*+])[ \t]+(.*)$/;
-const OL_ITEM = /^( {0,3})(\d{1,9})[.)][ \t]+(.*)$/;
+const QUOTE = /^( {0,3})>([ \t]?)(.*)$/;
+const UL_ITEM = /^( {0,3})([-*+])([ \t]+)(.*)$/;
+const OL_ITEM = /^( {0,3})(\d{1,9})([.)])([ \t]+)(.*)$/;
 const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
 
 function fenceOpen(line) {
@@ -44,8 +44,8 @@ function isBlockStart(line) {
 }
 
 function isTableSeparator(line) {
-  const cells = splitTableRow(line);
-  return cells.length > 0 && cells.every((cell) => /^:?-{1,}:?$/.test(cell));
+  const cells = splitTableRow(line, 0);
+  return cells.length > 0 && cells.every((cell) => /^:?-{1,}:?$/.test(cell.text));
 }
 
 function hasUnescapedPipe(line) {
@@ -63,14 +63,57 @@ function stripFenceIndent(line, indent) {
   return line.slice(count);
 }
 
-// Keep the source of each block as the cache key. Only the open tail block may still change.
+// Inline text plus where each part comes from. A run maps text [at, at+len) to source [src, src+len).
+function inlineSource() {
+  return { text: "", runs: [] };
+}
+
+function addSource(s, text, src) {
+  if (!text) return;
+  const last = s.runs[s.runs.length - 1];
+  if (last && last.src + last.len === src) last.len += text.length;
+  else s.runs.push({ at: s.text.length, src, len: text.length });
+  s.text += text;
+}
+
+// One run, for text that comes from a single contiguous source range.
+function oneRun(text, src) {
+  return text.length ? [{ at: 0, src, len: text.length }] : [];
+}
+
+// The run that holds inline index `i`. The runs cover the whole inline text in order.
+function runFor(runs, i) {
+  for (let k = runs.length - 1; k > 0; k--) if (i >= runs[k].at) return runs[k];
+  return runs[0];
+}
+
+// The source offset of inline index `i`. `end` gives the offset after that character.
+function srcAt(runs, i, end) {
+  const r = runFor(runs, i);
+  const o = r.src + Math.min(Math.max(0, i - r.at), r.len - 1);
+  return end ? o + 1 : o;
+}
+
+// Split the text into blocks. `at` and `end` are source offsets, and `raw` checks the block cache.
+// Only the open tail block may still change.
 function segment(text) {
   const lines = text.split("\n");
+  const starts = new Array(lines.length + 1);
+  {
+    let off = 0;
+    for (let k = 0; k < lines.length; k++) {
+      starts[k] = off;
+      off += lines[k].length + 1;
+    }
+    starts[lines.length] = off;
+  }
   const blocks = [];
   let i = 0;
 
   const push = (b, from, to) => {
-    b.src = lines.slice(from, to).join("\n");
+    b.raw = lines.slice(from, to).join("\n");
+    b.at = starts[from];
+    b.end = starts[to] - 1;
     blocks.push(b);
   };
 
@@ -86,6 +129,7 @@ function segment(text) {
     if (fence) {
       const marker = fence.marker;
       const body = [];
+      const bodyAt = [];
       let j = i + 1;
       let closed = false;
       for (; j < lines.length; j++) {
@@ -93,24 +137,30 @@ function segment(text) {
           closed = true;
           break;
         }
-        body.push(stripFenceIndent(lines[j], fence.indent));
+        const stripped = stripFenceIndent(lines[j], fence.indent);
+        body.push(stripped);
+        bodyAt.push(starts[j] + lines[j].length - stripped.length);
       }
       const to = closed ? j + 1 : lines.length;
-      push({ kind: "code", lang: fence.lang, lines: body, closed }, i, to);
+      push({ kind: "code", lang: fence.lang, lines: body, lineAt: bodyAt, closed }, i, to);
       i = to;
       continue;
     }
 
     const heading = HEADING.exec(line);
     if (heading) {
-      const headingText = (heading[3] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
-      push({ kind: "heading", level: heading[2].length, text: headingText }, i, i + 1);
+      const headingText = (heading[4] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
+      const src = starts[i] + heading[1].length + heading[2].length + (heading[3] ? heading[3].length : 0);
+      push({ kind: "heading", level: heading[2].length, text: headingText, runs: oneRun(headingText, src) }, i, i + 1);
       i++;
       continue;
     }
 
     if (isSetextHeading(lines, i)) {
-      push({ kind: "heading", level: lines[i + 1].trimStart()[0] === "=" ? 1 : 2, text: line.trim() }, i, i + 2);
+      const headingText = line.trim();
+      const src = starts[i] + line.length - line.trimStart().length;
+      const level = lines[i + 1].trimStart()[0] === "=" ? 1 : 2;
+      push({ kind: "heading", level, text: headingText, runs: oneRun(headingText, src) }, i, i + 2);
       i += 2;
       continue;
     }
@@ -123,9 +173,16 @@ function segment(text) {
 
     if (QUOTE.test(line)) {
       let j = i;
-      const body = [];
-      for (; j < lines.length && QUOTE.test(lines[j]); j++) body.push(QUOTE.exec(lines[j])[2]);
-      push({ kind: "quote", text: body.join("\n") }, i, j);
+      const body = inlineSource();
+      let markEnd = starts[i];
+      for (; j < lines.length && QUOTE.test(lines[j]); j++) {
+        const m = QUOTE.exec(lines[j]);
+        const src = starts[j] + m[1].length + 1 + m[2].length;
+        if (j === i) markEnd = src;
+        else addSource(body, "\n", starts[j] - 1);
+        addSource(body, m[3], src);
+      }
+      push({ kind: "quote", text: body.text, runs: body.runs, markAt: starts[i], markEnd }, i, j);
       i = j;
       continue;
     }
@@ -135,42 +192,53 @@ function segment(text) {
       const items = [];
       let ordered = !!OL_ITEM.exec(line);
       for (; j < lines.length; j++) {
-        const ul = UL_ITEM.exec(lines[j]);
-        const ol = OL_ITEM.exec(lines[j]);
-        const m = ordered ? ol : ul;
+        const m = ordered ? OL_ITEM.exec(lines[j]) : UL_ITEM.exec(lines[j]);
         if (!m) break;
-        items.push({ indent: Math.floor(m[1].length / 2), marker: ordered ? m[2] + "." : "•", text: m[3] });
+        // The last group runs to the end of the line, so its offset needs no group arithmetic.
+        const body = m[m.length - 1];
+        const src = starts[j] + lines[j].length - body.length;
+        items.push({
+          indent: Math.floor(m[1].length / 2),
+          marker: ordered ? m[2] + "." : "•",
+          text: body,
+          runs: oneRun(body, src),
+          markAt: starts[j],
+          markEnd: src,
+        });
       }
       push({ kind: "list", ordered, items }, i, j);
       i = j;
       continue;
     }
 
-    const headerCells = hasUnescapedPipe(line) ? splitTableRow(line) : [];
-    const separatorCells = i + 1 < lines.length && isTableSeparator(lines[i + 1]) ? splitTableRow(lines[i + 1]) : [];
+    const headerCells = hasUnescapedPipe(line) ? splitTableRow(line, starts[i]) : [];
+    const separatorCells = i + 1 < lines.length && isTableSeparator(lines[i + 1]) ? splitTableRow(lines[i + 1], starts[i + 1]) : [];
     if (headerCells.length > 0 && headerCells.length === separatorCells.length) {
       let j = i + 2;
       for (; j < lines.length && lines[j].trim() !== "" && !isBlockStart(lines[j]); j++);
       const rows = [];
       for (let k = i; k < j; k++) {
         if (k === i + 1) continue;
-        rows.push(splitTableRow(lines[k]));
+        rows.push(splitTableRow(lines[k], starts[k]));
       }
-      push({ kind: "table", columns: headerCells.length, rows }, i, j);
+      const sepAt = starts[i + 1];
+      push({ kind: "table", columns: headerCells.length, rows, sepAt, sepEnd: sepAt + lines[i + 1].length }, i, j);
       i = j;
       continue;
     }
 
-    // Consume a paragraph until a blank line or a new block.
+    // Consume a paragraph until a blank line or a new block. A line feed joins as one space, so
+    // the inline text keeps the length of its source.
     let j = i;
-    const body = [];
+    const body = inlineSource();
     for (; j < lines.length; j++) {
       const l = lines[j];
       if (l.trim() === "") break;
       if (isBlockStart(l) || isSetextHeading(lines, j)) break;
-      body.push(l);
+      if (j > i) addSource(body, " ", starts[j] - 1);
+      addSource(body, l, starts[j]);
     }
-    push({ kind: "paragraph", text: body.join(" ") }, i, j);
+    push({ kind: "paragraph", text: body.text, runs: body.runs }, i, j);
     i = j;
   }
 
@@ -179,25 +247,29 @@ function segment(text) {
   return blocks;
 }
 
-function splitTableRow(line) {
-  let s = line.trim();
-  if (s.startsWith("|")) s = s.slice(1);
-  if (s.endsWith("|") && !isEscaped(s, s.length - 1)) s = s.slice(0, -1);
+// Split a table row into cells. `base` is the source offset of the line, so a cell keeps its runs.
+function splitTableRow(line, base) {
+  let start = line.length - line.trimStart().length;
+  let stop = start + line.trim().length;
+  if (line[start] === "|") start++;
+  if (stop > start && line[stop - 1] === "|" && !isEscaped(line, stop - 1)) stop--;
   const cells = [];
-  let cell = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "|" && !isEscaped(s, i)) {
-      cells.push(cell.trim());
-      cell = "";
-    } else if (s[i] === "|" && isEscaped(s, i)) {
-      if (cell.endsWith("\\")) cell = cell.slice(0, -1);
-      cell += "|";
-    } else {
-      cell += s[i];
+  let from = start;
+  for (let i = start; i <= stop; i++) {
+    if (i === stop || (line[i] === "|" && !isEscaped(line, i))) {
+      cells.push(tableCell(line, from, i, base || 0));
+      from = i + 1;
     }
   }
-  cells.push(cell.trim());
   return cells;
+}
+
+// One cell: trim the edges. An escaped pipe stays in the text, so `parseInline` resolves it.
+function tableCell(line, from, to, base) {
+  while (from < to && (line[from] === " " || line[from] === "\t")) from++;
+  while (to > from && (line[to - 1] === " " || line[to - 1] === "\t")) to--;
+  const text = line.slice(from, to);
+  return { text, runs: oneRun(text, base + from) };
 }
 
 function isEscaped(text, index) {
@@ -309,14 +381,24 @@ function scanLink(cps, open) {
 function parseInline(text, baseGroup) {
   const base = baseGroup || "MdText";
   const cps = Array.from(text);
-  const nodes = []; // { kind:"text"|"seg", text, group?, marker?, count?, canOpen?, canClose? }
+  // The parser walks code points, but a segment range is UTF-16, so keep both indexes.
+  const units = new Array(cps.length + 1);
+  {
+    let u = 0;
+    for (let k = 0; k < cps.length; k++) {
+      units[k] = u;
+      u += cps[k].length;
+    }
+    units[cps.length] = u;
+  }
+  const nodes = []; // { kind, text, at, len, … }; at and len are the UTF-16 range of the source
   const delims = []; // indices into nodes of open/close delimiter runs
 
   let i = 0;
   while (i < cps.length) {
     const c = cps[i];
     if (c === "\\" && i + 1 < cps.length && ESCAPABLE.indexOf(cps[i + 1]) >= 0) {
-      nodes.push({ kind: "text", text: cps[i + 1] });
+      nodes.push({ kind: "text", text: cps[i + 1], at: units[i], len: units[i + 2] - units[i] });
       i += 2;
       continue;
     }
@@ -325,32 +407,51 @@ function parseInline(text, baseGroup) {
       while (cps[i + n] === "`") n++;
       const close = closeCodeSpan(cps, i + n, n);
       if (close >= 0) {
-        let code = cps.slice(i + n, close).join("").replace(/[\r\n]/g, " ");
-        if (code.length > 2 && code[0] === " " && code[code.length - 1] === " " && /[^ ]/.test(code)) code = code.slice(1, -1);
-        nodes.push({ kind: "seg", text: code, group: "MdCode" });
+        let from = i + n;
+        let to = close;
+        let code = cps.slice(from, to).join("").replace(/[\r\n]/g, " ");
+        if (code.length > 2 && code[0] === " " && code[code.length - 1] === " " && /[^ ]/.test(code)) {
+          code = code.slice(1, -1);
+          from++;
+          to--;
+        }
+        nodes.push({ kind: "seg", text: code, group: "MdCode", at: units[from], len: units[to] - units[from] });
         i = close + n;
         continue;
       }
-      nodes.push({ kind: "text", text: "`".repeat(n) });
+      nodes.push({ kind: "text", text: "`".repeat(n), at: units[i], len: units[i + n] - units[i] });
       i += n;
       continue;
     }
     if (c === "[") {
       const link = scanLink(cps, i);
       if (link) {
-        for (const s of parseInline(link.label, base)) if (s.text) nodes.push({ kind: "seg", text: s.text, group: s.group });
+        // The label is a verbatim slice of the parent, so a sub-range shifts by the label offset.
+        const shift = units[i + 1];
+        for (const s of parseInline(link.label, base)) {
+          if (s.text) nodes.push({ kind: "seg", text: s.text, group: s.group, at: shift + s.at, len: s.len });
+        }
         i = link.end + 1;
         continue;
       }
     }
     if (c === "*" || c === "_") {
       const d = scanDelims(cps, i, c);
-      nodes.push({ kind: "delim", text: c.repeat(d.count), marker: c, count: d.count, canOpen: d.canOpen, canClose: d.canClose });
+      nodes.push({
+        kind: "delim",
+        text: c.repeat(d.count),
+        at: units[i],
+        len: units[i + d.count] - units[i],
+        marker: c,
+        count: d.count,
+        canOpen: d.canOpen,
+        canClose: d.canClose,
+      });
       delims.push(nodes.length - 1);
       i += d.count;
       continue;
     }
-    nodes.push({ kind: "text", text: c });
+    nodes.push({ kind: "text", text: c, at: units[i], len: c.length });
     i++;
   }
 
@@ -375,6 +476,7 @@ function foldEmphasis(nodes, delims) {
         const use = opener.count >= 2 && closer.count >= 2 ? 2 : 1;
         opener.count -= use;
         closer.count -= use;
+        closer.at += use;
         if (use === 2) {
           opener.openStrong = (opener.openStrong || 0) + 1;
           closer.closeStrong = (closer.closeStrong || 0) + 1;
@@ -391,33 +493,91 @@ function foldEmphasis(nodes, delims) {
 }
 
 // Walk the folded nodes and emit segments, tracking the bold and emphasis depth per position.
-// Adjacent same-group text merges into one segment.
+// Text merges only while the source stays contiguous, so a merged segment can split by offset.
 function flattenInline(nodes, base) {
   const out = [];
   let bold = 0;
   let italic = 0;
-  const emit = (text, group) => {
+  const emit = (text, group, at, len) => {
     if (!text) return;
     const last = out[out.length - 1];
-    if (last && last.group === group) last.text += text;
-    else out.push({ text, group });
+    const joins = last && last.group === group && last.at + last.len === at && last.len === last.text.length && len === text.length;
+    if (joins) {
+      last.text += text;
+      last.len += len;
+    } else out.push({ text, group, at, len });
   };
   for (const n of nodes) {
     if (n.kind === "seg") {
-      emit(n.text, n.group);
+      emit(n.text, n.group, n.at, n.len);
       continue;
     }
     if (n.kind === "delim") {
       bold -= n.closeStrong || 0;
       italic -= n.closeEm || 0;
-      if (n.count > 0) emit(n.marker.repeat(n.count), emphGroup(bold > 0, italic > 0) || base);
+      if (n.count > 0) emit(n.marker.repeat(n.count), emphGroup(bold > 0, italic > 0) || base, n.at, n.count);
       bold += n.openStrong || 0;
       italic += n.openEm || 0;
       continue;
     }
-    emit(n.text, emphGroup(bold > 0, italic > 0) || base);
+    emit(n.text, emphGroup(bold > 0, italic > 0) || base, n.at, n.len);
   }
-  return out.length ? out : [{ text: "", group: base }];
+  return out.length ? out : [{ text: "", group: base, at: 0, len: 0 }];
+}
+
+// Map inline segments onto source offsets. A segment splits at a run edge, so every piece stays
+// linear (`srcEnd - src === text.length`) unless the markup itself is not, as with an escape.
+function resolveSegments(segments, runs) {
+  if (!runs || runs.length === 0) return segments.map((s) => ({ text: s.text, group: s.group }));
+  const out = [];
+  for (const s of segments) {
+    if (s.text.length === 0) {
+      out.push({ text: "", group: s.group });
+      continue;
+    }
+    if (s.len !== s.text.length) {
+      out.push({ text: s.text, group: s.group, src: srcAt(runs, s.at, false), srcEnd: srcAt(runs, s.at + s.len - 1, true) });
+      continue;
+    }
+    let k = 0;
+    while (k < s.text.length) {
+      const r = runFor(runs, s.at + k);
+      const take = Math.min(s.text.length - k, Math.max(1, r.at + r.len - (s.at + k)));
+      const src = r.src + (s.at + k - r.at);
+      out.push({ text: s.text.slice(k, k + take), group: s.group, src, srcEnd: src + take });
+      k += take;
+    }
+  }
+  return out;
+}
+
+// One source character per rendered character, so an offset survives a slice. A mark stands for
+// markup it hides, and an escape renders fewer characters than its source; neither one is linear.
+export function isLinear(seg) {
+  return seg.src != null && !seg.mark && seg.srcEnd - seg.src === seg.text.length;
+}
+
+// Slice a resolved segment. A segment that is not linear keeps its whole source span. It is never
+// wider than one grapheme, so a wrap never splits one.
+function sliceSegment(seg, from, to) {
+  const out = { text: seg.text.slice(from, to), group: seg.group };
+  if (seg.src == null) return out;
+  if (!isLinear(seg)) {
+    out.src = seg.src;
+    out.srcEnd = seg.srcEnd;
+    if (seg.mark) out.mark = true;
+    return out;
+  }
+  out.src = seg.src + from;
+  out.srcEnd = seg.src + to;
+  return out;
+}
+
+// Two neighbours merge only while both their text and their source stay contiguous.
+function segmentsJoin(a, b) {
+  if (a.group !== b.group) return false;
+  if (a.src == null && b.src == null) return true;
+  return a.srcEnd === b.src && isLinear(a) && isLinear(b);
 }
 
 function wrapSegments(segments, width, opts) {
@@ -466,6 +626,8 @@ function wrapSegments(segments, width, opts) {
   return rows;
 }
 
+// Split the segments at every blank run. A piece keeps its source offsets, so a wrap does not
+// lose them. The blank runs drop out, and `wrapSegments` puts one space back between two words.
 function segmentsToWords(segments) {
   const words = [];
   let cur = null;
@@ -474,22 +636,27 @@ function segmentsToWords(segments) {
     if (cur) words.push(cur);
     cur = null;
   };
+  const blank = (c) => c === " " || c === "\t" || c === "\n";
   for (const seg of segments) {
-    const parts = seg.text.split(/[ \t]+/);
-    for (let k = 0; k < parts.length; k++) {
-      if (k > 0) {
-        close();
-        spaceGroup = seg.group;
+    let k = 0;
+    while (k <= seg.text.length) {
+      let e = k;
+      while (e < seg.text.length && !blank(seg.text[e])) e++;
+      if (e > k) {
+        if (!cur) {
+          cur = { pieces: [], w: 0, spaceGroup };
+          spaceGroup = null;
+        }
+        const piece = sliceSegment(seg, k, e);
+        cur.pieces.push(piece);
+        cur.w += term.measure(piece.text);
       }
-      const t = parts[k];
-      if (t === "") continue;
-      if (!cur) {
-        cur = { pieces: [], w: 0, spaceGroup };
-        spaceGroup = null;
-      }
-      const w = term.measure(t);
-      cur.pieces.push({ text: t, group: seg.group });
-      cur.w += w;
+      if (e >= seg.text.length) break;
+      let ws = e;
+      while (ws < seg.text.length && blank(seg.text[ws])) ws++;
+      close();
+      spaceGroup = seg.group;
+      k = ws;
     }
   }
   close();
@@ -505,19 +672,20 @@ function hardBreakPieces(pieces, width) {
     segments = [];
     lineW = 0;
   };
-  const append = (text, group, w) => {
+  const append = (seg, w) => {
     const last = segments[segments.length - 1];
-    if (last && last.group === group) last.text += text;
-    else segments.push({ text, group });
+    if (last && segmentsJoin(last, seg)) {
+      last.text += seg.text;
+      if (last.src != null) last.srcEnd = seg.srcEnd;
+    } else segments.push(seg);
     lineW += w;
   };
   for (const piece of pieces) {
     const gs = term.graphemes(piece.text);
     for (let k = 0; k < gs.length; k += 3) {
-      const text = piece.text.slice(gs[k], gs[k] + gs[k + 1]);
       const w = gs[k + 2];
       if (segments.length && lineW + w > width) emit();
-      append(text, piece.group, w);
+      append(sliceSegment(piece, gs[k], gs[k] + gs[k + 1]), w);
       if (lineW >= width) emit();
     }
   }
@@ -536,18 +704,22 @@ function ruleText(width) {
   return glyph.repeat(count);
 }
 
+// A rendered segment carries the source it came from. A `mark` segment stands for markup it does
+// not show, so it takes that markup's span. A pure separator, such as a column border, carries none.
 function renderBlock(block, width) {
   switch (block.kind) {
     case "heading": {
-      const segs = parseInline(block.text, "MdHeading").map((s) => ({ text: s.text, group: "MdHeading" }));
+      const segs = resolveSegments(parseInline(block.text, "MdHeading"), block.runs).map((s) => ({ ...s, group: "MdHeading" }));
       return wrapSegments(segs, width, { emptyGroup: "MdHeading" });
     }
     case "paragraph":
-      return wrapSegments(parseInline(block.text), width);
+      return wrapSegments(resolveSegments(parseInline(block.text), block.runs), width);
     case "code": {
       const rows = [];
-      for (const l of block.lines) {
-        const parts = hardBreakPieces([{ text: l, group: "MdCodeBlock" }], width);
+      for (let k = 0; k < block.lines.length; k++) {
+        const at = block.lineAt[k];
+        const line = { text: block.lines[k], group: "MdCodeBlock", src: at, srcEnd: at + block.lines[k].length };
+        const parts = hardBreakPieces([line], width);
         if (parts.length === 0) rows.push(plainRow("", "MdCodeBlock"));
         for (const p of parts) rows.push({ segments: p.segments });
       }
@@ -555,18 +727,21 @@ function renderBlock(block, width) {
       return rows;
     }
     case "quote": {
-      const bar = { text: "▏ ", group: "MdQuote" };
-      return wrapSegments(parseInline(block.text, "MdQuote"), width, { firstPrefix: bar, contPrefix: bar, emptyGroup: "MdQuote" });
+      const bar = { text: "▏ ", group: "MdQuote", src: block.markAt, srcEnd: block.markEnd, mark: true };
+      const cont = { text: "▏ ", group: "MdQuote" };
+      const segs = resolveSegments(parseInline(block.text, "MdQuote"), block.runs);
+      return wrapSegments(segs, width, { firstPrefix: bar, contPrefix: cont, emptyGroup: "MdQuote" });
     }
     case "hr":
-      return [plainRow(ruleText(width), "MdRule")];
+      return [{ segments: [{ text: ruleText(width), group: "MdRule", src: block.at, srcEnd: block.end, mark: true }] }];
     case "list": {
       const rows = [];
       for (const item of block.items) {
         const pad = "  ".repeat(item.indent);
-        const mark = { text: pad + item.marker + " ", group: "MdListMark" };
+        const mark = { text: pad + item.marker + " ", group: "MdListMark", src: item.markAt, srcEnd: item.markEnd, mark: true };
         const cont = { text: pad + "  ", group: "MdListMark" };
-        for (const r of wrapSegments(parseInline(item.text), width, { firstPrefix: mark, contPrefix: cont })) rows.push(r);
+        const segs = resolveSegments(parseInline(item.text), item.runs);
+        for (const r of wrapSegments(segs, width, { firstPrefix: mark, contPrefix: cont })) rows.push(r);
       }
       return rows;
     }
@@ -574,14 +749,14 @@ function renderBlock(block, width) {
       const rows = [];
       for (let r = 0; r < block.rows.length; r++) {
         const cells = block.rows[r].slice(0, block.columns);
-        while (cells.length < block.columns) cells.push("");
+        while (cells.length < block.columns) cells.push({ text: "", runs: [] });
         const segs = [];
         for (let c = 0; c < cells.length; c++) {
           if (c > 0) segs.push({ text: " │ ", group: "MdTableBorder" });
-          for (const s of parseInline(cells[c])) segs.push(s);
+          for (const s of resolveSegments(parseInline(cells[c].text), cells[c].runs)) segs.push(s);
         }
         for (const row of wrapSegments(segs, width)) rows.push(row);
-        if (r === 0) rows.push(plainRow(ruleText(width), "MdTableBorder"));
+        if (r === 0) rows.push({ segments: [{ text: ruleText(width), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });
       }
       return rows;
     }
@@ -605,9 +780,14 @@ export class Document {
     this._blocks = segment(text);
     // Drop cache entries for blocks that the new text no longer holds.
     const live = new Set();
-    for (const b of this._blocks) if (!b.open) live.add(b.src);
+    for (const b of this._blocks) if (!b.open) live.add(b.at);
     for (const key of this._cache.keys()) if (!live.has(key)) this._cache.delete(key);
     return true;
+  }
+
+  // The normalized markdown. A segment offset indexes into this text, never into the raw input.
+  sourceText() {
+    return this._src == null ? "" : this._src;
   }
 
   rows(width) {
@@ -630,12 +810,14 @@ export class Document {
     return out;
   }
 
+  // The cache keys on the block offset, because a rendered segment holds absolute source offsets.
+  // Two blocks can hold the same text, so `raw` catches a block that changed under one offset.
   _blockRows(block, width) {
     if (block.open) return renderBlock(block, width);
-    let entry = this._cache.get(block.src);
-    if (!entry) {
-      entry = { width: null, rows: null };
-      this._cache.set(block.src, entry);
+    let entry = this._cache.get(block.at);
+    if (!entry || entry.raw !== block.raw) {
+      entry = { raw: block.raw, width: null, rows: null };
+      this._cache.set(block.at, entry);
     }
     if (entry.width !== width) {
       entry.width = width;

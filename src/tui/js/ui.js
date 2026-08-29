@@ -2,7 +2,7 @@
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
 import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, isWheel } from "yuke:core";
-import { Document } from "yuke:md";
+import { Document, isLinear } from "yuke:md";
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
 // theme that set one first keeps it, and a second import does not re-seed.
@@ -449,6 +449,30 @@ export function rowText(r) {
   return r.text || "";
 }
 
+// The source span under the rendered range [from, to) of a row. A segment with no source, such as
+// a wrapped list indent, adds nothing. Return null when the range maps to no source at all.
+function rowSourceSpan(row, from, to) {
+  const segments = row.segments;
+  if (!segments) return null;
+  let at = 0;
+  let lo = -1;
+  let hi = -1;
+  for (const seg of segments) {
+    const end = at + seg.text.length;
+    const a = Math.max(from, at);
+    const b = Math.min(to, end);
+    if (b > a && seg.src != null) {
+      const linear = isLinear(seg);
+      const s = linear ? seg.src + (a - at) : seg.src;
+      const e = linear ? seg.src + (b - at) : seg.srcEnd;
+      if (lo < 0 || s < lo) lo = s;
+      if (e > hi) hi = e;
+    }
+    at = end;
+  }
+  return lo < 0 ? null : { from: lo, to: hi };
+}
+
 // Repaint the string range [from, to) of `segments` with `group`. The bounds come from
 // `caretAtCol`, so they always land on a grapheme edge.
 function markSelection(segments, from, to, group) {
@@ -674,6 +698,38 @@ export class Transcript {
         const r = this._rowRange(range, i, k, body.length);
         if (r) out.push(body.slice(r.from, r.to));
       }
+    }
+    return out.join("\n");
+  }
+
+  // The markdown under the selection. A mouse copy still takes `selectedText`, so the rendered
+  // text and the source stay separate. A turn with no mapped row is plain text and is its own source.
+  selectedSource() {
+    const range = this._range();
+    if (!range || this._width <= 0) return "";
+    const out = [];
+    for (let i = range.si; i <= range.ei; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      const rows = this._rowsOf(m, this._width);
+      const plain = [];
+      let from = -1;
+      let to = -1;
+      for (let k = 0; k < rows.length; k++) {
+        const r = this._rowRange(range, i, k, rowText(rows[k]).length);
+        if (!r) continue;
+        plain.push(rowText(rows[k]).slice(r.from, r.to));
+        const span = rowSourceSpan(rows[k], r.from, r.to);
+        if (!span) continue;
+        if (from < 0 || span.from < from) from = span.from;
+        if (span.to > to) to = span.to;
+      }
+      if (from < 0) {
+        if (plain.length) out.push(plain.join("\n"));
+        continue;
+      }
+      const doc = this._docs.get(m.id);
+      out.push((doc ? doc.sourceText() : this.textOf(m.id)).slice(from, to));
     }
     return out.join("\n");
   }
