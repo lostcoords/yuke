@@ -1012,6 +1012,7 @@ export class Composer {
       onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
     });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
+    this.normalPrompt = opts.normalPrompt != null ? opts.normalPrompt : "▪ ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
     this.mode = "insert"; // the opt-in composer-vim layer flips to "normal"
@@ -1101,8 +1102,13 @@ export class Composer {
     return this.spans.find((sp) => sp.start === caret) || null;
   }
 
+  // The prompt marks the mode, so a modal layer never has to hide the text to show its state.
+  _prompt() {
+    return this.mode === "insert" ? this.prompt : this.normalPrompt;
+  }
+
   _textWidth(w) {
-    return Math.max(1, w - term.measure(this.prompt));
+    return Math.max(1, w - term.measure(this._prompt()));
   }
 
   _rowsAt(width) {
@@ -1115,7 +1121,7 @@ export class Composer {
   // The rows the text needs. The caller caps this against the space it has.
   height(w) {
     if (w <= 0) return 0;
-    if (this.mode !== "insert" || this.input.text === "") return 1;
+    if (this.input.text === "") return 1;
     return Math.min(this.maxRows, this._rowsAt(this._textWidth(w)).length);
   }
 
@@ -1224,13 +1230,9 @@ export class Composer {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, "UIComposer");
-    if (this.mode !== "insert") {
-      text(x, y, clip("-- " + this.mode.toUpperCase() + " --", w), "UIDim");
-      return;
-    }
     if (this.input.text === "") {
       this.scroll = 0;
-      text(x, y, clip(this.prompt + this.placeholder, w), "UIDim");
+      text(x, y, clip(this._prompt() + this.placeholder, w), "UIDim");
       return;
     }
 
@@ -1240,7 +1242,7 @@ export class Composer {
     this._scrollTo(rows, h);
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
-    if (this.scroll === 0) text(x, y, this.prompt, "UIComposer");
+    if (this.scroll === 0) text(x, y, this._prompt(), "UIComposer");
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = rows[this.scroll + i];
       text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
@@ -1248,7 +1250,6 @@ export class Composer {
   }
 
   cursor() {
-    if (this.mode !== "insert") return null;
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return null;
     const tw = this._textWidth(w);
@@ -1349,10 +1350,11 @@ export class ChatView {
     const rule = y + h - rows - 1;
     if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
     else this.transcript.hide();
+    // The rule always divides the pane. A status inlays into it, so it never reads as composer text.
     if (rule >= y) {
+      text(x, rule, "─".repeat(w), "YukeRule");
       const status = this.status();
-      if (status) text(x, rule, clip(status, w), "YukeStatus");
-      else text(x, rule, "─".repeat(w), "YukeRule");
+      if (status && w > 8) text(x + 2, rule, " " + clip(status, w - 6) + " ", "YukeStatus");
     }
     this.composer.draw(focused);
   }
