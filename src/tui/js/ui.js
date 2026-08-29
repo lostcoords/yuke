@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, isWheel } from "yuke:core";
+import { text, fill, clip, root, strokeOf, modalKey, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme, takePrefix, armPrefix, style, config, isWheel } from "yuke:core";
 import { Document, isLinear } from "yuke:md";
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
@@ -41,25 +41,9 @@ const PAGE_FALLBACK = 10;
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
 
-// Shift bit in the host modifier mask.
-const MOD_SHIFT = 1;
-
-// The base letter of a shifted char event, or "". It recovers G from g after strokeOf folds the case.
-function shiftedChar(ev) {
-  if (ev.code !== "char" || !ev.char) return "";
-  if (ev.char !== ev.char.toLowerCase()) return ev.char.toLowerCase();
-  if ((ev.mods | 0) & MOD_SHIFT) return ev.char.toLowerCase();
-  return "";
-}
-
 // The shared nav vocabulary: j/k move, ctrl+d/u page, gg/G top/bottom.
-// Return "pending_g" when a first g was swallowed; `gPending` is the caller's memory of it.
-function navAction(ev, gPending) {
-  const s = strokeOf(ev);
-  const sc = shiftedChar(ev);
-  if (gPending && s === "g" && !sc) return "top";
-
-  switch (s) {
+function navAction(k) {
+  switch (k) {
     case "j":
     case "down":
       return "down";
@@ -75,11 +59,26 @@ function navAction(ev, gPending) {
     case "home":
       return "top";
     case "end":
+    case "G":
       return "bottom";
     case "g":
-      return sc === "g" ? "bottom" : "pending_g";
+      return "pending_g";
   }
   return "";
+}
+
+function applyNav(chord, ev, map) {
+  const k = modalKey(ev);
+  const first = takePrefix(chord);
+  const act = first === "g" && k === "g" ? "top" : navAction(k);
+  if (act === "pending_g") {
+    armPrefix(chord, "g");
+    return true;
+  }
+  const fn = map[act];
+  if (!fn) return false;
+  fn();
+  return true;
 }
 
 // A scrollable, selectable list. `key(item)` gives a stable identity, so the selection follows its
@@ -102,7 +101,7 @@ export class List {
     this.selectedKey = null;
     this.scroll = 0; // first visible item index
     this._page = PAGE_FALLBACK; // last visible item count, for page moves
-    this._gPending = false;
+    this._chord = { pending: "" };
     this.setItems(opts.items || []);
   }
 
@@ -191,31 +190,14 @@ export class List {
   }
 
   onKey(ev) {
-    const act = navAction(ev, this._gPending);
-    this._gPending = act === "pending_g";
-    switch (act) {
-      case "down":
-        this.move(1);
-        return true;
-      case "up":
-        this.move(-1);
-        return true;
-      case "page_down":
-        this.move(this._page);
-        return true;
-      case "page_up":
-        this.move(-this._page);
-        return true;
-      case "top":
-        this.moveToEdge(-1);
-        return true;
-      case "bottom":
-        this.moveToEdge(1);
-        return true;
-      case "pending_g":
-        return true;
-    }
-    return false;
+    return applyNav(this._chord, ev, {
+      down: () => this.move(1),
+      up: () => this.move(-1),
+      page_down: () => this.move(this._page),
+      page_up: () => this.move(-this._page),
+      top: () => this.moveToEdge(-1),
+      bottom: () => this.moveToEdge(1),
+    });
   }
 
   // Forget the drawn rect. A container calls this when it draws something else in the same space,
@@ -320,7 +302,7 @@ export class Pager {
     this._h = 0;
     this._w = 0;
     this._rect = null; // the last drawn rect, for the mouse hit test
-    this._gPending = false;
+    this._chord = { pending: "" };
   }
 
   rect() {
@@ -416,31 +398,14 @@ export class Pager {
 
   onKey(ev) {
     const page = Math.max(1, this._h - 1);
-    const act = navAction(ev, this._gPending);
-    this._gPending = act === "pending_g";
-    switch (act) {
-      case "down":
-        this.scrollBy(1);
-        return true;
-      case "up":
-        this.scrollBy(-1);
-        return true;
-      case "page_down":
-        this.scrollBy(page);
-        return true;
-      case "page_up":
-        this.scrollBy(-page);
-        return true;
-      case "top":
-        this.toTop();
-        return true;
-      case "bottom":
-        this.toBottom();
-        return true;
-      case "pending_g":
-        return true;
-    }
-    return false;
+    return applyNav(this._chord, ev, {
+      down: () => this.scrollBy(1),
+      up: () => this.scrollBy(-1),
+      page_down: () => this.scrollBy(page),
+      page_up: () => this.scrollBy(-page),
+      top: () => this.toTop(),
+      bottom: () => this.toBottom(),
+    });
   }
 
   // The wheel scrolls by `config.mouse.scrollLines`. The protocol has no pixel wheel, so the step
@@ -580,11 +545,11 @@ function staticRowSource(list) {
 
 // A user turn wraps to a plain tinted band with a gutter marker. Input is plain text, not markdown.
 function userRows(id, body, width) {
+  const src = body || "";
   const contentW = Math.max(1, width - TX_GUTTER);
-  const lines = body ? wrap(body, contentW) : [""];
-  const rows = lines.map((line, i) => ({
-    text: line,
-    group: "TxUser",
+  const lines = wrapOffsets(src, contentW);
+  const rows = lines.map((r, i) => ({
+    segments: [{ text: src.slice(r.start, r.end), group: "TxUser", src: r.start, srcEnd: r.end }],
     bg: "TxUser",
     indent: TX_GUTTER,
     marker: i === 0 ? "⟩" : null,
@@ -599,7 +564,12 @@ function userRows(id, body, width) {
 function errorRows(id, error, width) {
   const label = "⚠ " + (error.message || error.type || "run failed");
   const contentW = Math.max(1, width - TX_GUTTER);
-  const rows = wrap(label, contentW).map((line) => ({ text: line, group: "TxError", indent: TX_GUTTER, key: id }));
+  const rows = wrapOffsets(label, contentW).map((r) => ({
+    text: label.slice(r.start, r.end),
+    group: "TxError",
+    indent: TX_GUTTER,
+    key: id,
+  }));
   rows.push({ text: "", key: id });
   return rows;
 }
@@ -619,7 +589,9 @@ export class Transcript {
     // A selection holds two logical positions, `{ id, row, col }`. `row` counts the rendered rows
     // of that message and `col` is a string index into the row text.
     this.selection = null;
+    this.caret = null;
     this._dragging = false;
+    this._press = null;
     this.onSelect = opts.onSelect || null;
     // Lines to show while the transcript holds no message, so an empty pane still says something.
     this.empty = opts.empty || null;
@@ -628,6 +600,37 @@ export class Transcript {
   clearSelection() {
     this.selection = null;
     this._dragging = false;
+    this._press = null;
+  }
+
+  // Set both ends. `{ inclusive: true }` grows the later end by one grapheme, as vim visual does.
+  select(anchor, cursor, opts) {
+    if (!anchor || !cursor) {
+      this.clearSelection();
+      return;
+    }
+    let a = anchor;
+    let b = cursor;
+    if (opts && opts.inclusive) {
+      const grow = (p) => {
+        const body = this.rowTextAt(p.id, p.row);
+        return { id: p.id, row: p.row, col: Math.min(nextGrapheme(body, p.col), body.length) };
+      };
+      if (this._cmpPos(b, a) >= 0) b = grow(b);
+      else a = grow(a);
+    }
+    this.selection = { anchor: a, cursor: b };
+  }
+
+  _cmpPos(a, b) {
+    if (a.id !== b.id) return this._indexOf(a.id) - this._indexOf(b.id);
+    return a.row !== b.row ? a.row - b.row : a.col - b.col;
+  }
+
+  cursor() {
+    if (!this.caret) return null;
+    const at = this.screenAt(this.caret);
+    return at ? { x: at.x, y: at.y, visible: true } : { x: 0, y: 0, visible: false };
   }
 
   // The pane draws something else in this space, so a click must not hit a row that left it.
@@ -669,7 +672,7 @@ export class Transcript {
 
   _sourceOf(id) {
     const doc = this._docs.get(id);
-    return doc ? doc.sourceText() : "";
+    return doc ? doc.sourceText() : this.textOf(id);
   }
 
   // The selection as source offsets. Return null when either end carries no source.
@@ -1027,7 +1030,7 @@ export class Transcript {
   }
 
   // A left drag selects text. The wheel still scrolls, and a bare click drops the old selection.
-  // Only a press starts a gesture, so a stray drag or release never revives an old selection.
+  // A press records the start; a drag opens the range, so a click never leaves a one-cell range.
   onMouse(ev) {
     if (isWheel(ev.button)) return this.pager.onMouse(ev);
     if (ev.button !== "left") return false;
@@ -1035,7 +1038,8 @@ export class Transcript {
       const r = this.pager.rect();
       if (!r || ev.col < r.x || ev.col >= r.x + r.w) return false;
       const pos = this.posAt(ev.col, ev.row, false);
-      this.selection = pos ? { anchor: pos, cursor: pos } : null;
+      this.clearSelection();
+      this._press = pos;
       this._dragging = pos != null;
       return true;
     }
@@ -1043,11 +1047,12 @@ export class Transcript {
     if (ev.event === "drag") {
       // A drag past the edge clamps, so the selection follows the pointer out of the pane.
       const pos = this.posAt(ev.col, ev.row, true);
-      if (this.selection && pos) this.selection.cursor = pos;
+      if (this._press && pos) this.select(this._press, pos);
       return true;
     }
     if (ev.event === "release") {
       this._dragging = false;
+      this._press = null;
       const text = this.selectedText();
       if (text === "") this.clearSelection();
       else if (this.onSelect) this.onSelect(text);
@@ -1058,7 +1063,6 @@ export class Transcript {
 }
 
 // A message input grows with its text. Enter submits and the newline keys add a line.
-// Normal mode passes a bare key to the keymap and the transcript.
 export class Composer {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -1067,10 +1071,8 @@ export class Composer {
       onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
     });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
-    this.normalPrompt = opts.normalPrompt != null ? opts.normalPrompt : "▪ ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
-    this.mode = "insert"; // the opt-in composer-vim layer flips to "normal"
     this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
     this.scroll = 0;
     this.goalCol = null; // the column a vertical move holds across a short row
@@ -1114,13 +1116,13 @@ export class Composer {
       this._proj = { text: s, parts: [] };
       return this._proj;
     }
-    const spans = this.spans.slice().sort((a, b) => a.start - b.start);
+    const spans = this.spans.filter((sp) => sp.end > sp.start && sp.end <= s.length).sort((a, b) => a.start - b.start);
+    if (spans.length !== this.spans.length) this.spans = spans;
     const parts = [];
     let out = "";
     let at = 0;
     for (const sp of spans) {
-      // A span is internal state. An overlap or a bad offset makes the caret map ambiguous.
-      if (sp.start < at || sp.end <= sp.start || sp.end > s.length) throw new Error("bad composer span");
+      if (sp.start < at) continue;
       out += s.slice(at, sp.start);
       // `delta` is what the label adds to every offset after it.
       const start = out.length;
@@ -1157,9 +1159,8 @@ export class Composer {
     return this.spans.find((sp) => sp.start === caret) || null;
   }
 
-  // The prompt marks the mode, so a modal layer never has to hide the text to show its state.
   _prompt() {
-    return this.mode === "insert" ? this.prompt : this.normalPrompt;
+    return this.prompt;
   }
 
   _textWidth(w) {
@@ -1204,7 +1205,7 @@ export class Composer {
   }
 
   onKey(ev) {
-    if (this.mode !== "insert") return false;
+    if (ev.type === "paste") return this._paste(ev.text || "");
     const s = strokeOf(ev);
     // The composer owns the vertical keys, so a wrapped line never scrolls the transcript.
     if (s === "up") return this.moveRow(-1);
@@ -1212,7 +1213,6 @@ export class Composer {
 
     // Every other key edits or moves the caret across, so the goal column is stale.
     this.goalCol = null;
-    if (s === "paste") return this._paste(ev.text || "");
     if (s === "enter") {
       this.submit();
       return true;
@@ -1258,9 +1258,7 @@ export class Composer {
     return true;
   }
 
-  // Move the caret one row. The goal column survives a short row, as vim and helix do.
-  // The move stops at the first and the last row.
-  // Move the caret one drawn row. A modal layer binds its own keys to this.
+  // Move the caret one drawn row. The goal column survives a short row.
   moveRow(delta) {
     const rows = this._rowsAt(this._textWidth(this.rect.w));
     const proj = this._projection().text;
@@ -1355,25 +1353,17 @@ export const borders = {
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
 
-// The chat pane: a transcript above a composer in one leaf. setOutline feeds the transcript (text
-// via textOf); the composer calls onSubmit(text); an unconsumed key scrolls the transcript.
+// The chat pane: a transcript above a composer in one leaf. Draw, layout, and mouse routing.
 export class ChatView {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
+    this.focus = "composer";
   }
 
   get name() {
     return "chat";
-  }
-
-  setOutline(messages, active) {
-    this.transcript.setOutline(messages, active);
-  }
-
-  setActive(id) {
-    this.transcript.setActive(id);
   }
 
   onKey(ev) {
@@ -1408,6 +1398,10 @@ export class ChatView {
   }
 
   cursor() {
+    if (this.focus === "transcript") {
+      const c = this.transcript.cursor();
+      if (c) return c;
+    }
     return this.composer.cursor();
   }
 }

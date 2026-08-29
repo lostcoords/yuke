@@ -173,7 +173,7 @@ pub fn serve(host: *Host, ch: *Channel) !void {
 
         // Apply every queued message, then paint once. A burst costs one frame, not one each.
         host.paint.defer_frame = true;
-        var wheel: ?Wheel = null;
+        var wheel: ?tui_loop.WheelRun = null;
         var applied: u32 = 0;
         while (true) {
             try applyMsg(host, &msg, &wheel);
@@ -181,57 +181,40 @@ pub fn serve(host: *Host, ch: *Channel) !void {
             if (applied >= drain_max or host.paint.quit_requested) break;
             msg = ch.tryReceive() catch break;
         }
-        try flushWheel(host, &wheel);
+        try absorbScriptFault(host, tui_loop.flushWheel(host, &wheel));
         host.paint.defer_frame = false;
         try absorbScriptFault(host, tui_loop.flushFrame(host));
     }
 }
 
-/// A run of equal wheel steps. The owner dispatches it once, so a fast scroll costs one turn.
-const Wheel = struct { mouse: term_pkg.Mouse, count: u32 };
-
 /// Apply one message. The caller owns the frame, so this never paints. A wheel step joins the open
 /// run; every other message ends that run first, so the order of events never changes.
-fn applyMsg(host: *Host, msg: *Msg, wheel: *?Wheel) !void {
+fn applyMsg(host: *Host, msg: *Msg, wheel: *?tui_loop.WheelRun) !void {
     switch (msg.*) {
         .event => |*e| {
             const ev = e.event();
-            if (tui_loop.wheelOf(ev)) |btn| {
-                if (wheel.*) |*w| {
-                    if (w.mouse.button == btn) {
-                        w.count += 1;
-                        return;
-                    }
-                }
-                try flushWheel(host, wheel);
-                wheel.* = .{ .mouse = ev.mouse, .count = 1 };
+            if (tui_loop.wheelOf(ev) != null) {
+                try absorbScriptFault(host, tui_loop.foldWheel(host, wheel, ev));
                 return;
             }
-            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
             try absorbScriptFault(host, tui_loop.step(host, ev));
         },
         .tick => {
-            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
             try absorbScriptFault(host, tui_loop.stepTick(host));
         },
         .paste => |text| {
             defer msg.deinit(host.gpa);
-            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
             try absorbScriptFault(host, tui_loop.stepPaste(host, text));
         },
         .daemon => |*d| {
             defer msg.deinit(host.gpa);
-            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
             try absorbScriptFault(host, host.client.onDaemon(host, d));
         },
     }
-}
-
-/// Dispatch the open wheel run, if one exists.
-fn flushWheel(host: *Host, wheel: *?Wheel) !void {
-    const w = wheel.* orelse return;
-    wheel.* = null;
-    try absorbScriptFault(host, tui_loop.stepMouseRepeat(host, w.mouse, w.count));
 }
 
 /// Free every message the owner never received. `stopReaders` must run first, so no reader sends.

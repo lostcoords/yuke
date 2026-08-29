@@ -1,13 +1,12 @@
-// yuke:composer-vim — an opt-in modal layer for the chat composer. A user's index.js loads it, or
-// the `composer-vim:toggle` command does. Normal mode disables the composer text input, so bare
-// keys reach the keymap and scroll the transcript; insert mode types. It reverts on unload.
+// yuke:composer-vim — opt-in modal keys for the chat composer.
 import {
   command,
   root,
   events,
   modalKey,
   isTextKey,
-  register,
+  takePrefix,
+  armPrefix,
   prevGrapheme,
   nextGrapheme,
   nextWordStart,
@@ -15,11 +14,35 @@ import {
   nextWordEnd,
 } from "yuke:core";
 import { Composer } from "yuke:ui";
+import { register, chatView } from "yuke:vim";
 
-// The first key of a two-key command: "g", "d", or "c". No pending key survives an unload.
-const pending = new WeakMap();
+const NORMAL_PROMPT = "▪ ";
+const states = new WeakMap();
 
-// The logical line under the caret. A wrapped row is not a line, as in vim.
+function stateOf(c) {
+  let s = states.get(c);
+  if (!s) {
+    s = { mode: "insert", pending: "" };
+    states.set(c, s);
+  }
+  return s;
+}
+
+export function composerMode(c) {
+  return c ? stateOf(c).mode : null;
+}
+
+export function setComposerMode(c, mode) {
+  if (!c) return;
+  const s = stateOf(c);
+  if (s.mode === mode) return;
+  s.mode = mode;
+  s.pending = "";
+  if (mode === "normal") c.input.caret = clamp(c.input.text, c.input.caret);
+  events.emit("composer-vim:mode", mode);
+  root.invalidate();
+}
+
 function lineAt(text, caret) {
   const at = caret > 0 && caret === text.length && text[caret - 1] === "\n" ? caret - 1 : caret;
   const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
@@ -27,7 +50,6 @@ function lineAt(text, caret) {
   return { start, end: end < 0 ? text.length : end };
 }
 
-// Normal mode holds the caret on a character, so it never sits past the last one of its line.
 function clamp(text, caret) {
   const { start, end } = lineAt(text, caret);
   if (caret <= start) return start;
@@ -41,38 +63,15 @@ function firstWord(text, caret) {
   return i;
 }
 
-// The focused chat pane's composer, or null when a non-chat view is focused.
 function chatComposer() {
-  const v = root.active;
-  return v && v.name === "chat" ? v.composer : null;
+  const v = chatView();
+  return v ? v.composer : null;
 }
 
-// Put the focused composer into `mode`, and announce the change so other plugins can react.
 function setFocusedMode(mode) {
-  const c = chatComposer();
-  if (!c || c.mode === mode) return;
-  c.mode = mode;
-  if (mode === "normal") c.input.caret = clamp(c.input.text, c.input.caret);
-  events.emit("composer-vim:mode", mode);
-  root.invalidate();
+  setComposerMode(chatComposer(), mode);
 }
 
-// Set every chat composer's mode on load and unload, so none is left unable to type.
-function setAllModes(mode) {
-  const rn = root.root_node;
-  if (rn) {
-    for (const leaf of rn.leaves()) {
-      const v = leaf.view;
-      if (!v || v.name !== "chat" || !v.composer) continue;
-      v.composer.mode = mode;
-      if (mode === "normal") v.composer.input.caret = clamp(v.composer.input.text, v.composer.input.caret);
-    }
-  }
-  events.emit("composer-vim:mode", mode);
-  root.invalidate();
-}
-
-// Move the caret and report that the key was used.
 function holdColumn(c) {
   const goal = c.goalCol;
   c.input.caret = clamp(c.input.text, c.input.caret);
@@ -86,8 +85,6 @@ function to(c, caret) {
   return true;
 }
 
-// Delete [from, to) and keep the caret on a character. `stored` is what the register keeps, which
-// is the line body for a linewise cut, never its separator.
 function cut(c, from, to, linewise, stored) {
   if (to <= from && stored == null) return true;
   register.set(stored == null ? c.input.text.slice(from, to) : stored, linewise);
@@ -96,7 +93,6 @@ function cut(c, from, to, linewise, stored) {
   return true;
 }
 
-// Put the register after the caret, or on its own line when the yank took whole lines.
 function put(c, after) {
   const t = c.input;
   if (!register.text && !register.linewise) return true;
@@ -113,17 +109,15 @@ function put(c, after) {
 
 function enter(c, caret) {
   c.input.caret = Math.max(0, Math.min(caret, c.input.text.length));
-  setFocusedMode("insert");
+  setComposerMode(c, "insert");
   return true;
 }
 
-// The second key of "gg", "dd", or "cc". Any other key cancels the pair.
 function pair(c, first, k) {
   const t = c.input;
   const { start, end } = lineAt(t.text, t.caret);
   if (first === "g" && k === "g") return to(c, 0);
   if (first === "d" && k === "d") {
-    // A line takes its own newline with it, and the last line takes the one before it.
     const body = t.text.slice(start, end);
     if (end < t.text.length) return cut(c, start, end + 1, true, body);
     return cut(c, start > 0 ? start - 1 : 0, end, true, body);
@@ -133,10 +127,9 @@ function pair(c, first, k) {
     t.replace(start, end, "");
     return enter(c, start);
   }
-  return true;
+  return false;
 }
 
-// One normal-mode key. Return false to leave the key for another layer.
 function normalKey(c, k) {
   const t = c.input;
   const text = t.text;
@@ -171,7 +164,7 @@ function normalKey(c, k) {
     case "g":
     case "d":
     case "c":
-      pending.set(c, k);
+      armPrefix(stateOf(c), k);
       return true;
     case "i":
       return enter(c, t.caret);
@@ -203,7 +196,6 @@ function normalKey(c, k) {
       return put(c, true);
     case "P":
       return put(c, false);
-    // A chat composer sends from either mode, so normal mode keeps enter as submit.
     case "enter":
       c.submit();
       return true;
@@ -225,25 +217,24 @@ export const composerVim = {
       cmdline: () => command.perform("ui:cmdline"),
     });
 
-    // Only `esc` needs a binding. Insert mode passes it through, and normal mode reads every other
-    // key itself, so a bare letter never reaches a global command.
     ctx.keymap({ esc: "composer-vim:normal" });
 
     ctx.advise(Composer.prototype, "onKey", "around", function (inner, ev) {
-      if (this.mode !== "normal") return inner(ev);
+      if (composerMode(this) !== "normal") return inner(ev);
       const k = modalKey(ev);
-      const first = pending.get(this);
+      const first = takePrefix(stateOf(this));
       if (first) {
-        pending.set(this, "");
         if (pair(this, first, k)) return true;
+        // An unknown second key still runs, so `gh` moves as `h`.
       }
       if (normalKey(this, k)) return true;
-      // A named key or a chord still reaches the keymap. A bare character never does.
       return isTextKey(ev);
     });
 
-    // Neovim-style window chords. In insert the composer eats ctrl+w (word-erase), so these reach
-    // the keymap only in normal mode or on a non-input pane. ctrl+k does the same in every mode.
+    ctx.advise(Composer.prototype, "_prompt", "around", function (inner) {
+      return composerMode(this) === "normal" ? NORMAL_PROMPT : inner();
+    });
+
     ctx.keymap({
       "ctrl+w h": "focus:left",
       "ctrl+w j": "focus:down",
@@ -259,25 +250,23 @@ export const composerVim = {
       "ctrl+w c": "window:close",
     });
 
-    // The bar shows the mode, so the composer never has to hide the draft to say which one.
-    ctx.status({ side: "right", order: 0, render: () => (chatComposer() ? chatComposer().mode.toUpperCase() : "") });
+    ctx.status({ side: "right", order: 0, render: () => {
+      const mode = composerMode(chatComposer());
+      return mode ? mode.toUpperCase() : "";
+    } });
 
-    // Publish the mode so other plugins can gate their own normal-mode bindings on it.
     ctx.provide("composer-vim", {
-      mode: () => (chatComposer() ? chatComposer().mode : null),
-      isNormal: () => inChat() && chatComposer().mode === "normal",
+      mode: () => composerMode(chatComposer()),
+      isNormal: () => inChat() && composerMode(chatComposer()) === "normal",
     });
 
-    setAllModes("normal"); // a vim user starts in normal mode
-    // A pane that does not hold the focus must not keep a pending key across a reload.
+    setFocusedMode("normal");
     return () => {
-      const rn = root.root_node;
-      if (rn) {
-        for (const leaf of rn.leaves()) {
-          if (leaf.view && leaf.view.name === "chat" && leaf.view.composer) pending.delete(leaf.view.composer);
-        }
+      const c = chatComposer();
+      if (c) {
+        setComposerMode(c, "insert");
+        states.delete(c);
       }
-      setAllModes("insert");
     };
   },
 };

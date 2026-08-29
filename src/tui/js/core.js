@@ -31,8 +31,8 @@ export function defineConfig(partial) {
   }
   const daemon = partial.daemon;
   const mouse = partial.mouse;
-  if (daemon !== undefined) applyDaemonConfig(daemon);
-  if (mouse !== undefined) applyMouseConfig(mouse);
+  if (daemon !== undefined) applyConfigPatch(config.daemon, DAEMON_FIELDS, daemon, "daemon");
+  if (mouse !== undefined) applyConfigPatch(config.mouse, MOUSE_FIELDS, mouse, "mouse");
   return partial;
 }
 
@@ -44,46 +44,26 @@ const DAEMON_FIELDS = {
   token: (v) => typeof v === "string" || "daemon.token must be a string",
 };
 
-// Validate a daemon patch before it changes the config.
-function applyDaemonConfig(d) {
-  if (d == null || typeof d !== "object" || Array.isArray(d)) {
-    throw new TypeError("defineConfig.daemon expects an object");
-  }
-  const patch = {};
-  for (const key of Object.keys(d)) {
-    if (!Object.prototype.hasOwnProperty.call(DAEMON_FIELDS, key)) {
-      throw new TypeError("defineConfig.daemon: unknown key " + key);
-    }
-    const check = DAEMON_FIELDS[key];
-    if (d[key] === undefined) continue;
-    const ok = check(d[key]);
-    if (ok !== true) throw new TypeError(ok);
-    patch[key] = d[key];
-  }
-  Object.assign(config.daemon, patch);
-}
-
 const MOUSE_FIELDS = {
   copyOnSelect: (v) => typeof v === "boolean" || "mouse.copyOnSelect must be a boolean",
   scrollLines: (v) => (Number.isInteger(v) && v >= 1 && v <= 20) || "mouse.scrollLines must be an integer 1..20",
 };
 
-// Validate a mouse patch before it changes the config.
-function applyMouseConfig(m) {
-  if (m == null || typeof m !== "object" || Array.isArray(m)) {
-    throw new TypeError("defineConfig.mouse expects an object");
+function applyConfigPatch(section, fields, src, label) {
+  if (src == null || typeof src !== "object" || Array.isArray(src)) {
+    throw new TypeError("defineConfig." + label + " expects an object");
   }
   const patch = {};
-  for (const key of Object.keys(m)) {
-    if (!Object.prototype.hasOwnProperty.call(MOUSE_FIELDS, key)) {
-      throw new TypeError("defineConfig.mouse: unknown key " + key);
+  for (const key of Object.keys(src)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, key)) {
+      throw new TypeError("defineConfig." + label + ": unknown key " + key);
     }
-    if (m[key] === undefined) continue;
-    const ok = MOUSE_FIELDS[key](m[key]);
+    if (src[key] === undefined) continue;
+    const ok = fields[key](src[key]);
     if (ok !== true) throw new TypeError(ok);
-    patch[key] = m[key];
+    patch[key] = src[key];
   }
-  Object.assign(config.mouse, patch);
+  Object.assign(section, patch);
 }
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
@@ -255,7 +235,7 @@ function wrapParagraph(para, width, out) {
 }
 
 // Wrap `s` in `width` cells and keep its UTF-16 offsets. A row holds [start, end) and a soft flag.
-// `wrap` rebuilds its lines and drops the space runs, so editable text uses this function.
+// `wrap` drops space runs, so editable text and user rows use this function.
 export function wrapOffsets(s, width) {
   s = String(s);
   if (width <= 0) return [{ start: 0, end: s.length, soft: false }];
@@ -484,16 +464,16 @@ export function copy(text, what) {
   return bytes;
 }
 
-// The unnamed register. A yank or a delete fills it and `p` reads it. OSC 52 is write only, so a
-// paste can never read the terminal's own clipboard.
-export const register = {
-  text: "",
-  linewise: false,
-  set(text, linewise) {
-    this.text = String(text == null ? "" : text);
-    this.linewise = !!linewise;
-  },
-};
+// A two-key chord. `holder.pending` is the first key, or "".
+export function takePrefix(holder) {
+  const first = holder.pending || "";
+  holder.pending = "";
+  return first;
+}
+
+export function armPrefix(holder, key) {
+  holder.pending = key;
+}
 
 // The key a modal layer reads. `strokeOf` folds a letter's case, so `G` needs the raw character.
 // A chord keeps its stroke, so ctrl+d never reads as a letter.
@@ -511,7 +491,7 @@ export function modalKey(ev) {
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
 export function textOf(ev) {
-  if (ev.code === "paste") return ev.text || "";
+  if (ev.type === "paste") return ev.text || "";
   if (ev.code !== "char") return "";
   if (ev.text) return ev.text;
   if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
@@ -1169,11 +1149,11 @@ export class RootView {
       const handled = callHook(top, method, ev);
       return top.modal !== false || !!handled;
     };
-    if (ev.type === "key") {
-      if (ev.event === "release") return;
+    if (ev.type === "key" || ev.type === "paste") {
+      if (ev.type === "key" && ev.event === "release") return;
       if (!consumedByOverlay("onKey")) {
         const viewTakes = !keymap.pending && callHook(this.active, "onKey", ev);
-        if (!viewTakes) keymap.onKey(ev);
+        if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {
       if (!consumedByOverlay("onMouse")) this.routeMouse(ev);
@@ -1185,7 +1165,6 @@ export class RootView {
 export const root = new RootView();
 
 export function quit() {
-  term.setNeedsTick(false);
   term.quit();
 }
 

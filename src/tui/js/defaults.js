@@ -355,12 +355,6 @@ events.on("copy", (e) => {
   else notice.show("copied " + e.what + " · " + e.bytes + " bytes");
 });
 
-// The focused chat pane, or the default one when another view holds the focus.
-function activeChat() {
-  const v = root.active;
-  return v && v.name === "chat" ? v : chat;
-}
-
 // One catalog per connection. `catalog.list` answers "unchanged" while the revision holds, so a
 // reopened picker costs no round trip.
 const catalogs = new Map();
@@ -559,13 +553,13 @@ const chatSession = {
   // A structural change (open, commit, resync): re-pull the outline.
   reload() {
     const o = this.sessionId ? client.sessionOutline(this.connKey, this.sessionId) : null;
-    chat.setOutline(o ? o.messages : [], o ? o.active : null);
+    chat.transcript.setOutline(o ? o.messages : [], o ? o.active : null);
     root.invalidate();
   },
 
   // A draft delta: re-wrap only the streaming message `id`.
   active(id) {
-    chat.setActive(id);
+    chat.transcript.setActive(id);
     root.invalidate();
   },
 
@@ -614,7 +608,7 @@ const chatSession = {
     if (this.sessionId) client.sessionClose(this.connKey, this.sessionId);
     this.sessionId = null;
     this.connKey = LOCAL;
-    chat.setOutline([], null);
+    chat.transcript.setOutline([], null);
     sidebar.active = null;
     root.focusView(chat);
     root.invalidate();
@@ -623,7 +617,7 @@ const chatSession = {
   // The daemon lost the session. Clear the pane back to the placeholder.
   close() {
     this.sessionId = null;
-    chat.setOutline([], null);
+    chat.transcript.setOutline([], null);
     root.invalidate();
   },
 };
@@ -1163,8 +1157,8 @@ plugins.use({
       "window:close": () => root.close(),
       "ui:cmdline": () => openCommandLine(),
       "copy:reply": () => copy(chat.transcript.textFor(chat.transcript.last("assistant")), "reply"),
-      "copy:selection": () => copy(activeChat().transcript.selectedText(), "selection"),
-      "copy:source": () => copy(activeChat().transcript.selectedSource(), "source"),
+      "copy:selection": () => copy(chat.transcript.selectedText(), "selection"),
+      "copy:source": () => copy(chat.transcript.selectedSource(), "source"),
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
       "model:pick": () => openModelPicker(),

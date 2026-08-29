@@ -290,11 +290,11 @@ fn keyMatches(ctx: Context, _: Value, args: []const Value) Value {
     const shifted = runeProp(ctx, args[0], "shifted") catch return rethrow(ctx);
     const text_s = textProp(ctx, args[0], &text_buf) catch return rethrow(ctx);
     const ev_mods = modsProp(ctx, args[0]) catch return rethrow(ctx);
-    return ctx.newBool(odinKeyMatches(char, shifted, text_s, ev_mods, cp, mods));
+    return ctx.newBool(matchKey(char, shifted, text_s, ev_mods, cp, mods));
 }
 
 /// Match keys in this order: exact, text without Shift, then shifted codepoint.
-fn odinKeyMatches(char: u21, shifted: u21, text_s: []const u8, ev_mods: Modifiers, cp: u21, mods: Modifiers) bool {
+fn matchKey(char: u21, shifted: u21, text_s: []const u8, ev_mods: Modifiers, cp: u21, mods: Modifiers) bool {
     if (cp == 0) return false;
     if (char == cp and eqlMods(ev_mods, mods)) return true;
     const rest = eqlMods(dropShift(ev_mods), dropShift(mods));

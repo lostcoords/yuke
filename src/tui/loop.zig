@@ -35,8 +35,7 @@ pub fn step(host: *Host, ev: Event) Error!void {
     }
 }
 
-/// Dispatch a paste. The event is a key with the code `paste`, so a text input inserts `text`
-/// with one edit.
+/// Dispatch a paste as its own event type, so a text input inserts `text` with one edit.
 pub fn stepPaste(host: *Host, text: []const u8) Error!void {
     std.debug.assert(host.phase == .open);
     const obj = try pasteObject(host.ctx, text);
@@ -74,6 +73,12 @@ pub fn stepMouseRepeat(host: *Host, m: Mouse, count: u32) Error!void {
     _ = try dispatch(host, obj);
 }
 
+/// A run of equal wheel steps on one cell. The owner dispatches it once.
+pub const WheelRun = struct {
+    mouse: Mouse,
+    count: u32,
+};
+
 /// The wheel button of a mouse event, or null for any other event.
 pub fn wheelOf(ev: Event) ?Mouse.Button {
     const m = switch (ev) {
@@ -84,6 +89,32 @@ pub fn wheelOf(ev: Event) ?Mouse.Button {
         .wheel_up, .wheel_down, .wheel_left, .wheel_right => m.button,
         else => null,
     };
+}
+
+fn mouseCell(host: *Host, m: Mouse) Mouse {
+    return if (host.paint.render) |r| r.vx.translateMouse(m) else m;
+}
+
+/// Join a wheel event into `run` when it is the same button on the same cell.
+pub fn foldWheel(host: *Host, run: *?WheelRun, ev: Event) Error!void {
+    const btn = wheelOf(ev) orelse unreachable;
+    const cell = mouseCell(host, ev.mouse);
+    if (run.*) |*w| {
+        const prev = mouseCell(host, w.mouse);
+        if (w.mouse.button == btn and prev.col == cell.col and prev.row == cell.row) {
+            w.count += 1;
+            return;
+        }
+    }
+    try flushWheel(host, run);
+    run.* = .{ .mouse = ev.mouse, .count = 1 };
+}
+
+/// Dispatch the open wheel run, if one exists.
+pub fn flushWheel(host: *Host, run: *?WheelRun) Error!void {
+    const w = run.* orelse return;
+    run.* = null;
+    try stepMouseRepeat(host, w.mouse, w.count);
 }
 
 /// Dispatch a focus change the terminal reported.
@@ -210,16 +241,10 @@ fn focusObject(ctx: Context, focused: bool) Error!Value {
 }
 
 fn pasteObject(ctx: Context, text: []const u8) Error!Value {
-    const obj = try objectType(ctx, "key");
+    const obj = try objectType(ctx, "paste");
     errdefer ctx.freeValue(obj);
 
-    put(ctx, obj, "code", ctx.newString("paste"));
-    put(ctx, obj, "event", ctx.newString("press"));
-    put(ctx, obj, "char", ctx.newString(""));
-    put(ctx, obj, "shifted", ctx.newString(""));
-    put(ctx, obj, "baseLayout", ctx.newString(""));
     put(ctx, obj, "text", ctx.newString(text));
-    put(ctx, obj, "mods", ctx.newInt32(0));
     if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
@@ -314,7 +339,7 @@ test "a parser key paints and a missing endFrame still commits" {
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "a") != null);
 }
 
-test "a paste arrives as one key event with the whole text" {
+test "a paste arrives as one paste event with the whole text" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const host = try Host.create(gpa.allocator());
@@ -323,9 +348,7 @@ test "a paste arrives as one key event with the whole text" {
 
     const text = "line one\nline two";
     try stepPaste(host, text);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.code === 'paste' ? 1 : 0"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.event === 'press' ? 1 : 0"));
-    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.ev.mods"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.type === 'paste' ? 1 : 0"));
     try std.testing.expectEqual(@as(i32, @intCast(text.len)), try host.evalInt("globalThis.ev.text.length"));
 }
 

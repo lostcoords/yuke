@@ -129,7 +129,6 @@ export function sessionCancelRun(connKey, id, clearQueue = false) {
   });
 }
 
-// The subdirectories of `params.path` (the daemon's default root when omitted), one page.
 // Create a session. An unset model or reasoning lets the daemon use its profile default.
 export function sessionCreate(connKey, params) {
   return request(connKey, "session.create", params);
@@ -140,6 +139,7 @@ export function catalogList(connKey, sinceRev) {
   return request(connKey, "catalog.list", sinceRev ? { since_rev: sinceRev } : {});
 }
 
+// The subdirectories of `params.path` (the daemon's default root when omitted), one page.
 export function workspaceBrowse(connKey, params = {}) {
   return request(connKey, "workspace.browse", params);
 }
