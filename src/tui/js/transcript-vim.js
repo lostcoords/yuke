@@ -36,6 +36,12 @@ function rowOf(t, pos) {
   return t.rowTextAt(pos.id, pos.row);
 }
 
+function holdCol(t, s) {
+  const body = rowOf(t, s.cursor);
+  if (body.length === 0) return;
+  if (s.cursor.col >= body.length) s.cursor = { ...s.cursor, col: prevGrapheme(body, body.length) };
+}
+
 // The message ids in transcript order.
 function idsOf(t) {
   return t.messages().map((m) => m.id);
@@ -340,6 +346,7 @@ export const transcriptVim = {
 
       if (k !== "j" && k !== "k" && k !== "up" && k !== "down") s.goal = null;
       if (!move(t, s, k)) return false;
+      holdCol(t, s);
       syncSelection(t, s);
       t.ensureVisible(s.cursor);
       return done(t, s);

@@ -1706,6 +1706,12 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\v.onKey(key("char", "0"));
         \\check("row-start", v.cursor().x === c0.x);
         \\
+        \\// The transcript cursor also stays on a character.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "$"));
+        \\check("transcript-dollar", v.cursor().x === 2 + v.transcript.rowTextAt("a1", 0).length - 1);
+        \\
         \\// "gg" reaches the first row and "G" the last. A shifted letter keeps its case.
         \\v.onKey(key("char", "g"));
         \\v.onKey(key("char", "g"));
