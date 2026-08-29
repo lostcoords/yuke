@@ -597,15 +597,17 @@ export class Document {
     this._cache = new Map();
   }
 
+  // Return true when the source changed, so a caller can drop its own cache for this document.
   setText(text) {
     text = String(text).replace(/\r\n?/g, "\n");
-    if (text === this._src) return;
+    if (text === this._src) return false;
     this._src = text;
     this._blocks = segment(text);
     // Drop cache entries for blocks that the new text no longer holds.
     const live = new Set();
     for (const b of this._blocks) if (!b.open) live.add(b.src);
     for (const key of this._cache.keys()) if (!live.has(key)) this._cache.delete(key);
+    return true;
   }
 
   rows(width) {
@@ -615,6 +617,15 @@ export class Document {
       if (!first) out.push(plainRow(""));
       first = false;
       for (const r of this._blockRows(block, width)) out.push(r);
+    }
+    return out;
+  }
+
+  // The fenced code blocks, in document order. The text is the body, without the fence lines.
+  codeBlocks() {
+    const out = [];
+    for (const b of this._blocks) {
+      if (b.kind === "code") out.push({ lang: b.lang || "", text: b.lines.join("\n") });
     }
     return out;
   }

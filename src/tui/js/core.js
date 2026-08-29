@@ -5,6 +5,13 @@ import { term } from "yuke:term";
 export const config = {
   plugins: Object.create(null),
   vim: false,
+  // Mouse reporting is always on. `scrollLines` is a screen-line count, so a wheel step moves the
+  // same distance in a transcript and in a list.
+  mouse: {
+    scrollLines: 3,
+    // A drag that ends copies the selection. A release is a deliberate end, so it never surprises.
+    copyOnSelect: true,
+  },
   daemon: {
     host: "127.0.0.1",
     port: 7880,
@@ -20,14 +27,18 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "daemon" && key !== "vim") throw new TypeError("defineConfig: unknown key " + key);
+    if (key !== "daemon" && key !== "vim" && key !== "mouse") {
+      throw new TypeError("defineConfig: unknown key " + key);
+    }
   }
   const vim = partial.vim;
   const daemon = partial.daemon;
+  const mouse = partial.mouse;
   if (vim !== undefined && typeof vim !== "boolean") {
     throw new TypeError("defineConfig: vim must be a boolean");
   }
   if (daemon !== undefined) applyDaemonConfig(daemon);
+  if (mouse !== undefined) applyMouseConfig(mouse);
   if (vim !== undefined) config.vim = vim;
   return partial;
 }
@@ -57,6 +68,34 @@ function applyDaemonConfig(d) {
     patch[key] = d[key];
   }
   Object.assign(config.daemon, patch);
+}
+
+const MOUSE_FIELDS = {
+  copyOnSelect: (v) => typeof v === "boolean" || "mouse.copyOnSelect must be a boolean",
+  scrollLines: (v) => (Number.isInteger(v) && v >= 1 && v <= 20) || "mouse.scrollLines must be an integer 1..20",
+};
+
+// Validate a mouse patch before it changes the config.
+function applyMouseConfig(m) {
+  if (m == null || typeof m !== "object" || Array.isArray(m)) {
+    throw new TypeError("defineConfig.mouse expects an object");
+  }
+  const patch = {};
+  for (const key of Object.keys(m)) {
+    if (!Object.prototype.hasOwnProperty.call(MOUSE_FIELDS, key)) {
+      throw new TypeError("defineConfig.mouse: unknown key " + key);
+    }
+    if (m[key] === undefined) continue;
+    const ok = MOUSE_FIELDS[key](m[key]);
+    if (ok !== true) throw new TypeError(ok);
+    patch[key] = m[key];
+  }
+  Object.assign(config.mouse, patch);
+}
+
+// True for a wheel button. The wheel scrolls a pane but never moves the focus.
+export function isWheel(button) {
+  return button === "wheel_up" || button === "wheel_down" || button === "wheel_left" || button === "wheel_right";
 }
 
 // Bound a link chain the way neovim bounds `syn_ns_get_final_id`. A cycle falls back instead.
@@ -698,6 +737,14 @@ export class Node {
     b.parent = this;
   }
 
+  // Return the leaf that contains the cell. Return null outside this subtree.
+  leafAt(col, row) {
+    const r = this.rect;
+    if (col < r.x || col >= r.x + r.w || row < r.y || row >= r.y + r.h) return null;
+    if (this.type === "leaf") return this;
+    return this.a.leafAt(col, row) || this.b.leafAt(col, row);
+  }
+
   leaves(out) {
     out = out || [];
     if (this.type === "leaf") out.push(this);
@@ -758,6 +805,8 @@ export class RootView {
     this.activeLeaf = null;
     this.overlays = [];
     this.services = [];
+    this._capture = null; // the leaf that owns the drag, from press to release
+    this._needsDraw = false; // the host paints once after it drains the event queue
     this._started = false;
   }
 
@@ -769,6 +818,7 @@ export class RootView {
     if (node) node.parent = null;
     this.root_node = node;
     this.activeLeaf = node ? node.leaves()[0] : null;
+    this._capture = null;
   }
 
   setActive(view) {
@@ -777,6 +827,42 @@ export class RootView {
 
   focusLeaf(leaf) {
     if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this.activeLeaf = leaf;
+  }
+
+  // Focus the leaf that holds `view`. Return false when the view is not in the tree.
+  focusView(view) {
+    if (!view || !this.root_node) return false;
+    for (const leaf of this.root_node.leaves()) {
+      if (leaf.view === view) {
+        this.activeLeaf = leaf;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Return the leaf that contains the cell. Return null over a split rule or outside the tree.
+  leafAt(col, row) {
+    return this.root_node ? this.root_node.leafAt(col, row) : null;
+  }
+
+  // Send the event to the leaf under the pointer. Focus a leaf on a button press, but not on a
+  // wheel event. A left press captures the leaf, so a drag that leaves it still reaches the same
+  // view and the release always arrives. Return true when a view consumed the event.
+  routeMouse(ev) {
+    if (this._capture && (ev.event === "drag" || ev.event === "release")) {
+      const held = this._capture;
+      if (ev.event === "release") this._capture = null;
+      const live = this.root_node && this.root_node.leaves().indexOf(held) >= 0;
+      return live && held.view ? !!callHook(held.view, "onMouse", ev) : false;
+    }
+    const leaf = this.leafAt(ev.col, ev.row);
+    if (!leaf || !leaf.view) return false;
+    if (ev.event === "press" && !isWheel(ev.button)) {
+      this.focusLeaf(leaf);
+      if (ev.button === "left") this._capture = leaf;
+    }
+    return !!callHook(leaf.view, "onMouse", ev);
   }
 
   split(kind, view) {
@@ -850,7 +936,7 @@ export class RootView {
   pushOverlay(layer) {
     requireDraw(layer, "pushOverlay needs a layer with a draw method");
     this.overlays.push(layer);
-    this.draw();
+    this.invalidate();
     return layer;
   }
 
@@ -859,10 +945,18 @@ export class RootView {
       const i = this.overlays.indexOf(layer);
       if (i >= 0) this.overlays.splice(i, 1);
     } else this.overlays.pop();
-    this.draw();
+    this.invalidate();
   }
 
+  // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
   invalidate() {
+    this._needsDraw = true;
+  }
+
+  // Paint if anything asked for it. The host calls this after it drains the event queue.
+  flush() {
+    if (!this._needsDraw) return;
+    this._needsDraw = false;
     this.draw();
   }
 
@@ -921,12 +1015,17 @@ export class RootView {
         this._started = true;
         for (const svc of this.services) callHook(svc, "onStart");
       }
-      this.draw();
+      this.invalidate();
       return;
     }
     if (ev.type === "tick") {
       this.tickLayers();
-      this.draw();
+      this.invalidate();
+      return;
+    }
+    // Redraw on focus gain. A focus loss changes no view state.
+    if (ev.type === "focus") {
+      if (ev.focused) this.invalidate();
       return;
     }
     const top = this.overlays.length ? this.overlays[this.overlays.length - 1] : null;
@@ -943,9 +1042,9 @@ export class RootView {
         if (!viewTakes) keymap.onKey(ev);
       }
     } else if (ev.type === "mouse") {
-      if (!consumedByOverlay("onMouse")) callHook(this.active, "onMouse", ev);
+      if (!consumedByOverlay("onMouse")) this.routeMouse(ev);
     }
-    this.draw();
+    this.invalidate();
   }
 }
 
@@ -960,3 +1059,4 @@ command.add(null, { quit });
 keymap.add({ q: "quit" });
 
 globalThis.onEvent = (ev) => root.onEvent(ev);
+globalThis.flushFrame = () => root.flush();

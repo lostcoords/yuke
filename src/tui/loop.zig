@@ -9,6 +9,7 @@ const term_mod = @import("modules/term.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 const Key = term_pkg.Key;
+const Mouse = term_pkg.Mouse;
 const Event = term_pkg.Event;
 const Winsize = term_pkg.Winsize;
 
@@ -25,7 +26,11 @@ pub fn step(host: *Host, ev: Event) Error!void {
     switch (ev) {
         .key_press => |k| try stepKey(host, k, .press),
         .key_release => |k| try stepKey(host, k, .release),
+        .mouse => |m| try stepMouseRepeat(host, m, 1),
         .winsize => |ws| try stepResize(host, ws),
+        .focus_in => try stepFocus(host, true),
+        .focus_out => try stepFocus(host, false),
+        // Ignore the leave and capability events.
         else => {},
     }
 }
@@ -56,6 +61,35 @@ fn stepKey(host: *Host, key: Key, kind: KeyKind) Error!void {
         host.paint.needs_tick = false;
         host.paint.quit_requested = true;
     }
+}
+
+/// Dispatch one mouse event that stands for `count` equal steps. The owner folds a wheel run, so a
+/// fast scroll costs one dispatch instead of one for every step.
+/// Pixel mode reports pixels, so the event translates to cells first.
+pub fn stepMouseRepeat(host: *Host, m: Mouse, count: u32) Error!void {
+    std.debug.assert(host.phase == .open);
+    std.debug.assert(count >= 1);
+    const cell = if (host.paint.render) |r| r.vx.translateMouse(m) else m;
+    const obj = try mouseObject(host.ctx, cell, count);
+    _ = try dispatch(host, obj);
+}
+
+/// The wheel button of a mouse event, or null for any other event.
+pub fn wheelOf(ev: Event) ?Mouse.Button {
+    const m = switch (ev) {
+        .mouse => |m| m,
+        else => return null,
+    };
+    return switch (m.button) {
+        .wheel_up, .wheel_down, .wheel_left, .wheel_right => m.button,
+        else => null,
+    };
+}
+
+/// Dispatch a focus change the terminal reported.
+fn stepFocus(host: *Host, focused: bool) Error!void {
+    const obj = try focusObject(host.ctx, focused);
+    _ = try dispatch(host, obj);
 }
 
 fn stepResize(host: *Host, ws: Winsize) Error!void {
@@ -93,8 +127,29 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
     }
     ctx.freeValue(result);
     try host.drainJobs();
-    term_mod.commitFrame(host);
+    if (!host.paint.defer_frame) try flushFrame(host);
     return true;
+}
+
+/// Paint the frame the handlers asked for, then write it. The owner calls this once, after it
+/// drains the queue, so a burst of events costs one paint.
+pub fn flushFrame(host: *Host) Error!void {
+    const ctx = host.ctx;
+    const global = ctx.getGlobalObject();
+    defer ctx.freeValue(global);
+    const flush = ctx.getPropertyStr(global, "flushFrame");
+    defer ctx.freeValue(flush);
+    if (ctx.isFunction(flush)) {
+        const result = ctx.call(flush, quickjs.UNDEFINED, &.{});
+        if (ctx.isException(result)) {
+            host.paint.needs_tick = false;
+            host.noteFault();
+            return error.JavaScriptFault;
+        }
+        ctx.freeValue(result);
+        try host.drainJobs();
+    }
+    term_mod.commitFrame(host);
 }
 
 fn objectType(ctx: Context, typ: []const u8) Error!Value {
@@ -125,6 +180,31 @@ fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     put(ctx, obj, "text", ctx.newString(key.text orelse ""));
     // Drop `caps_lock` and `num_lock`. A lock state must not change the binding that matches.
     put(ctx, obj, "mods", ctx.newInt32(bits & 0x3f));
+    if (ctx.hasException()) return error.JavaScriptFault;
+    return obj;
+}
+
+fn mouseObject(ctx: Context, m: Mouse, count: u32) Error!Value {
+    const obj = try objectType(ctx, "mouse");
+    errdefer ctx.freeValue(obj);
+
+    // Normalize the mouse modifiers to the key bit layout: shift 1, alt 2, ctrl 4.
+    const bits: u3 = @bitCast(m.mods);
+    put(ctx, obj, "col", ctx.newInt32(m.col));
+    put(ctx, obj, "row", ctx.newInt32(m.row));
+    put(ctx, obj, "button", ctx.newString(@tagName(m.button)));
+    put(ctx, obj, "event", ctx.newString(@tagName(m.type)));
+    put(ctx, obj, "mods", ctx.newInt32(bits));
+    put(ctx, obj, "count", ctx.newInt32(@intCast(count)));
+    if (ctx.hasException()) return error.JavaScriptFault;
+    return obj;
+}
+
+fn focusObject(ctx: Context, focused: bool) Error!Value {
+    const obj = try objectType(ctx, "focus");
+    errdefer ctx.freeValue(obj);
+
+    put(ctx, obj, "focused", ctx.newBool(focused));
     if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
@@ -282,6 +362,52 @@ test "q with no handler requests quit" {
     defer host.destroy();
     try step(host, .{ .key_press = .{ .codepoint = 'q' } });
     try std.testing.expect(host.paint.quit_requested);
+}
+
+test "a mouse event reaches JavaScript with the cell, the button, and the modifiers" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
+
+    try step(host, .{ .mouse = .{
+        .col = 3,
+        .row = 4,
+        .button = .left,
+        .mods = .{ .ctrl = true },
+        .type = .drag,
+    } });
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.type === 'mouse' ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 3), try host.evalInt("globalThis.ev.col"));
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.row"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.button === 'left' ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.event === 'drag' ? 1 : 0"));
+    // The mouse and the key share the low three modifier bits.
+    try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.ev.mods"));
+}
+
+test "a wheel event names the wheel button" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
+
+    try step(host, .{ .mouse = .{ .col = 0, .row = 0, .button = .wheel_down, .mods = .{}, .type = .press } });
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.button === 'wheel_down' ? 1 : 0"));
+}
+
+test "focus in and focus out reach JavaScript" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.seen = []; globalThis.onEvent = (ev) => { globalThis.seen.push(ev.type + ':' + ev.focused); };", "onEvent.js");
+
+    try step(host, .focus_in);
+    try step(host, .focus_out);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen.join(',') === 'focus:true,focus:false' ? 1 : 0"));
 }
 
 test "a key reports the modifiers and no lock state" {

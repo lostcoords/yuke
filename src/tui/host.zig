@@ -54,6 +54,8 @@ pub const Paint = struct {
     height: u16 = 24,
     dirty: bool = false,
     in_frame: bool = false,
+    /// True while the owner drains its queue. The frame then paints once, after the last event.
+    defer_frame: bool = false,
     needs_tick: bool = false,
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
@@ -1089,6 +1091,312 @@ test "yuke:core config validates and TextInput inserts committed text" {
     try std.testing.expectEqualStrings("ok", text);
 }
 
+test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 10, .cols = 21, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { config, defineConfig, root, Node, View, isWheel } from "yuke:core";
+        \\import { Pager, List } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
+        \\
+        \\check("mouse-default-lines", config.mouse.scrollLines === 3);
+        \\defineConfig({ mouse: { scrollLines: 5 } });
+        \\check("mouse-merge", config.mouse.scrollLines === 5);
+        \\check("mouse-unknown-key", throws(() => defineConfig({ mouse: { nope: 1 } })));
+        \\check("mouse-bad-lines", throws(() => defineConfig({ mouse: { scrollLines: 0 } })));
+        \\check("is-wheel", isWheel("wheel_up") && !isWheel("left"));
+        \\
+        \\const mouse = (o) => Object.assign({ type: "mouse", col: 0, row: 0, button: "left", event: "press", mods: 0 }, o);
+        \\const p = new Pager();
+        \\p.setRows(Array.from({ length: 100 }, (_, i) => ({ text: "row " + i })));
+        \\term.beginFrame();
+        \\p.draw({ x: 0, y: 0, w: 10, h: 10 });
+        \\term.endFrame();
+        \\p.toTop();
+        \\check("wheel-down", p.onMouse(mouse({ button: "wheel_down" })) === true && p.scroll === 5);
+        \\check("wheel-up", p.onMouse(mouse({ button: "wheel_up" })) === true && p.scroll === 0);
+        \\check("click-not-scroll", p.onMouse(mouse({ button: "left" })) === false && p.scroll === 0);
+        \\
+        \\// A click selects the row under the pointer. A two-line row covers two screen rows.
+        \\const L = new List({ key: (it) => it.id, itemHeight: 2, format: (it) => ({ text: it.id }) });
+        \\L.setItems([{ id: "a" }, { id: "b" }, { id: "c" }]);
+        \\term.beginFrame();
+        \\L.draw({ x: 2, y: 3, w: 8, h: 6 });
+        \\term.endFrame();
+        \\check("list-click", L.onMouse(mouse({ col: 3, row: 5, button: "left" })) === true && L.selectedKey === "b");
+        \\check("list-click-outside", L.onMouse(mouse({ col: 0, row: 5, button: "left" })) === false);
+        \\check("list-wheel", L.onMouse(mouse({ col: 3, row: 3, button: "wheel_down" })) === true && L.selectedKey === "c");
+        \\// A short pane paints one two-line row, so a click on the leftover row selects nothing.
+        \\const S = new List({ key: (it) => it.id, itemHeight: 2, format: (it) => ({ text: it.id }) });
+        \\S.setItems([{ id: "a" }, { id: "b" }]);
+        \\term.beginFrame();
+        \\S.draw({ x: 0, y: 0, w: 8, h: 3 });
+        \\term.endFrame();
+        \\check("list-partial-row", S.onMouse(mouse({ col: 1, row: 2, button: "left" })) === false && S.selectedKey === "a");
+        \\
+        \\// A cleared rect drops a click, so a row that left the screen cannot be hit.
+        \\L.clearRect();
+        \\check("list-click-cleared", L.onMouse(mouse({ col: 3, row: 5, button: "left" })) === false);
+        \\
+        \\// A press focuses the pane under the pointer; the wheel reaches it without moving focus.
+        \\class Pane extends View {
+        \\  constructor() { super(); this.seen = []; }
+        \\  draw() {}
+        \\  onMouse(ev) { this.seen.push(ev.button); return true; }
+        \\}
+        \\const left = new Pane();
+        \\const right = new Pane();
+        \\const a = new Node(left);
+        \\const b = new Node(right);
+        \\root.setRoot(Node.branch("row", a, b, 0.5));
+        \\root.root_node.layout({ x: 0, y: 0, w: 21, h: 5 });
+        \\root.focusLeaf(a);
+        \\root.routeMouse(mouse({ col: 15, row: 2, button: "left", event: "press" }));
+        \\check("press-focuses", root.active === right && right.seen.length === 1);
+        \\root.focusLeaf(a);
+        \\root.routeMouse(mouse({ col: 15, row: 2, button: "wheel_down", event: "press" }));
+        \\check("wheel-keeps-focus", root.active === left && right.seen.length === 2);
+        \\root.routeMouse(mouse({ col: 10, row: 2, button: "left", event: "press" }));
+        \\check("rule-hits-nothing", right.seen.length === 2 && left.seen.length === 0);
+        \\
+        \\// A left press captures the pane. The drag and the release reach it even over another pane.
+        \\right.seen.length = 0;
+        \\left.seen.length = 0;
+        \\root.routeMouse(mouse({ col: 15, row: 2, button: "left", event: "press" }));
+        \\root.routeMouse(mouse({ col: 3, row: 2, button: "left", event: "drag" }));
+        \\root.routeMouse(mouse({ col: 3, row: 2, button: "left", event: "release" }));
+        \\check("capture-drag", right.seen.length === 3 && left.seen.length === 0);
+        \\// The release ends the capture, so the next press hits the pane under the pointer.
+        \\root.routeMouse(mouse({ col: 3, row: 2, button: "left", event: "press" }));
+        \\check("capture-released", left.seen.length === 1);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "mouse.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui copy targets: last reply, message list, and code blocks" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 10, .cols = 40, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\const body = { u1: "ask", a1: "text\n```zig\nconst a = 1;\n```\nmore", a2: "second reply" };
+        \\const t = new Transcript({ textOf: (id) => body[id] || "" });
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
+        \\
+        \\check("last-assistant", t.last("assistant").id === "a1");
+        \\check("last-any", t.last().id === "a1");
+        \\check("text-for", t.textFor(t.last("assistant")) === body.a1);
+        \\check("no-user-code", t.messages().length === 2);
+        \\
+        \\// The block body carries no fence line and no language line.
+        \\const blocks = t.codeBlocks();
+        \\check("one-block", blocks.length === 1);
+        \\check("block-lang", blocks[0].lang === "zig");
+        \\check("block-text", blocks[0].text === "const a = 1;");
+        \\check("block-owner", blocks[0].id === "a1");
+        \\
+        \\// A user turn can hold a fence too, so no turn type is skipped.
+        \\const ub = { u2: "look:\n```sh\nls -l\n```", a3: "ok" };
+        \\const ut = new Transcript({ textOf: (id) => ub[id] || "" });
+        \\ut.setOutline([{ id: "u2", type: "user" }, { id: "a3", type: "assistant" }], null);
+        \\check("user-block", ut.codeBlocks().length === 1 && ut.codeBlocks()[0].text === "ls -l");
+        \\
+        \\// `codeBlocks` shares the row cache with the renderer, so a changed source must drop it.
+        \\const cb = { a1: "```zig\nold\n```" };
+        \\const ct = new Transcript({ textOf: (id) => cb[id] || "" });
+        \\ct.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0));
+        \\check("rows-old", rowsHave(ct.rows(40, 0, 100), "old"));
+        \\const doc0 = ct._docs.get("a1");
+        \\cb.a1 = "```zig\nnew\n```";
+        \\check("blocks-new", ct.codeBlocks()[0].text === "new");
+        \\check("same-doc", ct._docs.get("a1") === doc0);
+        \\check("rows-new", rowsHave(ct.rows(40, 0, 100), "new"));
+        \\
+        \\// A returned descriptor is a copy, so a caller cannot change the transcript.
+        \\const got = t.last("assistant");
+        \\got.id = "hacked";
+        \\check("no-aliasing", t.last("assistant").id === "a1");
+        \\
+        \\// The streaming draft is the newest message.
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], { id: "a2", type: "assistant" });
+        \\check("draft-is-last", t.last("assistant").id === "a2");
+        \\check("empty-last", new Transcript({}).last("assistant") === null);
+        \\
+        \\// term.copy writes OSC 52 and returns the byte count. It refuses a payload over the cap.
+        \\check("copy-ok", term.copy("hi") === 2);
+        \\check("copy-utf8-bytes", term.copy("héllo 🙂") === 11);
+        \\check("copy-too-large", term.copy("x".repeat(term.clipboardMax + 1)) === -1);
+        \\// A non-string argument is a type error, so a stray object never reaches the clipboard.
+        \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
+        \\check("copy-number", throws(() => term.copy(42)));
+        \\check("copy-null", throws(() => term.copy(null)));
+        \\check("copy-object", throws(() => term.copy({ toString: () => "x" })));
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "copy.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1b]52;c;aGk=\x1b\\") != null);
+}
+
+test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 12, .cols = 40, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
+        \\
+        \\// Two user turns. A user row is plain text with a two-column gutter.
+        \\const body = { u1: "alpha", u2: "bravo" };
+        \\let copied = null;
+        \\const t = new Transcript({ textOf: (id) => body[id] || "", onSelect: (s) => (copied = s) });
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
+        \\const paint = () => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 12 }); term.endFrame(); };
+        \\paint();
+        \\
+        \\// Drag inside one row: the gutter is two columns, so column 2 is the first character.
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(5, 0, "drag"));
+        \\check("within-row", t.selectedText() === "lp");
+        \\
+        \\// Row 1 is the blank row after "alpha", so the drag crosses into the second message.
+        \\t.onMouse(at(4, 2, "drag"));
+        \\// The blank row between the turns stays in the copy as a blank line.
+        \\check("across-rows", t.selectedText() === "lpha\n\nbr");
+        \\t.onMouse(at(4, 2, "release"));
+        \\check("copy-on-release", copied === "lpha\n\nbr");
+        \\
+        \\// A drag backwards selects the same text, because the ends are ordered.
+        \\t.onMouse(at(4, 2, "press"));
+        \\t.onMouse(at(3, 0, "drag"));
+        \\check("reverse-drag", t.selectedText() === "lpha\n\nbr");
+        \\
+        \\// The selected part of a visible row carries a range, and the rest of the row does not.
+        \\const rows = t.rows(40, 0, 12);
+        \\check("row-sel", rows[0].sel && rows[0].sel.from === 1 && rows[0].sel.to === 5);
+        \\// The visible row is a copy. The cached row and its segments never change.
+        \\const cached = t._rows.get("u1").rows[0];
+        \\check("row-sel-copy", cached.sel === undefined && rows[0] !== cached);
+        \\
+        \\// A bare click drops the selection instead of copying an empty string.
+        \\copied = null;
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(3, 0, "release"));
+        \\check("click-clears", t.selection === null && copied === null);
+        \\
+        \\// A cursor at column 0 of the end row adds no trailing blank line.
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(2, 2, "drag"));
+        \\check("no-trailing-newline", t.selectedText() === "lpha\n");
+        \\
+        \\// A stray drag or release without a press changes nothing.
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(5, 0, "drag"));
+        \\t.onMouse(at(5, 0, "release"));
+        \\copied = null;
+        \\t.onMouse(at(9, 0, "drag"));
+        \\check("orphan-drag", t.selectedText() === "lp");
+        \\t.onMouse(at(9, 0, "release"));
+        \\check("orphan-release", copied === null);
+        \\
+        \\// The streaming draft rewraps, so a selection inside it drops on the next delta.
+        \\body.a9 = "draft text";
+        \\t.setOutline([{ id: "u1", type: "user" }], { id: "a9", type: "assistant" });
+        \\paint();
+        \\// Rows 0 and 1 belong to "alpha", so row 2 is the first draft row.
+        \\t.onMouse(at(3, 2, "press"));
+        \\t.onMouse(at(5, 2, "drag"));
+        \\check("draft-sel", t.selection !== null && t.selection.anchor.id === "a9");
+        \\t.setActive("a9");
+        \\check("stream-clears", t.selection === null);
+        \\// A selection in another message survives a draft delta.
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(5, 0, "drag"));
+        \\t.setActive("a9");
+        \\check("other-msg-kept", t.selection !== null);
+        \\
+        \\// A width change rewraps the rows, so the selection drops.
+        \\t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
+        \\paint();
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(5, 0, "drag"));
+        \\check("before-resize", t.selection !== null);
+        \\t.rows(20, 0, 12);
+        \\check("clear-on-resize", t.selection === null);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "sel.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
 test "yuke:md renders the GFM subset and caches finalized blocks" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -1516,6 +1824,53 @@ test "yuke:client wraps the native and rejects an unimplemented connect" {
     try std.testing.expectEqualStrings("ok", text);
 }
 
+test "an event asks for a frame and the flush paints it once" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 2, .cols = 8, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { root, View } from "yuke:core";
+        \\globalThis.paints = 0;
+        \\class Counter extends View {
+        \\  draw() { globalThis.paints++; term.text(0, 0, "x"); }
+        \\  onKey() { return true; }
+        \\}
+        \\root.setActive(new Counter());
+    , "boot.js");
+
+    const loop = @import("loop.zig");
+    // A deferred run applies three keys and paints once.
+    host.paint.defer_frame = true;
+    for (0..3) |_| try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.paints"));
+    host.paint.defer_frame = false;
+    try loop.flushFrame(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.paints"));
+
+    // A second flush with no new event paints nothing.
+    try loop.flushFrame(host);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.paints"));
+
+    // Outside a deferred run, one event still paints on its own.
+    try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });
+    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.paints"));
+}
+
 test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -1547,7 +1902,8 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
     try host.evalModule(
         \\import { command, root } from "yuke:core";
         \\import { plugins } from "yuke:ext";
-        \\import { SessionList } from "yuke:defaults";
+        \\import { term } from "yuke:term";
+        \\import { SessionList, sidebar, chat } from "yuke:defaults";
         \\const fail = [];
         \\command.perform("ui:palette");
         \\if (root.overlays.length !== 1) fail.push("palette");
@@ -1562,6 +1918,33 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\const row = { connKey: "local", id: "z", session: { updated_at_ms: Date.now(), model: "m" }, activity: { state: { type: "working" } }, workspace: null };
         \\const line0 = sl._format(row).lines[0];
         \\if (line0.marker !== "●" || !line0.text.startsWith("▸ ")) fail.push("active-mark");
+        \\
+        \\// `focusView` moves the active leaf to the pane that holds the view.
+        \\root.focusView(sidebar);
+        \\if (root.active !== sidebar) fail.push("focus-sidebar");
+        \\root.focusView(chat);
+        \\if (root.active !== chat) fail.push("focus-chat");
+        \\root.focusView(sidebar);
+        \\
+        \\// A click reports "mouse" and Enter reports "key", so the shell moves the focus only on a click.
+        \\const seen = [];
+        \\const s2 = new SessionList({ onOpen: (c, i, src) => seen.push(src) });
+        \\s2.list.setItems([row]);
+        \\term.beginFrame();
+        \\s2.list.draw({ x: 0, y: 0, w: 20, h: 4 });
+        \\term.endFrame();
+        \\s2.onMouse({ type: "mouse", col: 1, row: 0, button: "left", event: "press", mods: 0 });
+        \\s2.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
+        \\if (seen.join(",") !== "mouse,key") fail.push("open-src:" + seen.join(","));
+        \\
+        \\// The real sidebar moves the focus to the chat pane on a click.
+        \\sidebar.list.setItems([row]);
+        \\term.beginFrame();
+        \\sidebar.list.draw({ x: 0, y: 0, w: 20, h: 4 });
+        \\term.endFrame();
+        \\sidebar.onMouse({ type: "mouse", col: 1, row: 0, button: "left", event: "press", mods: 0 });
+        \\if (root.active !== chat) fail.push("click-focuses-chat");
+        \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");
     const res = try host.ctx.eval("globalThis.result", "r.js", .{});

@@ -13,6 +13,10 @@ const Channel = owner.Channel;
 
 const frame_buf_bytes = 256 * 1024;
 
+/// The largest run of messages one frame absorbs. A longer burst paints before it continues, so
+/// steady input never starves the screen. It also bounds a folded wheel run.
+const drain_max = 64;
+
 /// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
 const send_tries_max = 100;
 
@@ -48,6 +52,8 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     try render.enterAltScreen(writer);
     // The terminal wraps pasted text in start and end markers.
     try render.setBracketedPaste(writer, true);
+    // Mouse reporting is always on. The in-app selection replaces the selection of the terminal.
+    try render.setMouseMode(writer, true);
 
     const host = try Host.createWith(gpa, io, .{});
     defer host.destroy();
@@ -61,7 +67,8 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
 
     var input: term_pkg.Input = .{ .gpa = gpa };
     defer input.deinit();
-    var slot: [1]Msg = undefined;
+    // The queue holds a wheel burst, so `serve` can fold it into one dispatch.
+    var slot: [64]Msg = undefined;
     var ch = Channel.init(&slot);
     host.client.bind(&ch);
     var group: zio.Group = .init;
@@ -158,19 +165,68 @@ pub fn serve(host: *Host, ch: *Channel) !void {
             error.ChannelClosed, error.Canceled => break,
             else => |e| return e,
         };
-        switch (msg) {
-            .tick => try absorbScriptFault(host, tui_loop.stepTick(host)),
-            .event => |*e| try absorbScriptFault(host, tui_loop.step(host, e.event())),
-            .paste => |text| {
-                defer msg.deinit(host.gpa);
-                try absorbScriptFault(host, tui_loop.stepPaste(host, text));
-            },
-            .daemon => |*d| {
-                defer msg.deinit(host.gpa);
-                try absorbScriptFault(host, host.client.onDaemon(host, d));
-            },
+
+        // Apply every queued message, then paint once. A burst costs one frame, not one each.
+        host.paint.defer_frame = true;
+        var wheel: ?Wheel = null;
+        var applied: u32 = 0;
+        while (true) {
+            try applyMsg(host, &msg, &wheel);
+            applied += 1;
+            if (applied >= drain_max or host.paint.quit_requested) break;
+            msg = ch.tryReceive() catch break;
         }
+        try flushWheel(host, &wheel);
+        host.paint.defer_frame = false;
+        try absorbScriptFault(host, tui_loop.flushFrame(host));
     }
+}
+
+/// A run of equal wheel steps. The owner dispatches it once, so a fast scroll costs one turn.
+const Wheel = struct { mouse: term_pkg.Mouse, count: u32 };
+
+/// Apply one message. The caller owns the frame, so this never paints. A wheel step joins the open
+/// run; every other message ends that run first, so the order of events never changes.
+fn applyMsg(host: *Host, msg: *Msg, wheel: *?Wheel) !void {
+    switch (msg.*) {
+        .event => |*e| {
+            const ev = e.event();
+            if (tui_loop.wheelOf(ev)) |btn| {
+                if (wheel.*) |*w| {
+                    if (w.mouse.button == btn) {
+                        w.count += 1;
+                        return;
+                    }
+                }
+                try flushWheel(host, wheel);
+                wheel.* = .{ .mouse = ev.mouse, .count = 1 };
+                return;
+            }
+            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.step(host, ev));
+        },
+        .tick => {
+            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.stepTick(host));
+        },
+        .paste => |text| {
+            defer msg.deinit(host.gpa);
+            try flushWheel(host, wheel);
+            try absorbScriptFault(host, tui_loop.stepPaste(host, text));
+        },
+        .daemon => |*d| {
+            defer msg.deinit(host.gpa);
+            try flushWheel(host, wheel);
+            try absorbScriptFault(host, host.client.onDaemon(host, d));
+        },
+    }
+}
+
+/// Dispatch the open wheel run, if one exists.
+fn flushWheel(host: *Host, wheel: *?Wheel) !void {
+    const w = wheel.* orelse return;
+    wheel.* = null;
+    try absorbScriptFault(host, tui_loop.stepMouseRepeat(host, w.mouse, w.count));
 }
 
 /// Free every message the owner never received. `stopReaders` must run first, so no reader sends.
@@ -226,7 +282,7 @@ fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input,
             },
         };
         switch (ev) {
-            .key_press, .key_release, .winsize => ch.send(Msg.from(ev)) catch return,
+            .key_press, .key_release, .mouse, .winsize, .focus_in, .focus_out => ch.send(Msg.from(ev)) catch return,
             .paste => |text| ch.send(Msg.from(ev)) catch {
                 gpa.free(text);
                 return;
@@ -269,6 +325,35 @@ test "serve stops when q arrives" {
     try serve(host, &ch);
     producer.join() catch {};
     try std.testing.expect(host.paint.quit_requested);
+}
+
+test "serve folds a wheel run into one dispatch and keeps the next button" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval(
+        \\globalThis.seen = [];
+        \\globalThis.onEvent = (ev) => {
+        \\  if (ev.type === "mouse") globalThis.seen.push(ev.button + ":" + ev.count);
+        \\};
+    , "count.js");
+
+    // The queue holds the whole burst, so the fold has something to collapse.
+    var slot: [16]Msg = undefined;
+    var ch = Channel.init(&slot);
+    var producer = try rt.spawn(sendWheelBurst, .{&ch});
+    try serve(host, &ch);
+    producer.join();
+
+    // Five equal steps fold into one event. The opposite direction stays a separate event.
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
+        "globalThis.seen.join(',') === 'wheel_down:5,wheel_up:1' ? 1 : 0",
+    ));
 }
 
 test "a closed channel unblocks serve" {
@@ -375,5 +460,16 @@ fn sendBounded(ch: *Channel, msg: Msg) !void {
 
 fn sendThenClose(ch: *Channel) void {
     ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'a' } })) catch {};
+    ch.close(.graceful);
+}
+
+fn wheelMsg(button: term_pkg.Mouse.Button) Msg {
+    return Msg.from(.{ .mouse = .{ .col = 1, .row = 1, .button = button, .mods = .{}, .type = .press } });
+}
+
+/// Send a run of wheel steps, then a different button, then close. `serve` must fold only the run.
+fn sendWheelBurst(ch: *Channel) void {
+    for (0..5) |_| ch.send(wheelMsg(.wheel_down)) catch {};
+    ch.send(wheelMsg(.wheel_up)) catch {};
     ch.close(.graceful);
 }

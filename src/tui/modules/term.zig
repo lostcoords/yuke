@@ -8,6 +8,9 @@ const Value = quickjs.Value;
 const Module = Context.Module;
 const Modifiers = term_pkg.Key.Modifiers;
 
+/// The largest clipboard payload `term.copy` accepts. JavaScript reads it to report a refusal.
+pub const clipboard_max = term_pkg.Render.clipboard_max;
+
 pub const tick_ms_min: u32 = 50;
 pub const tick_ms_max: u32 = 2000;
 
@@ -70,8 +73,10 @@ fn bindAll(ctx: Context, host: *Host, term_obj: Value) c_int {
     bind(ctx, term_obj, "cursor", 3, cursor) catch return -1;
     bind(ctx, term_obj, "size", 0, sizeOf) catch return -1;
     bind(ctx, term_obj, "setNeedsTick", 2, setNeedsTick) catch return -1;
+    bind(ctx, term_obj, "copy", 1, copyToClipboard) catch return -1;
     bind(ctx, term_obj, "quit", 0, quit) catch return -1;
     bind(ctx, term_obj, "keyMatches", 3, keyMatches) catch return -1;
+    ctx.setPropertyStr(term_obj, "clipboardMax", ctx.newInt32(clipboard_max)) catch return -1;
     ctx.setPropertyStr(term_obj, "width", ctx.newInt32(host.paint.width)) catch return -1;
     ctx.setPropertyStr(term_obj, "height", ctx.newInt32(host.paint.height)) catch return -1;
     return 0;
@@ -215,6 +220,24 @@ fn cursor(ctx: Context, _: Value, args: []const Value) Value {
     }
     host.paint.dirty = true;
     return quickjs.UNDEFINED;
+}
+
+/// Put text on the system clipboard through OSC 52. Return the UTF-8 byte count the write sent,
+/// or -1 when the text is over `clipboardMax`. OSC 52 has no acknowledgement, so a count reports
+/// only that the sequence left this process.
+fn copyToClipboard(ctx: Context, _: Value, args: []const Value) Value {
+    const host = Host.fromContext(ctx);
+    const render = host.paint.render orelse return ctx.throwTypeError("term.copy: no host");
+    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("term.copy(text): text is a string");
+    const payload = ctx.toCStringLen(args[0]) catch return rethrow(ctx);
+    defer ctx.freeCString(payload.ptr);
+    // `bindRender` sets the render and the writer together, so a render implies a writer.
+    std.debug.assert(host.paint.writer != null);
+    render.copyToClipboard(host.paint.writer.?, payload) catch |err| switch (err) {
+        error.ClipboardTooLarge => return ctx.newInt32(-1),
+        else => return ctx.throwInternalError("term.copy: the write failed"),
+    };
+    return ctx.newInt32(@intCast(payload.len));
 }
 
 fn quit(ctx: Context, _: Value, _: []const Value) Value {

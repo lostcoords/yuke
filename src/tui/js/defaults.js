@@ -219,14 +219,24 @@ class SessionList {
   onKey(ev) {
     if (this.list.onKey(ev)) return true;
     if (strokeOf(ev) === "enter") {
-      const row = this.list.selected();
-      if (row) {
-        this.active = { connKey: row.connKey, sessionId: row.id };
-        if (this.onOpen) this.onOpen(row.connKey, row.id);
-      }
+      this.open(this.list.selected(), "key");
       return true;
     }
     return false;
+  }
+
+  // A left click selects a row and opens its pair, the same as Enter. A wheel step only moves.
+  onMouse(ev) {
+    if (!this.list.onMouse(ev)) return false;
+    if (ev.button === "left") this.open(this.list.selected(), "mouse");
+    return true;
+  }
+
+  // `src` is "key" or "mouse". The shell reads it, because a click also moves the focus.
+  open(row, src) {
+    if (!row) return;
+    this.active = { connKey: row.connKey, sessionId: row.id };
+    if (this.onOpen) this.onOpen(row.connKey, row.id, src);
   }
 
   // A two-line row: an activity mark and title over a faint workspace and model. The active pair
@@ -255,7 +265,10 @@ class SessionList {
 
   draw(focused) {
     const { x, y, w: sw, h } = this.rect;
-    if (sw <= 0 || h <= 0) return;
+    if (sw <= 0 || h <= 0) {
+      this.list.clearRect();
+      return;
+    }
 
     const pad = sw >= 4 ? 1 : 0;
     const iw = Math.max(0, sw - pad * 2);
@@ -285,24 +298,60 @@ class SessionList {
   // The rows, or an empty/status line. The List paints the two-line rows; the cursor shows only
   // when the pane is focused.
   _drawList(x, top, w, h, focused) {
-    if (h <= 0 || w <= 0) return;
+    if (h <= 0 || w <= 0) {
+      this.list.clearRect();
+      return;
+    }
 
     const conns = client.connections();
     const ready = conns.some((c) => c.state === "ready");
     const busy = conns.some((c) => c.state === "connecting" || c.state === "closing");
     if (!ready) {
       text(x, top, clip(busy ? "…" : "not connected", w), "YukeEmpty");
+      this.list.clearRect();
       return;
     }
     if (this.list.items.length === 0) {
       const loading = [...feeds.values()].some((f) => !f.loaded);
       text(x, top, clip(loading ? "loading…" : "no sessions", w), "YukeEmpty");
+      this.list.clearRect();
       return;
     }
 
     this.list.drawCursor = focused;
     this.list.draw({ x, y: top, w, h });
   }
+}
+
+// A transient notice replaces the chat rule row until the next key press.
+const notice = {
+  text: "",
+  show(s) {
+    this.text = s;
+    root.invalidate();
+  },
+  clear() {
+    if (this.text === "") return;
+    this.text = "";
+    root.invalidate();
+  },
+};
+
+// Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
+events.on("key", (ev) => {
+  if (ev.event === "press") notice.clear();
+});
+
+// Send text to the system clipboard and report the outcome. OSC 52 has no acknowledgement, so a
+// byte count means the sequence left this process, not that the terminal accepted it.
+function copyText(what, text) {
+  if (!text) {
+    notice.show("nothing to copy");
+    return;
+  }
+  const n = term.copy(text);
+  if (n < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
+  else notice.show("copied " + what + " · " + n + " bytes");
 }
 
 // The main pane: a placeholder shown in a split leaf with no session.
@@ -346,7 +395,7 @@ class MainPane {
 class ChatView {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf });
+    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
   }
 
@@ -366,10 +415,20 @@ class ChatView {
     return this.composer.onKey(ev) || this.transcript.onKey(ev);
   }
 
+  // Route by sub-rect, so a click or a wheel step over the composer never moves the transcript.
+  // A captured drag still reaches the transcript, because only a press hits this test.
+  onMouse(ev) {
+    const r = this.transcript.pager.rect();
+    const inside = r && ev.col >= r.x && ev.col < r.x + r.w && ev.row >= r.y && ev.row < r.y + r.h;
+    if (inside || ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
+    return false;
+  }
+
   draw(focused) {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) {
       this.composer.rect = { x, y, w: 0, h: 0 };
+      this.transcript.hide();
       return;
     }
 
@@ -378,7 +437,11 @@ class ChatView {
     this.composer.rect = { x, y: y + h - rows, w, h: rows };
     const rule = y + h - rows - 1;
     if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
-    if (rule >= y) text(x, rule, "─".repeat(w), "YukeRule");
+    else this.transcript.hide();
+    if (rule >= y) {
+      if (notice.text) text(x, rule, clip(notice.text, w), "YukeStatus");
+      else text(x, rule, "─".repeat(w), "YukeRule");
+    }
     this.composer.draw(focused);
   }
 
@@ -391,6 +454,9 @@ class ChatView {
 const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
+  onSelect: (text) => {
+    if (config.mouse.copyOnSelect) copyText("selection", text);
+  },
 });
 
 // Drive one mounted pair into the chat pane: open and resync, then react to each "session" event.
@@ -499,7 +565,13 @@ events.on("conn", (ev) => {
   }
 });
 
-const sidebar = new SessionList({ onOpen: (connKey, id) => chatSession.open(connKey, id) });
+// A click opens the pair and moves the focus to the composer. Enter keeps the focus on the list.
+const sidebar = new SessionList({
+  onOpen: (connKey, id, src) => {
+    chatSession.open(connKey, id);
+    if (src === "mouse") root.focusView(chat);
+  },
+});
 
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
@@ -628,6 +700,54 @@ function openSessionFinder() {
       chatSession.open(r.connKey, r.id);
     },
   });
+}
+
+// Pick any message in the transcript and copy its source text.
+function openMessagePicker() {
+  const items = chat.transcript.messages().map((m, i) => ({ m, i, text: chat.transcript.textFor(m) }));
+  if (items.length === 0) {
+    notice.show("nothing to copy");
+    return null;
+  }
+  return ui.pick({
+    title: "copy a message",
+    footer: "type to filter · ↵ copy · esc close",
+    border: "rounded",
+    width: 0.6,
+    height: 0.5,
+    items: items.reverse(),
+    key: (r) => r.m.id,
+    filterText: (r) => r.text,
+    format: (r) => ({ text: firstLine(r.text) || "(empty)", right: r.m.type }),
+    onAccept: (r) => copyText(r.m.type + " message", r.text),
+  });
+}
+
+// Pick any fenced code block in the transcript and copy its body.
+function openCodePicker() {
+  const blocks = chat.transcript.codeBlocks();
+  if (blocks.length === 0) {
+    notice.show("no code block");
+    return null;
+  }
+  return ui.pick({
+    title: "copy a code block",
+    footer: "type to filter · ↵ copy · esc close",
+    border: "rounded",
+    width: 0.6,
+    height: 0.5,
+    items: blocks.map((b, i) => ({ ...b, i })),
+    key: (b) => b.i,
+    filterText: (b) => b.lang + " " + b.text,
+    format: (b) => ({ text: firstLine(b.text) || "(empty)", right: b.lang }),
+    onAccept: (b) => copyText(b.lang ? b.lang + " block" : "code block", b.text),
+  });
+}
+
+// The first line of `s`, for a one-row picker label.
+function firstLine(s) {
+  const i = s.indexOf("\n");
+  return (i < 0 ? s : s.slice(0, i)).trim();
 }
 
 // --- command line -------------------------------------------------------------------------
@@ -878,6 +998,9 @@ plugins.use({
       "window:split-down": () => root.split("col", new MainPane()),
       "window:close": () => root.close(),
       "ui:cmdline": () => openCommandLine(),
+      "copy:reply": () => copyText("reply", chat.transcript.textFor(chat.transcript.last("assistant"))),
+      "copy:message": () => openMessagePicker(),
+      "copy:code": () => openCodePicker(),
       "vim:toggle": () => (plugins.get("vim") ? plugins.dispose("vim") : plugins.use(vim)),
     });
 

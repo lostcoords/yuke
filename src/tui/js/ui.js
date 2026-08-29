@@ -1,7 +1,7 @@
 // yuke:ui — the widget kit over yuke:core. List/Pager/Window are classes to subclass or patch.
 // `ui` exports the pickers. Editor policy lives in yuke:core; presentation lives here.
 import { term } from "yuke:term";
-import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style } from "yuke:core";
+import { text, fill, clip, wrap, root, strokeOf, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, style, config, isWheel } from "yuke:core";
 import { Document } from "yuke:md";
 
 // The kit adds its highlight groups to the core palette. It adds only a group that is absent, so a
@@ -24,6 +24,7 @@ const UI_GROUPS = {
   TxUserMarker: { reverse: true, bold: true },
   // A failed turn shows its error in the danger color.
   TxError: { fg: "danger", bold: true },
+  TxSelect: { reverse: true },
 };
 let seededGroups = false;
 for (const name in UI_GROUPS) {
@@ -97,6 +98,7 @@ export class List {
     this.dimSelGroup = opts.dimSelGroup || "UIDimSel";
 
     this.drawCursor = opts.drawCursor !== false; // an unfocused list can hide its cursor
+    this._rect = null; // the last drawn rect, for the click hit test
     this.selectedKey = null;
     this.scroll = 0; // first visible item index
     this._page = PAGE_FALLBACK; // last visible item count, for page moves
@@ -205,11 +207,44 @@ export class List {
     return false;
   }
 
+  // Forget the drawn rect. A container calls this when it draws something else in the same space,
+  // so a click cannot hit a row that left the screen.
+  clearRect() {
+    this._rect = null;
+  }
+
+  // A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
+  // A left press selects the row under the pointer.
+  onMouse(ev) {
+    const r = this._rect;
+    if (!r || ev.event !== "press") return false;
+    if (isWheel(ev.button)) {
+      // `scrollLines` counts screen lines, so a tall row moves fewer items per step.
+      const step = Math.max(1, Math.round(config.mouse.scrollLines / this.itemHeight));
+      const n = step * (ev.count || 1);
+      if (ev.button === "wheel_up") this.move(-n);
+      else if (ev.button === "wheel_down") this.move(n);
+      else return false;
+      return true;
+    }
+    if (ev.button !== "left") return false;
+    if (ev.col < r.x || ev.col >= r.x + r.w || ev.row < r.y || ev.row >= r.y + r.h) return false;
+    // `draw` paints `_visible(h)` rows, so a short pane leaves the last row of the rect empty.
+    const off = Math.floor((ev.row - r.y) / this.itemHeight);
+    if (off >= this._visible(r.h)) return false;
+    const i = this.scroll + off;
+    if (i < 0 || i >= this.items.length || !this.isSelectable(this.items[i])) return false;
+    this.selectedKey = this.key(this.items[i]);
+    if (this.onMove) this.onMove(this.items[i], i);
+    return true;
+  }
+
   // Paint into rect { x, y, w, h }. A selected item fills all its rows; each item draws up to
   // `itemHeight` lines. Every row repaints each frame, so `format` may be dynamic.
   draw(rect) {
     const { x, y, w, h } = rect;
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) return this.clearRect();
+    this._rect = rect;
     const vis = this._visible(h);
     this._page = vis;
     this._scrollToVisible(vis);
@@ -273,7 +308,24 @@ export class Pager {
     this.stuck = true;
     this._h = 0;
     this._w = 0;
+    this._rect = null; // the last drawn rect, for the mouse hit test
     this._gPending = false;
+  }
+
+  rect() {
+    return this._rect;
+  }
+
+  clearRect() {
+    this._rect = null;
+  }
+
+  // The source row index under screen row `y`. Return -1 outside the drawn rows.
+  rowAtY(y) {
+    const r = this._rect;
+    if (!r || y < r.y || y >= r.y + r.h) return -1;
+    const i = this.scroll + (y - r.y);
+    return i < this._total() ? i : -1;
   }
 
   _total() {
@@ -323,6 +375,7 @@ export class Pager {
     const { x, y, w, h } = rect;
     this._h = h;
     this._w = w;
+    this._rect = rect;
     this._clamp();
 
     const rows = this.source.rows(w, this.scroll, h);
@@ -333,8 +386,9 @@ export class Pager {
       if (r.bg) fill(x, sy, w, 1, r.bg);
       if (r.marker) text(x, sy, r.marker, r.markerGroup);
       const ind = r.indent || 0;
-      if (r.segments) drawSegments(x + ind, sy, Math.max(0, w - ind), r.segments);
-      else if (r.text) text(x + ind, sy, clip(r.text, Math.max(0, w - ind)), r.group);
+      let segs = rowSegments(r);
+      if (segs && r.sel) segs = markSelection(segs, r.sel.from, r.sel.to, r.selGroup || "TxSelect");
+      if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs);
     }
   }
 
@@ -366,18 +420,85 @@ export class Pager {
     }
     return false;
   }
+
+  // The wheel scrolls by `config.mouse.scrollLines`. The protocol has no pixel wheel, so the step
+  // is a line count. `ev.count` holds the steps the owner folded into this event.
+  onMouse(ev) {
+    if (!isWheel(ev.button) || ev.event !== "press") return false;
+    const n = config.mouse.scrollLines * (ev.count || 1);
+    if (ev.button === "wheel_up") this.scrollBy(-n);
+    else if (ev.button === "wheel_down") this.scrollBy(n);
+    else return false;
+    return true;
+  }
 }
 
-// Draw styled segments left to right, each clipped to the space that remains.
-function drawSegments(x, sy, w, segments) {
-  let cx = x;
+// A row holds either `segments` or a plain `text`. Fold both into one segment list.
+function rowSegments(r) {
+  if (r.segments) return r.segments;
+  return r.text ? [{ text: r.text, group: r.group }] : null;
+}
+
+// The plain text of a row, without the indent. A selection indexes into this string.
+export function rowText(r) {
+  if (r.segments) {
+    let out = "";
+    for (const seg of r.segments) out += seg.text;
+    return out;
+  }
+  return r.text || "";
+}
+
+// Repaint the string range [from, to) of `segments` with `group`. The bounds come from
+// `caretAtCol`, so they always land on a grapheme edge.
+function markSelection(segments, from, to, group) {
+  if (to <= from) return segments;
+  const out = [];
+  let at = 0;
   for (const seg of segments) {
-    const avail = w - (cx - x);
+    const end = at + seg.text.length;
+    const a = Math.max(from, at);
+    const b = Math.min(to, end);
+    if (b <= a) {
+      out.push(seg);
+    } else {
+      if (a > at) out.push({ ...seg, text: seg.text.slice(0, a - at) });
+      out.push({ ...seg, text: seg.text.slice(a - at, b - at), group });
+      if (b < end) out.push({ ...seg, text: seg.text.slice(b - at) });
+    }
+    at = end;
+  }
+  return out;
+}
+
+// Draw styled segments left to right. The row clips as one string, so a split run never repeats
+// the ellipsis and a selection does not move where the row cuts.
+function drawSegments(x, sy, w, segments) {
+  if (w <= 0) return;
+  let total = 0;
+  for (const seg of segments) total += term.measure(seg.text);
+
+  let cx = x;
+  if (total <= w) {
+    for (const seg of segments) {
+      if (seg.text) text(cx, sy, seg.text, seg.group);
+      cx += term.measure(seg.text);
+    }
+    return;
+  }
+
+  // The last cell holds the ellipsis, and it takes the group of the run it cuts.
+  const room = w - 1;
+  let cutGroup;
+  for (const seg of segments) {
+    const avail = room - (cx - x);
     if (avail <= 0) break;
-    const t = clip(seg.text, avail);
+    const t = clip(seg.text, avail, false);
     if (t) text(cx, sy, t, seg.group);
     cx += term.measure(t);
+    cutGroup = seg.group;
   }
+  text(x + room, sy, "…", cutGroup);
 }
 
 // A fixed-array row source (width-independent), for the pickers and tests.
@@ -430,6 +551,22 @@ export class Transcript {
     this._width = -1;
     this._rows = new Map(); // id -> { w, rows }
     this._docs = new Map(); // id -> md Document, for the assistant block cache
+    // A selection holds two logical positions, `{ id, row, col }`. `row` counts the rendered rows
+    // of that message and `col` is a string index into the row text.
+    this.selection = null;
+    this._dragging = false;
+    this.onSelect = opts.onSelect || null;
+  }
+
+  clearSelection() {
+    this.selection = null;
+    this._dragging = false;
+  }
+
+  // The pane draws something else in this space, so a click must not hit a row that left it.
+  hide() {
+    this.pager.clearRect();
+    this.clearSelection();
   }
 
   // Replace the outline. Rare (commit/resync/truncate); a re-commit can change content under a
@@ -439,18 +576,25 @@ export class Transcript {
     this._active = active || null;
     this._rows.clear();
     this._docs.clear();
+    this.clearSelection();
   }
 
   // A streaming delta on draft `id`: adopt it if new, and drop its cached rows so it re-renders.
   setActive(id) {
+    // The draft rewraps as tokens arrive, so a position inside it no longer means the same text.
+    const sel = this.selection;
+    if (sel && (sel.anchor.id === id || sel.cursor.id === id)) this.clearSelection();
     if (!this._active || this._active.id !== id) this._active = { id, type: "assistant" };
     this._rows.delete(id);
   }
 
+  // A width change rewraps every row, so the row index of a position no longer means the same
+  // text. The selection drops instead of pointing somewhere else.
   _invalidate(width) {
     if (width === this._width) return;
     this._width = width;
     this._rows.clear();
+    this.clearSelection();
   }
 
   _rowsOf(m, width) {
@@ -481,6 +625,59 @@ export class Transcript {
     return i < this._messages.length ? this._messages[i] : i === this._messages.length ? this._active : null;
   }
 
+  // The message order index of `id`, or -1. A position outside the outline has no selection.
+  _indexOf(id) {
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) return -1;
+      if (m.id === id) return i;
+    }
+  }
+
+  // Order the two ends and resolve them to message indexes. Return null without a live selection.
+  _range() {
+    const sel = this.selection;
+    if (!sel || !sel.anchor || !sel.cursor) return null;
+    const a = sel.anchor;
+    const b = sel.cursor;
+    const ia = this._indexOf(a.id);
+    const ib = this._indexOf(b.id);
+    if (ia < 0 || ib < 0) return null;
+    const ordered = ia < ib || (ia === ib && (a.row < b.row || (a.row === b.row && a.col <= b.col)));
+    return ordered ? { start: a, end: b, si: ia, ei: ib } : { start: b, end: a, si: ib, ei: ia };
+  }
+
+  // Return a row range for the rows inside the selection. Keep an empty row in the middle, so a
+  // blank line survives the copy, but drop an empty end row.
+  _rowRange(range, i, k, len) {
+    if (i < range.si || i > range.ei) return null;
+    if (i === range.si && k < range.start.row) return null;
+    if (i === range.ei && k > range.end.row) return null;
+    const last = i === range.ei && k === range.end.row;
+    if (last && range.end.col === 0 && !(i === range.si && k === range.start.row)) return null;
+    const from = i === range.si && k === range.start.row ? range.start.col : 0;
+    const to = last ? range.end.col : len;
+    return to < from ? null : { from, to };
+  }
+
+  // The selected text, with one line feed between rows. The indent stays out of the copy.
+  selectedText() {
+    const range = this._range();
+    if (!range || this._width <= 0) return "";
+    const out = [];
+    for (let i = range.si; i <= range.ei; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      const rows = this._rowsOf(m, this._width);
+      for (let k = 0; k < rows.length; k++) {
+        const body = rowText(rows[k]);
+        const r = this._rowRange(range, i, k, body.length);
+        if (r) out.push(body.slice(r.from, r.to));
+      }
+    }
+    return out.join("\n");
+  }
+
   rowCount(width) {
     if (width <= 0) return 0;
     this._invalidate(width);
@@ -496,6 +693,7 @@ export class Transcript {
   rows(width, top, height) {
     if (width <= 0 || height <= 0) return [];
     this._invalidate(width);
+    const range = this._range();
     const out = [];
     let base = 0;
     for (let i = 0; ; i++) {
@@ -504,10 +702,52 @@ export class Transcript {
       const rows = this._rowsOf(m, width);
       for (let k = 0; k < rows.length; k++) {
         const abs = base + k;
-        if (abs >= top && abs < top + height) out.push(rows[k]);
+        if (abs < top || abs >= top + height) continue;
+        // The row objects are cached, so a selection goes onto a copy.
+        const r = range && this._rowRange(range, i, k, rowText(rows[k]).length);
+        // An empty range paints nothing, so only a real span goes onto the row copy.
+        out.push(r && r.to > r.from ? { ...rows[k], sel: r } : rows[k]);
       }
       base += rows.length;
       if (base >= top + height) break;
+    }
+    return out;
+  }
+
+  // The committed messages, oldest first, then the streaming draft. Each one is a copy, so a
+  // caller cannot change the transcript through it.
+  messages() {
+    const out = this._messages.map((m) => ({ ...m }));
+    if (this._active) out.push({ ...this._active });
+    return out;
+  }
+
+  // The newest message of `type`, or the newest of any type without one. Return null when empty.
+  last(type) {
+    const all = this.messages();
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (!type || all[i].type === type) return all[i];
+    }
+    return null;
+  }
+
+  textFor(m) {
+    return m ? this.textOf(m.id) : "";
+  }
+
+  // Return the fenced block bodies of every message, oldest first. A user turn can also hold a
+  // fence, so no turn type is skipped.
+  codeBlocks() {
+    const out = [];
+    for (const m of this.messages()) {
+      let doc = this._docs.get(m.id);
+      if (!doc) {
+        doc = new Document();
+        this._docs.set(m.id, doc);
+      }
+      // A changed source makes the cached rows stale, because this call is outside a draw.
+      if (doc.setText(this.textOf(m.id))) this._rows.delete(m.id);
+      for (const b of doc.codeBlocks()) out.push({ id: m.id, lang: b.lang, text: b.text });
     }
     return out;
   }
@@ -518,6 +758,57 @@ export class Transcript {
 
   onKey(ev) {
     return this.pager.onKey(ev);
+  }
+
+  // The logical position under the pointer, or null off the drawn rows. `clamp` pulls a pointer
+  // outside the pane back to the nearest row, so a drag keeps up with it.
+  _posAt(ev, clamp) {
+    const rect = this.pager.rect();
+    if (!rect) return null;
+    const y = clamp ? Math.min(Math.max(ev.row, rect.y), rect.y + rect.h - 1) : ev.row;
+    const g = this.pager.rowAtY(y);
+    if (g < 0) return null;
+    let base = 0;
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) return null;
+      const rows = this._rowsOf(m, this._width);
+      if (g < base + rows.length) {
+        const row = rows[g - base];
+        const body = rowText(row);
+        const x = Math.max(0, ev.col - rect.x - (row.indent || 0));
+        return { id: m.id, row: g - base, col: caretAtCol(body, { start: 0, end: body.length }, x) };
+      }
+      base += rows.length;
+    }
+  }
+
+  // A left drag selects text. The wheel still scrolls, and a bare click drops the old selection.
+  // Only a press starts a gesture, so a stray drag or release never revives an old selection.
+  onMouse(ev) {
+    if (isWheel(ev.button)) return this.pager.onMouse(ev);
+    if (ev.button !== "left") return false;
+    if (ev.event === "press") {
+      const pos = this._posAt(ev, false);
+      this.selection = pos ? { anchor: pos, cursor: pos } : null;
+      this._dragging = pos != null;
+      return true;
+    }
+    if (!this._dragging) return false;
+    if (ev.event === "drag") {
+      // A drag past the edge clamps, so the selection follows the pointer out of the pane.
+      const pos = this._posAt(ev, true);
+      if (this.selection && pos) this.selection.cursor = pos;
+      return true;
+    }
+    if (ev.event === "release") {
+      this._dragging = false;
+      const text = this.selectedText();
+      if (text === "") this.clearSelection();
+      else if (this.onSelect) this.onSelect(text);
+      return true;
+    }
+    return false;
   }
 }
 
@@ -983,6 +1274,10 @@ export class PickerContent {
     this.list.draw(win.inner);
   }
 
+  onMouse(ev) {
+    return this.list.onMouse(ev);
+  }
+
   needsTick() {
     return this.opts.needsTick || null;
   }
@@ -1227,11 +1522,19 @@ export class Picker {
 
   draw(win) {
     const { x, y, w, h } = win.inner;
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) {
+      this.list.clearRect();
+      return;
+    }
     text(x, y, clip(PICKER_PROMPT, w), "UIPrompt");
     const pw = term.measure(PICKER_PROMPT);
     if (pw < w) text(x + pw, y, clip(this.query, w - pw), "UIQuery");
     if (h > 1) this.list.draw({ x, y: y + 1, w, h: h - 1 });
+    else this.list.clearRect();
+  }
+
+  onMouse(ev) {
+    return this.list.onMouse(ev);
   }
 
   cursor(win) {
