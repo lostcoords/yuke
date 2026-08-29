@@ -59,7 +59,8 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
     var tick_wake: zio.ResetEvent = .init;
     host.paint.tick_wake = &tick_wake;
 
-    var input: term_pkg.Input = .{};
+    var input: term_pkg.Input = .{ .gpa = gpa };
+    defer input.deinit();
     var slot: [1]Msg = undefined;
     var ch = Channel.init(&slot);
     host.client.bind(&ch);
@@ -74,7 +75,7 @@ fn runIo(gpa: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, opts
         ch.close(.immediate);
     }
 
-    try group.spawn(inputTask, .{ &tty, &input, &ch });
+    try group.spawn(inputTask, .{ gpa, &tty, &input, &ch });
     try group.spawn(tickTask, .{ host, &ch });
     if (!term_pkg.resize_in_band) {
         try group.spawn(winchTask, .{ &tty, &ch });
@@ -160,6 +161,10 @@ pub fn serve(host: *Host, ch: *Channel) !void {
         switch (msg) {
             .tick => try absorbScriptFault(host, tui_loop.stepTick(host)),
             .event => |*e| try absorbScriptFault(host, tui_loop.step(host, e.event())),
+            .paste => |text| {
+                defer msg.deinit(host.gpa);
+                try absorbScriptFault(host, tui_loop.stepPaste(host, text));
+            },
             .daemon => |*d| {
                 defer msg.deinit(host.gpa);
                 try absorbScriptFault(host, host.client.onDaemon(host, d));
@@ -206,9 +211,9 @@ fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!vo
     };
 }
 
-/// Read TTY events. Drop the input buffer on overflow.
-/// Close the channel only on EOF or cancellation.
-fn inputTask(tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
+/// Read TTY events. Reset the input after a decode error.
+/// Close the channel only on EOF or cancellation. The owner frees the paste text.
+fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
     while (true) {
         const ev = input.readEvent(tty) catch |err| switch (err) {
             error.EndOfStream, error.Canceled => {
@@ -216,12 +221,16 @@ fn inputTask(tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
                 return;
             },
             else => {
-                input.len = 0;
+                input.reset();
                 continue;
             },
         };
         switch (ev) {
             .key_press, .key_release, .winsize => ch.send(Msg.from(ev)) catch return,
+            .paste => |text| ch.send(Msg.from(ev)) catch {
+                gpa.free(text);
+                return;
+            },
             else => {},
         }
     }

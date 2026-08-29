@@ -8,19 +8,25 @@ const Event = term_pkg.Event;
 
 pub const Channel = zio.Channel(Msg);
 
-/// One owner message: a parser event with owned key text, a synthetic tick, or a daemon frame.
+/// One owner message: a parser event with owned key text, owned paste text, a synthetic tick, or a
+/// daemon frame.
 pub const Msg = union(enum) {
     event: EventBuf,
+    paste: []const u8,
     tick,
     daemon: Daemon,
 
     pub fn from(ev: Event) Msg {
-        return .{ .event = EventBuf.from(ev) };
+        return switch (ev) {
+            .paste => |text| .{ .paste = text },
+            else => .{ .event = EventBuf.from(ev) },
+        };
     }
 
-    /// Free an owned daemon payload. Every other variant owns nothing.
+    /// Free an owned paste or daemon payload. Every other variant owns nothing.
     pub fn deinit(self: *Msg, gpa: std.mem.Allocator) void {
         switch (self.*) {
+            .paste => |text| gpa.free(text),
             .daemon => |*d| d.deinit(gpa),
             else => {},
         }
@@ -77,6 +83,14 @@ pub const EventBuf = struct {
         return ev;
     }
 };
+
+test "a paste message owns its text" {
+    const gpa = std.testing.allocator;
+    const text = try gpa.dupe(u8, "pasted");
+    var msg = Msg.from(.{ .paste = text });
+    defer msg.deinit(gpa);
+    try std.testing.expectEqualStrings("pasted", msg.paste);
+}
 
 test "queued key text survives a later parse" {
     var input: term_pkg.Input = .{};

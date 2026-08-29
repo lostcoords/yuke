@@ -30,6 +30,14 @@ pub fn step(host: *Host, ev: Event) Error!void {
     }
 }
 
+/// Dispatch a paste. The event is a key with the code `paste`, so a text input inserts `text`
+/// with one edit.
+pub fn stepPaste(host: *Host, text: []const u8) Error!void {
+    std.debug.assert(host.phase == .open);
+    const obj = try pasteObject(host.ctx, text);
+    _ = try dispatch(host, obj);
+}
+
 /// Dispatch a `tick` event on the reactor owner.
 pub fn stepTick(host: *Host) Error!void {
     std.debug.assert(host.phase == .open);
@@ -117,6 +125,21 @@ fn keyObject(ctx: Context, key: Key, kind: KeyKind) Error!Value {
     put(ctx, obj, "text", ctx.newString(key.text orelse ""));
     // Drop `caps_lock` and `num_lock`. A lock state must not change the binding that matches.
     put(ctx, obj, "mods", ctx.newInt32(bits & 0x3f));
+    if (ctx.hasException()) return error.JavaScriptFault;
+    return obj;
+}
+
+fn pasteObject(ctx: Context, text: []const u8) Error!Value {
+    const obj = try objectType(ctx, "key");
+    errdefer ctx.freeValue(obj);
+
+    put(ctx, obj, "code", ctx.newString("paste"));
+    put(ctx, obj, "event", ctx.newString("press"));
+    put(ctx, obj, "char", ctx.newString(""));
+    put(ctx, obj, "shifted", ctx.newString(""));
+    put(ctx, obj, "baseLayout", ctx.newString(""));
+    put(ctx, obj, "text", ctx.newString(text));
+    put(ctx, obj, "mods", ctx.newInt32(0));
     if (ctx.hasException()) return error.JavaScriptFault;
     return obj;
 }
@@ -209,6 +232,36 @@ test "a parser key paints and a missing endFrame still commits" {
     try step(host, ev);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.code === 'char' && globalThis.ch === 'a' ? 1 : 0"));
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "a") != null);
+}
+
+test "a paste arrives as one key event with the whole text" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.onEvent = (ev) => { globalThis.ev = ev; };", "onEvent.js");
+
+    const text = "line one\nline two";
+    try stepPaste(host, text);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.code === 'paste' ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ev.event === 'press' ? 1 : 0"));
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.ev.mods"));
+    try std.testing.expectEqual(@as(i32, @intCast(text.len)), try host.evalInt("globalThis.ev.text.length"));
+}
+
+test "a large paste reaches JavaScript in one event" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.eval("globalThis.n = 0; globalThis.onEvent = (ev) => { globalThis.n++; globalThis.len = ev.text.length; };", "onEvent.js");
+
+    const text = try gpa.allocator().alloc(u8, 100 * 1024);
+    defer gpa.allocator().free(text);
+    @memset(text, 'x');
+    try stepPaste(host, text);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.n"));
+    try std.testing.expectEqual(@as(i32, 100 * 1024), try host.evalInt("globalThis.len"));
 }
 
 test "onEvent throw is a JavaScriptFault" {
