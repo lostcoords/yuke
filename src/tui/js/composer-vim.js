@@ -21,8 +21,9 @@ const pending = new WeakMap();
 
 // The logical line under the caret. A wrapped row is not a line, as in vim.
 function lineAt(text, caret) {
-  const start = text.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
-  const end = text.indexOf("\n", caret);
+  const at = caret > 0 && caret === text.length && text[caret - 1] === "\n" ? caret - 1 : caret;
+  const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
+  const end = text.indexOf("\n", at);
   return { start, end: end < 0 ? text.length : end };
 }
 
@@ -72,6 +73,13 @@ function setAllModes(mode) {
 }
 
 // Move the caret and report that the key was used.
+function holdColumn(c) {
+  const goal = c.goalCol;
+  c.input.caret = clamp(c.input.text, c.input.caret);
+  c.goalCol = goal;
+  return true;
+}
+
 function to(c, caret) {
   c.input.caret = Math.max(0, Math.min(caret, c.input.text.length));
   c.goalCol = null;
@@ -81,6 +89,7 @@ function to(c, caret) {
 // Delete [from, to) and keep the caret on a character. `stored` is what the register keeps, which
 // is the line body for a linewise cut, never its separator.
 function cut(c, from, to, linewise, stored) {
+  if (to <= from && stored == null) return true;
   register.set(stored == null ? c.input.text.slice(from, to) : stored, linewise);
   c.input.replace(from, to, "");
   c.input.caret = clamp(c.input.text, from);
@@ -90,7 +99,7 @@ function cut(c, from, to, linewise, stored) {
 // Put the register after the caret, or on its own line when the yank took whole lines.
 function put(c, after) {
   const t = c.input;
-  if (!register.text) return true;
+  if (!register.text && !register.linewise) return true;
   if (register.linewise) {
     const { start, end } = lineAt(t.text, t.caret);
     const at = after ? end : start;
@@ -141,10 +150,10 @@ function normalKey(c, k) {
       return to(c, clamp(text, nextGrapheme(text, t.caret)));
     case "j":
     case "down":
-      return c.moveRow(1);
+      return c.moveRow(1) && holdColumn(c);
     case "k":
     case "up":
-      return c.moveRow(-1);
+      return c.moveRow(-1) && holdColumn(c);
     case "0":
       return to(c, start);
     case "^":
@@ -179,7 +188,7 @@ function normalKey(c, k) {
       t.replace(start, start, "\n");
       return enter(c, start);
     case "x":
-      return cut(c, t.caret, nextGrapheme(text, t.caret), false);
+      return cut(c, t.caret, Math.min(nextGrapheme(text, t.caret), end), false);
     case "s":
       register.set(text.slice(t.caret, nextGrapheme(text, t.caret)), false);
       t.replace(t.caret, nextGrapheme(text, t.caret), "");
@@ -194,6 +203,10 @@ function normalKey(c, k) {
       return put(c, true);
     case "P":
       return put(c, false);
+    // A chat composer sends from either mode, so normal mode keeps enter as submit.
+    case "enter":
+      c.submit();
+      return true;
     case ":":
       command.perform("ui:cmdline");
       return true;
@@ -256,9 +269,14 @@ export const composerVim = {
     });
 
     setAllModes("normal"); // a vim user starts in normal mode
+    // A pane that does not hold the focus must not keep a pending key across a reload.
     return () => {
-      const c = chatComposer();
-      if (c) pending.delete(c);
+      const rn = root.root_node;
+      if (rn) {
+        for (const leaf of rn.leaves()) {
+          if (leaf.view && leaf.view.name === "chat" && leaf.view.composer) pending.delete(leaf.view.composer);
+        }
+      }
       setAllModes("insert");
     };
   },

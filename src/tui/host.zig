@@ -1604,6 +1604,24 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\press("p");
         \\check("put-line", t.text === "one\ntwo");
         \\
+        \\// Normal mode holds the caret on a character after every motion.
+        \\v.composer.rect = { x: 0, y: 0, w: 40, h: 3 };
+        \\t.setText("abcdef\ntwo");
+        \\v.composer.mode = "normal";
+        \\press("gg$j");
+        \\check("row-clamp", t.caret === t.text.length - 1);
+        \\t.setText("one\n");
+        \\v.composer.mode = "normal";
+        \\press("G");
+        \\check("trailing-newline", t.caret === 2);
+        \\
+        \\// "x" never joins two lines, and a blank line keeps the register.
+        \\t.setText("a\n\nb");
+        \\v.composer.mode = "normal";
+        \\press("gg");
+        \\press("jx");
+        \\check("x-blank-line", t.text === "a\n\nb");
+        \\
         \\// A bare letter never reaches the keymap, so no stray key runs a command.
         \\check("swallow", v.composer.onKey(key("z")) === true);
         \\check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 }) === false);
