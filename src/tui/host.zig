@@ -1532,6 +1532,16 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
         \\t.ensureVisible(last);
         \\check("visible-after", t.screenAt(last) !== null);
         \\
+        \\// A source offset inside a grapheme snaps to its edge.
+        \\{
+        \\  const em = new Transcript({ textOf: () => "a😀b" });
+        \\  em.setOutline([{ id: "e1", type: "assistant" }], null);
+        \\  em.rows(20, 0, 4);
+        \\  const p1 = em.posAtSource("e1", 2);
+        \\  const line = em.rowTextAt("e1", 0);
+        \\  check("grapheme-snap", p1 && (p1.col === line.indexOf("😀") || p1.col === line.indexOf("😀") + 2));
+        \\}
+        \\
         \\// The blocks carry their source span, so a caller can move by markdown structure.
         \\const doc = new Document();
         \\doc.setText("# H\n\npara\n\n```\nx\n```");

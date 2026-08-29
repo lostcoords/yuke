@@ -767,7 +767,8 @@ export class Transcript {
             // A caret at the end of the source before a gap belongs to that end, not past it.
             if (offset === tailOff) return tail;
             const col = offset > seg.src && isLinear(seg) ? at + (offset - seg.src) : at;
-            return { id, row: k, col: Math.min(col, end) };
+            const body = rowText(rows[k]);
+            return { id, row: k, col: caretAtCol(body, { start: 0, end: body.length }, term.measure(body.slice(0, Math.min(col, end)))) };
           }
           tail = { id, row: k, col: end };
           tailOff = seg.srcEnd;
@@ -782,12 +783,13 @@ export class Transcript {
   screenAt(pos) {
     const rect = this.pager.rect();
     const g = this._globalRow(pos);
-    if (!rect || g < 0) return null;
+    if (!rect || rect.w <= 0 || rect.h <= 0 || g < 0) return null;
     const y = rect.y + (g - this.pager.scroll);
     if (y < rect.y || y >= rect.y + rect.h) return null;
     const row = this._rowsFor(pos.id)[pos.row];
     const body = rowText(row);
-    return { x: rect.x + (row.indent || 0) + term.measure(body.slice(0, pos.col)), y };
+    const x = rect.x + (row.indent || 0) + term.measure(body.slice(0, pos.col));
+    return x >= rect.x + rect.w ? null : { x, y };
   }
 
   // Scroll the least amount that brings `pos` onto the screen.
@@ -1030,6 +1032,8 @@ export class Transcript {
     if (isWheel(ev.button)) return this.pager.onMouse(ev);
     if (ev.button !== "left") return false;
     if (ev.event === "press") {
+      const r = this.pager.rect();
+      if (!r || ev.col < r.x || ev.col >= r.x + r.w) return false;
       const pos = this.posAt(ev.col, ev.row, false);
       this.selection = pos ? { anchor: pos, cursor: pos } : null;
       this._dragging = pos != null;
