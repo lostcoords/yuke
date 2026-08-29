@@ -77,6 +77,7 @@ fn bindAll(ctx: Context, host: *Host, term_obj: Value) c_int {
     bind(ctx, term_obj, "quit", 0, quit) catch return -1;
     bind(ctx, term_obj, "keyMatches", 3, keyMatches) catch return -1;
     ctx.setPropertyStr(term_obj, "clipboardMax", ctx.newInt32(clipboard_max)) catch return -1;
+    ctx.setPropertyStr(term_obj, "cwd", ctx.newString(host.cwd)) catch return -1;
     ctx.setPropertyStr(term_obj, "width", ctx.newInt32(host.paint.width)) catch return -1;
     ctx.setPropertyStr(term_obj, "height", ctx.newInt32(host.paint.height)) catch return -1;
     return 0;
