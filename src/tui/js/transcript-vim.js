@@ -4,14 +4,17 @@ import { term } from "yuke:term";
 import { root, command, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView, rowText } from "yuke:ui";
 
-// Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map.
+// Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map, and
+// `touched` lets an unload clear every pane this load reached.
 const panes = new WeakMap();
+const touched = [];
 
 function stateOf(view) {
   let s = panes.get(view);
   if (!s) {
     s = { on: false, cursor: null, anchor: null, visual: false, goal: null, gPending: false, yPending: false };
     panes.set(view, s);
+    touched.push(view);
   }
   return s;
 }
@@ -126,7 +129,8 @@ function blockStep(t, s, d) {
   if (i < 0) return false;
 
   let blocks = t.blocksOf(ids[i]);
-  const here = t.sourceAt(s.cursor);
+  let here = t.sourceAt(s.cursor);
+  for (let r = s.cursor.row - 1; here < 0 && r >= 0; r--) here = t.sourceAt({ ...s.cursor, row: r });
   let k = -1;
   for (let n = 0; n < blocks.length; n++) if (here >= blocks[n].at) k = n;
   k += d;
@@ -200,6 +204,7 @@ function move(t, s, k) {
 
 // Grow the selection to whole rows, which is what a linewise yank takes.
 function expandLines(t, s) {
+  if (!s.cursor || !s.anchor) return;
   const after = cmp(t, s.cursor, s.anchor) >= 0;
   const lo = after ? s.anchor : s.cursor;
   const hi = after ? s.cursor : s.anchor;
@@ -209,6 +214,7 @@ function expandLines(t, s) {
 // Copy through the core command, so the mouse and the keyboard take one path to the clipboard.
 // Without a selection the row under the cursor is the target, which is what `yy` means.
 function yank(t, s, name, linewise) {
+  if (!s.cursor) return;
   if (!s.visual) {
     const body = rowOf(t, s.cursor);
     t.selection = { anchor: { ...s.cursor, col: 0 }, cursor: { ...s.cursor, col: body.length } };
@@ -341,13 +347,19 @@ export const transcriptVim = {
       s.on = true;
       s.cursor = pos;
       s.goal = null;
+      s.visual = false;
+      s.anchor = null;
+      s.gPending = false;
+      s.yPending = false;
       return true;
     });
 
-    // A pane keeps its cursor, but the focus must not survive an unload.
+    // No focus, selection, or pending key survives an unload.
     return () => {
-      const v = chatPane();
-      if (v && panes.has(v)) panes.get(v).on = false;
+      for (const view of touched.splice(0)) {
+        panes.delete(view);
+        view.transcript.clearSelection();
+      }
       root.invalidate();
     };
   },

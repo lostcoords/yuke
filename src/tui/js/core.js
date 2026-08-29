@@ -491,7 +491,11 @@ export const register = {
 export function modalKey(ev) {
   const m = ev.mods | 0;
   if (ev.code === "char" && ev.char && (m & (MOD_CTRL | MOD_ALT | MOD_SUPER)) === 0) {
-    if (ev.char !== ev.char.toLowerCase() || (m & MOD_SHIFT) !== 0) return ev.char;
+    // The kitty protocol reports the base key and its shifted form apart. A legacy terminal sends
+    // the shifted character itself.
+    if ((m & MOD_SHIFT) !== 0 && ev.shifted) return ev.shifted;
+    if (ev.char !== ev.char.toLowerCase()) return ev.char;
+    if ((m & MOD_SHIFT) !== 0) return ev.char.toUpperCase();
   }
   return strokeOf(ev);
 }

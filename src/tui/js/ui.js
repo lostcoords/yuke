@@ -705,7 +705,8 @@ export class Transcript {
 
   // The source offset under a logical position, or -1 without one.
   sourceAt(pos) {
-    const rows = pos ? this.rowsOf(pos.id) : [];
+    if (!pos || pos.row < 0) return -1;
+    const rows = this.rowsOf(pos.id);
     if (pos.row >= rows.length) return -1;
     return rowSourceAt(rows[pos.row], pos.col);
   }
@@ -1300,8 +1301,6 @@ export const borders = {
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
 
-// A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
-// interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
 // The chat pane: a transcript above a composer in one leaf. setOutline feeds the transcript (text
 // via textOf); the composer calls onSubmit(text); an unconsumed key scrolls the transcript.
 export class ChatView {
@@ -1359,6 +1358,8 @@ export class ChatView {
   }
 }
 
+// A floating, bordered, titled window centers over the screen as an overlay-stack layer. The
+// interior is winText/winFill (clipped); override drawContent(win) or set a `content`.
 export class Window {
   constructor(opts = {}) {
     this.opts = opts;

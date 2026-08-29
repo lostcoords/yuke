@@ -16,7 +16,7 @@ import {
 } from "yuke:core";
 import { Composer } from "yuke:ui";
 
-// A pending first key of a two-key command: "g", "d", or "c".
+// The first key of a two-key command: "g", "d", or "c". No pending key survives an unload.
 const pending = new WeakMap();
 
 // The logical line under the caret. A wrapped row is not a line, as in vim.
@@ -78,9 +78,10 @@ function to(c, caret) {
   return true;
 }
 
-// Delete [from, to) into the register and keep the caret on a character.
-function cut(c, from, to, linewise) {
-  register.set(c.input.text.slice(from, to), linewise);
+// Delete [from, to) and keep the caret on a character. `stored` is what the register keeps, which
+// is the line body for a linewise cut, never its separator.
+function cut(c, from, to, linewise, stored) {
+  register.set(stored == null ? c.input.text.slice(from, to) : stored, linewise);
   c.input.replace(from, to, "");
   c.input.caret = clamp(c.input.text, from);
   return true;
@@ -92,9 +93,8 @@ function put(c, after) {
   if (!register.text) return true;
   if (register.linewise) {
     const { start, end } = lineAt(t.text, t.caret);
-    const body = register.text.replace(/\n$/, "");
     const at = after ? end : start;
-    t.replace(at, at, after ? "\n" + body : body + "\n");
+    t.replace(at, at, after ? "\n" + register.text : register.text + "\n");
     return to(c, at + (after ? 1 : 0));
   }
   const at = after ? Math.min(nextGrapheme(t.text, t.caret), lineAt(t.text, t.caret).end) : t.caret;
@@ -115,8 +115,9 @@ function pair(c, first, k) {
   if (first === "g" && k === "g") return to(c, 0);
   if (first === "d" && k === "d") {
     // A line takes its own newline with it, and the last line takes the one before it.
-    if (end < t.text.length) return cut(c, start, end + 1, true);
-    return cut(c, start > 0 ? start - 1 : 0, end, true);
+    const body = t.text.slice(start, end);
+    if (end < t.text.length) return cut(c, start, end + 1, true, body);
+    return cut(c, start > 0 ? start - 1 : 0, end, true, body);
   }
   if (first === "c" && k === "c") {
     register.set(t.text.slice(start, end), true);
@@ -255,6 +256,10 @@ export const composerVim = {
     });
 
     setAllModes("normal"); // a vim user starts in normal mode
-    return () => setAllModes("insert");
+    return () => {
+      const c = chatComposer();
+      if (c) pending.delete(c);
+      setAllModes("insert");
+    };
   },
 };

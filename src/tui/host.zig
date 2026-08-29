@@ -535,6 +535,7 @@ test "close drains then destroy frees the runtime" {
     defer std.debug.assert(gpa.deinit() == .ok);
 
     const host = try Host.create(gpa.allocator());
+    defer host.destroy();
     host.budget = 0;
     try host.eval("Promise.resolve().then(() => {})", "close.js");
     try std.testing.expect(host.runtime.isJobPending());
@@ -542,7 +543,6 @@ test "close drains then destroy frees the runtime" {
     try host.close();
     try std.testing.expectEqual(Host.Phase.drained, host.phase);
     try std.testing.expect(!host.runtime.isJobPending());
-    host.destroy();
 }
 
 test "drainJobs yields when the budget is hit" {
@@ -1059,7 +1059,7 @@ test "yuke:core config validates and TextInput inserts committed text" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { config, defineConfig, TextInput } from "yuke:core";
+        \\import { config, defineConfig, TextInput, modalKey } from "yuke:core";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
         \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
@@ -1074,6 +1074,15 @@ test "yuke:core config validates and TextInput inserts committed text" {
         \\const before = config.daemon.host;
         \\throws(() => defineConfig({ daemon: { host: "9.9.9.9", retryMs: -1 } }));
         \\check("cfg-atomic", config.daemon.host === before);
+        \\
+        \\// modalKey separates G from g under both keyboard protocols.
+        \\const mk = (o) => modalKey(Object.assign({ type: "key", code: "char", char: "", shifted: "", text: "", mods: 0 }, o));
+        \\check("modal-legacy-shift", mk({ char: "G", mods: 1 }) === "G");
+        \\check("modal-kitty-shift", mk({ char: "g", shifted: "G", mods: 1 }) === "G");
+        \\check("modal-plain", mk({ char: "g" }) === "g");
+        \\check("modal-kitty-colon", mk({ char: ";", shifted: ":", mods: 1 }) === ":");
+        \\check("modal-chord", mk({ char: "d", mods: 4 }) === "ctrl+d");
+        \\check("modal-named", mk({ code: "tab" }) === "tab");
         \\
         \\// TextInput uses committed text before the folded key.
         \\const key = (o) => Object.assign({ type: "key", code: "char", event: "press", char: "", text: "", mods: 0 }, o);
@@ -1611,8 +1620,6 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\const off = plugins.use(transcriptVim);
         \\// The pane takes no cursor until the focus moves, so typing still works.
         \\check("still-composer", v.cursor().y === v.composer.rect.y);
-        \\v.onKey(key("tab"));
-        \\check("tab-consumed-by-keymap", true);
         \\root.onEvent(key("tab"));
         \\const c0 = v.cursor();
         \\check("transcript-caret", c0 && c0.visible && c0.y < v.composer.rect.y);
