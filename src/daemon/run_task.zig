@@ -3,21 +3,19 @@
 const std = @import("std");
 const wire = @import("wire");
 const State = @import("State.zig");
-const connection = @import("connection.zig");
 const session_runtime = @import("session_runtime.zig");
+const session_events = @import("session_events.zig");
 const run = @import("../engine/run.zig");
 const provider = @import("../provider/provider.zig");
 const draft = @import("domain").draft;
 const Session = @import("domain").session.Session;
 const database = @import("../database/database.zig");
 const turn_context = @import("turn_context.zig");
-const provider_view = @import("provider_view.zig");
-const catalog_store = @import("../database/catalog.zig");
+const provider_catalog = @import("provider_catalog.zig");
 const tools = @import("../tools/tool.zig");
 const tool_registry = @import("../tools/registry.zig");
 const retry = @import("../provider/retry.zig");
 const local_host = @import("../tools/local.zig");
-const handlers = @import("handlers.zig");
 
 const ids = wire.ids;
 const message = wire.message;
@@ -123,8 +121,8 @@ fn runSession(state: *State, slot: *RunSlot) void {
             return;
         };
         const live = &rt.session.active.?;
-        publishBestEffort(state, session_id, started_note);
-        announceActivity(state, rt); // `run.started` says a run exists, not what it does.
+        session_events.publishBestEffort(state, session_id, started_note);
+        session_events.announceActivity(state, rt); // `run.started` says a run exists, not what it does.
 
         const terminal = streamRound(state, arena, slot, &streamer, &ctx);
 
@@ -262,7 +260,7 @@ fn publishRetrying(state: *State, slot: *RunSlot, number: u8, err: anyerror, del
     // Announce the whole activity, so the context gauge, the config and the queue stay true.
     // `residentActivity` reads the retry state that this function just set.
     const rt = state.sessions.get(slot.sessionId()) orelse return;
-    announceActivity(state, rt);
+    session_events.announceActivity(state, rt);
 }
 
 /// The outcome of one attempt. A failure carries its error for the classifier.
@@ -332,15 +330,9 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     const transcript = ctx.slice();
     const model = slot.config.model;
 
-    const rows = try provider_view.resolve(arena, .{
-        .local = if (state.providers) |*loaded| loaded else null,
-        .cloud = state.cloud_bundle,
-        .catalog = try catalog_store.providers(&state.db, arena),
-        .env = state.env,
-    });
-    const resolved = provider_view.resolveModel(rows, model);
+    const resolved = state.catalog.resolveModel(model);
     // A daemon with configured providers rejects an unknown model. One with none uses the placeholder transport.
-    if (resolved == null and rows.len != 0) return error.UnknownModel;
+    if (resolved == null and state.catalog.rows.len != 0) return error.UnknownModel;
     const request = if (resolved) |r| try resolvedRequest(arena, slot, transcript, r) else fallback: {
         // The fallback uses the injected or placeholder transport.
         break :fallback provider.transport.Request{ .body = try provider.requestBody(arena, transcript, .anthropic_messages, .{
@@ -367,7 +359,7 @@ fn resolvedRequest(
     arena: std.mem.Allocator,
     slot: *RunSlot,
     transcript: []const wire.message.Message,
-    r: provider_view.Match,
+    r: provider_catalog.Match,
 ) !provider.transport.Request {
     // A provider the merge could not complete has no route, so it cannot serve a turn.
     const route = r.provider.route orelse return error.UnknownModel;
@@ -492,11 +484,11 @@ fn commitRound(
     if (completion == .final) slot.phase = .terminalized;
 
     const rt = state.sessions.get(session_id) orelse unreachable;
-    emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{
+    session_events.emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{
         .message_committed_data = .{ .session_id = session_id, .seq = seq, .message = owned },
     } });
-    announceSummary(state, session_id); // The commit moved the count, the lifetime usage, and the order.
-    if (done) |run_done| emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = run_done } });
+    session_events.announceSummary(state, session_id); // The commit moved the count, the lifetime usage, and the order.
+    if (done) |run_done| session_events.emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = run_done } });
     return owned;
 }
 
@@ -522,7 +514,7 @@ fn finishRunOpen(state: *State, arena: std.mem.Allocator, slot: *RunSlot, outcom
     slot.phase = .terminalized;
 
     const rt = state.sessions.get(session_id) orelse unreachable;
-    emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
+    session_events.emitDurable(state, rt, .{ .method = .@"run.done", .params = .{ .run_done_data = done } });
 }
 
 /// Allocate the next round: allocate a message id, then advance the progress state.
@@ -560,7 +552,7 @@ fn finishSlot(state: *State, session_id: ids.SessionId, slot: *RunSlot) void {
         };
     }
     // A nested finishSlot can evict the session, so look the runtime up again before it is read.
-    if (state.sessions.get(session_id)) |settled| announceActivity(state, settled);
+    if (state.sessions.get(session_id)) |settled| session_events.announceActivity(state, settled);
     state.sessions.evictIfIdle(session_id);
 }
 
@@ -586,10 +578,10 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     slot.bind(started.handle, started.first_round);
     // Fold each durable event in sequence order: the drained user messages, then run.started.
     // The commit fold retires each drained input from the queue.
-    publishUserCommits(state, rt, started.user_commits);
+    session_events.publishUserCommits(state, rt, started.user_commits);
     std.debug.assert(rt.session.queue.depth() == 0);
     rt.active = slot;
-    emitDurable(state, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
+    session_events.emitDurable(state, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
     return slot;
 }
 
@@ -649,7 +641,7 @@ const Streamer = struct {
     /// Fold the canonical value first, then publish the same value. The daemon never folds its own output.
     fn emit(self: *Streamer, note: wire.rpc.Notification) !void {
         try self.session.applyAuthoritative(note.params);
-        try publish(self.state, self.slot.sessionId(), note);
+        try session_events.publish(self.state, self.slot.sessionId(), note);
     }
 
     fn onEvent(self: *Streamer, ev: event.StreamEvent) !void {
@@ -670,7 +662,7 @@ const Streamer = struct {
                         .part = emptyPart(b.block, b.kind),
                     } } });
                     // A block boundary is the only point in a turn that moves the phase. A delta never does.
-                    announceActivity(self.state, self.rt);
+                    session_events.announceActivity(self.state, self.rt);
                 }
                 try self.offsets.append(self.state.gpa, 0);
                 self.open += 1;
@@ -724,7 +716,7 @@ const Streamer = struct {
             .part_id = part_id,
             .final = final,
         } } });
-        announceActivity(self.state, self.rt); // A closed reasoning part ends the reasoning phase.
+        session_events.announceActivity(self.state, self.rt); // A closed reasoning part ends the reasoning phase.
     }
 
     /// Open a pending tool part when its block stops. The provider is a peer, so cap the metadata sizes.
@@ -744,7 +736,7 @@ const Streamer = struct {
                 .state = .{ .pending = .{} },
             } },
         } } });
-        announceActivity(self.state, self.rt);
+        session_events.announceActivity(self.state, self.rt);
     }
 
     /// Fold and publish a tool state transition for one part.
@@ -755,7 +747,7 @@ const Streamer = struct {
             .part_id = part_id,
             .state = state,
         } } });
-        announceActivity(self.state, self.rt);
+        session_events.announceActivity(self.state, self.rt);
     }
 };
 
@@ -888,79 +880,6 @@ fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) message.AssistantPar
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
         .tool => unreachable, // A tool part opens at block_stopped, not block_started.
     };
-}
-
-/// Fold a durable daemon event into the session, then publish the same value. The daemon never folds its output.
-/// The session sequence must track the store. A fold failure leaves the cache behind the log, so fail fast.
-/// A restart rehydrates the projection from SQLite, which stays authoritative.
-pub fn emitDurable(state: *State, rt: *session_runtime.SessionRuntime, note: wire.rpc.Notification) void {
-    rt.session.applyAuthoritative(note.params) catch |err| {
-        std.debug.panic("cannot fold the durable event {t}: {t}", .{ note.method, err });
-    };
-    publishBestEffort(state, rt.session.id, note);
-}
-
-/// Fold and publish each committed user message. A publish failure leaves the durable event for client resync.
-pub fn publishUserCommits(state: *State, rt: *session_runtime.SessionRuntime, commits: []const wire.message.MessageCommittedData) void {
-    for (commits) |c| emitDurable(state, rt, .{ .method = .@"message.committed", .params = .{ .message_committed_data = c } });
-    if (commits.len > 0) announceSummary(state, rt.session.id);
-}
-
-/// Publish the activity after a phase or queue transition.
-/// A failed read drops the announcement. A resync then reports the same state.
-pub fn announceActivity(state: *State, rt: *session_runtime.SessionRuntime) void {
-    var arena_state = std.heap.ArenaAllocator.init(state.gpa);
-    defer arena_state.deinit();
-    const activity = handlers.residentActivity(state, arena_state.allocator(), rt) catch |err| {
-        std.log.warn("cannot build the activity for session {x}: {t}", .{ &rt.session.id.raw, err });
-        return;
-    };
-    publishBestEffort(state, rt.session.id, .{
-        .method = .@"session.activity_changed",
-        .params = .{ .session_activity_changed_data = .{ .session_id = rt.session.id, .activity = activity } },
-    });
-}
-
-/// Publish the summary a commit moved: the message count, the lifetime usage, and `updated_at_ms`.
-/// Read it back, because SQLite owns the fold. The event log omits this broadcast.
-pub fn announceSummary(state: *State, session_id: ids.SessionId) void {
-    var arena_state = std.heap.ArenaAllocator.init(state.gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const snapshot = session_store.snapshot(&state.db, arena, session_id.raw) catch |err| {
-        std.log.warn("cannot re-read the summary for session {x}: {t}", .{ &session_id.raw, err });
-        return;
-    } orelse return; // A removed session has no summary to announce.
-    const item = handlers.sessionItem(arena, snapshot) catch |err| {
-        std.log.warn("cannot project the summary for session {x}: {t}", .{ &session_id.raw, err });
-        return;
-    };
-    // Frame first, then take the revision. A failed frame publishes nothing and must skip no revision.
-    const revision = state.session_revision + 1;
-    const note: wire.rpc.Notification = .{ .method = .@"session.summary_changed", .params = .{
-        .session_summary_changed_data = .{ .revision = revision, .session = item.session },
-    } };
-    const bytes = connection.frameNotification(state.gpa, note) catch |err| {
-        std.log.warn("cannot frame the summary for session {x}: {t}", .{ &session_id.raw, err });
-        return;
-    };
-    defer state.gpa.free(bytes);
-    state.session_revision = revision;
-    if (state.broadcast_tap) |tap| tap.record(note.params) catch {};
-    state.registry.publishAll(bytes);
-}
-
-pub fn publishBestEffort(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) void {
-    publish(state, session_id, note) catch |err| {
-        std.log.warn("cannot publish {t}: {t}", .{ note.method, err });
-    };
-}
-
-fn publish(state: *State, session_id: ids.SessionId, note: wire.rpc.Notification) !void {
-    const bytes = try connection.frameNotification(state.gpa, note);
-    defer state.gpa.free(bytes);
-    if (state.broadcast_tap) |tap| try tap.record(note.params); // A conformance test records the published output.
-    state.registry.publish(session_id, bytes, connection.classOf(note.method));
 }
 
 test "the stream cap rejects an oversized provider delta" {

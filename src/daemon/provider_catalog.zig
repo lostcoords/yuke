@@ -1,4 +1,4 @@
-//! Resolve the providers a user can actually pick, from three sources with one precedence rule:
+//! Own the merged provider catalog and resolve the providers a user can pick.
 //! `providers.json` always wins, then the cloud bundle, then the catalog for display data.
 //! A provider appears only when a credential is configured for it.
 
@@ -7,14 +7,16 @@ const wire = @import("wire");
 const provider = @import("../provider/provider.zig");
 const bundle = @import("../cloud/bundle.zig");
 const cloud_catalog = @import("../cloud/catalog.zig");
+const catalog_store = @import("../database/catalog.zig");
+const Database = @import("../database/database.zig").Database;
 
 const instance = provider.instance;
 const EnvMap = std.process.Environ.Map;
 
 const no_cost: cloud_catalog.Cost = .{ .input = null, .output = null, .cache_read = null, .cache_write = null };
 
-/// One model in the shape both sources share. Every value the source omits stays null.
-/// `flags` shapes the request; the cloud publishes none of them, so it keeps the defaults.
+/// One model in the shape every source shares. Every omitted value stays null.
+/// A source overrides only the request flags that it publishes.
 pub const ModelView = struct {
     id: []const u8,
     upstream_id: []const u8,
@@ -51,7 +53,7 @@ pub const Match = struct {
 };
 
 /// Resolve a `providerId/modelId` selector against the merged list.
-pub fn resolveModel(rows: []const Resolved, qualified: []const u8) ?Match {
+fn findModel(rows: []const Resolved, qualified: []const u8) ?Match {
     const slash = std.mem.indexOfScalar(u8, qualified, '/') orelse return null;
     const provider_id = qualified[0..slash];
     const model_id = qualified[slash + 1 ..];
@@ -71,6 +73,100 @@ pub const Sources = struct {
     catalog: []const cloud_catalog.Provider = &.{},
     env: ?*const EnvMap = null,
 };
+
+/// The daemon's complete provider snapshot. The arena owns the stored rows and the projections.
+/// Routes borrow the state-owned local and cloud sources.
+pub const Catalog = struct {
+    arena: std.heap.ArenaAllocator,
+    rows: []const Resolved = &.{},
+    providers: []const wire.catalog.ProviderInfo = &.{},
+    models: []const wire.catalog.ModelInfo = &.{},
+    revision: wire.ids.CatalogRev = .bytes(@splat(0)),
+
+    pub fn init(gpa: std.mem.Allocator) Catalog {
+        return .{ .arena = .init(gpa) };
+    }
+
+    /// Load the stored public catalog and merge every configured provider into one owned snapshot.
+    pub fn load(gpa: std.mem.Allocator, db: *Database, sources: Sources) !Catalog {
+        std.debug.assert(sources.catalog.len == 0); // The snapshot owns the only stored catalog view.
+
+        var self: Catalog = .init(gpa);
+        errdefer self.deinit();
+        const arena = self.arena.allocator();
+
+        var merged_sources = sources;
+        merged_sources.catalog = try catalog_store.providers(db, arena);
+        self.rows = try resolve(arena, merged_sources);
+
+        const providers = try arena.alloc(wire.catalog.ProviderInfo, self.rows.len);
+        var models: std.ArrayList(wire.catalog.ModelInfo) = .empty;
+        for (self.rows, 0..) |row, i| {
+            providers[i] = .{ .id = row.id, .name = row.name, .source = row.source, .state = row.state };
+            for (row.models) |item| try models.append(arena, try modelInfo(arena, row.id, item));
+        }
+        self.providers = providers;
+        self.models = models.items;
+        self.revision = try catalogRevision(gpa, self.providers, self.models);
+        return self;
+    }
+
+    pub fn deinit(self: *Catalog) void {
+        self.arena.deinit();
+        self.* = undefined;
+    }
+
+    /// Resolve one selector against the same snapshot that `catalog.list` exposes.
+    pub fn resolveModel(self: *const Catalog, qualified: []const u8) ?Match {
+        return findModel(self.rows, qualified);
+    }
+};
+
+/// Choose the effort a client uses when the user picks none. Prefer `medium` when it exists.
+fn defaultReasoning(levels: []const []const u8) []const u8 {
+    for (levels) |level| if (std.mem.eql(u8, level, "medium")) return level;
+    return if (levels.len != 0) levels[0] else "";
+}
+
+/// Project one resolved model onto the public wire shape.
+fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, model: ModelView) !wire.catalog.ModelInfo {
+    var levels: std.ArrayList([]const u8) = .empty;
+    for (model.reasoning_levels) |level| if (level) |value| try levels.append(arena, value);
+
+    return .{
+        .id = model.id,
+        .provider = provider_id,
+        .name = model.name,
+        .context_window = model.context_window orelse 0,
+        .max_output_tokens = model.max_output_tokens orelse 0,
+        .reasoning_levels = levels.items,
+        .default_reasoning = defaultReasoning(levels.items),
+        .supports_vision = model.flags.supports_vision,
+        .supports_tools = model.flags.supports_tools,
+        .cost = .{
+            .input = model.cost.input orelse 0,
+            .output = model.cost.output orelse 0,
+            .cache_read = model.cost.cache_read orelse 0,
+            .cache_write = model.cost.cache_write orelse 0,
+        },
+    };
+}
+
+/// Hash the public projection. An empty projection keeps the protocol's zero revision sentinel.
+fn catalogRevision(
+    gpa: std.mem.Allocator,
+    providers: []const wire.catalog.ProviderInfo,
+    models: []const wire.catalog.ModelInfo,
+) !wire.ids.CatalogRev {
+    if (providers.len == 0 and models.len == 0) return .bytes(@splat(0));
+
+    const public = .{ .providers = providers, .models = models };
+    const bytes = try std.json.Stringify.valueAlloc(gpa, public, .{ .emit_null_optional_fields = false });
+    defer gpa.free(bytes);
+    var digest: [wire.ids.CatalogRev.byte_len]u8 = undefined;
+    std.crypto.hash.sha2.Sha512.hash(bytes, &digest, .{});
+    return .bytes(digest);
+}
 
 /// Build the provider list. The result borrows `arena` and the sources.
 pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Resolved {
@@ -133,8 +229,8 @@ fn localRoute(p: provider.config.LocalProvider, from_catalog: ?cloud_catalog.Pro
             .id = p.id,
             .base_url = base_url,
             .protocol = protocol,
-            .auth = .{ .api_key = .{ .header = header, .source = p.auth.source } },
-            .headers = p.headers,
+            .auth = .{ .api_key = header },
+            .headers = p.headers orelse (if (from_catalog) |catalog_provider| catalog_provider.headers else &.{}),
             .cache = p.cache orelse (if (from_catalog) |c| c.cache else .unsupported),
         },
         .secret = secret,
@@ -152,7 +248,7 @@ fn bundleRoute(p: bundle.Provider) ?Route {
     switch (p.auth.kind) {
         .api_key => {
             const key = p.auth.api_key orelse return null;
-            auth = .{ .api_key = .{ .header = p.auth.header orelse return null, .source = .{ .literal = key } } };
+            auth = .{ .api_key = p.auth.header orelse return null };
             secret = .{ .api_key = key };
         },
         .oauth => {
@@ -160,10 +256,10 @@ fn bundleRoute(p: bundle.Provider) ?Route {
             const flow = p.auth.flow orelse return null;
             if (std.mem.eql(u8, flow, "codex")) {
                 const account = p.auth.account_id orelse return null;
-                auth = .{ .codex_oauth = .{ .access_token = token, .account_id = account } };
+                auth = .codex_oauth;
                 secret = .{ .codex = .{ .access_token = token, .account_id = account } };
             } else if (std.mem.eql(u8, flow, "xai")) {
-                auth = .{ .xai_oauth = .{ .access_token = token } };
+                auth = .xai_oauth;
                 secret = .{ .xai = token };
             } else return null; // An unknown flow is not routable.
         },
@@ -262,7 +358,7 @@ fn catalogRow(id: []const u8, name: []const u8, models: []const cloud_catalog.Mo
         .protocol = .openai_chat,
         .auth = .{ .kind = .api_key, .header = .authorization_bearer },
         .cache = .unsupported,
-        .headers = &.{},
+        .headers = &.{.{ .name = "x-catalog-version", .value = "1" }},
         .models = models,
     };
 }
@@ -407,8 +503,9 @@ test "an id and a key alone resolve a full route from the catalog" {
     const route = rows[0].route.?;
     try testing.expectEqualStrings("https://api.example/v1", route.instance.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.instance.protocol);
-    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key.header);
+    try testing.expectEqual(instance.ApiKeyHeader.authorization_bearer, route.instance.auth.api_key);
     try testing.expectEqualStrings("sk-minimal", route.secret.api_key);
+    try testing.expectEqualStrings("x-catalog-version", route.instance.headers[0].name);
 
     // The models come from the catalog too, so the picker is complete.
     try testing.expectEqual(@as(usize, 1), rows[0].models.len);
@@ -420,9 +517,9 @@ test "a local field beats the catalog field by field" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    // The file pins only the base_url; the protocol and the header still come from the catalog.
+    // The file pins the base URL and clears the headers. Other route fields come from the catalog.
     var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://pinned.example/v1","api_key":"k"}]}
+        \\{"version":1,"providers":[{"id":"acme","base_url":"https://pinned.example/v1","api_key":"k","headers":[]}]}
     );
     defer loaded.deinit();
 
@@ -430,6 +527,7 @@ test "a local field beats the catalog field by field" {
     const route = rows[0].route.?;
     try testing.expectEqualStrings("https://pinned.example/v1", route.instance.base_url);
     try testing.expectEqual(instance.Protocol.openai_chat, route.instance.protocol);
+    try testing.expectEqual(@as(usize, 0), route.instance.headers.len);
 }
 
 test "a minimal entry with no catalog row is offered but not routable" {
@@ -480,13 +578,13 @@ test "resolveModel finds a model through the merged list" {
     const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})} });
 
     // The model came from the catalog, so the old providers.json-only lookup would have missed it.
-    const match = resolveModel(rows, "acme/cm").?;
+    const match = findModel(rows, "acme/cm").?;
     try testing.expectEqualStrings("acme", match.provider.id);
     try testing.expectEqualStrings("cm", match.model.upstream_id);
 
-    try testing.expect(resolveModel(rows, "acme/absent") == null);
-    try testing.expect(resolveModel(rows, "absent/cm") == null);
-    try testing.expect(resolveModel(rows, "no-slash") == null);
+    try testing.expect(findModel(rows, "acme/absent") == null);
+    try testing.expect(findModel(rows, "absent/cm") == null);
+    try testing.expect(findModel(rows, "no-slash") == null);
 }
 
 test "a cloud oauth provider routes with its access token" {
@@ -504,6 +602,6 @@ test "a cloud oauth provider routes with its access token" {
 
     const rows = try resolve(a, .{ .cloud = doc });
     const route = rows[0].route.?;
-    try testing.expectEqualStrings("tok", route.instance.auth.codex_oauth.access_token);
+    try testing.expect(route.instance.auth == .codex_oauth);
     try testing.expectEqualStrings("acct", route.secret.codex.account_id);
 }

@@ -1,4 +1,4 @@
-//! Provider instances hold protocol data and credential references, not secrets.
+//! Provider instances hold request routing data and no credentials.
 //! A new dialect uses a data row with a closed protocol value.
 
 const std = @import("std");
@@ -12,35 +12,11 @@ pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 /// Select whether the endpoint accepts Anthropic `cache_control`.
 pub const CachePolicy = enum { unsupported, ephemeral };
 
-/// Name the source of a key. The `env` value refers to a key; the `literal` value refers to an owned key.
-/// The owner zeroes a `literal` buffer before it frees it.
-pub const CredentialSource = union(enum) {
-    env: []const u8,
-    literal: []const u8,
-};
-
-/// Select the authentication scheme. The resolver uses a credential source.
+/// Select the authentication scheme. Credentials stay outside the provider instance.
 pub const Auth = union(enum) {
-    api_key: ApiKey,
-    codex_oauth: CodexOAuth,
-    xai_oauth: XaiOAuth,
-};
-
-pub const ApiKey = struct {
-    header: ApiKeyHeader,
-    source: CredentialSource,
-};
-
-/// The Codex access token and account id. The cloud owns every refresh, so the daemon holds no
-/// refresh token and this token is all it gets.
-pub const CodexOAuth = struct {
-    access_token: []const u8,
-    account_id: []const u8,
-};
-
-/// The xAI access token. The cloud owns every refresh.
-pub const XaiOAuth = struct {
-    access_token: []const u8,
+    api_key: ApiKeyHeader,
+    codex_oauth,
+    xai_oauth,
 };
 
 /// A pinned non-secret request header.
@@ -136,7 +112,7 @@ test "a provider round-trips through JSON" {
         .id = "acme",
         .base_url = "https://llm.acme.example/v1",
         .protocol = .openai_chat,
-        .auth = .{ .api_key = .{ .header = .authorization_bearer, .source = .{ .env = "ACME_KEY" } } },
+        .auth = .{ .api_key = .authorization_bearer },
     };
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
@@ -145,6 +121,5 @@ test "a provider round-trips through JSON" {
     const parsed = try std.json.parseFromSlice(ProviderInstance, testing.allocator, buf.written(), .{});
     defer parsed.deinit();
     try testing.expectEqualStrings("acme", parsed.value.id);
-    try testing.expectEqual(ApiKeyHeader.authorization_bearer, parsed.value.auth.api_key.header);
-    try testing.expectEqualStrings("ACME_KEY", parsed.value.auth.api_key.source.env);
+    try testing.expectEqual(ApiKeyHeader.authorization_bearer, parsed.value.auth.api_key);
 }

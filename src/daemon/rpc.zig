@@ -1901,6 +1901,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\ "models":[{"id":"fast","upstream_id":"acme-fast-1","limits":{"context_window":200000,"max_output_tokens":8192}}]}]}
     );
+    _ = try fixture.state.rebuildCatalog();
     var capture: CaptureTransport = .{ .gpa = std.testing.allocator, .reply = provider.transport.placeholder_reply };
     defer capture.deinit();
     fixture.state.transport = capture.transportFor();
@@ -2154,7 +2155,7 @@ test "a cancel during a retry delay stops before the next attempt" {
     try std.testing.expectEqual(wire.enums.StopReason.canceled, try lastFinish(&fixture.state, a, sid));
 }
 
-fn cloud_catalog_test_local(_: std.mem.Allocator) !provider.config.Loaded {
+fn cloud_catalog_test_local() !provider.config.Loaded {
     return provider.config.loadBytes(std.testing.allocator,
         \\{"version":1,"providers":[{"id":"anthropic","base_url":"https://api.anthropic.com/v1",
         \\ "protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"literal":"k"}}}}]}
@@ -2172,6 +2173,27 @@ test "catalog.list serves an empty catalog before the first sync" {
     try std.testing.expectEqual(@as(usize, 0), result.full.providers.len);
     // A zero revision says the daemon holds no catalog yet.
     try std.testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &result.full.catalog_rev.raw);
+}
+
+test "a local provider changes the catalog before the first cloud sync" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    fixture.state.providers = try cloud_catalog_test_local();
+    try std.testing.expect(try fixture.state.rebuildCatalog());
+
+    const initialized = try handlers.initialize(&fixture.state, a);
+    try std.testing.expect(!std.mem.eql(u8, &initialized.catalog_rev.raw, &@as([64]u8, @splat(0))));
+
+    const full = try handlers.catalogList(&fixture.state, a, .{ .since_rev = .bytes(@splat(0)) });
+    try std.testing.expect(full == .full);
+    try std.testing.expectEqual(@as(usize, 1), full.full.providers.len);
+    try std.testing.expectEqualSlices(u8, &initialized.catalog_rev.raw, &full.full.catalog_rev.raw);
+
+    const unchanged = try handlers.catalogList(&fixture.state, a, .{ .since_rev = full.full.catalog_rev });
+    try std.testing.expect(unchanged == .unchanged);
+    try std.testing.expect(!try fixture.state.rebuildCatalog());
 }
 
 test "catalog.list projects stored models and honors a matching revision" {
@@ -2195,7 +2217,8 @@ test "catalog.list projects stored models and honors a matching revision" {
     try catalog_store.replace(&fixture.state.db, a, parsed.providers, parsed.catalog_rev, "etag-1");
 
     // A catalog row alone is not offered; a local key makes it a configured provider.
-    fixture.state.providers = try cloud_catalog_test_local(a); // State.deinit frees this.
+    fixture.state.providers = try cloud_catalog_test_local(); // State.deinit frees this.
+    _ = try fixture.state.rebuildCatalog();
     const result = try handlers.catalogList(&fixture.state, a, .{});
     try std.testing.expect(result == .full);
     try std.testing.expectEqual(@as(usize, 1), result.full.providers.len);

@@ -33,14 +33,15 @@ pub const Error = error{
 
 // The file schema is strict. The std.json parser rejects unknown fields, duplicate keys, and invalid union shapes.
 
-const FileSource = union(enum) {
+/// Name the source of a local API key. The owner clears each literal key.
+pub const CredentialSource = union(enum) {
     env: []const u8,
     literal: []const u8,
 };
 
 const FileApiKey = struct {
     header: instance.ApiKeyHeader,
-    source: FileSource,
+    source: CredentialSource,
 };
 
 const FileAuth = struct {
@@ -70,7 +71,7 @@ const FileProvider = struct {
     /// The short form. It is a literal key, and the catalog names the header.
     api_key: ?[]const u8 = null,
     cache: ?instance.CachePolicy = null,
-    headers: []const FileHeader = &.{},
+    headers: ?[]const FileHeader = null,
     models: []const FileModel = &.{},
 };
 
@@ -163,7 +164,7 @@ fn readSecureFile(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
     return raw;
 }
 
-/// Validate the document and copy it into resolved `ProviderInstance` values. `source_json` is the raw file.
+/// Validate the document and copy it into local provider values. `source_json` is the raw file.
 fn resolveDoc(gpa: Allocator, doc: FileDoc, source_json: []const u8) !Loaded {
     var out: Loaded = empty(gpa);
     errdefer out.deinit();
@@ -187,9 +188,9 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
     if ((fp.auth == null) == (fp.api_key == null)) return error.MissingCredential;
 
     const header: ?instance.ApiKeyHeader = if (fp.auth) |a| a.api_key.header else null;
-    const file_source: FileSource = if (fp.auth) |a| a.api_key.source else .{ .literal = fp.api_key.? };
+    const file_source: CredentialSource = if (fp.auth) |a| a.api_key.source else .{ .literal = fp.api_key.? };
 
-    const source: instance.CredentialSource = switch (file_source) {
+    const source: CredentialSource = switch (file_source) {
         .env => |name| blk: {
             if (!validEnvName(name)) return error.BadEnvName;
             break :blk .{ .env = try arena.dupe(u8, name) };
@@ -209,15 +210,18 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
         },
     };
 
-    const headers = try arena.alloc(instance.Header, fp.headers.len);
-    for (fp.headers, 0..) |fh, i| {
-        if (!validHeaderName(fh.name)) return error.BadHeaderName;
-        if (!cleanHeaderValue(fh.value)) return error.BadHeaderValue;
-        // A header the file pins must not collide with the one the credential generates.
-        // An unknown header is checked again when the merge resolves it.
-        if (header) |h| if (std.ascii.eqlIgnoreCase(fh.name, generatedHeaderName(h))) return error.HeaderConflict;
-        headers[i] = .{ .name = try arena.dupe(u8, fh.name), .value = try arena.dupe(u8, fh.value) };
-    }
+    const headers: ?[]const instance.Header = if (fp.headers) |file_headers| blk: {
+        const resolved = try arena.alloc(instance.Header, file_headers.len);
+        for (file_headers, 0..) |fh, i| {
+            if (!validHeaderName(fh.name)) return error.BadHeaderName;
+            if (!cleanHeaderValue(fh.value)) return error.BadHeaderValue;
+            // A header the file pins must not collide with the one the credential generates.
+            // An unknown header is checked again when the merge resolves it.
+            if (header) |h| if (std.ascii.eqlIgnoreCase(fh.name, generatedHeaderName(h))) return error.HeaderConflict;
+            resolved[i] = .{ .name = try arena.dupe(u8, fh.name), .value = try arena.dupe(u8, fh.value) };
+        }
+        break :blk resolved;
+    } else null;
 
     const models = try arena.alloc(instance.ModelBinding, fp.models.len);
     for (fp.models, 0..) |fm, i| {
@@ -300,7 +304,7 @@ fn cleanHeaderValue(value: []const u8) bool {
 /// The credential of a local provider. The header is null when the catalog must name it.
 pub const LocalAuth = struct {
     header: ?instance.ApiKeyHeader = null,
-    source: instance.CredentialSource,
+    source: CredentialSource,
 };
 
 /// One `providers.json` entry, still unresolved. The merge fills every null from the catalog.
@@ -310,7 +314,7 @@ pub const LocalProvider = struct {
     protocol: ?instance.Protocol = null,
     auth: LocalAuth,
     cache: ?instance.CachePolicy = null,
-    headers: []const instance.Header = &.{},
+    headers: ?[]const instance.Header = null,
     models: []const instance.ModelBinding = &.{},
 };
 
@@ -318,7 +322,7 @@ pub const ResolveError = error{MissingCredential};
 
 /// Resolve one credential from the process environment or a literal key.
 /// The result borrows the key. Never log the key.
-pub fn resolveApiKey(source: instance.CredentialSource, env: ?*const EnvMap) ResolveError!resolve.Secret {
+pub fn resolveApiKey(source: CredentialSource, env: ?*const EnvMap) ResolveError!resolve.Secret {
     const key = switch (source) {
         .env => |name| (if (env) |e| e.get(name) else null) orelse return error.MissingCredential,
         .literal => |bytes| bytes,
@@ -347,7 +351,7 @@ test "load a provider with an env api key and one model" {
     try testing.expectEqualStrings("minimax", p.id);
     try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
     try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.source.env);
-    try testing.expectEqualStrings("anthropic-version", p.headers[0].name);
+    try testing.expectEqualStrings("anthropic-version", p.headers.?[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
     try testing.expectEqual(@as(u64, 8192), p.models[0].limits.max_output_tokens);
 }

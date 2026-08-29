@@ -4,12 +4,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zio = @import("zio");
 const zqlite = @import("zqlite");
+const wire = @import("wire");
 const http = @import("http.zig");
 const database = @import("../database/database.zig");
 const paths = @import("../paths/paths.zig");
 const cloud = @import("../cloud/cloud.zig");
 const provider = @import("../provider/provider.zig");
 const daemon_config = @import("config.zig");
+const connection = @import("connection.zig");
 const State = @import("State.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
@@ -76,6 +78,8 @@ pub fn run(init: std.process.Init) !void {
         state.config_owner = loaded;
     }
 
+    _ = try state.rebuildCatalog();
+
     // Fetch the catalog off the request path. The daemon must answer before the network does.
     var cloud_client: cloud.http.Client = .init(init.gpa, io);
     defer cloud_client.deinit();
@@ -117,10 +121,32 @@ fn catalogTask(gpa: std.mem.Allocator, state: *State, client: *cloud.http.Client
         return;
     };
     switch (outcome) {
-        .updated => std.log.info("catalog updated from {s}", .{base_url}),
+        .updated => {
+            const changed = state.rebuildCatalog() catch |err| {
+                std.log.warn("catalog snapshot rebuild failed: {t}", .{err});
+                return;
+            };
+            if (changed) announceCatalogChanged(state);
+            std.log.info("catalog updated from {s}", .{base_url});
+        },
         .unchanged => std.log.info("catalog already current", .{}),
         .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
     }
+}
+
+/// Publish the new merged revision after the replacement is ready.
+fn announceCatalogChanged(state: *State) void {
+    const note: wire.rpc.Notification = .{
+        .method = .@"catalog.changed",
+        .params = .{ .catalog_changed_data = .{ .catalog_rev = state.catalog.revision } },
+    };
+    const bytes = connection.frameNotification(state.gpa, note) catch |err| {
+        std.log.warn("cannot frame catalog.changed: {t}", .{err});
+        return;
+    };
+    defer state.gpa.free(bytes);
+    if (state.broadcast_tap) |tap| tap.record(note.params) catch {};
+    state.registry.publishAll(bytes);
 }
 
 /// Create the data directory. Give a new POSIX directory mode 0700 and keep current permissions.
@@ -131,4 +157,27 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
     const perms = std.Io.File.Permissions.fromMode(0o700);
     if (try cwd.createDirPathStatus(io, dir, perms) == .created)
         try cwd.setFilePermissions(io, dir, perms, .{});
+}
+
+test "a catalog replacement announces the merged revision" {
+    const testing = std.testing;
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
+    defer state.deinit();
+
+    var conn: connection.Connection = undefined;
+    conn.init(testing.allocator, rt.io());
+    defer conn.deinit();
+    try state.registry.register(&conn);
+    defer state.registry.unregister(&conn);
+
+    state.catalog.revision = .bytes(@splat(0xab));
+    announceCatalogChanged(&state);
+
+    const item = (try conn.tryReceive()).?;
+    defer testing.allocator.free(item.bytes);
+    try testing.expect(std.mem.indexOf(u8, item.bytes, "\"method\":\"catalog.changed\"") != null);
+    try testing.expect(std.mem.indexOf(u8, item.bytes, "ab" ** 64) != null);
 }

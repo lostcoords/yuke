@@ -10,6 +10,7 @@ const domain_session = @import("domain").session;
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
 const cloud_bundle_mod = @import("../cloud/bundle.zig");
+const provider_catalog = @import("provider_catalog.zig");
 const tools = @import("../tools/tool.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -28,6 +29,7 @@ registry: connection.Registry, // The registry tracks live connections and the r
 transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
 cloud_bundle: ?cloud_bundle_mod.Document = null, // The account bundle stays in memory, because it holds live credentials.
+catalog: provider_catalog.Catalog, // One merged snapshot serves catalog reads and provider requests.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
@@ -75,6 +77,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
         .transport = provider.transport.placeholderTransport(),
+        .catalog = .init(gpa),
     };
     errdefer self.deinit();
 
@@ -147,9 +150,25 @@ pub fn deinit(self: *State) void {
     self.run_group.cancel(self.io);
     self.registry.deinit();
     self.sessions.deinit();
+    self.catalog.deinit();
     if (self.providers) |*p| p.deinit();
     if (self.config_owner) |*c| c.deinit();
     self.db.deinit();
+}
+
+/// Replace the merged provider snapshot. Build the replacement before the live snapshot changes.
+pub fn rebuildCatalog(self: *State) !bool {
+    const next = try provider_catalog.Catalog.load(self.gpa, &self.db, .{
+        .local = if (self.providers) |*loaded| loaded else null,
+        .cloud = self.cloud_bundle,
+        .env = self.env,
+    });
+
+    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next.revision.raw);
+    var previous = self.catalog;
+    self.catalog = next;
+    previous.deinit();
+    return changed;
 }
 
 /// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.

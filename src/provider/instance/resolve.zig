@@ -34,12 +34,11 @@ pub const Secret = union(enum) {
     };
 };
 
-/// Append the credential and pinned headers to `out`, an arena-backed empty list.
-/// The checks run before any allocation, so no error leaves partial output.
+/// Append the credential and pinned headers to `out`. The arena owns every borrowed value.
 pub fn authHeaders(gpa: std.mem.Allocator, p: *const ProviderInstance, secret: Secret, out: *std.ArrayList(Header)) Error!void {
     // This call knows the header names before it allocates memory.
     const generated: []const []const u8 = switch (p.auth) {
-        .api_key => |a| switch (a.header) {
+        .api_key => |api_key_header| switch (api_key_header) {
             .x_api_key => &.{"x-api-key"},
             .authorization_bearer => &.{"Authorization"},
         },
@@ -51,13 +50,13 @@ pub fn authHeaders(gpa: std.mem.Allocator, p: *const ProviderInstance, secret: S
     };
 
     switch (p.auth) {
-        .api_key => |a| {
+        .api_key => |api_key_header| {
             const key = switch (secret) {
                 .api_key => |k| k,
                 else => return error.AuthMismatch,
             };
-            switch (a.header) {
-                .x_api_key => try out.append(gpa, .{ .name = "x-api-key", .value = key }),
+            switch (api_key_header) {
+                .x_api_key => try out.append(gpa, .{ .name = "x-api-key", .value = try gpa.dupe(u8, key) }),
                 .authorization_bearer => try out.append(gpa, .{ .name = "Authorization", .value = try bearer(gpa, key) }),
             }
         },
@@ -67,7 +66,7 @@ pub fn authHeaders(gpa: std.mem.Allocator, p: *const ProviderInstance, secret: S
                 else => return error.AuthMismatch,
             };
             try out.append(gpa, .{ .name = "Authorization", .value = try bearer(gpa, c.access_token) });
-            try out.append(gpa, .{ .name = "ChatGPT-Account-ID", .value = c.account_id });
+            try out.append(gpa, .{ .name = "ChatGPT-Account-ID", .value = try gpa.dupe(u8, c.account_id) });
         },
         .xai_oauth => {
             const token = switch (secret) {
@@ -78,7 +77,10 @@ pub fn authHeaders(gpa: std.mem.Allocator, p: *const ProviderInstance, secret: S
         },
     }
 
-    for (p.headers) |h| try out.append(gpa, h);
+    for (p.headers) |h| try out.append(gpa, .{
+        .name = try gpa.dupe(u8, h.name),
+        .value = try gpa.dupe(u8, h.value),
+    });
 }
 
 fn bearer(gpa: std.mem.Allocator, token: []const u8) Error![]u8 {
@@ -97,7 +99,7 @@ test "endpoint url appends the protocol path" {
         .id = "x",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
+        .auth = .{ .api_key = .x_api_key },
     });
     defer testing.allocator.free(url);
     try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
@@ -108,20 +110,21 @@ test "endpoint url collapses a trailing slash on the base" {
         .id = "x",
         .base_url = "https://api.anthropic.com/v1/",
         .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
+        .auth = .{ .api_key = .x_api_key },
     });
     defer testing.allocator.free(url);
     try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
 }
 
 test "anthropic api key uses x-api-key plus the pinned version header" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
-    defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, &.{
+    try authHeaders(arena.allocator(), &.{
         .id = "anthropic",
         .base_url = "https://api.anthropic.com/v1",
         .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
+        .auth = .{ .api_key = .x_api_key },
         .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
     }, .{ .api_key = "sk-secret" }, &out);
 
@@ -131,30 +134,28 @@ test "anthropic api key uses x-api-key plus the pinned version header" {
 }
 
 test "a compat host uses Authorization Bearer" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
-    defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, &.{
+    try authHeaders(arena.allocator(), &.{
         .id = "compat",
         .base_url = "https://llm.acme/v1",
         .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .{ .header = .authorization_bearer, .source = .{ .env = "K" } } },
+        .auth = .{ .api_key = .authorization_bearer },
     }, .{ .api_key = "sk-2" }, &out);
-    defer for (out.items) |h| if (std.mem.startsWith(u8, h.value, "Bearer ")) testing.allocator.free(h.value);
-
     try testing.expectEqualStrings("Bearer sk-2", header(out.items, "Authorization").?);
 }
 
 test "codex oauth emits the account header" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
     var out: std.ArrayList(Header) = .empty;
-    defer out.deinit(testing.allocator);
-    try authHeaders(testing.allocator, &.{
+    try authHeaders(arena.allocator(), &.{
         .id = "codex",
         .base_url = "https://chatgpt.com/backend-api/codex",
         .protocol = .openai_responses,
-        .auth = .{ .codex_oauth = .{ .access_token = "tok", .account_id = "acct" } },
+        .auth = .codex_oauth,
     }, .{ .codex = .{ .access_token = "tok", .account_id = "acct" } }, &out);
-    defer for (out.items) |h| if (std.mem.startsWith(u8, h.value, "Bearer ")) testing.allocator.free(h.value);
-
     try testing.expectEqualStrings("Bearer tok", header(out.items, "Authorization").?);
     try testing.expectEqualStrings("acct", header(out.items, "ChatGPT-Account-ID").?);
 }
@@ -166,7 +167,7 @@ test "a secret of the wrong kind is rejected" {
         .id = "codex",
         .base_url = "x",
         .protocol = .openai_responses,
-        .auth = .{ .codex_oauth = .{ .access_token = "tok", .account_id = "acct" } },
+        .auth = .codex_oauth,
     }, .{ .api_key = "wrong" }, &out));
 }
 
@@ -177,7 +178,7 @@ test "a pinned header that collides with the credential is rejected" {
         .id = "x",
         .base_url = "x",
         .protocol = .anthropic_messages,
-        .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
+        .auth = .{ .api_key = .x_api_key },
         .headers = &.{.{ .name = "X-Api-Key", .value = "injected" }},
     }, .{ .api_key = "real" }, &out));
 }

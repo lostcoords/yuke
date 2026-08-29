@@ -79,11 +79,6 @@ pub const Provider = struct {
     headers: []const instance.Header,
     auth: Auth,
     models: []const Model,
-
-    /// Return true when the daemon can build a request for this provider.
-    pub fn routable(self: Provider) bool {
-        return self.protocol != null and self.base_url != null and self.auth.usable();
-    }
 };
 
 /// The bundle envelope. `catalog_rev` is null before the cloud's first catalog sync; the routing
@@ -132,7 +127,6 @@ fn bounded(value: []const u8, max: usize) bool {
 }
 
 const testing = std.testing;
-const rev_hex = "0123456789abcdef" ** 8;
 
 test "decode reads an active api-key provider" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -147,7 +141,6 @@ test "decode reads an active api-key provider" {
     );
     const p = doc.providers[0];
     try testing.expectEqualStrings("abc123", p.public_id);
-    try testing.expect(p.routable());
     try testing.expect(p.auth.usable());
     try testing.expectEqualStrings("sk-live", p.auth.api_key.?);
     try testing.expect(p.auth.access_token == null);
@@ -167,7 +160,6 @@ test "a dead grant keeps its expiry and drops its token" {
     const p = doc.providers[0];
     try testing.expectEqual(Status.reauth_required, p.auth.status);
     try testing.expect(!p.auth.usable()); // The expiry does not make it live.
-    try testing.expect(!p.routable());
     try testing.expectEqual(@as(u64, 1700000000000), p.auth.expires_at_ms.?);
     try testing.expectEqualStrings("acct-1", p.auth.account_id.?);
     try testing.expect(doc.catalog_rev == null);
@@ -190,7 +182,6 @@ test "decode accepts a model the feed does not describe" {
     );
     const p = doc.providers[0];
     try testing.expect(p.auth.usable());
-    try testing.expect(p.routable());
 
     const m = p.models[0];
     try testing.expect(m.flags.supports_tools == null); // Unknown, not false.
@@ -237,5 +228,4 @@ test "an empty account decodes to no providers" {
         \\{"version":1,"catalog_rev":null,"providers":[]}
     );
     try testing.expectEqual(@as(usize, 0), doc.providers.len);
-    _ = rev_hex;
 }
