@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime. A Scope owns revertible effects, a Context is the plugin's
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
-import { command, keymap, events } from "yuke:core";
+import { command, keymap, events, status } from "yuke:core";
 
 const NOOP = () => {};
 
@@ -228,6 +228,10 @@ export class Context {
 
   keymap(bindings, overwrite) {
     return this.scope.effect(() => keymap.add(bindings, overwrite));
+  }
+
+  status(seg) {
+    return this.scope.effect(() => status.add(seg));
   }
 
   advise(obj, prop, where, fn, opts) {

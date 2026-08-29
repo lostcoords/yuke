@@ -1,7 +1,7 @@
 // yuke:defaults — the bundled UI: a sidebar | chat split shell with a local connect, a command
 // palette, a ":" line, and a stub explorer. A user's index.js layers on top.
 import { term } from "yuke:term";
-import { command, keymap, style, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
+import { command, keymap, style, status, clip, fill, text, strokeOf, TextInput, caretCol, Node, root, quit, config, events } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, ChatView, List } from "yuke:ui";
 import * as client from "yuke:client";
@@ -361,6 +361,38 @@ function activeChat() {
   return v && v.name === "chat" ? v : chat;
 }
 
+// The chat's live entry, or null with no open session.
+function chatEntry() {
+  if (!chatSession.sessionId) return null;
+  const feed = feeds.get(chatSession.connKey);
+  return feed ? feed.items.get(chatSession.sessionId) : null;
+}
+
+// Round a token count to a short label. The catalog is not in the TUI, so this is not a percentage.
+function tokenLabel(n) {
+  if (n < 1000) return String(n);
+  return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
+}
+
+status.add({ side: "left", order: 0, render: () => notice.text });
+status.add({
+  side: "right",
+  order: 10,
+  render: () => {
+    const e = chatEntry();
+    return e && e.session ? e.session.model : "";
+  },
+});
+status.add({
+  side: "right",
+  order: 20,
+  render: () => {
+    const e = chatEntry();
+    const u = e && e.activity ? e.activity.context_usage : null;
+    return u && u.input ? tokenLabel(u.input) + " ctx" : "";
+  },
+});
+
 // The main pane: a placeholder shown in a split leaf with no session.
 class MainPane {
   constructor() {
@@ -401,7 +433,6 @@ class MainPane {
 const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
   onSubmit: (text) => chatSession.send(text),
-  status: () => notice.text,
   onSelect: (text) => {
     if (config.mouse.copyOnSelect) copyText("selection", text);
   },

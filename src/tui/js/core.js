@@ -116,6 +116,7 @@ export const style = {
     YukeSessionMetaSel: { reverse: true },
     YukeEmpty: { fg: "fg", dim: true },
     YukeHint: { fg: "fg", dim: true },
+    YukeBar: { fg: "fg", dim: true },
   },
   _cache: Object.create(null),
   resolve(name) {
@@ -474,6 +475,27 @@ export function strokeOf(ev) {
   );
 }
 
+// The unnamed register. A yank or a delete fills it and `p` reads it. OSC 52 is write only, so a
+// paste can never read the terminal's own clipboard.
+export const register = {
+  text: "",
+  linewise: false,
+  set(text, linewise) {
+    this.text = String(text == null ? "" : text);
+    this.linewise = !!linewise;
+  },
+};
+
+// The key a modal layer reads. `strokeOf` folds a letter's case, so `G` needs the raw character.
+// A chord keeps its stroke, so ctrl+d never reads as a letter.
+export function modalKey(ev) {
+  const m = ev.mods | 0;
+  if (ev.code === "char" && ev.char && (m & (MOD_CTRL | MOD_ALT | MOD_SUPER)) === 0) {
+    if (ev.char !== ev.char.toLowerCase() || (m & MOD_SHIFT) !== 0) return ev.char;
+  }
+  return strokeOf(ev);
+}
+
 // Return committed text. Use the folded key only for an unmodified legacy event.
 export function textOf(ev) {
   if (ev.code === "paste") return ev.text || "";
@@ -515,6 +537,57 @@ function deleteWordBack(s, caret) {
   while (i > 0 && s[i - 1] === " ") i--;
   while (i > 0 && s[i - 1] !== " ") i--;
   return i;
+}
+
+// A blank, a word character, or punctuation. A word motion stops where the class changes.
+function graphemeClass(g) {
+  if (!g || /\s/u.test(g)) return 0;
+  return /[\p{L}\p{N}_]/u.test(g) ? 1 : 2;
+}
+
+// The graphemes of `s` with their offset and class, so a word motion never lands inside a cluster.
+function graphemeCells(s) {
+  const gs = term.graphemes(s);
+  const out = [];
+  for (let k = 0; k < gs.length; k += 3) out.push({ at: gs[k], cls: graphemeClass(s.slice(gs[k], gs[k] + gs[k + 1])) });
+  return out;
+}
+
+function cellIndex(cells, at) {
+  for (let i = 0; i < cells.length; i++) if (cells[i].at >= at) return i;
+  return cells.length;
+}
+
+// The start of the next word, or the end of the text. This is vim's `w`.
+export function nextWordStart(s, at) {
+  const cells = graphemeCells(s);
+  let i = cellIndex(cells, at);
+  const cls = i < cells.length ? cells[i].cls : 0;
+  while (i < cells.length && cells[i].cls === cls && cls !== 0) i++;
+  while (i < cells.length && cells[i].cls === 0) i++;
+  return i < cells.length ? cells[i].at : s.length;
+}
+
+// The start of the previous word, or the start of the text. This is vim's `b`.
+export function prevWordStart(s, at) {
+  const cells = graphemeCells(s);
+  let i = cellIndex(cells, at) - 1;
+  while (i >= 0 && cells[i].cls === 0) i--;
+  if (i < 0) return 0;
+  const cls = cells[i].cls;
+  while (i > 0 && cells[i - 1].cls === cls) i--;
+  return cells[i].at;
+}
+
+// The last grapheme of the word at or after the caret. This is vim's `e`, which lands on the char.
+export function nextWordEnd(s, at) {
+  const cells = graphemeCells(s);
+  let i = cellIndex(cells, at) + 1;
+  while (i < cells.length && cells[i].cls === 0) i++;
+  if (i >= cells.length) return s.length;
+  const cls = cells[i].cls;
+  while (i + 1 < cells.length && cells[i + 1].cls === cls) i++;
+  return cells[i].at;
 }
 
 // A caret step reads this many code units around the caret. No grapheme cluster is this long.
@@ -792,6 +865,48 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
+// --- status bar ---------------------------------------------------------------------------
+// One row under the whole layout. A segment renders to a string, or to nothing when it has none to
+// say, so a provider that is idle takes no space.
+export const status = {
+  _list: [],
+
+  // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
+  add(seg) {
+    if (typeof seg.render !== "function") throw new TypeError("status.add needs a render function");
+    const entry = { side: seg.side === "right" ? "right" : "left", order: seg.order || 0, render: seg.render };
+    this._list.push(entry);
+    this._list.sort((a, b) => a.order - b.order);
+    return () => {
+      const i = this._list.indexOf(entry);
+      if (i >= 0) this._list.splice(i, 1);
+    };
+  },
+
+  // The text of one side. A segment that renders nothing drops out of the join.
+  side(which) {
+    const out = [];
+    for (const seg of this._list) {
+      if (seg.side !== which) continue;
+      const t = seg.render();
+      if (t) out.push(String(t));
+    }
+    return out.join(" · ");
+  },
+
+  // The right side keeps the width it needs, so a long message never pushes it off the row.
+  draw(rect) {
+    const { x, y, w } = rect;
+    if (w <= 0) return;
+    fill(x, y, w, 1, "YukeBar");
+    const right = this.side("right");
+    const rw = right ? term.measure(right) : 0;
+    if (right) text(x + Math.max(0, w - rw), y, clip(right, w), "YukeBar");
+    const left = this.side("left");
+    if (left) text(x, y, clip(left, Math.max(0, w - rw - 1)), "YukeBar");
+  },
+};
+
 export class RootView {
   constructor() {
     this.root_node = null;
@@ -962,11 +1077,14 @@ export class RootView {
   draw() {
     if (!this.root_node && this.overlays.length === 0) return;
     term.beginFrame();
+    // The bar owns the last row, so every pane rect below derives from the shorter height.
+    const barY = term.height - 1;
     if (this.root_node) {
       fill(0, 0, term.width, term.height, "Normal");
-      this.root_node.layout({ x: 0, y: 0, w: term.width, h: term.height });
+      this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
       this.root_node.draw(this.activeLeaf);
     }
+    if (barY >= 0) status.draw({ x: 0, y: barY, w: term.width, h: 1 });
     for (const layer of this.overlays) {
       callHook(layer, "update");
       callHook(layer, "draw");
@@ -1048,8 +1166,8 @@ export function quit() {
   term.quit();
 }
 
+// A bare key never quits. A stray key in a modal layer must not end the session.
 command.add(null, { quit });
-keymap.add({ q: "quit" });
 
 globalThis.onEvent = (ev) => root.onEvent(ev);
 globalThis.flushFrame = () => root.flush();

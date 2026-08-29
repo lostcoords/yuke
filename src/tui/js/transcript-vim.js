@@ -1,7 +1,7 @@
 // yuke:transcript-vim — an opt-in layer that gives the transcript a cursor. Tab moves the focus
 // between the composer and the transcript, and the motions then move a cursor, not the viewport.
 import { term } from "yuke:term";
-import { root, command, strokeOf, caretAtCol, prevGrapheme, nextGrapheme } from "yuke:core";
+import { root, command, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView, rowText } from "yuke:ui";
 
 // Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map.
@@ -105,74 +105,16 @@ function syncSelection(t, s) {
   t.selection = after ? { anchor: s.anchor, cursor: grow(s.cursor) } : { anchor: grow(s.anchor), cursor: s.cursor };
 }
 
-// A blank, a word character, or punctuation. A motion stops where the class changes.
-function classOf(g) {
-  if (!g || /\s/u.test(g)) return 0;
-  return /[\p{L}\p{N}_]/u.test(g) ? 1 : 2;
-}
-
-// The graphemes of a row with their class, so a word motion never lands inside a cluster.
-function cells(body) {
-  const gs = term.graphemes(body);
-  const out = [];
-  for (let k = 0; k < gs.length; k += 3) out.push({ at: gs[k], cls: classOf(body.slice(gs[k], gs[k] + gs[k + 1])) });
-  return out;
-}
-
-function cellAt(g, col) {
-  for (let i = 0; i < g.length; i++) if (g[i].at >= col) return i;
-  return g.length;
-}
-
-// Move to the start of the next word. The row edge steps to the next row, once.
-function wordFwd(t, s) {
+// A word motion runs inside the row. The row edge steps to the next row, once.
+function wordStep(t, s, find, edge) {
   const body = rowOf(t, s.cursor);
-  const g = cells(body);
-  let i = cellAt(g, s.cursor.col);
-  const cls = i < g.length ? g[i].cls : 0;
-  while (i < g.length && g[i].cls === cls && cls !== 0) i++;
-  while (i < g.length && g[i].cls === 0) i++;
-  if (i >= g.length) {
-    if (!stepRow(t, s, 1)) return false;
-    s.cursor = { ...s.cursor, col: 0 };
+  const col = find(body, s.cursor.col);
+  if (col !== s.cursor.col) {
+    s.cursor = { ...s.cursor, col };
     return true;
   }
-  s.cursor = { ...s.cursor, col: g[i].at };
-  return true;
-}
-
-// Move to the start of the previous word.
-function wordBack(t, s) {
-  const body = rowOf(t, s.cursor);
-  const g = cells(body);
-  let i = cellAt(g, s.cursor.col) - 1;
-  while (i >= 0 && g[i].cls === 0) i--;
-  if (i < 0) {
-    if (!stepRow(t, s, -1)) return false;
-    const prev = rowOf(t, s.cursor);
-    s.cursor = { ...s.cursor, col: prev.length };
-    return true;
-  }
-  const cls = g[i].cls;
-  while (i > 0 && g[i - 1].cls === cls) i--;
-  s.cursor = { ...s.cursor, col: g[i].at };
-  return true;
-}
-
-// Move to the end of the word under or after the cursor.
-function wordEnd(t, s) {
-  const body = rowOf(t, s.cursor);
-  const g = cells(body);
-  let i = cellAt(g, s.cursor.col) + 1;
-  while (i < g.length && g[i].cls === 0) i++;
-  if (i >= g.length) {
-    if (!stepRow(t, s, 1)) return false;
-    s.cursor = { ...s.cursor, col: 0 };
-    return true;
-  }
-  const cls = g[i].cls;
-  while (i + 1 < g.length && g[i + 1].cls === cls) i++;
-  s.cursor = { ...s.cursor, col: g[i].at };
+  if (!stepRow(t, s, edge)) return false;
+  s.cursor = { ...s.cursor, col: edge > 0 ? 0 : rowOf(t, s.cursor).length };
   return true;
 }
 
@@ -243,11 +185,11 @@ function move(t, s, k) {
     case "G":
       return toEnd(t, s, true);
     case "w":
-      return wordFwd(t, s);
+      return wordStep(t, s, nextWordStart, 1);
     case "b":
-      return wordBack(t, s);
+      return wordStep(t, s, prevWordStart, -1);
     case "e":
-      return wordEnd(t, s);
+      return wordStep(t, s, nextWordEnd, 1);
     case "}":
       return blockStep(t, s, 1);
     case "{":
@@ -256,13 +198,22 @@ function move(t, s, k) {
   return false;
 }
 
+// Grow the selection to whole rows, which is what a linewise yank takes.
+function expandLines(t, s) {
+  const after = cmp(t, s.cursor, s.anchor) >= 0;
+  const lo = after ? s.anchor : s.cursor;
+  const hi = after ? s.cursor : s.anchor;
+  t.selection = { anchor: { ...lo, col: 0 }, cursor: { ...hi, col: rowOf(t, hi).length } };
+}
+
 // Copy through the core command, so the mouse and the keyboard take one path to the clipboard.
 // Without a selection the row under the cursor is the target, which is what `yy` means.
-function yank(t, s, name) {
+function yank(t, s, name, linewise) {
   if (!s.visual) {
     const body = rowOf(t, s.cursor);
     t.selection = { anchor: { ...s.cursor, col: 0 }, cursor: { ...s.cursor, col: body.length } };
   }
+  register.set(name === "copy:source" ? t.selectedSource() : t.selectedText(), linewise !== false && !s.visual);
   command.perform(name);
   s.visual = false;
   s.anchor = null;
@@ -293,7 +244,7 @@ export const transcriptVim = {
       if (!s || !s.on) return inner(ev);
 
       const t = this.transcript;
-      const k = strokeOf(ev);
+      const k = modalKey(ev);
       // "g" opens a two-key motion: "gg" to the top, "gy" to copy the markdown source.
       if (s.gPending) {
         s.gPending = false;
@@ -349,8 +300,15 @@ export const transcriptVim = {
         root.invalidate();
         return true;
       }
+      // "Y" takes whole rows, as vim's visual Y does.
+      if (k === "Y") {
+        if (s.visual) expandLines(t, s);
+        yank(t, s, "copy:selection", true);
+        root.invalidate();
+        return true;
+      }
       if (k === "y") {
-        if (s.visual) yank(t, s, "copy:selection");
+        if (s.visual) yank(t, s, "copy:selection", false);
         else s.yPending = true;
         root.invalidate();
         return true;

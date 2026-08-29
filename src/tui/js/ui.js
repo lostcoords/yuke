@@ -1152,8 +1152,8 @@ export class Composer {
     if (this.mode !== "insert") return false;
     const s = strokeOf(ev);
     // The composer owns the vertical keys, so a wrapped line never scrolls the transcript.
-    if (s === "up") return this._moveRow(-1);
-    if (s === "down") return this._moveRow(1);
+    if (s === "up") return this.moveRow(-1);
+    if (s === "down") return this.moveRow(1);
 
     // Every other key edits or moves the caret across, so the goal column is stale.
     this.goalCol = null;
@@ -1205,7 +1205,8 @@ export class Composer {
 
   // Move the caret one row. The goal column survives a short row, as vim and helix do.
   // The move stops at the first and the last row.
-  _moveRow(delta) {
+  // Move the caret one drawn row. A modal layer binds its own keys to this.
+  moveRow(delta) {
     const rows = this._rowsAt(this._textWidth(this.rect.w));
     const proj = this._projection().text;
     const here = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
@@ -1308,7 +1309,6 @@ export class ChatView {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
-    this.status = opts.status || (() => "");
   }
 
   get name() {
@@ -1347,15 +1347,10 @@ export class ChatView {
     // The composer grows with its text. It never takes more than half the pane.
     const rows = Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2)));
     this.composer.rect = { x, y: y + h - rows, w, h: rows };
-    // A status takes its own row over the composer. The rule stays whole under the transcript.
-    const status = this.status();
-    const noteY = y + h - rows - 1;
-    const note = status && noteY - 1 > y ? 1 : 0;
-    const rule = noteY - note;
+    const rule = y + h - rows - 1;
     if (rule > y) this.transcript.draw({ x, y, w, h: rule - y });
     else this.transcript.hide();
     if (rule >= y) text(x, rule, "─".repeat(w), "YukeRule");
-    if (note) text(x, noteY, clip(status, w), "YukeStatus");
     this.composer.draw(focused);
   }
 

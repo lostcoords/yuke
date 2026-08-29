@@ -753,7 +753,7 @@ test "resize keeps unicode width after a write fail" {
     try std.testing.expectEqual(@as(u16, 3), host.paint.height);
 }
 
-test "yuke:core RootView paints and q quits" {
+test "yuke:core RootView paints and only ctrl+q quits" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
@@ -782,7 +782,13 @@ test "yuke:core RootView paints and q quits" {
     const loop = @import("loop.zig");
     try loop.start(host);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "hi") != null);
+    // A bare key never quits, so a stray key in a modal layer cannot end the session.
     try loop.step(host, .{ .key_press = .{ .codepoint = 'q' } });
+    try std.testing.expect(!host.paint.quit_requested);
+    try host.evalModule(
+        \\import { command } from "yuke:core";
+        \\command.perform("quit");
+    , "quit.js");
     try std.testing.expect(host.paint.quit_requested);
 }
 
@@ -1488,6 +1494,77 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
     try std.testing.expectEqualStrings("ok", text);
 }
 
+test "yuke:composer-vim moves, edits, and puts in normal mode" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    try host.evalModule(
+        \\import { root, Node, register } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { ChatView } from "yuke:ui";
+        \\import { composerVim } from "yuke:composer-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\const v = new ChatView({ textOf: () => "" });
+        \\root.setRoot(new Node(v));
+        \\const off = plugins.use(composerVim);
+        \\const t = v.composer.input;
+        \\const key = (ch) => ({ type: "key", code: "char", char: ch, text: ch, event: "press", mods: 0 });
+        \\const press = (str) => { for (const ch of str) v.composer.onKey(key(ch)); };
+        \\
+        \\t.setText("alpha bravo charlie");
+        \\v.composer.mode = "normal";
+        \\press("$");
+        \\// Normal mode holds the caret on a character, so it never sits past the last one.
+        \\check("dollar", t.caret === 18);
+        \\press("bb");
+        \\check("back-word", t.caret === 6);
+        \\press("w");
+        \\check("fwd-word", t.caret === 12);
+        \\press("e");
+        \\check("word-end", t.caret === 18);
+        \\press("0");
+        \\check("zero", t.caret === 0);
+        \\
+        \\// A shifted letter keeps its case, so D is not a pending d.
+        \\press("$x");
+        \\check("x", t.text === "alpha bravo charli" && t.caret === 17);
+        \\press("0w");
+        \\press("D");
+        \\check("D", t.text === "alpha " && register.text === "bravo charli");
+        \\
+        \\// "p" puts the register after the caret.
+        \\press("$p");
+        \\check("put-char", t.text === "alpha bravo charli");
+        \\
+        \\// "dd" takes the whole line, and "p" puts it back on its own line.
+        \\press("dd");
+        \\check("dd", t.text === "" && register.linewise);
+        \\press("p");
+        \\check("put-line", t.text === "\nalpha bravo charli");
+        \\
+        \\// A bare letter never reaches the keymap, so no stray key runs a command.
+        \\check("swallow", v.composer.onKey(key("z")) === true);
+        \\check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 }) === false);
+        \\
+        \\// "i" types again, and an unload leaves the composer plain.
+        \\press("i");
+        \\check("insert", v.composer.mode === "insert");
+        \\off();
+        \\check("unloaded", v.composer.mode === "insert" && v.composer.onKey(key("z")) === true);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "cvim.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
 test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -1555,12 +1632,15 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\v.onKey(key("char", "0"));
         \\check("row-start", v.cursor().x === c0.x);
         \\
-        \\// "gg" reaches the first row and "G" the last.
+        \\// "gg" reaches the first row and "G" the last. A shifted letter keeps its case.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\const top = v.cursor().y;
         \\v.onKey(key("char", "G"));
-        \\const low = v.cursor().y;
+        \\check("G-moves", v.cursor().y > top);
         \\v.onKey(key("char", "g"));
         \\v.onKey(key("char", "g"));
-        \\check("gg-and-G", v.cursor().y < low);
+        \\check("gg-returns", v.cursor().y === top);
         \\
         \\// An unhandled key falls through, so the palette and the window chords still work.
         \\check("falls-through", v.onKey(key("char", "z")) === false);
@@ -2121,8 +2201,7 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
         \\t.draw({ x: 0, y: 0, w: 24, h: 6 });
         \\term.endFrame();
         \\// The pane takes its status line from the caller, so the kit holds no app state.
-        \\// The status inlays into the rule, so the rule and the status both show.
-        \\const v = new ChatView({ textOf: () => "body", status: () => "saved" });
+        \\const v = new ChatView({ textOf: () => "body" });
         \\v.setOutline([{ id: "a1", type: "assistant" }], null);
         \\v.rect = { x: 0, y: 0, w: 24, h: 6 };
         \\term.beginFrame();
@@ -2131,7 +2210,6 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     , "draw.js");
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "hi") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "there") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "saved") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "─") != null);
 }
 
