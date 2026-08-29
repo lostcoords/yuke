@@ -37,6 +37,7 @@ pub const default_baked = [_]loader_mod.BakedModule{
     .{ .name = "yuke:ui", .source = @embedFile("js/ui.js") },
     .{ .name = "yuke:client", .source = @embedFile("js/client.js") },
     .{ .name = "yuke:composer-vim", .source = @embedFile("js/composer-vim.js") },
+    .{ .name = "yuke:transcript-vim", .source = @embedFile("js/transcript-vim.js") },
     .{ .name = "yuke:defaults", .source = @embedFile("js/defaults.js") },
 };
 
@@ -1480,6 +1481,99 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "seam.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 10, .cols = 24, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { root, Node } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { ChatView } from "yuke:ui";
+        \\import { transcriptVim } from "yuke:transcript-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
+        \\
+        \\const body = { a1: "alpha bravo\ncharlie delta" };
+        \\const v = new ChatView({ textOf: (id) => body[id] || "" });
+        \\v.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\root.setRoot(new Node(v));
+        \\v.rect = { x: 0, y: 0, w: 24, h: 8 };
+        \\const paint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
+        \\paint();
+        \\
+        \\// Without the plugin the composer owns the caret and a bare key types.
+        \\const composerCaret = v.cursor();
+        \\check("composer-caret", composerCaret && composerCaret.y === v.composer.rect.y);
+        \\
+        \\const off = plugins.use(transcriptVim);
+        \\// The pane takes no cursor until the focus moves, so typing still works.
+        \\check("still-composer", v.cursor().y === v.composer.rect.y);
+        \\v.onKey(key("tab"));
+        \\check("tab-consumed-by-keymap", true);
+        \\root.onEvent(key("tab"));
+        \\const c0 = v.cursor();
+        \\check("transcript-caret", c0 && c0.visible && c0.y < v.composer.rect.y);
+        \\
+        \\// A motion moves the caret one cell, and it never reaches the composer text.
+        \\const before = v.composer.input.text;
+        \\v.onKey(key("char", "l"));
+        \\const c1 = v.cursor();
+        \\check("moved-right", c1.x === c0.x + 1);
+        \\check("no-typing", v.composer.input.text === before);
+        \\v.onKey(key("char", "h"));
+        \\check("moved-left", v.cursor().x === c0.x);
+        \\
+        \\// "$" goes to the row end and "0" back to its start.
+        \\v.onKey(key("char", "$"));
+        \\check("row-end", v.cursor().x > c0.x);
+        \\v.onKey(key("char", "0"));
+        \\check("row-start", v.cursor().x === c0.x);
+        \\
+        \\// "gg" reaches the first row and "G" the last.
+        \\v.onKey(key("char", "G"));
+        \\const low = v.cursor().y;
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\check("gg-and-G", v.cursor().y < low);
+        \\
+        \\// An unhandled key falls through, so the palette and the window chords still work.
+        \\check("falls-through", v.onKey(key("char", "z")) === false);
+        \\
+        \\// A click places the cursor and takes the focus.
+        \\const r = v.transcript.pager.rect();
+        \\v.onMouse({ type: "mouse", col: r.x + 4, row: r.y, button: "left", event: "press", mods: 0 });
+        \\check("click-focus", v.cursor().y === r.y);
+        \\
+        \\// An unload gives the caret back to the composer.
+        \\off();
+        \\check("unload-restores", v.cursor().y === v.composer.rect.y);
+        \\check("unload-types", v.onKey(key("char", "x")) === true && v.composer.input.text === before + "x");
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "tvim.js");
     const res = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(res);
     const text = try host.ctx.toCStringLen(res);

@@ -6,6 +6,7 @@ import { plugins } from "yuke:ext";
 import { ui, ChatView, List } from "yuke:ui";
 import * as client from "yuke:client";
 import { composerVim } from "yuke:composer-vim";
+import { transcriptVim } from "yuke:transcript-vim";
 
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
 // alone, so a theme that set one first keeps it.
@@ -951,6 +952,7 @@ plugins.use({
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),
+      "transcript-vim:toggle": () => (plugins.get("transcript-vim") ? plugins.dispose("transcript-vim") : plugins.use(transcriptVim)),
     });
 
     // Global commands live on ctrl strokes, so they never collide with typing. Window nav is a
