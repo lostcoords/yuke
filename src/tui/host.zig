@@ -1643,7 +1643,7 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { root, Node } from "yuke:core";
+        \\import { root, Node, register } from "yuke:core";
         \\import { plugins } from "yuke:ext";
         \\import { ChatView } from "yuke:ui";
         \\import { transcriptVim } from "yuke:transcript-vim";
@@ -1737,6 +1737,14 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\v.onKey(key("char", "g"));
         \\v.onKey(key("char", "y"));
         \\check("yank-source", copied === "alpha **bravo** charlie");
+        \\
+        \\// "Y" takes whole rows, so the register is linewise even inside visual mode.
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "g"));
+        \\v.onKey(key("char", "v"));
+        \\v.onKey(key("char", "l"));
+        \\v.onKey(key("char", "Y"));
+        \\check("visual-Y-linewise", register.linewise === true && copied === "alpha bravo charlie");
         \\
         \\// "}" and "{" step by markdown block.
         \\body.a2 = "# Head\n\npara text\n\n- item";

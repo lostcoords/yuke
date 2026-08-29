@@ -4,17 +4,14 @@ import { term } from "yuke:term";
 import { root, copy, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
 import { ChatView } from "yuke:ui";
 
-// Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map, and
-// `touched` lets an unload clear every pane this load reached.
+// Per-pane state, so a split keeps its own cursor. A pane that leaves the tree drops with the map.
 const panes = new WeakMap();
-const touched = [];
 
 function stateOf(view) {
   let s = panes.get(view);
   if (!s) {
     s = { on: false, cursor: null, src: -1, anchor: null, visual: false, goal: null, gPending: false, yPending: false };
     panes.set(view, s);
-    touched.push(view);
   }
   return s;
 }
@@ -23,6 +20,15 @@ function stateOf(view) {
 function chatPane() {
   const v = root.active;
   return v && v.name === "chat" ? v : null;
+}
+
+// Every mounted chat pane, so an unload reaches a pane that does not hold the focus.
+function chatPanes() {
+  const rn = root.root_node;
+  if (!rn) return [];
+  const out = [];
+  for (const leaf of rn.leaves()) if (leaf.view && leaf.view.name === "chat") out.push(leaf.view);
+  return out;
 }
 
 // The rendered text of the cursor's row, or "" when the row is gone.
@@ -240,7 +246,7 @@ function yank(t, s, source, linewise) {
     t.selection = { anchor: { ...s.cursor, col: 0 }, cursor: { ...s.cursor, col: body.length } };
   }
   const text = source ? t.selectedSource() : t.selectedText();
-  register.set(text, linewise !== false && !s.visual);
+  register.set(text, linewise === undefined ? !s.visual : linewise);
   copy(text, source ? "source" : "selection");
   s.visual = false;
   s.anchor = null;
@@ -285,7 +291,7 @@ export const transcriptVim = {
           yank(t, s, true);
           return done(t, s);
         }
-        if (k === "g") return true;
+        if (k === "g") return done(t, s);
       }
       // "y" waits for a second "y", the way vim waits for a motion.
       if (s.yPending) {
@@ -295,7 +301,7 @@ export const transcriptVim = {
       }
       if (k === "g") {
         s.gPending = true;
-        return true;
+        return done(t, s);
       }
 
       if (k === "esc") {
@@ -369,7 +375,7 @@ export const transcriptVim = {
 
     // No focus, selection, or pending key survives an unload.
     return () => {
-      for (const view of touched.splice(0)) {
+      for (const view of chatPanes()) {
         panes.delete(view);
         view.transcript.clearSelection();
       }
