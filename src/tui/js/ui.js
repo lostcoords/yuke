@@ -355,6 +355,17 @@ export class Pager {
     this.stuck = this.atBottom();
   }
 
+  // Scroll the least amount that puts row `index` on the screen.
+  scrollIntoView(index) {
+    if (index < 0 || this._h <= 0) return;
+    let next = this.scroll;
+    if (index < next) next = index;
+    else if (index >= next + this._h) next = index - this._h + 1;
+    if (next === this.scroll) return;
+    this.scroll = Math.min(Math.max(0, next), this._maxScroll());
+    this.stuck = this.atBottom();
+  }
+
   setSource(source) {
     this.source = source || staticRowSource([]);
   }
@@ -471,6 +482,25 @@ function rowSourceSpan(row, from, to) {
     at = end;
   }
   return lo < 0 ? null : { from: lo, to: hi };
+}
+
+// The source offset at caret column `col`. A column in a gap, such as a wrap space, takes the end
+// of the source before it. Return -1 when the row carries no source at all.
+function rowSourceAt(row, col) {
+  const segments = row.segments;
+  if (!segments) return -1;
+  let at = 0;
+  let last = -1;
+  for (const seg of segments) {
+    const end = at + seg.text.length;
+    if (seg.src != null) {
+      if (col < at) return last < 0 ? seg.src : last;
+      if (col < end) return isLinear(seg) ? seg.src + (col - at) : seg.src;
+      last = seg.srcEnd;
+    }
+    at = end;
+  }
+  return last;
 }
 
 // Repaint the string range [from, to) of `segments` with `group`. The bounds come from
@@ -605,20 +635,117 @@ export class Transcript {
 
   // A streaming delta on draft `id`: adopt it if new, and drop its cached rows so it re-renders.
   setActive(id) {
-    // The draft rewraps as tokens arrive, so a position inside it no longer means the same text.
+    // The draft rewraps as tokens arrive, but an append never moves the source before it.
     const sel = this.selection;
-    if (sel && (sel.anchor.id === id || sel.cursor.id === id)) this.clearSelection();
+    const touches = !!sel && (sel.anchor.id === id || sel.cursor.id === id);
+    const anchors = touches ? this._anchors() : null;
     if (!this._active || this._active.id !== id) this._active = { id, type: "assistant" };
     this._rows.delete(id);
+    if (touches) this._reanchor(anchors);
   }
 
-  // A width change rewraps every row, so the row index of a position no longer means the same
-  // text. The selection drops instead of pointing somewhere else.
+  // A width change rewraps every row, so a row index means other text. The selection moves back to
+  // the same source instead.
   _invalidate(width) {
     if (width === this._width) return;
+    const anchors = this._anchors();
     this._width = width;
     this._rows.clear();
-    this.clearSelection();
+    if (this.selection) this._reanchor(anchors);
+  }
+
+  // The selection as source offsets. Return null when either end carries no source.
+  _anchors() {
+    const sel = this.selection;
+    if (!sel || this._width <= 0) return null;
+    const a = this.sourceAt(sel.anchor);
+    const b = this.sourceAt(sel.cursor);
+    if (a < 0 || b < 0) return null;
+    return { a: { id: sel.anchor.id, off: a }, b: { id: sel.cursor.id, off: b } };
+  }
+
+  // Put the selection back on the same source text. A missing end clears it, so a selection never
+  // moves to text the user did not choose.
+  _reanchor(anchors) {
+    const anchor = anchors && this.posAtSource(anchors.a.id, anchors.a.off);
+    const cursor = anchors && this.posAtSource(anchors.b.id, anchors.b.off);
+    if (!anchor || !cursor) {
+      this.clearSelection();
+      return;
+    }
+    this.selection = { anchor, cursor };
+  }
+
+  // The rendered rows of one message at the drawn width.
+  rowsOf(id) {
+    const i = this._indexOf(id);
+    if (i < 0 || this._width <= 0) return [];
+    return this._rowsOf(this._at(i), this._width);
+  }
+
+  // The row index of `pos` across every message, or -1 when the position is gone.
+  _globalRow(pos) {
+    if (!pos || this._width <= 0) return -1;
+    let base = 0;
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) return -1;
+      const rows = this._rowsOf(m, this._width);
+      if (m.id === pos.id) return pos.row < rows.length ? base + pos.row : -1;
+      base += rows.length;
+    }
+  }
+
+  // The source offset under a logical position, or -1 without one.
+  sourceAt(pos) {
+    const rows = pos ? this.rowsOf(pos.id) : [];
+    if (pos.row >= rows.length) return -1;
+    return rowSourceAt(rows[pos.row], pos.col);
+  }
+
+  // The position that renders source `offset`, or the first one after it. The end of the source
+  // takes the last position, so a selection that runs to the end survives a rewrap.
+  posAtSource(id, offset) {
+    const rows = this.rowsOf(id);
+    let tail = null;
+    let tailOff = -1;
+    for (let k = 0; k < rows.length; k++) {
+      const segments = rows[k].segments;
+      if (!segments) continue;
+      let at = 0;
+      for (const seg of segments) {
+        const end = at + seg.text.length;
+        if (seg.src != null) {
+          if (seg.srcEnd > offset) {
+            // A caret at the end of the source before a gap belongs to that end, not past it.
+            if (offset === tailOff) return tail;
+            const col = offset > seg.src && isLinear(seg) ? at + (offset - seg.src) : at;
+            return { id, row: k, col: Math.min(col, end) };
+          }
+          tail = { id, row: k, col: end };
+          tailOff = seg.srcEnd;
+        }
+        at = end;
+      }
+    }
+    return tail;
+  }
+
+  // The screen cell of a logical position, or null when it is off the drawn rows.
+  screenAt(pos) {
+    const rect = this.pager.rect();
+    const g = this._globalRow(pos);
+    if (!rect || g < 0) return null;
+    const y = rect.y + (g - this.pager.scroll);
+    if (y < rect.y || y >= rect.y + rect.h) return null;
+    const row = this.rowsOf(pos.id)[pos.row];
+    const body = rowText(row);
+    return { x: rect.x + (row.indent || 0) + term.measure(body.slice(0, pos.col)), y };
+  }
+
+  // Scroll the least amount that brings `pos` onto the screen.
+  ensureVisible(pos) {
+    this.pager.scrollIntoView(this._globalRow(pos));
   }
 
   _rowsOf(m, width) {
@@ -816,12 +943,12 @@ export class Transcript {
     return this.pager.onKey(ev);
   }
 
-  // The logical position under the pointer, or null off the drawn rows. `clamp` pulls a pointer
+  // The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a pointer
   // outside the pane back to the nearest row, so a drag keeps up with it.
-  _posAt(ev, clamp) {
+  posAt(col, row, clamp) {
     const rect = this.pager.rect();
     if (!rect) return null;
-    const y = clamp ? Math.min(Math.max(ev.row, rect.y), rect.y + rect.h - 1) : ev.row;
+    const y = clamp ? Math.min(Math.max(row, rect.y), rect.y + rect.h - 1) : row;
     const g = this.pager.rowAtY(y);
     if (g < 0) return null;
     let base = 0;
@@ -830,9 +957,9 @@ export class Transcript {
       if (!m) return null;
       const rows = this._rowsOf(m, this._width);
       if (g < base + rows.length) {
-        const row = rows[g - base];
-        const body = rowText(row);
-        const x = Math.max(0, ev.col - rect.x - (row.indent || 0));
+        const line = rows[g - base];
+        const body = rowText(line);
+        const x = Math.max(0, col - rect.x - (line.indent || 0));
         return { id: m.id, row: g - base, col: caretAtCol(body, { start: 0, end: body.length }, x) };
       }
       base += rows.length;
@@ -845,7 +972,7 @@ export class Transcript {
     if (isWheel(ev.button)) return this.pager.onMouse(ev);
     if (ev.button !== "left") return false;
     if (ev.event === "press") {
-      const pos = this._posAt(ev, false);
+      const pos = this.posAt(ev.col, ev.row, false);
       this.selection = pos ? { anchor: pos, cursor: pos } : null;
       this._dragging = pos != null;
       return true;
@@ -853,7 +980,7 @@ export class Transcript {
     if (!this._dragging) return false;
     if (ev.event === "drag") {
       // A drag past the edge clamps, so the selection follows the pointer out of the pane.
-      const pos = this._posAt(ev, true);
+      const pos = this.posAt(ev.col, ev.row, true);
       if (this.selection && pos) this.selection.cursor = pos;
       return true;
     }

@@ -354,6 +354,12 @@ function copyText(what, text) {
   else notice.show("copied " + what + " · " + n + " bytes");
 }
 
+// The focused chat pane, or the default one when another view holds the focus.
+function activeChat() {
+  const v = root.active;
+  return v && v.name === "chat" ? v : chat;
+}
+
 // The main pane: a placeholder shown in a split leaf with no session.
 class MainPane {
   constructor() {
@@ -940,6 +946,8 @@ plugins.use({
       "window:close": () => root.close(),
       "ui:cmdline": () => openCommandLine(),
       "copy:reply": () => copyText("reply", chat.transcript.textFor(chat.transcript.last("assistant"))),
+      "copy:selection": () => copyText("selection", activeChat().transcript.selectedText()),
+      "copy:source": () => copyText("source", activeChat().transcript.selectedSource()),
       "copy:message": () => openMessagePicker(),
       "copy:code": () => openCodePicker(),
       "composer-vim:toggle": () => (plugins.get("composer-vim") ? plugins.dispose("composer-vim") : plugins.use(composerVim)),

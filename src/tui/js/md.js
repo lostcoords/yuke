@@ -801,6 +801,11 @@ export class Document {
     return out;
   }
 
+  // The blocks in document order, for a caller that moves by markdown structure.
+  blocks() {
+    return this._blocks.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
+  }
+
   // The fenced code blocks, in document order. The text is the body, without the fence lines.
   codeBlocks() {
     const out = [];

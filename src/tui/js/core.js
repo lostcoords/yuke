@@ -520,6 +520,23 @@ function deleteWordBack(s, caret) {
 // A caret step reads this many code units around the caret. No grapheme cluster is this long.
 const grapheme_window = 256;
 
+// A step needs only the grapheme beside the caret, so it scans a window and not the whole text.
+// A cluster longer than the window is not real text.
+export function prevGrapheme(s, at) {
+  const from = Math.max(0, at - grapheme_window);
+  const gs = term.graphemes(s.slice(from, at));
+  let p = from;
+  for (let k = 0; k < gs.length; k += 3) p = from + gs[k];
+  return p;
+}
+
+export function nextGrapheme(s, at) {
+  const to = Math.min(s.length, at + grapheme_window);
+  const gs = term.graphemes(s.slice(at, to));
+  if (gs.length === 0) return s.length;
+  return at + gs[0] + gs[1];
+}
+
 export class TextInput {
   constructor(opts = {}) {
     this.text = "";
@@ -540,23 +557,6 @@ export class TextInput {
 
   beforeCaret() {
     return this.text.slice(0, this.caret);
-  }
-
-  // A step needs only the grapheme beside the caret, so it scans a window and not the whole text.
-  // A cluster longer than the window is not real text.
-  _prev(caret) {
-    const from = Math.max(0, caret - grapheme_window);
-    const gs = term.graphemes(this.text.slice(from, caret));
-    let p = from;
-    for (let k = 0; k < gs.length; k += 3) p = from + gs[k];
-    return p;
-  }
-
-  _next(caret) {
-    const to = Math.min(this.text.length, caret + grapheme_window);
-    const gs = term.graphemes(this.text.slice(caret, to));
-    if (gs.length === 0) return this.text.length;
-    return caret + gs[0] + gs[1];
   }
 
   _splice(from, to, ins) {
@@ -581,10 +581,10 @@ export class TextInput {
     const s = strokeOf(ev);
     switch (s) {
       case "left":
-        this.caret = this._prev(this.caret);
+        this.caret = prevGrapheme(this.text, this.caret);
         return true;
       case "right":
-        this.caret = this._next(this.caret);
+        this.caret = nextGrapheme(this.text, this.caret);
         return true;
       case "home":
       case "ctrl+a":
@@ -595,12 +595,12 @@ export class TextInput {
         this.caret = this.text.length;
         return true;
       case "backspace": {
-        const p = this._prev(this.caret);
+        const p = prevGrapheme(this.text, this.caret);
         if (p !== this.caret) this._splice(p, this.caret, "");
         return true;
       }
       case "delete": {
-        const n = this._next(this.caret);
+        const n = nextGrapheme(this.text, this.caret);
         if (n !== this.caret) this._splice(this.caret, n, "");
         return true;
       }

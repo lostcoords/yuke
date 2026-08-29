@@ -1361,7 +1361,7 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
         \\t.onMouse(at(9, 0, "release"));
         \\check("orphan-release", copied === null);
         \\
-        \\// The streaming draft rewraps, so a selection inside it drops on the next delta.
+        \\// An append never moves the source before it, so a selection in the draft survives a delta.
         \\body.a9 = "draft text";
         \\t.setOutline([{ id: "u1", type: "user" }], { id: "a9", type: "assistant" });
         \\paint();
@@ -1369,15 +1369,16 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
         \\t.onMouse(at(3, 2, "press"));
         \\t.onMouse(at(5, 2, "drag"));
         \\check("draft-sel", t.selection !== null && t.selection.anchor.id === "a9");
+        \\body.a9 = "draft text and more";
         \\t.setActive("a9");
-        \\check("stream-clears", t.selection === null);
+        \\check("stream-keeps", t.selectedText() === "ra");
         \\// A selection in another message survives a draft delta.
         \\t.onMouse(at(3, 0, "press"));
         \\t.onMouse(at(5, 0, "drag"));
         \\t.setActive("a9");
         \\check("other-msg-kept", t.selection !== null);
         \\
-        \\// A width change rewraps the rows, so the selection drops.
+        \\// A user turn is plain text with no source map, so a rewrap drops its selection.
         \\t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
         \\paint();
         \\t.onMouse(at(3, 0, "press"));
@@ -1386,8 +1387,99 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
         \\t.rows(20, 0, 12);
         \\check("clear-on-resize", t.selection === null);
         \\
+        \\// A markdown turn re-anchors on its source, so the same words stay selected.
+        \\body.a2 = "alpha bravo charlie delta echo";
+        \\t.setOutline([{ id: "a2", type: "assistant" }], null);
+        \\t.rows(40, 0, 12);
+        \\paint();
+        \\t.onMouse(at(8, 0, "press"));
+        \\t.onMouse(at(13, 0, "drag"));
+        \\check("wide-sel", t.selectedText() === "bravo");
+        \\t.rows(14, 0, 12);
+        \\check("keep-on-resize", t.selectedText() === "bravo");
+        \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "sel.js");
+    const res = try host.ctx.eval("globalThis.result", "r.js", .{});
+    defer host.ctx.freeValue(res);
+    const text = try host.ctx.toCStringLen(res);
+    defer host.ctx.freeCString(text.ptr);
+    try std.testing.expectEqualStrings("ok", text);
+}
+
+test "yuke:ui the transcript seam maps a position to source, screen, and scroll" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var env_map = try std.testing.environ.createMap(gpa.allocator());
+    defer env_map.deinit();
+    var render = try term_pkg.Render.init(std.testing.io, gpa.allocator(), &env_map, .{});
+    var sink: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer sink.deinit();
+    defer render.deinit(&sink.writer);
+    try render.resize(&sink.writer, .{ .rows = 8, .cols = 20, .x_pixel = 0, .y_pixel = 0 });
+
+    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    defer out.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    host.bindRender(&render, &out.writer);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript, rowText } from "yuke:ui";
+        \\import { Document } from "yuke:md";
+        \\import { prevGrapheme, nextGrapheme } from "yuke:core";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\
+        \\const body = { a1: "alpha bravo charlie delta echo foxtrot golf hotel india" };
+        \\const t = new Transcript({ textOf: (id) => body[id] || "" });
+        \\t.setOutline([{ id: "a1", type: "assistant" }], null);
+        \\const rect = { x: 0, y: 0, w: 20, h: 2 };
+        \\const paint = () => { term.beginFrame(); t.draw(rect); term.endFrame(); };
+        \\paint();
+        \\const rows = t.rowsOf("a1");
+        \\check("wrapped", rows.length > rect.h);
+        \\
+        \\// Every column that carries source maps to an offset that maps back to the same offset.
+        \\let bad = 0;
+        \\for (let r = 0; r < rows.length; r++) {
+        \\  const n = rowText(rows[r]).length;
+        \\  for (let c = 0; c <= n; c++) {
+        \\    const off = t.sourceAt({ id: "a1", row: r, col: c });
+        \\    if (off < 0) continue;
+        \\    const back = t.posAtSource("a1", off);
+        \\    if (!back || t.sourceAt(back) !== off) bad++;
+        \\  }
+        \\}
+        \\check("roundtrip", bad === 0);
+        \\
+        \\// An offset past the end takes the last position, so a selection to the end survives.
+        \\check("tail", t.posAtSource("a1", body.a1.length + 99) !== null);
+        \\check("no-source", t.sourceAt({ id: "a1", row: rows.length + 5, col: 0 }) === -1);
+        \\
+        \\// The screen cell counts the gutter, and a row off the viewport has none.
+        \\t.pager.toTop();
+        \\paint();
+        \\const head = t.screenAt({ id: "a1", row: 0, col: 3 });
+        \\check("screen-at", head && head.y === 0 && head.x === (rows[0].indent || 0) + 3);
+        \\const last = { id: "a1", row: rows.length - 1, col: 0 };
+        \\check("hidden-before", t.screenAt(last) === null);
+        \\t.ensureVisible(last);
+        \\check("visible-after", t.screenAt(last) !== null);
+        \\
+        \\// The blocks carry their source span, so a caller can move by markdown structure.
+        \\const doc = new Document();
+        \\doc.setText("# H\n\npara\n\n```\nx\n```");
+        \\const bs = doc.blocks();
+        \\check("blocks", bs.length === 3 && bs[0].kind === "heading" && bs[0].at === 0 && bs[2].kind === "code");
+        \\
+        \\// A grapheme step crosses an astral pair whole.
+        \\check("grapheme-step", nextGrapheme("a𝄞b", 1) === 3 && prevGrapheme("a𝄞b", 3) === 1);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "seam.js");
     const res = try host.ctx.eval("globalThis.result", "r.js", .{});
     defer host.ctx.freeValue(res);
     const text = try host.ctx.toCStringLen(res);
