@@ -1647,8 +1647,12 @@ test "yuke:composer-vim moves, edits, and puts in normal mode" {
         \\// "i" types again, and an unload leaves the composer plain.
         \\press("i");
         \\check("insert", v.composer.mode === "insert");
+        \\v.composer.mode = "normal";
+        \\t.setText("");
         \\off();
-        \\check("unloaded", v.composer.mode === "insert" && v.composer.onKey(key("z")) === true);
+        \\check("unloaded", v.composer.mode === "insert");
+        \\v.composer.onKey(key("z"));
+        \\check("types-after-unload", t.text === "z");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "cvim.js");
@@ -1917,6 +1921,8 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  const doc = new Document();
         \\  doc.setText("# H\n\n```\nx=1");
         \\  check("open-fence", has(doc.rows(80), "MdCodeBlock", "x=1"));
+        \\  doc.setText("# H\n\n```\nx=2");
+        \\  check("open-tail-refreshes", has(doc.rows(80), "MdCodeBlock", "x=2"));
         \\}
         \\
         \\// A finalized block keeps its cache entry when the open tail grows.
