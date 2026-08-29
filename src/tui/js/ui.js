@@ -678,16 +678,28 @@ export class Transcript {
 
   // The markdown blocks of one message, oldest first. A plain turn has none.
   blocksOf(id) {
-    this.rowsOf(id);
+    this._rowsFor(id);
     const doc = this._docs.get(id);
     return doc ? doc.blocks() : [];
   }
 
-  // The rendered rows of one message at the drawn width.
-  rowsOf(id) {
+  // The rendered rows of one message at the drawn width. The array and its rows belong to the
+  // render cache, so only this class may hold them.
+  _rowsFor(id) {
     const i = this._indexOf(id);
     if (i < 0 || this._width <= 0) return [];
     return this._rowsOf(this._at(i), this._width);
+  }
+
+  // The number of rendered rows in one message.
+  rowCountOf(id) {
+    return this._rowsFor(id).length;
+  }
+
+  // The rendered text of one row, or "" when the row is gone.
+  rowTextAt(id, row) {
+    const rows = this._rowsFor(id);
+    return row >= 0 && row < rows.length ? rowText(rows[row]) : "";
   }
 
   // The row index of `pos` across every message, or -1 when the position is gone.
@@ -706,7 +718,7 @@ export class Transcript {
   // The source offset under a logical position, or -1 without one.
   sourceAt(pos) {
     if (!pos || pos.row < 0) return -1;
-    const rows = this.rowsOf(pos.id);
+    const rows = this._rowsFor(pos.id);
     if (pos.row >= rows.length) return -1;
     return rowSourceAt(rows[pos.row], pos.col);
   }
@@ -714,7 +726,7 @@ export class Transcript {
   // The position that renders source `offset`, or the first one after it. The end of the source
   // takes the last position, so a selection that runs to the end survives a rewrap.
   posAtSource(id, offset) {
-    const rows = this.rowsOf(id);
+    const rows = this._rowsFor(id);
     let tail = null;
     let tailOff = -1;
     for (let k = 0; k < rows.length; k++) {
@@ -746,7 +758,7 @@ export class Transcript {
     if (!rect || g < 0) return null;
     const y = rect.y + (g - this.pager.scroll);
     if (y < rect.y || y >= rect.y + rect.h) return null;
-    const row = this.rowsOf(pos.id)[pos.row];
+    const row = this._rowsFor(pos.id)[pos.row];
     const body = rowText(row);
     return { x: rect.x + (row.indent || 0) + term.measure(body.slice(0, pos.col)), y };
   }

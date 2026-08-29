@@ -887,7 +887,11 @@ export const status = {
   // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
   add(seg) {
     if (typeof seg.render !== "function") throw new TypeError("status.add needs a render function");
-    const entry = { side: seg.side === "right" ? "right" : "left", order: seg.order || 0, render: seg.render };
+    const side = seg.side == null ? "left" : seg.side;
+    if (side !== "left" && side !== "right") throw new TypeError("status.add: side must be left or right");
+    const order = seg.order == null ? 0 : seg.order;
+    if (!Number.isFinite(order)) throw new TypeError("status.add: order must be a finite number");
+    const entry = { side, order, render: seg.render };
     this._list.push(entry);
     this._list.sort((a, b) => a.order - b.order);
     return () => {

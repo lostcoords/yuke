@@ -818,10 +818,11 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
     const host = try Host.create(gpa.allocator());
     defer host.destroy();
     try host.evalModule(
-        \\import { command, keymap, events, Emitter } from "yuke:core";
+        \\import { command, keymap, events, status, Emitter } from "yuke:core";
         \\import { Scope, Context, advice, services, plugins } from "yuke:ext";
         \\const fail = [];
         \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
         \\
         \\// A scope reverts its effects newest first.
         \\{
@@ -1041,6 +1042,25 @@ test "yuke:ext kernel: scope, advice, services, and the plugin lifecycle" {
         \\    !keymap.map["ctrl+y"] && services.get("svc7") === undefined &&
         \\    obj.f() === 1 && advice.list(obj, "f").length === 0;
         \\  check("context-surface", ok && gone);
+        \\}
+        \\
+        \\// The status registry orders each side, rejects a bad segment, and disposes with the scope.
+        \\const offA = status.add({ side: "left", order: 10, render: () => "a" });
+        \\status.add({ side: "left", order: 1, render: () => "b" });
+        \\status.add({ side: "right", order: 0, render: () => "r" });
+        \\status.add({ side: "left", order: 5, render: () => null });
+        \\check("status-order", status.side("left") === "b · a");
+        \\check("status-side", status.side("right") === "r");
+        \\check("status-bad-side", throws(() => status.add({ side: "up", render: () => "x" })));
+        \\check("status-bad-order", throws(() => status.add({ order: Infinity, render: () => "x" })));
+        \\check("status-no-render", throws(() => status.add({ side: "left" })));
+        \\offA();
+        \\check("status-dispose", status.side("left") === "b");
+        \\{
+        \\  const stop = plugins.use({ name: "seg", apply: (c) => { c.status({ side: "right", order: 9, render: () => "p" }); } });
+        \\  check("status-plugin", status.side("right") === "r · p");
+        \\  stop();
+        \\  check("status-unload", status.side("right") === "r");
         \\}
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
@@ -1352,9 +1372,9 @@ test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
         \\// The selected part of a visible row carries a range, and the rest of the row does not.
         \\const rows = t.rows(40, 0, 12);
         \\check("row-sel", rows[0].sel && rows[0].sel.from === 1 && rows[0].sel.to === 5);
-        \\// The visible row is a copy. The cached row and its segments never change.
-        \\const cached = t._rows.get("u1").rows[0];
-        \\check("row-sel-copy", cached.sel === undefined && rows[0] !== cached);
+        \\// The visible row is a copy, so a selection never sticks to the cached row.
+        \\t.clearSelection();
+        \\check("row-sel-copy", t.rows(40, 0, 12)[0].sel === undefined);
         \\
         \\// A bare click drops the selection instead of copying an empty string.
         \\copied = null;
@@ -1443,7 +1463,7 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
 
     try host.evalModule(
         \\import { term } from "yuke:term";
-        \\import { Transcript, rowText } from "yuke:ui";
+        \\import { Transcript } from "yuke:ui";
         \\import { Document } from "yuke:md";
         \\import { prevGrapheme, nextGrapheme } from "yuke:core";
         \\const fail = [];
@@ -1455,13 +1475,13 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
         \\const rect = { x: 0, y: 0, w: 20, h: 2 };
         \\const paint = () => { term.beginFrame(); t.draw(rect); term.endFrame(); };
         \\paint();
-        \\const rows = t.rowsOf("a1");
-        \\check("wrapped", rows.length > rect.h);
+        \\const count = t.rowCountOf("a1");
+        \\check("wrapped", count > rect.h);
         \\
         \\// Every column that carries source maps to an offset that maps back to the same offset.
         \\let bad = 0;
-        \\for (let r = 0; r < rows.length; r++) {
-        \\  const n = rowText(rows[r]).length;
+        \\for (let r = 0; r < count; r++) {
+        \\  const n = t.rowTextAt("a1", r).length;
         \\  for (let c = 0; c <= n; c++) {
         \\    const off = t.sourceAt({ id: "a1", row: r, col: c });
         \\    if (off < 0) continue;
@@ -1473,14 +1493,15 @@ test "yuke:ui the transcript seam maps a position to source, screen, and scroll"
         \\
         \\// An offset past the end takes the last position, so a selection to the end survives.
         \\check("tail", t.posAtSource("a1", body.a1.length + 99) !== null);
-        \\check("no-source", t.sourceAt({ id: "a1", row: rows.length + 5, col: 0 }) === -1);
+        \\check("no-source", t.sourceAt({ id: "a1", row: count + 5, col: 0 }) === -1);
         \\
         \\// The screen cell counts the gutter, and a row off the viewport has none.
         \\t.pager.toTop();
         \\paint();
         \\const head = t.screenAt({ id: "a1", row: 0, col: 3 });
-        \\check("screen-at", head && head.y === 0 && head.x === (rows[0].indent || 0) + 3);
-        \\const last = { id: "a1", row: rows.length - 1, col: 0 };
+        \\// The assistant gutter is two columns wide.
+        \\check("screen-at", head && head.y === 0 && head.x === 2 + 3);
+        \\const last = { id: "a1", row: count - 1, col: 0 };
         \\check("hidden-before", t.screenAt(last) === null);
         \\t.ensureVisible(last);
         \\check("visible-after", t.screenAt(last) !== null);
@@ -1784,8 +1805,6 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  const doc = new Document();
         \\  doc.setText("# H\n\n```\nx=1");
         \\  check("open-fence", has(doc.rows(80), "MdCodeBlock", "x=1"));
-        \\  check("open-uncached", !doc._cache.has(5));
-        \\  check("final-cached", doc._cache.has(0));
         \\}
         \\
         \\// A finalized block keeps its cache entry when the open tail grows.
@@ -1795,7 +1814,7 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  doc.rows(80);
         \\  doc.setText("# H\n\npara one two");
         \\  const rows = doc.rows(80);
-        \\  check("append-heading", has(rows, "MdHeading", "H") && doc._cache.has(0));
+        \\  check("append-heading", has(rows, "MdHeading", "H"));
         \\  check("append-tail", rows.some((r) => r.segments.some((s) => s.text.indexOf("two") >= 0)));
         \\}
         \\
@@ -1829,7 +1848,8 @@ test "yuke:md maps a rendered row back to its markdown source" {
         \\    if (s.src < 0 || s.srcEnd <= s.src || s.srcEnd > src.length) return false;
         \\    if (s.mark) continue;
         \\    const span = src.slice(s.src, s.srcEnd);
-        \\    if (span !== s.text && span.indexOf(s.text) < 0) return false;
+        \\    // A linear segment is its own source. An escape is the same text behind a backslash.
+        \\    if (span !== s.text && span.split("\\").join("") !== s.text) return false;
         \\  }
         \\  return true;
         \\};

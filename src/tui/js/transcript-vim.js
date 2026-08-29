@@ -2,7 +2,7 @@
 // between the composer and the transcript, and the motions then move a cursor, not the viewport.
 import { term } from "yuke:term";
 import { root, copy, modalKey, caretAtCol, register, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:core";
-import { ChatView, rowText } from "yuke:ui";
+import { ChatView } from "yuke:ui";
 
 // Per-pane state, so a split keeps its own cursor. A pane that goes away drops with the map, and
 // `touched` lets an unload clear every pane this load reached.
@@ -27,8 +27,7 @@ function chatPane() {
 
 // The rendered text of the cursor's row, or "" when the row is gone.
 function rowOf(t, pos) {
-  const rows = t.rowsOf(pos.id);
-  return pos.row < rows.length ? rowText(rows[pos.row]) : "";
+  return t.rowTextAt(pos.id, pos.row);
 }
 
 // The message ids in transcript order.
@@ -89,20 +88,20 @@ function stepRow(t, s, d) {
   if (i < 0) return false;
 
   let r = s.cursor.row + d;
-  while (r < 0 || r >= t.rowsOf(ids[i]).length) {
+  while (r < 0 || r >= t.rowCountOf(ids[i])) {
     if (r < 0) {
       if (i === 0) return false;
       i--;
-      r += t.rowsOf(ids[i]).length;
+      r += t.rowCountOf(ids[i]);
     } else {
       if (i === ids.length - 1) return false;
-      r -= t.rowsOf(ids[i]).length;
+      r -= t.rowCountOf(ids[i]);
       i++;
     }
   }
 
   const goal = s.goal == null ? term.measure(rowOf(t, s.cursor).slice(0, s.cursor.col)) : s.goal;
-  const body = rowText(t.rowsOf(ids[i])[r]);
+  const body = t.rowTextAt(ids[i], r);
   s.cursor = { id: ids[i], row: r, col: caretAtCol(body, { start: 0, end: body.length }, goal) };
   s.goal = goal;
   return true;
@@ -174,11 +173,11 @@ function toEnd(t, s, last) {
   const ids = idsOf(t);
   if (ids.length === 0) return false;
   const id = last ? ids[ids.length - 1] : ids[0];
-  const rows = t.rowsOf(id);
-  if (rows.length === 0) return false;
+  const count = t.rowCountOf(id);
+  if (count === 0) return false;
   // A message ends with a blank separator row, so `G` steps back onto the last real text.
-  let r = last ? rows.length - 1 : 0;
-  while (last && r > 0 && rowText(rows[r]) === "") r--;
+  let r = last ? count - 1 : 0;
+  while (last && r > 0 && t.rowTextAt(id, r) === "") r--;
   s.cursor = { id, row: r, col: 0 };
   return true;
 }
