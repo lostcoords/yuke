@@ -1901,6 +1901,8 @@ test "yuke:md renders the GFM subset and caches finalized blocks" {
         \\  const rows = renderRows("*x **y** z*", 80);
         \\  check("nested-emph", has(rows, "MdStrongEm", "y") && has(rows, "MdEm", "x") && has(rows, "MdEm", "z"));
         \\}
+        \\// A link label keeps the emphasis that encloses it.
+        \\check("link-in-emphasis", has(renderRows("*[x](u)* y", 80), "MdEm", "x"));
         \\// A malformed link (a space in the destination) stays literal, not dropped.
         \\check("bad-link", renderRows("[foo](bad url)", 80).some((r) => r.segments.some((s) => s.text.indexOf("bad") >= 0)));
         \\// A table renders a column border.

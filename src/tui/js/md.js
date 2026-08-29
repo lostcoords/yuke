@@ -429,7 +429,9 @@ function parseInline(text, baseGroup) {
         // The label is a verbatim slice of the parent, so a sub-range shifts by the label offset.
         const shift = units[i + 1];
         for (const s of parseInline(link.label, base)) {
-          if (s.text) nodes.push({ kind: "seg", text: s.text, group: s.group, at: shift + s.at, len: s.len });
+          if (!s.text) continue;
+          const styled = s.group !== base;
+          nodes.push({ kind: styled ? "seg" : "text", text: s.text, group: s.group, at: shift + s.at, len: s.len });
         }
         i = link.end + 1;
         continue;
@@ -557,8 +559,8 @@ export function isLinear(seg) {
   return seg.src != null && !seg.mark && seg.srcEnd - seg.src === seg.text.length;
 }
 
-// Slice a resolved segment. A segment that is not linear keeps its whole source span. It is never
-// wider than one grapheme, so a wrap never splits one.
+// Slice a resolved segment. A segment that is not linear keeps its whole source span. Only an
+// escape reaches a wrap; a mark is wide but never wraps.
 function sliceSegment(seg, from, to) {
   const out = { text: seg.text.slice(from, to), group: seg.group };
   if (seg.src == null) return out;
