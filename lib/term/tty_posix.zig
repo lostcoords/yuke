@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const xvaxis = @import("xvaxis/main.zig");
 const zio = @import("zio");
@@ -36,9 +37,9 @@ pub const Tty = struct {
     file: std.Io.File,
     original: posix.termios,
 
-    /// Open `/dev/tty` and enter raw mode. `deinit` restores termios.
+    /// Open the controlling TTY and enter raw mode. `deinit` restores termios.
     pub fn open(io: std.Io) !Tty {
-        var file = try std.Io.Dir.openFileAbsolute(io, "/dev/tty", .{ .mode = .read_write });
+        var file = try openDevice(io);
         errdefer file.close(io);
         const original = try posix.tcgetattr(file.handle);
         try posix.tcsetattr(file.handle, .FLUSH, rawTermios(original));
@@ -74,6 +75,35 @@ pub const Tty = struct {
         return .{ .rows = ws.row, .cols = ws.col, .x_pixel = ws.xpixel, .y_pixel = ws.ypixel };
     }
 };
+
+/// Open the terminal device.
+fn openDevice(io: std.Io) !std.Io.File {
+    // `/dev/tty` fails to register with kqueue, so darwin needs the real device name
+    if (builtin.os.tag.isDarwin()) {
+        var buf: [posix.PATH_MAX]u8 = undefined;
+        if (devicePath(&buf)) |path| {
+            if (std.Io.Dir.openFileAbsolute(io, path, .{ .mode = .read_write })) |file| {
+                return file;
+            } else |_| {}
+        }
+    }
+    return std.Io.Dir.openFileAbsolute(io, "/dev/tty", .{ .mode = .read_write });
+}
+
+/// Return the device path of the first standard stream that is a terminal.
+fn devicePath(buf: *[posix.PATH_MAX]u8) ?[]const u8 {
+    const streams = [_]posix.fd_t{ posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO };
+    for (streams) |fd| {
+        if (std.c.isatty(fd) == 0) continue;
+        const rc = posix.system.fcntl(fd, posix.F.GETPATH, @intFromPtr(buf));
+        if (posix.errno(rc) != .SUCCESS) continue;
+        const path = std.mem.sliceTo(buf, 0);
+        // A caller can redirect a standard stream from `/dev/tty`; that name is the one to avoid.
+        if (!std.fs.path.isAbsolute(path) or std.mem.eql(u8, path, "/dev/tty")) continue;
+        return path;
+    }
+    return null;
+}
 
 /// Build raw-mode termios from the saved state. Clear echo, canonical, and transform flags.
 fn rawTermios(state: posix.termios) posix.termios {
