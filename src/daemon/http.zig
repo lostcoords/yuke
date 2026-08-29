@@ -464,6 +464,16 @@ test "the user commit and run.started precede the send_input response" {
     try testing.expect(saw_user_commit and saw_run_started and response_after_broadcasts);
 }
 
+/// Take the next session-stream frame. It drops `session.summary_changed`, which fans out to every
+/// connection as an index event and holds no place in one session's order.
+fn nextStreamFrame(conn: *Connection) !?connection.OutboxItem {
+    while (try conn.tryReceive()) |item| {
+        if (std.mem.indexOf(u8, item.bytes, "session.summary_changed") == null) return item;
+        testing.allocator.free(item.bytes);
+    }
+    return null;
+}
+
 test "a queued drain publishes its commits and run.started before a send_input error" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
@@ -508,21 +518,21 @@ test "a queued drain publishes its commits and run.started before a send_input e
     {
         const first_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old.input.input_id});
         const second_id = try std.fmt.allocPrint(arena, "\"input_id\":{d}", .{old2.input.input_id});
-        const first = (try conn.tryReceive()).?;
+        const first = (try nextStreamFrame(&conn)).?;
         defer testing.allocator.free(first.bytes);
         try testing.expect(std.mem.indexOf(u8, first.bytes, "message.committed") != null and std.mem.indexOf(u8, first.bytes, first_id) != null);
-        const second = (try conn.tryReceive()).?;
+        const second = (try nextStreamFrame(&conn)).?;
         defer testing.allocator.free(second.bytes);
         try testing.expect(std.mem.indexOf(u8, second.bytes, "message.committed") != null and std.mem.indexOf(u8, second.bytes, second_id) != null);
-        const started = (try conn.tryReceive()).?;
+        const started = (try nextStreamFrame(&conn)).?;
         defer testing.allocator.free(started.bytes);
         try testing.expect(std.mem.indexOf(u8, started.bytes, "\"method\":\"run.started\"") != null);
     }
-    try testing.expect((try conn.tryReceive()) == null);
+    try testing.expect((try nextStreamFrame(&conn)) == null);
 
     var launch = try rt.spawn(enqueueReplyAndLaunch, .{ &state, &conn, reply });
     try launch.join();
-    const response_item = (try conn.tryReceive()).?;
+    const response_item = (try nextStreamFrame(&conn)).?;
     defer testing.allocator.free(response_item.bytes);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"id\":\"request-error\"") != null);
     try testing.expect(std.mem.indexOf(u8, response_item.bytes, "\"error\"") != null);

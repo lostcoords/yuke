@@ -12,15 +12,14 @@ pub const ApiKeyHeader = enum { x_api_key, authorization_bearer };
 /// Select whether the endpoint accepts Anthropic `cache_control`.
 pub const CachePolicy = enum { unsupported, ephemeral };
 
-/// Name the source of a key. The `env` and `store` values refer to a key; the `literal` value refers to an owned key.
+/// Name the source of a key. The `env` value refers to a key; the `literal` value refers to an owned key.
 /// The owner zeroes a `literal` buffer before it frees it.
 pub const CredentialSource = union(enum) {
     env: []const u8,
     literal: []const u8,
-    store: []const u8,
 };
 
-/// Select the authentication scheme. The resolver uses a secret reference.
+/// Select the authentication scheme. The resolver uses a credential source.
 pub const Auth = union(enum) {
     api_key: ApiKey,
     codex_oauth: CodexOAuth,
@@ -32,14 +31,16 @@ pub const ApiKey = struct {
     source: CredentialSource,
 };
 
-/// Name the Codex token and account-ID entries in the credential store.
+/// The Codex access token and account id. The cloud owns every refresh, so the daemon holds no
+/// refresh token and this token is all it gets.
 pub const CodexOAuth = struct {
-    store: []const u8,
-    account_store: []const u8,
+    access_token: []const u8,
+    account_id: []const u8,
 };
 
+/// The xAI access token. The cloud owns every refresh.
 pub const XaiOAuth = struct {
-    store: []const u8,
+    access_token: []const u8,
 };
 
 /// A pinned non-secret request header.
@@ -134,8 +135,8 @@ test "a provider round-trips through JSON" {
     const provider: ProviderInstance = .{
         .id = "acme",
         .base_url = "https://llm.acme.example/v1",
-        .protocol = .@"openai-completions",
-        .auth = .{ .api_key = .{ .header = .authorization_bearer, .source = .{ .store = "acme" } } },
+        .protocol = .openai_chat,
+        .auth = .{ .api_key = .{ .header = .authorization_bearer, .source = .{ .env = "ACME_KEY" } } },
     };
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
@@ -145,5 +146,5 @@ test "a provider round-trips through JSON" {
     defer parsed.deinit();
     try testing.expectEqualStrings("acme", parsed.value.id);
     try testing.expectEqual(ApiKeyHeader.authorization_bearer, parsed.value.auth.api_key.header);
-    try testing.expectEqualStrings("acme", parsed.value.auth.api_key.source.store);
+    try testing.expectEqualStrings("ACME_KEY", parsed.value.auth.api_key.source.env);
 }

@@ -63,3 +63,18 @@ FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
 WHERE m.session_id = :session_id AND m.message_id < :cursor_message_id
 ORDER BY m.message_id DESC
 LIMIT :limit;
+
+-- name: LastAssistantUsage :optional
+-- Return the newest committed assistant usage for the live context gauge, or no row.
+-- The session_context view serves the same value for a page.
+-- session_id: [16]u8!
+-- tokens_input: ?u64!
+-- tokens_output: ?u64!
+-- tokens_reasoning: ?u64!
+-- tokens_cache_read: ?u64!
+-- tokens_cache_write: ?u64!
+SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+FROM messages
+WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
+ORDER BY message_id DESC
+LIMIT 1;

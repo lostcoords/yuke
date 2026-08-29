@@ -11,12 +11,12 @@ pub const Error = error{ AuthMismatch, HeaderConflict, OutOfMemory };
 
 /// Map each protocol to its stream path.
 const protocol_path = std.enums.EnumArray(instance.Protocol, []const u8).init(.{
-    .@"anthropic-messages" = "/messages",
-    .@"openai-completions" = "/chat/completions",
-    .@"openai-responses" = "/responses",
+    .anthropic_messages = "/messages",
+    .openai_chat = "/chat/completions",
+    .openai_responses = "/responses",
 });
 
-/// Build the full URL in `gpa`. A trailing slash on the base gives one separator, not two.
+/// Build the full URL in `gpa`. A final slash on the base gives one separator, not two.
 pub fn endpointUrl(gpa: std.mem.Allocator, p: *const ProviderInstance) std.mem.Allocator.Error![]u8 {
     const base = std.mem.trimEnd(u8, p.base_url, "/");
     return std.mem.concat(gpa, u8, &.{ base, protocol_path.get(p.protocol) });
@@ -96,7 +96,7 @@ test "endpoint url appends the protocol path" {
     const url = try endpointUrl(testing.allocator, &.{
         .id = "x",
         .base_url = "https://api.anthropic.com/v1",
-        .protocol = .@"anthropic-messages",
+        .protocol = .anthropic_messages,
         .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
     });
     defer testing.allocator.free(url);
@@ -107,7 +107,7 @@ test "endpoint url collapses a trailing slash on the base" {
     const url = try endpointUrl(testing.allocator, &.{
         .id = "x",
         .base_url = "https://api.anthropic.com/v1/",
-        .protocol = .@"anthropic-messages",
+        .protocol = .anthropic_messages,
         .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
     });
     defer testing.allocator.free(url);
@@ -120,7 +120,7 @@ test "anthropic api key uses x-api-key plus the pinned version header" {
     try authHeaders(testing.allocator, &.{
         .id = "anthropic",
         .base_url = "https://api.anthropic.com/v1",
-        .protocol = .@"anthropic-messages",
+        .protocol = .anthropic_messages,
         .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
         .headers = &.{.{ .name = "anthropic-version", .value = "2023-06-01" }},
     }, .{ .api_key = "sk-secret" }, &out);
@@ -136,7 +136,7 @@ test "a compat host uses Authorization Bearer" {
     try authHeaders(testing.allocator, &.{
         .id = "compat",
         .base_url = "https://llm.acme/v1",
-        .protocol = .@"anthropic-messages",
+        .protocol = .anthropic_messages,
         .auth = .{ .api_key = .{ .header = .authorization_bearer, .source = .{ .env = "K" } } },
     }, .{ .api_key = "sk-2" }, &out);
     defer for (out.items) |h| if (std.mem.startsWith(u8, h.value, "Bearer ")) testing.allocator.free(h.value);
@@ -150,8 +150,8 @@ test "codex oauth emits the account header" {
     try authHeaders(testing.allocator, &.{
         .id = "codex",
         .base_url = "https://chatgpt.com/backend-api/codex",
-        .protocol = .@"openai-responses",
-        .auth = .{ .codex_oauth = .{ .store = "t", .account_store = "a" } },
+        .protocol = .openai_responses,
+        .auth = .{ .codex_oauth = .{ .access_token = "tok", .account_id = "acct" } },
     }, .{ .codex = .{ .access_token = "tok", .account_id = "acct" } }, &out);
     defer for (out.items) |h| if (std.mem.startsWith(u8, h.value, "Bearer ")) testing.allocator.free(h.value);
 
@@ -165,8 +165,8 @@ test "a secret of the wrong kind is rejected" {
     try testing.expectError(error.AuthMismatch, authHeaders(testing.allocator, &.{
         .id = "codex",
         .base_url = "x",
-        .protocol = .@"openai-responses",
-        .auth = .{ .codex_oauth = .{ .store = "t", .account_store = "a" } },
+        .protocol = .openai_responses,
+        .auth = .{ .codex_oauth = .{ .access_token = "tok", .account_id = "acct" } },
     }, .{ .api_key = "wrong" }, &out));
 }
 
@@ -176,7 +176,7 @@ test "a pinned header that collides with the credential is rejected" {
     try testing.expectError(error.HeaderConflict, authHeaders(testing.allocator, &.{
         .id = "x",
         .base_url = "x",
-        .protocol = .@"anthropic-messages",
+        .protocol = .anthropic_messages,
         .auth = .{ .api_key = .{ .header = .x_api_key, .source = .{ .env = "K" } } },
         .headers = &.{.{ .name = "X-Api-Key", .value = "injected" }},
     }, .{ .api_key = "real" }, &out));

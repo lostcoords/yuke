@@ -16,7 +16,7 @@ pub const RunSlot = struct {
     progress: run.RunProgress = .{},
     config: run.Config,
     phase: Phase = .pending_start,
-    protocol: wire.enums.ProviderProtocol = .@"anthropic-messages", // The run sets this after provider resolution.
+    protocol: wire.enums.ProviderProtocol = .anthropic_messages, // The run sets this after provider resolution.
     cancel_requested: bool = false,
     /// Retry permits left for the whole run. `max_attempts` bounds one request.
     /// A null `max_rounds` would otherwise let the rounds multiply the retries.

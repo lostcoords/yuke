@@ -7,6 +7,8 @@ const State = @import("State.zig");
 const database = @import("../database/database.zig");
 const run = @import("../engine/run.zig");
 const run_task = @import("run_task.zig");
+const catalog_store = @import("../database/catalog.zig");
+const provider_view = @import("provider_view.zig");
 const session_runtime = @import("session_runtime.zig");
 const domain_session = @import("domain").session;
 const paths = @import("../paths/paths.zig");
@@ -100,7 +102,7 @@ fn sessionOrigin(row: anytype) !wire.session.SessionOrigin {
     return error.CorruptDatabase;
 }
 
-fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionListItem {
+pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionListItem {
     const permission = std.meta.stringToEnum(wire.enums.PermissionMode, row.permission) orelse return error.CorruptDatabase;
 
     const created_by = if (row.created_by_name) |name| blk: {
@@ -143,9 +145,21 @@ fn sessionItem(arena: std.mem.Allocator, row: anytype) !wire.session.SessionList
             .state = .{ .idle = .{} },
             .config = null,
             .queued = 0,
-            .context_usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+            .context_usage = contextUsage(row),
             .pending_compaction = null,
         },
+    };
+}
+
+/// The context gauge that `session_context` joined onto the row. A session with no committed
+/// assistant turn joins to nulls, which report as zero.
+fn contextUsage(row: anytype) wire.message.TokenUsage {
+    return .{
+        .input = row.ctx_tokens_input orelse 0,
+        .output = row.ctx_tokens_output orelse 0,
+        .reasoning = row.ctx_tokens_reasoning orelse 0,
+        .cache_read = row.ctx_tokens_cache_read orelse 0,
+        .cache_write = row.ctx_tokens_cache_write orelse 0,
     };
 }
 
@@ -166,7 +180,7 @@ pub fn sessionList(state: *State, arena: std.mem.Allocator, params: wire.session
     for (kept, 0..) |row, i| items[i] = try sessionItem(arena, row);
 
     return .{
-        .revision = 0,
+        .revision = state.session_revision,
         .items = items,
         .next_cursor = next_cursor,
         .total = try session_store.count(&state.db, arena, sel),
@@ -208,9 +222,78 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
         .workspaces = workspaces,
         .profiles = &.{},
         .agents = &.{},
-        .session_revision = 0,
+        .session_revision = state.session_revision,
         .catalog_rev = .bytes([_]u8{0} ** 64),
         .capabilities = &.{},
+    };
+}
+
+/// The revision a client sees before the daemon stores a catalog.
+const empty_catalog_rev: wire.ids.CatalogRev = .bytes(@splat(0));
+
+/// Choose the effort a client uses when the user picks none. `medium` wins when the model offers it.
+fn defaultReasoning(levels: []const []const u8) []const u8 {
+    for (levels) |level| if (std.mem.eql(u8, level, "medium")) return level;
+    return if (levels.len != 0) levels[0] else "";
+}
+
+/// Handle catalog.list: return every configured provider and its models, or nothing when the
+/// client already holds this revision. A signed-out user with a local key still picks a model.
+pub fn catalogList(state: *State, arena: std.mem.Allocator, params: wire.catalog.CatalogListParams) !wire.catalog.CatalogListResult {
+    const current = try storedRev(state, arena);
+    if (params.since_rev) |since| {
+        if (std.mem.eql(u8, &since.raw, &current.raw)) return .{ .unchanged = .{ .catalog_rev = current } };
+    }
+
+    const rows = try provider_view.resolve(arena, .{
+        .local = if (state.providers) |*loaded| loaded else null,
+        .cloud = state.cloud_bundle,
+        .catalog = try catalog_store.providers(&state.db, arena),
+        .env = state.env,
+    });
+
+    var providers = try arena.alloc(wire.catalog.ProviderInfo, rows.len);
+    var models: std.ArrayList(wire.catalog.ModelInfo) = .empty;
+    for (rows, 0..) |row, i| {
+        providers[i] = .{ .id = row.id, .name = row.name, .source = row.source, .state = row.state };
+        for (row.models) |m| try models.append(arena, try modelInfo(arena, row.id, m));
+    }
+    return .{ .full = .{ .catalog_rev = current, .providers = providers, .models = models.items } };
+}
+
+/// Return the stored catalog revision. A daemon that never synced reports a zero revision.
+/// A stored value is durable state, not an invariant, so a bad digest is an error.
+fn storedRev(state: *State, arena: std.mem.Allocator) !wire.ids.CatalogRev {
+    const stored = try catalog_store.rev(&state.db, arena) orelse return empty_catalog_rev;
+    var raw: [wire.ids.CatalogRev.byte_len]u8 = undefined;
+    const bytes = std.fmt.hexToBytes(&raw, stored) catch return error.CorruptCatalog;
+    if (bytes.len != raw.len) return error.CorruptCatalog;
+    return .bytes(raw);
+}
+
+/// Project one resolved model onto its wire shape. A value the source omits reads as zero,
+/// because the wire keeps these fields required.
+fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, m: provider_view.ModelView) !wire.catalog.ModelInfo {
+    // A null level means "no effort at all", so it never reaches a client.
+    var levels: std.ArrayList([]const u8) = .empty;
+    for (m.reasoning_levels) |level| if (level) |value| try levels.append(arena, value);
+
+    return .{
+        .id = m.id,
+        .provider = provider_id,
+        .name = m.name,
+        .context_window = m.context_window orelse 0,
+        .max_output_tokens = m.max_output_tokens orelse 0,
+        .reasoning_levels = levels.items,
+        .default_reasoning = defaultReasoning(levels.items),
+        .supports_vision = m.flags.supports_vision,
+        .supports_tools = m.flags.supports_tools,
+        .cost = .{
+            .input = m.cost.input orelse 0,
+            .output = m.cost.output orelse 0,
+            .cache_read = m.cost.cache_read orelse 0,
+            .cache_write = m.cost.cache_write orelse 0,
+        },
     };
 }
 
@@ -266,32 +349,62 @@ pub fn sessionResync(state: *State, arena: std.mem.Allocator, params: wire.sessi
 /// The active run identity for the resync activity state.
 const RunInfo = struct { run_id: wire.ids.RunId, started_at_ms: u64, retry: ?wire.activity.ActivityStateRetrying = null };
 
-/// Serialize a session projection into the resync result. Deep-copy so a transient session can release.
-fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, session: *domain_session.Session, run_info: ?RunInfo, limit: usize) !wire.session.SessionResyncResult {
-    var item = try sessionItem(arena, snap);
-    item.activity.queued = session.queue.depth();
-
+/// Build the activity from the session projection and its context usage. Every surface builds it here.
+/// The caller supplies `context_usage`: a page joins it, a broadcast reads it. The result borrows `arena`.
+pub fn sessionActivity(
+    state: *State,
+    arena: std.mem.Allocator,
+    session_id: [16]u8,
+    session: *domain_session.Session,
+    run_info: ?RunInfo,
+    context_usage: wire.message.TokenUsage,
+) !wire.session.SessionActivity {
     // Resolve the active draft config once. The cache may lack the current run's revision.
     var active_config: ?wire.run.RunConfig = null;
     if (session.active) |*d| {
         const cached = session.configs.get(d.config_rev);
-        active_config = cached orelse (try config_store.byRevision(&state.db, arena, snap.id, d.config_rev)) orelse return error.CorruptLog;
+        active_config = cached orelse (try config_store.byRevision(&state.db, arena, session_id, d.config_rev)) orelse return error.CorruptLog;
     }
+
+    var activity: wire.session.SessionActivity = .{
+        .state = .{ .idle = .{} },
+        .config = null,
+        .queued = session.queue.depth(),
+        .context_usage = context_usage,
+        .pending_compaction = null,
+    };
 
     // A waiting retry outranks the draft. The stream already stopped, so a draft state would mislead.
     const waiting: ?wire.activity.ActivityStateRetrying = if (run_info) |r| r.retry else null;
     if (waiting) |state_retry| {
-        item.activity.state = try wire.dupe(arena, wire.activity.ActivityState{ .retrying = state_retry });
-        if (session.active != null) item.activity.config = try wire.dupe(arena, active_config.?);
+        activity.state = try wire.dupe(arena, wire.activity.ActivityState{ .retrying = state_retry });
+        if (session.active != null) activity.config = try wire.dupe(arena, active_config.?);
     } else if (session.active) |*d| {
         std.debug.assert(run_info != null); // a live draft belongs to an active run
-        item.activity.state = try wire.dupe(arena, d.deriveStreamingState(run_info.?.started_at_ms));
-        item.activity.config = try wire.dupe(arena, active_config.?);
+        activity.state = try wire.dupe(arena, d.deriveStreamingState(run_info.?.started_at_ms));
+        activity.config = try wire.dupe(arena, active_config.?);
     } else if (run_info) |r| {
-        item.activity.state = .{ .building = .{ .run_id = r.run_id, .started_at_ms = r.started_at_ms } };
-    } else {
-        item.activity.state = .{ .idle = .{} };
+        activity.state = .{ .building = .{ .run_id = r.run_id, .started_at_ms = r.started_at_ms } };
     }
+    return activity;
+}
+
+/// The activity of one resident session, for a broadcast. It reads the context gauge from SQLite.
+pub fn residentActivity(state: *State, arena: std.mem.Allocator, rt: *session_runtime.SessionRuntime) !wire.session.SessionActivity {
+    const session_id = rt.session.id.raw;
+    const run_info: ?RunInfo = if (rt.active) |slot| .{
+        .run_id = slot.handle.started.run_id,
+        .started_at_ms = slot.handle.started.started_at_ms,
+        .retry = slot.retry_state,
+    } else null;
+    const usage = try message_store.contextUsage(&state.db, arena, session_id);
+    return sessionActivity(state, arena, session_id, &rt.session, run_info, usage);
+}
+
+/// Serialize a session projection into the resync result. Deep-copy so a transient session can release.
+fn serializeResync(state: *State, arena: std.mem.Allocator, snap: anytype, session: *domain_session.Session, run_info: ?RunInfo, limit: usize) !wire.session.SessionResyncResult {
+    var item = try sessionItem(arena, snap);
+    item.activity = try sessionActivity(state, arena, snap.id, session, run_info, contextUsage(snap));
 
     // The committed window returns its newest `limit` messages, oldest-first.
     const all = try session.committed.messages(arena);
@@ -369,6 +482,7 @@ pub fn sessionSendInputForRpc(state: *State, arena: std.mem.Allocator, params: w
     run_task.emitDurable(state, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
     } });
+    run_task.announceActivity(state, rt);
     return .{ .queued = .{ .input_id = queued.input.input_id } };
 }
 
@@ -389,6 +503,7 @@ pub fn sessionCancelInput(state: *State, arena: std.mem.Allocator, params: wire.
     run_task.emitDurable(state, rt, .{ .method = .@"input.canceled", .params = .{
         .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
     } });
+    run_task.announceActivity(state, rt); // The queue is shorter. Announce before an evict frees `rt`.
     state.sessions.evictIfIdle(params.session_id);
     return .{ .canceled_input = params.input_id };
 }
@@ -423,6 +538,7 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
                 .input_canceled_data = .{ .session_id = params.session_id, .seq = seq, .input_id = input_id },
             } });
         }
+        if (cleared_inputs.len > 0) run_task.announceActivity(state, rt);
     }
 
     const canceled_run = if (active) |slot| slot.handle.started.run_id else null;
@@ -472,6 +588,9 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     if (system_prompt) |sys| try session_store.setPrompt(&state.db, id, sys);
     try config_store.recordInitial(&state.db, id, model, reasoning);
     try tx.commit();
+
+    // The index gained a session. Announce it after the commit, so no client hears of an unwritten one.
+    run_task.announceSummary(state, .bytes(id));
 
     return .{ .session = .{
         .id = .bytes(id),

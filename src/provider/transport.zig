@@ -349,7 +349,7 @@ test "stream delivers each event to the callback across fragmented reads" {
     try testing.expectEqual(wire.enums.StopReason.stop, collector.stop.?);
     try testing.expectEqual(event.BlockKind.text, collector.first_block_kind.?);
     try testing.expectEqual(std.meta.Tag(event.BlockResult).text, collector.stop_result.?);
-    try testing.expectEqual(@as(u64, 100), collector.usage_input.?);
+    try testing.expectEqual(@as(u64, 120), collector.usage_input.?); // The cache subsets belong to input.
     try testing.expectEqual(@as(u64, 5), collector.usage_output.?);
     // The order is block_started, two text_delta, block_stopped, done.
     try testing.expectEqual(@as(usize, 5), collector.kinds.items.len);

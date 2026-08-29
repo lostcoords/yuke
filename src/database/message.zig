@@ -185,6 +185,26 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
     return .{ .messages = out, .has_more = has_more };
 }
 
+/// The token usage of the newest committed assistant turn. This is the live context gauge, not a
+/// lifetime total. A session with no such turn reports zero.
+pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !wire.message.TokenUsage {
+    const row = (try db.queries.last_assistant_usage.maybeOne(arena, .{ .session_id = session_id })) orelse return .{
+        .input = 0,
+        .output = 0,
+        .reasoning = 0,
+        .cache_read = 0,
+        .cache_write = 0,
+    };
+    std.debug.assert(row.value.tokens_input != null); // The query keeps a null-usage turn out.
+    return .{
+        .input = row.value.tokens_input orelse 0,
+        .output = row.value.tokens_output orelse 0,
+        .reasoning = row.value.tokens_reasoning orelse 0,
+        .cache_read = row.value.tokens_cache_read orelse 0,
+        .cache_write = row.value.tokens_cache_write orelse 0,
+    };
+}
+
 const testing = std.testing;
 const workspace = @import("workspace.zig");
 const session = @import("session.zig");
@@ -237,7 +257,7 @@ test "a committed user then assistant message advances the summary" {
         .finish = .stop,
         .tokens = .{ .input = 10, .output = 20, .reasoning = 5, .cache_read = 3, .cache_write = 2 },
         .time = .{ .created_at_ms = 160 },
-        .provenance = .{ .protocol = .@"anthropic-messages", .model = "claude-opus-4-8" },
+        .provenance = .{ .protocol = .anthropic_messages, .model = "claude-opus-4-8" },
     } };
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
@@ -254,9 +274,102 @@ test "a committed user then assistant message advances the summary" {
     try testing.expectEqual(@as(u64, 20), snap.usage_output_total);
     try testing.expectEqual(@as(u64, 5), snap.usage_reasoning_total);
 
+    // All five counters fold, and the cache subsets ride inside the input total.
+    try testing.expectEqual(@as(u64, 3), snap.usage_cache_read_total);
+    try testing.expectEqual(@as(u64, 2), snap.usage_cache_write_total);
+
     // The id mark and projection seq track the last committed message.
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT message_id_high FROM sessions"));
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT projection_seq FROM sessions"));
+}
+
+/// Build one committed assistant turn for a usage test.
+fn assistantTurn(id: u64, created_at_ms: u64, tokens: ?wire.message.TokenUsage) wire.message.Message {
+    return .{ .assistant = .{
+        .id = id,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &.{},
+        .finish = .stop,
+        .tokens = tokens,
+        .time = .{ .created_at_ms = created_at_ms },
+        .provenance = .{ .protocol = .anthropic_messages, .model = "claude-opus-4-8" },
+    } };
+}
+
+test "each committed turn adds its usage one time and the gauge names the newest" {
+    var db = try Database.openTest();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const sid = [_]u8{9} ** 16;
+    try seedSession(&db, a, sid);
+
+    // Three rounds of one turn. Each round commits its own assistant message.
+    const rounds = [_]wire.message.TokenUsage{
+        .{ .input = 100, .output = 10, .reasoning = 0, .cache_read = 40, .cache_write = 20 },
+        .{ .input = 220, .output = 30, .reasoning = 7, .cache_read = 90, .cache_write = 0 },
+        .{ .input = 300, .output = 50, .reasoning = 0, .cache_read = 150, .cache_write = 0 },
+    };
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    for (rounds, 0..) |usage, i| {
+        const n: u64 = @intCast(i + 1);
+        _ = try appendCommittedMessage(&db, a, sid, @splat(@intCast(n)), 200 + n, assistantTurn(n, 200 + n, usage));
+    }
+    try db.conn.execNoArgs("COMMIT");
+
+    const snap = (try session.snapshot(&db, a, sid)).?;
+    try testing.expectEqual(@as(u64, 620), snap.usage_input_total);
+    try testing.expectEqual(@as(u64, 90), snap.usage_output_total);
+    try testing.expectEqual(@as(u64, 7), snap.usage_reasoning_total);
+    try testing.expectEqual(@as(u64, 280), snap.usage_cache_read_total);
+    try testing.expectEqual(@as(u64, 20), snap.usage_cache_write_total);
+    try testing.expectEqual(@as(u64, 3), snap.message_count);
+
+    // The context gauge reads the newest round alone, never the sum.
+    const context = try contextUsage(&db, a, sid);
+    try testing.expectEqual(@as(u64, 300), context.input);
+    try testing.expectEqual(@as(u64, 50), context.output);
+    try testing.expectEqual(@as(u64, 150), context.cache_read);
+}
+
+test "the context gauge skips a turn that reported no usage" {
+    var db = try Database.openTest();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const sid = [_]u8{11} ** 16;
+    try seedSession(&db, a, sid);
+
+    // A session with no assistant turn reports zero rather than an error.
+    const empty = try contextUsage(&db, a, sid);
+    try testing.expectEqual(@as(u64, 0), empty.input);
+
+    const with_usage: wire.message.TokenUsage = .{ .input = 70, .output = 8, .reasoning = 0, .cache_read = 25, .cache_write = 5 };
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 300, assistantTurn(1, 300, with_usage));
+    // A canceled round commits with no tokens. It must not blank the gauge.
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 310, assistantTurn(2, 310, null));
+    // A later user turn must not blank it either.
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{3} ** 16, 320, .{ .user = .{ .id = 3, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 320 } } });
+    try db.conn.execNoArgs("COMMIT");
+
+    const context = try contextUsage(&db, a, sid);
+    try testing.expectEqual(@as(u64, 70), context.input);
+    try testing.expectEqual(@as(u64, 8), context.output);
+    try testing.expectEqual(@as(u64, 25), context.cache_read);
+    try testing.expectEqual(@as(u64, 5), context.cache_write);
+
+    // The usage-free turn still counts as a message and adds nothing to the totals.
+    const snap = (try session.snapshot(&db, a, sid)).?;
+    try testing.expectEqual(@as(u64, 3), snap.message_count);
+    try testing.expectEqual(@as(u64, 70), snap.usage_input_total);
+    try testing.expectEqual(@as(u64, 70), snap.ctx_tokens_input.?); // The view agrees with the query.
 }
 
 test "a later commit with an earlier timestamp does not regress recency" {

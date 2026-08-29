@@ -6,6 +6,8 @@ const cli = @import("cli.zig");
 const daemon_app = @import("daemon/app.zig");
 const tui_app = @import("tui/app.zig");
 const paths = @import("paths/paths.zig");
+const cloud_login = @import("cloud/login.zig");
+const zio = @import("zio");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
 
@@ -105,26 +107,18 @@ test "appendLog keeps every line and a line over the buffer" {
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     std.debug.assert(args.len >= 1);
-    const opts = cli.parse(args[1..]) catch |err| switch (err) {
-        error.Help => {
-            var buf: [128]u8 = undefined;
-            var stdout = std.Io.File.stdout().writer(init.io, &buf);
-            try stdout.interface.print("{s}\n", .{cli.usage});
-            try stdout.interface.flush();
-            return;
-        },
-        error.Conflict => {
-            std.log.err("choose one of --tui or --daemon", .{});
-            std.log.err("{s}", .{cli.usage});
-            std.process.exit(2);
-        },
-        error.UnknownFlag => {
-            std.log.err("{s}", .{cli.usage});
+
+    const command = switch (cli.parse(args[1..])) {
+        .command => |command| command,
+        .help => |scope| return printUsage(init.io, scope),
+        .diagnostic => |diagnostic| {
+            report(diagnostic);
             std.process.exit(2);
         },
     };
-    switch (opts.mode) {
-        .tui => {
+
+    switch (command) {
+        .tui => |root| {
             // A null directory is not an error. The baked UI still runs without a config file.
             const config_dir = try paths.configDir(init.gpa, init.environ_map);
             defer if (config_dir) |dir| init.gpa.free(dir);
@@ -132,9 +126,56 @@ pub fn main(init: std.process.Init) !void {
             defer stopTuiLog(init.io);
             try tui_app.run(init.gpa, init.environ_map, .{
                 .config_dir = config_dir,
-                .safe_mode = opts.safe_mode,
+                .safe_mode = root.safe_mode,
             });
         },
         .daemon => try daemon_app.run(init),
+        .login => |opts| try runLogin(init, opts),
     }
+}
+
+/// Run the login on its own reactor, like the other modes. It exits non-zero on any failure.
+fn runLogin(init: std.process.Init, opts: cli.Login) !void {
+    var rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(1) });
+    defer rt.deinit();
+
+    cloud_login.run(init.gpa, rt.io(), init.environ_map, opts) catch |err| {
+        // These failures already told the user what went wrong.
+        switch (err) {
+            error.Rejected, error.RoleRequired, error.NoDataDir => {},
+            else => std.log.err("yuke login: {t}", .{err}),
+        }
+        std.process.exit(1);
+    };
+}
+
+fn printUsage(io: std.Io, scope: cli.Scope) !void {
+    var buf: [512]u8 = undefined;
+    var out = std.Io.File.stdout().writer(io, &buf);
+    try out.interface.print("{s}\n", .{usageFor(scope)});
+    try out.interface.flush();
+}
+
+fn usageFor(scope: cli.Scope) []const u8 {
+    return switch (scope) {
+        .root => cli.usage,
+        .login => cli.login_usage,
+    };
+}
+
+/// Report one rejected argument, then the usage of the grammar that rejected it.
+fn report(diagnostic: cli.Diagnostic) void {
+    const who = switch (diagnostic.scope) {
+        .root => "yuke",
+        .login => "yuke login",
+    };
+    switch (diagnostic.failure) {
+        .unknown_command => std.log.err("{s}: unknown command '{s}'", .{ who, diagnostic.arg }),
+        .unknown_flag => std.log.err("{s}: unknown option '{s}'", .{ who, diagnostic.arg }),
+        .missing_value => std.log.err("{s}: {s} needs a value", .{ who, diagnostic.arg }),
+        .invalid_value => std.log.err("{s}: {s} does not accept '{s}'", .{ who, diagnostic.arg, diagnostic.value.? }),
+        .duplicate_flag => std.log.err("{s}: {s} appears more than once", .{ who, diagnostic.arg }),
+        .mode_conflict => std.log.err("{s}: choose one of --tui or --daemon", .{who}),
+    }
+    std.log.err("{s}", .{usageFor(diagnostic.scope)});
 }

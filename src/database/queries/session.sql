@@ -65,6 +65,11 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- open_run_id: ?u64!
 -- open_run_kind: ?[]const u8!
 -- open_run_started_at_ms: ?u64!
+-- ctx_tokens_input: ?u64!
+-- ctx_tokens_output: ?u64!
+-- ctx_tokens_reasoning: ?u64!
+-- ctx_tokens_cache_read: ?u64!
+-- ctx_tokens_cache_write: ?u64!
 SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -73,8 +78,9 @@ SELECT
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     created_at_ms, updated_at_ms,
-    open_run_id, open_run_kind, open_run_started_at_ms
-FROM sessions
+    open_run_id, open_run_kind, open_run_started_at_ms,
+    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+FROM session_context
 WHERE id = :id;
 
 -- name: SetOpenRun :one
@@ -158,6 +164,11 @@ ORDER BY id;
 -- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
+-- ctx_tokens_input: ?u64!
+-- ctx_tokens_output: ?u64!
+-- ctx_tokens_reasoning: ?u64!
+-- ctx_tokens_cache_read: ?u64!
+-- ctx_tokens_cache_write: ?u64!
 SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -165,8 +176,9 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    created_at_ms, updated_at_ms
-FROM sessions
+    created_at_ms, updated_at_ms,
+    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+FROM session_context
 WHERE (NOT :top_level OR origin IN ('root', 'fork'))
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
 ORDER BY updated_at_ms DESC, id DESC
@@ -205,6 +217,11 @@ LIMIT :limit;
 -- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
+-- ctx_tokens_input: ?u64!
+-- ctx_tokens_output: ?u64!
+-- ctx_tokens_reasoning: ?u64!
+-- ctx_tokens_cache_read: ?u64!
+-- ctx_tokens_cache_write: ?u64!
 SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -212,8 +229,9 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    created_at_ms, updated_at_ms
-FROM sessions
+    created_at_ms, updated_at_ms,
+    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+FROM session_context
 WHERE workspace_id = :filter_workspace_id
   AND (NOT :top_level OR origin IN ('root', 'fork'))
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
@@ -254,6 +272,11 @@ LIMIT :limit;
 -- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
+-- ctx_tokens_input: ?u64!
+-- ctx_tokens_output: ?u64!
+-- ctx_tokens_reasoning: ?u64!
+-- ctx_tokens_cache_read: ?u64!
+-- ctx_tokens_cache_write: ?u64!
 SELECT
     id, workspace_id,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -261,8 +284,9 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    created_at_ms, updated_at_ms
-FROM sessions
+    created_at_ms, updated_at_ms,
+    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+FROM session_context
 WHERE parent_id = :filter_parent_id
   AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
   AND (NOT :top_level OR origin IN ('root', 'fork'))

@@ -227,6 +227,22 @@ pub const Registry = struct {
         next = .empty;
     }
 
+    /// Fan out an index event to every open connection, whatever it subscribes to.
+    /// The caller owns `bytes`. An overflow closes the connection, because an index event never sheds.
+    pub fn publishAll(self: *Registry, bytes: []const u8) void {
+        var it = self.connections.valueIterator();
+        while (it.next()) |slot| {
+            const conn = slot.*;
+            if (conn.closing) continue;
+            const copy = self.gpa.dupe(u8, bytes) catch {
+                beginClose(conn); // An OOM loses the frame before it reaches the outbox.
+                continue;
+            };
+            if (conn.tryEnqueue(.{ .bytes = copy })) continue; // The tryEnqueue call frees the copy when the outbox is full.
+            beginClose(conn);
+        }
+    }
+
     /// Fan out framed bytes to every subscriber of a session. Copy the bytes per connection.
     /// The caller owns `bytes`. A must-deliver overflow closes the connection. A shed-able overflow drops the frame.
     pub fn publish(self: *Registry, session_id: ids.SessionId, bytes: []const u8, class: DeliveryClass) void {

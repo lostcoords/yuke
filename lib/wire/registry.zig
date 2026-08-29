@@ -65,6 +65,7 @@ pub const structs = [_]TypeEntry{
     .{ .name = "CatalogChangedData", .ty = catalog.CatalogChangedData },
     .{ .name = "CatalogListParams", .ty = catalog.CatalogListParams },
     .{ .name = "CatalogListResultFull", .ty = catalog.CatalogListResultFull },
+    .{ .name = "ProviderInfo", .ty = catalog.ProviderInfo },
     .{ .name = "CatalogListResultUnchanged", .ty = catalog.CatalogListResultUnchanged },
     .{ .name = "CatalogRefreshResult", .ty = catalog.CatalogRefreshResult },
     .{ .name = "ModelCost", .ty = catalog.ModelCost },
@@ -233,6 +234,8 @@ pub const string_enums = [_]EnumEntry{
     .{ .name = "SessionView", .ty = enums.SessionView },
     .{ .name = "CompactionReason", .ty = enums.CompactionReason },
     .{ .name = "ProviderProtocol", .ty = enums.ProviderProtocol },
+    .{ .name = "ProviderSource", .ty = enums.ProviderSource },
+    .{ .name = "ProviderState", .ty = enums.ProviderState },
     .{ .name = "SkillScope", .ty = enums.SkillScope },
     .{ .name = "WorkspaceKind", .ty = enums.WorkspaceKind },
 };
@@ -263,6 +266,8 @@ pub const enum_order = .{
     .{ .entry = string_enums[17], .numeric = false },
     .{ .entry = string_enums[18], .numeric = false },
     .{ .entry = string_enums[19], .numeric = false },
+    .{ .entry = string_enums[20], .numeric = false },
+    .{ .entry = string_enums[21], .numeric = false },
 };
 
 pub const aliases = [_]AliasEntry{

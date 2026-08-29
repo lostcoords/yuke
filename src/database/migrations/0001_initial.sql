@@ -1,7 +1,7 @@
 -- The schema has mutable registry tables and an append-only activity log. Projections rebuild from the log.
 -- STRICT types enforce storage; checks enforce domain rules; 2^53-1 keeps numbers safe for wire JSON.
 
--- The models.dev catalog uses a thin key-value store until a typed schema exists.
+-- The provider catalog uses a thin key-value store. One row holds one provider and its models.
 CREATE TABLE catalog_meta (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
@@ -12,13 +12,6 @@ CREATE TABLE catalog_providers (
     data TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE catalog_models (
-    id          TEXT PRIMARY KEY,
-    provider_id TEXT NOT NULL,
-    data        TEXT NOT NULL
-) STRICT, WITHOUT ROWID;
-
-CREATE INDEX catalog_models_by_provider ON catalog_models (provider_id);
 
 -- The daemon mints an opaque id instead of a path hash. This supports container and cloud kinds later.
 -- A persistent local root sets stable_key to the canonical path; an ephemeral one leaves it null.
@@ -167,6 +160,27 @@ CREATE INDEX messages_by_event ON messages(session_id, seq);
 -- Index only rows with a recorded model. This supports the query for turns that used a model and adds
 -- no cost before the engine records provenance.
 CREATE INDEX messages_by_model ON messages(model, created_at_ms) WHERE model IS NOT NULL;
+
+-- Index only the turns that answer the context-usage lookup. The lookup then seeks the newest turn.
+CREATE INDEX messages_context_usage ON messages(session_id, message_id)
+    WHERE role = 'assistant' AND tokens_input IS NOT NULL;
+
+-- Join each session to the usage of its newest committed assistant turn: the live context gauge.
+-- A truncation removes the newest messages, so re-read this instead of a store on the session row.
+CREATE VIEW session_context AS
+SELECT s.*,
+       ctx.tokens_input       AS ctx_tokens_input,
+       ctx.tokens_output      AS ctx_tokens_output,
+       ctx.tokens_reasoning   AS ctx_tokens_reasoning,
+       ctx.tokens_cache_read  AS ctx_tokens_cache_read,
+       ctx.tokens_cache_write AS ctx_tokens_cache_write
+FROM sessions s
+LEFT JOIN messages ctx
+       ON ctx.session_id = s.id
+      AND ctx.message_id = (
+          SELECT message_id FROM messages
+           WHERE session_id = s.id AND role = 'assistant' AND tokens_input IS NOT NULL
+           ORDER BY message_id DESC LIMIT 1);
 
 -- Replay rebuilds this projection. Store each revision so session.config reads it directly instead of
 -- a log scan from seq 1.

@@ -9,6 +9,7 @@ const committed = @import("domain").committed;
 const domain_session = @import("domain").session;
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
+const cloud_bundle_mod = @import("../cloud/bundle.zig");
 const tools = @import("../tools/tool.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
@@ -26,6 +27,7 @@ sessions: session_runtime.Sessions, // The daemon stores live per-session state,
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
 transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
+cloud_bundle: ?cloud_bundle_mod.Document = null, // The account bundle stays in memory, because it holds live credentials.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
 env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
@@ -35,6 +37,9 @@ broadcast_tap: ?*BroadcastTap = null, // A conformance test records the publishe
 tool_host: ?tools.ToolHost = null,
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
 retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
+/// The session index revision. It counts each published `session.summary_changed`.
+/// It lives in memory, so a restart returns it to zero.
+session_revision: u64 = 0,
 
 /// A test hook. It records each published broadcast, so a conformance test refolds the daemon output.
 pub const BroadcastTap = struct {

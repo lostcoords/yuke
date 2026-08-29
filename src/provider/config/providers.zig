@@ -1,5 +1,6 @@
-//! Load the strict `providers.json` user file into resolved provider instances.
-//! The file layer stays separate from the internal `ProviderInstance`. The owner zeroes each literal key.
+//! Load the strict `providers.json` user file into the local provider layer.
+//! A field the file omits stays null here. The merge fills it from the catalog, so an entry that
+//! names only an id and a key is complete. The owner zeroes each literal key.
 
 const std = @import("std");
 const instance = @import("../instance/instance.zig");
@@ -24,6 +25,7 @@ pub const Error = error{
     BadHeaderName,
     BadHeaderValue,
     HeaderConflict,
+    MissingCredential,
     FileTooLarge,
     NotRegularFile,
     InsecurePermissions,
@@ -58,12 +60,16 @@ const FileModel = struct {
     flags: instance.ModelFlags = .{},
 };
 
+/// The file shape. Only `id` and one credential are required; the catalog supplies the rest.
 const FileProvider = struct {
     id: []const u8,
-    base_url: []const u8,
-    protocol: instance.Protocol,
-    auth: FileAuth,
-    cache: instance.CachePolicy = .unsupported,
+    base_url: ?[]const u8 = null,
+    protocol: ?instance.Protocol = null,
+    /// The long form names the header and the source.
+    auth: ?FileAuth = null,
+    /// The short form. It is a literal key, and the catalog names the header.
+    api_key: ?[]const u8 = null,
+    cache: ?instance.CachePolicy = null,
     headers: []const FileHeader = &.{},
     models: []const FileModel = &.{},
 };
@@ -77,7 +83,7 @@ const FileDoc = struct {
 pub const Loaded = struct {
     arena: std.heap.ArenaAllocator,
     gpa: Allocator,
-    providers: []instance.ProviderInstance = &.{},
+    providers: []LocalProvider = &.{},
     literals: std.ArrayList([]u8) = .empty,
 
     pub fn deinit(self: *Loaded) void {
@@ -91,7 +97,7 @@ pub const Loaded = struct {
     }
 };
 
-/// Read `path` and resolve it. A missing file returns an empty layer. An invalid file returns an error.
+/// Read `path` and resolve it. An absent file returns an empty layer. An invalid file returns an error.
 /// `path` must be absolute. The daemon builds it from the config directory.
 pub fn load(gpa: Allocator, io: std.Io, path: []const u8) !Loaded {
     const raw = readSecureFile(gpa, io, path) catch |err| switch (err) {
@@ -163,7 +169,7 @@ fn resolveDoc(gpa: Allocator, doc: FileDoc, source_json: []const u8) !Loaded {
     errdefer out.deinit();
     const arena = out.arena.allocator();
 
-    var providers = try arena.alloc(instance.ProviderInstance, doc.providers.len);
+    var providers = try arena.alloc(LocalProvider, doc.providers.len);
     for (doc.providers, 0..) |fp, i| {
         for (doc.providers[0..i]) |prev| {
             if (std.mem.eql(u8, prev.id, fp.id)) return error.DuplicateProvider;
@@ -174,11 +180,16 @@ fn resolveDoc(gpa: Allocator, doc: FileDoc, source_json: []const u8) !Loaded {
     return out;
 }
 
-fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json: []const u8) !instance.ProviderInstance {
+fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json: []const u8) !LocalProvider {
     if (fp.id.len == 0) return error.EmptyId;
-    try checkUrl(fp.base_url);
+    if (fp.base_url) |url| try checkUrl(url);
+    // Exactly one credential form. Both or neither leaves the entry ambiguous.
+    if ((fp.auth == null) == (fp.api_key == null)) return error.MissingCredential;
 
-    const source: instance.CredentialSource = switch (fp.auth.api_key.source) {
+    const header: ?instance.ApiKeyHeader = if (fp.auth) |a| a.api_key.header else null;
+    const file_source: FileSource = if (fp.auth) |a| a.api_key.source else .{ .literal = fp.api_key.? };
+
+    const source: instance.CredentialSource = switch (file_source) {
         .env => |name| blk: {
             if (!validEnvName(name)) return error.BadEnvName;
             break :blk .{ .env = try arena.dupe(u8, name) };
@@ -198,12 +209,13 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
         },
     };
 
-    const generated = generatedHeaderName(fp.auth.api_key.header);
     const headers = try arena.alloc(instance.Header, fp.headers.len);
     for (fp.headers, 0..) |fh, i| {
         if (!validHeaderName(fh.name)) return error.BadHeaderName;
         if (!cleanHeaderValue(fh.value)) return error.BadHeaderValue;
-        if (std.ascii.eqlIgnoreCase(fh.name, generated)) return error.HeaderConflict;
+        // A header the file pins must not collide with the one the credential generates.
+        // An unknown header is checked again when the merge resolves it.
+        if (header) |h| if (std.ascii.eqlIgnoreCase(fh.name, generatedHeaderName(h))) return error.HeaderConflict;
         headers[i] = .{ .name = try arena.dupe(u8, fh.name), .value = try arena.dupe(u8, fh.value) };
     }
 
@@ -224,9 +236,9 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
 
     return .{
         .id = try arena.dupe(u8, fp.id),
-        .base_url = try arena.dupe(u8, fp.base_url),
+        .base_url = if (fp.base_url) |url| try arena.dupe(u8, url) else null,
         .protocol = fp.protocol,
-        .auth = .{ .api_key = .{ .header = fp.auth.api_key.header, .source = source } },
+        .auth = .{ .header = header, .source = source },
         .cache = fp.cache,
         .headers = headers,
         .models = models,
@@ -285,39 +297,31 @@ fn cleanHeaderValue(value: []const u8) bool {
     return true;
 }
 
-/// A resolved value holds a provider and a model binding. Both values borrow the `Loaded` arena.
-pub const Resolved = struct {
-    provider: *const instance.ProviderInstance,
-    binding: *const instance.ModelBinding,
+/// The credential of a local provider. The header is null when the catalog must name it.
+pub const LocalAuth = struct {
+    header: ?instance.ApiKeyHeader = null,
+    source: instance.CredentialSource,
 };
 
-/// Resolve a provider-qualified "providerId/modelId" key against the loaded providers.
-/// Return null when the key names no provider or model.
-pub fn resolveModel(loaded: *const Loaded, qualified: []const u8) ?Resolved {
-    const slash = std.mem.indexOfScalar(u8, qualified, '/') orelse return null;
-    const provider_id = qualified[0..slash];
-    const model_id = qualified[slash + 1 ..];
-    for (loaded.providers) |*p| {
-        if (!std.mem.eql(u8, p.id, provider_id)) continue;
-        for (p.models) |*m| if (std.mem.eql(u8, m.id, model_id)) return .{ .provider = p, .binding = m };
-        return null; // The provider has no binding for the model.
-    }
-    return null;
-}
+/// One `providers.json` entry, still unresolved. The merge fills every null from the catalog.
+pub const LocalProvider = struct {
+    id: []const u8,
+    base_url: ?[]const u8 = null,
+    protocol: ?instance.Protocol = null,
+    auth: LocalAuth,
+    cache: ?instance.CachePolicy = null,
+    headers: []const instance.Header = &.{},
+    models: []const instance.ModelBinding = &.{},
+};
 
-pub const ResolveError = error{ AuthMismatch, MissingCredential, CredentialUnsupported };
+pub const ResolveError = error{MissingCredential};
 
-/// Resolve one provider's API key from the process environment or a literal key.
+/// Resolve one credential from the process environment or a literal key.
 /// The result borrows the key. Never log the key.
-pub fn resolveApiKey(p: *const instance.ProviderInstance, env: ?*const EnvMap) ResolveError!resolve.Secret {
-    const src = switch (p.auth) {
-        .api_key => |a| a.source,
-        else => return error.AuthMismatch,
-    };
-    const key = switch (src) {
+pub fn resolveApiKey(source: instance.CredentialSource, env: ?*const EnvMap) ResolveError!resolve.Secret {
+    const key = switch (source) {
         .env => |name| (if (env) |e| e.get(name) else null) orelse return error.MissingCredential,
         .literal => |bytes| bytes,
-        .store => return error.CredentialUnsupported,
     };
     return .{ .api_key = key };
 }
@@ -330,7 +334,7 @@ fn wrapProvider(comptime provider_json: []const u8) []const u8 {
 
 test "load a provider with an env api key and one model" {
     const json = wrapProvider(
-        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic-messages",
+        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}},
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\ "models":[{"id":"local","upstream_id":"MiniMax-Text","limits":{"context_window":200000,"max_output_tokens":8192}}]}
@@ -341,8 +345,8 @@ test "load a provider with an env api key and one model" {
     try testing.expectEqual(@as(usize, 1), loaded.providers.len);
     const p = loaded.providers[0];
     try testing.expectEqualStrings("minimax", p.id);
-    try testing.expectEqual(instance.Protocol.@"anthropic-messages", p.protocol);
-    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.api_key.source.env);
+    try testing.expectEqual(instance.Protocol.anthropic_messages, p.protocol.?);
+    try testing.expectEqualStrings("MINIMAX_API_KEY", p.auth.source.env);
     try testing.expectEqualStrings("anthropic-version", p.headers[0].name);
     try testing.expectEqualStrings("local", p.models[0].id);
     try testing.expectEqual(@as(u64, 8192), p.models[0].limits.max_output_tokens);
@@ -350,7 +354,7 @@ test "load a provider with an env api key and one model" {
 
 test "a literal api key resolves without touching the environment" {
     const json = wrapProvider(
-        \\{"id":"local","base_url":"http://127.0.0.1:8080/v1","protocol":"openai-completions",
+        \\{"id":"local","base_url":"http://127.0.0.1:8080/v1","protocol":"openai_chat",
         \\ "auth":{"api_key":{"header":"authorization_bearer","source":{"literal":"sk-secret-value"}}}}
     );
     var loaded = try loadBytes(testing.allocator, json);
@@ -358,13 +362,13 @@ test "a literal api key resolves without touching the environment" {
 
     var env = EnvMap.init(testing.allocator);
     defer env.deinit();
-    const secret = try resolveApiKey(&loaded.providers[0], &env);
+    const secret = try resolveApiKey(loaded.providers[0].auth.source, &env);
     try testing.expectEqualStrings("sk-secret-value", secret.api_key);
 }
 
 test "an env api key resolves from the process environment" {
     const json = wrapProvider(
-        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic-messages",
+        \\{"id":"minimax","base_url":"https://api.minimax.io/anthropic","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"MINIMAX_API_KEY"}}}}
     );
     var loaded = try loadBytes(testing.allocator, json);
@@ -373,20 +377,20 @@ test "an env api key resolves from the process environment" {
     var env = EnvMap.init(testing.allocator);
     defer env.deinit();
     try env.put("MINIMAX_API_KEY", "sk-from-env");
-    const secret = try resolveApiKey(&loaded.providers[0], &env);
+    const secret = try resolveApiKey(loaded.providers[0].auth.source, &env);
     try testing.expectEqualStrings("sk-from-env", secret.api_key);
 
     var absent = try loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"ABSENT_KEY_NAME"}}}}
     ));
     defer absent.deinit();
-    try testing.expectError(error.MissingCredential, resolveApiKey(&absent.providers[0], &env));
+    try testing.expectError(error.MissingCredential, resolveApiKey(absent.providers[0].auth.source, &env));
 }
 
 test "the strict schema rejects an unknown field" {
     try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "surprise":true,
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
     )));
@@ -394,7 +398,7 @@ test "the strict schema rejects an unknown field" {
 
 test "the strict schema rejects a duplicate object key" {
     try testing.expectError(error.DuplicateField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","id":"y","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","id":"y","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
     )));
 }
@@ -408,11 +412,11 @@ test "a bad document version is rejected" {
 test "duplicate provider and model ids are rejected" {
     try testing.expectError(error.DuplicateProvider, loadBytes(testing.allocator,
         \\{"version":1,"providers":[
-        \\ {"id":"dup","base_url":"https://a.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}},
-        \\ {"id":"dup","base_url":"https://b.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}]}
+        \\ {"id":"dup","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}},
+        \\ {"id":"dup","base_url":"https://b.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}]}
     ));
     try testing.expectError(error.DuplicateModel, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"p","base_url":"https://a.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
+        \\{"id":"p","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "models":[{"id":"m","upstream_id":"a","limits":{"context_window":1,"max_output_tokens":1}},
         \\           {"id":"m","upstream_id":"b","limits":{"context_window":1,"max_output_tokens":1}}]}
     )));
@@ -430,7 +434,7 @@ test "url validation rejects scheme, host, userinfo, query, and fragment" {
         var buf: [256]u8 = undefined;
         const json = try std.fmt.bufPrint(
             &buf,
-            "{{\"version\":1,\"providers\":[{{\"id\":\"x\",\"base_url\":\"{s}\",\"protocol\":\"anthropic-messages\",\"auth\":{{\"api_key\":{{\"header\":\"x_api_key\",\"source\":{{\"env\":\"K\"}}}}}}}}]}}",
+            "{{\"version\":1,\"providers\":[{{\"id\":\"x\",\"base_url\":\"{s}\",\"protocol\":\"anthropic_messages\",\"auth\":{{\"api_key\":{{\"header\":\"x_api_key\",\"source\":{{\"env\":\"K\"}}}}}}}}]}}",
             .{url},
         );
         try testing.expectError(error.BadUrl, loadBytes(testing.allocator, json));
@@ -439,29 +443,29 @@ test "url validation rejects scheme, host, userinfo, query, and fragment" {
 
 test "a bad env name is rejected" {
     try testing.expectError(error.BadEnvName, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"env":"9BAD-NAME"}}}}
     )));
 }
 
 test "a literal with a control byte is rejected" {
     try testing.expectError(error.BadLiteral, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"line\none"}}}}
     )));
 }
 
 test "bad header names, values, and auth collisions are rejected" {
     try testing.expectError(error.BadHeaderName, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "headers":[{"name":"bad name","value":"v"}]}
     )));
     try testing.expectError(error.BadHeaderValue, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "headers":[{"name":"x-note","value":"a\r\nb"}]}
     )));
     try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "headers":[{"name":"X-Api-Key","value":"injected"}]}
     )));
 }
@@ -469,7 +473,7 @@ test "bad header names, values, and auth collisions are rejected" {
 test "a literal written with a json escape is rejected" {
     // The decoded value is "sk-Abc" but the source escapes it, so it never appears plainly.
     try testing.expectError(error.BadLiteral, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-\u0041bc"}}}}
     )));
 }
@@ -477,7 +481,7 @@ test "a literal written with a json escape is rejected" {
 test "a literal key is freed once when a later check fails" {
     // The code appends the literal key before the header check fails. Cleanup frees the key once.
     try testing.expectError(error.HeaderConflict, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic-messages",
+        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-secret"}}},
         \\ "headers":[{"name":"X-Api-Key","value":"injected"}]}
     )));

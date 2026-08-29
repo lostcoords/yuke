@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const ids = @import("ids.zig");
+const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 
 /// This payload describes `catalog.changed`.
@@ -34,7 +35,18 @@ pub const CatalogListResult = union(enum) {
 /// The client sent a stale or absent revision, so the daemon returns the full catalog.
 pub const CatalogListResultFull = struct {
     catalog_rev: ids.CatalogRev,
+    providers: []const ProviderInfo,
     models: []const ModelInfo,
+};
+
+/// This type describes one configured provider. The daemon lists a provider that holds a
+/// credential, so a client can tell a usable provider from one that needs a new login.
+pub const ProviderInfo = struct {
+    /// The left half of a `provider/model` selector.
+    id: []const u8,
+    name: []const u8,
+    source: enums.ProviderSource,
+    state: enums.ProviderState,
 };
 
 /// The client sent the current revision, so the daemon returns no catalog data.
@@ -72,7 +84,7 @@ pub const ModelInfo = struct {
 test "catalog list result full round-trips without availability state" {
     const testing = std.testing;
     const input =
-        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","models":[]}
+        \\{"type":"full","catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[],"models":[]}
     ;
     const parsed = try std.json.parseFromSlice(CatalogListResult, testing.allocator, input, .{});
     defer parsed.deinit();

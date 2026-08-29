@@ -7,6 +7,7 @@ const zqlite = @import("zqlite");
 const http = @import("http.zig");
 const database = @import("../database/database.zig");
 const paths = @import("../paths/paths.zig");
+const cloud = @import("../cloud/cloud.zig");
 const provider = @import("../provider/provider.zig");
 const daemon_config = @import("config.zig");
 const State = @import("State.zig");
@@ -65,7 +66,7 @@ pub fn run(init: std.process.Init) !void {
         } else loaded.deinit();
     }
 
-    // Load the daemon defaults. An invalid file fails startup. A missing file uses built-in defaults.
+    // Load the daemon defaults. An invalid file fails startup. An absent file uses built-in defaults.
     // The daemon trusts the values. A client validates a model selector before it sends the request.
     const yuked_path = try configFilePath(init.gpa, init.environ_map, "yuked.json");
     defer if (yuked_path) |path| init.gpa.free(path);
@@ -74,6 +75,16 @@ pub fn run(init: std.process.Init) !void {
         state.defaults = loaded.defaults;
         state.config_owner = loaded;
     }
+
+    // Fetch the catalog off the request path. The daemon must answer before the network does.
+    var cloud_client: cloud.http.Client = .init(init.gpa, io);
+    defer cloud_client.deinit();
+    var maintenance: std.Io.Group = .init;
+    defer maintenance.cancel(io);
+    const base_url = cloud.endpoint.baseUrl(init.environ_map, null);
+    maintenance.concurrent(io, catalogTask, .{ init.gpa, &state, &cloud_client, base_url }) catch |err| {
+        std.log.warn("catalog refresh not started: {t}", .{err});
+    };
 
     std.log.info("daemon store at {s}", .{config.db_path});
     try http.serve(&state);
@@ -96,6 +107,20 @@ fn resolveDbPath(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Env
     const file = try paths.dbPathIn(gpa, base);
     defer gpa.free(file);
     return try gpa.dupeZ(u8, file);
+}
+
+/// Refresh the catalog once at startup. The catalog needs no credential, so any daemon holds it.
+/// A failure leaves the stored snapshot alone and never stops the daemon.
+fn catalogTask(gpa: std.mem.Allocator, state: *State, client: *cloud.http.Client, base_url: []const u8) void {
+    const outcome = cloud.sync.refreshCatalog(gpa, client, &state.db, base_url) catch |err| {
+        std.log.warn("catalog refresh failed: {t}", .{err});
+        return;
+    };
+    switch (outcome) {
+        .updated => std.log.info("catalog updated from {s}", .{base_url}),
+        .unchanged => std.log.info("catalog already current", .{}),
+        .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
+    }
 }
 
 /// Create the data directory. Give a new POSIX directory mode 0700 and keep current permissions.

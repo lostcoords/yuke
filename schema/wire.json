@@ -1074,8 +1074,40 @@
           "presence": "required"
         },
         {
+          "name": "providers",
+          "type": "[]ProviderInfo",
+          "presence": "required"
+        },
+        {
           "name": "models",
           "type": "[]ModelInfo",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "ProviderInfo",
+      "doc": "This type describes one configured provider. The daemon lists a provider that holds a credential, so a client can tell a usable provider from one that needs a new login.",
+      "fields": [
+        {
+          "name": "id",
+          "doc": "The left half of a `provider/model` selector.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "source",
+          "type": "ProviderSource",
+          "presence": "required"
+        },
+        {
+          "name": "state",
+          "type": "ProviderState",
           "presence": "required"
         }
       ]
@@ -4841,16 +4873,46 @@
       "numeric": false,
       "values": [
         {
-          "name": "anthropic-messages",
-          "wire": "anthropic-messages"
+          "name": "anthropic_messages",
+          "wire": "anthropic_messages"
         },
         {
-          "name": "openai-completions",
-          "wire": "openai-completions"
+          "name": "openai_chat",
+          "wire": "openai_chat"
         },
         {
-          "name": "openai-responses",
-          "wire": "openai-responses"
+          "name": "openai_responses",
+          "wire": "openai_responses"
+        }
+      ]
+    },
+    {
+      "name": "ProviderSource",
+      "doc": "Name where a provider's route and credential came from.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "cloud",
+          "wire": "cloud"
+        },
+        {
+          "name": "local",
+          "wire": "local"
+        }
+      ]
+    },
+    {
+      "name": "ProviderState",
+      "doc": "Report whether a configured provider can serve a request now.",
+      "numeric": false,
+      "values": [
+        {
+          "name": "ready",
+          "wire": "ready"
+        },
+        {
+          "name": "needs_login",
+          "wire": "needs_login"
         }
       ]
     },

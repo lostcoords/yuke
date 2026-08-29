@@ -27,15 +27,15 @@ pub const retry = @import("retry.zig");
 /// Return the protocol's request serializer and stream reducer. A new protocol needs one arm here.
 pub fn Adapter(comptime protocol: wire.enums.ProviderProtocol) type {
     return switch (protocol) {
-        .@"anthropic-messages" => struct {
+        .anthropic_messages => struct {
             pub const serialize = request_anthropic.serialize;
             pub const Reducer = anthropic.Reducer;
         },
-        .@"openai-completions" => struct {
+        .openai_chat => struct {
             pub const serialize = request_openai_chat.serialize;
             pub const Reducer = openai_chat.Reducer;
         },
-        .@"openai-responses" => struct {
+        .openai_responses => struct {
             pub const serialize = request_openai_responses.serialize;
             pub const Reducer = openai_responses.Reducer;
         },

@@ -5,6 +5,8 @@ const wire = @import("wire");
 const wss = @import("websocket").server;
 const State = @import("State.zig");
 const handlers = @import("handlers.zig");
+const cloud_catalog = @import("../cloud/catalog.zig");
+const catalog_store = @import("../database/catalog.zig");
 const connection = @import("connection.zig");
 const run_task = @import("run_task.zig");
 
@@ -122,6 +124,10 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_cancel_run_result = result } } };
         },
+        .@"catalog.list" => {
+            const result = try handlers.catalogList(state, arena, request.params.catalog_list_params);
+            return .{ .ok = .{ .id = request.id, .result = .{ .catalog_list_result = result } } };
+        },
         .@"session.resync" => {
             const result = handlers.sessionResync(state, arena, request.params.session_resync_params) catch |err| switch (err) {
                 error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
@@ -136,7 +142,6 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
         .@"session.compact",
         .@"session.rewind",
         .@"permission.decide",
-        .@"catalog.list",
         .@"catalog.refresh",
         .@"auth.list",
         .@"auth.set_api_key",
@@ -1111,6 +1116,135 @@ const final_text_reply =
     "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n" ++
     "data: {\"type\":\"message_stop\"}\n\n";
 
+// A turn that reports cached and cache-created prompt tokens, so the gauge has every subset.
+const cached_reply =
+    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":13}}}\n\n" ++
+    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" ++
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" ++
+    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" ++
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n" ++
+    "data: {\"type\":\"message_stop\"}\n\n";
+
+/// Install `seq`, run one full turn, and return when the session settles.
+fn runOneTurn(fixture: *TestState, a: std.mem.Allocator, path: []const u8, seq: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
+    fixture.state.transport = seq.transport();
+    const sid = try createSession(fixture, a, .{ .workspace_path = path, .model = "mock" });
+    _ = try sendText(fixture, a, sid, "hi");
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+    return sid;
+}
+
+test "session.list reports the context gauge and the lifetime totals after a turn" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const steps = provider.transport.replies(&.{cached_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    const sid = try runOneTurn(&fixture, a, "/gauge-list", &seq);
+
+    const listed = try handlers.sessionList(&fixture.state, a, .{});
+    try std.testing.expectEqual(@as(usize, 1), listed.items.len);
+    const item = listed.items[0];
+    try std.testing.expectEqualSlices(u8, &sid.raw, &item.session.id.raw);
+
+    // The gauge is the newest assistant turn, not a zero and not the lifetime sum.
+    try std.testing.expectEqual(@as(u64, 40), item.activity.context_usage.input); // 7 + 20 + 13
+    try std.testing.expectEqual(@as(u64, 5), item.activity.context_usage.output);
+    try std.testing.expectEqual(@as(u64, 20), item.activity.context_usage.cache_read);
+    try std.testing.expectEqual(@as(u64, 13), item.activity.context_usage.cache_write);
+
+    // The lifetime totals carry the same one turn, and input holds the cache subsets.
+    try std.testing.expectEqual(@as(u64, 40), item.session.usage_total.input);
+    try std.testing.expectEqual(@as(u64, 5), item.session.usage_total.output);
+    try std.testing.expectEqual(@as(u64, 20), item.session.usage_total.cache_read);
+    try std.testing.expectEqual(@as(u64, 13), item.session.usage_total.cache_write);
+    try std.testing.expectEqual(@as(u64, 2), item.session.message_count);
+}
+
+test "resync reports the context gauge of an idle session" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const steps = provider.transport.replies(&.{cached_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    const sid = try runOneTurn(&fixture, a, "/gauge-resync", &seq);
+
+    // The idle runtime was evicted, so this resync hydrates a transient projection.
+    try std.testing.expect(fixture.state.sessions.get(sid) == null);
+    const result = try handlers.sessionResync(&fixture.state, a, .{ .session_id = sid, .limit = null });
+    try std.testing.expect(result.item.activity.state == .idle);
+    try std.testing.expectEqual(@as(u64, 40), result.item.activity.context_usage.input);
+    try std.testing.expectEqual(@as(u64, 20), result.item.activity.context_usage.cache_read);
+    try std.testing.expectEqual(@as(u64, 13), result.item.activity.context_usage.cache_write);
+}
+
+test "the lifetime totals stay monotonic over two turns" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const steps = provider.transport.replies(&.{ cached_reply, cached_reply });
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    const sid = try runOneTurn(&fixture, a, "/gauge-restart", &seq);
+
+    _ = try sendText(&fixture, a, sid, "again");
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+
+    // Two turns folded once each. The durable row holds the sum.
+    const snap = (try database.session.snapshot(&fixture.state.db, a, sid.raw)).?;
+    try std.testing.expectEqual(@as(u64, 80), snap.usage_input_total);
+    try std.testing.expectEqual(@as(u64, 10), snap.usage_output_total);
+    try std.testing.expectEqual(@as(u64, 40), snap.usage_cache_read_total);
+    try std.testing.expectEqual(@as(u64, 26), snap.usage_cache_write_total);
+    try std.testing.expectEqual(@as(u64, 4), snap.message_count);
+}
+
+test "a turn announces its activity and its summary" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var tap = State.BroadcastTap.init(std.testing.allocator);
+    defer tap.deinit();
+    fixture.state.broadcast_tap = &tap;
+    const a = fixture.allocator();
+
+    const steps = provider.transport.replies(&.{cached_reply});
+    var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
+    _ = try runOneTurn(&fixture, a, "/gauge-activity", &seq);
+
+    var activities: usize = 0;
+    var summaries: usize = 0;
+    var settled_idle = false;
+    var final_gauge: u64 = 0;
+    var counts: [8]u64 = undefined;
+    for (tap.events.items) |bc| switch (bc) {
+        .session_activity_changed_data => |d| {
+            activities += 1;
+            settled_idle = d.activity.state == .idle;
+            final_gauge = d.activity.context_usage.input;
+        },
+        .session_summary_changed_data => |d| {
+            try std.testing.expectEqual(@as(u64, @intCast(summaries + 1)), d.revision); // No revision repeats or is skipped.
+            try std.testing.expect(summaries < counts.len);
+            counts[summaries] = d.session.message_count;
+            summaries += 1;
+        },
+        else => {},
+    };
+
+    // The create, the user commit, and the assistant commit each announce a growing summary.
+    try std.testing.expect(summaries >= 3);
+    for (counts[1..summaries], counts[0 .. summaries - 1]) |now, before| try std.testing.expect(now >= before);
+    // The run start, the text block, and the settle each announce activity.
+    try std.testing.expect(activities >= 3);
+    // The last announcement reports an idle session whose gauge holds the committed turn.
+    try std.testing.expect(settled_idle);
+    try std.testing.expectEqual(@as(u64, 40), final_gauge);
+}
+
 test "a tool_use round commits, then a second round streams the final answer" {
     var fixture = try TestState.init();
     defer fixture.deinit();
@@ -1762,7 +1896,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
 
     // State.deinit frees the loaded provider layer. Leave that layer for State.deinit.
     fixture.state.providers = try provider.config.loadBytes(std.testing.allocator,
-        \\{"version":1,"providers":[{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic-messages",
+        \\{"version":1,"providers":[{"id":"acme","base_url":"https://llm.acme.example/v1","protocol":"anthropic_messages",
         \\ "auth":{"api_key":{"header":"x_api_key","source":{"literal":"sk-test"}}},
         \\ "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
         \\ "models":[{"id":"fast","upstream_id":"acme-fast-1","limits":{"context_window":200000,"max_output_tokens":8192}}]}]}
@@ -1785,7 +1919,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     try std.testing.expect(std.mem.indexOf(u8, capture.body.items, "acme/fast") == null);
     // The committed assistant message records the resolved protocol and the session model.
     const history = (try database.message.historyPage(&fixture.state.db, a, sid.raw, 0, 10)).messages;
-    try std.testing.expectEqual(wire.enums.ProviderProtocol.@"anthropic-messages", history[1].assistant.provenance.?.protocol);
+    try std.testing.expectEqual(wire.enums.ProviderProtocol.anthropic_messages, history[1].assistant.provenance.?.protocol);
     try std.testing.expectEqualStrings("acme/fast", history[1].assistant.provenance.?.model);
 }
 
@@ -2018,4 +2152,70 @@ test "a cancel during a retry delay stops before the next attempt" {
 
     try std.testing.expectEqual(@as(usize, 1), script.opens); // the second attempt never opened
     try std.testing.expectEqual(wire.enums.StopReason.canceled, try lastFinish(&fixture.state, a, sid));
+}
+
+fn cloud_catalog_test_local(_: std.mem.Allocator) !provider.config.Loaded {
+    return provider.config.loadBytes(std.testing.allocator,
+        \\{"version":1,"providers":[{"id":"anthropic","base_url":"https://api.anthropic.com/v1",
+        \\ "protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"literal":"k"}}}}]}
+    );
+}
+
+test "catalog.list serves an empty catalog before the first sync" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const result = try handlers.catalogList(&fixture.state, a, .{});
+    try std.testing.expect(result == .full);
+    try std.testing.expectEqual(@as(usize, 0), result.full.models.len);
+    try std.testing.expectEqual(@as(usize, 0), result.full.providers.len);
+    // A zero revision says the daemon holds no catalog yet.
+    try std.testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &result.full.catalog_rev.raw);
+}
+
+test "catalog.list projects stored models and honors a matching revision" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    // The revision must be a sha-512 hex digest, so substitute it into the document.
+    const rev_hex = "0123456789abcdef" ** 8;
+    const raw_doc = try std.mem.replaceOwned(u8, a,
+        \\{"version":1,"catalog_rev":"REV","providers":[
+        \\{"id":"anthropic","name":"Anthropic","base_url":"https://api.anthropic.com/v1",
+        \\ "protocol":"anthropic_messages","auth":{"kind":"api_key","header":"x_api_key"},
+        \\ "cache":"ephemeral","headers":[],"models":[{"id":"m","upstream_id":"u","name":"M",
+        \\ "limits":{"context_window":200000,"max_output_tokens":null},
+        \\ "cost":{"input":3.0,"output":15.0,"cache_read":null,"cache_write":null},
+        \\ "flags":{"supports_tools":true,"supports_vision":false},"reasoning":true,
+        \\ "reasoning_levels":[null,"low","medium"],"status":null}]}]}
+    , "REV", rev_hex);
+    const parsed = try cloud_catalog.decode(a, raw_doc);
+    try catalog_store.replace(&fixture.state.db, a, parsed.providers, parsed.catalog_rev, "etag-1");
+
+    // A catalog row alone is not offered; a local key makes it a configured provider.
+    fixture.state.providers = try cloud_catalog_test_local(a); // State.deinit frees this.
+    const result = try handlers.catalogList(&fixture.state, a, .{});
+    try std.testing.expect(result == .full);
+    try std.testing.expectEqual(@as(usize, 1), result.full.providers.len);
+    try std.testing.expectEqual(wire.enums.ProviderSource.local, result.full.providers[0].source);
+    try std.testing.expectEqual(@as(usize, 1), result.full.models.len);
+
+    const m = result.full.models[0];
+    try std.testing.expectEqualStrings("m", m.id);
+    try std.testing.expectEqualStrings("anthropic", m.provider);
+    try std.testing.expectEqual(@as(u64, 200000), m.context_window);
+    try std.testing.expectEqual(@as(u64, 0), m.max_output_tokens); // A null limit reads as zero.
+    try std.testing.expectEqual(@as(f64, 0), m.cost.cache_write);
+    try std.testing.expectEqual(@as(usize, 2), m.reasoning_levels.len); // The null level is gone.
+    try std.testing.expectEqualStrings("medium", m.default_reasoning);
+
+    // A client that already holds this revision gets no catalog data.
+    const again = try handlers.catalogList(&fixture.state, a, .{ .since_rev = result.full.catalog_rev });
+    try std.testing.expect(again == .unchanged);
+
+    // A stale revision returns the whole catalog again.
+    const stale = try handlers.catalogList(&fixture.state, a, .{ .since_rev = .bytes(@splat(0)) });
+    try std.testing.expect(stale == .full);
 }

@@ -7,12 +7,6 @@ pub const DeleteProviders = sql.ExecQuery(
     struct {},
 );
 
-pub const DeleteModels = sql.ExecQuery(
-    \\DELETE FROM catalog_models;
-,
-    struct {},
-);
-
 pub const InsertProvider = sql.ExecQuery(
     \\INSERT INTO catalog_providers (id, data) VALUES (:id, :data);
 ,
@@ -22,18 +16,16 @@ pub const InsertProvider = sql.ExecQuery(
     },
 );
 
-pub const InsertModel = sql.ExecQuery(
-    \\INSERT INTO catalog_models (id, provider_id, data) VALUES (:id, :provider_id, :data);
+pub const SetEtag = sql.ExecQuery(
+    \\INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('etag', :v);
 ,
     struct {
-        id: []const u8,
-        provider_id: []const u8,
-        data: []const u8,
+        v: []const u8,
     },
 );
 
-pub const SetEtag = sql.ExecQuery(
-    \\INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('etag', :v);
+pub const SetRev = sql.ExecQuery(
+    \\INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('rev', :v);
 ,
     struct {
         v: []const u8,
@@ -49,19 +41,17 @@ pub const SelectProviders = sql.ManyQuery(
     },
 );
 
-pub const SelectModels = sql.ManyQuery(
-    \\SELECT data FROM catalog_models WHERE provider_id = :provider_id ORDER BY id;
+pub const GetEtag = sql.OptionalQuery(
+    \\SELECT v FROM catalog_meta WHERE k = 'etag';
 ,
+    struct {},
     struct {
-        provider_id: []const u8,
-    },
-    struct {
-        data: []const u8,
+        v: []const u8,
     },
 );
 
-pub const GetEtag = sql.OptionalQuery(
-    \\SELECT v FROM catalog_meta WHERE k = 'etag';
+pub const GetRev = sql.OptionalQuery(
+    \\SELECT v FROM catalog_meta WHERE k = 'rev';
 ,
     struct {},
     struct {
@@ -371,6 +361,25 @@ pub const MessagePage = sql.ManyQuery(
     },
 );
 
+pub const LastAssistantUsage = sql.OptionalQuery(
+    \\SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+    \\FROM messages
+    \\WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
+    \\ORDER BY message_id DESC
+    \\LIMIT 1;
+,
+    struct {
+        session_id: [16]u8,
+    },
+    struct {
+        tokens_input: ?u64,
+        tokens_output: ?u64,
+        tokens_reasoning: ?u64,
+        tokens_cache_read: ?u64,
+        tokens_cache_write: ?u64,
+    },
+);
+
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, workspace_id, origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -425,8 +434,9 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     \\    created_at_ms, updated_at_ms,
-    \\    open_run_id, open_run_kind, open_run_started_at_ms
-    \\FROM sessions
+    \\    open_run_id, open_run_kind, open_run_started_at_ms,
+    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+    \\FROM session_context
     \\WHERE id = :id;
 ,
     struct {
@@ -461,6 +471,11 @@ pub const SessionSnapshot = sql.OptionalQuery(
         open_run_id: ?u64,
         open_run_kind: ?[]const u8,
         open_run_started_at_ms: ?u64,
+        ctx_tokens_input: ?u64,
+        ctx_tokens_output: ?u64,
+        ctx_tokens_reasoning: ?u64,
+        ctx_tokens_cache_read: ?u64,
+        ctx_tokens_cache_write: ?u64,
     },
 );
 
@@ -532,8 +547,9 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    \\    created_at_ms, updated_at_ms
-    \\FROM sessions
+    \\    created_at_ms, updated_at_ms,
+    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+    \\FROM session_context
     \\WHERE (NOT :top_level OR origin IN ('root', 'fork'))
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
     \\ORDER BY updated_at_ms DESC, id DESC
@@ -571,6 +587,11 @@ pub const SessionPageRecent = sql.ManyQuery(
         usage_cache_write_total: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
+        ctx_tokens_input: ?u64,
+        ctx_tokens_output: ?u64,
+        ctx_tokens_reasoning: ?u64,
+        ctx_tokens_cache_read: ?u64,
+        ctx_tokens_cache_write: ?u64,
     },
 );
 
@@ -582,8 +603,9 @@ pub const SessionPageWorkspace = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    \\    created_at_ms, updated_at_ms
-    \\FROM sessions
+    \\    created_at_ms, updated_at_ms,
+    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+    \\FROM session_context
     \\WHERE workspace_id = :filter_workspace_id
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
@@ -623,6 +645,11 @@ pub const SessionPageWorkspace = sql.ManyQuery(
         usage_cache_write_total: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
+        ctx_tokens_input: ?u64,
+        ctx_tokens_output: ?u64,
+        ctx_tokens_reasoning: ?u64,
+        ctx_tokens_cache_read: ?u64,
+        ctx_tokens_cache_write: ?u64,
     },
 );
 
@@ -634,8 +661,9 @@ pub const SessionPageParent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    \\    created_at_ms, updated_at_ms
-    \\FROM sessions
+    \\    created_at_ms, updated_at_ms,
+    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
+    \\FROM session_context
     \\WHERE parent_id = :filter_parent_id
     \\  AND (:filter_workspace_id IS NULL OR workspace_id = :filter_workspace_id)
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
@@ -677,6 +705,11 @@ pub const SessionPageParent = sql.ManyQuery(
         usage_cache_write_total: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
+        ctx_tokens_input: ?u64,
+        ctx_tokens_output: ?u64,
+        ctx_tokens_reasoning: ?u64,
+        ctx_tokens_cache_read: ?u64,
+        ctx_tokens_cache_write: ?u64,
     },
 );
 
@@ -795,13 +828,12 @@ pub const WorkspaceList = sql.ManyQuery(
 
 pub const Queries = struct {
     delete_providers: DeleteProviders,
-    delete_models: DeleteModels,
     insert_provider: InsertProvider,
-    insert_model: InsertModel,
     set_etag: SetEtag,
+    set_rev: SetRev,
     select_providers: SelectProviders,
-    select_models: SelectModels,
     get_etag: GetEtag,
+    get_rev: GetRev,
     insert_config: InsertConfig,
     advance_config: AdvanceConfig,
     config_by_revision: ConfigByRevision,
@@ -820,6 +852,7 @@ pub const Queries = struct {
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,
+    last_assistant_usage: LastAssistantUsage,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,

@@ -172,7 +172,13 @@ pub const SessionView = enum { active, recent, active_recent };
 pub const CompactionReason = enum { auto, manual };
 
 /// Provider protocol kind.
-pub const ProviderProtocol = enum { @"anthropic-messages", @"openai-completions", @"openai-responses" };
+pub const ProviderProtocol = enum { anthropic_messages, openai_chat, openai_responses };
+
+/// Name where a provider's route and credential came from.
+pub const ProviderSource = enum { cloud, local };
+
+/// Report whether a configured provider can serve a request now.
+pub const ProviderState = enum { ready, needs_login };
 
 pub const SkillScope = enum { project, personal };
 

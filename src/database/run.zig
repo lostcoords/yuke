@@ -341,7 +341,7 @@ test "recovery cancels an open run and keeps its committed rounds" {
         .finish = .tool_calls,
         .tokens = .{ .input = 10, .output = 20, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
         .time = .{ .created_at_ms = 130, .completed_at_ms = 140 },
-        .provenance = .{ .protocol = .@"anthropic-messages", .model = "opus" },
+        .provenance = .{ .protocol = .anthropic_messages, .model = "opus" },
     } };
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try message.appendCommittedMessage(&db, a, sid, [_]u8{10} ** 16, 130, round);

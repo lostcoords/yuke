@@ -674,6 +674,7 @@ fn scanRecord(
     indices: *const [@typeInfo(Row).@"struct".fields.len]usize,
     allocator: std.mem.Allocator,
 ) !Row {
+    @setEvalBranchQuota(10_000); // the two inline loops unroll over every column of the widest row.
     const fields = @typeInfo(Row).@"struct".fields;
     var value: Row = undefined;
     var initialized: usize = 0;

@@ -155,16 +155,16 @@ test "reasoning replays only when the provenance matches the target" {
         .agent = "main",
         .content = &content,
         .time = .{ .created_at_ms = 0 },
-        .provenance = .{ .protocol = .@"anthropic-messages", .model = "claude" },
+        .provenance = .{ .protocol = .anthropic_messages, .model = "claude" },
     } }};
 
     const dropped = try build(arena.allocator(), &messages, .{});
     try testing.expectEqual(@as(usize, 1), dropped.blocks.len); // A null target drops reasoning.
 
-    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .@"anthropic-messages", .model = "claude" } });
+    const kept = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "claude" } });
     try testing.expectEqual(@as(usize, 2), kept.blocks.len);
     try testing.expectEqualStrings("ponder", kept.blocks[0].value.reasoning.text);
 
-    const mismatch = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .@"anthropic-messages", .model = "other" } });
+    const mismatch = try build(arena.allocator(), &messages, .{ .target = .{ .protocol = .anthropic_messages, .model = "other" } });
     try testing.expectEqual(@as(usize, 1), mismatch.blocks.len);
 }

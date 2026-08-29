@@ -97,9 +97,21 @@ pub const Reducer = struct {
         if (self.started) return error.Protocol; // The stream has one message_start event.
         self.started = true;
         const usage = json.fieldObj(json.fieldGet(root, "message") orelse return, "usage") orelse return;
-        self.usage.input = try json.countOf(usage, "input_tokens");
-        self.usage.cache_read = try json.countOf(usage, "cache_read_input_tokens");
-        self.usage.cache_write = try json.countOf(usage, "cache_creation_input_tokens");
+        try self.foldPromptUsage(usage);
+    }
+
+    /// Fold the cumulative prompt counts from both events. `input` holds the cache subsets.
+    /// Keep the larger value of each, because a max counts a repeated report one time.
+    fn foldPromptUsage(self: *Reducer, usage: std.json.ObjectMap) Error!void {
+        const cache_read = try json.countOf(usage, "cache_read_input_tokens");
+        const cache_write = try json.countOf(usage, "cache_creation_input_tokens");
+        var input = try json.countOf(usage, "input_tokens");
+        input +|= cache_read;
+        input +|= cache_write;
+
+        self.usage.input = @max(self.usage.input, input);
+        self.usage.cache_read = @max(self.usage.cache_read, cache_read);
+        self.usage.cache_write = @max(self.usage.cache_write, cache_write);
     }
 
     fn onBlockStart(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -205,6 +217,7 @@ pub const Reducer = struct {
         if (json.fieldObj(root, "usage")) |usage| {
             self.usage.output = try json.countOf(usage, "output_tokens");
             if (json.childObj(usage, "output_tokens_details")) |d| self.usage.reasoning = try json.countOf(d, "thinking_tokens");
+            try self.foldPromptUsage(usage);
         }
     }
 
@@ -305,9 +318,60 @@ test "text turn: started, deltas, stopped, done with usage" {
     const done = h.out.items[4].done;
     try testing.expectEqual(wire.enums.StopReason.stop, done.stop_reason);
     try testing.expectEqualStrings("end_turn", done.raw_stop_reason);
-    try testing.expectEqual(@as(u64, 100), done.usage.input);
+    try testing.expectEqual(@as(u64, 120), done.usage.input); // The cache subsets belong to input.
     try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
     try testing.expectEqual(@as(u64, 5), done.usage.output);
+}
+
+test "input holds the cached and the cache-created subsets" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":7,"cache_read_input_tokens":20,"cache_creation_input_tokens":13}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    const done = h.out.items[0].done;
+    try testing.expectEqual(@as(u64, 40), done.usage.input);
+    try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
+    try testing.expectEqual(@as(u64, 13), done.usage.cache_write);
+}
+
+test "a repeated cumulative prompt usage counts one time" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":7,"cache_read_input_tokens":20,"cache_creation_input_tokens":13}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":7,"cache_read_input_tokens":20,"cache_creation_input_tokens":13,"output_tokens":5}}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    const done = h.out.items[0].done;
+    try testing.expectEqual(@as(u64, 40), done.usage.input);
+    try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
+    try testing.expectEqual(@as(u64, 13), done.usage.cache_write);
+}
+
+test "a compat server reports the prompt usage only in message_delta" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"message_start","message":{"usage":{}}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":7,"cache_read_input_tokens":20,"output_tokens":5}}
+        ,
+        \\{"type":"message_stop"}
+    });
+
+    const done = h.out.items[0].done;
+    try testing.expectEqual(@as(u64, 27), done.usage.input);
+    try testing.expectEqual(@as(u64, 20), done.usage.cache_read);
+    try testing.expectEqual(@as(u64, 0), done.usage.cache_write);
 }
 
 test "tool turn: input deltas stream and the whole call surfaces at stop" {
