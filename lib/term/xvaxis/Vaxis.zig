@@ -898,6 +898,8 @@ pub fn setMouseShape(self: *Vaxis, shape: Shape) void {
 
 /// Change the mouse reporting mode
 pub fn setMouseMode(self: *Vaxis, tty: *std.Io.Writer, enable: bool) !void {
+    // `deinit` resets the mode from `state.mouse`. An enable marks the state first and a disable
+    // clears it last, so a failed write always leaves the reset for `deinit`.
     if (enable) {
         self.state.mouse = true;
         if (self.caps.sgr_pixels) {
@@ -908,11 +910,13 @@ pub fn setMouseMode(self: *Vaxis, tty: *std.Io.Writer, enable: bool) !void {
             log.debug("enabling mouse mode: cell coordinates", .{});
             try tty.writeAll(ctlseqs.mouse_set);
         }
+        try tty.flush();
     } else {
         try tty.writeAll(ctlseqs.mouse_reset);
+        try tty.flush();
+        self.state.mouse = false;
+        self.state.pixel_mouse = false;
     }
-
-    try tty.flush();
 }
 
 /// Translate pixel mouse coordinates to cell + offset

@@ -16,12 +16,11 @@ pub const explicit_width_query = "\x1b]66;w=1; \x1b\\";
 pub const scaled_text_query = "\x1b]66;s=2; \x1b\\";
 pub const multi_cursor_query = "\x1b[> q";
 
-// mouse. We try for button motion and any motion. terminals will enable the
-// last one we tried (any motion). This was added because zellij doesn't
-// support any motion currently
-// See: https://github.com/zellij-org/zellij/issues/1679
-pub const mouse_set = "\x1b[?1002;1003;1004;1006h";
-pub const mouse_set_pixels = "\x1b[?1002;1003;1004;1016h";
+// Mouse: button tracking (1002), focus reporting (1004), SGR encoding (1006/1016).
+// Keep 1003 off. It reports motion with no button and floods the input path.
+pub const mouse_set = "\x1b[?1002;1004;1006h";
+pub const mouse_set_pixels = "\x1b[?1002;1004;1016h";
+// The reset clears 1003 and 1016 too, because another program can leave them on.
 pub const mouse_reset = "\x1b[?1002;1003;1004;1006;1016l";
 
 // in-band window size reports

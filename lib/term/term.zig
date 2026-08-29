@@ -6,6 +6,7 @@ pub const Color = xvaxis.Color;
 pub const Screen = xvaxis.Screen;
 pub const Window = xvaxis.Window;
 pub const Parser = xvaxis.Parser;
+pub const Mouse = xvaxis.Mouse;
 pub const gwidth = xvaxis.gwidth;
 pub const unicode = xvaxis.unicode;
 

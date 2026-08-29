@@ -9,6 +9,8 @@ pub const Winsize = xvaxis.Winsize;
 pub const Render = struct {
     vx: xvaxis.Vaxis,
     alloc: std.mem.Allocator,
+    /// True inside tmux. A clipboard write then needs the passthrough sequence.
+    tmux: bool,
 
     pub fn init(
         io: std.Io,
@@ -19,6 +21,7 @@ pub const Render = struct {
         return .{
             .vx = try xvaxis.Vaxis.init(io, alloc, env_map, opts),
             .alloc = alloc,
+            .tmux = env_map.get("TMUX") != null,
         };
     }
 
@@ -42,6 +45,35 @@ pub const Render = struct {
     /// `deinit` tries to turn the mode off again.
     pub fn setBracketedPaste(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
         try self.vx.setBracketedPaste(writer, enable);
+    }
+
+    /// Turn mouse reporting on or off. The mode reports clicks, drags, the wheel, and focus.
+    /// `deinit` turns the mode off again.
+    pub fn setMouseMode(self: *Render, writer: *std.Io.Writer, enable: bool) !void {
+        try self.vx.setMouseMode(writer, enable);
+    }
+
+    /// Limit the raw OSC 52 payload. Reject larger text instead of truncation.
+    pub const clipboard_max = 100 * 1000;
+
+    /// OSC 52 inside a tmux passthrough. Each inner escape is doubled, and the payload ends with
+    /// BEL, so the tail needs no second doubled escape.
+    const tmux_clipboard_copy = "\x1bPtmux;\x1b\x1b]52;c;{s}\x07\x1b\\";
+
+    /// Ask the terminal to set the system clipboard through OSC 52.
+    /// The sequence has no acknowledgement, so a success means only that the write left this process.
+    pub fn copyToClipboard(self: *Render, writer: *std.Io.Writer, text: []const u8) !void {
+        if (text.len > clipboard_max) return error.ClipboardTooLarge;
+        const encoder = std.base64.standard.Encoder;
+        const buf = try self.alloc.alloc(u8, encoder.calcSize(text.len));
+        defer self.alloc.free(buf);
+        const b64 = encoder.encode(buf, text);
+
+        try writer.print(xvaxis.ctlseqs.osc52_clipboard_copy, .{b64});
+        // tmux with `set-clipboard external` drops an application OSC 52. The passthrough carries
+        // the same sequence to the outer terminal, which owns the real clipboard.
+        if (self.tmux) try writer.print(tmux_clipboard_copy, .{b64});
+        try writer.flush();
     }
 
     pub fn queueRefresh(self: *Render) void {
@@ -85,6 +117,87 @@ test "bracketed paste sets the mode and deinit resets it" {
     }
 
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1b[?2004l") != null);
+}
+
+test "mouse mode sets 1002;1004;1006 and deinit resets it" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    {
+        var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+        defer r.deinit(&out.writer);
+
+        try r.setMouseMode(&out.writer, true);
+        // Mode 1003 must stay out, so the terminal never reports hover motion.
+        try std.testing.expectEqualStrings("\x1b[?1002;1004;1006h", out.written());
+        out.clearRetainingCapacity();
+    }
+
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1b[?1002;1003;1004;1006;1016l") != null);
+}
+
+test "a mouse disable stops deinit from resetting the mode twice" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    try r.setMouseMode(&out.writer, true);
+    try r.setMouseMode(&out.writer, false);
+    out.clearRetainingCapacity();
+
+    r.deinit(&out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "1002") == null);
+}
+
+test "copyToClipboard emits base64 OSC 52 and refuses an oversize payload" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    // The test inherits the real environment, so drop TMUX to test the plain sequence alone.
+    _ = env_map.swapRemove("TMUX");
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    defer r.deinit(&out.writer);
+
+    try r.copyToClipboard(&out.writer, "hello");
+    try std.testing.expectEqualStrings("\x1b]52;c;aGVsbG8=\x1b\\", out.written());
+
+    const big = try std.testing.allocator.alloc(u8, Render.clipboard_max + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'a');
+    try std.testing.expectError(error.ClipboardTooLarge, r.copyToClipboard(&out.writer, big));
+}
+
+test "a tmux session also gets the passthrough clipboard sequence" {
+    const io = std.testing.io;
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("TMUX", "/tmp/tmux-501/default,123,0");
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var r = try Render.init(io, std.testing.allocator, &env_map, .{});
+    defer r.deinit(&out.writer);
+    try std.testing.expect(r.tmux);
+
+    try r.copyToClipboard(&out.writer, "hi");
+    // The plain sequence serves `set-clipboard on`. The passthrough serves `external`.
+    try std.testing.expectEqualStrings(
+        "\x1b]52;c;aGk=\x1b\\" ++ "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\",
+        out.written(),
+    );
 }
 
 test "init stores a 0x0 back-buffer and render writes nothing" {
