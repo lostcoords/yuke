@@ -235,7 +235,8 @@ fn refreshCloudLocked(self: *State) !void {
         break :blk null;
     };
     if (catalog_outcome) |outcome| switch (outcome) {
-        .updated, .unchanged => rebuild = true,
+        .updated => rebuild = true,
+        .unchanged => {},
         .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
     };
 
