@@ -159,8 +159,23 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
         .@"auth.login",
         .@"auth.cancel_login",
         .@"auth.logout",
-        .@"fs.stat",
-        .@"fs.browse",
+        => return errorResponse(request.id, .unknown_method, "not implemented"),
+        .@"fs.stat" => {
+            const result = handlers.fsStat(state, arena, request.params.fs_stat_params) catch |err| switch (err) {
+                error.BadPath => return errorResponse(request.id, .bad_request, "the daemon cannot read the path"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .fs_stat_result = result } } };
+        },
+        .@"fs.browse" => {
+            const result = handlers.fsBrowse(state, arena, request.params.fs_browse_params) catch |err| switch (err) {
+                error.BadPath => return errorResponse(request.id, .bad_request, "the daemon cannot list the path"),
+                error.BadRequest => return errorResponse(request.id, .bad_request, "the browse limit is out of range"),
+                error.BadCursor => return errorResponse(request.id, .stale_cursor, "stale cursor"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .fs_browse_result = result } } };
+        },
         .@"workspace.remove",
         .@"workspace.skills",
         .@"permission.rules",
@@ -221,6 +236,7 @@ const domain_session = @import("domain").session;
 const tools = @import("../tools/tool.zig");
 const host_mod = @import("../host/host.zig");
 const test_host = @import("../host/test_host.zig");
+const local_host = @import("../host/local.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 /// The fixture environment is empty. The map has no allocation to free.
@@ -2604,4 +2620,223 @@ test "a busy child blocks the cascade and leaves the whole tree" {
     try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, a, .{}));
     _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = root, .cascade_children = true });
     try std.testing.expectEqual(@as(u64, 0), try database.session.count(&fixture.state.db, a, .{}));
+}
+
+/// Build a directory tree and point the fixture host at it. The picker reads through that host.
+const PickerTree = struct {
+    tmp: std.testing.TmpDir,
+    backend: local_host.LocalHost = undefined,
+    root_buf: [std.fs.max_path_bytes]u8 = undefined,
+    root_len: usize = 0,
+
+    fn init(self: *PickerTree, state: *State, dirs: []const []const u8, files: []const []const u8) !void {
+        self.* = .{ .tmp = std.testing.tmpDir(.{}) };
+        errdefer self.tmp.cleanup();
+        for (dirs) |name| try self.tmp.dir.createDir(std.testing.io, name, .default_dir);
+        for (files) |name| try self.tmp.dir.writeFile(std.testing.io, .{ .sub_path = name, .data = "x" });
+        self.root_len = try self.tmp.dir.realPath(std.testing.io, &self.root_buf);
+        self.backend = .{ .io = state.io, .root = self.root(), .env = null };
+        state.tool_host = self.backend.host();
+    }
+    fn deinit(self: *PickerTree) void {
+        self.tmp.cleanup();
+    }
+    fn root(self: *PickerTree) []const u8 {
+        return self.root_buf[0..self.root_len];
+    }
+    fn under(self: *PickerTree, a: std.mem.Allocator, name: []const u8) ![]const u8 {
+        return std.fs.path.join(a, &.{ self.root(), name });
+    }
+};
+
+test "fs.browse pages a directory and binds the cursor to it" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{ "a", "b", "c" }, &.{"note.txt"});
+    defer tree.deinit();
+
+    const first = try handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = 2 });
+    try std.testing.expectEqual(@as(usize, 2), first.entries.len);
+    try std.testing.expectEqualStrings("a", first.entries[0].name);
+    try std.testing.expectEqualStrings(try tree.under(a, "a"), first.entries[0].path);
+    try std.testing.expect(first.entries[0].is_dir);
+    try std.testing.expect(first.next_cursor != null);
+
+    const second = try handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = 2, .cursor = first.next_cursor });
+    try std.testing.expectEqual(@as(usize, 1), second.entries.len); // The file stays out by default.
+    try std.testing.expectEqualStrings("c", second.entries[0].name);
+    try std.testing.expect(second.next_cursor == null);
+
+    // A cursor of one directory must not page another one.
+    try std.testing.expectError(error.BadCursor, handlers.fsBrowse(&fixture.state, a, .{
+        .path = try tree.under(a, "a"),
+        .cursor = first.next_cursor,
+    }));
+}
+
+test "fs.browse includes files on request and reports the parent" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{"sub"}, &.{"note.txt"});
+    defer tree.deinit();
+
+    const page = try handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .include_files = true });
+    try std.testing.expectEqual(@as(usize, 2), page.entries.len);
+    try std.testing.expectEqualStrings("note.txt", page.entries[0].name);
+    try std.testing.expect(!page.entries[0].is_dir);
+    try std.testing.expectEqualStrings("sub", page.entries[1].name);
+    try std.testing.expectEqualStrings(std.fs.path.dirname(tree.root()).?, page.parent.?);
+}
+
+test "fs.stat describes a directory, a repository, and a missing path" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{"repo"}, &.{});
+    defer tree.deinit();
+    try tree.tmp.dir.createDir(std.testing.io, "repo/.git", .default_dir);
+    try tree.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "repo/.git/HEAD", .data = "ref: refs/heads/main\n" });
+
+    const plain = try handlers.fsStat(&fixture.state, a, .{ .path = tree.root() });
+    try std.testing.expect(plain.entry.?.is_dir);
+    try std.testing.expect(plain.entry.?.git == null);
+
+    const repo = try handlers.fsStat(&fixture.state, a, .{ .path = try tree.under(a, "repo") });
+    try std.testing.expectEqualStrings("main", repo.entry.?.git.?.branch.?);
+
+    const gone = try handlers.fsStat(&fixture.state, a, .{ .path = try tree.under(a, "nope") });
+    try std.testing.expect(gone.entry == null);
+}
+
+test "fs.stat reports a detached head as a repository with no branch" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{"repo"}, &.{});
+    defer tree.deinit();
+    try tree.tmp.dir.createDir(std.testing.io, "repo/.git", .default_dir);
+    try tree.tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "repo/.git/HEAD",
+        .data = "9fceb02d0ae598e95dc970b74767f19372d61af8\n",
+    });
+
+    const repo = try handlers.fsStat(&fixture.state, a, .{ .path = try tree.under(a, "repo") });
+    try std.testing.expect(repo.entry.?.git != null);
+    try std.testing.expect(repo.entry.?.git.?.branch == null);
+}
+
+test "session.create announces a new workspace once" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var log = BroadcastLog.init();
+    defer log.deinit();
+    const a = fixture.allocator();
+
+    try fixture.register();
+    _ = try createSession(&fixture, a, .{ .workspace_path = "/shared" });
+    _ = try createSession(&fixture, a, .{ .workspace_path = "/shared" });
+    try log.drain(fixture.conn);
+
+    var created: usize = 0;
+    for (log.events.items) |bc| switch (bc) {
+        .workspace_created_data => |d| {
+            created += 1;
+            try std.testing.expectEqualStrings("/shared", d.workspace.root);
+            try std.testing.expectEqualStrings("shared", d.workspace.title);
+        },
+        else => {},
+    };
+    // The second session reuses the workspace, so only the first call sends `workspace.created`.
+    try std.testing.expectEqual(@as(usize, 1), created);
+}
+
+test "an unimplemented method reports unknown_method and reads no other params" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    // Each of these shares one dispatch arm with the fs methods, so a split arm would decode
+    // the wrong parameter union and panic on the tag.
+    const frames = [_][]const u8{
+        \\{"id":"1","method":"session.patch","params":{"session_id":"00000000000000000000000000000000","patch":{}}}
+        ,
+        \\{"id":"2","method":"auth.logout","params":{"provider_id":"x"}}
+        ,
+        \\{"id":"3","method":"permission.decide","params":{"session_id":"00000000000000000000000000000000","message_id":1,"part_id":0,"option_id":"allow_once"}}
+        ,
+        \\{"id":"4","method":"workspace.skills","params":{"workspace_id":"00000000000000000000000000000000"}}
+        ,
+    };
+    for (frames) |frame| {
+        var buffer: [2048]u8 = undefined;
+        const written = try call(&fixture, frame, &buffer);
+        try std.testing.expect(std.mem.indexOf(u8, written, "\"code\":-32601") != null);
+    }
+}
+
+test "fs.browse rejects a limit above the wire maximum" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{"a"}, &.{});
+    defer tree.deinit();
+
+    const over = wire.meta.limits.max_fs_browse_page_size + 1;
+    try std.testing.expectError(error.BadRequest, handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = over }));
+    try std.testing.expectError(error.BadRequest, handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = 0 }));
+    // The published maximum itself must pass.
+    _ = try handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = wire.meta.limits.max_fs_browse_page_size });
+}
+
+test "fs.browse rejects a cursor longer than the wire maximum" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{"a"}, &.{});
+    defer tree.deinit();
+
+    const huge = try a.alloc(u8, wire.meta.limits.max_fs_browse_cursor_bytes + 1);
+    @memset(huge, 'A');
+    try std.testing.expectError(error.BadCursor, handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .cursor = huge }));
+}
+
+test "fs.stat reads the branch of a worktree that stores .git as a file" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{ "real", "tree" }, &.{});
+    defer tree.deinit();
+    try tree.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "real/HEAD", .data = "ref: refs/heads/side\n" });
+    try tree.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "tree/.git", .data = "gitdir: ../real\n" });
+
+    const worktree = try handlers.fsStat(&fixture.state, a, .{ .path = try tree.under(a, "tree") });
+    try std.testing.expectEqualStrings("side", worktree.entry.?.git.?.branch.?);
+}
+
+test "listDir keeps one page whatever the directory order" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+    var tree: PickerTree = undefined;
+    try tree.init(&fixture.state, &.{}, &.{});
+    defer tree.deinit();
+    // Create the names in descending order, so every entry displaces the page tail.
+    var i: usize = 40;
+    while (i > 0) : (i -= 1) {
+        var name: [8]u8 = undefined;
+        try tree.tmp.dir.createDir(std.testing.io, try std.fmt.bufPrint(&name, "d{d:0>3}", .{i}), .default_dir);
+    }
+
+    const page = try handlers.fsBrowse(&fixture.state, a, .{ .path = tree.root(), .limit = 3 });
+    try std.testing.expectEqual(@as(usize, 3), page.entries.len);
+    try std.testing.expectEqualStrings("d001", page.entries[0].name);
+    try std.testing.expectEqualStrings("d003", page.entries[2].name);
 }

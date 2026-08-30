@@ -4,7 +4,7 @@
     "dead_connection_ms": 90000,
     "default_page_size": 50,
     "default_session_list_page_size": 25,
-    "default_workspace_browse_page_size": 100,
+    "default_fs_browse_page_size": 100,
     "max_activity_retry_message_bytes": 1024,
     "max_agents": 256,
     "max_api_key_bytes": 65536,
@@ -36,8 +36,8 @@
     "max_view_bytes": 1048576,
     "max_view_items": 1024,
     "max_views_per_tool": 64,
-    "max_workspace_browse_cursor_bytes": 256,
-    "max_workspace_browse_page_size": 500,
+    "max_fs_browse_cursor_bytes": 256,
+    "max_fs_browse_page_size": 500,
     "max_workspaces": 1024,
     "ping_interval_ms": 30000
   },
@@ -786,7 +786,7 @@
     },
     {
       "name": "DirEntry",
-      "doc": "This entry identifies one item in a browse page.",
+      "doc": "One directory entry in a browse page.",
       "fields": [
         {
           "name": "name",
@@ -805,7 +805,7 @@
         },
         {
           "name": "is_git_repo",
-          "doc": "This field says whether this directory is a Git repository.",
+          "doc": "True when this directory contains a `.git` entry.",
           "type": "bool",
           "presence": "required"
         }
@@ -858,7 +858,7 @@
         },
         {
           "name": "entries",
-          "doc": "The entries of this page, directories first, then each name in order.",
+          "doc": "The entries of this page in name order.",
           "type": "[]DirEntry",
           "presence": "required"
         },
@@ -872,7 +872,7 @@
     },
     {
       "name": "FsEntry",
-      "doc": "This type describes one filesystem item. A symbolic link reports its target.",
+      "doc": "Metadata for one filesystem path. A symbolic link reports its target.",
       "fields": [
         {
           "name": "is_dir",

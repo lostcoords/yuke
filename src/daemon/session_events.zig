@@ -204,6 +204,19 @@ pub fn announceSummary(state: *State, session_id: wire.ids.SessionId) void {
     } });
 }
 
+/// Publish the workspace after the commit, so each client learns of a row that it can read.
+pub fn announceWorkspaceCreated(state: *State, workspace: wire.workspace.Workspace) void {
+    const note: wire.rpc.Notification = .{ .method = .@"workspace.created", .params = .{
+        .workspace_created_data = .{ .workspace = workspace },
+    } };
+    const bytes = connection.frameNotification(state.gpa, note) catch |err| {
+        std.log.warn("cannot frame {t}: {t}", .{ note.method, err });
+        return;
+    };
+    defer state.gpa.free(bytes);
+    state.registry.publishAll(bytes);
+}
+
 /// Publish the removal after the delete, so no client hears of a session that it can read.
 pub fn announceRemoved(state: *State, session_id: wire.ids.SessionId) void {
     const revision = state.session_revision + 1;

@@ -2,12 +2,12 @@
 
 const std = @import("std");
 
-/// This entry identifies one item in a browse page.
+/// One directory entry in a browse page.
 pub const DirEntry = struct {
     name: []const u8,
     path: []const u8,
     is_dir: bool,
-    /// This field says whether this directory is a Git repository.
+    /// True when this directory contains a `.git` entry.
     is_git_repo: bool,
 };
 
@@ -34,7 +34,7 @@ pub const FsBrowseResult = struct {
     path: []const u8,
     /// The daemon sets this field to null at the filesystem root.
     parent: ?[]const u8 = null,
-    /// The entries of this page, directories first, then each name in order.
+    /// The entries of this page in name order.
     entries: []const DirEntry,
     /// An opaque continuation cursor; null on the final page.
     next_cursor: ?[]const u8 = null,
@@ -45,7 +45,7 @@ pub const FsStatParams = struct {
     path: []const u8,
 };
 
-/// This type describes one filesystem item. A symbolic link reports its target.
+/// Metadata for one filesystem path. A symbolic link reports its target.
 pub const FsEntry = struct {
     is_dir: bool,
     /// The last modification time in epoch milliseconds.

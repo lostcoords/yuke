@@ -471,12 +471,15 @@ test "the user commit and run.started precede the send_input response" {
     try testing.expect(saw_user_commit and saw_run_started and response_after_broadcasts);
 }
 
-/// Take the next session-stream frame. It drops `session.summary_changed`, which fans out to every
-/// connection as an index event and holds no place in one session's order.
+/// Take the next session-stream frame. An index broadcast has no place in one session's order.
 fn nextStreamFrame(conn: *Connection) !?connection.OutboxItem {
-    while (try conn.tryReceive()) |item| {
-        if (std.mem.indexOf(u8, item.bytes, "session.summary_changed") == null) return item;
-        testing.allocator.free(item.bytes);
+    const index_events = [_][]const u8{ "session.summary_changed", "workspace.created" };
+    outer: while (try conn.tryReceive()) |item| {
+        for (index_events) |name| if (std.mem.indexOf(u8, item.bytes, name) != null) {
+            testing.allocator.free(item.bytes);
+            continue :outer;
+        };
+        return item;
     }
     return null;
 }

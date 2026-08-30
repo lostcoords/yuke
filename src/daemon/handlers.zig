@@ -11,6 +11,8 @@ const session_events = @import("session_events.zig");
 const session_runtime = @import("session_runtime.zig");
 const domain_session = @import("domain").session;
 const paths = @import("../paths/paths.zig");
+const host_mod = @import("../host/host.zig");
+const local_host = @import("../host/local.zig");
 
 const session_store = database.session;
 const workspace_store = database.workspace;
@@ -405,6 +407,129 @@ pub fn sessionRemove(state: *State, arena: std.mem.Allocator, params: wire.sessi
     return .{};
 }
 
+const browse_cursor_version: u8 = 1;
+const browse_cursor_head = 9; // one version byte and one 64-bit path fingerprint
+const git_head_max_bytes: u32 = 4096;
+
+/// Build the picker host. The local backend uses the home directory as its root.
+fn pickerHost(state: *State, backend: *local_host.LocalHost) host_mod.Host {
+    if (state.tool_host) |installed| return installed;
+    backend.* = .{ .io = state.io, .root = state.home, .env = state.env };
+    return backend.host();
+}
+
+/// Store a directory fingerprint in each browse cursor.
+fn browseFingerprint(path: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, path);
+}
+
+fn encodeBrowseCursor(arena: std.mem.Allocator, path: []const u8, after: []const u8) ![]const u8 {
+    const raw = try arena.alloc(u8, browse_cursor_head + after.len);
+    raw[0] = browse_cursor_version;
+    std.mem.writeInt(u64, raw[1..9], browseFingerprint(path), .big);
+    @memcpy(raw[browse_cursor_head..], after);
+    const size = std.base64.url_safe_no_pad.Encoder.calcSize(raw.len);
+    std.debug.assert(size <= wire.meta.limits.max_fs_browse_cursor_bytes);
+    const encoded = try arena.alloc(u8, size);
+    _ = std.base64.url_safe_no_pad.Encoder.encode(encoded, raw);
+    return encoded;
+}
+
+fn decodeBrowseCursor(arena: std.mem.Allocator, path: []const u8, encoded: []const u8) ![]const u8 {
+    // Measure the peer cursor before the decode allocates for it.
+    if (encoded.len > wire.meta.limits.max_fs_browse_cursor_bytes) return error.BadCursor;
+    const size = std.base64.url_safe_no_pad.Decoder.calcSizeForSlice(encoded) catch return error.BadCursor;
+    if (size <= browse_cursor_head) return error.BadCursor;
+    const raw = try arena.alloc(u8, size);
+    std.base64.url_safe_no_pad.Decoder.decode(raw, encoded) catch return error.BadCursor;
+    if (raw[0] != browse_cursor_version) return error.BadCursor;
+    if (std.mem.readInt(u64, raw[1..9], .big) != browseFingerprint(path)) return error.BadCursor;
+    return raw[browse_cursor_head..];
+}
+
+/// Read the HEAD text. A worktree stores `.git` as a file that names the real Git directory.
+fn readHead(arena: std.mem.Allocator, backend: host_mod.Host, dir_path: []const u8) !?[]const u8 {
+    const marker = try std.fs.path.join(arena, &.{ dir_path, ".git" });
+    const head_path = try std.fs.path.join(arena, &.{ marker, "HEAD" });
+    if (backend.readAll(arena, head_path, git_head_max_bytes)) |text| return text else |err| switch (err) {
+        error.NotFound, error.NotAFile => {},
+        else => return err,
+    }
+    const link = backend.readAll(arena, marker, git_head_max_bytes) catch |err| switch (err) {
+        error.NotFound, error.NotAFile => return null,
+        else => return err,
+    };
+    const prefix = "gitdir: ";
+    const line = std.mem.trimEnd(u8, link, "\r\n");
+    if (!std.mem.startsWith(u8, line, prefix)) return null;
+    const git_dir = try std.fs.path.resolve(arena, &.{ dir_path, line[prefix.len..] });
+    const linked_head = try std.fs.path.join(arena, &.{ git_dir, "HEAD" });
+    return backend.readAll(arena, linked_head, git_head_max_bytes) catch |err| switch (err) {
+        error.NotFound, error.NotAFile => null,
+        else => err,
+    };
+}
+
+/// Read the branch of a Git repository. Return null when the directory contains no `.git` entry.
+fn gitInfo(arena: std.mem.Allocator, backend: host_mod.Host, dir_path: []const u8) !?wire.fs.GitInfo {
+    const text = (try readHead(arena, backend, dir_path)) orelse return null;
+    const prefix = "ref: refs/heads/";
+    const line = std.mem.trimEnd(u8, text, "\r\n");
+    if (!std.mem.startsWith(u8, line, prefix)) return .{}; // a detached HEAD holds a raw commit id
+    return .{ .branch = line[prefix.len..] };
+}
+
+/// Handle fs.stat: describe one path. A path that does not exist returns no entry.
+pub fn fsStat(state: *State, arena: std.mem.Allocator, params: wire.fs.FsStatParams) !wire.fs.FsStatResult {
+    var local: local_host.LocalHost = undefined;
+    const backend = pickerHost(state, &local);
+    const path = paths.canonicalizeWorkspace(arena, state.env, params.path) catch return error.BadPath;
+    const info = backend.stat(arena, path) catch |err| switch (err) {
+        error.NotFound => return .{ .path = path },
+        error.AccessDenied, error.NotAFile, error.InvalidUtf8, error.TooLarge => return error.BadPath,
+        else => return err, // Canceled and HostFailure are operating errors, not bad input.
+    };
+    return .{ .path = path, .entry = .{
+        .is_dir = info.is_dir,
+        .last_modified_ms = info.last_modified_ms,
+        .git = if (info.is_dir) try gitInfo(arena, backend, path) else null,
+    } };
+}
+
+/// Handle fs.browse: list one page of a directory for the workspace picker.
+pub fn fsBrowse(state: *State, arena: std.mem.Allocator, params: wire.fs.FsBrowseParams) !wire.fs.FsBrowseResult {
+    var local: local_host.LocalHost = undefined;
+    const backend = pickerHost(state, &local);
+    const path = paths.canonicalizeWorkspace(arena, state.env, params.path orelse state.home) catch return error.BadPath;
+    const after = if (params.cursor) |cursor| try decodeBrowseCursor(arena, path, cursor) else null;
+    const requested = params.limit orelse wire.meta.limits.default_fs_browse_page_size;
+    if (requested == 0 or requested > wire.meta.limits.max_fs_browse_page_size) return error.BadRequest;
+    const limit: u32 = @intCast(requested);
+
+    const page = backend.listDir(arena, path, .{
+        .after = after,
+        .limit = limit,
+        .include_files = params.include_files,
+    }) catch |err| switch (err) {
+        error.NotFound, error.AccessDenied, error.NotAFile, error.InvalidUtf8, error.TooLarge => return error.BadPath,
+        else => return err, // Canceled and HostFailure are operating errors, not bad input.
+    };
+
+    const entries = try arena.alloc(wire.fs.DirEntry, page.items.len);
+    for (page.items, entries) |item, *entry| entry.* = .{
+        .name = item.name,
+        .path = try std.fs.path.join(arena, &.{ path, item.name }),
+        .is_dir = item.is_dir,
+        .is_git_repo = item.is_git_repo,
+    };
+    return .{
+        .path = path,
+        .parent = std.fs.path.dirname(path),
+        .entries = entries,
+        .next_cursor = if (page.next_after) |name| try encodeBrowseCursor(arena, path, name) else null,
+    };
+}
+
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
     // Normalize the path so one directory maps to one workspace.
@@ -442,7 +567,12 @@ pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.
     try config_store.recordInitial(&state.db, id, model, reasoning);
     try tx.commit();
 
-    // The index gained a session. Announce it after the commit, so no client hears of an unwritten one.
+    // Announce the new workspace and the session after the commit, never before it.
+    if (workspace.created) session_events.announceWorkspaceCreated(state, .{
+        .id = .bytes(workspace.id),
+        .root = root,
+        .title = title,
+    });
     session_events.announceSummary(state, .bytes(id));
 
     return .{ .session = .{
