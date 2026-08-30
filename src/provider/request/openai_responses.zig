@@ -35,21 +35,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     }
 
     // Responses reasons by default, so only a named effort is worth a control.
-    // The include carries the encrypted trace that a stateless replay needs.
-    switch (request.reasoning) {
-        .effort => |effort| {
-            try jw.objectField("reasoning");
-            try jw.beginObject();
-            try json.field(&jw, "effort", @tagName(effort));
-            try json.field(&jw, "summary", "auto");
-            try jw.endObject();
-            try jw.objectField("include");
-            try jw.beginArray();
-            try jw.write("reasoning.encrypted_content");
-            try jw.endArray();
-        },
-        .default, .off, .adaptive, .budget => {},
-    }
+    // `.default` is also the empty-levels catalog case (gpt-4o); a reasoning object 400s there.
+    try writeReasoning(&jw, request.reasoning);
 
     // The backend rejects a request with no instructions, so a default stands in.
     try jw.objectField("instructions");
@@ -178,6 +165,26 @@ fn beginMessage(jw: *std.json.Stringify, role: Message) !void {
     try jw.beginArray();
 }
 
+fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
+    switch (reasoning) {
+        // A model that lists `off` takes `none`. It writes no trace, so it needs no include.
+        .off => try json.nested(jw, "reasoning", "effort", "none"),
+        .effort => |effort| {
+            try jw.objectField("reasoning");
+            try jw.beginObject();
+            try json.field(jw, "effort", @tagName(effort));
+            // Encrypted traces have no visible text without a plaintext summary.
+            try json.field(jw, "summary", "auto");
+            try jw.endObject();
+            try jw.objectField("include");
+            try jw.beginArray();
+            try jw.write("reasoning.encrypted_content");
+            try jw.endArray();
+        },
+        .default, .adaptive, .budget => {},
+    }
+}
+
 fn endMessage(jw: *std.json.Stringify) !void {
     try jw.endArray();
     try jw.endObject();
@@ -241,6 +248,31 @@ test "a named effort rides on the responses request" {
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// gpt-5.1 and later list `off`, which the endpoint spells `none`. Omitting the control instead
+// would leave the model at its own default, which reasons.
+test "off asks for no reasoning rather than omitting the control" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5.2", .max_output_tokens = 8, .reasoning = .off },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// gpt-4o has no reasoning levels. An empty session level resolves to .default and must omit the object.
+test "a non-reasoning model omits the reasoning control" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-4o","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-4o", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
         .{},
     );
