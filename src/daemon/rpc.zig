@@ -140,8 +140,16 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .session_resync_result = result } } };
         },
+        .@"session.remove" => {
+            const result = handlers.sessionRemove(state, arena, request.params.session_remove_params) catch |err| switch (err) {
+                error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
+                error.SessionBusy => return errorResponse(request.id, .session_busy, "the session has an active run"),
+                error.SessionHasChildren => return errorResponse(request.id, .session_has_children, "the session has children"),
+                else => return err,
+            };
+            return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
+        },
         .@"session.patch",
-        .@"session.remove",
         .@"session.fork",
         .@"session.compact",
         .@"session.rewind",
@@ -204,6 +212,7 @@ fn requestMethod(value: std.json.Value) ?wire.enums.MethodName {
 }
 
 const zio = @import("zio");
+const zqlite = @import("zqlite");
 const database = @import("../database/database.zig");
 const engine_run = @import("../engine/run.zig");
 const transport = @import("../provider/transport.zig");
@@ -2358,4 +2367,240 @@ test "catalog.list projects stored models and honors a matching revision" {
     // A stale revision returns the whole catalog again.
     const stale = try handlers.catalogList(&fixture.state, a, .{ .since_rev = .bytes(@splat(0)) });
     try std.testing.expect(stale == .full);
+}
+
+/// Insert a related session directly. `session.create` makes roots, and no method builds these yet.
+/// A child records the parent transcript anchor. A fork records only its source.
+fn createRelated(
+    state: *State,
+    a: std.mem.Allocator,
+    relative: wire.ids.SessionId,
+    origin: enum { child, fork },
+) !wire.ids.SessionId {
+    const snap = (try database.session.snapshot(&state.db, a, relative.raw)) orelse return error.UnknownSession;
+    const now = state.nowMillis();
+    var params: database.session.CreateParams = .{
+        .id = state.newId(),
+        .workspace_id = snap.workspace_id,
+        .origin = @tagName(origin),
+        .profile = "default",
+        .model = "mock/fast",
+        .reasoning = "",
+        .config_rev = 0,
+        .permission = "normal",
+        .title = @tagName(origin),
+        .created_at_ms = now,
+        .updated_at_ms = now,
+    };
+    switch (origin) {
+        .child => {
+            params.parent_id = relative.raw;
+            params.parent_message_id = 1;
+            params.parent_part_id = 0;
+        },
+        .fork => params.source_id = relative.raw,
+    }
+    var tx = try state.db.begin();
+    defer tx.deinit();
+    try database.session.create(&state.db, params);
+    // A run resolves its config by revision, so seed revision 0 exactly as session.create does.
+    try database.config.recordInitial(&state.db, params.id, params.model, params.reasoning);
+    try tx.commit();
+    return .bytes(params.id);
+}
+
+fn countRowsFor(db: *database.Database, table: []const u8, sid: wire.ids.SessionId) !i64 {
+    var buf: [128]u8 = undefined;
+    const text = try std.fmt.bufPrintZ(&buf, "SELECT count(*) FROM {s} WHERE session_id = ?1", .{table});
+    // zqlite binds a plain byte slice as TEXT, and SQLite never matches TEXT against a BLOB column.
+    const row = (try db.conn.row(text, .{zqlite.blob(&sid.raw)})) orelse return error.NoRow;
+    defer row.deinit();
+    return row.int(0);
+}
+
+test "session.remove deletes the session and cascades its transcript" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const sid = try createSession(&fixture, a, .{
+        .workspace_path = "/remove",
+        .model = "mock/fast",
+        .system_prompt = "be brief",
+    });
+    _ = try sendText(&fixture, a, sid, "hi");
+    var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
+    try launch.join();
+    // Queue one durable input behind the settled turn, so the delete also cascades that table.
+    {
+        const content = [_]wire.content.ContentPart{.{ .text = .{ .text = "later" } }};
+        const now = fixture.state.nowMillis();
+        var tx = try fixture.state.db.begin();
+        defer tx.deinit();
+        _ = try database.input.enqueue(&fixture.state.db, a, sid.raw, fixture.state.newId(), now, &content, now);
+        try tx.commit();
+    }
+
+    // Every child table must hold a row, so the delete exercises each cascade.
+    const tables = [_][]const u8{ "events", "messages", "session_configs", "session_prompts", "pending_inputs" };
+    for (tables) |table| try std.testing.expect((try countRowsFor(&fixture.state.db, table, sid)) > 0);
+
+    _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = sid });
+
+    try std.testing.expectEqual(@as(u64, 0), try database.session.count(&fixture.state.db, a, .{}));
+    for (tables) |table| try std.testing.expectEqual(@as(i64, 0), try countRowsFor(&fixture.state.db, table, sid));
+    try std.testing.expect(fixture.state.sessions.get(sid) == null);
+}
+
+test "session.remove announces the removal with the next index revision" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var log = BroadcastLog.init();
+    defer log.deinit();
+    const a = fixture.allocator();
+
+    try fixture.register();
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/announce-remove" });
+    const before = fixture.state.session_revision;
+    _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = sid });
+    try log.drain(fixture.conn);
+
+    var removed: usize = 0;
+    for (log.events.items) |bc| switch (bc) {
+        .session_removed_data => |d| {
+            removed += 1;
+            try std.testing.expectEqual(sid, d.session_id);
+            try std.testing.expectEqual(before + 1, d.revision);
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 1), removed);
+    try std.testing.expectEqual(before + 1, fixture.state.session_revision);
+}
+
+test "session.remove rejects a session that has children" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const parent = try createSession(&fixture, a, .{ .workspace_path = "/tree" });
+    _ = try createRelated(&fixture.state, a, parent, .child);
+
+    try std.testing.expectError(
+        error.SessionHasChildren,
+        handlers.sessionRemove(&fixture.state, a, .{ .session_id = parent }),
+    );
+    try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, a, .{}));
+}
+
+test "cascade_children removes the subtree and keeps a fork of it" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    const a = fixture.allocator();
+
+    const parent = try createSession(&fixture, a, .{ .workspace_path = "/tree" });
+    const child = try createRelated(&fixture.state, a, parent, .child);
+    const grandchild = try createRelated(&fixture.state, a, child, .child);
+    const forked = try createRelated(&fixture.state, a, parent, .fork);
+
+    _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = parent, .cascade_children = true });
+
+    // A fork owns its transcript, so it survives with a source_id that now resolves to nothing.
+    try std.testing.expectEqual(@as(u64, 1), try database.session.count(&fixture.state.db, a, .{}));
+    try std.testing.expect(try database.session.exists(&fixture.state.db, a, forked.raw));
+    for ([_]wire.ids.SessionId{ parent, child, grandchild }) |id| {
+        try std.testing.expect(!try database.session.exists(&fixture.state.db, a, id.raw));
+    }
+}
+
+/// Remove the session while its provider read parks, then release the read.
+fn removeWhileBlocked(
+    state: *State,
+    sid: wire.ids.SessionId,
+    entered: *zio.ResetEvent,
+    gate: *zio.ResetEvent,
+) !void {
+    try entered.wait(); // The read parked, so the run is active.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(
+        error.SessionBusy,
+        handlers.sessionRemove(state, arena.allocator(), .{ .session_id = sid }),
+    );
+    gate.set();
+    try launchUntilIdle(state, sid);
+}
+
+test "session.remove rejects a session with an active run" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var interrupted = false;
+    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    fixture.state.route_transport = blocking.transportFor();
+    const a = fixture.allocator();
+
+    const sid = try createSession(&fixture, a, .{ .workspace_path = "/busy", .model = "mock/fast" });
+    _ = try sendText(&fixture, a, sid, "hi");
+    var driver = try fixture.rt.spawn(removeWhileBlocked, .{ &fixture.state, sid, &entered, &gate });
+    try driver.join();
+
+    // The reject left the session whole, so it removes cleanly once the run settles.
+    try std.testing.expectEqual(@as(u64, 1), try database.session.count(&fixture.state.db, a, .{}));
+    _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = sid });
+    try std.testing.expectEqual(@as(u64, 0), try database.session.count(&fixture.state.db, a, .{}));
+}
+
+test "session.remove dispatch maps an unknown session to its error code" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+
+    var buffer: [1024]u8 = undefined;
+    const frame =
+        \\{"id":"9","method":"session.remove","params":{"session_id":"00000000000000000000000000000000"}}
+    ;
+    const written = try call(&fixture, frame, &buffer);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"code\":-31000") != null);
+}
+
+/// Remove the root while a child run parks. The busy child must block the whole cascade.
+fn removeWhileChildBlocked(
+    state: *State,
+    root: wire.ids.SessionId,
+    child: wire.ids.SessionId,
+    entered: *zio.ResetEvent,
+    gate: *zio.ResetEvent,
+) !void {
+    try entered.wait(); // The child read parked, so the child run is active.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(
+        error.SessionBusy,
+        handlers.sessionRemove(state, arena.allocator(), .{ .session_id = root, .cascade_children = true }),
+    );
+    gate.set();
+    try launchUntilIdle(state, child);
+}
+
+test "a busy child blocks the cascade and leaves the whole tree" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    var entered: zio.ResetEvent = .init;
+    var gate: zio.ResetEvent = .init;
+    var interrupted = false;
+    var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
+    fixture.state.route_transport = blocking.transportFor();
+    const a = fixture.allocator();
+
+    const root = try createSession(&fixture, a, .{ .workspace_path = "/busy-tree", .model = "mock/fast" });
+    const child = try createRelated(&fixture.state, a, root, .child);
+    _ = try sendText(&fixture, a, child, "hi");
+    var driver = try fixture.rt.spawn(removeWhileChildBlocked, .{ &fixture.state, root, child, &entered, &gate });
+    try driver.join();
+
+    // The reject came before the first delete, so neither the root nor the child lost a row.
+    try std.testing.expectEqual(@as(u64, 2), try database.session.count(&fixture.state.db, a, .{}));
+    _ = try handlers.sessionRemove(&fixture.state, a, .{ .session_id = root, .cascade_children = true });
+    try std.testing.expectEqual(@as(u64, 0), try database.session.count(&fixture.state.db, a, .{}));
 }

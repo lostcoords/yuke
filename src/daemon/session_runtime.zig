@@ -143,6 +143,13 @@ pub const Sessions = struct {
         return gop.value_ptr.*;
     }
 
+    /// Drop a runtime with any queue or fault state. The caller must first stop the active run.
+    pub fn remove(self: *Sessions, session_id: ids.SessionId) void {
+        const entry = self.map.fetchRemove(session_id) orelse return;
+        std.debug.assert(entry.value.active == null);
+        entry.value.destroy();
+    }
+
     /// Drop an idle runtime so memory does not grow with dormant sessions.
     pub fn evictIfIdle(self: *Sessions, session_id: ids.SessionId) void {
         const rt = self.map.get(session_id) orelse return;

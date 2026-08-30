@@ -332,3 +332,14 @@ INSERT INTO session_prompts(session_id, prompt) VALUES (:session_id, :prompt);
 -- session_id: [16]u8!
 -- prompt: []const u8!
 SELECT prompt FROM session_prompts WHERE session_id = :session_id;
+
+-- name: DeleteSession :exec
+-- Remove one session row. Each child table cascades. parent_id and source_id hold no key.
+-- id: [16]u8!
+DELETE FROM sessions WHERE id = :id;
+
+-- name: SessionChildIds :many
+-- List the sessions that one session spawned. A fork holds source_id and stays out.
+-- parent_id: [16]u8!
+-- id: [16]u8!
+SELECT id FROM sessions WHERE parent_id = :parent_id ORDER BY id;

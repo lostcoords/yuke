@@ -355,6 +355,56 @@ pub fn sessionCancelRun(state: *State, arena: std.mem.Allocator, params: wire.se
     return .{ .canceled_run = canceled_run, .cleared_inputs = cleared_inputs };
 }
 
+/// Collect the session and, with `cascade`, each session below it. The walk follows parent_id.
+fn removalSet(state: *State, arena: std.mem.Allocator, root: [16]u8, cascade: bool) ![]const [16]u8 {
+    var out: std.ArrayList([16]u8) = .empty;
+    try out.append(arena, root);
+    if (!cascade) return out.items;
+    // A parent_id chain forms a tree, so a repeated id means a corrupt row.
+    var seen: std.AutoHashMapUnmanaged([16]u8, void) = .empty;
+    try seen.put(arena, root, {});
+    var frontier: usize = 0;
+    while (frontier < out.items.len) : (frontier += 1) {
+        for (try session_store.childIds(&state.db, arena, out.items[frontier])) |child| {
+            if ((try seen.getOrPut(arena, child)).found_existing) return error.CorruptDatabase;
+            try out.append(arena, child);
+        }
+    }
+    return out.items;
+}
+
+/// Handle session.remove: delete the session and, with `cascade_children`, its children.
+pub fn sessionRemove(state: *State, arena: std.mem.Allocator, params: wire.session.SessionRemoveParams) !wire.misc.Empty {
+    const sid = params.session_id.raw;
+    if (!try session_store.exists(&state.db, arena, sid)) return error.UnknownSession;
+
+    // A child points into the parent transcript, so it cannot outlive its parent.
+    if (!params.cascade_children and (try session_store.childIds(&state.db, arena, sid)).len > 0)
+        return error.SessionHasChildren;
+
+    const doomed = try removalSet(state, arena, sid, params.cascade_children);
+    // Check each session before the first delete, so a busy child leaves no partial removal.
+    for (doomed) |id| {
+        const rt = state.sessions.get(.bytes(id)) orelse continue;
+        if (rt.active != null) return error.SessionBusy;
+    }
+
+    var tx = try state.db.begin();
+    defer tx.deinit();
+    for (doomed) |id| try session_store.remove(&state.db, id);
+    try tx.commit();
+
+    // Announce the deepest session first, so a client tree holds no orphan.
+    var i = doomed.len;
+    while (i > 0) {
+        i -= 1;
+        const id: wire.ids.SessionId = .bytes(doomed[i]);
+        state.sessions.remove(id);
+        session_events.announceRemoved(state, id);
+    }
+    return .{};
+}
+
 /// Handle session.create: resolve the workspace, mint ids, insert the session, and return it.
 pub fn sessionCreate(state: *State, arena: std.mem.Allocator, params: wire.misc.CreateSession) !wire.session.SessionResult {
     // Normalize the path so one directory maps to one workspace.

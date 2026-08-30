@@ -51,6 +51,21 @@ pub fn create(db: *Database, params: CreateParams) !void {
     try db.queries.insert_session.exec(params);
 }
 
+/// Remove one session row. Each child table cascades. A child row and a fork row stay.
+pub fn remove(db: *Database, id: [16]u8) !void {
+    std.debug.assert(sql.inTransaction(db.conn));
+    try db.queries.delete_session.exec(.{ .id = id });
+}
+
+/// List the sessions that `parent_id` spawned. A fork is not a child.
+pub fn childIds(db: *Database, arena: std.mem.Allocator, parent_id: [16]u8) ![]const [16]u8 {
+    var rows = try db.queries.session_child_ids.rows(.{ .parent_id = parent_id });
+    defer rows.deinit();
+    var out: std.ArrayList([16]u8) = .empty;
+    while (try rows.next(arena)) |owned| try out.append(arena, owned.value.id);
+    return out.items;
+}
+
 /// Store the session's system prompt. Create sets it once; all methods preserve it.
 pub fn setPrompt(db: *Database, id: [16]u8, text: []const u8) !void {
     try db.queries.insert_prompt.exec(.{ .session_id = id, .prompt = text });

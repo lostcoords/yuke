@@ -199,11 +199,24 @@ pub fn announceSummary(state: *State, session_id: wire.ids.SessionId) void {
     };
 
     const revision = state.session_revision + 1;
-    const note: wire.rpc.Notification = .{ .method = .@"session.summary_changed", .params = .{
+    publishIndex(state, revision, .{ .method = .@"session.summary_changed", .params = .{
         .session_summary_changed_data = .{ .revision = revision, .session = item.session },
-    } };
+    } });
+}
+
+/// Publish the removal after the delete, so no client hears of a session that it can read.
+pub fn announceRemoved(state: *State, session_id: wire.ids.SessionId) void {
+    const revision = state.session_revision + 1;
+    publishIndex(state, revision, .{ .method = .@"session.removed", .params = .{
+        .session_removed_data = .{ .revision = revision, .session_id = session_id },
+    } });
+}
+
+/// Frame one index event and send it to each connection. A failed frame keeps the revision.
+fn publishIndex(state: *State, revision: wire.ids.SessionRevision, note: wire.rpc.Notification) void {
+    std.debug.assert(revision == state.session_revision + 1);
     const bytes = connection.frameNotification(state.gpa, note) catch |err| {
-        std.log.warn("cannot frame the summary for session {x}: {t}", .{ &session_id.raw, err });
+        std.log.warn("cannot frame {t}: {t}", .{ note.method, err });
         return;
     };
     defer state.gpa.free(bytes);

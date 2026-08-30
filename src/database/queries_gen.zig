@@ -775,6 +775,25 @@ pub const SelectPrompt = sql.OptionalQuery(
     },
 );
 
+pub const DeleteSession = sql.ExecQuery(
+    \\DELETE FROM sessions WHERE id = :id;
+,
+    struct {
+        id: [16]u8,
+    },
+);
+
+pub const SessionChildIds = sql.ManyQuery(
+    \\SELECT id FROM sessions WHERE parent_id = :parent_id ORDER BY id;
+,
+    struct {
+        parent_id: [16]u8,
+    },
+    struct {
+        id: [16]u8,
+    },
+);
+
 pub const WorkspaceByStableKey = sql.OptionalQuery(
     \\SELECT id FROM workspaces WHERE kind = :kind AND stable_key = :stable_key;
 ,
@@ -867,6 +886,8 @@ pub const Queries = struct {
     session_count_parent: SessionCountParent,
     insert_prompt: InsertPrompt,
     select_prompt: SelectPrompt,
+    delete_session: DeleteSession,
+    session_child_ids: SessionChildIds,
     workspace_by_stable_key: WorkspaceByStableKey,
     insert_workspace: InsertWorkspace,
     workspace_by_id: WorkspaceById,
