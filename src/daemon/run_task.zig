@@ -330,24 +330,10 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     const transcript = ctx.slice();
     const model = slot.config.model;
 
-    const resolved = state.catalog.resolveModel(model);
-    // A daemon with configured providers rejects an unknown model. One with none uses the placeholder transport.
-    if (resolved == null and state.catalog.rows.len != 0) return error.UnknownModel;
-    const request = if (resolved) |r| try resolvedRequest(arena, slot, transcript, r) else fallback: {
-        // The fallback uses the injected or placeholder transport.
-        break :fallback provider.transport.Request{ .body = try provider.requestBody(arena, transcript, .anthropic_messages, .{
-            .model = model,
-            .system = slot.config.system_prompt,
-            .tools = tool_registry.declarations,
-            .max_output_tokens = max_output_tokens,
-        }, .{ .protocol = .anthropic_messages, .model = model }) };
-    };
-
-    const selected_transport = if (resolved != null)
-        state.route_transport orelse state.fallback_transport
-    else
-        state.fallback_transport;
-    const body = try selected_transport.open(arena, request, info);
+    // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
+    const resolved = state.catalog.resolveModel(model) orelse return error.UnknownModel;
+    const request = try resolvedRequest(arena, slot, transcript, resolved);
+    const body = try state.route_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {

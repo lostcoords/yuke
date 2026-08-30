@@ -208,7 +208,6 @@ pub fn announceSummary(state: *State, session_id: wire.ids.SessionId) void {
     };
     defer state.gpa.free(bytes);
     state.session_revision = revision;
-    if (state.broadcast_tap) |tap| tap.record(note.params) catch {};
     state.registry.publishAll(bytes);
 }
 
@@ -221,6 +220,5 @@ pub fn publishBestEffort(state: *State, session_id: wire.ids.SessionId, note: wi
 pub fn publish(state: *State, session_id: wire.ids.SessionId, note: wire.rpc.Notification) !void {
     const bytes = try connection.frameNotification(state.gpa, note);
     defer state.gpa.free(bytes);
-    if (state.broadcast_tap) |tap| try tap.record(note.params);
     state.registry.publish(session_id, bytes, connection.classOf(note.method));
 }

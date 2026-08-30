@@ -23,6 +23,9 @@ const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
 // Use this port for the front door. A proxy terminates TLS before remote web clients connect.
 const default_port = 7880;
 
+// The device credential and its key fit this buffer. A larger file fails the read and keeps no secret.
+const secret_buffer_bytes = 16 * 1024;
+
 const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
 pub fn run(init: std.process.Init) !void {
@@ -53,20 +56,27 @@ pub fn run(init: std.process.Init) !void {
     defer http_transport.deinit();
 
     const conn = try zqlite.open(config.db_path, open_flags);
-    var state = try State.init(
-        init.gpa,
-        io,
-        try database.Database.open(conn),
-        config,
-        paths.homeDir(init.environ_map) orelse "/",
-    );
+    // The buffer holds every byte the credential read allocates. The scope zeroes it on each path.
+    var state = state: {
+        var secrets: [secret_buffer_bytes]u8 = undefined;
+        defer std.crypto.secureZero(u8, &secrets);
+        var fixed: std.heap.FixedBufferAllocator = .init(&secrets);
+        const device = readDevice(fixed.allocator(), io, data_dir);
+        break :state try State.init(.{
+            .gpa = init.gpa,
+            .io = io,
+            .db = try database.Database.open(conn),
+            .config = config,
+            .home = paths.homeDir(init.environ_map) orelse "/",
+            .env = init.environ_map,
+            .route_transport = http_transport.transportFor(),
+            .cloud_base_url = cloud.endpoint.baseUrl(init.environ_map, null),
+            .cloud_credential = if (device) |stored| stored.credential else null,
+        });
+    };
     defer state.deinit();
-    // The environment is always needed (a `~` in a workspace path), not only when providers load.
-    state.env = init.environ_map;
-    state.route_transport = http_transport.transportFor();
-    try configureCloud(&state, init.gpa, io, data_dir, init.environ_map);
 
-    // Load the user providers. An invalid file fails startup. An absent file keeps the placeholder.
+    // Load the user providers. An invalid file fails startup. An absent file leaves the cloud catalog.
     const providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
     defer if (providers_path) |path| init.gpa.free(path);
     if (providers_path) |path| {
@@ -140,38 +150,19 @@ fn lockInstance(gpa: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) !?Ins
     return held;
 }
 
-/// Load the device bearer without retaining the device private key.
-fn configureCloud(
-    state: *State,
-    gpa: std.mem.Allocator,
-    io: std.Io,
-    data_dir: ?[]const u8,
-    env: *const std.process.Environ.Map,
-) !void {
-    var arena: std.heap.ArenaAllocator = .init(gpa);
-    defer arena.deinit();
-
-    const device: ?cloud.identity.Device = blk: {
-        const data_path = data_dir orelse break :blk null;
-        var dir = std.Io.Dir.cwd().openDir(io, data_path, .{}) catch |err| {
-            std.log.warn("cannot open the cloud identity directory: {t}", .{err});
-            break :blk null;
-        };
-        defer dir.close(io);
-        break :blk cloud.identity.readMeta(arena.allocator(), io, dir, cloud.identity.Device, .device) catch |err| {
-            std.log.warn("cannot read the device credential: {t}", .{err});
-            break :blk null;
-        };
+/// Read the stored device credential. A daemon without one still starts and serves local providers.
+/// The caller owns the buffer and must zero it, because a failed parse can leave a partial secret.
+fn readDevice(arena: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) ?cloud.identity.Device {
+    const data_path = data_dir orelse return null;
+    var dir = std.Io.Dir.cwd().openDir(io, data_path, .{}) catch |err| {
+        std.log.warn("cannot open the cloud identity directory: {t}", .{err});
+        return null;
     };
-    defer if (device) |stored| {
-        std.crypto.secureZero(u8, @constCast(stored.credential));
-        std.crypto.secureZero(u8, @constCast(stored.identity_key));
+    defer dir.close(io);
+    return cloud.identity.readMeta(arena, io, dir, cloud.identity.Device, .device) catch |err| {
+        std.log.warn("cannot read the device credential: {t}", .{err});
+        return null;
     };
-
-    try state.configureCloud(
-        cloud.endpoint.baseUrl(env, null),
-        if (device) |stored| stored.credential else null,
-    );
 }
 
 /// Refresh the public catalog and the account bundle once at startup.
@@ -193,12 +184,16 @@ fn ensureDataDir(io: std.Io, dir: []const u8) !void {
         try cwd.setFilePermissions(io, dir, perms, .{});
 }
 
+/// The test dependencies. An empty environment allocates nothing, so no test frees it.
+var test_env: std.process.Environ.Map = .init(std.testing.allocator);
+var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+
 test "a catalog replacement announces the merged revision" {
     const testing = std.testing;
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
+    var state = try State.init(.{ .gpa = testing.allocator, .io = rt.io(), .db = try database.Database.openTest(), .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
 
     var conn: connection.Connection = undefined;

@@ -7,6 +7,7 @@ const wire = @import("wire");
 const wss = @import("websocket").server;
 const rpc = @import("rpc.zig");
 const State = @import("State.zig");
+const provider = @import("../provider/provider.zig");
 const connection = @import("connection.zig");
 const Connection = connection.Connection;
 const OutboxItem = connection.OutboxItem;
@@ -369,6 +370,10 @@ fn blockedWriter(started: *zio.ResetEvent, release: *zio.ResetEvent, finished: *
     release.wait() catch return;
 }
 
+/// The test dependencies. An empty environment allocates nothing, so no test frees it.
+var test_env: std.process.Environ.Map = .init(std.testing.allocator);
+var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+
 test "websocket close signal supervises both tasks" {
     var rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
@@ -417,7 +422,7 @@ test "the user commit and run.started precede the send_input response" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
+    var state = try State.init(.{ .gpa = testing.allocator, .io = rt.io(), .db = try database.Database.openTest(), .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
 
     var conn: Connection = undefined;
@@ -480,7 +485,7 @@ test "a queued drain publishes its commits and run.started before a send_input e
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var state = try State.init(testing.allocator, rt.io(), try database.Database.openTest(), .{ .listen = listen }, "/home/test");
+    var state = try State.init(.{ .gpa = testing.allocator, .io = rt.io(), .db = try database.Database.openTest(), .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
 
     var conn: Connection = undefined;

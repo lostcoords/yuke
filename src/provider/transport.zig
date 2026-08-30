@@ -164,8 +164,8 @@ fn frame(comptime json: []const u8) []const u8 {
     return "data: " ++ json ++ "\n\n";
 }
 
-/// The no-providers fallback and tests use this canned reply. The real path uses `HttpTransport`.
-pub const placeholder_reply =
+/// A test uses this canned reply. The real path uses `HttpTransport`.
+pub const canned_reply =
     frame(
         \\{"type":"message_start","message":{"usage":{"input_tokens":0}}}
     ) ++ frame(
@@ -180,7 +180,7 @@ pub const placeholder_reply =
         \\{"type":"message_stop"}
     );
 
-/// Replay one fixed reply for every open. The no-providers fallback uses it.
+/// Replay one fixed reply for every open. A test uses it.
 pub const CannedTransport = struct {
     bytes: []const u8,
 
@@ -257,13 +257,6 @@ pub fn replies(comptime list: []const []const u8) [list.len]Step {
     var out: [list.len]Step = undefined;
     for (&out, list) |*step, bytes| step.* = .{ .body = bytes };
     return out;
-}
-
-var placeholder_instance = CannedTransport{ .bytes = placeholder_reply };
-
-/// This is the default daemon transport until startup connects a real adapter.
-pub fn placeholderTransport() Transport {
-    return placeholder_instance.transport();
 }
 
 const testing = std.testing;

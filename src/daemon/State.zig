@@ -29,8 +29,7 @@ config: Config,
 home: []const u8, // The default workspace root. A create that omits a workspace path uses it.
 sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
-fallback_transport: provider.transport.Transport, // An unresolved route uses this test seam or the placeholder.
-route_transport: ?provider.transport.Transport = null, // A resolved provider route uses this production transport.
+route_transport: provider.transport.Transport, // Every resolved route opens its response through this transport.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
 cloud_client: cloud_http.Client,
 cloud_base_url: []u8,
@@ -40,10 +39,9 @@ cloud_refresh_mutex: std.Io.Mutex = .init,
 catalog: provider_catalog.Catalog, // One merged snapshot serves catalog reads and provider requests.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
-env: ?*const std.process.Environ.Map = null, // This pointer borrows the process environment for key lookup.
+env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
-broadcast_tap: ?*BroadcastTap = null, // A conformance test records the published broadcasts here.
 tool_host: ?tools.ToolHost = null,
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
 retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
@@ -51,43 +49,58 @@ retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a to
 /// It lives in memory, so a restart returns it to zero.
 session_revision: u64 = 0,
 
-/// A test hook. It records each published broadcast, so a conformance test refolds the daemon output.
-pub const BroadcastTap = struct {
-    arena: std.heap.ArenaAllocator,
-    events: std.ArrayList(wire.rpc.BroadcastData) = .empty,
-
-    pub fn init(gpa: std.mem.Allocator) BroadcastTap {
-        return .{ .arena = std.heap.ArenaAllocator.init(gpa) };
-    }
-    pub fn deinit(self: *BroadcastTap) void {
-        self.arena.deinit();
-    }
-    pub fn record(self: *BroadcastTap, params: wire.rpc.BroadcastData) !void {
-        const a = self.arena.allocator();
-        try self.events.append(a, try wire.dupe(a, params));
-    }
-};
-
 /// The daemon stores its configuration here.
 pub const Config = struct {
     listen: std.Io.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",
 };
 
+/// These options provide the state dependencies and the initial cloud identity.
+pub const InitOptions = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    db: database.Database,
+    config: Config,
+    home: []const u8,
+    /// The state borrows the process environment for `~` expansion and key lookup.
+    env: *const std.process.Environ.Map,
+    /// The state borrows the transport owner, which must outlive the state.
+    route_transport: provider.transport.Transport,
+    cloud_base_url: []const u8 = cloud_endpoint.default_base,
+    cloud_credential: ?[]const u8 = null,
+};
+
+/// Duplicate the cloud endpoint and credential. The state then owns both values.
+fn dupeCloud(gpa: std.mem.Allocator, options: InitOptions) !struct { []u8, ?[]u8 } {
+    const base_url = try gpa.dupe(u8, options.cloud_base_url);
+    errdefer gpa.free(base_url);
+    const credential = if (options.cloud_credential) |value| try gpa.dupe(u8, value) else null;
+    return .{ base_url, credential };
+}
+
 /// Build the daemon state. It takes ownership of `db` and borrows `io` for its lifetime.
-pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: Config, home: []const u8) !State {
-    const cloud_base_url = try gpa.dupe(u8, cloud_endpoint.default_base);
+pub fn init(options: InitOptions) !State {
+    const gpa = options.gpa;
+    std.debug.assert(options.cloud_base_url.len != 0);
+    // The state never formed, so close the store the caller gave it.
+    const cloud_base_url, const cloud_credential = dupeCloud(gpa, options) catch |err| {
+        var db = options.db;
+        db.deinit();
+        return err;
+    };
     var self: State = .{
         .gpa = gpa,
-        .io = io,
-        .db = db,
-        .config = config,
-        .home = home,
+        .io = options.io,
+        .db = options.db,
+        .config = options.config,
+        .home = options.home,
+        .env = options.env,
+        .route_transport = options.route_transport,
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
-        .fallback_transport = provider.transport.placeholderTransport(),
-        .cloud_client = .init(gpa, io),
+        .cloud_client = .init(gpa, options.io),
         .cloud_base_url = cloud_base_url,
+        .cloud_credential = cloud_credential,
         .catalog = .init(gpa),
     };
     errdefer self.deinit();
@@ -189,22 +202,6 @@ pub fn rebuildCatalog(self: *State) !bool {
     return changed;
 }
 
-/// Replace the cloud endpoint and device credential. The state owns both values.
-pub fn configureCloud(self: *State, base_url: []const u8, credential: ?[]const u8) !void {
-    std.debug.assert(base_url.len != 0);
-    const next_base_url = try self.gpa.dupe(u8, base_url);
-    errdefer self.gpa.free(next_base_url);
-    const next_credential = if (credential) |value| try self.gpa.dupe(u8, value) else null;
-
-    if (self.cloud_credential) |value| {
-        std.crypto.secureZero(u8, value);
-        self.gpa.free(value);
-    }
-    self.gpa.free(self.cloud_base_url);
-    self.cloud_base_url = next_base_url;
-    self.cloud_credential = next_credential;
-}
-
 /// Fetch the public catalog and the account bundle. Only one check runs at a time.
 pub fn refreshCloud(self: *State) !wire.ids.CatalogRev {
     try self.cloud_refresh_mutex.lock(self.io);
@@ -293,7 +290,6 @@ pub fn announceCatalogChanged(self: *State) void {
         return;
     };
     defer self.gpa.free(bytes);
-    if (self.broadcast_tap) |tap| tap.record(note.params) catch {};
     self.registry.publishAll(bytes);
 }
 
@@ -318,17 +314,23 @@ pub fn jitter(self: *const State) f64 {
     return @as(f64, @floatFromInt(bits)) / @as(f64, @floatFromInt(@as(u64, 1) << 53));
 }
 
+/// These test dependencies use an empty environment. The map has no allocation to free.
+var test_env: std.process.Environ.Map = .init(std.testing.allocator);
+var test_transport = provider.transport.CannedTransport{ .bytes = provider.transport.canned_reply };
+
 test "a cloud bundle and its etag install as one snapshot" {
     var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
     const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var state = try State.init(
-        std.testing.allocator,
-        runtime.io(),
-        try database.Database.openTest(),
-        .{ .listen = listen },
-        "/home/test",
-    );
+    var state = try State.init(.{
+        .gpa = std.testing.allocator,
+        .io = runtime.io(),
+        .db = try database.Database.openTest(),
+        .config = .{ .listen = listen },
+        .home = "/home/test",
+        .env = &test_env,
+        .route_transport = test_transport.transport(),
+    });
     defer state.deinit();
 
     var snapshot = try bundle.Snapshot.init(std.testing.allocator,
@@ -381,7 +383,7 @@ test "init restores durable pending input into the runtime queue" {
     const queued = try database.input.enqueue(&db, arena, session_id, [_]u8{3} ** 16, 2, &.{.{ .text = .{ .text = "recover" } }}, 2);
     try db.conn.execNoArgs("COMMIT");
 
-    var state = try State.init(std.testing.allocator, runtime.io(), db, .{ .listen = listen }, "/home/test");
+    var state = try State.init(.{ .gpa = std.testing.allocator, .io = runtime.io(), .db = db, .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
     const rt = state.sessions.get(.bytes(session_id)).?;
     try std.testing.expectEqual(@as(usize, 1), rt.session.queue.depth());
@@ -417,7 +419,7 @@ test "activation does not retain partial hydration after allocation failure" {
     try db.conn.execNoArgs("COMMIT");
 
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    var state = try State.init(failing.allocator(), runtime.io(), db, .{ .listen = listen }, "/home/test");
+    var state = try State.init(.{ .gpa = failing.allocator(), .io = runtime.io(), .db = db, .config = .{ .listen = listen }, .home = "/home/test", .env = &test_env, .route_transport = test_transport.transport() });
     defer state.deinit();
     const rt = state.sessions.get(.bytes(session_id)).?;
     const baseline = failing.alloc_index;
