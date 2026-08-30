@@ -155,6 +155,19 @@ pub const Reducer = struct {
             block.emitted_id = self.emitted_count;
             self.emitted_count += 1;
             try out.append(self.gpa, .{ .block_started = .{ .block = block.emitted_id, .kind = kind } });
+            // MiniMax (and some Anthropic-compat hosts) put the whole trace on start, with no deltas.
+            if (kind == .reasoning) {
+                if (json.fieldStr(cb, "thinking")) |t| {
+                    if (t.len != 0) try out.append(self.gpa, .{ .reasoning_delta = .{ .block = block.emitted_id, .text = t } });
+                }
+                if (json.fieldStr(cb, "signature")) |s| {
+                    if (s.len != 0) try block.signature.appendSlice(self.gpa, s);
+                }
+            } else if (kind == .text) {
+                if (json.fieldStr(cb, "text")) |t| {
+                    if (t.len != 0) try out.append(self.gpa, .{ .text_delta = .{ .block = block.emitted_id, .text = t } });
+                }
+            }
         }
     }
 
@@ -400,6 +413,20 @@ test "tool turn: input deltas stream and the whole call surfaces at stop" {
     try testing.expectEqualStrings("run", call.name);
     try testing.expectEqualStrings("{\"cmd\":\"zig test\"}", call.arguments);
     try testing.expectEqual(wire.enums.StopReason.tool_calls, h.out.items[4].done.stop_reason);
+}
+
+test "a thinking block that arrives complete on start still emits a delta" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"plan the poem","signature":"sig"}}
+        ,
+        \\{"type":"content_block_stop","index":0}
+    });
+
+    try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("plan the poem", h.out.items[1].reasoning_delta.text);
+    try testing.expectEqualStrings("sig", h.out.items[2].block_stopped.result.reasoning.signature);
 }
 
 test "thinking block accumulates its signature into the result" {
