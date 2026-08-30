@@ -189,7 +189,7 @@ function metaLabel(row) {
 // A pane is a node-leaf view: it owns its rect, draws with draw(focused), and returns whether
 // onKey(ev) consumed the key. The node tree assigns rects and routes focus.
 
-// The sidebar: merged DeviceFeed rows, newest first, two lines each. Enter opens the pair.
+// The sidebar: merged DeviceFeed rows, newest first, two lines each. Enter previews the pair.
 class SessionList {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -222,8 +222,14 @@ class SessionList {
 
   onKey(ev) {
     if (this.list.onKey(ev)) return true;
-    if (strokeOf(ev) === "enter") {
+    const s = strokeOf(ev);
+    if (s === "enter") {
       this.open(this.list.selected(), "key");
+      return true;
+    }
+    // `l`/`right` open and enter the chat, the way a vim window takes `l`.
+    if (s === "l" || s === "right") {
+      this.open(this.list.selected(), "go");
       return true;
     }
     return false;
@@ -236,7 +242,7 @@ class SessionList {
     return true;
   }
 
-  // `src` is "key" or "mouse". The shell reads it, because a click also moves the focus.
+  // `src` is "key" (preview, stay), "go" (jump in), or "mouse" (jump in).
   open(row, src) {
     if (!row) return;
     this.active = { connKey: row.connKey, sessionId: row.id };
@@ -504,6 +510,7 @@ const newChatLines = () => {
 
 const chat = new ChatView({
   textOf: (id) => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
+  partsOf: (id) => (chatSession.sessionId ? client.sessionParts(chatSession.connKey, chatSession.sessionId, id) : []),
   onSubmit: (text) => chatSession.send(text),
   onSelect: (text) => {
     if (config.mouse.copyOnSelect) copy(text, "selection");
@@ -672,11 +679,11 @@ events.on("conn", (ev) => {
   }
 });
 
-// A click opens the pair and moves the focus to the composer. Enter keeps the focus on the list.
+// Enter previews the session and stays on the list. Click, `l`, and → move into the chat.
 const sidebar = new SessionList({
   onOpen: (connKey, id, src) => {
     chatSession.open(connKey, id);
-    if (src === "mouse") root.focusView(chat);
+    if (src !== "key") root.focusView(chat);
   },
 });
 

@@ -113,6 +113,11 @@ export function sessionText(connKey, sessionId, messageId) {
   return native.sessionText(connKey, sessionId, messageId);
 }
 
+// The assistant parts of one message (committed or the draft), [] when absent.
+export function sessionParts(connKey, sessionId, messageId) {
+  return JSON.parse(native.sessionParts(connKey, sessionId, messageId));
+}
+
 // Send `text` into `id`. The daemon commits it and streams the reply as broadcasts the replica folds.
 export function sessionSendInput(connKey, id, text) {
   return request(connKey, "session.send_input", {

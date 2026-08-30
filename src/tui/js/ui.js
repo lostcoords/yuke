@@ -25,6 +25,15 @@ const UI_GROUPS = {
   // A failed turn shows its error in the danger color.
   TxError: { fg: "danger", bold: true },
   TxSelect: { reverse: true },
+  // Tool rows stay monochrome: weight and dim, danger only for a failed call.
+  TxToolName: { fg: "fg", bold: true },
+  TxToolMeta: { fg: "fg", dim: true },
+  TxToolError: { fg: "danger", bold: true },
+  TxToolBody: { fg: "fg", dim: true },
+  TxToolAdd: { fg: "fg", bold: true },
+  TxToolDel: { fg: "fg", dim: true },
+  TxToolContext: { fg: "fg", dim: true },
+  TxThought: { fg: "fg", dim: true, italic: true },
 };
 let seededGroups = false;
 for (const name in UI_GROUPS) {
@@ -40,6 +49,8 @@ const PAGE_FALLBACK = 10;
 
 // Left gutter for a transcript row marker; the body indents past it.
 const TX_GUTTER = 2;
+// Keep a long tool body inside the pager. The replica still holds the full output.
+const TOOL_BODY_CAP = 40;
 
 // The shared nav vocabulary: j/k move, ctrl+d/u page, gg/G top/bottom.
 function navAction(k) {
@@ -349,12 +360,12 @@ export class Pager {
   }
 
   // Scroll the least amount that puts row `index` on the screen.
+  // Refresh `stuck` even when the offset is unchanged, so an unfold cannot jump to the tail.
   scrollIntoView(index) {
     if (index < 0 || this._h <= 0) return;
     let next = this.scroll;
     if (index < next) next = index;
     else if (index >= next + this._h) next = index - this._h + 1;
-    if (next === this.scroll) return;
     this.scroll = Math.min(Math.max(0, next), this._maxScroll());
     this.stuck = this.atBottom();
   }
@@ -448,10 +459,10 @@ function rowSourceSpan(row, from, to) {
     const end = at + seg.text.length;
     const a = Math.max(from, at);
     const b = Math.min(to, end);
-    if (b > a && seg.src != null) {
+    if (seg.src != null && (b > a || (seg.text.length === 0 && from <= at && at <= to))) {
       const linear = isLinear(seg);
-      const s = linear ? seg.src + (a - at) : seg.src;
-      const e = linear ? seg.src + (b - at) : seg.srcEnd;
+      const s = linear && b > a ? seg.src + (a - at) : seg.src;
+      const e = linear && b > a ? seg.src + (b - at) : seg.srcEnd;
       if (lo < 0 || s < lo) lo = s;
       if (e > hi) hi = e;
     }
@@ -544,6 +555,19 @@ function staticRowSource(list) {
 }
 
 // A user turn wraps to a plain tinted band with a gutter marker. Input is plain text, not markdown.
+function wrapPlain(id, body, width, group) {
+  const src = body || "";
+  const contentW = Math.max(1, width - TX_GUTTER);
+  const rows = wrapOffsets(src, contentW).map((r) => ({
+    segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
+    indent: TX_GUTTER,
+    key: id,
+    kind: "compaction",
+  }));
+  rows.push({ text: "", key: id });
+  return rows;
+}
+
 function userRows(id, body, width) {
   const src = body || "";
   const contentW = Math.max(1, width - TX_GUTTER);
@@ -560,18 +584,245 @@ function userRows(id, body, width) {
   return rows;
 }
 
+function shiftSrc(segments, base) {
+  if (!segments || !base) return segments;
+  return segments.map((seg) => (seg.src == null ? seg : { ...seg, src: seg.src + base, srcEnd: seg.srcEnd + base }));
+}
+
+function wrapBody(src, width, group) {
+  src = src || "";
+  const contentW = Math.max(1, width);
+  return wrapOffsets(src, contentW).map((r) => ({
+    segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
+    indent: TX_GUTTER,
+  }));
+}
+
+function capRows(rows, cap) {
+  if (rows.length <= cap) return rows;
+  const head = Math.floor((cap - 1) / 2);
+  const tail = cap - 1 - head;
+  return rows.slice(0, head).concat([{ text: "…", group: "TxToolMeta", indent: TX_GUTTER }], rows.slice(rows.length - tail));
+}
+
+function toolSummary(args) {
+  try {
+    const o = JSON.parse(args);
+    if (o && typeof o === "object") {
+      if (typeof o.path === "string") return o.path;
+      if (typeof o.command === "string") return o.command;
+    }
+  } catch (_) {}
+  const s = String(args || "");
+  return s.length > 48 ? s.slice(0, 47) + "…" : s;
+}
+
+function toolStateKind(state) {
+  return state && state.type ? state.type : "pending";
+}
+
+function toolStateLabel(state) {
+  const t = toolStateKind(state);
+  if (t === "completed") return "done";
+  if (t === "waiting_permission") return "need permission";
+  return t;
+}
+
+function defaultExpanded(state) {
+  const t = toolStateKind(state);
+  return t === "running" || t === "error" || t === "denied" || t === "canceled";
+}
+
+function toolHeaderSource(part) {
+  const name = String(part.name || "tool");
+  const summary = toolSummary(part.arguments);
+  return summary ? name + " " + summary : name;
+}
+
+function toolHeaderRow(part, expanded, width) {
+  const name = String(part.name || "tool");
+  const summary = toolSummary(part.arguments);
+  const state = part.state || {};
+  const kind = toolStateKind(state);
+  const right = toolStateLabel(state) + (state.duration_ms != null ? " · " + state.duration_ms + "ms" : "");
+  const err = kind === "error" || kind === "denied";
+  const contentW = Math.max(1, width);
+  const rightW = term.measure(right);
+  const leftW = Math.max(1, contentW - (rightW > 0 ? rightW + 1 : 0));
+  const segs = [];
+  const nameT = clip(name, leftW);
+  segs.push({ text: nameT, group: "TxToolName", src: 0, srcEnd: name.length });
+  let used = term.measure(nameT);
+  if (summary && used + 1 < leftW) {
+    const t = clip(summary, leftW - used - 1);
+    segs.push({ text: " " + t, group: "TxToolMeta", src: name.length, srcEnd: name.length + 1 + summary.length });
+    used += 1 + term.measure(t);
+  }
+  if (rightW > 0 && used + 1 + rightW <= contentW) {
+    segs.push({ text: " ".repeat(contentW - used - rightW), group: "TxToolMeta" });
+    segs.push({ text: right, group: err ? "TxToolError" : "TxToolMeta" });
+  }
+  return {
+    segments: segs,
+    indent: TX_GUTTER,
+    marker: expanded ? "▾" : "▸",
+    markerGroup: "TxToolMeta",
+    kind: "tool-header",
+    partId: part.id,
+  };
+}
+
+function toolBodyText(part) {
+  const s = part.state || {};
+  if (s.type === "error") return s.error || "";
+  if (s.type === "denied") return s.reason || "";
+  if (s.output) return s.output;
+  return "";
+}
+
+function diffRows(view, width) {
+  const rows = [];
+  let source = "";
+  for (const f of view.files || []) {
+    if (f.path) {
+      if (source) source += "\n";
+      const base = source.length;
+      source += f.path;
+      rows.push({
+        segments: [{ text: f.path, group: "TxToolName", src: base, srcEnd: base + f.path.length }],
+        indent: TX_GUTTER,
+      });
+    }
+    for (const h of f.hunks || []) {
+      for (const line of h.lines || []) {
+        if (source) source += "\n";
+        const base = source.length;
+        source += line;
+        const mark = line[0];
+        const group = mark === "+" ? "TxToolAdd" : mark === "-" ? "TxToolDel" : "TxToolContext";
+        for (const r of wrapBody(line, width, group)) {
+          rows.push({ ...r, segments: shiftSrc(r.segments, base) });
+        }
+      }
+    }
+  }
+  return { rows, source };
+}
+
+function viewRows(views, width) {
+  const rows = [];
+  let source = "";
+  for (const v of views || []) {
+    if (source) source += "\n";
+    const base = source.length;
+    const t = v && v.type;
+    if (t === "diff") {
+      const built = diffRows(v, width);
+      source += built.source;
+      for (const r of built.rows) rows.push({ ...r, segments: r.segments ? shiftSrc(r.segments, base) : r.segments });
+    } else if (t === "markdown") {
+      const doc = new Document();
+      doc.setText(v.text || "");
+      const chunk = doc.sourceText();
+      source += chunk;
+      for (const r of doc.rows(Math.max(1, width))) {
+        rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER });
+      }
+    } else if (t === "image") {
+      const label = "(image)";
+      source += label;
+      rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
+    } else {
+      const body = v && v.text ? v.text : "";
+      source += body;
+      for (const r of wrapBody(body, width, "TxToolBody")) rows.push({ ...r, segments: shiftSrc(r.segments, base) });
+    }
+  }
+  return { rows, source };
+}
+
+function toolBody(part, width) {
+  const views = part.state && part.state.view;
+  if (views && views.length) return viewRows(views, width);
+  const text = toolBodyText(part);
+  const kind = toolStateKind(part.state);
+  const group = kind === "error" || kind === "denied" ? "TxToolError" : "TxToolBody";
+  return { rows: wrapBody(text, width, group), source: text };
+}
+
+function reasoningRows(part, width, expanded, live, doc) {
+  const name = live ? "thinking" : "thought";
+  const header = {
+    segments: [{ text: name, group: "TxThought", src: 0, srcEnd: name.length }],
+    indent: TX_GUTTER,
+    marker: expanded ? "▾" : "▸",
+    markerGroup: "TxThought",
+    kind: "reasoning-header",
+    partId: part.id,
+  };
+  const rows = [header];
+  let source = name;
+  if (!expanded) return { rows, source };
+  if (!doc) doc = new Document();
+  doc.setText(part.text || "");
+  const chunk = doc.sourceText();
+  source += "\n" + chunk;
+  const base = name.length + 1;
+  const body = [];
+  for (const r of doc.rows(Math.max(1, width))) {
+    body.push({
+      segments: shiftSrc(r.segments, base),
+      indent: TX_GUTTER,
+      kind: "reasoning-body",
+      partId: part.id,
+    });
+  }
+  for (const r of capRows(body, TOOL_BODY_CAP)) rows.push(r);
+  return { rows, source };
+}
+
+function toolRows(part, width, expanded) {
+  const header = toolHeaderRow(part, expanded, width);
+  const headerSrc = toolHeaderSource(part);
+  const rows = [header];
+  let source = headerSrc;
+  if (!expanded) return { rows, source };
+  const body = toolBody(part, width);
+  const capped = capRows(body.rows, TOOL_BODY_CAP);
+  if (body.source) {
+    source += "\n" + body.source;
+    const base = headerSrc.length + 1;
+    for (const r of capped) {
+      rows.push({
+        ...r,
+        kind: "tool-body",
+        partId: part.id,
+        segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
+      });
+    }
+  } else {
+    for (const r of capped) rows.push({ ...r, kind: "tool-body", partId: part.id });
+  }
+  return { rows, source };
+}
+
+function errorLabel(error) {
+  return "⚠ " + ((error && error.message) || (error && error.type) || "run failed");
+}
+
 // Show a failed turn's error in the gutter with a warning marker and the danger color.
-function errorRows(id, error, width) {
-  const label = "⚠ " + (error.message || error.type || "run failed");
+function errorRows(id, error, width, srcBase) {
+  const label = errorLabel(error);
+  const base = srcBase || 0;
   const contentW = Math.max(1, width - TX_GUTTER);
   const rows = wrapOffsets(label, contentW).map((r) => ({
-    text: label.slice(r.start, r.end),
-    group: "TxError",
+    segments: [{ text: label.slice(r.start, r.end), group: "TxError", src: base + r.start, srcEnd: base + r.end }],
     indent: TX_GUTTER,
     key: id,
+    kind: "error",
   }));
   rows.push({ text: "", key: id });
-  return rows;
+  return { rows, source: label };
 }
 
 // A virtualized transcript (the Pager's row source). It holds descriptors ({id, type}) plus a
@@ -579,17 +830,22 @@ function errorRows(id, error, width) {
 export class Transcript {
   constructor(opts = {}) {
     this.textOf = opts.textOf || (() => "");
+    this.partsOf = opts.partsOf || null;
     this.pager = new Pager();
     this.pager.setSource(this);
     this._messages = []; // committed descriptors, oldest first
     this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
-    this._rows = new Map(); // id -> { w, rows }
-    this._docs = new Map(); // id -> md Document, for the assistant block cache
+    this._rows = new Map(); // id -> { w, rows, source?, blocks? }
+    this._sources = new Map(); // id -> display source, survives row-cache drops
+    this._docs = new Map(); // id -> md Document, for the textOf path
+    this._partDocs = new Map(); // id:partId -> md Document, for text and reasoning parts
+    this._expand = new Map(); // id:partId -> user override
     // A selection holds two logical positions, `{ id, row, col }`. `row` counts the rendered rows
     // of that message and `col` is a string index into the row text.
     this.selection = null;
     this._dragging = false;
+    this._didDrag = false;
     this._press = null;
     this.onSelect = opts.onSelect || null;
     // Lines to show while the transcript holds no message, so an empty pane still says something.
@@ -599,6 +855,7 @@ export class Transcript {
   clearSelection() {
     this.selection = null;
     this._dragging = false;
+    this._didDrag = false;
     this._press = null;
   }
 
@@ -639,7 +896,26 @@ export class Transcript {
     this._active = active || null;
     this._rows.clear();
     this._docs.clear();
+    this._sources.clear();
+    const live = this._liveIds();
+    this._pruneKeyed(this._partDocs, live);
+    this._pruneKeyed(this._expand, live);
     this.clearSelection();
+  }
+
+  _liveIds() {
+    const live = new Set();
+    for (const m of this._messages) live.add(String(m.id));
+    if (this._active) live.add(String(this._active.id));
+    return live;
+  }
+
+  _pruneKeyed(map, live) {
+    for (const k of [...map.keys()]) {
+      const cut = String(k).indexOf(":");
+      const id = cut < 0 ? String(k) : String(k).slice(0, cut);
+      if (!live.has(id)) map.delete(k);
+    }
   }
 
   // A streaming delta on draft `id`: adopt it if new, and drop its cached rows so it re-renders.
@@ -664,6 +940,9 @@ export class Transcript {
   }
 
   _sourceOf(id) {
+    if (this._sources.has(id)) return this._sources.get(id);
+    const c = this._rows.get(id);
+    if (c && c.source != null) return c.source;
     const doc = this._docs.get(id);
     return doc ? doc.sourceText() : this.textOf(id);
   }
@@ -702,6 +981,8 @@ export class Transcript {
   // The markdown blocks of one message, oldest first. A plain turn has none.
   blocksOf(id) {
     this._rowsFor(id);
+    const c = this._rows.get(id);
+    if (c && c.blocks) return c.blocks;
     const doc = this._docs.get(id);
     return doc ? doc.blocks() : [];
   }
@@ -797,10 +1078,199 @@ export class Transcript {
     const c = this._rows.get(m.id);
     if (c && c.w === width) return c.rows;
 
-    let rows = m.type === "user" ? userRows(m.id, this.textOf(m.id), width) : this._assistantRows(m.id, width);
-    if (m.error) rows = rows.concat(errorRows(m.id, m.error, width));
-    this._rows.set(m.id, { w: width, rows });
+    let rows;
+    let source = null;
+    let blocks = null;
+    if (m.type === "user") {
+      rows = userRows(m.id, this.textOf(m.id), width);
+      source = this.textOf(m.id) || "";
+    } else if (m.type === "compaction") {
+      rows = wrapPlain(m.id, this.textOf(m.id), width, "TxThought");
+      source = this.textOf(m.id) || "";
+    } else if (this.partsOf) {
+      const built = this._partRows(m, width);
+      rows = built.rows;
+      source = built.source;
+      blocks = built.blocks;
+    } else {
+      rows = this._assistantRows(m.id, width);
+      const doc = this._docs.get(m.id);
+      source = doc ? doc.sourceText() : this.textOf(m.id) || "";
+    }
+    if (m.error) {
+      const base = source && source.length ? source.length + 1 : 0;
+      const err = errorRows(m.id, m.error, width, base);
+      source = source && source.length ? source + "\n" + err.source : err.source;
+      rows = rows.concat(err.rows);
+    }
+    this._rows.set(m.id, { w: width, rows, source, blocks });
+    this._sources.set(m.id, source == null ? "" : source);
     return rows;
+  }
+
+  _partList(id) {
+    try {
+      const p = this.partsOf(id);
+      return Array.isArray(p) ? p : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _expandKey(id, partId) {
+    return String(id) + ":" + String(partId);
+  }
+
+  _reasoningLive(id, partId) {
+    if (!this._active || this._active.id !== id) return false;
+    const parts = this._partList(id);
+    const part = parts.find((p) => p && p.id === partId);
+    return !!(part && part.type === "reasoning");
+  }
+
+  _isExpanded(id, partId, part) {
+    const k = this._expandKey(id, partId);
+    if (this._expand.has(k)) return this._expand.get(k);
+    if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
+    return defaultExpanded(part && part.state);
+  }
+
+  // Flip the user override for one foldable part. A missing part is a no-op.
+  togglePart(id, partId) {
+    if (id == null || partId == null) return;
+    const k = this._expandKey(id, partId);
+    let part = null;
+    if (this.partsOf) {
+      for (const p of this._partList(id)) if (p.id === partId) part = p;
+    }
+    this._expand.set(k, !this._isExpanded(id, partId, part));
+    this._rows.delete(id);
+    root.invalidate();
+  }
+
+  // The part under a logical position, or null on a gutter/separator row.
+  partAt(pos) {
+    if (!pos) return null;
+    const rows = this._rowsFor(pos.id);
+    const row = pos.row >= 0 && pos.row < rows.length ? rows[pos.row] : null;
+    if (!row || row.partId == null || !row.kind) return null;
+    return { id: pos.id, partId: row.partId, kind: row.kind };
+  }
+
+  // The header position of a foldable part, or null when it is gone.
+  partHeader(id, partId) {
+    const rows = this._rowsFor(id);
+    for (let row = 0; row < rows.length; row++) {
+      const kind = rows[row].kind || "";
+      if (rows[row].partId === partId && kind.endsWith("-header")) return { id, row, col: 0 };
+    }
+    return null;
+  }
+
+  // Stops for J/K: user rows, text-part starts, tool and reasoning headers.
+  partStops() {
+    const out = [];
+    for (let i = 0; ; i++) {
+      const m = this._at(i);
+      if (!m) break;
+      const rows = this._rowsFor(m.id);
+      if (m.type === "user" || m.type === "compaction" || !this.partsOf) {
+        if (rows.length) out.push({ id: m.id, row: 0, col: 0 });
+        continue;
+      }
+      let lastPart = null;
+      for (let row = 0; row < rows.length; row++) {
+        const r = rows[row];
+        const kind = r.kind;
+        if (kind === "tool-header" || kind === "reasoning-header" || kind === "error") {
+          out.push({ id: m.id, row, col: 0 });
+          lastPart = r.partId;
+        } else if (kind === "text" && r.partId !== lastPart) {
+          out.push({ id: m.id, row, col: 0 });
+          lastPart = r.partId;
+        }
+      }
+    }
+    return out;
+  }
+
+  // Next (dir > 0) or previous (dir < 0) part stop after `pos`.
+  partStep(pos, dir) {
+    if (!pos) return null;
+    const stops = this.partStops();
+    if (stops.length === 0) return null;
+    if (dir > 0) {
+      for (const s of stops) if (this._cmpPos(s, pos) > 0) return s;
+      return null;
+    }
+    for (let n = stops.length - 1; n >= 0; n--) if (this._cmpPos(stops[n], pos) < 0) return stops[n];
+    return null;
+  }
+
+  _partRows(m, width) {
+    const parts = this._partList(m.id);
+    const rows = [];
+    const blocks = [];
+    let source = "";
+    const contentW = Math.max(1, width - TX_GUTTER);
+    for (const part of parts) {
+      const type = part && part.type;
+      if (type === "text") {
+        if (source) source += "\n";
+        const base = source.length;
+        const key = this._expandKey(m.id, part.id);
+        let doc = this._partDocs.get(key);
+        if (!doc) {
+          doc = new Document();
+          this._partDocs.set(key, doc);
+        }
+        doc.setText(part.text || "");
+        source += doc.sourceText();
+        for (const b of doc.blocks()) blocks.push({ kind: b.kind, at: b.at + base, end: b.end + base });
+        for (const r of doc.rows(contentW)) {
+          rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER, key: m.id, partId: part.id, kind: "text" });
+        }
+      } else if (type === "tool") {
+        if (source) source += "\n";
+        const base = source.length;
+        const expanded = this._isExpanded(m.id, part.id, part);
+        const built = toolRows(part, contentW, expanded);
+        source += built.source;
+        for (const r of built.rows) {
+          rows.push({
+            ...r,
+            segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
+            indent: TX_GUTTER,
+            key: m.id,
+            partId: part.id,
+          });
+        }
+      } else if (type === "reasoning") {
+        if (source) source += "\n";
+        const base = source.length;
+        const live = this._reasoningLive(m.id, part.id);
+        const expanded = this._isExpanded(m.id, part.id, part);
+        const key = this._expandKey(m.id, part.id);
+        let doc = this._partDocs.get(key);
+        if (!doc) {
+          doc = new Document();
+          this._partDocs.set(key, doc);
+        }
+        const built = reasoningRows(part, contentW, expanded, live, doc);
+        source += built.source;
+        for (const r of built.rows) {
+          rows.push({
+            ...r,
+            segments: r.segments ? shiftSrc(r.segments, base) : r.segments,
+            indent: TX_GUTTER,
+            key: m.id,
+            partId: part.id,
+          });
+        }
+      }
+    }
+    rows.push({ text: "", key: m.id });
+    return { rows, source, blocks };
   }
 
   // Assistant rows come from a per-message md Document, indented past the gutter, then a separator.
@@ -900,8 +1370,7 @@ export class Transcript {
         if (plain.length) out.push(plain.join("\n"));
         continue;
       }
-      const doc = this._docs.get(m.id);
-      out.push((doc ? doc.sourceText() : this.textOf(m.id)).slice(from, to));
+      out.push(this._sourceOf(m.id).slice(from, to));
     }
     return out.join("\n");
   }
@@ -1034,21 +1503,36 @@ export class Transcript {
       this.clearSelection();
       this._press = pos;
       this._dragging = pos != null;
+      this._didDrag = false;
       return true;
     }
     if (!this._dragging) return false;
     if (ev.event === "drag") {
+      this._didDrag = true;
       // A drag past the edge clamps, so the selection follows the pointer out of the pane.
       const pos = this.posAt(ev.col, ev.row, true);
       if (this._press && pos) this.select(this._press, pos);
       return true;
     }
     if (ev.event === "release") {
+      const press = this._press;
+      const dragged = this._didDrag;
       this._dragging = false;
       this._press = null;
-      const text = this.selectedText();
-      if (text === "") this.clearSelection();
-      else if (this.onSelect) this.onSelect(text);
+      this._didDrag = false;
+      if (!dragged && press) {
+        const hit = this.partAt(press);
+        if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header")) {
+          this.togglePart(hit.id, hit.partId);
+          const header = this.partHeader(hit.id, hit.partId);
+          if (header) this.ensureVisible(header);
+          this.clearSelection();
+          return true;
+        }
+      }
+      const selected = this.selectedText();
+      if (selected === "") this.clearSelection();
+      else if (this.onSelect) this.onSelect(selected);
       return true;
     }
     return false;
@@ -1350,13 +1834,16 @@ export const borders = {
 export class ChatView {
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect, empty: opts.empty });
+    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
   }
 
   get name() {
     return "chat";
   }
+
+  // The pane's default caret is the composer.
+  onFocus() {}
 
   onKey(ev) {
     return this.composer.onKey(ev) || this.transcript.onKey(ev);

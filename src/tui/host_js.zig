@@ -1116,6 +1116,17 @@ test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" 
         \\v.rect = { x: 0, y: 0, w: 24, h: 18 };
         \\paint();
         \\
+        \\// A focus jump from another pane drops the transcript grab. Tab inside the pane keeps it.
+        \\const side = { name: "sessions", draw() {}, onKey() { return false; } };
+        \\root.setRoot(Node.branch("row", new Node(side), new Node(v), 0.3));
+        \\root.focusView(v);
+        \\paint();
+        \\root.onEvent(key("tab"));
+        \\check("tab-transcript", v.cursor() && v.cursor().y < v.composer.rect.y);
+        \\root.focusView(side);
+        \\root.focusView(v);
+        \\check("jump-composer", v.cursor() && v.cursor().y === v.composer.rect.y);
+        \\
         \\// An unload gives the caret back to the composer.
         \\off();
         \\check("unload-restores", v.cursor().y === v.composer.rect.y);
@@ -1149,6 +1160,228 @@ test "yuke:ui a transcript with no message shows its placeholder" {
     , "empty.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.count"));
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "new chat") != null);
+}
+
+test "yuke:ui tool parts render, collapse, copy, and toggle" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 12, 40);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { root, Node } from "yuke:core";
+        \\import { plugins } from "yuke:ext";
+        \\import { Transcript, ChatView } from "yuke:ui";
+        \\import { transcriptVim } from "yuke:transcript-vim";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
+        \\const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);
+        \\const markerOf = (rs) => (rs[0] && rs[0].marker) || "";
+        \\const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
+        \\const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
+        \\
+        \\const parts = {
+        \\  done: [{ type: "tool", id: 0, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "alpha\\nbeta", duration_ms: 12 } }],
+        \\  run: [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"zig build test"}', state: { type: "running", started_at_ms: 1, output: "compiling" } }],
+        \\  err: [{ type: "tool", id: 1, name: "edit", arguments: '{"path":"b.zig"}', state: { type: "error", error: "no match", duration_ms: 3 } }],
+        \\  mix: [{ type: "text", id: 0, text: "**hi** there" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"c.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }],
+        \\  diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, view: [{ type: "diff", files: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] }] } }],
+        \\};
+        \\const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+        \\t.setOutline([{ id: "done", type: "assistant" }, { id: "run", type: "assistant" }, { id: "err", type: "assistant" }], null);
+        \\const paint = (h) => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: h || 12 }); term.endFrame(); };
+        \\paint();
+        \\
+        \\const done = t.rows(40, 0, 4);
+        \\check("done-name", rowsHave(done, "read"));
+        \\check("done-path", rowsHave(done, "a.zig"));
+        \\check("done-state", rowsHave(done, "done"));
+        \\check("done-collapsed", markerOf(done) === "▸" && !rowsHave(done, "alpha"));
+        \\
+        \\const runStart = t._globalRow({ id: "run", row: 0, col: 0 });
+        \\const run = t.rows(40, runStart, 6);
+        \\check("run-name", rowsHave(run, "exec"));
+        \\check("run-expanded", markerOf(run) === "▾" && rowsHave(run, "compiling"));
+        \\
+        \\const errStart = t._globalRow({ id: "err", row: 0, col: 0 });
+        \\const err = t.rows(40, errStart, 6);
+        \\check("err-expanded", rowsHave(err, "no match") && rowsGroup(err, "TxToolError"));
+        \\
+        \\// A click on a collapsed header expands it. A drag does not.
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(3, 0, "release"));
+        \\const doneOpen = t.rows(40, 0, 6);
+        \\check("click-open", markerOf(doneOpen) === "▾" && rowsHave(doneOpen, "alpha"));
+        \\t.onMouse(at(3, 0, "press"));
+        \\t.onMouse(at(5, 0, "drag"));
+        \\t.onMouse(at(5, 0, "release"));
+        \\check("drag-keeps", markerOf(t.rows(40, 0, 6)) === "▾");
+        \\
+        \\const mix = new Transcript({ textOf: (id) => (id === "mix" ? "**hi** there" : ""), partsOf: (id) => parts[id] || [] });
+        \\mix.setOutline([{ id: "mix", type: "assistant" }], null);
+        \\term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\const mixRows = mix.rows(40, 0, 8);
+        \\check("mix-text", rowsHave(mixRows, "hi") && rowsHave(mixRows, "there"));
+        \\check("mix-tool", rowsHave(mixRows, "read") && rowsHave(mixRows, "c.zig"));
+        \\const srcEnd = mix._sourceOf("mix").length;
+        \\mix.select(mix.posAtSource("mix", 0), mix.posAtSource("mix", srcEnd));
+        \\const src = mix.selectedSource();
+        \\check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
+        \\check("mix-source-tool", src.indexOf("read") >= 0 && src.indexOf("c.zig") >= 0);
+        \\
+        \\const dt = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+        \\dt.setOutline([{ id: "diff", type: "assistant" }], null);
+        \\dt.togglePart("diff", 0);
+        \\const diffRows = dt.rows(40, 0, 10);
+        \\check("diff-path", rowsHave(diffRows, "d.zig"));
+        \\check("diff-del", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxToolDel"));
+        \\check("diff-add", rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxToolAdd"));
+        \\
+        \\const v = new ChatView({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+        \\v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
+        \\root.setRoot(new Node(v));
+        \\v.rect = { x: 0, y: 0, w: 40, h: 12 };
+        \\const vpaint = () => { term.beginFrame(); v.draw(true); term.endFrame(); };
+        \\vpaint();
+        \\plugins.use(transcriptVim);
+        \\root.onEvent(key("tab"));
+        \\vpaint();
+        \\check("enter-closed", markerOf(v.transcript.rows(40, 0, 4)) === "▸");
+        \\v.onKey(key("enter"));
+        \\check("enter-open", markerOf(v.transcript.rows(40, 0, 6)) === "▾");
+        \\const vr = v.transcript.pager.rect();
+        \\v.onMouse({ type: "mouse", col: vr.x + 3, row: vr.y, button: "left", event: "press", mods: 0 });
+        \\v.onMouse({ type: "mouse", col: vr.x + 3, row: vr.y, button: "left", event: "release", mods: 0 });
+        \\check("plugin-click-fold", markerOf(v.transcript.rows(40, 0, 6)) === "▸");
+        \\
+        \\const longOut = Array.from({ length: 80 }, (_, i) => "line" + i).join("\n");
+        \\parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: longOut, duration_ms: 1 } }];
+        \\const longT = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+        \\longT.setOutline([{ id: "long", type: "assistant" }], null);
+        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\longT.onMouse(at(3, 0, "press"));
+        \\longT.onMouse(at(3, 0, "release"));
+        \\term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\const headerAt = longT.screenAt({ id: "long", row: 0, col: 0 });
+        \\check("header-on-screen", !!headerAt && headerAt.y >= 0 && headerAt.y < 8);
+        \\check("unfold-unstuck", longT.pager.stuck === false);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "tools.js");
+    try expectJs(host, "ok");
+}
+
+test "yuke:ui reasoning auto-collapses and J/K walks parts" {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var paint: Paint = undefined;
+    try paint.setup(gpa.allocator(), 12, 40);
+    defer paint.deinit();
+    const host = try Host.create(gpa.allocator());
+    defer host.destroy();
+    paint.bind(host);
+
+    try host.evalModule(
+        \\import { term } from "yuke:term";
+        \\import { Transcript } from "yuke:ui";
+        \\const fail = [];
+        \\const check = (name, cond) => { if (!cond) fail.push(name); };
+        \\const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
+        \\const markerOf = (rs) => (rs[0] && rs[0].marker) || "";
+        \\
+        \\const parts = {};
+        \\const t = new Transcript({ textOf: (id) => (id === "u" ? "ask" : ""), partsOf: (id) => parts[id] || [] });
+        \\
+        \\parts.r1 = [{ type: "reasoning", id: 0, text: "because why" }];
+        \\t.setOutline([], { id: "r1", type: "assistant" });
+        \\term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
+        \\let rs = t.rows(40, 0, 10);
+        \\check("live-name", rowsHave(rs, "thinking"));
+        \\check("live-body", rowsHave(rs, "because") && markerOf(rs) === "▾");
+        \\
+        \\parts.r1 = [{ type: "reasoning", id: 0, text: "because why" }, { type: "text", id: 1, text: "hello" }];
+        \\t.setActive("r1");
+        \\rs = t.rows(40, 0, 10);
+        \\check("draft-keeps-thought", rowsHave(rs, "thinking") && rowsHave(rs, "because") && markerOf(rs) === "▾");
+        \\
+        \\t.setOutline([{ id: "r1", type: "assistant" }], null);
+        \\rs = t.rows(40, 0, 10);
+        \\check("commit-hides", rowsHave(rs, "thought") && !rowsHave(rs, "thinking") && markerOf(rs) === "▸" && !rowsHave(rs, "because"));
+        \\
+        \\t.togglePart("r1", 0);
+        \\rs = t.rows(40, 0, 10);
+        \\check("override-holds", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\
+        \\const committed = new Transcript({ textOf: () => "", partsOf: () => [{ type: "reasoning", id: 0, text: "later" }] });
+        \\committed.setOutline([{ id: "c", type: "assistant" }], null);
+        \\term.beginFrame(); committed.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\check("commit-collapsed", markerOf(committed.rows(40, 0, 6)) === "▸" && rowsHave(committed.rows(40, 0, 6), "thought"));
+        \\
+        \\parts.hid = [{ type: "redacted_reasoning", id: 0 }, { type: "text", id: 1, text: "visible" }];
+        \\const hid = new Transcript({ textOf: () => "visible", partsOf: (id) => parts[id] || [] });
+        \\hid.setOutline([{ id: "hid", type: "assistant" }], null);
+        \\term.beginFrame(); hid.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
+        \\const hrs = hid.rows(40, 0, 8);
+        \\check("redacted-skip", rowsHave(hrs, "visible") && !rowsHave(hrs, "thought") && !rowsHave(hrs, "thinking"));
+        \\
+        \\parts.walk = [
+        \\  { type: "reasoning", id: 0, text: "why" },
+        \\  { type: "tool", id: 1, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "x", duration_ms: 1 } },
+        \\  { type: "text", id: 2, text: "hello" },
+        \\];
+        \\const w = new Transcript({ textOf: (id) => (id === "u" ? "ask" : ""), partsOf: (id) => parts[id] || [] });
+        \\w.setOutline([{ id: "u", type: "user" }, { id: "walk", type: "assistant" }], null);
+        \\term.beginFrame(); w.draw({ x: 0, y: 0, w: 40, h: 16 }); term.endFrame();
+        \\const p0 = { id: "u", row: 0, col: 0 };
+        \\const p1 = w.partStep(p0, 1);
+        \\check("jk-reason", p1 && w.partAt(p1) && w.partAt(p1).kind === "reasoning-header");
+        \\const p2 = w.partStep(p1, 1);
+        \\check("jk-tool", p2 && w.partAt(p2) && w.partAt(p2).kind === "tool-header");
+        \\const p3 = w.partStep(p2, 1);
+        \\check("jk-text", p3 && w.partAt(p3) && w.partAt(p3).kind === "text");
+        \\const back = w.partStep(p3, -1);
+        \\check("jk-back", back && back.id === p2.id && back.row === p2.row);
+        \\
+        \\const pack = new Transcript({ textOf: (id) => (id === "k" ? "kept the tail" : ""), partsOf: () => [] });
+        \\pack.setOutline([{ id: "k", type: "compaction" }], null);
+        \\term.beginFrame(); pack.draw({ x: 0, y: 0, w: 40, h: 6 }); term.endFrame();
+        \\check("compaction", rowsHave(pack.rows(40, 0, 6), "kept the tail"));
+        \\
+        \\t.setOutline([{ id: "r1", type: "assistant" }], { id: "r1", type: "assistant" });
+        \\rs = t.rows(40, 0, 10);
+        \\check("expand-survives-outline", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\
+        \\const mix = new Transcript({ textOf: () => "hello", partsOf: () => [{ type: "text", id: 0, text: "hello" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }] });
+        \\mix.setOutline([{ id: "m1", type: "assistant" }], { id: "m1", type: "assistant" });
+        \\term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
+        \\const mxn = mix.rowCountOf("m1");
+        \\mix.select({ id: "m1", row: 0, col: 0 }, mix.posAtSource("m1", mix._sourceOf("m1").length));
+        \\check("mix-had-sel", mix.selectedText() !== "");
+        \\mix.setActive("m1");
+        \\check("mix-sel-lives", mix.selection != null && mix.selectedText() !== "");
+        \\
+        \\const et = new Transcript({ textOf: () => "hi", partsOf: () => [{ type: "text", id: 0, text: "hi" }] });
+        \\et.setOutline([{ id: "e1", type: "assistant", error: { type: "x", message: "boom" } }], null);
+        \\term.beginFrame(); et.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
+        \\let er = -1;
+        \\const en = et.rowCountOf("e1");
+        \\for (let i = 0; i < en; i++) if (et.rowTextAt("e1", i).indexOf("boom") >= 0) er = i;
+        \\check("err-row", er >= 0);
+        \\et.select({ id: "e1", row: er, col: 0 }, { id: "e1", row: er, col: et.rowTextAt("e1", er).length });
+        \\check("err-sel", et.selectedText().indexOf("boom") >= 0);
+        \\check("err-src", et.sourceAt({ id: "e1", row: er, col: 1 }) >= 0);
+        \\
+        \\globalThis.result = fail.length ? fail.join(",") : "ok";
+    , "reason.js");
+    try expectJs(host, "ok");
 }
 
 test "yuke:md renders the GFM subset and caches finalized blocks" {
@@ -1772,7 +2005,7 @@ test "yuke:client wraps the native and rejects an unimplemented connect" {
     try host.evalModule(
         \\import * as client from "yuke:client";
         \\const surface = ["connect", "disconnect", "connectionState", "connections", "devices", "sessionList",
-        \\  "sessionOpen", "sessionClose", "sessionRev", "sessionResync", "sessionOutline", "sessionText",
+        \\  "sessionOpen", "sessionClose", "sessionRev", "sessionResync", "sessionOutline", "sessionText", "sessionParts",
         \\  "sessionSendInput", "sessionCancelRun", "workspaceBrowse"].every((k) => typeof client[k] === "function");
         \\let code = "";
         \\try { await client.connect({}); } catch (e) { code = e.code; }
@@ -1829,7 +2062,7 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\if (root.active !== chat) fail.push("focus-chat");
         \\root.focusView(sidebar);
         \\
-        \\// A click reports "mouse" and Enter reports "key", so the shell moves the focus only on a click.
+        \\// A click reports "mouse", Enter reports "key", and `l` reports "go".
         \\const seen = [];
         \\const s2 = new SessionList({ onOpen: (c, i, src) => seen.push(src) });
         \\s2.list.setItems([row]);
@@ -1838,7 +2071,8 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\term.endFrame();
         \\s2.onMouse({ type: "mouse", col: 1, row: 0, button: "left", event: "press", mods: 0 });
         \\s2.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
-        \\if (seen.join(",") !== "mouse,key") fail.push("open-src:" + seen.join(","));
+        \\s2.onKey({ type: "key", code: "char", char: "l", text: "", event: "press", mods: 0 });
+        \\if (seen.join(",") !== "mouse,key,go") fail.push("open-src:" + seen.join(","));
         \\
         \\// The real sidebar moves the focus to the chat pane on a click.
         \\sidebar.list.setItems([row]);
@@ -1847,6 +2081,12 @@ test "yuke:defaults boots the shell, seeds the sidebar, and wires commands" {
         \\term.endFrame();
         \\sidebar.onMouse({ type: "mouse", col: 1, row: 0, button: "left", event: "press", mods: 0 });
         \\if (root.active !== chat) fail.push("click-focuses-chat");
+        \\root.focusView(sidebar);
+        \\sidebar.onKey({ type: "key", code: "char", char: "l", text: "", event: "press", mods: 0 });
+        \\if (root.active !== chat) fail.push("l-focuses-chat");
+        \\root.focusView(sidebar);
+        \\sidebar.onKey({ type: "key", code: "enter", event: "press", char: "", text: "", mods: 0 });
+        \\if (root.active !== sidebar) fail.push("enter-stays");
         \\
         \\globalThis.result = fail.length ? fail.join(",") : "ok";
     , "act.js");

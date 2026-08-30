@@ -377,7 +377,7 @@ fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes
 
 /// Return a wire view that shares an owned part's bytes.
 /// Include accumulated output for an active tool.
-fn partToWire(p: *const Part) message.AssistantPart {
+pub fn partToWire(p: *const Part) message.AssistantPart {
     return switch (p.*) {
         .text => |*t| .{ .text = .{ .id = t.id, .text = t.text.items } },
         .reasoning => |*r| .{ .reasoning = .{ .id = r.id, .text = r.text.items, .signature = r.signature } },

@@ -936,8 +936,15 @@ export class RootView {
     this.setRoot(view == null ? null : new Node(view));
   }
 
+  // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.
+  _setActiveLeaf(leaf) {
+    if (!leaf || leaf === this.activeLeaf) return;
+    this.activeLeaf = leaf;
+    callHook(leaf.view, "onFocus");
+  }
+
   focusLeaf(leaf) {
-    if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this.activeLeaf = leaf;
+    if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this._setActiveLeaf(leaf);
   }
 
   // Focus the leaf that holds `view`. Return false when the view is not in the tree.
@@ -945,7 +952,7 @@ export class RootView {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
       if (leaf.view === view) {
-        this.activeLeaf = leaf;
+        this._setActiveLeaf(leaf);
         return true;
       }
     }
@@ -981,7 +988,7 @@ export class RootView {
     if (!leaf) return null;
     const add = new Node(view);
     leaf.becomeSplit(kind, new Node(leaf.view), add);
-    this.activeLeaf = add;
+    this._setActiveLeaf(add);
     return add;
   }
 
@@ -998,7 +1005,7 @@ export class RootView {
     p.b = sib.b;
     if (p.a) p.a.parent = p;
     if (p.b) p.b.parent = p;
-    this.activeLeaf = p.leaves()[0];
+    this._setActiveLeaf(p.leaves()[0]);
   }
 
   focusDir(d) {
@@ -1021,7 +1028,7 @@ export class RootView {
         best = leaf;
       }
     }
-    if (best) this.activeLeaf = best;
+    if (best) this._setActiveLeaf(best);
   }
 
   focusCycle(step) {
@@ -1030,7 +1037,7 @@ export class RootView {
     if (leaves.length === 0) return;
     let i = leaves.indexOf(this.activeLeaf);
     if (i < 0) i = 0;
-    this.activeLeaf = leaves[(i + step + leaves.length) % leaves.length];
+    this._setActiveLeaf(leaves[(i + step + leaves.length) % leaves.length]);
   }
 
   addService(svc) {

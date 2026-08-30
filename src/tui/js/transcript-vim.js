@@ -185,6 +185,18 @@ function move(t, s, k) {
       return blockStep(t, s, 1);
     case "{":
       return blockStep(t, s, -1);
+    case "J": {
+      const pos = t.partStep(s.cursor, 1);
+      if (!pos) return false;
+      s.cursor = pos;
+      return true;
+    }
+    case "K": {
+      const pos = t.partStep(s.cursor, -1);
+      if (!pos) return false;
+      s.cursor = pos;
+      return true;
+    }
   }
   return false;
 }
@@ -240,6 +252,16 @@ export const transcriptVim = {
     ctx.command(() => chatView() != null, { focus: toggle });
     ctx.keymap({ tab: "transcript-vim:focus" });
 
+    ctx.advise(ChatView.prototype, "onFocus", "before", function () {
+      const s = panes.get(this);
+      if (!s) return;
+      s.on = false;
+      s.pending = "";
+      s.visual = false;
+      s.anchor = null;
+      this.transcript.clearSelection();
+    });
+
     ctx.advise(ChatView.prototype, "onKey", "around", function (inner, ev) {
       const s = panes.get(this);
       if (!s || !s.on) return inner(ev);
@@ -270,6 +292,16 @@ export const transcriptVim = {
         return place(this, s);
       }
 
+      if (k === "enter") {
+        const hit = t.partAt(s.cursor);
+        if (hit && (hit.kind === "tool-header" || hit.kind === "tool-body" || hit.kind === "reasoning-header" || hit.kind === "reasoning-body")) {
+          t.togglePart(hit.id, hit.partId);
+          const header = t.partHeader(hit.id, hit.partId);
+          if (header) s.cursor = header;
+          t.ensureVisible(s.cursor);
+        }
+        return place(this, s);
+      }
       if (k === "esc") {
         s.visual = false;
         s.anchor = null;
@@ -324,8 +356,10 @@ export const transcriptVim = {
       const s = stateOf(this);
       const pos = this.transcript.posAt(ev.col, ev.row, false);
       if (!pos) {
+        s.on = false;
         s.visual = false;
         s.anchor = null;
+        s.pending = "";
         return taken;
       }
       s.on = true;
@@ -334,7 +368,6 @@ export const transcriptVim = {
       s.visual = false;
       s.anchor = null;
       s.pending = "";
-      this.transcript.clearSelection();
       return place(this, s);
     });
 

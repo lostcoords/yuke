@@ -745,6 +745,7 @@ fn bindAll(ctx: Context, native: Value) c_int {
     bind(ctx, native, "sessionResync", 2, jsSessionResync) catch return -1;
     bind(ctx, native, "sessionOutline", 2, jsSessionOutline) catch return -1;
     bind(ctx, native, "sessionText", 3, jsSessionText) catch return -1;
+    bind(ctx, native, "sessionParts", 3, jsSessionParts) catch return -1;
     return 0;
 }
 
@@ -1003,6 +1004,17 @@ fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newString(aw.written());
 }
 
+fn jsSessionParts(ctx: Context, _: Value, args: []const Value) Value {
+    const client = Host.fromContext(ctx).client;
+    const replica = replicaArg(ctx, client, args) orelse return ctx.newString("[]");
+    if (args.len < 3) return ctx.newString("[]");
+    const mid: u64 = std.math.lossyCast(u64, ctx.toFloat64(args[2]) catch return ctx.newString("[]"));
+    var aw: std.Io.Writer.Allocating = .init(client.gpa);
+    defer aw.deinit();
+    writeMessageParts(&aw.writer, &replica.session, mid) catch return ctx.newString("[]");
+    return ctx.newString(aw.written());
+}
+
 /// Convert the first argument to an owned C string, or null when absent. The caller frees it.
 fn keyArg(ctx: Context, args: []const Value) ?[:0]const u8 {
     if (args.len < 1) return null;
@@ -1036,6 +1048,7 @@ fn writeOutline(w: *std.Io.Writer, s: *domain.session.Session) !void {
         if (i > 0) try w.writeByte(',');
         const role = switch (entry.message) {
             .user => "user",
+            .compaction => "compaction",
             else => "assistant",
         };
         try w.print("{{\"id\":{d},\"type\":\"{s}\"", .{ entry.message.id(), role });
@@ -1088,6 +1101,52 @@ fn appendDraftText(w: *std.Io.Writer, d: domain.draft.Draft) !void {
         .text => |t| try w.writeAll(t.text.items),
         else => {},
     };
+}
+
+/// Write the assistant parts of one message as a JSON array. Skip user and compaction content.
+fn writeMessageParts(w: *std.Io.Writer, s: *domain.session.Session, mid: u64) !void {
+    try w.writeByte('[');
+    if (s.active) |*d| {
+        if (d.message_id == mid) {
+            for (d.parts.items, 0..) |*p, i| {
+                if (i > 0) try w.writeByte(',');
+                try writePart(w, domain.draft.partToWire(p));
+            }
+            try w.writeByte(']');
+            return;
+        }
+    }
+    for (s.committed.list.items) |entry| {
+        if (entry.message.id() != mid) continue;
+        switch (entry.message) {
+            .assistant => |a| {
+                for (a.content, 0..) |p, i| {
+                    if (i > 0) try w.writeByte(',');
+                    try writePart(w, p);
+                }
+            },
+            else => {},
+        }
+        try w.writeByte(']');
+        return;
+    }
+    try w.writeByte(']');
+}
+
+/// Project one part for the TUI. Drop redacted data and the reasoning signature.
+fn writePart(w: *std.Io.Writer, p: wire.message.AssistantPart) !void {
+    const opts: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
+    switch (p) {
+        .reasoning => |r| {
+            try w.writeAll("{\"type\":\"reasoning\",\"id\":");
+            try w.print("{d}", .{r.id});
+            try w.writeAll(",\"text\":");
+            try std.json.Stringify.encodeJsonString(r.text, .{}, w);
+            try w.writeByte('}');
+        },
+        .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
+        else => try std.json.Stringify.value(p, opts, w),
+    }
 }
 
 test "client map creates and destroys connections" {
@@ -1144,6 +1203,40 @@ test "the outline carries a failed message error" {
     );
 }
 
+test "the outline types a compaction message" {
+    const gpa = std.testing.allocator;
+    var sess = domain.session.Session.init(gpa, SessionId.bytes([_]u8{0} ** 16));
+    defer sess.deinit();
+    const messages = [_]wire.message.Message{.{ .compaction = .{
+        .id = 3,
+        .run_id = 1,
+        .reason = .auto,
+        .summary = "kept the tail",
+        .tokens_before = 100,
+        .tokens_after = 10,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 3, .messages = &messages, .configs = &.{}, .has_more = false });
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeOutline(&aw.writer, &sess);
+    try std.testing.expectEqualStrings(
+        "{\"messages\":[{\"id\":3,\"type\":\"compaction\"}],\"active\":null}",
+        aw.written(),
+    );
+
+    var tw: std.Io.Writer.Allocating = .init(gpa);
+    defer tw.deinit();
+    try writeMessageText(&tw.writer, &sess, 3);
+    try std.testing.expectEqualStrings("kept the tail", tw.written());
+
+    var pw: std.Io.Writer.Allocating = .init(gpa);
+    defer pw.deinit();
+    try writeMessageParts(&pw.writer, &sess, 3);
+    try std.testing.expectEqualStrings("[]", pw.written());
+}
+
 test "the outline and text project a streaming draft" {
     const gpa = std.testing.allocator;
     const sid = SessionId.bytes([_]u8{0} ** 16);
@@ -1188,6 +1281,83 @@ test "outline and text serialize a folded transcript" {
     defer tw.deinit();
     try writeMessageText(&tw.writer, &sess, 2);
     try std.testing.expectEqualStrings("hello", tw.written());
+}
+
+test "sessionParts projects a mixed draft and omits redacted data" {
+    const gpa = std.testing.allocator;
+    const sid = SessionId.bytes([_]u8{0} ** 16);
+    var sess = domain.session.Session.init(gpa, sid);
+    defer sess.deinit();
+    _ = try sess.applyBroadcast(.{ .message_started_data = .{ .session_id = sid, .message_id = 1, .run_id = 1, .config_rev = 0, .agent = "claude", .created_at_ms = 1 } });
+    _ = try sess.applyBroadcast(.{ .message_part_added_data = .{ .session_id = sid, .message_id = 1, .part = .{ .text = .{ .id = 0, .text = "hi" } } } });
+    _ = try sess.applyBroadcast(.{ .message_part_added_data = .{ .session_id = sid, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "why", .signature = "sig" } } } });
+    _ = try sess.applyBroadcast(.{ .message_part_added_data = .{ .session_id = sid, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 2, .data = "secret" } } } });
+    _ = try sess.applyBroadcast(.{ .message_part_added_data = .{ .session_id = sid, .message_id = 1, .part = .{ .tool = .{
+        .id = 3,
+        .name = "read",
+        .arguments = "{\"path\":\"a.zig\"}",
+        .state = .{ .pending = .{} },
+    } } } });
+
+    var tw: std.Io.Writer.Allocating = .init(gpa);
+    defer tw.deinit();
+    try writeMessageText(&tw.writer, &sess, 1);
+    try std.testing.expectEqualStrings("hi", tw.written());
+
+    var pw: std.Io.Writer.Allocating = .init(gpa);
+    defer pw.deinit();
+    try writeMessageParts(&pw.writer, &sess, 1);
+    try std.testing.expectEqualStrings(
+        "[{\"type\":\"text\",\"id\":0,\"text\":\"hi\"},{\"type\":\"reasoning\",\"id\":1,\"text\":\"why\"},{\"type\":\"redacted_reasoning\",\"id\":2},{\"type\":\"tool\",\"id\":3,\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.zig\\\"}\",\"state\":{\"type\":\"pending\"}}]",
+        pw.written(),
+    );
+
+    var missing: std.Io.Writer.Allocating = .init(gpa);
+    defer missing.deinit();
+    try writeMessageParts(&missing.writer, &sess, 99);
+    try std.testing.expectEqualStrings("[]", missing.written());
+}
+
+test "sessionParts serializes a committed tool view" {
+    const gpa = std.testing.allocator;
+    var sess = domain.session.Session.init(gpa, SessionId.bytes([_]u8{0} ** 16));
+    defer sess.deinit();
+    const hunk: wire.view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+b" } };
+    const file: wire.view.DiffFile = .{ .path = "a.txt", .hunks = &.{hunk} };
+    const views = [_]wire.view.View{.{ .diff = .{ .files = &.{file} } }};
+    const parts = [_]wire.message.AssistantPart{.{ .tool = .{
+        .id = 0,
+        .name = "edit",
+        .arguments = "{\"path\":\"a.txt\"}",
+        .state = .{ .completed = .{ .output = "ok", .view = &views, .duration_ms = 4 } },
+    } }};
+    const messages = [_]wire.message.Message{.{ .assistant = .{
+        .id = 2,
+        .run_id = 1,
+        .config_rev = 0,
+        .agent = "claude",
+        .content = &parts,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try sess.installSnapshot(.{ .base_seq = 1, .finalized_message_id = 2, .messages = &messages, .configs = &.{}, .has_more = false });
+
+    var pw: std.Io.Writer.Allocating = .init(gpa);
+    defer pw.deinit();
+    try writeMessageParts(&pw.writer, &sess, 2);
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, pw.written(), .{});
+    defer parsed.deinit();
+    const arr = parsed.value.array;
+    try std.testing.expectEqual(@as(usize, 1), arr.items.len);
+    const obj = arr.items[0].object;
+    try std.testing.expectEqualStrings("tool", obj.get("type").?.string);
+    try std.testing.expectEqualStrings("edit", obj.get("name").?.string);
+    const state = obj.get("state").?.object;
+    try std.testing.expectEqualStrings("completed", state.get("type").?.string);
+    try std.testing.expectEqualStrings("ok", state.get("output").?.string);
+    try std.testing.expectEqual(@as(i64, 4), state.get("duration_ms").?.integer);
+    const view0 = state.get("view").?.array.items[0].object;
+    try std.testing.expectEqualStrings("diff", view0.get("type").?.string);
+    try std.testing.expectEqualStrings("a.txt", view0.get("files").?.array.items[0].object.get("path").?.string);
 }
 
 const wss = websocket.server;
