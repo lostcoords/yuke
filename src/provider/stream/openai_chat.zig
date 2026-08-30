@@ -1,4 +1,5 @@
 //! The reducer maps OpenAI Chat Completions SSE data to `StreamEvent` values. The stream emits content blocks, then `[DONE]`.
+//! The dialect has no block-stop event, so a new block or `[DONE]` stops the open block.
 //! Deltas borrow caller `scratch`. Terminal results and `done` borrow reducer buffers until `deinit`. Malformed peer input returns `error.Protocol`.
 
 const std = @import("std");
@@ -27,8 +28,8 @@ const Block = struct {
 pub const Reducer = struct {
     gpa: std.mem.Allocator,
     blocks: std.ArrayList(Block) = .empty,
-    text_block: ?usize = null,
-    reasoning_block: ?usize = null,
+    /// The one open block. Blocks are sequential.
+    open_block: ?usize = null,
     usage: wire.message.TokenUsage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
     raw_stop_reason: []const u8 = "",
     stop_reason: wire.enums.StopReason = .unknown,
@@ -109,12 +110,7 @@ pub const Reducer = struct {
         }
 
         if (json.fieldStr(delta, "reasoning_content")) |text| {
-            const index = self.reasoning_block orelse blk: {
-                const started = try self.startBlock(.reasoning, null, "", "", out);
-                self.reasoning_block = started;
-                break :blk started;
-            };
-            try out.append(self.gpa, .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } });
+            try self.appendReasoningDelta(text, out);
         }
 
         if (json.fieldGet(delta, "tool_calls")) |tool_calls| switch (tool_calls) {
@@ -125,24 +121,39 @@ pub const Reducer = struct {
 
     fn appendTextDelta(self: *Reducer, text: []const u8, out: *std.ArrayList(StreamEvent)) Error!void {
         if (text.len == 0) return;
-        const index = self.text_block orelse blk: {
-            const started = try self.startBlock(.text, null, "", "", out);
-            self.text_block = started;
-            break :blk started;
-        };
+        const index = try self.openFor(.text, out);
         try out.append(self.gpa, .{ .text_delta = .{ .block = @intCast(index), .text = text } });
+    }
+
+    fn appendReasoningDelta(self: *Reducer, text: []const u8, out: *std.ArrayList(StreamEvent)) Error!void {
+        if (text.len == 0) return;
+        const index = try self.openFor(.reasoning, out);
+        try out.append(self.gpa, .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } });
+    }
+
+    /// Return the open block of `kind`. A block of another kind stops first.
+    fn openFor(self: *Reducer, kind: event.BlockKind, out: *std.ArrayList(StreamEvent)) Error!usize {
+        std.debug.assert(kind == .text or kind == .reasoning);
+        if (self.open_block) |index| {
+            if (self.blocks.items[index].kind == kind) return index;
+            try self.stopOpen(out);
+        }
+        return self.startBlock(kind, null, "", "", out);
     }
 
     fn onToolCall(self: *Reducer, call: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const index = try toolIndex(call);
         const function = json.fieldGet(call, "function") orelse return error.Protocol;
-        const block_index = self.findTool(index) orelse try self.startBlock(
-            .tool,
-            index,
-            json.fieldStr(call, "id") orelse "",
-            json.fieldStr(function, "name") orelse "",
-            out,
-        );
+        const block_index = self.findTool(index) orelse blk: {
+            try self.stopOpen(out);
+            break :blk try self.startBlock(
+                .tool,
+                index,
+                json.fieldStr(call, "id") orelse "",
+                json.fieldStr(function, "name") orelse "",
+                out,
+            );
+        };
         const block = &self.blocks.items[block_index];
         if (!block.open) return error.Protocol; // The decode boundary returns an error for closed stream state.
         std.debug.assert(block.kind == .tool); // The findTool call matched a tool block.
@@ -178,6 +189,7 @@ pub const Reducer = struct {
         name: []const u8,
         out: *std.ArrayList(StreamEvent),
     ) Error!usize {
+        std.debug.assert(self.open_block == null);
         if (self.blocks.items.len >= max_blocks) return error.Protocol;
         try self.blocks.append(self.gpa, .{ .kind = kind, .tool_index = tool_index });
         const index = self.blocks.items.len - 1;
@@ -186,6 +198,7 @@ pub const Reducer = struct {
         if (call_id.len != 0) block.call_id = try self.own(call_id);
         if (name.len != 0) block.name = try self.own(name);
         try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
+        self.open_block = index;
         return index;
     }
 
@@ -202,24 +215,29 @@ pub const Reducer = struct {
         destination.* = try self.own(bytes);
     }
 
+    /// Stop the open block. A stopped block never reopens.
+    fn stopOpen(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
+        const index = self.open_block orelse return;
+        const block = &self.blocks.items[index];
+        std.debug.assert(block.open);
+        const result: event.BlockResult = switch (block.kind) {
+            .text => .text,
+            .reasoning => .{ .reasoning = .{ .signature = "" } },
+            .redacted_reasoning => .{ .redacted_reasoning = .{ .data = "" } },
+            .tool => .{ .tool = .{
+                .call_id = block.call_id,
+                .name = block.name,
+                .arguments = if (block.args.items.len == 0) "{}" else block.args.items,
+            } },
+        };
+        try out.append(self.gpa, .{ .block_stopped = .{ .block = @intCast(index), .result = result } });
+        block.open = false;
+        self.open_block = null;
+    }
+
     fn onDone(self: *Reducer, out: *std.ArrayList(StreamEvent)) Error!void {
         if (self.done_emitted) return error.Protocol;
-
-        for (self.blocks.items, 0..) |*block, index| {
-            if (!block.open) continue;
-            block.open = false;
-            const result: event.BlockResult = switch (block.kind) {
-                .text => .text,
-                .reasoning => .{ .reasoning = .{ .signature = "" } },
-                .redacted_reasoning => .{ .redacted_reasoning = .{ .data = "" } },
-                .tool => .{ .tool = .{
-                    .call_id = block.call_id,
-                    .name = block.name,
-                    .arguments = if (block.args.items.len == 0) "{}" else block.args.items,
-                } },
-            };
-            try out.append(self.gpa, .{ .block_stopped = .{ .block = @intCast(index), .result = result } });
-        }
+        try self.stopOpen(out);
 
         self.done_emitted = true;
         try out.append(self.gpa, .{ .done = .{
@@ -331,7 +349,7 @@ test "tool turn: input deltas stream and the whole call surfaces at stop" {
     try testing.expectEqual(wire.enums.StopReason.tool_calls, h.out.items[4].done.stop_reason);
 }
 
-test "two parallel tool calls both close" {
+test "a second tool index stops the first block before it opens" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
@@ -346,11 +364,81 @@ test "two parallel tool calls both close" {
 
     try testing.expectEqual(@as(usize, 7), h.out.items.len);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[0].block_started.block);
-    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[2].block_started.block);
-    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[4].block_stopped.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[3].block_started.block);
     try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
-    try testing.expectEqualStrings("a", h.out.items[4].block_stopped.result.tool.call_id);
+    try testing.expectEqualStrings("a", h.out.items[2].block_stopped.result.tool.call_id);
     try testing.expectEqualStrings("b", h.out.items[5].block_stopped.result.tool.call_id);
+}
+
+test "reasoning then text gives two sequential blocks" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"reasoning_content":"why","role":"assistant"}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"content":"hi"}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        ,
+        "[DONE]",
+    });
+
+    try testing.expectEqual(@as(usize, 7), h.out.items.len);
+    try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("why", h.out.items[1].reasoning_delta.text);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
+    try testing.expectEqual(event.BlockKind.text, h.out.items[3].block_started.kind);
+    try testing.expectEqualStrings("hi", h.out.items[4].text_delta.text);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
+}
+
+test "text after a tool call stops the tool block first" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{}"}}]}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"content":"done"}}]}
+        ,
+        "[DONE]",
+    });
+
+    try testing.expectEqual(@as(usize, 7), h.out.items.len);
+    try testing.expectEqual(event.BlockKind.tool, h.out.items[0].block_started.kind);
+    try testing.expectEqualStrings("a", h.out.items[2].block_stopped.result.tool.call_id);
+    try testing.expectEqual(event.BlockKind.text, h.out.items[3].block_started.kind);
+    try testing.expectEqual(@as(event.BlockId, 1), h.out.items[5].block_stopped.block);
+}
+
+test "every block stops before the next block starts" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"choices":[{"index":0,"delta":{"reasoning_content":"r"}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"content":"t"}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{}"}}]}}]}
+        ,
+        \\{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{}"}}]}}]}
+        ,
+        "[DONE]",
+    });
+
+    var open: usize = 0;
+    for (h.out.items) |ev| switch (ev) {
+        .block_started => {
+            try testing.expectEqual(@as(usize, 0), open);
+            open += 1;
+        },
+        .block_stopped => {
+            try testing.expectEqual(@as(usize, 1), open);
+            open -= 1;
+        },
+        .done => try testing.expectEqual(@as(usize, 0), open),
+        else => {},
+    };
 }
 
 test "reasoning_content starts a reasoning block" {
