@@ -39,11 +39,10 @@ pub const CatalogListResultFull = struct {
     models: []const ModelInfo,
 };
 
-/// This type describes one configured provider. The daemon lists a provider that holds a
-/// credential, so a client can tell a usable provider from one that needs a new login.
+/// This type describes one configured provider. Its state tells a client whether it needs login.
 pub const ProviderInfo = struct {
     /// The left half of a `provider/model` selector.
-    id: []const u8,
+    id: ids.ProviderId,
     name: []const u8,
     source: enums.ProviderSource,
     state: enums.ProviderState,
@@ -61,23 +60,23 @@ pub const CatalogRefreshResult = struct {
 
 /// These costs use United States dollars per million tokens.
 pub const ModelCost = struct {
-    input: f64,
-    output: f64,
-    cache_read: f64,
-    cache_write: f64,
+    input: ?f64 = null,
+    output: ?f64 = null,
+    cache_read: ?f64 = null,
+    cache_write: ?f64 = null,
 };
 
 /// This type exposes a closed projection of a provider model record. Its fields borrow their data.
 pub const ModelInfo = struct {
     id: ids.ModelId,
-    provider: []const u8,
+    provider: ids.ProviderId,
     name: []const u8,
-    context_window: u64,
-    max_output_tokens: u64,
+    context_window: ?u64 = null,
+    max_output_tokens: ?u64 = null,
     reasoning_levels: []const []const u8,
     default_reasoning: []const u8,
-    supports_vision: bool,
-    supports_tools: bool,
+    supports_vision: ?bool = null,
+    supports_tools: ?bool = null,
     cost: ModelCost,
 };
 
@@ -95,4 +94,21 @@ test "catalog list result full round-trips without availability state" {
     defer buf.deinit();
     try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
     try testing.expectEqualStrings(input, buf.written());
+}
+
+test "model metadata may remain unknown" {
+    const input =
+        \\{"id":"m","provider":"p","name":"Model","reasoning_levels":[],"default_reasoning":"","cost":{}}
+    ;
+    const parsed = try std.json.parseFromSlice(ModelInfo, std.testing.allocator, input, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.context_window == null);
+    try std.testing.expect(parsed.value.max_output_tokens == null);
+    try std.testing.expect(parsed.value.supports_tools == null);
+    try std.testing.expect(parsed.value.cost.input == null);
+
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
+    try std.testing.expectEqualStrings(input, buf.written());
 }

@@ -1,6 +1,6 @@
 //! Own the merged provider catalog and resolve the providers a user can pick.
 //! `providers.json` always wins, then the cloud bundle, then the catalog for display data.
-//! A provider appears only when a credential is configured for it.
+//! A local provider needs a credential. Every account provider remains visible for login repair.
 
 const std = @import("std");
 const wire = @import("wire");
@@ -16,7 +16,6 @@ const EnvMap = std.process.Environ.Map;
 const no_cost: cloud_catalog.Cost = .{ .input = null, .output = null, .cache_read = null, .cache_write = null };
 
 /// One model in the shape every source shares. Every omitted value stays null.
-/// A source overrides only the request flags that it publishes.
 pub const ModelView = struct {
     id: []const u8,
     upstream_id: []const u8,
@@ -25,7 +24,8 @@ pub const ModelView = struct {
     max_output_tokens: ?u64 = null,
     cost: cloud_catalog.Cost = no_cost,
     reasoning_levels: []const ?[]const u8 = &.{},
-    flags: instance.ModelFlags = .{},
+    supports_tools: ?bool = null,
+    supports_vision: ?bool = null,
 };
 
 /// This route holds every value that one request needs. A provider that cannot be called has none.
@@ -130,6 +130,8 @@ fn defaultReasoning(levels: []const []const u8) []const u8 {
 
 /// Project one resolved model onto the public wire shape.
 fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, model: ModelView) !wire.catalog.ModelInfo {
+    std.debug.assert(wire.ids.isSelectorPart(provider_id));
+    std.debug.assert(wire.ids.isSelectorPart(model.id));
     var levels: std.ArrayList([]const u8) = .empty;
     for (model.reasoning_levels) |level| if (level) |value| try levels.append(arena, value);
 
@@ -137,17 +139,17 @@ fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, model: ModelView
         .id = model.id,
         .provider = provider_id,
         .name = model.name,
-        .context_window = model.context_window orelse 0,
-        .max_output_tokens = model.max_output_tokens orelse 0,
+        .context_window = model.context_window,
+        .max_output_tokens = model.max_output_tokens,
         .reasoning_levels = levels.items,
         .default_reasoning = defaultReasoning(levels.items),
-        .supports_vision = model.flags.supports_vision,
-        .supports_tools = model.flags.supports_tools,
+        .supports_vision = model.supports_vision,
+        .supports_tools = model.supports_tools,
         .cost = .{
-            .input = model.cost.input orelse 0,
-            .output = model.cost.output orelse 0,
-            .cache_read = model.cost.cache_read orelse 0,
-            .cache_write = model.cost.cache_write orelse 0,
+            .input = model.cost.input,
+            .output = model.cost.output,
+            .cache_read = model.cost.cache_read,
+            .cache_write = model.cost.cache_write,
         },
     };
 }
@@ -197,15 +199,12 @@ pub fn resolve(arena: std.mem.Allocator, sources: Sources) ![]const Resolved {
     if (sources.cloud) |doc| {
         for (doc.providers) |p| {
             if (claimed(out.items, p.id)) continue;
-            // A row with no credential is not configured. A dead one still shows, so the user
-            // knows to log in again.
-            if (!configured(p.auth)) continue;
             const route = bundleRoute(p);
             try out.append(arena, .{
                 .id = p.id,
                 .name = p.name,
                 .source = .cloud,
-                // A usable credential is not enough; an incomplete route still cannot serve a turn.
+                // An active credential is not enough; an incomplete route still cannot serve a turn.
                 .state = if (route != null) .ready else .needs_login,
                 // The bundle carries its own models. Its id is an account slug, so it never
                 // joins to a catalog id. An empty list means the cloud has not synced yet.
@@ -239,7 +238,7 @@ fn localRoute(p: provider.config.LocalProvider, from_catalog: ?cloud_catalog.Pro
 
 /// Build the route of a bundled provider. The bundle already carries every routing field.
 fn bundleRoute(p: bundle.Provider) ?Route {
-    if (!p.auth.usable()) return null;
+    if (p.auth.status != .active) return null;
     const base_url = p.base_url orelse return null;
     const protocol = p.protocol orelse return null;
 
@@ -278,14 +277,6 @@ fn bundleRoute(p: bundle.Provider) ?Route {
     };
 }
 
-/// Return true when the row holds a credential, whether it works or not.
-fn configured(auth: bundle.Auth) bool {
-    return switch (auth.kind) {
-        .api_key => auth.api_key != null or auth.status != .active,
-        .oauth => true,
-    };
-}
-
 fn claimed(rows: []const Resolved, id: []const u8) bool {
     for (rows) |r| if (std.mem.eql(u8, r.id, id)) return true;
     return false;
@@ -307,7 +298,8 @@ fn catalogModels(arena: std.mem.Allocator, row: ?cloud_catalog.Provider) ![]cons
         .max_output_tokens = m.limits.max_output_tokens,
         .cost = m.cost,
         .reasoning_levels = m.reasoning_levels,
-        .flags = .{ .supports_tools = m.flags.supports_tools, .supports_vision = m.flags.supports_vision },
+        .supports_tools = m.flags.supports_tools,
+        .supports_vision = m.flags.supports_vision,
     };
     return out;
 }
@@ -315,10 +307,6 @@ fn catalogModels(arena: std.mem.Allocator, row: ?cloud_catalog.Provider) ![]cons
 fn bundleModels(arena: std.mem.Allocator, models: []const bundle.Model) ![]const ModelView {
     const out = try arena.alloc(ModelView, models.len);
     for (models, 0..) |m, i| {
-        var flags: instance.ModelFlags = .{};
-        // The bundle publishes what it knows. An unknown capability keeps the default.
-        if (m.flags.supports_tools) |v| flags.supports_tools = v;
-        if (m.flags.supports_vision) |v| flags.supports_vision = v;
         out[i] = .{
             .id = m.id,
             .upstream_id = m.upstream_id,
@@ -327,7 +315,8 @@ fn bundleModels(arena: std.mem.Allocator, models: []const bundle.Model) ![]const
             .max_output_tokens = m.limits.max_output_tokens,
             .cost = m.cost,
             .reasoning_levels = m.reasoning_levels,
-            .flags = flags,
+            .supports_tools = m.flags.supports_tools,
+            .supports_vision = m.flags.supports_vision,
         };
     }
     return out;
@@ -343,7 +332,8 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         .context_window = m.limits.context_window,
         .max_output_tokens = m.limits.max_output_tokens,
         .cost = .{ .input = m.cost.input, .output = m.cost.output, .cache_read = m.cost.cache_read, .cache_write = m.cost.cache_write },
-        .flags = m.flags,
+        .supports_tools = m.flags.supports_tools,
+        .supports_vision = m.flags.supports_vision,
     };
     return out;
 }
@@ -396,9 +386,8 @@ test "a cloud provider takes its name, models and ready state from the bundle" {
     try testing.expectEqual(wire.enums.ProviderSource.cloud, rows[0].source);
     try testing.expectEqual(wire.enums.ProviderState.ready, rows[0].state);
     try testing.expectEqualStrings("grok-5", rows[0].models[0].id);
-    // The bundle published no flags, so the model keeps the defaults.
-    try testing.expect(rows[0].models[0].flags.supports_tools);
-    try testing.expect(!rows[0].models[0].flags.supports_vision);
+    try testing.expect(rows[0].models[0].supports_tools == null);
+    try testing.expect(rows[0].models[0].supports_vision == null);
 }
 
 test "a dead grant still appears so the user can log in again" {

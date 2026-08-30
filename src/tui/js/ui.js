@@ -589,7 +589,6 @@ export class Transcript {
     // A selection holds two logical positions, `{ id, row, col }`. `row` counts the rendered rows
     // of that message and `col` is a string index into the row text.
     this.selection = null;
-    this.caret = null;
     this._dragging = false;
     this._press = null;
     this.onSelect = opts.onSelect || null;
@@ -625,12 +624,6 @@ export class Transcript {
   _cmpPos(a, b) {
     if (a.id !== b.id) return this._indexOf(a.id) - this._indexOf(b.id);
     return a.row !== b.row ? a.row - b.row : a.col - b.col;
-  }
-
-  cursor() {
-    if (!this.caret) return null;
-    const at = this.screenAt(this.caret);
-    return at ? { x: at.x, y: at.y, visible: true } : { x: 0, y: 0, visible: false };
   }
 
   // The pane draws something else in this space, so a click must not hit a row that left it.
@@ -1359,7 +1352,6 @@ export class ChatView {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.transcript = new Transcript({ textOf: opts.textOf, onSelect: opts.onSelect, empty: opts.empty });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
-    this.focus = "composer";
   }
 
   get name() {
@@ -1398,10 +1390,6 @@ export class ChatView {
   }
 
   cursor() {
-    if (this.focus === "transcript") {
-      const c = this.transcript.cursor();
-      if (c) return c;
-    }
     return this.composer.cursor();
   }
 }

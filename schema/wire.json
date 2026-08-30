@@ -1087,7 +1087,7 @@
     },
     {
       "name": "ProviderInfo",
-      "doc": "This type describes one configured provider. The daemon lists a provider that holds a credential, so a client can tell a usable provider from one that needs a new login.",
+      "doc": "This type describes one configured provider. Its state tells a client whether it needs login.",
       "fields": [
         {
           "name": "id",
@@ -1141,22 +1141,22 @@
         {
           "name": "input",
           "type": "f64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "output",
           "type": "f64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "cache_read",
           "type": "f64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "cache_write",
           "type": "f64",
-          "presence": "required"
+          "presence": "optional"
         }
       ]
     },
@@ -1182,12 +1182,12 @@
         {
           "name": "context_window",
           "type": "u64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "max_output_tokens",
           "type": "u64",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "reasoning_levels",
@@ -1202,12 +1202,12 @@
         {
           "name": "supports_vision",
           "type": "bool",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "supports_tools",
           "type": "bool",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "cost",

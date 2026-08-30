@@ -3,6 +3,7 @@
 //! names only an id and a key is complete. The owner zeroes each literal key.
 
 const std = @import("std");
+const wire = @import("wire");
 const instance = @import("../instance/instance.zig");
 const resolve = @import("../instance/resolve.zig");
 
@@ -19,6 +20,7 @@ pub const Error = error{
     DuplicateProvider,
     DuplicateModel,
     EmptyId,
+    BadId,
     BadUrl,
     BadEnvName,
     BadLiteral,
@@ -183,6 +185,7 @@ fn resolveDoc(gpa: Allocator, doc: FileDoc, source_json: []const u8) !Loaded {
 
 fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json: []const u8) !LocalProvider {
     if (fp.id.len == 0) return error.EmptyId;
+    if (!wire.ids.isSelectorPart(fp.id)) return error.BadId;
     if (fp.base_url) |url| try checkUrl(url);
     // Exactly one credential form. Both or neither leaves the entry ambiguous.
     if ((fp.auth == null) == (fp.api_key == null)) return error.MissingCredential;
@@ -226,6 +229,7 @@ fn resolveProvider(out: *Loaded, arena: Allocator, fp: FileProvider, source_json
     const models = try arena.alloc(instance.ModelBinding, fp.models.len);
     for (fp.models, 0..) |fm, i| {
         if (fm.id.len == 0) return error.EmptyId;
+        if (!wire.ids.isSelectorPart(fm.id)) return error.BadId;
         for (fp.models[0..i]) |prev| {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
@@ -423,6 +427,16 @@ test "duplicate provider and model ids are rejected" {
         \\{"id":"p","base_url":"https://a.example/v1","protocol":"anthropic_messages","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}},
         \\ "models":[{"id":"m","upstream_id":"a","limits":{"context_window":1,"max_output_tokens":1}},
         \\           {"id":"m","upstream_id":"b","limits":{"context_window":1,"max_output_tokens":1}}]}
+    )));
+}
+
+test "selector ids reject a slash or whitespace" {
+    try testing.expectError(error.BadId, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"bad/provider","api_key":"k"}
+    )));
+    try testing.expectError(error.BadId, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"provider","api_key":"k","models":[{"id":"bad model","upstream_id":"upstream/model",
+        \\ "limits":{"context_window":1,"max_output_tokens":1}}]}
     )));
 }
 

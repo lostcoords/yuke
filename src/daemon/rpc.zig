@@ -2228,9 +2228,9 @@ test "catalog.list projects stored models and honors a matching revision" {
     const m = result.full.models[0];
     try std.testing.expectEqualStrings("m", m.id);
     try std.testing.expectEqualStrings("anthropic", m.provider);
-    try std.testing.expectEqual(@as(u64, 200000), m.context_window);
-    try std.testing.expectEqual(@as(u64, 0), m.max_output_tokens); // A null limit reads as zero.
-    try std.testing.expectEqual(@as(f64, 0), m.cost.cache_write);
+    try std.testing.expectEqual(@as(?u64, 200000), m.context_window);
+    try std.testing.expect(m.max_output_tokens == null);
+    try std.testing.expect(m.cost.cache_write == null);
     try std.testing.expectEqual(@as(usize, 2), m.reasoning_levels.len); // The null level is gone.
     try std.testing.expectEqualStrings("medium", m.default_reasoning);
 

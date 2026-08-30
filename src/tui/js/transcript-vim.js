@@ -35,8 +35,6 @@ function anchor(t, s) {
 
 function place(view, s) {
   const t = view.transcript;
-  t.caret = s.cursor;
-  view.focus = s.on ? "transcript" : "composer";
   anchor(t, s);
   root.invalidate();
   return true;
@@ -50,23 +48,24 @@ function reanchor(t, s) {
 
 function seed(view, s) {
   const t = view.transcript;
-  if (s.cursor && t.screenAt(s.cursor)) {
-    t.caret = s.cursor;
-    return;
-  }
+  if (s.cursor && t.screenAt(s.cursor)) return;
   const r = t.pager.rect();
   for (let y = r ? r.y + r.h - 1 : -1; r && y >= r.y; y--) {
     const pos = t.posAt(r.x, y, false);
     if (pos && rowOf(t, pos) !== "") {
       s.cursor = pos;
-      t.caret = pos;
       anchor(t, s);
       return;
     }
   }
   toEnd(t, s, true);
-  t.caret = s.cursor;
   anchor(t, s);
+}
+
+function cursorOf(t, pos) {
+  if (!pos) return null;
+  const at = t.screenAt(pos);
+  return at ? { x: at.x, y: at.y, visible: true } : { x: 0, y: 0, visible: false };
 }
 
 function stepCol(t, s, d) {
@@ -235,8 +234,6 @@ export const transcriptVim = {
       s.on = !s.on;
       s.pending = "";
       if (s.on) seed(v, s);
-      else v.transcript.caret = null;
-      v.focus = s.on ? "transcript" : "composer";
       root.invalidate();
     };
 
@@ -318,8 +315,7 @@ export const transcriptVim = {
       if (!s || !s.on) return inner();
       if (!s.cursor) seed(this, s);
       reanchor(this.transcript, s);
-      this.transcript.caret = s.cursor;
-      return inner();
+      return cursorOf(this.transcript, s.cursor) || inner();
     });
 
     ctx.advise(ChatView.prototype, "onMouse", "around", function (inner, ev) {
@@ -346,8 +342,6 @@ export const transcriptVim = {
       const view = chatView();
       if (view) {
         panes.delete(view);
-        view.focus = "composer";
-        view.transcript.caret = null;
         view.transcript.clearSelection();
       }
       root.invalidate();

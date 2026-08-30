@@ -67,13 +67,22 @@ pub const SessionRevision = u64;
 /// This numeric value identifies a run configuration revision.
 pub const ConfigRev = u64;
 
-// Opaque string IDs use plain slices.
-/// This opaque string identifies a provider.
+// String IDs use plain slices.
+/// This string identifies a provider.
 pub const ProviderId = []const u8;
-/// This opaque string identifies a model.
+/// This string identifies a model.
 pub const ModelId = []const u8;
-/// This opaque string identifies a request.
+/// This string identifies a request.
 pub const RequestId = []const u8;
+
+/// Return true when an ID can form one half of a `provider/model` selector.
+pub fn isSelectorPart(bytes: []const u8) bool {
+    if (bytes.len == 0) return false;
+    for (bytes) |c| {
+        if (c == '/' or std.ascii.isWhitespace(c) or std.ascii.isControl(c)) return false;
+    }
+    return true;
+}
 
 /// Return true when every byte is a lowercase hexadecimal digit. This check keeps `[N]u8` IDs safe in paths.
 pub fn isLowerHex(bytes: []const u8) bool {
@@ -88,6 +97,15 @@ test isLowerHex {
     try std.testing.expect(isLowerHex("0123456789abcdef"));
     try std.testing.expect(!isLowerHex("0123456789ABCDEF")); // Reject uppercase hexadecimal.
     try std.testing.expect(!isLowerHex("../etc/passwd_xx")); // Reject path characters.
+}
+
+test isSelectorPart {
+    try std.testing.expect(isSelectorPart("openai"));
+    try std.testing.expect(isSelectorPart("claude-4.1:fast"));
+    try std.testing.expect(!isSelectorPart(""));
+    try std.testing.expect(!isSelectorPart("open/router"));
+    try std.testing.expect(!isSelectorPart(" leading"));
+    try std.testing.expect(!isSelectorPart("line\nbreak"));
 }
 
 test "HexId encodes lowercase hex and rejects uppercase or a wrong length" {

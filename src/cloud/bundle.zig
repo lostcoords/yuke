@@ -2,6 +2,7 @@
 //! it in memory and never writes it down. It is the routing source; the catalog is for display.
 
 const std = @import("std");
+const wire = @import("wire");
 const catalog = @import("catalog.zig");
 const provider = @import("../provider/provider.zig");
 
@@ -36,15 +37,6 @@ pub const Auth = struct {
     access_token: ?[]const u8 = null,
     expires_at_ms: ?u64 = null,
     account_id: ?[]const u8 = null,
-
-    /// Return true when this credential can sign a request now.
-    pub fn usable(self: Auth) bool {
-        if (self.status != .active) return false;
-        return switch (self.kind) {
-            .api_key => self.api_key != null and self.header != null,
-            .oauth => self.access_token != null,
-        };
-    }
 };
 
 /// The bundle publishes what it knows. An unknown capability stays null rather than a guess.
@@ -100,7 +92,7 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
     if (doc.providers.len > max_providers) return error.InvalidDocument;
 
     for (doc.providers, 0..) |p, i| {
-        if (!bounded(p.id, max_id_bytes)) return error.InvalidDocument;
+        if (!bounded(p.id, max_id_bytes) or !wire.ids.isSelectorPart(p.id)) return error.InvalidDocument;
         if (!bounded(p.public_id, max_id_bytes)) return error.InvalidDocument;
         // A duplicate id or public id makes one selector ambiguous.
         for (doc.providers[0..i]) |prev| {
@@ -113,9 +105,14 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
 
         if (p.auth.api_key) |key| if (!bounded(key, max_secret_bytes)) return error.InvalidDocument;
         if (p.auth.access_token) |token| if (!bounded(token, max_secret_bytes)) return error.InvalidDocument;
+        switch (p.auth.kind) {
+            .api_key => if (p.auth.status == .active and p.auth.api_key == null) return error.InvalidDocument,
+            .oauth => if (p.auth.status == .active and p.auth.access_token == null) return error.InvalidDocument,
+        }
 
         for (p.models, 0..) |m, j| {
-            if (!bounded(m.id, max_id_bytes) or !bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
+            if (!bounded(m.id, max_id_bytes) or !wire.ids.isSelectorPart(m.id)) return error.InvalidDocument;
+            if (!bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
             for (p.models[0..j]) |prev| if (std.mem.eql(u8, prev.id, m.id)) return error.InvalidDocument;
         }
     }
@@ -141,7 +138,7 @@ test "decode reads an active api-key provider" {
     );
     const p = doc.providers[0];
     try testing.expectEqualStrings("abc123", p.public_id);
-    try testing.expect(p.auth.usable());
+    try testing.expectEqual(Status.active, p.auth.status);
     try testing.expectEqualStrings("sk-live", p.auth.api_key.?);
     try testing.expect(p.auth.access_token == null);
 }
@@ -159,7 +156,6 @@ test "a dead grant keeps its expiry and drops its token" {
     );
     const p = doc.providers[0];
     try testing.expectEqual(Status.reauth_required, p.auth.status);
-    try testing.expect(!p.auth.usable()); // The expiry does not make it live.
     try testing.expectEqual(@as(u64, 1700000000000), p.auth.expires_at_ms.?);
     try testing.expectEqualStrings("acct-1", p.auth.account_id.?);
     try testing.expect(doc.catalog_rev == null);
@@ -181,7 +177,7 @@ test "decode accepts a model the feed does not describe" {
         \\ "flags":{},"reasoning":null,"reasoning_levels":[],"status":null}]}]}
     );
     const p = doc.providers[0];
-    try testing.expect(p.auth.usable());
+    try testing.expectEqual(Status.active, p.auth.status);
 
     const m = p.models[0];
     try testing.expect(m.flags.supports_tools == null); // Unknown, not false.
@@ -190,7 +186,7 @@ test "decode accepts a model the feed does not describe" {
     try testing.expect(m.limits.context_window == null);
 }
 
-test "an api-key provider with no stored key is not usable" {
+test "a dead api-key provider may omit its key" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
 
@@ -199,7 +195,8 @@ test "an api-key provider with no stored key is not usable" {
         \\ "base_url":"https://acme.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
         \\ "auth":{"kind":"api_key","header":"authorization_bearer","status":"revoked"},"models":[]}]}
     );
-    try testing.expect(!doc.providers[0].auth.usable());
+    try testing.expectEqual(Status.revoked, doc.providers[0].auth.status);
+    try testing.expect(doc.providers[0].auth.api_key == null);
 }
 
 test "decode rejects a bad version, a bad revision, and an incomplete route" {
@@ -219,6 +216,42 @@ test "decode rejects a bad version, a bad revision, and an incomplete route" {
         \\ "auth":{"kind":"api_key","status":"active"},"models":[]}]}
     ));
     try testing.expectError(error.InvalidDocument, decode(a, "not json"));
+}
+
+test "decode rejects an active credential with no secret" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"key","public_id":"p1","name":"Key",
+        \\ "base_url":"https://key.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"api_key","header":"authorization_bearer","status":"active"},"models":[]}]}
+    ));
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"oauth","public_id":"p2","name":"OAuth",
+        \\ "base_url":"https://oauth.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"oauth","flow":"future","status":"active"},"models":[]}]}
+    ));
+}
+
+test "decode rejects a slash in a selector id" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"bad/provider","public_id":"opaque/value","name":"Bad",
+        \\ "base_url":null,"protocol":null,"cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"api_key","status":"revoked"},"models":[]}]}
+    ));
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"provider","public_id":"opaque/value","name":"Bad",
+        \\ "base_url":null,"protocol":null,"cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"api_key","status":"revoked"},"models":[{"id":"bad/model","upstream_id":"upstream/model",
+        \\ "name":"Bad","limits":{"context_window":null,"max_output_tokens":null},
+        \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null}}]}]}
+    ));
 }
 
 test "an empty account decodes to no providers" {

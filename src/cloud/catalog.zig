@@ -2,6 +2,7 @@
 //! carry no route. This file performs no input and no output, and never asserts on the document.
 
 const std = @import("std");
+const wire = @import("wire");
 const provider = @import("../provider/provider.zig");
 
 const instance = provider.instance;
@@ -103,7 +104,8 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
 
     var models: usize = 0;
     for (doc.providers, 0..) |p, i| {
-        if (!bounded(p.id, max_id_bytes) or !bounded(p.name, max_name_bytes)) return error.InvalidDocument;
+        if (!bounded(p.id, max_id_bytes) or !wire.ids.isSelectorPart(p.id)) return error.InvalidDocument;
+        if (!bounded(p.name, max_name_bytes)) return error.InvalidDocument;
         // A duplicate id makes one selector ambiguous, so it never reaches the store.
         for (doc.providers[0..i]) |prev| if (std.mem.eql(u8, prev.id, p.id)) return error.InvalidDocument;
         if (p.base_url) |url| if (!bounded(url, max_url_bytes)) return error.InvalidDocument;
@@ -119,7 +121,8 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
         models += p.models.len;
         if (models > max_models) return error.InvalidDocument;
         for (p.models, 0..) |m, j| {
-            if (!bounded(m.id, max_id_bytes) or !bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
+            if (!bounded(m.id, max_id_bytes) or !wire.ids.isSelectorPart(m.id)) return error.InvalidDocument;
+            if (!bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
             for (p.models[0..j]) |prev| if (std.mem.eql(u8, prev.id, m.id)) return error.InvalidDocument;
         }
     }
@@ -196,6 +199,27 @@ test "decode tolerates a null level, a null limit, and a null price" {
     try testing.expect(m.reasoning_levels[0] == null);
     try testing.expectEqualStrings("low", m.reasoning_levels[1].?);
     try testing.expectEqualStrings("beta", m.status.?);
+}
+
+test "decode rejects a slash in a selector id" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[
+        \\ {"id":"bad/provider","name":"Bad","base_url":null,"protocol":null,"auth":null,
+        \\ "cache":"unsupported","headers":[],"models":[]}]}
+    ));
+    try testing.expectError(error.InvalidDocument, decode(a,
+        \\{"version":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[
+        \\ {"id":"provider","name":"Bad","base_url":null,"protocol":null,"auth":null,
+        \\ "cache":"unsupported","headers":[],"models":[{"id":"bad/model","upstream_id":"upstream/model","name":"Bad",
+        \\ "limits":{"context_window":null,"max_output_tokens":null},
+        \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},
+        \\ "flags":{"supports_tools":false,"supports_vision":false},"reasoning":false,
+        \\ "reasoning_levels":[],"status":null}]}]}
+    ));
 }
 
 test "decode keeps an unroutable provider visible" {

@@ -86,7 +86,6 @@ pub const ProviderInstance = struct {
     auth: Auth,
     headers: []const Header = &.{},
     cache: CachePolicy = .unsupported,
-    models: []const ModelBinding = &.{},
 };
 
 const testing = std.testing;
