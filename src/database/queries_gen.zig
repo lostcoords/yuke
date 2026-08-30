@@ -32,10 +32,12 @@ pub const SetRev = sql.ExecQuery(
     },
 );
 
-pub const SelectProviders = sql.ManyQuery(
-    \\SELECT data FROM catalog_providers ORDER BY id;
+pub const SelectProvider = sql.OptionalQuery(
+    \\SELECT data FROM catalog_providers WHERE id = :id;
 ,
-    struct {},
+    struct {
+        id: []const u8,
+    },
     struct {
         data: []const u8,
     },
@@ -850,7 +852,7 @@ pub const Queries = struct {
     insert_provider: InsertProvider,
     set_etag: SetEtag,
     set_rev: SetRev,
-    select_providers: SelectProviders,
+    select_provider: SelectProvider,
     get_etag: GetEtag,
     get_rev: GetRev,
     insert_config: InsertConfig,

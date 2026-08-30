@@ -14,9 +14,10 @@ INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('etag', :v);
 -- v: []const u8!
 INSERT OR REPLACE INTO catalog_meta (k, v) VALUES ('rev', :v);
 
--- name: SelectProviders :many
+-- name: SelectProvider :optional
+-- id: []const u8!
 -- data: []const u8!
-SELECT data FROM catalog_providers ORDER BY id;
+SELECT data FROM catalog_providers WHERE id = :id;
 
 -- name: GetEtag :optional
 -- v: []const u8!

@@ -41,15 +41,10 @@ pub fn replace(
 }
 
 /// Load every provider into `arena` in id order. The result borrows `arena`.
-pub fn providers(db: *Database, arena: std.mem.Allocator) ![]const Provider {
-    var it = try db.queries.select_providers.rows(.{});
-    defer it.deinit();
-
-    var out: std.ArrayList(Provider) = .empty;
-    while (try it.next(arena)) |row| {
-        try out.append(arena, try std.json.parseFromSliceLeaky(Provider, arena, row.value.data, parse_opts));
-    }
-    return out.items;
+/// Return the stored row for one provider id, or null. The result borrows `arena`.
+pub fn provider(db: *Database, arena: std.mem.Allocator, id: []const u8) !?Provider {
+    const row = (try db.queries.select_provider.maybeOne(arena, .{ .id = id })) orelse return null;
+    return try std.json.parseFromSliceLeaky(Provider, arena, row.value.data, parse_opts);
 }
 
 /// Return the stored revision from `arena`, or null. The result borrows `arena`.
@@ -101,12 +96,11 @@ test "a snapshot round-trips a provider with its models" {
 
     try replace(&db, a, &.{sample("acme", &.{one_model})}, rev_one, "etag-1");
 
-    const got = try providers(&db, a);
-    try testing.expectEqual(@as(usize, 1), got.len);
-    try testing.expectEqualStrings("acme", got[0].id);
-    try testing.expect(got[0].routable());
+    const got = (try provider(&db, a, "acme")).?;
+    try testing.expectEqualStrings("acme", got.id);
+    try testing.expect(got.routable());
 
-    const m = got[0].models[0];
+    const m = got.models[0];
     try testing.expectEqualStrings("upstream-1", m.upstream_id);
     try testing.expectEqual(@as(u64, 128000), m.limits.context_window.?);
     try testing.expect(m.cost.cache_write == null); // A null price survives the round trip.
@@ -127,9 +121,8 @@ test "a second replace overwrites the prior snapshot" {
     try replace(&db, a, &.{ sample("p1", &.{}), sample("p2", &.{}) }, rev_one, "e1");
     try replace(&db, a, &.{sample("p2", &.{})}, rev_two, "e2");
 
-    const got = try providers(&db, a);
-    try testing.expectEqual(@as(usize, 1), got.len);
-    try testing.expectEqualStrings("p2", got[0].id);
+    try testing.expect((try provider(&db, a, "p1")) == null); // The replace dropped the old row.
+    try testing.expectEqualStrings("p2", (try provider(&db, a, "p2")).?.id);
     try testing.expectEqualStrings(rev_two, (try rev(&db, a)).?);
     try testing.expectEqualStrings("e2", (try etag(&db, a)).?);
 }
@@ -141,7 +134,7 @@ test "an empty snapshot reads back with no revision" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    try testing.expectEqual(@as(usize, 0), (try providers(&db, a)).len);
+    try testing.expect((try provider(&db, a, "acme")) == null);
     try testing.expect((try rev(&db, a)) == null);
     try testing.expect((try etag(&db, a)) == null);
 }
@@ -159,7 +152,7 @@ test "an unroutable provider survives storage" {
     row.auth = null;
     try replace(&db, a, &.{row}, rev_one, "e1");
 
-    const got = try providers(&db, a);
-    try testing.expect(!got[0].routable());
-    try testing.expectEqualStrings("unrouted", got[0].id);
+    const got = (try provider(&db, a, "unrouted")).?;
+    try testing.expect(!got.routable());
+    try testing.expectEqualStrings("unrouted", got.id);
 }

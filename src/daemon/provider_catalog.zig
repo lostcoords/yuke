@@ -121,7 +121,7 @@ pub const Catalog = struct {
         const arena = self.arena.allocator();
 
         var merged_sources = sources;
-        merged_sources.catalog = try catalog_store.providers(db, arena);
+        merged_sources.catalog = try storedRows(db, arena, sources.local);
         self.rows = try resolve(arena, merged_sources);
 
         const providers = try arena.alloc(wire.catalog.ProviderInfo, self.rows.len);
@@ -146,6 +146,17 @@ pub const Catalog = struct {
         return findModel(self.rows, qualified);
     }
 };
+
+/// Read the catalog row of each configured provider. The snapshot does not parse the other rows.
+fn storedRows(db: *Database, arena: std.mem.Allocator, local: ?*const provider.config.Loaded) ![]const cloud_catalog.Provider {
+    const loaded = local orelse return &.{};
+    var out: std.ArrayList(cloud_catalog.Provider) = .empty;
+    try out.ensureTotalCapacityPrecise(arena, loaded.providers.len);
+    for (loaded.providers) |p| {
+        if (try catalog_store.provider(db, arena, p.id)) |row| out.appendAssumeCapacity(row);
+    }
+    return out.items;
+}
 
 /// Choose the effort a client uses when the user picks none. Prefer `medium`, else the middle level.
 fn defaultReasoning(levels: []const []const u8) []const u8 {
