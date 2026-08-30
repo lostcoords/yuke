@@ -43,6 +43,12 @@ pub const Auth = struct {
 pub const Flags = struct {
     supports_tools: ?bool = null,
     supports_vision: ?bool = null,
+    /// The OpenAI-chat thinking dialect. An unknown name degrades to no control.
+    thinking_format: ?[]const u8 = null,
+    /// Compatible hosts take `adaptive` in place of a token budget.
+    anthropic_adaptive: ?bool = null,
+    reasoning_budget_min: ?i64 = null,
+    reasoning_budget_max: ?u64 = null,
 };
 
 /// One bundled model. The bundle is looser than the catalog: a model the feed does not describe

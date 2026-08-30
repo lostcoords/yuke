@@ -57,12 +57,44 @@ pub const Tool = struct {
     strict: bool = false,
 };
 
+/// A named reasoning effort. The set is closed: the catalog only publishes these.
+pub const Effort = enum { minimal, low, medium, high, xhigh, max };
+
+/// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
+pub const ThinkingFormat = enum {
+    none,
+    openai,
+    openrouter,
+    deepseek,
+    zai,
+    qwen,
+    together,
+    @"string-thinking",
+    @"ant-ling",
+};
+
+/// The reasoning control one request asks for, resolved against the model.
+pub const ReasoningControl = union(enum) {
+    /// Omit the control. The endpoint default stays.
+    default,
+    /// Ask for no reasoning. Some hosts accept the field and reason again.
+    off,
+    /// Let the model choose when and how much to think.
+    adaptive,
+    /// A thinking-token budget, clamped below `max_output_tokens`.
+    budget: u64,
+    effort: Effort,
+};
+
 /// A provider request without the transcript. The daemon assembles it per turn.
 pub const Request = struct {
     model: []const u8,
     system: []const u8 = "",
     tools: []const Tool = &.{},
     max_output_tokens: u32,
+    reasoning: ReasoningControl = .default,
+    /// Only OpenAI-chat reads this field.
+    thinking_format: ThinkingFormat = .none,
 };
 
 /// These options control the transcript fold.

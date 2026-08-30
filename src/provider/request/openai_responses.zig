@@ -28,6 +28,12 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("max_output_tokens");
     try jw.write(request.max_output_tokens);
 
+    // Responses reasons by default, so only an effort is necessary.
+    switch (request.reasoning) {
+        .effort => |effort| try json.nested(&jw, "reasoning", "effort", @tagName(effort)),
+        .default, .off, .adaptive, .budget => {},
+    }
+
     if (request.system.len != 0) {
         try jw.objectField("instructions");
         try jw.write(request.system);
@@ -183,6 +189,17 @@ test "a plain user turn with a system prompt" {
         \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .system = "be brief", .max_output_tokens = 1024 },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "a named effort rides on the responses request" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"reasoning":{"effort":"high"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
         .{},
     );

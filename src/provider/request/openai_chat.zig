@@ -18,13 +18,10 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(request.model);
     try jw.objectField("stream");
     try jw.write(true);
-    try jw.objectField("stream_options");
-    try jw.beginObject();
-    try jw.objectField("include_usage");
-    try jw.write(true);
-    try jw.endObject();
+    try json.nested(&jw, "stream_options", "include_usage", true);
     try jw.objectField("max_completion_tokens");
     try jw.write(request.max_output_tokens);
+    try writeReasoning(&jw, request.thinking_format, request.reasoning);
 
     if (request.tools.len != 0) {
         try jw.objectField("tools");
@@ -209,6 +206,48 @@ fn writeImageSource(jw: *std.json.Stringify, source: wire.content.MediaSource) !
     }
 }
 
+/// Write the reasoning control in the dialect of the host. Anthropic shapes write nothing.
+fn writeReasoning(
+    jw: *std.json.Stringify,
+    format: ir.ThinkingFormat,
+    reasoning: ir.ReasoningControl,
+) !void {
+    if (format == .none) return;
+    const level: []const u8 = switch (reasoning) {
+        .off => "none",
+        .effort => |effort| @tagName(effort),
+        .default, .adaptive, .budget => return,
+    };
+    const on = reasoning != .off;
+    const switch_shape: []const u8 = if (on) "enabled" else "disabled";
+
+    switch (format) {
+        .none => unreachable,
+        .openai => try json.field(jw, "reasoning_effort", level),
+        .openrouter => try json.nested(jw, "reasoning", "effort", level),
+        .together => try json.nested(jw, "reasoning", "enabled", on),
+        .qwen => {
+            try jw.objectField("enable_thinking");
+            try jw.write(on);
+        },
+        .@"string-thinking" => try json.field(jw, "thinking", level),
+        .@"ant-ling" => if (on) try json.nested(jw, "reasoning", "effort", level),
+        .deepseek => {
+            try json.nested(jw, "thinking", "type", switch_shape);
+            if (on) try json.field(jw, "reasoning_effort", level);
+        },
+        // Only zai adds a second member, so it cannot use the shared shape.
+        .zai => {
+            try jw.objectField("thinking");
+            try jw.beginObject();
+            try json.field(jw, "type", switch_shape);
+            try jw.objectField("clear_thinking");
+            try jw.write(false);
+            try jw.endObject();
+        },
+    }
+}
+
 const testing = std.testing;
 
 fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
@@ -216,6 +255,72 @@ fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestI
     defer buf.deinit();
     try serialize(&buf.writer, request, request_ir, options);
     try testing.expectEqualStrings(expected, buf.written());
+}
+
+test "each host dialect spells the reasoning control its own way" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    const cases = [_]struct { format: ir.ThinkingFormat, expected: []const u8 }{
+        .{ .format = .openai, .expected = "\"reasoning_effort\":\"high\"" },
+        .{ .format = .openrouter, .expected = "\"reasoning\":{\"effort\":\"high\"}" },
+        .{ .format = .deepseek, .expected = "\"thinking\":{\"type\":\"enabled\"},\"reasoning_effort\":\"high\"" },
+        .{ .format = .zai, .expected = "\"thinking\":{\"type\":\"enabled\",\"clear_thinking\":false}" },
+        .{ .format = .qwen, .expected = "\"enable_thinking\":true" },
+        .{ .format = .together, .expected = "\"reasoning\":{\"enabled\":true}" },
+        .{ .format = .@"string-thinking", .expected = "\"thinking\":\"high\"" },
+        .{ .format = .@"ant-ling", .expected = "\"reasoning\":{\"effort\":\"high\"}" },
+    };
+    for (cases) |case| {
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+        try serialize(&buf.writer, .{
+            .model = "m",
+            .max_output_tokens = 8,
+            .reasoning = .{ .effort = .high },
+            .thinking_format = case.format,
+        }, .{ .blocks = &blocks }, .{});
+        try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
+    }
+}
+
+test "off disables thinking in the dialect that has a switch" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    const cases = [_]struct { format: ir.ThinkingFormat, expected: []const u8 }{
+        .{ .format = .qwen, .expected = "\"enable_thinking\":false" },
+        .{ .format = .zai, .expected = "\"thinking\":{\"type\":\"disabled\",\"clear_thinking\":false}" },
+        .{ .format = .together, .expected = "\"reasoning\":{\"enabled\":false}" },
+        .{ .format = .openai, .expected = "\"reasoning_effort\":\"none\"" },
+    };
+    for (cases) |case| {
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+        try serialize(&buf.writer, .{
+            .model = "m",
+            .max_output_tokens = 8,
+            .reasoning = .off,
+            .thinking_format = case.format,
+        }, .{ .blocks = &blocks }, .{});
+        try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
+    }
+    var deepseek: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer deepseek.deinit();
+    try serialize(&deepseek.writer, .{
+        .model = "m",
+        .max_output_tokens = 8,
+        .reasoning = .off,
+        .thinking_format = .deepseek,
+    }, .{ .blocks = &blocks }, .{});
+    try testing.expect(std.mem.indexOf(u8, deepseek.written(), "\"reasoning_effort\"") == null);
+}
+
+test "no dialect writes no control" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning = .{ .effort = .high }, .thinking_format = .none },
+        .{ .blocks = &blocks },
+        .{},
+    );
 }
 
 test "a plain user turn with a system prompt" {

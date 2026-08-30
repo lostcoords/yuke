@@ -49,6 +49,12 @@ pub const Cost = struct {
 pub const Flags = struct {
     supports_tools: bool,
     supports_vision: bool,
+    /// The OpenAI-chat thinking dialect. An unknown name degrades to no control.
+    thinking_format: ?[]const u8 = null,
+    /// Compatible hosts take `adaptive` in place of a token budget.
+    anthropic_adaptive: ?bool = null,
+    reasoning_budget_min: ?i64 = null,
+    reasoning_budget_max: ?u64 = null,
 };
 
 pub const Model = struct {

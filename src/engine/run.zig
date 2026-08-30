@@ -16,6 +16,8 @@ const run_store = database.run;
 /// The run uses this config from its start. A mid-run change applies to the next run.
 pub const Config = struct {
     model: []const u8,
+    /// The reasoning level of the session. Empty keeps the endpoint default.
+    reasoning: []const u8 = "",
     system_prompt: []const u8,
     max_rounds: ?u64 = null, // null means unlimited rounds. A finite cap ends the turn with an error.
 };

@@ -354,6 +354,37 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
     try streamWithReducer(state, body, streamer, slot.protocol);
 }
 
+/// Resolve the session level against the model. An unset level omits the control.
+fn reasoningFor(
+    model: *const provider_catalog.ModelView,
+    level: []const u8,
+    output_limit: u32,
+) provider.ir.ReasoningControl {
+    if (level.len == 0) return .default;
+    if (std.mem.eql(u8, level, "off")) return .off;
+    if (model.anthropic_adaptive) return .adaptive;
+    if (thinkingBudget(model, level, output_limit)) |tokens| return .{ .budget = tokens };
+    return if (std.meta.stringToEnum(provider.ir.Effort, level)) |effort| .{ .effort = effort } else .default;
+}
+
+/// The smallest budget an Anthropic-shaped endpoint accepts.
+const thinking_budget_min: u64 = 1024;
+
+/// Size the budget for a level. Thinking shares the output ceiling, so the answer keeps a part.
+fn thinkingBudget(model: *const provider_catalog.ModelView, level: []const u8, output_limit: u32) ?u64 {
+    if (model.reasoning_budget_min == null and model.reasoning_budget_max == null) return null;
+
+    const cap: u64 = output_limit;
+    var budget: u64 = if (std.mem.eql(u8, level, "max")) cap / 4 * 3 else cap / 2;
+    if (model.reasoning_budget_max) |maximum| budget = @min(budget, maximum);
+    if (model.reasoning_budget_min) |minimum| {
+        if (minimum > 0) budget = @max(budget, @as(u64, @intCast(minimum)));
+    }
+    budget = @max(budget, thinking_budget_min);
+
+    return if (budget >= cap) null else budget;
+}
+
 /// Build the real provider request. It sets the run protocol, the endpoint URL, and the auth headers.
 fn resolvedRequest(
     arena: std.mem.Allocator,
@@ -365,14 +396,18 @@ fn resolvedRequest(
     const route = r.provider.route orelse return error.UnknownModel;
     slot.protocol = route.instance.protocol;
 
+    const output_limit = if (r.model.max_output_tokens) |limit|
+        std.math.cast(u32, limit) orelse max_output_tokens
+    else
+        max_output_tokens;
+
     const body_bytes = try provider.requestBody(arena, transcript, route.instance.protocol, .{
         .model = r.model.upstream_id,
         .system = slot.config.system_prompt,
         .tools = tool_registry.declarations,
-        .max_output_tokens = if (r.model.max_output_tokens) |limit|
-            std.math.cast(u32, limit) orelse max_output_tokens
-        else
-            max_output_tokens,
+        .max_output_tokens = output_limit,
+        .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
+        .thinking_format = r.model.thinking_format,
     }, .{ .protocol = route.instance.protocol, .model = slot.config.model });
 
     var auth: std.ArrayList(provider.transport.Header) = .empty;
@@ -572,7 +607,7 @@ pub fn prepareQueued(state: *State, rt: *session_runtime.SessionRuntime) !*RunSl
     const session_id = rt.session.id;
     const snapshot = (try session_store.snapshot(&state.db, arena, session_id.raw)) orelse return error.UnknownSession;
     const prompt = try session_store.prompt(&state.db, arena, session_id.raw);
-    const slot = try RunSlot.prepare(state.gpa, snapshot.model, prompt orelse "", snapshot.max_rounds);
+    const slot = try RunSlot.prepare(state.gpa, snapshot.model, snapshot.reasoning, prompt orelse "", snapshot.max_rounds);
     errdefer slot.destroy();
     const started = try run.beginQueuedTurn(&state.db, state.io, arena, session_id.raw, snapshot.config_rev);
     slot.bind(started.handle, started.first_round);
@@ -880,6 +915,45 @@ fn emptyPart(part_id: event.BlockId, kind: event.BlockKind) message.AssistantPar
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
         .tool => unreachable, // A tool part opens at block_stopped, not block_started.
     };
+}
+
+test "an unset level omits the control and off disables it" {
+    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "", 8192));
+    try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
+}
+
+test "an adaptive row resolves to adaptive for every level that is not off" {
+    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .anthropic_adaptive = true };
+    try std.testing.expectEqual(provider.ir.ReasoningControl.adaptive, reasoningFor(&model, "high", 8192));
+    try std.testing.expectEqual(provider.ir.ReasoningControl.off, reasoningFor(&model, "off", 8192));
+}
+
+test "a budget row sizes the budget from the output ceiling" {
+    const model: provider_catalog.ModelView = .{
+        .id = "m",
+        .upstream_id = "m",
+        .name = "m",
+        .reasoning_budget_min = 1024,
+        .reasoning_budget_max = 32000,
+    };
+    try std.testing.expectEqual(@as(u64, 6144), reasoningFor(&model, "max", 8192).budget);
+    try std.testing.expectEqual(@as(u64, 4096), reasoningFor(&model, "high", 8192).budget);
+}
+
+test "a budget is clamped by the feed bounds and refused when it reaches the ceiling" {
+    const capped: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_budget_max = 2000 };
+    try std.testing.expectEqual(@as(u64, 2000), reasoningFor(&capped, "high", 8192).budget);
+
+    // A budget that reaches the ceiling falls back to the effort control.
+    const tiny: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m", .reasoning_budget_min = 1024 };
+    try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&tiny, "high", 1024).effort);
+}
+
+test "a level the model never listed omits the control" {
+    const model: provider_catalog.ModelView = .{ .id = "m", .upstream_id = "m", .name = "m" };
+    try std.testing.expectEqual(provider.ir.ReasoningControl.default, reasoningFor(&model, "turbo", 8192));
+    try std.testing.expectEqual(provider.ir.Effort.high, reasoningFor(&model, "high", 8192).effort);
 }
 
 test "the stream cap rejects an oversized provider delta" {

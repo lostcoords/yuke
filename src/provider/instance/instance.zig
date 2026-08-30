@@ -40,18 +40,8 @@ pub const Cost = struct {
 /// Select how prior assistant reasoning returns in an OpenAI Chat request.
 pub const ReasoningReplay = enum { none, reasoning, @"reasoning-content", @"reasoning-details" };
 
-/// Select the request shape for reasoning control. This enum keeps a compatibility quirk as data.
-pub const ThinkingFormat = enum {
-    none,
-    openai,
-    openrouter,
-    deepseek,
-    zai,
-    qwen,
-    together,
-    @"string-thinking",
-    @"ant-ling",
-};
+/// Select the request shape for reasoning control. The serializers own the vocabulary.
+pub const ThinkingFormat = @import("../request/ir.zig").ThinkingFormat;
 
 /// Select the output-token field in the OpenAI Chat request.
 pub const MaxTokensField = enum { @"max-completion-tokens", @"max-tokens" };

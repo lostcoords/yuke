@@ -29,18 +29,31 @@ pub const RunSlot = struct {
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
-    /// Allocate the slot and own copies of `model` and `system_prompt`. Bind the handle after Tx1.
-    /// The caller allocates before the run transaction, so a late failure cannot orphan an open run.
-    pub fn prepare(gpa: std.mem.Allocator, model: []const u8, system_prompt: []const u8, max_rounds: ?u64) !*RunSlot {
+    /// Allocate the slot and own copies of `model`, `reasoning` and `system_prompt`.
+    /// Bind the handle after Tx1. The caller allocates before the run transaction.
+    pub fn prepare(
+        gpa: std.mem.Allocator,
+        model: []const u8,
+        reasoning: []const u8,
+        system_prompt: []const u8,
+        max_rounds: ?u64,
+    ) !*RunSlot {
         const model_copy = try gpa.dupe(u8, model);
         errdefer gpa.free(model_copy);
+        const reasoning_copy = try gpa.dupe(u8, reasoning);
+        errdefer gpa.free(reasoning_copy);
         const prompt_copy = try gpa.dupe(u8, system_prompt);
         errdefer gpa.free(prompt_copy);
         const self = try gpa.create(RunSlot);
         self.* = .{
             .gpa = gpa,
             .handle = undefined,
-            .config = .{ .model = model_copy, .system_prompt = prompt_copy, .max_rounds = max_rounds },
+            .config = .{
+                .model = model_copy,
+                .reasoning = reasoning_copy,
+                .system_prompt = prompt_copy,
+                .max_rounds = max_rounds,
+            },
         };
         return self;
     }
@@ -67,6 +80,7 @@ pub const RunSlot = struct {
     pub fn destroy(self: *RunSlot) void {
         std.debug.assert(self.body == null);
         self.gpa.free(self.config.model);
+        self.gpa.free(self.config.reasoning);
         self.gpa.free(self.config.system_prompt);
         self.gpa.destroy(self);
     }
@@ -165,7 +179,7 @@ test "evictIfIdle drops an idle runtime but keeps an active one" {
     try testing.expect(rt.idle());
 
     // A live run pins the runtime.
-    rt.active = try RunSlot.prepare(testing.allocator, "model", "", null);
+    rt.active = try RunSlot.prepare(testing.allocator, "model", "", "", null);
     rt.active.?.bind(.{
         .input_id = 1,
         .started = .{ .session_id = sid, .seq = 1, .run_id = 1, .kind = .turn, .config_rev = 0, .started_at_ms = 1 },

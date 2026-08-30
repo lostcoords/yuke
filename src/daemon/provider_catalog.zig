@@ -26,7 +26,18 @@ pub const ModelView = struct {
     reasoning_levels: []const ?[]const u8 = &.{},
     supports_tools: ?bool = null,
     supports_vision: ?bool = null,
+    /// How a request asks this model to reason.
+    thinking_format: instance.ThinkingFormat = .none,
+    anthropic_adaptive: bool = false,
+    reasoning_budget_min: ?i64 = null,
+    reasoning_budget_max: ?u64 = null,
 };
+
+/// Read a thinking dialect name. An unknown name degrades to no control.
+fn thinkingFormat(name: ?[]const u8) instance.ThinkingFormat {
+    const value = name orelse return .none;
+    return std.meta.stringToEnum(instance.ThinkingFormat, value) orelse .none;
+}
 
 /// This route holds every value that one request needs. A provider that cannot be called has none.
 /// The instance keeps the shape that `resolve.endpointUrl` and `resolve.authHeaders` already take.
@@ -122,10 +133,10 @@ pub const Catalog = struct {
     }
 };
 
-/// Choose the effort a client uses when the user picks none. Prefer `medium` when it exists.
+/// Choose the effort a client uses when the user picks none. Prefer `medium`, else the middle level.
 fn defaultReasoning(levels: []const []const u8) []const u8 {
     for (levels) |level| if (std.mem.eql(u8, level, "medium")) return level;
-    return if (levels.len != 0) levels[0] else "";
+    return if (levels.len != 0) levels[levels.len / 2] else "";
 }
 
 /// Project one resolved model onto the public wire shape.
@@ -300,6 +311,10 @@ fn catalogModels(arena: std.mem.Allocator, row: ?cloud_catalog.Provider) ![]cons
         .reasoning_levels = m.reasoning_levels,
         .supports_tools = m.flags.supports_tools,
         .supports_vision = m.flags.supports_vision,
+        .thinking_format = thinkingFormat(m.flags.thinking_format),
+        .anthropic_adaptive = m.flags.anthropic_adaptive orelse false,
+        .reasoning_budget_min = m.flags.reasoning_budget_min,
+        .reasoning_budget_max = m.flags.reasoning_budget_max,
     };
     return out;
 }
@@ -317,6 +332,10 @@ fn bundleModels(arena: std.mem.Allocator, models: []const bundle.Model) ![]const
             .reasoning_levels = m.reasoning_levels,
             .supports_tools = m.flags.supports_tools,
             .supports_vision = m.flags.supports_vision,
+            .thinking_format = thinkingFormat(m.flags.thinking_format),
+            .anthropic_adaptive = m.flags.anthropic_adaptive orelse false,
+            .reasoning_budget_min = m.flags.reasoning_budget_min,
+            .reasoning_budget_max = m.flags.reasoning_budget_max,
         };
     }
     return out;
@@ -334,6 +353,10 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         .cost = .{ .input = m.cost.input, .output = m.cost.output, .cache_read = m.cost.cache_read, .cache_write = m.cost.cache_write },
         .supports_tools = m.flags.supports_tools,
         .supports_vision = m.flags.supports_vision,
+        .thinking_format = m.flags.thinking_format,
+        .anthropic_adaptive = m.flags.anthropic_adaptive,
+        .reasoning_budget_min = m.flags.reasoning_budget_min,
+        .reasoning_budget_max = m.flags.reasoning_budget_max,
     };
     return out;
 }

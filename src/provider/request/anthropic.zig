@@ -23,6 +23,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("stream");
     try jw.write(true);
 
+    try writeThinking(&jw, request.reasoning);
+
     if (request.system.len != 0) {
         try jw.objectField("system");
         try jw.beginArray();
@@ -69,6 +71,27 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     if (role != null) try endMessage(&jw);
     try jw.endArray();
 
+    try jw.endObject();
+}
+
+/// Write the thinking control. Compatible hosts take `adaptive`; Anthropic takes a budget.
+fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
+    const kind: []const u8 = switch (reasoning) {
+        .default => return,
+        .off => "disabled",
+        .adaptive => "adaptive",
+        .budget => "enabled",
+        // An effort is a whole-request control, not a thinking shape.
+        .effort => |effort| return json.nested(jw, "output_config", "effort", @tagName(effort)),
+    };
+
+    try jw.objectField("thinking");
+    try jw.beginObject();
+    try json.field(jw, "type", kind);
+    if (reasoning == .budget) {
+        try jw.objectField("budget_tokens");
+        try jw.write(reasoning.budget);
+    }
     try jw.endObject();
 }
 
@@ -165,10 +188,7 @@ fn lastCacheable(blocks: []const ir.Block) ?usize {
 }
 
 fn writeCacheControl(jw: *std.json.Stringify) !void {
-    try jw.objectField("cache_control");
-    try jw.beginObject();
-    try json.field(jw, "type", "ephemeral");
-    try jw.endObject();
+    try json.nested(jw, "cache_control", "type", "ephemeral");
 }
 
 const testing = std.testing;
@@ -186,6 +206,57 @@ test "a plain user turn with a system prompt" {
         \\{"model":"claude","max_tokens":1024,"stream":true,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}
     ,
         .{ .model = "claude", .system = "be brief", .max_output_tokens = 1024 },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "adaptive thinking rides on the request" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "MiniMax-M3", .max_output_tokens = 8, .reasoning = .adaptive },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "a token budget writes the enabled shape" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "off writes disabled and the default omits the member" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .off },
+        .{ .blocks = &blocks },
+        .{},
+    );
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .default },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "a named effort rides on output_config, not on thinking" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"output_config":{"effort":"high"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
         .{},
     );
