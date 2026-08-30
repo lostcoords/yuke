@@ -408,16 +408,17 @@ const chatDefaults = { model: null, reasoning: "" };
 
 function chooseModel(model, reasoning) {
   chatDefaults.model = model.provider + "/" + model.id;
-  chatDefaults.reasoning = reasoning || "";
+  chatDefaults.reasoning = reasoning;
   notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
   root.invalidate();
 }
 
-// Without a choice this run, the newest session names the model, so a restart keeps working.
+// Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.
 function defaultModel() {
   if (chatDefaults.model) return chatDefaults;
   for (const r of mergedRows()) {
-    if (r.connKey === LOCAL && r.session && r.session.model) return { model: r.session.model, reasoning: "" };
+    if (r.connKey === LOCAL && r.session && r.session.model)
+      return { model: r.session.model, reasoning: r.session.reasoning };
   }
   return chatDefaults;
 }
@@ -873,7 +874,7 @@ function openModelPicker() {
 
 // A model with one level needs no second step, so the pick ends there.
 function pickReasoning(connKey, model) {
-  const levels = model.reasoning_levels || [];
+  const levels = model.reasoning_levels;
   if (levels.length < 2) {
     chooseModel(model, model.default_reasoning || levels[0] || "");
     return;
