@@ -159,12 +159,12 @@ const alias_uses = [_]AliasUse{
     .{ .owner = "WorkspaceRef", .field = "workspace_id", .alias = "WorkspaceId" },
 };
 
-fn shortName(comptime name: []const u8) []const u8 {
+pub fn shortName(comptime name: []const u8) []const u8 {
     const index = comptime std.mem.lastIndexOfScalar(u8, name, '.');
     return if (index) |i| name[i + 1 ..] else name;
 }
 
-fn aliasFor(comptime owner: []const u8, comptime field: []const u8) ?[]const u8 {
+pub fn aliasFor(comptime owner: []const u8, comptime field: []const u8) ?[]const u8 {
     inline for (alias_uses) |use| {
         if (std.mem.eql(u8, owner, use.owner) and std.mem.eql(u8, field, use.field)) return use.alias;
     }
@@ -335,7 +335,7 @@ fn writeMethods(jw: *std.json.Stringify, docs: *const std.StringHashMap([]const 
     try jw.endArray();
 }
 
-fn broadcastType(
+pub fn broadcastType(
     comptime name: []const u8,
     comptime union_name: []const u8,
     comptime field_name: []const u8,

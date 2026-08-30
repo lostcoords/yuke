@@ -164,6 +164,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_gen_schema = b.addRunArtifact(gen_schema);
     run_gen_schema.setCwd(b.path("."));
+    const gen_dts = b.addExecutable(.{
+        .name = "gen-wire-dts",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/wiregen/dts.zig"),
+            .target = host,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "wire", .module = wire_host },
+            },
+        }),
+    });
+    const run_gen_dts = b.addRunArtifact(gen_dts);
+    run_gen_dts.setCwd(b.path("."));
 
     const exe = b.addExecutable(.{
         .name = "yuke",
@@ -211,6 +224,7 @@ pub fn build(b: *std.Build) void {
 
     const write_schema = b.addUpdateSourceFiles();
     write_schema.addCopyFileToSource(run_gen_schema.captureStdOut(.{}), "schema/wire.json");
+    write_schema.addCopyFileToSource(run_gen_dts.captureStdOut(.{}), "src/tui/js/generated/wire.d.ts");
     const gen_schema_step = b.step("gen-schema", "Regenerate schema/wire.json from the wire types");
     gen_schema_step.dependOn(&write_schema.step);
 }
