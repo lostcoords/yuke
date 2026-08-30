@@ -558,9 +558,12 @@ const chatSession = {
   },
 
   // A structural change (open, commit, resync): re-pull the outline.
+  // A missing replica must not empty the pane; that would drop user fold overrides.
   reload() {
-    const o = this.sessionId ? client.sessionOutline(this.connKey, this.sessionId) : null;
-    chat.transcript.setOutline(o ? o.messages : [], o ? o.active : null);
+    if (!this.sessionId) return;
+    const o = client.sessionOutline(this.connKey, this.sessionId);
+    if (!o || !Array.isArray(o.messages)) return;
+    chat.transcript.setOutline(o.messages, o.active || null);
     root.invalidate();
   },
 

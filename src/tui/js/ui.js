@@ -52,6 +52,10 @@ const TX_GUTTER = 2;
 // Keep a long tool body inside the pager. The replica still holds the full output.
 const TOOL_BODY_CAP = 40;
 
+function sameId(a, b) {
+  return a != null && b != null && String(a) === String(b);
+}
+
 // The shared nav vocabulary: j/k move, ctrl+d/u page, gg/G top/bottom.
 function navAction(k) {
   switch (k) {
@@ -890,7 +894,7 @@ export class Transcript {
   }
 
   // Replace the outline. Rare (commit/resync/truncate); a re-commit can change content under a
-  // stable id, so drop the caches.
+  // stable id, so drop the caches. A user fold override stays if its message is still live.
   setOutline(messages, active) {
     this._messages = messages || [];
     this._active = active || null;
@@ -918,14 +922,19 @@ export class Transcript {
     }
   }
 
+  _dropRows(id) {
+    this._rows.delete(id);
+    this._rows.delete(String(id));
+  }
+
   // A streaming delta on draft `id`: adopt it if new, and drop its cached rows so it re-renders.
   setActive(id) {
     // The draft rewraps as tokens arrive, but an append never moves the source before it.
     const sel = this.selection;
-    const touches = !!sel && (sel.anchor.id === id || sel.cursor.id === id);
+    const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
     const anchors = touches ? this._anchors() : null;
-    if (!this._active || this._active.id !== id) this._active = { id, type: "assistant" };
-    this._rows.delete(id);
+    if (!this._active || !sameId(this._active.id, id)) this._active = { id, type: "assistant" };
+    this._dropRows(id);
     if (touches) this._reanchor(anchors);
   }
 
@@ -1014,7 +1023,7 @@ export class Transcript {
       const m = this._at(i);
       if (!m) return -1;
       const rows = this._rowsOf(m, this._width);
-      if (m.id === pos.id) return pos.row < rows.length ? base + pos.row : -1;
+      if (sameId(m.id, pos.id)) return pos.row < rows.length ? base + pos.row : -1;
       base += rows.length;
     }
   }
@@ -1122,9 +1131,9 @@ export class Transcript {
   }
 
   _reasoningLive(id, partId) {
-    if (!this._active || this._active.id !== id) return false;
+    if (!this._active || !sameId(this._active.id, id)) return false;
     const parts = this._partList(id);
-    const part = parts.find((p) => p && p.id === partId);
+    const part = parts.find((p) => p && sameId(p.id, partId));
     return !!(part && part.type === "reasoning");
   }
 
@@ -1141,10 +1150,10 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     let part = null;
     if (this.partsOf) {
-      for (const p of this._partList(id)) if (p.id === partId) part = p;
+      for (const p of this._partList(id)) if (p && sameId(p.id, partId)) part = p;
     }
     this._expand.set(k, !this._isExpanded(id, partId, part));
-    this._rows.delete(id);
+    this._dropRows(id);
     root.invalidate();
   }
 
@@ -1296,7 +1305,7 @@ export class Transcript {
     for (let i = 0; ; i++) {
       const m = this._at(i);
       if (!m) return -1;
-      if (m.id === id) return i;
+      if (sameId(m.id, id)) return i;
     }
   }
 

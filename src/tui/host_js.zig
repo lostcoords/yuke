@@ -1320,6 +1320,17 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\rs = t.rows(40, 0, 10);
         \\check("override-holds", markerOf(rs) === "▾" && rowsHave(rs, "because"));
         \\
+        \\t.setOutline([{ id: "u", type: "user" }, { id: "r1", type: "assistant" }, { id: "u2", type: "user" }], { id: "r2", type: "assistant" });
+        \\rs = t.rows(40, t._globalRow({ id: "r1", row: 0, col: 0 }), 8);
+        \\check("later-send-keeps-override", markerOf(rs) === "▾" && rowsHave(rs, "because"));
+        \\
+        \\const num = new Transcript({ textOf: () => "", partsOf: () => [{ type: "reasoning", id: 0, text: "because why" }] });
+        \\num.setOutline([{ id: 2, type: "assistant" }], null);
+        \\term.beginFrame(); num.draw({ x: 0, y: 0, w: 40, h: 10 }); term.endFrame();
+        \\num.togglePart(2, 0);
+        \\num.setOutline([{ id: 2, type: "assistant" }, { id: 3, type: "user" }], { id: 4, type: "assistant" });
+        \\check("num-id-later-send", markerOf(num.rows(40, num._globalRow({ id: 2, row: 0, col: 0 }), 8)) === "▾");
+        \\
         \\const committed = new Transcript({ textOf: () => "", partsOf: () => [{ type: "reasoning", id: 0, text: "later" }] });
         \\committed.setOutline([{ id: "c", type: "assistant" }], null);
         \\term.beginFrame(); committed.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
@@ -1355,8 +1366,8 @@ test "yuke:ui reasoning auto-collapses and J/K walks parts" {
         \\term.beginFrame(); pack.draw({ x: 0, y: 0, w: 40, h: 6 }); term.endFrame();
         \\check("compaction", rowsHave(pack.rows(40, 0, 6), "kept the tail"));
         \\
-        \\t.setOutline([{ id: "r1", type: "assistant" }], { id: "r1", type: "assistant" });
-        \\rs = t.rows(40, 0, 10);
+        \\t.setOutline([{ id: "r1", type: "assistant" }], { id: "r2", type: "assistant" });
+        \\rs = t.rows(40, t._globalRow({ id: "r1", row: 0, col: 0 }), 8);
         \\check("expand-survives-outline", markerOf(rs) === "▾" && rowsHave(rs, "because"));
         \\
         \\const mix = new Transcript({ textOf: () => "hello", partsOf: () => [{ type: "text", id: 0, text: "hello" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }] });
