@@ -27,7 +27,14 @@ const Drain = struct {
     /// Join the head and the tail with one notice between them. The result comes from `scratch`.
     /// Each end stops on a byte, so the notice counts the codepoint the cap cut in half.
     fn text(self: *Drain, scratch: std.mem.Allocator) error{OutOfMemory}![]const u8 {
-        if (self.dropped == 0) return self.head.items;
+        if (self.dropped == 0) {
+            if (self.tail.items.len == 0) return self.head.items;
+            // No byte went, so the two ends stay adjacent. The join restores the exact stream.
+            var whole: std.ArrayList(u8) = .empty;
+            try whole.appendSlice(scratch, self.head.items);
+            try whole.appendSlice(scratch, self.tail.items);
+            return whole.toOwnedSlice(scratch);
+        }
         const head = headFloor(self.head.items);
         const tail = tailCeil(self.tail.items);
         const trimmed = (self.head.items.len - head.len) + (self.tail.items.len - tail.len);
@@ -265,6 +272,29 @@ test "exec keeps the head and the tail of a long stream" {
     const marker = std.mem.indexOf(u8, res.stdout, "dropped").?;
     const tail = res.stdout[marker..];
     try testing.expect(std.mem.indexOf(u8, tail, "abcdefgh") != null);
+}
+
+test "a stream at or below the cap keeps every byte" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // `runShell` caps at 256 bytes, so each end holds 128 and a length within the cap keeps all.
+    for ([_]usize{ 127, 128, 129, 255, 256 }) |len| {
+        const command = try std.fmt.allocPrint(arena.allocator(), "head -c {d} /dev/zero | tr '\\0' x", .{len});
+        const res = try runShell(arena.allocator(), command, 20_000);
+        try testing.expectEqual(@as(u64, 0), res.stdout_dropped);
+        try testing.expectEqual(len, res.stdout.len);
+        try testing.expect(std.mem.indexOfNone(u8, res.stdout, "x") == null);
+    }
+}
+
+test "a stream one byte above the cap reports the gap" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const res = try runShell(arena.allocator(), "head -c 257 /dev/zero | tr '\\0' x", 20_000);
+    try testing.expectEqual(@as(u64, 1), res.stdout_dropped);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "dropped 1 bytes") != null);
 }
 
 test "a cap that splits a codepoint drops the half instead of the whole end" {
