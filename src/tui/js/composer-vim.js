@@ -16,9 +16,17 @@ import {
 import { Composer } from "yuke:ui";
 import { register, chatView } from "yuke:vim";
 
+/** @typedef {import("yuke:ui").Composer} ComposerType */
+/** @typedef {"insert" | "normal"} ComposerMode */
+/** @typedef {{ mode: ComposerMode, pending: string }} ComposerVimState */
+/** @typedef {{ start: number, end: number }} LineBounds */
+/** @typedef {Extract<HostEvent, { type: "key" }>} HostKeyEvent */
+
 const NORMAL_PROMPT = "▪ ";
+/** @type {WeakMap<ComposerType, ComposerVimState>} */
 const states = new WeakMap();
 
+/** @param {ComposerType} c @returns {ComposerVimState} */
 function stateOf(c) {
   let s = states.get(c);
   if (!s) {
@@ -28,10 +36,12 @@ function stateOf(c) {
   return s;
 }
 
+/** @param {ComposerType | null} c @returns {ComposerMode | null} */
 export function composerMode(c) {
   return c ? stateOf(c).mode : null;
 }
 
+/** @param {ComposerType | null} c @param {ComposerMode} mode @returns {void} */
 export function setComposerMode(c, mode) {
   if (!c) return;
   const s = stateOf(c);
@@ -43,6 +53,7 @@ export function setComposerMode(c, mode) {
   root.invalidate();
 }
 
+/** @param {string} text @param {number} caret @returns {LineBounds} */
 function lineAt(text, caret) {
   const at = caret > 0 && caret === text.length && text[caret - 1] === "\n" ? caret - 1 : caret;
   const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
@@ -50,12 +61,14 @@ function lineAt(text, caret) {
   return { start, end: end < 0 ? text.length : end };
 }
 
+/** @param {string} text @param {number} caret @returns {number} */
 function clamp(text, caret) {
   const { start, end } = lineAt(text, caret);
   if (caret <= start) return start;
   return caret >= end && end > start ? prevGrapheme(text, end) : Math.min(caret, end);
 }
 
+/** @param {string} text @param {number} caret @returns {number} */
 function firstWord(text, caret) {
   const { start, end } = lineAt(text, caret);
   let i = start;
@@ -63,15 +76,18 @@ function firstWord(text, caret) {
   return i;
 }
 
+/** @returns {ComposerType | null} */
 function chatComposer() {
-  const v = chatView();
+  const v = /** @type {import("yuke:ui").ChatView | null} */ (chatView());
   return v ? v.composer : null;
 }
 
+/** @param {ComposerMode} mode @returns {void} */
 function setFocusedMode(mode) {
   setComposerMode(chatComposer(), mode);
 }
 
+/** @param {ComposerType} c @returns {true} */
 function holdColumn(c) {
   const goal = c.goalCol;
   c.input.caret = clamp(c.input.text, c.input.caret);
@@ -79,12 +95,14 @@ function holdColumn(c) {
   return true;
 }
 
+/** @param {ComposerType} c @param {number} caret @returns {true} */
 function to(c, caret) {
   c.input.caret = Math.max(0, Math.min(caret, c.input.text.length));
   c.goalCol = null;
   return true;
 }
 
+/** @param {ComposerType} c @param {number} from @param {number} to @param {boolean} linewise @param {string | null | undefined} [stored] @returns {true} */
 function cut(c, from, to, linewise, stored) {
   if (to <= from && stored == null) return true;
   register.set(stored == null ? c.input.text.slice(from, to) : stored, linewise);
@@ -93,6 +111,7 @@ function cut(c, from, to, linewise, stored) {
   return true;
 }
 
+/** @param {ComposerType} c @param {boolean} after @returns {true} */
 function put(c, after) {
   const t = c.input;
   if (!register.text && !register.linewise) return true;
@@ -107,12 +126,14 @@ function put(c, after) {
   return to(c, clamp(t.text, prevGrapheme(t.text, at + register.text.length)));
 }
 
+/** @param {ComposerType} c @param {number} caret @returns {true} */
 function enter(c, caret) {
   c.input.caret = Math.max(0, Math.min(caret, c.input.text.length));
   setComposerMode(c, "insert");
   return true;
 }
 
+/** @param {ComposerType} c @param {string} first @param {string} k @returns {boolean} */
 function pair(c, first, k) {
   const t = c.input;
   const { start, end } = lineAt(t.text, t.caret);
@@ -130,6 +151,7 @@ function pair(c, first, k) {
   return false;
 }
 
+/** @param {ComposerType} c @param {string} k @returns {boolean} */
 function normalKey(c, k) {
   const t = c.input;
   const text = t.text;
@@ -208,6 +230,7 @@ function normalKey(c, k) {
 
 export const composerVim = {
   name: "composer-vim",
+  /** @param {import("yuke:ext").Context} ctx @returns {() => void} */
   apply(ctx) {
     const inChat = () => chatComposer() != null;
 
@@ -219,7 +242,7 @@ export const composerVim = {
 
     ctx.keymap({ esc: "composer-vim:normal" });
 
-    ctx.advise(Composer.prototype, "onKey", "around", function (inner, ev) {
+    ctx.advise(Composer.prototype, "onKey", "around", /** @this {ComposerType} @param {(ev: HostEvent) => boolean} inner @param {HostKeyEvent} ev @returns {boolean} */ function (inner, ev) {
       if (composerMode(this) !== "normal") return inner(ev);
       const k = modalKey(ev);
       const first = takePrefix(stateOf(this));
@@ -231,7 +254,7 @@ export const composerVim = {
       return isTextKey(ev);
     });
 
-    ctx.advise(Composer.prototype, "_prompt", "around", function (inner) {
+    ctx.advise(Composer.prototype, "_prompt", "around", /** @this {ComposerType} @param {() => string} inner @returns {string} */ function (inner) {
       return composerMode(this) === "normal" ? NORMAL_PROMPT : inner();
     });
 

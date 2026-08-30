@@ -1,7 +1,39 @@
 import { term } from "yuke:term";
 
+/** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
+/** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} StyleGroup */
+/** @typedef {{ palette: Record<string, import("yuke:term").Color>, groups: Record<string, StyleGroup>, _cache: Record<string, import("yuke:term").Style>, resolve: (name: string) => import("yuke:term").Style, invalidate: () => void }} StyleConfig */
+/** @typedef {{ host: string, port: number, autoConnect: boolean, retryMs: number }} DaemonConfig */
+/** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
+/** @typedef {{ daemon: DaemonConfig, mouse: MouseConfig }} Config */
+/** @typedef {{ daemon?: Partial<DaemonConfig>, mouse?: Partial<MouseConfig> }} ConfigPatch */
+/** @typedef {(value: unknown) => true | string} ConfigValidator */
+/** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
+/** @typedef {{ [index: number]: number, length: number }} GraphemeArray */
+/** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
+/** @typedef {{ text: string, w: number }} TextPiece */
+/** @typedef {{ at: number, cls: number }} GraphemeCell */
+/** @typedef {{ rect: Rect, draw: (...args: any[]) => unknown, name?: string, update?: () => void, onKey?: (ev: HostEvent) => boolean, onMouse?: (ev: Extract<HostEvent, { type: "mouse" }>) => boolean, onFocus?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void, cursor?: () => { x: number, y: number, visible: boolean } | null, modal?: boolean }} ViewLike */
+/** @typedef {Omit<ViewLike, "rect"> & { rect?: Rect }} Overlay */
+/** @typedef {{ onStart?: () => void, needsTick?: () => { periodMs: number } | null, tick?: () => void }} ServiceLike */
+/** @typedef {{ type: "leaf" | "split", parent: Node | null, rect: Rect, view: ViewLike | null, kind: "row" | "col" | null, a: Node | null, b: Node | null, ratio: number }} NodeShape */
+/** @typedef {(...args: any[]) => unknown} CommandAction */
+/** @typedef {(...args: any[]) => boolean | [boolean, ...any[]]} CommandPredicate */
+/** @typedef {{ predicate: CommandPredicate | null, perform: CommandAction }} CommandEntry */
+/** @typedef {{ [name: string]: CommandEntry }} CommandMap */
+/** @typedef {{ map: CommandMap, add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>) => () => void, perform: (name: string, ...args: any[]) => boolean }} CommandRegistry */
+/** @typedef {string | ((ev: HostEvent) => boolean | void)} KeyBinding */
+/** @typedef {{ [name: string]: KeyBinding[] }} KeyMap */
+/** @typedef {{ map: KeyMap, prefixes: Record<string, boolean>, pending: string | null, add: (bindings: Record<string, KeyBinding | KeyBinding[]>, overwrite?: boolean) => () => void, _rebuildPrefixes: () => void, onKey: (ev: Extract<HostEvent, { type: "key" }>) => boolean, _perform: (cmds: KeyBinding[] | undefined, ev: Extract<HostEvent, { type: "key" }>) => boolean }} KeymapRegistry */
+/** @typedef {{ side?: "left" | "right", order?: number, render: () => string | null | undefined }} StatusSegment */
+/** @typedef {{ side: "left" | "right", order: number, render: () => string | null | undefined }} StatusEntry */
+/** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
+/** @typedef {{ onChange?: (() => void) | null, onEdit?: ((from: number, to: number, insertedLength: number) => void) | null }} TextInputOptions */
+/** @typedef {{ type: "start" } | { type: "input_closed" } | HostEvent } RootEvent */
+
 // --- config -------------------------------------------------------------------------------
 // Runtime configuration. Direct daemon writes bypass validation.
+/** @type {Config} */
 export const config = {
   // Mouse reporting is always on. `scrollLines` is a screen-line count, so a wheel step moves the
   // same distance in a transcript and in a list.
@@ -20,6 +52,7 @@ export const config = {
 };
 
 // Merge a user config and return it for a default export.
+/** @param {ConfigPatch} partial @returns {ConfigPatch} */
 export function defineConfig(partial) {
   if (partial == null || typeof partial !== "object" || Array.isArray(partial)) {
     throw new TypeError("defineConfig expects a config object");
@@ -31,35 +64,39 @@ export function defineConfig(partial) {
   }
   const daemon = partial.daemon;
   const mouse = partial.mouse;
-  if (daemon !== undefined) applyConfigPatch(config.daemon, DAEMON_FIELDS, daemon, "daemon");
-  if (mouse !== undefined) applyConfigPatch(config.mouse, MOUSE_FIELDS, mouse, "mouse");
+  if (daemon !== undefined) applyConfigPatch(/** @type {Record<string, unknown>} */ (config.daemon), DAEMON_FIELDS, /** @type {Record<string, unknown>} */ (daemon), "daemon");
+  if (mouse !== undefined) applyConfigPatch(/** @type {Record<string, unknown>} */ (config.mouse), MOUSE_FIELDS, /** @type {Record<string, unknown>} */ (mouse), "mouse");
   return partial;
 }
 
+/** @type {ConfigValidators} */
 const DAEMON_FIELDS = {
   host: (v) => (typeof v === "string" && v !== "") || "daemon.host must be a non-empty string",
-  port: (v) => (Number.isInteger(v) && v >= 1 && v <= 65535) || "daemon.port must be an integer 1..65535",
+  port: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1 && /** @type {number} */ (v) <= 65535) || "daemon.port must be an integer 1..65535",
   autoConnect: (v) => typeof v === "boolean" || "daemon.autoConnect must be a boolean",
-  retryMs: (v) => (Number.isInteger(v) && v >= 1) || "daemon.retryMs must be a positive integer",
+  retryMs: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1) || "daemon.retryMs must be a positive integer",
   token: (v) => typeof v === "string" || "daemon.token must be a string",
 };
 
+/** @type {ConfigValidators} */
 const MOUSE_FIELDS = {
   copyOnSelect: (v) => typeof v === "boolean" || "mouse.copyOnSelect must be a boolean",
-  scrollLines: (v) => (Number.isInteger(v) && v >= 1 && v <= 20) || "mouse.scrollLines must be an integer 1..20",
+  scrollLines: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1 && /** @type {number} */ (v) <= 20) || "mouse.scrollLines must be an integer 1..20",
 };
 
+/** @param {Record<string, unknown>} section @param {ConfigValidators} fields @param {Record<string, unknown>} src @param {string} label */
 function applyConfigPatch(section, fields, src, label) {
   if (src == null || typeof src !== "object" || Array.isArray(src)) {
     throw new TypeError("defineConfig." + label + " expects an object");
   }
+  /** @type {Record<string, unknown>} */
   const patch = {};
   for (const key of Object.keys(src)) {
     if (!Object.prototype.hasOwnProperty.call(fields, key)) {
       throw new TypeError("defineConfig." + label + ": unknown key " + key);
     }
     if (src[key] === undefined) continue;
-    const ok = fields[key](src[key]);
+    const ok = /** @type {ConfigValidator} */ (fields[key])(src[key]);
     if (ok !== true) throw new TypeError(ok);
     patch[key] = src[key];
   }
@@ -67,6 +104,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
+/** @param {string} button @returns {boolean} */
 export function isWheel(button) {
   return button === "wheel_up" || button === "wheel_down" || button === "wheel_left" || button === "wheel_right";
 }
@@ -76,6 +114,7 @@ const link_depth_max = 100;
 
 // The highlight groups use the palette. yuke is monochrome: emphasis is weight and inversion, not hue.
 // `Normal` is `reset`, so the terminal background shows through. `danger` is the only color.
+/** @type {StyleConfig} */
 export const style = {
   palette: {
     fg: "reset",
@@ -103,13 +142,13 @@ export const style = {
     const cached = this._cache[name];
     if (cached) return cached;
 
-    let def = this.groups[name];
+    let def = /** @type {StyleGroup | undefined | null} */ (this.groups[name]);
     for (let i = 0; def && def.link && i < link_depth_max; i++) def = this.groups[def.link];
     if (def && def.link) def = null;
 
-    const out = {};
+    const out = /** @type {import("yuke:term").Style} */ ({});
     if (def) {
-      if (def.bg !== undefined) out.bg = this.palette[def.bg] !== undefined ? this.palette[def.bg] : def.bg;
+      if (def.bg !== undefined) out.bg = /** @type {import("yuke:term").Color} */ (this.palette[def.bg] !== undefined ? this.palette[def.bg] : def.bg);
       if (def.bold) out.bold = true;
       if (def.dim) out.dim = true;
       if (def.italic) out.italic = true;
@@ -117,7 +156,7 @@ export const style = {
       if (def.reverse) out.reverse = true;
     }
     const fg = def && def.fg !== undefined ? def.fg : "fg";
-    out.fg = this.palette[fg] !== undefined ? this.palette[fg] : fg;
+    out.fg = /** @type {import("yuke:term").Color} */ (this.palette[fg] !== undefined ? this.palette[fg] : fg);
 
     this._cache[name] = out;
     return out;
@@ -127,15 +166,18 @@ export const style = {
   },
 };
 
+/** @param {number} x @param {number} y @param {number} w @param {number} h @param {string} group @returns {void} */
 export function fill(x, y, w, h, group) {
   term.fill(x, y, w, h, style.resolve(group));
 }
 
+/** @param {number} x @param {number} y @param {string} s @param {string} group @returns {void} */
 export function text(x, y, s, group) {
   term.text(x, y, s, style.resolve(group));
 }
 
 // Limit `s` to `max` cells. Add an ellipsis when one cell remains and `ellipsis` is true.
+/** @param {string} s @param {number} max @param {boolean} [ellipsis] @returns {string} */
 export function clip(s, max, ellipsis = true) {
   if (max <= 0) return "";
   s = String(s);
@@ -143,13 +185,13 @@ export function clip(s, max, ellipsis = true) {
 
   const ell = ellipsis && max > 1 ? 1 : 0;
   const budget = max - ell;
-  const gs = term.graphemes(s);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
   let cut = 0;
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    if (w + gs[k + 2] > budget) break;
-    w += gs[k + 2];
-    cut = gs[k] + gs[k + 1];
+    if (w + /** @type {number} */ (gs[k + 2]) > budget) break;
+    w += /** @type {number} */ (gs[k + 2]);
+    cut = /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]);
   }
 
   return s.slice(0, cut) + (ell ? "…" : "");
@@ -157,53 +199,60 @@ export function clip(s, max, ellipsis = true) {
 
 // Wrap `s` to `width` cells. A newline breaks the line. A word wider than `width` breaks by grapheme.
 // A grapheme wider than `width` keeps its own line. That line is wider than `width`.
+/** @param {string} s @param {number} width @returns {string[]} */
 export function wrap(s, width) {
   s = String(s);
   if (width <= 0) return [""];
 
+  /** @type {string[]} */
   const lines = [];
   for (const para of s.split("\n")) wrapParagraph(para, width, lines);
   return lines;
 }
 
+/** @param {string} para @returns {TextPiece[]} */
 function splitWords(para) {
-  const gs = term.graphemes(para);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(para)));
+  /** @type {TextPiece[]} */
   const words = [];
   let text = "";
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    const ch = para.slice(gs[k], gs[k] + gs[k + 1]);
+    const ch = para.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]));
     if (ch === " ") {
       if (text) words.push({ text, w });
       text = "";
       w = 0;
     } else {
       text += ch;
-      w += gs[k + 2];
+      w += /** @type {number} */ (gs[k + 2]);
     }
   }
   if (text) words.push({ text, w });
   return words;
 }
 
+/** @param {string} s @param {number} width @returns {TextPiece[]} */
 function hardBreak(s, width) {
-  const gs = term.graphemes(s);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  /** @type {TextPiece[]} */
   const pieces = [];
   let piece = "";
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    if (w + gs[k + 2] > width && piece !== "") {
+    if (w + /** @type {number} */ (gs[k + 2]) > width && piece !== "") {
       pieces.push({ text: piece, w });
       piece = "";
       w = 0;
     }
-    piece += s.slice(gs[k], gs[k] + gs[k + 1]);
-    w += gs[k + 2];
+    piece += s.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]));
+    w += /** @type {number} */ (gs[k + 2]);
   }
   pieces.push({ text: piece, w });
   return pieces;
 }
 
+/** @param {string} para @param {number} width @param {string[]} out @returns {void} */
 function wrapParagraph(para, width, out) {
   const words = splitWords(para);
   if (words.length === 0) {
@@ -222,9 +271,9 @@ function wrapParagraph(para, width, out) {
 
     if (word.w > width) {
       const pieces = hardBreak(word.text, width);
-      for (let i = 0; i < pieces.length - 1; i++) out.push(pieces[i].text);
-      line = pieces[pieces.length - 1].text;
-      lineW = pieces[pieces.length - 1].w;
+      for (let i = 0; i < pieces.length - 1; i++) out.push(/** @type {TextPiece} */ (pieces[i]).text);
+      line = /** @type {TextPiece} */ (pieces[pieces.length - 1]).text;
+      lineW = /** @type {TextPiece} */ (pieces[pieces.length - 1]).w;
     } else {
       const sep = line === "" ? 0 : 1;
       line += (sep ? " " : "") + word.text;
@@ -236,23 +285,25 @@ function wrapParagraph(para, width, out) {
 
 // Wrap `s` in `width` cells and keep its UTF-16 offsets. A row holds [start, end) and a soft flag.
 // `wrap` drops space runs, so editable text and user rows use this function.
+/** @param {string} s @param {number} width @returns {WrapRow[]} */
 export function wrapOffsets(s, width) {
   s = String(s);
   if (width <= 0) return [{ start: 0, end: s.length, soft: false }];
 
+  /** @type {WrapRow[]} */
   const rows = [];
-  const gs = term.graphemes(s);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
   let start = 0; // where the row starts
   let w = 0; // cells the row uses
   let breakAt = -1; // after the last space of the row
   let breakW = 0; // cells up to breakAt
 
   for (let k = 0; k < gs.length; k += 3) {
-    const off = gs[k];
-    const ch = s.slice(off, off + gs[k + 1]);
+    const off = /** @type {number} */ (gs[k]);
+    const ch = s.slice(off, off + /** @type {number} */ (gs[k + 1]));
     if (ch === "\n") {
       rows.push({ start, end: off, soft: false });
-      start = off + gs[k + 1];
+      start = off + /** @type {number} */ (gs[k + 1]);
       w = 0;
       breakAt = -1;
       continue;
@@ -260,7 +311,7 @@ export function wrapOffsets(s, width) {
 
     // A space hangs past the right edge, so a wrap never starts a row with the space it broke on.
     // A row keeps one grapheme even when that grapheme is wider than the width.
-    if (ch !== " " && w + gs[k + 2] > width && off > start) {
+    if (ch !== " " && w + /** @type {number} */ (gs[k + 2]) > width && off > start) {
       if (breakAt > start) {
         rows.push({ start, end: breakAt, soft: true });
         w -= breakW;
@@ -272,9 +323,9 @@ export function wrapOffsets(s, width) {
       }
       breakAt = -1;
     }
-    w += gs[k + 2];
+    w += /** @type {number} */ (gs[k + 2]);
     if (ch === " ") {
-      breakAt = off + gs[k + 1];
+      breakAt = off + /** @type {number} */ (gs[k + 1]);
       breakW = w;
     }
   }
@@ -284,38 +335,42 @@ export function wrapOffsets(s, width) {
 
 // Place `caret` in the rows of `wrapOffsets`. A caret on a soft break takes the next row, so the
 // caret stays on the screen instead of one cell past the right edge.
+/** @param {string} s @param {WrapRow[]} rows @param {number} caret @returns {{ row: number, col: number }} */
 export function caretRowCol(s, rows, caret) {
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
+    const r = /** @type {WrapRow} */ (rows[i]);
     if (caret > r.end) continue;
     if (caret === r.end && r.soft && i + 1 < rows.length) continue;
     return { row: i, col: term.measure(s.slice(r.start, caret)) };
   }
-  const last = rows[rows.length - 1];
+  const last = /** @type {WrapRow} */ (rows[rows.length - 1]);
   return { row: rows.length - 1, col: term.measure(s.slice(last.start, last.end)) };
 }
 
 // Return the caret index in `row` closest to the cell column `col`.
+/** @param {string} s @param {WrapRow} row @param {number} col @returns {number} */
 export function caretAtCol(s, row, col) {
   const line = s.slice(row.start, row.end);
-  const gs = term.graphemes(line);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(line)));
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    if (w + gs[k + 2] > col) return row.start + gs[k];
-    w += gs[k + 2];
+    if (w + /** @type {number} */ (gs[k + 2]) > col) return row.start + /** @type {number} */ (gs[k]);
+    w += /** @type {number} */ (gs[k + 2]);
   }
   return row.end;
 }
 
 // A command has a predicate and an action. A string predicate matches the active view.
+/** @type {CommandRegistry} */
 export const command = {
   map: Object.create(null),
 
   add(predicate, map) {
     const pred = normalizePredicate(predicate);
+    /** @type {Array<[string, CommandEntry]>} */
     const added = [];
     for (const name in map) {
-      const entry = { predicate: pred, perform: map[name] };
+      const entry = { predicate: pred, perform: /** @type {CommandAction} */ (map[name]) };
       this.map[name] = entry;
       added.push([name, entry]);
     }
@@ -338,6 +393,7 @@ export const command = {
   },
 };
 
+/** @param {string | CommandPredicate | null} predicate @returns {CommandPredicate | null} */
 function normalizePredicate(predicate) {
   if (predicate == null) return null;
   if (typeof predicate === "string") {
@@ -347,16 +403,19 @@ function normalizePredicate(predicate) {
 }
 
 // New bindings run before old bindings. A space separates chord strokes.
+/** @type {KeymapRegistry} */
 export const keymap = {
   map: Object.create(null),
   prefixes: Object.create(null),
   pending: null,
 
   add(bindings, overwrite) {
+    /** @type {Array<[string, KeyBinding]>} */
     const added = [];
     for (const seq in bindings) {
       const key = normalizeSeq(seq);
-      const value = bindings[seq];
+      const value = /** @type {KeyBinding | KeyBinding[]} */ (bindings[seq]);
+      /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
       if (overwrite || !this.map[key]) this.map[key] = list;
       else this.map[key] = list.concat(this.map[key]);
@@ -400,6 +459,7 @@ export const keymap = {
     return this._perform(this.map[s], ev);
   },
 
+  /** @param {KeyBinding[] | undefined} cmds @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
   _perform(cmds, ev) {
     if (!cmds) return false;
     for (const c of cmds) {
@@ -413,12 +473,14 @@ export const keymap = {
   },
 };
 
+/** @param {string} seq @returns {string} */
 function normalizeSeq(seq) {
   const s = String(seq);
   if (s.trim() === "") return normalizeStroke(s);
   return s.trim().split(/\s+/).map(normalizeStroke).join(" ");
 }
 
+/** @param {string} stroke @returns {string} */
 function stripCtrl(stroke) {
   return stroke.indexOf("ctrl+") === 0 ? stroke.slice(5) : stroke;
 }
@@ -428,6 +490,7 @@ const MOD_ALT = 2;
 const MOD_CTRL = 4;
 const MOD_SUPER = 8;
 
+/** @param {{ ctrl: boolean, alt: boolean, super: boolean, shift: boolean }} mods @param {string} token @returns {string} */
 function joinStroke(mods, token) {
   const parts = [];
   if (mods.ctrl) parts.push("ctrl");
@@ -438,6 +501,7 @@ function joinStroke(mods, token) {
   return parts.join("+");
 }
 
+/** @param {Extract<HostEvent, { type: "key" }>} ev @returns {string} */
 export function strokeOf(ev) {
   const m = ev.mods | 0;
   let token;
@@ -457,6 +521,7 @@ export function strokeOf(ev) {
 
 // Write `text` to the system clipboard and report the byte count, or -1 when it is too large.
 // The `copy` event carries the outcome, so the app owns the message the user reads.
+/** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
 export function copy(text, what) {
   const s = text == null ? "" : String(text);
   const bytes = s === "" ? 0 : term.copy(s);
@@ -465,18 +530,21 @@ export function copy(text, what) {
 }
 
 // A two-key chord. `holder.pending` is the first key, or "".
+/** @param {{ pending: string | null }} holder @returns {string} */
 export function takePrefix(holder) {
   const first = holder.pending || "";
   holder.pending = "";
   return first;
 }
 
+/** @param {{ pending: string | null }} holder @param {string} key @returns {void} */
 export function armPrefix(holder, key) {
   holder.pending = key;
 }
 
 // The key a modal layer reads. `strokeOf` folds a letter's case, so `G` needs the raw character.
 // A chord keeps its stroke, so ctrl+d never reads as a letter.
+/** @param {Extract<HostEvent, { type: "key" }>} ev @returns {string} */
 export function modalKey(ev) {
   const m = ev.mods | 0;
   if (ev.code === "char" && ev.char && (m & (MOD_CTRL | MOD_ALT | MOD_SUPER)) === 0) {
@@ -490,22 +558,25 @@ export function modalKey(ev) {
 }
 
 // Return committed text. Use the folded key only for an unmodified legacy event.
+/** @param {HostEvent} ev @returns {string} */
 export function textOf(ev) {
   if (ev.type === "paste") return ev.text || "";
-  if (ev.code !== "char") return "";
-  if (ev.text) return ev.text;
-  if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
-  return ev.char || "";
+  if (/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).code !== "char") return "";
+  if (/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).text) return /** @type {Extract<HostEvent, { type: "key" }>} */ (ev).text;
+  if (((/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
+  return /** @type {Extract<HostEvent, { type: "key" }>} */ (ev).char || "";
 }
 
+/** @param {HostEvent} ev @returns {boolean} */
 export function isTextKey(ev) {
   return textOf(ev) !== "";
 }
 
+/** @param {string} stroke @returns {string} */
 function normalizeStroke(stroke) {
   const parts = String(stroke).toLowerCase().split("+");
-  const token = parts.pop();
-  const mods = { ctrl: false, alt: false, super: false, shift: false };
+  const token = /** @type {string} */ (parts.pop());
+  const mods = /** @type {{ ctrl: boolean, alt: boolean, super: boolean, shift: boolean } & Record<string, boolean>} */ ({ ctrl: false, alt: false, super: false, shift: false });
   for (const p of parts) {
     if (p === "control") mods.ctrl = true;
     else if (p in mods) mods[p] = true;
@@ -514,17 +585,20 @@ function normalizeStroke(stroke) {
 }
 
 // A layer implements only the hooks it needs.
+/** @param {object | null | undefined} obj @param {string} name @param {...unknown} args @returns {unknown} */
 function callHook(obj, name, ...args) {
-  const fn = obj && obj[name];
+  const fn = obj && /** @type {Record<string, unknown>} */ (obj)[name];
   // `Reflect.apply` keeps the receiver even when the hook shadows `Function.prototype.apply`.
   return typeof fn === "function" ? Reflect.apply(fn, obj, args) : undefined;
 }
 
 // `draw` runs every frame. A layer or a view without `draw` never appears.
+/** @param {object | null | undefined} obj @param {string} message @returns {void} */
 function requireDraw(obj, message) {
-  if (!obj || typeof obj.draw !== "function") throw new TypeError(message);
+  if (!obj || typeof /** @type {Record<string, unknown>} */ (obj).draw !== "function") throw new TypeError(message);
 }
 
+/** @param {string} s @param {number} caret @returns {number} */
 function deleteWordBack(s, caret) {
   let i = caret;
   while (i > 0 && s[i - 1] === " ") i--;
@@ -533,54 +607,61 @@ function deleteWordBack(s, caret) {
 }
 
 // A blank, a word character, or punctuation. A word motion stops where the class changes.
+/** @param {string} g @returns {number} */
 function graphemeClass(g) {
   if (!g || /\s/u.test(g)) return 0;
   return /[\p{L}\p{N}_]/u.test(g) ? 1 : 2;
 }
 
 // The graphemes of `s` with their offset and class, so a word motion never lands inside a cluster.
+/** @param {string} s @returns {GraphemeCell[]} */
 function graphemeCells(s) {
-  const gs = term.graphemes(s);
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  /** @type {GraphemeCell[]} */
   const out = [];
-  for (let k = 0; k < gs.length; k += 3) out.push({ at: gs[k], cls: graphemeClass(s.slice(gs[k], gs[k] + gs[k + 1])) });
+  for (let k = 0; k < gs.length; k += 3) out.push({ at: /** @type {number} */ (gs[k]), cls: graphemeClass(s.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]))) });
   return out;
 }
 
+/** @param {GraphemeCell[]} cells @param {number} at @returns {number} */
 function cellIndex(cells, at) {
-  for (let i = 0; i < cells.length; i++) if (cells[i].at >= at) return i;
+  for (let i = 0; i < cells.length; i++) if (/** @type {GraphemeCell} */ (cells[i]).at >= at) return i;
   return cells.length;
 }
 
 // The start of the next word, or the end of the text. This is vim's `w`.
+/** @param {string} s @param {number} at @returns {number} */
 export function nextWordStart(s, at) {
   const cells = graphemeCells(s);
   let i = cellIndex(cells, at);
-  const cls = i < cells.length ? cells[i].cls : 0;
-  while (i < cells.length && cells[i].cls === cls && cls !== 0) i++;
-  while (i < cells.length && cells[i].cls === 0) i++;
-  return i < cells.length ? cells[i].at : s.length;
+  const cls = i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).cls : 0;
+  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === cls && cls !== 0) i++;
+  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === 0) i++;
+  return i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).at : s.length;
 }
 
 // The start of the previous word, or the start of the text. This is vim's `b`.
+/** @param {string} s @param {number} at @returns {number} */
 export function prevWordStart(s, at) {
   const cells = graphemeCells(s);
   let i = cellIndex(cells, at) - 1;
-  while (i >= 0 && cells[i].cls === 0) i--;
+  while (i >= 0 && /** @type {GraphemeCell} */ (cells[i]).cls === 0) i--;
   if (i < 0) return 0;
-  const cls = cells[i].cls;
-  while (i > 0 && cells[i - 1].cls === cls) i--;
-  return cells[i].at;
+  const cls = /** @type {GraphemeCell} */ (cells[i]).cls;
+  while (i > 0 && /** @type {GraphemeCell} */ (cells[i - 1]).cls === cls) i--;
+  return /** @type {GraphemeCell} */ (cells[i]).at;
 }
 
 // The last grapheme of the word at or after the caret. This is vim's `e`, which lands on the char.
+/** @param {string} s @param {number} at @returns {number} */
 export function nextWordEnd(s, at) {
   const cells = graphemeCells(s);
   let i = cellIndex(cells, at) + 1;
-  while (i < cells.length && cells[i].cls === 0) i++;
+  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === 0) i++;
   if (i >= cells.length) return s.length;
-  const cls = cells[i].cls;
-  while (i + 1 < cells.length && cells[i + 1].cls === cls) i++;
-  return cells[i].at;
+  const cls = /** @type {GraphemeCell} */ (cells[i]).cls;
+  while (i + 1 < cells.length && /** @type {GraphemeCell} */ (cells[i + 1]).cls === cls) i++;
+  return /** @type {GraphemeCell} */ (cells[i]).at;
 }
 
 // A caret step reads this many code units around the caret. No grapheme cluster is this long.
@@ -588,31 +669,37 @@ const grapheme_window = 256;
 
 // A step needs only the grapheme beside the caret, so it scans a window and not the whole text.
 // A cluster longer than the window is not real text.
+/** @param {string} s @param {number} at @returns {number} */
 export function prevGrapheme(s, at) {
   const from = Math.max(0, at - grapheme_window);
-  const gs = term.graphemes(s.slice(from, at));
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s.slice(from, at))));
   let p = from;
-  for (let k = 0; k < gs.length; k += 3) p = from + gs[k];
+  for (let k = 0; k < gs.length; k += 3) p = from + /** @type {number} */ (gs[k]);
   return p;
 }
 
+/** @param {string} s @param {number} at @returns {number} */
 export function nextGrapheme(s, at) {
   const to = Math.min(s.length, at + grapheme_window);
-  const gs = term.graphemes(s.slice(at, to));
+  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s.slice(at, to))));
   if (gs.length === 0) return s.length;
-  return at + gs[0] + gs[1];
+  return at + /** @type {number} */ (gs[0]) + /** @type {number} */ (gs[1]);
 }
 
 export class TextInput {
+  /** @param {TextInputOptions} opts */
   constructor(opts = {}) {
     this.text = "";
     this.caret = 0;
+    /** @type {(() => void) | null} */
     this.onChange = opts.onChange || null;
     // onEdit(from, to, insertedLength) reports the range an edit replaced. An owner that keeps
     // offsets into the text uses this hook. TextInput never learns what those offsets mean.
+    /** @type {((from: number, to: number, insertedLength: number) => void) | null} */
     this.onEdit = opts.onEdit || null;
   }
 
+  /** @param {string} s @returns {void} */
   setText(s) {
     const had = this.text.length;
     this.text = String(s);
@@ -621,10 +708,12 @@ export class TextInput {
     callHook(this, "onChange");
   }
 
+  /** @returns {string} */
   beforeCaret() {
     return this.text.slice(0, this.caret);
   }
 
+  /** @param {number} from @param {number} to @param {string} ins @returns {void} */
   _splice(from, to, ins) {
     this.text = this.text.slice(0, from) + ins + this.text.slice(to);
     this.caret = from + ins.length;
@@ -633,18 +722,21 @@ export class TextInput {
   }
 
   // Replace [from, to) with `s`. The caret lands after the new text.
+  /** @param {number} from @param {number} to @param {string} s @returns {void} */
   replace(from, to, s) {
     this._splice(from, to, String(s));
   }
 
   // Insert `s` at the caret with one edit. A paste and a newline key use this.
+  /** @param {string} s @returns {void} */
   insert(s) {
     s = String(s);
     if (s !== "") this._splice(this.caret, this.caret, s);
   }
 
+  /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    const s = strokeOf(ev);
+    const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
     switch (s) {
       case "left":
         this.caret = prevGrapheme(this.text, this.caret);
@@ -686,16 +778,20 @@ export class TextInput {
   }
 }
 
+/** @param {number} w @param {string} prompt @param {string} before @returns {number} */
 export function caretCol(w, prompt, before) {
   return Math.min(w - 1, term.measure(prompt + before));
 }
 
 export class Emitter {
   constructor() {
+    /** @type {ListenerMap} */
     this._hooks = Object.create(null);
+    /** @type {((error: unknown, name: string) => void) | null} */
     this.onError = null;
   }
 
+  /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
   on(name, fn, opts) {
     const list = this._hooks[name] || (this._hooks[name] = []);
     if (opts && opts.prepend) list.unshift(fn);
@@ -706,6 +802,7 @@ export class Emitter {
     };
   }
 
+  /** @param {string} name @param {(...args: any[]) => unknown} fn @returns {() => void} */
   once(name, fn) {
     const off = this.on(name, (...args) => {
       off();
@@ -714,6 +811,7 @@ export class Emitter {
     return off;
   }
 
+  /** @param {string} name @param {...any} args @returns {void} */
   emit(name, ...args) {
     const list = this._hooks[name];
     if (!list) return;
@@ -729,6 +827,7 @@ export class Emitter {
     }
   }
 
+  /** @param {string} name @param {...any} args @returns {unknown} */
   bail(name, ...args) {
     const list = this._hooks[name];
     if (!list) return undefined;
@@ -744,47 +843,65 @@ export const events = new Emitter();
 
 export class View {
   constructor() {
+    /** @type {Rect} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
   get name() {
     return "view";
   }
+  /** @returns {void} */
   update() {}
+  /** @returns {void} */
   draw() {}
+  /** @param {HostEvent} _ev @returns {boolean} */
   onKey(_ev) {
     return false;
   }
+  /** @param {Extract<HostEvent, { type: "mouse" }>} _ev @returns {boolean} */
   onMouse(_ev) {
     return false;
   }
+  /** @returns {void} */
   tick() {}
+  /** @returns {{ periodMs: number } | null} */
   needsTick() {
     return null;
   }
+  /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
     return null;
   }
 }
 
 export class Node {
+  /** @param {ViewLike | null} view */
   constructor(view) {
     if (view != null) requireDraw(view, "a view needs a draw method");
+    /** @type {"leaf" | "split"} */
     this.type = "leaf";
+    /** @type {Node | null} */
     this.parent = null;
+    /** @type {Rect} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.view = view || null;
+    /** @type {"row" | "col" | null} */
     this.kind = null;
+    /** @type {Node | null} */
     this.a = null;
+    /** @type {Node | null} */
     this.b = null;
+    /** @type {number} */
     this.ratio = 0.5;
   }
 
+  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} ratio @returns {Node} */
   static branch(kind, a, b, ratio) {
     const n = new Node(null);
     n.becomeSplit(kind, a, b, ratio);
     return n;
   }
 
+  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} [ratio] @returns {void} */
   becomeSplit(kind, a, b, ratio) {
     this.type = "split";
     this.kind = kind;
@@ -797,23 +914,26 @@ export class Node {
   }
 
   // Return the leaf that contains the cell. Return null outside this subtree.
+  /** @param {number} col @param {number} row @returns {Node | null} */
   leafAt(col, row) {
     const r = this.rect;
     if (col < r.x || col >= r.x + r.w || row < r.y || row >= r.y + r.h) return null;
     if (this.type === "leaf") return this;
-    return this.a.leafAt(col, row) || this.b.leafAt(col, row);
+    return /** @type {Node} */ (this.a).leafAt(col, row) || /** @type {Node} */ (this.b).leafAt(col, row);
   }
 
+  /** @param {Node[] | undefined} [out] @returns {Node[]} */
   leaves(out) {
     out = out || [];
     if (this.type === "leaf") out.push(this);
     else {
-      this.a.leaves(out);
-      this.b.leaves(out);
+      /** @type {Node} */ (this.a).leaves(out);
+      /** @type {Node} */ (this.b).leaves(out);
     }
     return out;
   }
 
+  /** @param {Rect} rect @returns {void} */
   layout(rect) {
     this.rect = rect;
     if (this.type === "leaf") {
@@ -823,16 +943,17 @@ export class Node {
     if (this.kind === "row") {
       const total = Math.max(0, rect.w - 1);
       const aw = clampChildSize(Math.round(total * this.ratio), total);
-      this.a.layout({ x: rect.x, y: rect.y, w: aw, h: rect.h });
-      this.b.layout({ x: rect.x + aw + 1, y: rect.y, w: total - aw, h: rect.h });
+      /** @type {Node} */ (this.a).layout({ x: rect.x, y: rect.y, w: aw, h: rect.h });
+      /** @type {Node} */ (this.b).layout({ x: rect.x + aw + 1, y: rect.y, w: total - aw, h: rect.h });
     } else {
       const total = Math.max(0, rect.h - 1);
       const ah = clampChildSize(Math.round(total * this.ratio), total);
-      this.a.layout({ x: rect.x, y: rect.y, w: rect.w, h: ah });
-      this.b.layout({ x: rect.x, y: rect.y + ah + 1, w: rect.w, h: total - ah });
+      /** @type {Node} */ (this.a).layout({ x: rect.x, y: rect.y, w: rect.w, h: ah });
+      /** @type {Node} */ (this.b).layout({ x: rect.x, y: rect.y + ah + 1, w: rect.w, h: total - ah });
     }
   }
 
+  /** @param {Node | null} activeLeaf @returns {void} */
   draw(activeLeaf) {
     if (this.type === "leaf") {
       const v = this.view;
@@ -841,18 +962,19 @@ export class Node {
       callHook(v, "draw", this === activeLeaf);
       return;
     }
-    this.a.draw(activeLeaf);
-    this.b.draw(activeLeaf);
+    /** @type {Node} */ (this.a).draw(activeLeaf);
+    /** @type {Node} */ (this.b).draw(activeLeaf);
     if (this.kind === "row") {
-      const x = this.a.rect.x + this.a.rect.w;
+      const x = /** @type {Node} */ (this.a).rect.x + /** @type {Node} */ (this.a).rect.w;
       for (let y = this.rect.y; y < this.rect.y + this.rect.h; y++) text(x, y, "│", "YukeRule");
     } else if (this.rect.w > 0) {
-      const y = this.a.rect.y + this.a.rect.h;
+      const y = /** @type {Node} */ (this.a).rect.y + /** @type {Node} */ (this.a).rect.h;
       text(this.rect.x, y, "─".repeat(this.rect.w), "YukeRule");
     }
   }
 }
 
+/** @param {number} size @param {number} total @returns {number} */
 function clampChildSize(size, total) {
   if (total <= 1) return total;
   return Math.max(1, Math.min(size, total - 1));
@@ -862,9 +984,11 @@ function clampChildSize(size, total) {
 // One row under the whole layout. A segment renders to a string, or to nothing when it has none to
 // say, so a provider that is idle takes no space.
 export const status = {
+  /** @type {StatusEntry[]} */
   _list: [],
 
   // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
+  /** @param {StatusSegment} seg @returns {() => void} */
   add(seg) {
     if (typeof seg.render !== "function") throw new TypeError("status.add needs a render function");
     const side = seg.side == null ? "left" : seg.side;
@@ -881,11 +1005,13 @@ export const status = {
   },
 
   // The text of one side. A segment that renders nothing drops out of the join.
+  /** @param {"left" | "right"} which @returns {string} */
   side(which) {
     const out = [];
     for (const seg of this._list) {
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
+      /** @type {string | null | undefined} */
       let t = "";
       try {
         t = seg.render();
@@ -898,6 +1024,7 @@ export const status = {
   },
 
   // The right side keeps the width it needs, so a long message never pushes it off the row.
+  /** @param {Rect} rect @returns {void} */
   draw(rect) {
     const { x, y, w } = rect;
     if (w <= 0) return;
@@ -912,12 +1039,19 @@ export const status = {
 
 export class RootView {
   constructor() {
+    /** @type {Node | null} */
     this.root_node = null;
+    /** @type {Node | null} */
     this.activeLeaf = null;
+    /** @type {Overlay[]} */
     this.overlays = [];
+    /** @type {ServiceLike[]} */
     this.services = [];
+    /** @type {Node | null} */
     this._capture = null; // the leaf that owns the drag, from press to release
+    /** @type {boolean} */
     this._needsDraw = false; // the host paints once after it drains the event queue
+    /** @type {boolean} */
     this._started = false;
   }
 
@@ -925,29 +1059,34 @@ export class RootView {
     return this.activeLeaf ? this.activeLeaf.view : null;
   }
 
+  /** @param {Node | null} node @returns {void} */
   setRoot(node) {
     if (node) node.parent = null;
     this.root_node = node;
-    this.activeLeaf = node ? node.leaves()[0] : null;
+    this.activeLeaf = node ? /** @type {Node} */ (node.leaves()[0]) : null;
     this._capture = null;
   }
 
+  /** @param {ViewLike | null} view @returns {void} */
   setActive(view) {
     this.setRoot(view == null ? null : new Node(view));
   }
 
   // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.
+  /** @param {Node | null} leaf @returns {void} */
   _setActiveLeaf(leaf) {
     if (!leaf || leaf === this.activeLeaf) return;
     this.activeLeaf = leaf;
     callHook(leaf.view, "onFocus");
   }
 
+  /** @param {Node | null} leaf @returns {void} */
   focusLeaf(leaf) {
     if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this._setActiveLeaf(leaf);
   }
 
   // Focus the leaf that holds `view`. Return false when the view is not in the tree.
+  /** @param {ViewLike | null} view @returns {boolean} */
   focusView(view) {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
@@ -960,6 +1099,7 @@ export class RootView {
   }
 
   // Return the leaf that contains the cell. Return null over a split rule or outside the tree.
+  /** @param {number} col @param {number} row @returns {Node | null} */
   leafAt(col, row) {
     return this.root_node ? this.root_node.leafAt(col, row) : null;
   }
@@ -967,6 +1107,7 @@ export class RootView {
   // Send the event to the leaf under the pointer. Focus a leaf on a button press, but not on a
   // wheel event. A left press captures the leaf, so a drag that leaves it still reaches the same
   // view and the release always arrives. Return true when a view consumed the event.
+  /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
   routeMouse(ev) {
     if (this._capture && (ev.event === "drag" || ev.event === "release")) {
       const held = this._capture;
@@ -983,6 +1124,7 @@ export class RootView {
     return !!callHook(leaf.view, "onMouse", ev);
   }
 
+  /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
   split(kind, view) {
     const leaf = this.activeLeaf;
     if (!leaf) return null;
@@ -996,7 +1138,7 @@ export class RootView {
     const leaf = this.activeLeaf;
     const p = leaf && leaf.parent;
     if (!p) return;
-    const sib = p.a === leaf ? p.b : p.a;
+    const sib = /** @type {Node} */ (p.a === leaf ? p.b : p.a);
     p.type = sib.type;
     p.view = sib.view;
     p.kind = sib.kind;
@@ -1005,9 +1147,10 @@ export class RootView {
     p.b = sib.b;
     if (p.a) p.a.parent = p;
     if (p.b) p.b.parent = p;
-    this._setActiveLeaf(p.leaves()[0]);
+    this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
   }
 
+  /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
   focusDir(d) {
     if (!this.activeLeaf) return;
     const cur = this.activeLeaf.rect;
@@ -1015,7 +1158,7 @@ export class RootView {
     const cy = cur.y + cur.h / 2;
     let best = null;
     let bestScore = Infinity;
-    for (const leaf of this.root_node.leaves()) {
+    for (const leaf of /** @type {Node} */ (this.root_node).leaves()) {
       if (leaf === this.activeLeaf) continue;
       const dx = leaf.rect.x + leaf.rect.w / 2 - cx;
       const dy = leaf.rect.y + leaf.rect.h / 2 - cy;
@@ -1031,15 +1174,17 @@ export class RootView {
     if (best) this._setActiveLeaf(best);
   }
 
+  /** @param {number} step @returns {void} */
   focusCycle(step) {
     if (!this.root_node) return;
     const leaves = this.root_node.leaves();
     if (leaves.length === 0) return;
-    let i = leaves.indexOf(this.activeLeaf);
+    let i = leaves.indexOf(/** @type {Node} */ (this.activeLeaf));
     if (i < 0) i = 0;
-    this._setActiveLeaf(leaves[(i + step + leaves.length) % leaves.length]);
+    this._setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
   }
 
+  /** @param {ServiceLike} svc @returns {ServiceLike} */
   addService(svc) {
     this.services.push(svc);
     if (this._started) callHook(svc, "onStart");
@@ -1051,6 +1196,7 @@ export class RootView {
     return this.overlays.length ? this.overlays[this.overlays.length - 1] : this.active;
   }
 
+  /** @param {Overlay} layer @returns {Overlay} */
   pushOverlay(layer) {
     requireDraw(layer, "pushOverlay needs a layer with a draw method");
     this.overlays.push(layer);
@@ -1058,6 +1204,7 @@ export class RootView {
     return layer;
   }
 
+  /** @param {Overlay | undefined} layer @returns {void} */
   popOverlay(layer) {
     if (layer) {
       const i = this.overlays.indexOf(layer);
@@ -1067,23 +1214,27 @@ export class RootView {
   }
 
   // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
+  /** @returns {void} */
   invalidate() {
     this._needsDraw = true;
   }
 
   // Paint if anything asked for it. The host calls this after it drains the event queue.
+  /** @returns {void} */
   flush() {
     if (!this._needsDraw) return;
     this._needsDraw = false;
     this.draw();
   }
 
+  /** @param {(layer: Overlay | ServiceLike) => void} fn @returns {void} */
   _forEachTickable(fn) {
     if (this.root_node) for (const leaf of this.root_node.leaves()) if (leaf.view) fn(leaf.view);
     for (const layer of this.overlays) fn(layer);
     for (const svc of this.services) fn(svc);
   }
 
+  /** @returns {void} */
   draw() {
     if (!this.root_node && this.overlays.length === 0) return;
     term.beginFrame();
@@ -1099,17 +1250,19 @@ export class RootView {
       callHook(layer, "update");
       callHook(layer, "draw");
     }
-    const c = callHook(this.focused, "cursor");
+    const c = /** @type {{ x: number, y: number, visible: boolean } | null} */ (callHook(this.focused, "cursor"));
     if (c && c.visible) term.cursor(c.x, c.y, true);
     else term.cursor(0, 0, false);
     term.endFrame();
     this.syncTick();
   }
 
+  /** @returns {void} */
   syncTick() {
+    /** @type {number | null} */
     let period = null;
     this._forEachTickable((layer) => {
-      const t = callHook(layer, "needsTick");
+      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
       if (!t) return;
       const ms = t.periodMs;
       period = period == null ? ms : Math.min(period, ms);
@@ -1118,12 +1271,14 @@ export class RootView {
     else term.setNeedsTick(false);
   }
 
+  /** @returns {void} */
   tickLayers() {
     this._forEachTickable((layer) => {
       if (callHook(layer, "needsTick")) callHook(layer, "tick");
     });
   }
 
+  /** @param {RootEvent} ev @returns {void} */
   onEvent(ev) {
     events.emit(ev.type, ev);
     if (ev.type === "input_closed") {
@@ -1151,11 +1306,11 @@ export class RootView {
     }
     const top = this.overlays.length ? this.overlays[this.overlays.length - 1] : null;
     // A modal overlay consumes the event even when the overlay has no requested hook.
-    const consumedByOverlay = (method) => {
+    const consumedByOverlay = /** @type {(method: string) => boolean} */ ((method) => {
       if (!top) return false;
       const handled = callHook(top, method, ev);
       return top.modal !== false || !!handled;
-    };
+    });
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;
       if (!consumedByOverlay("onKey")) {

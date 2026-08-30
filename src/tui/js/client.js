@@ -7,6 +7,7 @@ import { events } from "yuke:core";
 native.setEventSink((ev) => events.emit(ev.type, ev));
 
 export class ClientError extends Error {
+  /** @param {unknown} code */
   constructor(code) {
     super(String(code));
     this.name = "ClientError";
@@ -15,6 +16,7 @@ export class ClientError extends Error {
 }
 
 export class RpcError extends Error {
+  /** @param {unknown} code @param {unknown} message */
   constructor(code, message) {
     super(String(message));
     this.name = "RpcError";
@@ -22,28 +24,37 @@ export class RpcError extends Error {
   }
 }
 
+/** @param {unknown} reason @returns {ClientError} */
 function clientError(reason) {
   return reason instanceof ClientError ? reason : new ClientError(reason);
 }
 
+/**
+ * @param {Parameters<typeof native.connect>[0]} options
+ * @returns {Promise<void>}
+ */
 export function connect(options) {
   return native.connect(options).catch((reason) => {
     throw clientError(reason);
   });
 }
 
+/** @param {string} connKey @returns {void} */
 export function disconnect(connKey) {
   native.disconnect(connKey);
 }
 
+/** @param {string} connKey @returns {import("yuke:client-native").ConnState} */
 export function connectionState(connKey) {
   return native.state(connKey);
 }
 
+/** @returns {ReturnType<typeof native.connections>} */
 export function connections() {
   return native.connections();
 }
 
+/** @returns {ReturnType<typeof native.devices>} */
 export function devices() {
   return native.devices().catch((reason) => {
     throw clientError(reason);
@@ -51,6 +62,12 @@ export function devices() {
 }
 
 // A JSON-RPC request. The native returns the response text; unwrap the result or throw an RpcError.
+/**
+ * @param {string} connKey
+ * @param {string} method
+ * @param {unknown} params
+ * @returns {Promise<any>}
+ */
 function request(connKey, method, params) {
   return native.request(connKey, method, JSON.stringify(params)).then(
     (text) => {
@@ -73,6 +90,11 @@ function request(connKey, method, params) {
   );
 }
 
+/**
+ * @param {string} connKey
+ * @param {Wire.SessionListParams} [params]
+ * @returns {Promise<Wire.SessionListResult>}
+ */
 export function sessionList(connKey, params = {}) {
   return request(connKey, "session.list", {
     scope: { type: "all" },
@@ -83,20 +105,24 @@ export function sessionList(connKey, params = {}) {
 }
 
 // Mount a replica for (connKey, sessionId). Idempotent. It needs a resync before it folds.
+/** @param {string} connKey @param {string} sessionId @returns {void} */
 export function sessionOpen(connKey, sessionId) {
   native.sessionOpen(connKey, sessionId);
 }
 
+/** @param {string} connKey @param {string} sessionId @returns {void} */
 export function sessionClose(connKey, sessionId) {
   native.sessionClose(connKey, sessionId);
 }
 
 // The change counter for that pair, or -1 when it is not mounted.
+/** @param {string} connKey @param {string} sessionId @returns {number} */
 export function sessionRev(connKey, sessionId) {
   return native.sessionRev(connKey, sessionId);
 }
 
 // Install the ordered cut, so broadcasts fold again for that pair.
+/** @param {string} connKey @param {string} sessionId @returns {Promise<void>} */
 export function sessionResync(connKey, sessionId) {
   return native.sessionResync(connKey, sessionId).catch((reason) => {
     throw clientError(reason);
@@ -104,21 +130,39 @@ export function sessionResync(connKey, sessionId) {
 }
 
 // The transcript outline (message ids, roles, and the draft), or null when not mounted.
+/**
+ * @param {string} connKey
+ * @param {string} sessionId
+ * @returns {import("yuke:client-native").SessionOutline}
+ */
 export function sessionOutline(connKey, sessionId) {
   return JSON.parse(native.sessionOutline(connKey, sessionId));
 }
 
 // The concatenated text of one message (committed or the draft), "" when absent.
+/** @param {string} connKey @param {string} sessionId @param {number} messageId @returns {string} */
 export function sessionText(connKey, sessionId, messageId) {
   return native.sessionText(connKey, sessionId, messageId);
 }
 
 // The assistant parts of one message (committed or the draft), [] when absent.
+/**
+ * @param {string} connKey
+ * @param {string} sessionId
+ * @param {number} messageId
+ * @returns {Wire.AssistantPart[]}
+ */
 export function sessionParts(connKey, sessionId, messageId) {
   return JSON.parse(native.sessionParts(connKey, sessionId, messageId));
 }
 
 // Send `text` into `id`. The daemon commits it and streams the reply as broadcasts the replica folds.
+/**
+ * @param {string} connKey
+ * @param {string} id
+ * @param {string} text
+ * @returns {Promise<Wire.SessionSendInputResult>}
+ */
 export function sessionSendInput(connKey, id, text) {
   return request(connKey, "session.send_input", {
     session_id: id,
@@ -127,6 +171,12 @@ export function sessionSendInput(connKey, id, text) {
 }
 
 // Interrupt the open session's active run; clearQueue also drops every queued input.
+/**
+ * @param {string} connKey
+ * @param {string} id
+ * @param {boolean} [clearQueue]
+ * @returns {Promise<Wire.SessionCancelRunResult>}
+ */
 export function sessionCancelRun(connKey, id, clearQueue = false) {
   return request(connKey, "session.cancel_run", {
     session_id: id,
@@ -135,16 +185,31 @@ export function sessionCancelRun(connKey, id, clearQueue = false) {
 }
 
 // Create a session. An unset model or reasoning lets the daemon use its profile default.
+/**
+ * @param {string} connKey
+ * @param {Wire.CreateSession} params
+ * @returns {Promise<Wire.SessionResult>}
+ */
 export function sessionCreate(connKey, params) {
   return request(connKey, "session.create", params);
 }
 
 // The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
+/**
+ * @param {string} connKey
+ * @param {Wire.CatalogRev | null | undefined} sinceRev
+ * @returns {Promise<Wire.CatalogListResult>}
+ */
 export function catalogList(connKey, sinceRev) {
   return request(connKey, "catalog.list", sinceRev ? { since_rev: sinceRev } : {});
 }
 
 // The subdirectories of `params.path` (the daemon's default root when omitted), one page.
+/**
+ * @param {string} connKey
+ * @param {Wire.FsBrowseParams} [params]
+ * @returns {Promise<Wire.FsBrowseResult>}
+ */
 export function fsBrowse(connKey, params = {}) {
   return request(connKey, "fs.browse", params);
 }

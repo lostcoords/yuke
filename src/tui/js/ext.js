@@ -2,17 +2,40 @@
 // registration surface, `advice` wraps methods, and `plugins` loads and unloads.
 import { command, keymap, events, status } from "yuke:core";
 
+/** @typedef {() => void} Disposer */
+/** @typedef {() => unknown} Effect */
+/** @typedef {(...args: any[]) => any} AdviceFunction */
+/** @typedef {"before" | "after" | "around" | "filterArgs" | "filterReturn"} AdviceWhere */
+/** @typedef {{ owner?: string, name?: string, order?: number }} AdviceOptions */
+/** @typedef {{ original: AdviceFunction, list: AdviceEntry[] }} AdviceRecord */
+/** @typedef {{ owner: string, name: string, key: string, where: AdviceWhere, fn: AdviceFunction, order: number }} AdviceEntry */
+/** @typedef {{ prop: string, owner: string, name: string, where: AdviceWhere, order: number }} AdviceInfo */
+/** @typedef {Parameters<typeof events.on>[1]} EventHandler */
+/** @typedef {Parameters<typeof events.on>[2]} EventOptions */
+/** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
+/** @typedef {Parameters<typeof command.add>[1]} CommandMap */
+/** @typedef {Parameters<typeof keymap.add>[0]} KeyBindings */
+/** @typedef {Parameters<typeof status.add>[0]} StatusSegment */
+/** @typedef {(ctx: Context, config: unknown) => unknown} PluginApply */
+/** @typedef {PluginApply & { pluginName?: string }} PluginFunction */
+/** @typedef {{ name?: string, apply: PluginApply }} PluginObject */
+/** @typedef {PluginFunction | PluginObject} Plugin */
+/** @typedef {{ name: string, apply: PluginApply }} PluginDefinition */
+
 const NOOP = () => {};
 
 // --- scope: the owner of revertible effects ---
 export class Scope {
+  /** @param {string | undefined} name */
   constructor(name) {
     this.name = name || "scope";
     this.alive = true;
+    /** @type {Disposer[]} */
     this._disposers = []; // registration order; reverted in reverse
   }
 
   // Run `fn` now. Collect the disposer it returns. The handle reverts this one effect, once.
+  /** @param {Effect} fn @returns {Disposer} */
   effect(fn) {
     if (!this.alive) throw new Error("effect on a disposed scope: " + this.name);
 
@@ -31,6 +54,7 @@ export class Scope {
   }
 
   // A child scope is an effect on this scope, so one LIFO stack owns the whole tree.
+  /** @param {string | undefined} name @returns {Scope} */
   child(name) {
     const s = new Scope(name);
     this.effect(() => () => s.dispose());
@@ -39,6 +63,7 @@ export class Scope {
   }
 
   // Revert every effect, newest first. A throwing teardown never stops the others.
+  /** @returns {void} */
   dispose() {
     if (!this.alive) return;
     this.alive = false;
@@ -60,35 +85,38 @@ export const rootScope = new Scope("root");
 // --- advice: named, removable method wrapping ---
 const WHERE = { before: 1, after: 1, around: 1, filterArgs: 1, filterReturn: 1 };
 
+/** @type {WeakMap<object, Record<string, AdviceRecord>>} */
 const RECORDS = new WeakMap(); // obj -> { [prop]: { original, list } }
 
+/** @param {object} obj @param {string} prop @returns {AdviceRecord} */
 function adviceRecord(obj, prop) {
   let byProp = RECORDS.get(obj);
   if (!byProp) {
     byProp = Object.create(null);
-    RECORDS.set(obj, byProp);
+    RECORDS.set(obj, /** @type {Record<string, AdviceRecord>} */ (byProp));
   }
 
-  let rec = byProp[prop];
+  let rec = (/** @type {Record<string, AdviceRecord>} */ (byProp))[prop];
   if (!rec) {
     // An accessor is not a method. Assigning the wrapper would call its setter.
     const desc = findDescriptor(obj, prop);
     if (desc && !("value" in desc)) throw new TypeError("advise: " + prop + " is an accessor");
 
-    const original = obj[prop];
+    const original = /** @type {AdviceFunction} */ (/** @type {Record<string, unknown>} */ (obj)[prop]);
     if (typeof original !== "function") throw new Error("advise: " + prop + " is not a method");
 
     rec = { original, list: [] };
-    obj[prop] = function (...args) {
-      return applyAdvice(rec, this, args);
-    };
-    byProp[prop] = rec;
+    /** @type {Record<string, unknown>} */ (obj)[prop] = /** @type {AdviceFunction} */ (/** @this {object} */ function (...args) {
+      return applyAdvice(/** @type {AdviceRecord} */ (rec), /** @type {object} */ (this), args);
+    });
+    (/** @type {Record<string, AdviceRecord>} */ (byProp))[prop] = rec;
   }
 
   return rec;
 }
 
 // Find the property descriptor on `obj` or the first prototype that owns it.
+/** @param {object} obj @param {string} prop @returns {PropertyDescriptor | undefined} */
 function findDescriptor(obj, prop) {
   let holder = obj;
   while (holder) {
@@ -101,19 +129,20 @@ function findDescriptor(obj, prop) {
 
 // Fold the advice around one call: filterArgs, before, the around chain, filterReturn, after.
 // The first-listed `around` is outermost, so the chain wraps in reverse.
+/** @param {AdviceRecord} rec @param {object} self @param {any[]} args @returns {any} */
 function applyAdvice(rec, self, args) {
   const list = rec.list;
 
   for (const a of list) if (a.where === "filterArgs") args = Reflect.apply(a.fn, self, [args]) || args;
   for (const a of list) if (a.where === "before") Reflect.apply(a.fn, self, args);
 
-  let call = (...as) => Reflect.apply(rec.original, self, as);
+  let call = /** @type {AdviceFunction} */ ((...as) => Reflect.apply(rec.original, self, as));
   for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].where !== "around") continue;
+    if (/** @type {AdviceEntry} */ (list[i]).where !== "around") continue;
 
     const inner = call;
-    const fn = list[i].fn;
-    call = (...as) => Reflect.apply(fn, self, [inner, ...as]);
+    const fn = /** @type {AdviceEntry} */ (list[i]).fn;
+    call = /** @type {AdviceFunction} */ ((...as) => Reflect.apply(fn, self, [inner, ...as]));
   }
 
   let result = call(...args);
@@ -127,6 +156,7 @@ function applyAdvice(rec, self, args) {
 export const advice = {
   // Install one advice and return a disposer. The same owner and name replaces in place, so a
   // reload does not stack. Sorted by `order`, which defaults to 0.
+  /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     if (!WHERE[where]) throw new Error("advise: unknown kind " + where);
     if (typeof fn !== "function") throw new Error("advise: fn must be a function");
@@ -152,6 +182,7 @@ export const advice = {
   },
 
   // The advice installed on a target, for a "what is patched here?" view.
+  /** @param {object} obj @param {string | undefined} [prop] @returns {AdviceInfo[]} */
   list(obj, prop) {
     const byProp = RECORDS.get(obj);
     if (!byProp) return [];
@@ -159,7 +190,7 @@ export const advice = {
     const out = [];
     for (const p in byProp) {
       if (prop && p !== prop) continue;
-      for (const a of byProp[p].list) {
+      for (const a of (/** @type {AdviceRecord} */ (byProp[p])).list) {
         out.push({ prop: p, owner: a.owner, name: a.name, where: a.where, order: a.order });
       }
     }
@@ -169,17 +200,20 @@ export const advice = {
 };
 
 // Put the original method back once no advice remains.
+/** @param {object} obj @param {string} prop @param {AdviceRecord} rec @returns {void} */
 function adviceRestore(obj, prop, rec) {
-  obj[prop] = rec.original;
+  /** @type {Record<string, unknown>} */ (obj)[prop] = rec.original;
   const byProp = RECORDS.get(obj);
   if (byProp) delete byProp[prop];
 }
 
 // --- services: one provider per name ---
 export const services = {
+  /** @type {Record<string, unknown>} */
   _map: Object.create(null),
 
   // Register `value` and return a disposer. Both the arrival and the withdrawal emit an event.
+  /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     this._map[name] = value;
     events.emit("service:" + name, value);
@@ -192,6 +226,7 @@ export const services = {
     };
   },
 
+  /** @param {string} name @returns {unknown} */
   get(name) {
     return this._map[name];
   },
@@ -201,24 +236,29 @@ export const services = {
 // Every registration is an effect on the scope, so an unload reverts all of them.
 // A plugin never touches a global registry, which is what makes the unload total.
 export class Context {
+  /** @param {Scope} scope @param {string} id */
   constructor(scope, id) {
     this.scope = scope;
     this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
   }
 
+  /** @param {Effect} fn @returns {Disposer} */
   effect(fn) {
     return this.scope.effect(fn);
   }
 
+  /** @param {string} name @param {EventHandler} fn @param {EventOptions} [opts] @returns {Disposer} */
   on(name, fn, opts) {
     return this.scope.effect(() => events.on(name, fn, opts));
   }
 
+  /** @param {string} name @param {EventHandler} fn @returns {Disposer} */
   once(name, fn) {
     return this.scope.effect(() => events.once(name, fn));
   }
 
   // A bare name becomes "<id>:<name>". A name that already holds a ":" stays as the author wrote it.
+  /** @param {CommandPredicate} predicate @param {CommandMap} map @returns {Disposer} */
   command(predicate, map) {
     const scoped = Object.create(null);
     for (const name in map) scoped[this._qualify(name)] = map[name];
@@ -226,28 +266,34 @@ export class Context {
     return this.scope.effect(() => command.add(predicate, scoped));
   }
 
+  /** @param {KeyBindings} bindings @param {boolean} [overwrite] @returns {Disposer} */
   keymap(bindings, overwrite) {
     return this.scope.effect(() => keymap.add(bindings, overwrite));
   }
 
+  /** @param {StatusSegment} seg @returns {Disposer} */
   status(seg) {
     return this.scope.effect(() => status.add(seg));
   }
 
+  /** @param {object} obj @param {string} prop @param {string} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     return this.scope.effect(() =>
-      advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
+      advice.advise(obj, prop, /** @type {AdviceWhere} */ (where), fn, Object.assign({}, opts, { owner: this.id })),
     );
   }
 
+  /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     return this.scope.effect(() => services.provide(name, value));
   }
 
+  /** @param {string} name @returns {unknown} */
   use(name) {
     return services.get(name);
   }
 
+  /** @param {string} name @returns {string} */
   _qualify(name) {
     return name.indexOf(":") >= 0 ? name : this.id + ":" + name;
   }
@@ -255,9 +301,10 @@ export class Context {
 
 // --- plugin registry ---
 // A plugin is a function `apply(ctx, config)` or an object `{ name, apply }`.
+/** @param {Plugin} plugin @returns {PluginDefinition} */
 function resolvePlugin(plugin) {
   if (typeof plugin === "function") {
-    return { name: plugin.pluginName || plugin.name || "plugin", apply: plugin };
+    return { name: (/** @type {PluginFunction} */ (plugin)).pluginName || plugin.name || "plugin", apply: /** @type {PluginApply} */ (plugin) };
   }
   if (plugin && typeof plugin.apply === "function") {
     return { name: plugin.name || "plugin", apply: plugin.apply };
@@ -267,10 +314,12 @@ function resolvePlugin(plugin) {
 }
 
 export const plugins = {
+  /** @type {Record<string, Scope>} */
   _live: Object.create(null), // name -> Scope
 
   // Instantiate under a child of `rootScope`. A throw in `apply` reverts the partial scope.
   // `use` by name is idempotent, so a live name disposes first.
+  /** @param {Plugin} plugin @param {unknown} [config] @returns {Disposer} */
   use(plugin, config) {
     const def = resolvePlugin(plugin);
     if (this._live[def.name]) this.dispose(def.name);
@@ -293,10 +342,12 @@ export const plugins = {
     };
   },
 
+  /** @param {string} name @returns {Scope | undefined} */
   get(name) {
     return this._live[name];
   },
 
+  /** @param {string} name @returns {void} */
   dispose(name) {
     const scope = this._live[name];
     if (!scope) return;
@@ -305,6 +356,7 @@ export const plugins = {
     scope.dispose();
   },
 
+  /** @returns {string[]} */
   names() {
     return Object.keys(this._live);
   },
