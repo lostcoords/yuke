@@ -44,6 +44,12 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, arg
     if (matches == 0) return error.NoMatch;
     if (matches > 1 and !args.replace_all) return error.Ambiguous;
 
+    // Measure the result before the allocation. A wide `replace_all` grows the file by a multiple.
+    const removed = matches * old_string.len;
+    std.debug.assert(removed <= old.len); // matches never overlap, so they fit in the old text
+    const grown = (old.len - removed) +| (matches *| new_string.len); // saturate; the cap rejects it
+    if (grown > max_file_bytes) return error.TooLarge;
+
     // One match without `replace_all` gives the same bytes, so one call covers both cases.
     const new = try std.mem.replaceOwned(u8, scratch, old, old_string, new_string);
     // Build the whole result BEFORE the write. A failure after the write would report an error for a
@@ -60,7 +66,27 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, arg
 }
 
 const testing = std.testing;
+
 const FileHost = test_host.FileHost;
+
+test "edit rejects a replace_all that grows the file above the cap" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // 600_000 matches each grow by 19 bytes, so the 12 MB result passes the 10 MiB cap.
+    const old = try a.alloc(u8, 600_000);
+    @memset(old, 'a');
+    var fake: FileHost = .{ .content = old };
+    const args: Args = .{
+        .path = .{ .bytes = "big.txt" },
+        .old_string = .{ .bytes = "a" },
+        .new_string = .{ .bytes = "0123456789012345678a" },
+        .replace_all = true,
+    };
+    try testing.expectError(error.TooLarge, execute(a, a, fake.host(), args));
+    try testing.expect(fake.written == null); // the guard runs before the write
+}
 
 test "edit replaces one unique match" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

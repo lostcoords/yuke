@@ -16,8 +16,7 @@ pub const Error = error{ TooDifferent, OutOfMemory };
 pub const Options = struct {
     /// The hunk keeps this many unchanged lines on each side of a change. Three is the usual default.
     context: u32 = 3,
-    /// The search depth cap. The trace costs about `max_edits * max_edits / 2` words, so this bounds
-    /// the memory. A pair above the cap gives `error.TooDifferent`.
+    /// The search depth cap. It bounds the trace only; the caller must bound the input byte size.
     max_edits: u32 = 1000,
 };
 

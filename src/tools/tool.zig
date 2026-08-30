@@ -6,6 +6,9 @@ const Host = @import("../host/host.zig").Host;
 const HostError = @import("../host/host.zig").HostError;
 pub const schema = @import("schema.zig");
 
+/// The largest one argument value. Without it the parser caps a value at the whole argument slice.
+const max_arg_bytes = 10 * 1024 * 1024;
+
 pub const ToolError = HostError || error{
     MalformedArgs,
     MissingArg,
@@ -44,7 +47,8 @@ pub fn define(
         fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: Host, arguments: []const u8) ToolError!ToolResult {
             // The provider is a peer. A malformed argument must return an error. It must not assert.
             // A parsed string borrows `arguments` or `scratch`. The handler must copy what it keeps into `out`.
-            const args = std.json.parseFromSliceLeaky(Args, scratch, arguments, .{}) catch |err| return argError(err);
+            const options: std.json.ParseOptions = .{ .max_value_len = max_arg_bytes };
+            const args = std.json.parseFromSliceLeaky(Args, scratch, arguments, options) catch |err| return argError(err);
             return handler(out, scratch, host, args);
         }
     }.execute;
@@ -62,7 +66,7 @@ fn argError(err: std.json.ParseError(std.json.Scanner)) ToolError {
         error.UnknownField => error.UnknownArg,
         error.MissingField => error.MissingArg,
         error.DuplicateField => error.DuplicateArg,
-        error.Overflow, error.InvalidNumber, error.InvalidCharacter, error.UnexpectedToken => error.InvalidArg,
+        error.Overflow, error.InvalidNumber, error.InvalidCharacter, error.UnexpectedToken, error.ValueTooLong => error.InvalidArg,
         error.OutOfMemory => error.OutOfMemory,
         else => error.MalformedArgs,
     };

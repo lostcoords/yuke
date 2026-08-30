@@ -10,6 +10,9 @@ pub const Rendered = struct {
     changed_lines: usize = 0,
 };
 
+/// The largest side the mapper compares. A line table costs about 20 bytes for each line.
+pub const max_side_bytes = 1024 * 1024;
+
 /// Build a one-file diff view. The tool result still states the change when the view is absent.
 /// The hunks come from `scratch`. The returned view comes from `out`.
 pub fn diffView(
@@ -19,6 +22,8 @@ pub fn diffView(
     old: []const u8,
     new: []const u8,
 ) error{OutOfMemory}!Rendered {
+    // The line tables come before the edit cap, so a large side must stop the mapper here.
+    if (old.len > max_side_bytes or new.len > max_side_bytes) return .{};
     // `compare` borrows `old` and `new` until the mapping ends. The view copies the borrowed text.
     const hunks = diff.compare(scratch, old, new, .{}) catch |err| switch (err) {
         error.TooDifferent => return .{}, // The change is too large for a reader-friendly view.

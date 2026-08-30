@@ -6,8 +6,8 @@ const h = @import("../host/host.zig");
 const view = @import("view.zig");
 const test_host = @import("../host/test_host.zig");
 
-/// The tool reads old content up to this byte limit for the diff view. A larger file gets no view.
-const max_diff_bytes = 10 * 1024 * 1024;
+/// The tool reads old content up to this byte limit. `view.max_side_bytes` caps the diff itself.
+const max_read_bytes = 10 * 1024 * 1024;
 
 const Args = struct {
     path: t.schema.Str,
@@ -29,7 +29,7 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, arg
     const path = args.path.bytes;
     const content = args.content.bytes;
     // The view uses the old content only. The tool still writes a file that it cannot diff.
-    const old: ?[]const u8 = host.readAll(scratch, path, max_diff_bytes) catch |err| switch (err) {
+    const old: ?[]const u8 = host.readAll(scratch, path, max_read_bytes) catch |err| switch (err) {
         error.NotFound => "", // A new file has an empty old side.
         error.TooLarge, error.InvalidUtf8 => null,
         else => |e| return e,
@@ -48,6 +48,19 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, arg
 }
 
 const testing = std.testing;
+
+test "write above the diff cap still writes and reports the bytes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const big = try a.alloc(u8, view.max_side_bytes + 1);
+    @memset(big, 'x');
+    var fake: test_host.FileHost = .{ .content = "old\n" };
+    const res = try execute(a, a, fake.host(), .{ .path = .{ .bytes = "big.txt" }, .content = .{ .bytes = big } });
+    try testing.expect(res.view == null); // the pair is above the mapper cap
+    try testing.expectEqual(big.len, fake.written.?.len); // the write still holds every byte
+}
 const FileHost = test_host.FileHost;
 
 test "write replaces a file and reports the changed lines" {
