@@ -149,17 +149,6 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .empty = result } } };
         },
-        .@"session.patch",
-        .@"session.fork",
-        .@"session.compact",
-        .@"session.rewind",
-        .@"permission.decide",
-        .@"auth.list",
-        .@"auth.set_api_key",
-        .@"auth.login",
-        .@"auth.cancel_login",
-        .@"auth.logout",
-        => return errorResponse(request.id, .unknown_method, "not implemented"),
         .@"fs.stat" => {
             const result = handlers.fsStat(state, arena, request.params.fs_stat_params) catch |err| switch (err) {
                 error.BadPath => return errorResponse(request.id, .bad_request, "the daemon cannot read the path"),
@@ -176,12 +165,35 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             };
             return .{ .ok = .{ .id = request.id, .result = .{ .fs_browse_result = result } } };
         },
-        .@"workspace.remove",
-        .@"workspace.skills",
-        .@"permission.rules",
-        .@"permission.forget",
-        => return errorResponse(request.id, .unknown_method, "not implemented"),
+        inline else => |method| {
+            comptime assertUnimplemented(method);
+            return errorResponse(request.id, .unknown_method, "not implemented");
+        },
     }
+}
+
+/// The methods the daemon does not implement yet. A dispatch arm always wins over this list.
+const unimplemented = [_]wire.enums.MethodName{
+    .@"session.patch",
+    .@"session.fork",
+    .@"session.compact",
+    .@"session.rewind",
+    .@"permission.decide",
+    .@"permission.rules",
+    .@"permission.forget",
+    .@"auth.list",
+    .@"auth.set_api_key",
+    .@"auth.login",
+    .@"auth.cancel_login",
+    .@"auth.logout",
+    .@"workspace.remove",
+    .@"workspace.skills",
+};
+
+/// Stop the build when a new method reaches the fallback arm and the list above does not name it.
+fn assertUnimplemented(comptime method: wire.enums.MethodName) void {
+    for (unimplemented) |m| if (m == method) return;
+    @compileError("`" ++ @tagName(method) ++ "` has no dispatch arm; add one or list it as unimplemented");
 }
 
 fn errorResponse(id: wire.ids.RequestId, code: wire.enums.ErrorCode, message: []const u8) wire.rpc.Response {
