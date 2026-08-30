@@ -51,6 +51,10 @@ pub const Flags = struct {
     supports_vision: bool,
     /// The OpenAI-chat thinking dialect. An unknown name degrades to no control.
     thinking_format: ?[]const u8 = null,
+    /// How a prior assistant turn returns its reasoning on OpenAI-chat.
+    reasoning_replay: ?[]const u8 = null,
+    /// The output-token member an OpenAI-chat host accepts.
+    max_tokens_field: ?[]const u8 = null,
     /// Compatible hosts take `adaptive` in place of a token budget.
     anthropic_adaptive: ?bool = null,
     reasoning_budget_min: ?i64 = null,

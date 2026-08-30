@@ -398,6 +398,9 @@ fn resolvedRequest(
         .max_output_tokens = output_limit,
         .reasoning = reasoningFor(r.model, slot.config.reasoning, output_limit),
         .thinking_format = r.model.thinking_format,
+        .reasoning_replay = r.model.reasoning_replay,
+        .max_tokens_field = r.model.max_tokens_field,
+        .responses_dialect = if (route.instance.auth == .codex_oauth) .codex else .standard,
     }, .{ .protocol = route.instance.protocol, .model = slot.config.model });
 
     var auth: std.ArrayList(provider.transport.Header) = .empty;

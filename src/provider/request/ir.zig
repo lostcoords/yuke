@@ -60,6 +60,16 @@ pub const Tool = struct {
 /// A named reasoning effort. The set is closed: the catalog only publishes these.
 pub const Effort = enum { minimal, low, medium, high, xhigh, max };
 
+/// Select the Responses endpoint shape. The Codex backend refuses the sampling limits.
+pub const ResponsesDialect = enum { standard, codex };
+
+/// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
+pub const MaxTokensField = enum { @"max-tokens", @"max-completion-tokens" };
+
+/// Select how a prior assistant turn returns its reasoning in an OpenAI-chat request.
+/// DeepSeek rejects a thinking turn that comes back without it.
+pub const ReasoningReplay = enum { none, reasoning, @"reasoning-content", @"reasoning-details" };
+
 /// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
 pub const ThinkingFormat = enum {
     none,
@@ -95,6 +105,12 @@ pub const Request = struct {
     reasoning: ReasoningControl = .default,
     /// Only OpenAI-chat reads this field.
     thinking_format: ThinkingFormat = .none,
+    /// Only OpenAI-chat reads this field.
+    reasoning_replay: ReasoningReplay = .none,
+    /// Only OpenAI-chat reads this field. A compatible host keeps the original member.
+    max_tokens_field: MaxTokensField = .@"max-tokens",
+    /// Only Responses reads this field. The bound credential selects it, not the model.
+    responses_dialect: ResponsesDialect = .standard,
 };
 
 /// These options control the transcript fold.

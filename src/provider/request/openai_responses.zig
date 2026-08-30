@@ -8,6 +8,9 @@ const json = @import("json.zig");
 
 pub const Options = struct {};
 
+/// The backend rejects a request that folds in no system prompt.
+const default_instructions = "You are a helpful assistant.";
+
 /// Write the OpenAI Responses request body for `request` and `request_ir`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestIr, options: Options) !void {
     _ = options;
@@ -18,26 +21,39 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.write(request.model);
     try jw.objectField("stream");
     try jw.write(true);
+    // The daemon owns the transcript, so the endpoint never keeps a copy.
     try jw.objectField("store");
     try jw.write(false);
-    // Keep the legacy include for stateless reasoning replay.
-    try jw.objectField("include");
-    try jw.beginArray();
-    try jw.write("reasoning.encrypted_content");
-    try jw.endArray();
-    try jw.objectField("max_output_tokens");
-    try jw.write(request.max_output_tokens);
 
-    // Responses reasons by default, so only an effort is necessary.
+    // The Codex backend refuses the sampling limits an API key accepts.
+    switch (request.responses_dialect) {
+        .standard => {
+            try jw.objectField("max_output_tokens");
+            try jw.write(request.max_output_tokens);
+        },
+        .codex => {},
+    }
+
+    // Responses reasons by default, so only a named effort is worth a control.
+    // The include carries the encrypted trace that a stateless replay needs.
     switch (request.reasoning) {
-        .effort => |effort| try json.nested(&jw, "reasoning", "effort", @tagName(effort)),
+        .effort => |effort| {
+            try jw.objectField("reasoning");
+            try jw.beginObject();
+            try json.field(&jw, "effort", @tagName(effort));
+            try json.field(&jw, "summary", "auto");
+            try jw.endObject();
+            try jw.objectField("include");
+            try jw.beginArray();
+            try jw.write("reasoning.encrypted_content");
+            try jw.endArray();
+        },
         .default, .off, .adaptive, .budget => {},
     }
 
-    if (request.system.len != 0) {
-        try jw.objectField("instructions");
-        try jw.write(request.system);
-    }
+    // The backend rejects a request with no instructions, so a default stands in.
+    try jw.objectField("instructions");
+    try jw.write(if (request.system.len != 0) request.system else default_instructions);
 
     if (request.tools.len != 0) {
         try jw.objectField("tools");
@@ -54,6 +70,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
             try jw.endObject();
         }
         try jw.endArray();
+        try json.field(&jw, "tool_choice", "auto");
     }
 
     try jw.objectField("input");
@@ -186,9 +203,33 @@ fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestI
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .system = "be brief", .max_output_tokens = 1024 },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// The ChatGPT-account backend rejects the sampling limits an API key accepts.
+test "the codex dialect omits the output ceiling" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8, .responses_dialect = .codex },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// The backend rejects a request that folds in no system prompt.
+test "a turn with no system prompt still carries instructions" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+    ,
+        .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
         .{},
     );
@@ -197,7 +238,7 @@ test "a plain user turn with a system prompt" {
 test "a named effort rides on the responses request" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"reasoning":{"effort":"high"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8, .reasoning = .{ .effort = .high } },
         .{ .blocks = &blocks },
@@ -213,7 +254,7 @@ test "assistant reasoning text and tool call precede a tool result" {
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "ok", .is_error = false } } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"instructions":"You are a helpful assistant.","input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
@@ -227,7 +268,7 @@ test "a reasoning block with no signature is omitted" {
         .{ .role = .assistant, .value = .{ .text = "done" } },
     };
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}
     ,
         .{ .model = "gpt-5", .max_output_tokens = 8 },
         .{ .blocks = &blocks },
@@ -239,7 +280,7 @@ test "tools declare a flat raw schema with strict mode" {
     const tools = [_]ir.Tool{.{ .name = "run", .description = "run a command", .input_schema = "{\"type\":\"object\"}" }};
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"gpt-5","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"instructions":"You are a helpful assistant.","tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}
     ,
         .{ .model = "gpt-5", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },

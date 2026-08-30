@@ -19,7 +19,13 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
     try jw.objectField("stream");
     try jw.write(true);
     try json.nested(&jw, "stream_options", "include_usage", true);
-    try jw.objectField("max_completion_tokens");
+    // The daemon owns the transcript, so the endpoint never keeps a copy.
+    try jw.objectField("store");
+    try jw.write(false);
+    try jw.objectField(switch (request.max_tokens_field) {
+        .@"max-tokens" => "max_tokens",
+        .@"max-completion-tokens" => "max_completion_tokens",
+    });
     try jw.write(request.max_output_tokens);
     try writeReasoning(&jw, request.thinking_format, request.reasoning);
 
@@ -68,7 +74,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, request_ir: ir.RequestI
                 },
                 .assistant => {
                     const end_index = assistantMessageEnd(request_ir.blocks, block_index);
-                    try writeAssistantMessage(&jw, request_ir.blocks[block_index..end_index]);
+                    try writeAssistantMessage(&jw, request_ir.blocks[block_index..end_index], request.reasoning_replay);
                     block_index = end_index;
                 },
             },
@@ -120,18 +126,31 @@ fn writeUserMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
     try jw.endObject();
 }
 
-fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !void {
+/// Name the member that carries a replayed reasoning text, or null when the host takes none.
+/// `reasoning-details` needs the provider array back byte for byte, which the reducer drops.
+fn replayField(replay: ir.ReasoningReplay) ?[]const u8 {
+    return switch (replay) {
+        .none, .@"reasoning-details" => null,
+        .reasoning => "reasoning",
+        .@"reasoning-content" => "reasoning_content",
+    };
+}
+
+fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, replay: ir.ReasoningReplay) !void {
     std.debug.assert(blocks.len != 0);
     std.debug.assert(blocks[0].role == .assistant);
 
     var has_text = false;
     var has_tool_calls = false;
+    var has_reasoning = false;
     for (blocks) |block| {
         std.debug.assert(block.role == .assistant);
         switch (block.value) {
             .text => has_text = true,
             .tool_use => has_tool_calls = true,
-            .audio, .file, .image, .reasoning, .redacted_reasoning, .tool_result => return error.UnsupportedContent,
+            // A host that takes no replay drops the block. It is never a reason to fail the turn.
+            .reasoning, .redacted_reasoning => has_reasoning = true,
+            .audio, .file, .image, .tool_result => return error.UnsupportedContent,
         }
     }
 
@@ -142,7 +161,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !voi
         try jw.beginArray();
         for (blocks) |block| switch (block.value) {
             .text => |text| try writeTextBlock(jw, text),
-            .tool_use => {},
+            .tool_use, .reasoning, .redacted_reasoning => {},
             else => unreachable,
         };
         try jw.endArray();
@@ -150,10 +169,26 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block) !voi
         try jw.write(null);
     }
 
+    // DeepSeek answers 400 when a thinking turn returns without its reasoning.
+    if (has_reasoning) {
+        if (replayField(replay)) |field| {
+            try jw.objectField(field);
+            try jw.beginWriteRaw();
+            try jw.writer.writeByte('"');
+            for (blocks) |block| switch (block.value) {
+                .reasoning => |r| try std.json.Stringify.encodeJsonStringChars(r.text, .{}, jw.writer),
+                else => {},
+            };
+            try jw.writer.writeByte('"');
+            jw.endWriteRaw();
+        }
+    }
+
     if (has_tool_calls) {
         try jw.objectField("tool_calls");
         try jw.beginArray();
         for (blocks) |block| switch (block.value) {
+            .reasoning, .redacted_reasoning => {},
             .tool_use => |tool_use| {
                 try jw.beginObject();
                 try json.field(jw, "id", tool_use.call_id);
@@ -257,6 +292,99 @@ fn expectJson(expected: []const u8, request: ir.Request, request_ir: ir.RequestI
     try testing.expectEqualStrings(expected, buf.written());
 }
 
+// The live bug: a replayed reasoning block used to fail the whole turn.
+test "a host with no replay drops the reasoning block instead of failing" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "ponder", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .text = "answer" } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8 },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// DeepSeek answers 400 when a thinking turn returns without its reasoning.
+test "a replay host carries the reasoning back on the assistant message" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "ponder", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .text = "answer" } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning_content":"ponder"}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .blocks = &blocks },
+        .{},
+    );
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning":"ponder"}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .reasoning },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// The array form needs the provider structure back byte for byte, which we do not keep yet.
+test "reasoning-details replays nothing rather than send a string" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "ponder", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .text = "answer" } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-details" },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+test "a replayed reasoning text is escaped and joined across blocks" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "say \"hi\"\n", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "then stop", .signature = "" } } },
+        .{ .role = .assistant, .value = .{ .text = "ok" } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}],"reasoning_content":"say \"hi\"\nthen stop"}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// A reasoning-only turn keeps a null content and still carries the replay.
+test "a reasoning block with no text leaves content null" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .reasoning = .{ .text = "only", .signature = "" } } },
+    };
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"assistant","content":null,"reasoning_content":"only"}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .reasoning_replay = .@"reasoning-content" },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
+// Only OpenAI renamed the member; every compatible host kept `max_tokens`.
+test "the output-token member follows the host" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
+    try expectJson(
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+    ,
+        .{ .model = "m", .max_output_tokens = 8, .max_tokens_field = .@"max-completion-tokens" },
+        .{ .blocks = &blocks },
+        .{},
+    );
+}
+
 test "each host dialect spells the reasoning control its own way" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     const cases = [_]struct { format: ir.ThinkingFormat, expected: []const u8 }{
@@ -315,7 +443,7 @@ test "off disables thinking in the dialect that has a switch" {
 test "no dialect writes no control" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+        \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "m", .max_output_tokens = 8, .reasoning = .{ .effort = .high }, .thinking_format = .none },
         .{ .blocks = &blocks },
@@ -326,7 +454,7 @@ test "no dialect writes no control" {
 test "a plain user turn with a system prompt" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
     try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":1024,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"hello"}]}]}
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":1024,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"hello"}]}]}
     ,
         .{ .model = "gpt", .system = "be brief", .max_output_tokens = 1024 },
         .{ .blocks = &blocks },
@@ -341,7 +469,7 @@ test "an assistant tool call has a JSON string and its result is standalone" {
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "ok", .is_error = false } } },
     };
     try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}
     ,
         .{ .model = "gpt", .max_output_tokens = 64 },
         .{ .blocks = &blocks },
@@ -353,7 +481,7 @@ test "tools declare a raw input schema and strict mode" {
     const tools = [_]ir.Tool{.{ .name = "run", .description = "run a command", .input_schema = "{\"type\":\"object\"}" }};
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "go" } }};
     try expectJson(
-        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_completion_tokens":8,"tools":[{"type":"function","function":{"name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"tools":[{"type":"function","function":{"name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}
     ,
         .{ .model = "gpt", .tools = &tools, .max_output_tokens = 8 },
         .{ .blocks = &blocks },

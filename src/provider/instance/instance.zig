@@ -38,13 +38,15 @@ pub const Cost = struct {
 };
 
 /// Select how prior assistant reasoning returns in an OpenAI Chat request.
-pub const ReasoningReplay = enum { none, reasoning, @"reasoning-content", @"reasoning-details" };
+/// The serializers own the vocabulary, so a catalog row and a request body cannot disagree.
+pub const ReasoningReplay = @import("../request/ir.zig").ReasoningReplay;
 
 /// Select the request shape for reasoning control. The serializers own the vocabulary.
 pub const ThinkingFormat = @import("../request/ir.zig").ThinkingFormat;
 
 /// Select the output-token field in the OpenAI Chat request.
-pub const MaxTokensField = enum { @"max-completion-tokens", @"max-tokens" };
+/// The serializers own the vocabulary, so a catalog row and a request body cannot disagree.
+pub const MaxTokensField = @import("../request/ir.zig").MaxTokensField;
 
 /// Model flags shape request bodies without provider-specific branches.
 pub const ModelFlags = struct {

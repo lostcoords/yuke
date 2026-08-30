@@ -28,6 +28,8 @@ pub const ModelView = struct {
     supports_vision: ?bool = null,
     /// How a request asks this model to reason.
     thinking_format: instance.ThinkingFormat = .none,
+    reasoning_replay: instance.ReasoningReplay = .none,
+    max_tokens_field: instance.MaxTokensField = .@"max-tokens",
     anthropic_adaptive: bool = false,
     reasoning_budget_min: ?i64 = null,
     reasoning_budget_max: ?u64 = null,
@@ -37,6 +39,18 @@ pub const ModelView = struct {
 fn thinkingFormat(name: ?[]const u8) instance.ThinkingFormat {
     const value = name orelse return .none;
     return std.meta.stringToEnum(instance.ThinkingFormat, value) orelse .none;
+}
+
+/// Read a replay field name. An unknown name degrades to no replay.
+fn reasoningReplay(name: ?[]const u8) instance.ReasoningReplay {
+    const value = name orelse return .none;
+    return std.meta.stringToEnum(instance.ReasoningReplay, value) orelse .none;
+}
+
+/// Read the output-token member. An absent or unknown name keeps `max-tokens`.
+fn maxTokensField(name: ?[]const u8) instance.MaxTokensField {
+    const value = name orelse return .@"max-tokens";
+    return std.meta.stringToEnum(instance.MaxTokensField, value) orelse .@"max-tokens";
 }
 
 /// This route holds every value that one request needs. A provider that cannot be called has none.
@@ -311,6 +325,8 @@ fn catalogModels(arena: std.mem.Allocator, row: ?cloud_catalog.Provider) ![]cons
         .supports_tools = m.flags.supports_tools,
         .supports_vision = m.flags.supports_vision,
         .thinking_format = thinkingFormat(m.flags.thinking_format),
+        .reasoning_replay = reasoningReplay(m.flags.reasoning_replay),
+        .max_tokens_field = maxTokensField(m.flags.max_tokens_field),
         .anthropic_adaptive = m.flags.anthropic_adaptive orelse false,
         .reasoning_budget_min = m.flags.reasoning_budget_min,
         .reasoning_budget_max = m.flags.reasoning_budget_max,
@@ -332,6 +348,8 @@ fn bundleModels(arena: std.mem.Allocator, models: []const bundle.Model) ![]const
             .supports_tools = m.flags.supports_tools,
             .supports_vision = m.flags.supports_vision,
             .thinking_format = thinkingFormat(m.flags.thinking_format),
+            .reasoning_replay = reasoningReplay(m.flags.reasoning_replay),
+            .max_tokens_field = maxTokensField(m.flags.max_tokens_field),
             .anthropic_adaptive = m.flags.anthropic_adaptive orelse false,
             .reasoning_budget_min = m.flags.reasoning_budget_min,
             .reasoning_budget_max = m.flags.reasoning_budget_max,
@@ -353,6 +371,8 @@ fn localModels(arena: std.mem.Allocator, models: []const instance.ModelBinding) 
         .supports_tools = m.flags.supports_tools,
         .supports_vision = m.flags.supports_vision,
         .thinking_format = m.flags.thinking_format,
+        .reasoning_replay = m.flags.reasoning_replay,
+        .max_tokens_field = m.flags.max_tokens_field,
         .anthropic_adaptive = m.flags.anthropic_adaptive,
         .reasoning_budget_min = m.flags.reasoning_budget_min,
         .reasoning_budget_max = m.flags.reasoning_budget_max,
