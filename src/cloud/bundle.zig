@@ -117,7 +117,8 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
         }
 
         for (p.models, 0..) |m, j| {
-            if (!bounded(m.id, max_id_bytes) or !wire.ids.isSelectorPart(m.id)) return error.InvalidDocument;
+            // A model id is the right half of a selector, so it may hold a slash.
+            if (!bounded(m.id, max_id_bytes)) return error.InvalidDocument;
             if (!bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
             for (p.models[0..j]) |prev| if (std.mem.eql(u8, prev.id, m.id)) return error.InvalidDocument;
         }
@@ -241,7 +242,7 @@ test "decode rejects an active credential with no secret" {
     ));
 }
 
-test "decode rejects a slash in a selector id" {
+test "decode rejects a slash in a provider id but keeps one in a model id" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -251,13 +252,15 @@ test "decode rejects a slash in a selector id" {
         \\ "base_url":null,"protocol":null,"cache":"unsupported","headers":[],
         \\ "auth":{"kind":"api_key","status":"revoked"},"models":[]}]}
     ));
-    try testing.expectError(error.InvalidDocument, decode(a,
-        \\{"version":1,"catalog_rev":null,"providers":[{"id":"provider","public_id":"opaque/value","name":"Bad",
+    // OpenRouter names 408 of its models `vendor/model`. The selector splits on the first slash.
+    const doc = try decode(a,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"provider","public_id":"opaque/value","name":"Ok",
         \\ "base_url":null,"protocol":null,"cache":"unsupported","headers":[],
-        \\ "auth":{"kind":"api_key","status":"revoked"},"models":[{"id":"bad/model","upstream_id":"upstream/model",
-        \\ "name":"Bad","limits":{"context_window":null,"max_output_tokens":null},
+        \\ "auth":{"kind":"api_key","status":"revoked"},"models":[{"id":"anthropic/claude-opus-5","upstream_id":"anthropic/claude-opus-5",
+        \\ "name":"Opus","limits":{"context_window":null,"max_output_tokens":null},
         \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null}}]}]}
-    ));
+    );
+    try testing.expectEqualStrings("anthropic/claude-opus-5", doc.providers[0].models[0].id);
 }
 
 test "an empty account decodes to no providers" {

@@ -127,7 +127,8 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
         models += p.models.len;
         if (models > max_models) return error.InvalidDocument;
         for (p.models, 0..) |m, j| {
-            if (!bounded(m.id, max_id_bytes) or !wire.ids.isSelectorPart(m.id)) return error.InvalidDocument;
+            // A model id is the right half of a selector, so it may hold a slash.
+            if (!bounded(m.id, max_id_bytes)) return error.InvalidDocument;
             if (!bounded(m.upstream_id, max_id_bytes)) return error.InvalidDocument;
             for (p.models[0..j]) |prev| if (std.mem.eql(u8, prev.id, m.id)) return error.InvalidDocument;
         }
@@ -161,6 +162,23 @@ const routable_document =
     \\ "flags":{"supports_tools":true,"supports_vision":true},"reasoning":true,
     \\ "reasoning_levels":["low","high"],"status":null}]}]}
 ;
+
+// OpenRouter names 408 of its models `vendor/model`. The selector splits on the first slash,
+// so the model half keeps its own.
+test "a model id with a slash decodes" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const doc = try decode(arena.allocator(),
+        \\{"version":1,"catalog_rev":"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","providers":[{"id":"openrouter","name":"OpenRouter",
+        \\ "base_url":"https://openrouter.ai/api/v1","protocol":"openai_chat","auth":{"kind":"api_key","header":"authorization_bearer"},
+        \\ "cache":"unsupported","headers":[],"models":[{"id":"anthropic/claude-opus-5","upstream_id":"anthropic/claude-opus-5",
+        \\ "name":"Opus","limits":{"context_window":null,"max_output_tokens":null},
+        \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},
+        \\ "flags":{"supports_tools":true,"supports_vision":false},"reasoning":true,
+        \\ "reasoning_levels":[],"status":null}]}]}
+    );
+    try testing.expectEqualStrings("anthropic/claude-opus-5", doc.providers[0].models[0].id);
+}
 
 test "decode reads a routable provider" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -207,24 +225,14 @@ test "decode tolerates a null level, a null limit, and a null price" {
     try testing.expectEqualStrings("beta", m.status.?);
 }
 
-test "decode rejects a slash in a selector id" {
+test "decode rejects a slash in a provider id" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const a = arena.allocator();
 
-    try testing.expectError(error.InvalidDocument, decode(a,
+    try testing.expectError(error.InvalidDocument, decode(arena.allocator(),
         \\{"version":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[
         \\ {"id":"bad/provider","name":"Bad","base_url":null,"protocol":null,"auth":null,
         \\ "cache":"unsupported","headers":[],"models":[]}]}
-    ));
-    try testing.expectError(error.InvalidDocument, decode(a,
-        \\{"version":1,"catalog_rev":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","providers":[
-        \\ {"id":"provider","name":"Bad","base_url":null,"protocol":null,"auth":null,
-        \\ "cache":"unsupported","headers":[],"models":[{"id":"bad/model","upstream_id":"upstream/model","name":"Bad",
-        \\ "limits":{"context_window":null,"max_output_tokens":null},
-        \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},
-        \\ "flags":{"supports_tools":false,"supports_vision":false},"reasoning":false,
-        \\ "reasoning_levels":[],"status":null}]}]}
     ));
 }
 

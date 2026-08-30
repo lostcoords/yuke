@@ -142,7 +142,6 @@ fn defaultReasoning(levels: []const []const u8) []const u8 {
 /// Project one resolved model onto the public wire shape.
 fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, model: ModelView) !wire.catalog.ModelInfo {
     std.debug.assert(wire.ids.isSelectorPart(provider_id));
-    std.debug.assert(wire.ids.isSelectorPart(model.id));
     var levels: std.ArrayList([]const u8) = .empty;
     for (model.reasoning_levels) |level| if (level) |value| try levels.append(arena, value);
 
