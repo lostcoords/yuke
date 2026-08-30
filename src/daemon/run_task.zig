@@ -343,7 +343,11 @@ fn streamChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer
         }, .{ .protocol = .anthropic_messages, .model = model }) };
     };
 
-    const body = try state.transport.open(arena, request, info);
+    const selected_transport = if (resolved != null)
+        state.route_transport orelse state.fallback_transport
+    else
+        state.fallback_transport;
+    const body = try selected_transport.open(arena, request, info);
     std.debug.assert(slot.body == null); // one body per run
     slot.body = body;
     defer {

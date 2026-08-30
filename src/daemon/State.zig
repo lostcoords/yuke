@@ -9,7 +9,10 @@ const committed = @import("domain").committed;
 const domain_session = @import("domain").session;
 const util = @import("../util.zig");
 const provider = @import("../provider/provider.zig");
-const cloud_bundle_mod = @import("../cloud/bundle.zig");
+const bundle = @import("../cloud/bundle.zig");
+const cloud_endpoint = @import("../cloud/endpoint.zig");
+const cloud_http = @import("../cloud/http.zig");
+const cloud_sync = @import("../cloud/sync.zig");
 const provider_catalog = @import("provider_catalog.zig");
 const tools = @import("../tools/tool.zig");
 const retry = @import("../provider/retry.zig");
@@ -26,9 +29,14 @@ config: Config,
 home: []const u8, // The default workspace root. A create that omits a workspace path uses it.
 sessions: session_runtime.Sessions, // The daemon stores live per-session state, keyed by session id.
 registry: connection.Registry, // The registry tracks live connections and the reverse subscription index.
-transport: provider.transport.Transport, // The transport opens each provider response. A test or adapter overrides it.
+fallback_transport: provider.transport.Transport, // An unresolved route uses this test seam or the placeholder.
+route_transport: ?provider.transport.Transport = null, // A resolved provider route uses this production transport.
 providers: ?provider.config.Loaded = null, // The daemon owns the loaded providers.json layer when present.
-cloud_bundle: ?cloud_bundle_mod.Document = null, // The account bundle stays in memory, because it holds live credentials.
+cloud_client: cloud_http.Client,
+cloud_base_url: []u8,
+cloud_credential: ?[]u8 = null,
+cloud_bundle: ?bundle.Snapshot = null, // The account bundle stays in memory, because it holds live credentials.
+cloud_refresh_mutex: std.Io.Mutex = .init,
 catalog: provider_catalog.Catalog, // One merged snapshot serves catalog reads and provider requests.
 defaults: daemon_config.Defaults = .{}, // Defaults seed a new session's model and system prompt.
 config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json arena when present.
@@ -68,6 +76,7 @@ pub const Config = struct {
 
 /// Build the daemon state. It takes ownership of `db` and borrows `io` for its lifetime.
 pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: Config, home: []const u8) !State {
+    const cloud_base_url = try gpa.dupe(u8, cloud_endpoint.default_base);
     var self: State = .{
         .gpa = gpa,
         .io = io,
@@ -76,7 +85,9 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, db: database.Database, config: C
         .home = home,
         .sessions = session_runtime.Sessions.init(gpa),
         .registry = connection.Registry.init(gpa),
-        .transport = provider.transport.placeholderTransport(),
+        .fallback_transport = provider.transport.placeholderTransport(),
+        .cloud_client = .init(gpa, io),
+        .cloud_base_url = cloud_base_url,
         .catalog = .init(gpa),
     };
     errdefer self.deinit();
@@ -151,6 +162,13 @@ pub fn deinit(self: *State) void {
     self.registry.deinit();
     self.sessions.deinit();
     self.catalog.deinit();
+    if (self.cloud_bundle) |*loaded| loaded.deinit();
+    if (self.cloud_credential) |credential| {
+        std.crypto.secureZero(u8, credential);
+        self.gpa.free(credential);
+    }
+    self.gpa.free(self.cloud_base_url);
+    self.cloud_client.deinit();
     if (self.providers) |*p| p.deinit();
     if (self.config_owner) |*c| c.deinit();
     self.db.deinit();
@@ -160,7 +178,7 @@ pub fn deinit(self: *State) void {
 pub fn rebuildCatalog(self: *State) !bool {
     const next = try provider_catalog.Catalog.load(self.gpa, &self.db, .{
         .local = if (self.providers) |*loaded| loaded else null,
-        .cloud = self.cloud_bundle,
+        .cloud = if (self.cloud_bundle) |*loaded| loaded.document else null,
         .env = self.env,
     });
 
@@ -169,6 +187,114 @@ pub fn rebuildCatalog(self: *State) !bool {
     self.catalog = next;
     previous.deinit();
     return changed;
+}
+
+/// Replace the cloud endpoint and device credential. The state owns both values.
+pub fn configureCloud(self: *State, base_url: []const u8, credential: ?[]const u8) !void {
+    std.debug.assert(base_url.len != 0);
+    const next_base_url = try self.gpa.dupe(u8, base_url);
+    errdefer self.gpa.free(next_base_url);
+    const next_credential = if (credential) |value| try self.gpa.dupe(u8, value) else null;
+
+    if (self.cloud_credential) |value| {
+        std.crypto.secureZero(u8, value);
+        self.gpa.free(value);
+    }
+    self.gpa.free(self.cloud_base_url);
+    self.cloud_base_url = next_base_url;
+    self.cloud_credential = next_credential;
+}
+
+/// Fetch the public catalog and the account bundle. Only one check runs at a time.
+pub fn refreshCloud(self: *State) !wire.ids.CatalogRev {
+    try self.cloud_refresh_mutex.lock(self.io);
+    defer self.cloud_refresh_mutex.unlock(self.io);
+    try self.refreshCloudLocked();
+    return self.catalog.revision;
+}
+
+fn refreshCloudLocked(self: *State) !void {
+    std.debug.assert(self.cloud_base_url.len != 0);
+
+    var first_error: ?anyerror = null;
+    var rebuild = false;
+    const catalog_outcome = cloud_sync.refreshCatalog(self.gpa, &self.cloud_client, &self.db, self.cloud_base_url) catch |err| blk: {
+        first_error = err;
+        break :blk null;
+    };
+    if (catalog_outcome) |outcome| switch (outcome) {
+        .updated, .unchanged => rebuild = true,
+        .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
+    };
+
+    var next_bundle: ?bundle.Snapshot = null;
+    defer if (next_bundle) |*loaded| loaded.deinit();
+    if (self.cloud_credential) |credential| {
+        const etag = if (self.cloud_bundle) |*loaded| loaded.etag else "";
+        const providers_outcome = cloud_sync.refreshProviders(
+            self.gpa,
+            &self.cloud_client,
+            self.cloud_base_url,
+            credential,
+            etag,
+        ) catch |err| blk: {
+            if (first_error == null) first_error = err;
+            break :blk null;
+        };
+        if (providers_outcome) |outcome| switch (outcome) {
+            .unchanged => {},
+            .updated => |loaded| {
+                next_bundle = loaded;
+                rebuild = true;
+            },
+        };
+    }
+
+    var changed = false;
+    if (rebuild) {
+        if (next_bundle) |*loaded| {
+            changed = try self.installCloudBundle(loaded);
+            next_bundle = null;
+        } else {
+            changed = try self.rebuildCatalog();
+        }
+    }
+    if (changed) self.announceCatalogChanged();
+    if (first_error) |err| return err;
+}
+
+/// Install one bundle only after the merged replacement is ready.
+fn installCloudBundle(self: *State, next_bundle: *bundle.Snapshot) !bool {
+    const next_catalog = try provider_catalog.Catalog.load(self.gpa, &self.db, .{
+        .local = if (self.providers) |*loaded| loaded else null,
+        .cloud = next_bundle.document,
+        .env = self.env,
+    });
+
+    const changed = !std.mem.eql(u8, &self.catalog.revision.raw, &next_catalog.revision.raw);
+    var previous_catalog = self.catalog;
+    var previous_bundle = self.cloud_bundle;
+    self.catalog = next_catalog;
+    self.cloud_bundle = next_bundle.*;
+    next_bundle.* = undefined;
+    previous_catalog.deinit();
+    if (previous_bundle) |*loaded| loaded.deinit();
+    return changed;
+}
+
+/// Publish the new merged revision after the replacement is ready.
+pub fn announceCatalogChanged(self: *State) void {
+    const note: wire.rpc.Notification = .{
+        .method = .@"catalog.changed",
+        .params = .{ .catalog_changed_data = .{ .catalog_rev = self.catalog.revision } },
+    };
+    const bytes = connection.frameNotification(self.gpa, note) catch |err| {
+        std.log.warn("cannot frame catalog.changed: {t}", .{err});
+        return;
+    };
+    defer self.gpa.free(bytes);
+    if (self.broadcast_tap) |tap| tap.record(note.params) catch {};
+    self.registry.publishAll(bytes);
 }
 
 /// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
@@ -190,6 +316,41 @@ pub fn jitter(self: *const State) f64 {
     for (id[9..16]) |b| raw = (raw << 8) | b;
     const bits = raw >> 3; // 53 bits fit an f64 exactly
     return @as(f64, @floatFromInt(bits)) / @as(f64, @floatFromInt(@as(u64, 1) << 53));
+}
+
+test "a cloud bundle and its etag install as one snapshot" {
+    var runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer runtime.deinit();
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var state = try State.init(
+        std.testing.allocator,
+        runtime.io(),
+        try database.Database.openTest(),
+        .{ .listen = listen },
+        "/home/test",
+    );
+    defer state.deinit();
+
+    var snapshot = try bundle.Snapshot.init(std.testing.allocator,
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"acme","public_id":"p1","name":"Acme",
+        \\ "base_url":"https://acme.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"api_key","header":"authorization_bearer","status":"active","api_key":"secret"},
+        \\ "models":[{"id":"m","upstream_id":"upstream-m","name":"Model","limits":{"context_window":null,"max_output_tokens":null},
+        \\ "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},"flags":{},"reasoning":null,
+        \\ "reasoning_levels":[],"status":null}]}]}
+    , "etag-1");
+    var installed = false;
+    defer if (!installed) snapshot.deinit();
+
+    const changed = try state.installCloudBundle(&snapshot);
+    installed = true;
+    try std.testing.expect(changed);
+    try std.testing.expectEqualStrings("etag-1", state.cloud_bundle.?.etag);
+    try std.testing.expectEqualStrings("secret", state.cloud_bundle.?.document.providers[0].auth.api_key.?);
+    const resolved = state.catalog.resolveModel("acme/m").?;
+    try std.testing.expectEqual(wire.enums.ProviderSource.cloud, resolved.provider.source);
+    try std.testing.expect(resolved.provider.route != null);
+    try std.testing.expect(resolved.model.supports_tools == null);
 }
 
 test "init restores durable pending input into the runtime queue" {

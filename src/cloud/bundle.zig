@@ -87,7 +87,10 @@ pub const Document = struct {
     providers: []const Provider,
 };
 
-const parse_options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+const parse_options: std.json.ParseOptions = .{
+    .ignore_unknown_fields = true,
+    .allocate = .alloc_always,
+};
 
 /// Decode the bundle. The result borrows `arena` and holds credentials, so the caller wipes it.
 pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
@@ -125,6 +128,35 @@ pub fn decode(arena: std.mem.Allocator, body: []const u8) Error!Document {
     }
     return doc;
 }
+
+/// Own one installed bundle and its ETag. The snapshot never reaches durable storage.
+pub const Snapshot = struct {
+    arena: std.heap.ArenaAllocator,
+    document: Document,
+    etag: []const u8,
+
+    pub fn init(gpa: std.mem.Allocator, body: []const u8, etag: []const u8) !Snapshot {
+        var self: Snapshot = .{
+            .arena = .init(gpa),
+            .document = undefined,
+            .etag = &.{},
+        };
+        errdefer self.arena.deinit();
+        const arena = self.arena.allocator();
+        self.document = try decode(arena, body);
+        self.etag = try arena.dupe(u8, etag);
+        return self;
+    }
+
+    pub fn deinit(self: *Snapshot) void {
+        for (self.document.providers) |p| {
+            if (p.auth.api_key) |secret| std.crypto.secureZero(u8, @constCast(secret));
+            if (p.auth.access_token) |secret| std.crypto.secureZero(u8, @constCast(secret));
+        }
+        self.arena.deinit();
+        self.* = undefined;
+    }
+};
 
 fn bounded(value: []const u8, max: usize) bool {
     return value.len != 0 and value.len <= max;
@@ -270,4 +302,22 @@ test "an empty account decodes to no providers" {
         \\{"version":1,"catalog_rev":null,"providers":[]}
     );
     try testing.expectEqual(@as(usize, 0), doc.providers.len);
+}
+
+test "a bundle snapshot owns its strings and etag" {
+    const source =
+        \\{"version":1,"catalog_rev":null,"providers":[{"id":"acme","public_id":"p1","name":"Acme",
+        \\ "base_url":"https://acme.example/v1","protocol":"openai_chat","cache":"unsupported","headers":[],
+        \\ "auth":{"kind":"api_key","header":"authorization_bearer","status":"active","api_key":"secret"},"models":[]}]}
+    ;
+    const body = try testing.allocator.dupe(u8, source);
+    defer testing.allocator.free(body);
+
+    var loaded = try Snapshot.init(testing.allocator, body, "etag-1");
+    defer loaded.deinit();
+    std.crypto.secureZero(u8, body);
+
+    try testing.expectEqualStrings("acme", loaded.document.providers[0].id);
+    try testing.expectEqualStrings("secret", loaded.document.providers[0].auth.api_key.?);
+    try testing.expectEqualStrings("etag-1", loaded.etag);
 }

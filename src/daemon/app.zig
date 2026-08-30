@@ -26,7 +26,7 @@ const default_port = 7880;
 const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
 
 pub fn run(init: std.process.Init) !void {
-    // One executor owns all daemon state. The daemon needs no locks.
+    // One executor owns daemon state. Tasks can still interleave at I/O boundaries.
     const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(1) });
     defer rt.deinit();
     const io = rt.io();
@@ -63,6 +63,8 @@ pub fn run(init: std.process.Init) !void {
     defer state.deinit();
     // The environment is always needed (a `~` in a workspace path), not only when providers load.
     state.env = init.environ_map;
+    state.route_transport = http_transport.transportFor();
+    try configureCloud(&state, init.gpa, io, data_dir, init.environ_map);
 
     // Load the user providers. An invalid file fails startup. An absent file keeps the placeholder.
     const providers_path = try configFilePath(init.gpa, init.environ_map, "providers.json");
@@ -71,7 +73,6 @@ pub fn run(init: std.process.Init) !void {
         var loaded = try provider.config.load(init.gpa, io, path);
         if (loaded.providers.len > 0) {
             state.providers = loaded;
-            state.transport = http_transport.transportFor();
             std.log.info("loaded {d} provider(s) from providers.json", .{loaded.providers.len});
         } else loaded.deinit();
     }
@@ -88,14 +89,11 @@ pub fn run(init: std.process.Init) !void {
 
     _ = try state.rebuildCatalog();
 
-    // Fetch the catalog off the request path. The daemon must answer before the network does.
-    var cloud_client: cloud.http.Client = .init(init.gpa, io);
-    defer cloud_client.deinit();
+    // Fetch the cloud documents off the request path. The daemon must answer before the network does.
     var maintenance: std.Io.Group = .init;
     defer maintenance.cancel(io);
-    const base_url = cloud.endpoint.baseUrl(init.environ_map, null);
-    maintenance.concurrent(io, catalogTask, .{ init.gpa, &state, &cloud_client, base_url }) catch |err| {
-        std.log.warn("catalog refresh not started: {t}", .{err});
+    maintenance.concurrent(io, cloudTask, .{&state}) catch |err| {
+        std.log.warn("cloud refresh not started: {t}", .{err});
     };
 
     std.log.info("daemon store at {s}", .{config.db_path});
@@ -142,40 +140,47 @@ fn lockInstance(gpa: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) !?Ins
     return held;
 }
 
-/// Refresh the catalog once at startup. The catalog needs no credential, so any daemon holds it.
-/// A failure leaves the stored snapshot alone and never stops the daemon.
-fn catalogTask(gpa: std.mem.Allocator, state: *State, client: *cloud.http.Client, base_url: []const u8) void {
-    const outcome = cloud.sync.refreshCatalog(gpa, client, &state.db, base_url) catch |err| {
-        std.log.warn("catalog refresh failed: {t}", .{err});
-        return;
+/// Load the device bearer without retaining the device private key.
+fn configureCloud(
+    state: *State,
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    data_dir: ?[]const u8,
+    env: *const std.process.Environ.Map,
+) !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    const device: ?cloud.identity.Device = blk: {
+        const data_path = data_dir orelse break :blk null;
+        var dir = std.Io.Dir.cwd().openDir(io, data_path, .{}) catch |err| {
+            std.log.warn("cannot open the cloud identity directory: {t}", .{err});
+            break :blk null;
+        };
+        defer dir.close(io);
+        break :blk cloud.identity.readMeta(arena.allocator(), io, dir, cloud.identity.Device, .device) catch |err| {
+            std.log.warn("cannot read the device credential: {t}", .{err});
+            break :blk null;
+        };
     };
-    switch (outcome) {
-        .updated => {
-            const changed = state.rebuildCatalog() catch |err| {
-                std.log.warn("catalog snapshot rebuild failed: {t}", .{err});
-                return;
-            };
-            if (changed) announceCatalogChanged(state);
-            std.log.info("catalog updated from {s}", .{base_url});
-        },
-        .unchanged => std.log.info("catalog already current", .{}),
-        .unavailable => std.log.warn("catalog not synced by the control plane yet", .{}),
-    }
+    defer if (device) |stored| {
+        std.crypto.secureZero(u8, @constCast(stored.credential));
+        std.crypto.secureZero(u8, @constCast(stored.identity_key));
+    };
+
+    try state.configureCloud(
+        cloud.endpoint.baseUrl(env, null),
+        if (device) |stored| stored.credential else null,
+    );
 }
 
-/// Publish the new merged revision after the replacement is ready.
-fn announceCatalogChanged(state: *State) void {
-    const note: wire.rpc.Notification = .{
-        .method = .@"catalog.changed",
-        .params = .{ .catalog_changed_data = .{ .catalog_rev = state.catalog.revision } },
-    };
-    const bytes = connection.frameNotification(state.gpa, note) catch |err| {
-        std.log.warn("cannot frame catalog.changed: {t}", .{err});
+/// Refresh the public catalog and the account bundle once at startup.
+fn cloudTask(state: *State) void {
+    _ = state.refreshCloud() catch |err| {
+        std.log.warn("cloud refresh failed: {t}", .{err});
         return;
     };
-    defer state.gpa.free(bytes);
-    if (state.broadcast_tap) |tap| tap.record(note.params) catch {};
-    state.registry.publishAll(bytes);
+    std.log.info("cloud documents are current", .{});
 }
 
 /// Create the data directory. Give a new POSIX directory mode 0700 and keep current permissions.
@@ -203,7 +208,7 @@ test "a catalog replacement announces the merged revision" {
     defer state.registry.unregister(&conn);
 
     state.catalog.revision = .bytes(@splat(0xab));
-    announceCatalogChanged(&state);
+    state.announceCatalogChanged();
 
     const item = (try conn.tryReceive()).?;
     defer testing.allocator.free(item.bytes);

@@ -25,6 +25,8 @@ pub const GetRequest = struct {
     url: []const u8,
     /// Send this as `If-None-Match`. An empty value asks for the whole document.
     if_none_match: []const u8 = "",
+    /// Send this credential as an authorization bearer. An empty value sends no credential.
+    bearer: []const u8 = "",
     /// The body lands here. Its length bounds the response.
     body_out: []u8,
     /// The response ETag lands here, before the body reader invalidates the header strings.
@@ -92,11 +94,24 @@ pub const Client = struct {
 
         const uri = std.Uri.parse(req.url) catch return error.BadUrl;
 
-        var extra: [2]std.http.Header = undefined;
+        const authorization = if (req.bearer.len != 0)
+            try std.mem.concat(self.inner.allocator, u8, &.{ "Bearer ", req.bearer })
+        else
+            null;
+        defer if (authorization) |value| {
+            std.crypto.secureZero(u8, value);
+            self.inner.allocator.free(value);
+        };
+
+        var extra: [3]std.http.Header = undefined;
         extra[0] = .{ .name = "accept", .value = "application/json, application/problem+json" };
         var extra_len: usize = 1;
         if (req.if_none_match.len != 0) {
             extra[extra_len] = .{ .name = "if-none-match", .value = req.if_none_match };
+            extra_len += 1;
+        }
+        if (authorization) |value| {
+            extra[extra_len] = .{ .name = "authorization", .value = value };
             extra_len += 1;
         }
 

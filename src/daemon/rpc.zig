@@ -128,6 +128,10 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
             const result = try handlers.catalogList(state, arena, request.params.catalog_list_params);
             return .{ .ok = .{ .id = request.id, .result = .{ .catalog_list_result = result } } };
         },
+        .@"catalog.refresh" => {
+            const result: wire.catalog.CatalogRefreshResult = .{ .catalog_rev = try state.refreshCloud() };
+            return .{ .ok = .{ .id = request.id, .result = .{ .catalog_refresh_result = result } } };
+        },
         .@"session.resync" => {
             const result = handlers.sessionResync(state, arena, request.params.session_resync_params) catch |err| switch (err) {
                 error.UnknownSession => return errorResponse(request.id, .unknown_session, "unknown session"),
@@ -142,7 +146,6 @@ fn dispatch(state: *State, conn: *connection.Connection, arena: std.mem.Allocato
         .@"session.compact",
         .@"session.rewind",
         .@"permission.decide",
-        .@"catalog.refresh",
         .@"auth.list",
         .@"auth.set_api_key",
         .@"auth.login",
@@ -907,7 +910,7 @@ test "cancel run interrupts a blocked provider read" {
         .interrupted = &interrupted,
         .deinitialized = &deinitialized,
     };
-    fixture.state.transport = blocking.transportFor();
+    fixture.state.fallback_transport = blocking.transportFor();
 
     const a = fixture.allocator();
 
@@ -960,7 +963,7 @@ test "resync during a run serializes the live draft" {
     var gate: zio.ResetEvent = .init;
     var interrupted = false;
     var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
-    fixture.state.transport = blocking.transportFor();
+    fixture.state.fallback_transport = blocking.transportFor();
 
     const a = fixture.allocator();
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live", .model = "mock" });
@@ -977,7 +980,7 @@ test "the live draft is reachable from the runtime during a run" {
     var gate: zio.ResetEvent = .init;
     var interrupted = false;
     var blocking: BlockingTransport = .{ .entered = &entered, .gate = &gate, .interrupted = &interrupted };
-    fixture.state.transport = blocking.transportFor();
+    fixture.state.fallback_transport = blocking.transportFor();
 
     const a = fixture.allocator();
 
@@ -1080,7 +1083,7 @@ test "a reasoning block stop finalizes the signature into the committed message"
     var fixture = try TestState.init();
     defer fixture.deinit();
     var canned: provider.transport.CannedTransport = .{ .bytes = reasoning_reply };
-    fixture.state.transport = canned.transport();
+    fixture.state.fallback_transport = canned.transport();
     const a = fixture.allocator();
 
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/reason", .model = "mock" });
@@ -1127,7 +1130,7 @@ const cached_reply =
 
 /// Install `seq`, run one full turn, and return when the session settles.
 fn runOneTurn(fixture: *TestState, a: std.mem.Allocator, path: []const u8, seq: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     const sid = try createSession(fixture, a, .{ .workspace_path = path, .model = "mock" });
     _ = try sendText(fixture, a, sid, "hi");
     var launch = try fixture.rt.spawn(launchUntilIdle, .{ &fixture.state, sid });
@@ -1253,7 +1256,7 @@ test "a tool_use round commits, then a second round streams the final answer" {
     // Round 1 asks for the read tool; round 2 answers with text. Capture each request body.
     const steps = provider.transport.replies(&.{ tool_use_reply, final_text_reply });
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps, .capture = a };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
 
     // The read tool resolves its path against the session workspace.
     var tmp = std.testing.tmpDir(.{});
@@ -1375,7 +1378,7 @@ test "a tool round runs its calls one at a time in provider order" {
     // Round 1 asks for two reads; round 2 answers with text.
     const steps = provider.transport.replies(&.{ two_tool_reply, final_text_reply });
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
@@ -1428,7 +1431,7 @@ test "cancel run cancels the blocked tool call and every pending one" {
 
     const steps = provider.transport.replies(&.{two_tool_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates }; // No gate opens, so the first call stays blocked.
     fixture.state.tool_host = gated.host();
@@ -1470,7 +1473,7 @@ test "cancel run keeps a finished tool and cancels the blocked one" {
 
     const steps = provider.transport.replies(&.{two_tool_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates }; // Only gate a opens, so the second call blocks.
     fixture.state.tool_host = gated.host();
@@ -1514,7 +1517,7 @@ test "an input queued while tools run drains only after the turn commits" {
     // Turn 1: a tool round then a final answer. Turn 2 (steered): a final answer.
     const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply, final_text_reply });
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     var gated: GatedHost = .{ .gates = &gates };
     fixture.state.tool_host = gated.host();
@@ -1565,7 +1568,7 @@ test "an input queued while the provider streams drains after the turn" {
     var entered: zio.ResetEvent = .init;
     var gate: zio.ResetEvent = .init;
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .suffix = stream_finish_suffix, .entered = &entered, .gate = &gate };
-    fixture.state.transport = transport_impl.transportFor();
+    fixture.state.fallback_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/steer-stream", .model = "mock" });
@@ -1620,7 +1623,7 @@ test "a finite max_rounds ends the turn after the capped tool round" {
     // reply would let a leaked round complete, so the capture proves only one request opened.
     const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply });
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps, .capture = a };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     gates.release_a.set(); // The read never blocks.
     var gated: GatedHost = .{ .gates = &gates };
@@ -1656,7 +1659,7 @@ test "max_rounds of 2 allows a tool round then a final answer" {
     // A tool round then a final answer is two rounds, so the cap of 2 does not fire.
     const steps = provider.transport.replies(&.{ one_tool_reply_a, final_text_reply });
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
     var gates: BatchGates = .{};
     gates.release_a.set();
     var gated: GatedHost = .{ .gates = &gates };
@@ -1687,7 +1690,7 @@ test "max_rounds of 1 does not cap a plain text turn" {
     // A plain text answer is one round through the final path, so the cap never applies.
     const steps = provider.transport.replies(&.{final_text_reply});
     var seq: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = seq.transport();
+    fixture.state.fallback_transport = seq.transport();
 
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/max-rounds-text", .model = "mock", .max_rounds = 1 });
     _ = try sendText(&fixture, a, sid, "hi");
@@ -1809,7 +1812,7 @@ test "a resync snapshot reconstructs the live draft" {
     var entered: zio.ResetEvent = .init;
     var gate: zio.ResetEvent = .init;
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
-    fixture.state.transport = transport_impl.transportFor();
+    fixture.state.fallback_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/resync-live-draft", .model = "mock" });
@@ -1828,7 +1831,7 @@ test "a client fold of the published stream matches the daemon session" {
     var entered: zio.ResetEvent = .init;
     var gate: zio.ResetEvent = .init;
     var transport_impl = StreamThenParkTransport{ .prefix = stream_prefix, .entered = &entered, .gate = &gate };
-    fixture.state.transport = transport_impl.transportFor();
+    fixture.state.fallback_transport = transport_impl.transportFor();
 
     const a = fixture.allocator();
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/conform", .model = "mock" });
@@ -1904,7 +1907,7 @@ test "a provider-qualified model builds the real endpoint, headers, and body" {
     _ = try fixture.state.rebuildCatalog();
     var capture: CaptureTransport = .{ .gpa = std.testing.allocator, .reply = provider.transport.placeholder_reply };
     defer capture.deinit();
-    fixture.state.transport = capture.transportFor();
+    fixture.state.fallback_transport = capture.transportFor();
 
     const sid = try createSession(&fixture, a, .{ .workspace_path = "/prov", .model = "acme/fast" });
     _ = try sendText(&fixture, a, sid, "hi");
@@ -1932,7 +1935,7 @@ const started_text =
 
 /// Run one turn against a scripted provider and return the session id.
 fn runScripted(fixture: *TestState, a: std.mem.Allocator, name: []const u8, script: *provider.transport.ScriptedTransport) !wire.ids.SessionId {
-    fixture.state.transport = script.transport();
+    fixture.state.fallback_transport = script.transport();
     fixture.state.retry_policy = .{ .base_ms = 0, .cap_ms = 0 }; // No test waits for a real delay.
     const sid = try createSession(fixture, a, .{ .workspace_path = name, .model = "mock" });
     _ = try sendText(fixture, a, sid, "hi");
@@ -2063,7 +2066,7 @@ test "a resync during a retry delay reports the retry" {
         .{ .body = final_text_reply },
     };
     var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = script.transport();
+    fixture.state.fallback_transport = script.transport();
     // A real delay keeps the retry state observable while the driver resyncs.
     fixture.state.retry_policy = .{ .base_ms = 200, .cap_ms = 200 };
 
@@ -2141,7 +2144,7 @@ test "a cancel during a retry delay stops before the next attempt" {
         .{ .body = final_text_reply },
     };
     var script: provider.transport.ScriptedTransport = .{ .steps = &steps };
-    fixture.state.transport = script.transport();
+    fixture.state.fallback_transport = script.transport();
     // A long delay proves the cancel interrupts the wait instead of outliving it.
     fixture.state.retry_policy = .{ .base_ms = 30_000, .cap_ms = 30_000 };
 
@@ -2173,6 +2176,20 @@ test "catalog.list serves an empty catalog before the first sync" {
     try std.testing.expectEqual(@as(usize, 0), result.full.providers.len);
     // A zero revision says the daemon holds no catalog yet.
     try std.testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &result.full.catalog_rev.raw);
+}
+
+test "catalog.refresh dispatches the cloud refresh" {
+    var fixture = try TestState.init();
+    defer fixture.deinit();
+    try fixture.state.configureCloud("not a url", null);
+
+    var buffer: [1024]u8 = undefined;
+    const framed = try call(&fixture,
+        \\{"id":"refresh-1","method":"catalog.refresh","params":{}}
+    , &buffer);
+    const payload = try responsePayload(framed);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"code\":-32603") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "not implemented") == null);
 }
 
 test "a local provider changes the catalog before the first cloud sync" {
