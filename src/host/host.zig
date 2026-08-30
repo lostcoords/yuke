@@ -38,6 +38,37 @@ pub const RangeRead = struct {
     long_lines: u32 = 0,
 };
 
+/// Metadata for one filesystem path. The backend follows a symbolic link.
+pub const Stat = struct {
+    is_dir: bool,
+    /// The last modification time in epoch milliseconds.
+    last_modified_ms: u64,
+};
+
+/// One entry of a directory page. `name` holds the basename only.
+pub const DirItem = struct {
+    name: []const u8,
+    is_dir: bool,
+    /// The backend sets this field only when a directory contains a `.git` entry.
+    is_git_repo: bool = false,
+};
+
+/// The bounds of one directory page. The backend returns the first `limit` names after `after`.
+pub const ListOptions = struct {
+    /// Continue after this name. A null value starts at the first name.
+    after: ?[]const u8 = null,
+    limit: u32,
+    /// A false value drops every entry that is not a directory.
+    include_files: bool = false,
+};
+
+/// One directory page, sorted by name.
+pub const DirPage = struct {
+    items: []const DirItem,
+    /// The name to continue after, or null at the end of the directory.
+    next_after: ?[]const u8 = null,
+};
+
 /// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
 pub const ExecSpec = struct {
     command: []const u8,
@@ -89,6 +120,12 @@ pub const Host = struct {
         /// Run one command through a shell. The backend puts it in its OWN process group and kills
         /// the whole group on a deadline or a cancel, so no descendant survives the call.
         exec: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, spec: ExecSpec) HostError!ExecResult,
+
+        /// Report what one path is. The backend returns NotFound when the path does not exist.
+        stat: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8) HostError!Stat,
+
+        /// List one page of a directory. The backend sorts by name and keeps only one page.
+        listDir: *const fn (ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, options: ListOptions) HostError!DirPage,
     };
 
     pub fn readRange(self: Host, scratch: std.mem.Allocator, path: []const u8, range: Range, limits: ReadLimits) HostError!RangeRead {
@@ -105,5 +142,13 @@ pub const Host = struct {
 
     pub fn exec(self: Host, scratch: std.mem.Allocator, spec: ExecSpec) HostError!ExecResult {
         return self.vtable.exec(self.ctx, scratch, spec);
+    }
+
+    pub fn stat(self: Host, scratch: std.mem.Allocator, path: []const u8) HostError!Stat {
+        return self.vtable.stat(self.ctx, scratch, path);
+    }
+
+    pub fn listDir(self: Host, scratch: std.mem.Allocator, path: []const u8, options: ListOptions) HostError!DirPage {
+        return self.vtable.listDir(self.ctx, scratch, path, options);
     }
 };

@@ -26,6 +26,16 @@ pub const unsupported: h.Host.VTable = .{
             return error.HostFailure;
         }
     }.f,
+    .stat = struct {
+        fn f(_: *anyopaque, _: std.mem.Allocator, _: []const u8) h.HostError!h.Stat {
+            return error.HostFailure;
+        }
+    }.f,
+    .listDir = struct {
+        fn f(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: h.ListOptions) h.HostError!h.DirPage {
+            return error.HostFailure;
+        }
+    }.f,
 };
 
 /// A host over one in-memory file. Set `content` to null to report a missing file. Set `read_error`
