@@ -26,7 +26,9 @@ const text_plain = [_]std.http.Header{
 /// Accept connections forever. Run each connection in its own task.
 pub fn serve(state: *State) !void {
     try run_task.resumePendingInputs(state);
-    var listener = try state.config.listen.listen(state.io, .{});
+    // Reuse the address, because a restart must not wait for the sockets of the last daemon to leave
+    // TIME_WAIT. The instance lock, not the bind, keeps one daemon on the port.
+    var listener = try state.config.listen.listen(state.io, .{ .reuse_address = true });
     defer listener.deinit(state.io);
     std.log.info("front door on http://{f}", .{listener.socket.address});
 

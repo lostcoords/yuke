@@ -12,6 +12,7 @@ const cloud = @import("../cloud/cloud.zig");
 const provider = @import("../provider/provider.zig");
 const daemon_config = @import("config.zig");
 const connection = @import("connection.zig");
+const InstanceLock = @import("InstanceLock.zig");
 const State = @import("State.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
@@ -31,7 +32,14 @@ pub fn run(init: std.process.Init) !void {
     const io = rt.io();
 
     // Resolve the data directory. Use an in-memory store when the data directory has no path.
-    const owned_db_path = try resolveDbPath(init.gpa, io, init.environ_map);
+    const data_dir = try resolveDataDir(init.gpa, io, init.environ_map);
+    defer if (data_dir) |path| init.gpa.free(path);
+
+    // One daemon owns the data directory and the front door. Take the lock before the store opens.
+    const lock = try lockInstance(init.gpa, io, data_dir);
+    defer if (lock) |held| held.release(io);
+
+    const owned_db_path = if (data_dir) |base| try dbPathZ(init.gpa, base) else null;
     defer if (owned_db_path) |path| init.gpa.free(path);
     const db_path: [:0]const u8 = owned_db_path orelse ":memory:";
 
@@ -102,15 +110,36 @@ fn configFilePath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, n
     return try std.fs.path.join(gpa, &.{ base, name });
 }
 
-/// Resolve the SQLite path inside the data directory.
-/// Return null when the data directory has no path. The caller owns the returned path.
-fn resolveDbPath(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?[:0]u8 {
+/// Resolve the data directory and create it.
+/// Return null when no data directory path exists. The caller owns the returned path.
+fn resolveDataDir(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?[]u8 {
     const base = try paths.dataDir(gpa, env) orelse return null;
-    defer gpa.free(base);
+    errdefer gpa.free(base);
     try ensureDataDir(io, base);
+    return base;
+}
+
+/// Return the SQLite path under `base`. The caller owns the result.
+fn dbPathZ(gpa: std.mem.Allocator, base: []const u8) ![:0]u8 {
     const file = try paths.dbPathIn(gpa, base);
     defer gpa.free(file);
     return try gpa.dupeZ(u8, file);
+}
+
+/// Take the single-instance lock. A daemon without a data directory takes no lock.
+/// Report the conflict, because a bare error name does not tell the user what to do.
+fn lockInstance(gpa: std.mem.Allocator, io: std.Io, data_dir: ?[]const u8) !?InstanceLock {
+    const base = data_dir orelse {
+        std.log.warn("no data directory: the daemon takes no single-instance lock", .{});
+        return null;
+    };
+    const held = InstanceLock.acquire(gpa, io, base) catch |err| {
+        if (err == InstanceLock.Error.DaemonAlreadyRunning)
+            std.log.err("another yuke daemon already runs; it holds the lock in {s}", .{base});
+        return err;
+    };
+    if (held == null) std.log.warn("{s} gives no lock: a second daemon is not detected", .{base});
+    return held;
 }
 
 /// Refresh the catalog once at startup. The catalog needs no credential, so any daemon holds it.

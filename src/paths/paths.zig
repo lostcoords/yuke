@@ -18,6 +18,9 @@ pub const db_file = "yuked.db";
 /// This is the content-addressed blob directory under the data directory.
 pub const blob_subdir = "blobs";
 
+/// This is the single-instance lock file in the data directory.
+pub const lock_file = "yuked.lock";
+
 /// This variable names the home directory: `USERPROFILE` on Windows and `HOME` elsewhere.
 const home_env = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
@@ -105,6 +108,12 @@ pub fn dbPathIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
 pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
     std.debug.assert(base.len != 0);
     return std.fs.path.join(alloc, &.{ base, blob_subdir });
+}
+
+/// Return the single-instance lock path under `base`. The caller frees the result.
+pub fn lockPathIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
+    std.debug.assert(base.len != 0);
+    return std.fs.path.join(alloc, &.{ base, lock_file });
 }
 
 /// Expand an initial `~` against the home directory.
@@ -219,7 +228,7 @@ test "configDir falls back to dot-config" {
     try testing.expectEqualStrings("/home/u/.config/yuke", got);
 }
 
-test "dbPathIn and blobDirIn append the file and subdirectory" {
+test "dbPathIn, blobDirIn, and lockPathIn append the file and subdirectory" {
     const db = try dbPathIn(testing.allocator, "/data/yuke");
     defer testing.allocator.free(db);
     try testing.expectEqualStrings("/data/yuke/yuked.db", db);
@@ -227,6 +236,10 @@ test "dbPathIn and blobDirIn append the file and subdirectory" {
     const blobs = try blobDirIn(testing.allocator, "/data/yuke");
     defer testing.allocator.free(blobs);
     try testing.expectEqualStrings("/data/yuke/blobs", blobs);
+
+    const lock = try lockPathIn(testing.allocator, "/data/yuke");
+    defer testing.allocator.free(lock);
+    try testing.expectEqualStrings("/data/yuke/yuked.lock", lock);
 }
 
 test "expandHome substitutes a leading tilde" {

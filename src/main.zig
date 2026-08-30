@@ -129,7 +129,11 @@ pub fn main(init: std.process.Init) !void {
                 .safe_mode = root.safe_mode,
             });
         },
-        .daemon => try daemon_app.run(init),
+        .daemon => daemon_app.run(init) catch |err| {
+            // A conflict already told the user which daemon holds the lock.
+            if (err != error.DaemonAlreadyRunning) std.log.err("yuke --daemon: {t}", .{err});
+            std.process.exit(1);
+        },
         .login => |opts| try runLogin(init, opts),
     }
 }

@@ -20,5 +20,6 @@ test {
     _ = @import("daemon/session_runtime.zig");
     _ = @import("daemon/connection.zig");
     _ = @import("daemon/config.zig");
+    _ = @import("daemon/InstanceLock.zig");
     _ = @import("daemon/turn_context.zig");
 }
