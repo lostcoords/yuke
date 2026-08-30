@@ -14,7 +14,7 @@ const cloud_endpoint = @import("../cloud/endpoint.zig");
 const cloud_http = @import("../cloud/http.zig");
 const cloud_sync = @import("../cloud/sync.zig");
 const provider_catalog = @import("provider_catalog.zig");
-const tools = @import("../tools/tool.zig");
+const host = @import("../host/host.zig");
 const retry = @import("../provider/retry.zig");
 const session_runtime = @import("session_runtime.zig");
 const connection = @import("connection.zig");
@@ -42,7 +42,7 @@ config_owner: ?daemon_config.Loaded = null, // The daemon owns the yuked.json ar
 env: *const std.process.Environ.Map, // This pointer borrows the process environment for key lookup.
 run_group: std.Io.Group = .init, // The group owns each launched run task until it returns.
 shutting_down: bool = false,
-tool_host: ?tools.ToolHost = null,
+tool_host: ?host.Host = null,
 retry_policy: retry.Policy = .{}, // A test shortens the delays. Production keeps the defaults.
 retry_budget: u8 = 8, // Retry permits for one whole run. // A test injects a tool host; production builds a LocalHost per run.
 /// The session index revision. It counts each published `session.summary_changed`.

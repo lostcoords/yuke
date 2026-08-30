@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const t = @import("tool.zig");
+const h = @import("../host/host.zig");
 
 /// The command deadline. `plan.md` fixes both values.
 const default_timeout_ms: u32 = 120_000;
@@ -34,7 +35,7 @@ pub const tool = t.define(
     execute,
 );
 
-fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost, args: Args) t.ToolError!t.ToolResult {
+fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, args: Args) t.ToolError!t.ToolResult {
     // A blank command exits 0 and would tell the model that it finished work.
     if (std.mem.trim(u8, args.command.bytes, " \t\r\n").len == 0) return error.InvalidArg;
     const timeout_ms = args.timeout_ms orelse default_timeout_ms;
@@ -74,7 +75,7 @@ fn appendText(out: std.mem.Allocator, buf: *std.ArrayList(u8), raw: []const u8) 
 /// U+FFFD stands for one byte the decoder cannot read.
 const replacement = &std.unicode.replacement_character_utf8;
 
-fn render(out: std.mem.Allocator, r: t.ExecResult, timeout_ms: u32) error{OutOfMemory}![]const u8 {
+fn render(out: std.mem.Allocator, r: h.ExecResult, timeout_ms: u32) error{OutOfMemory}![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     try appendText(out, &buf, r.stdout);
     if (r.stderr.len != 0) {
@@ -105,7 +106,7 @@ fn endLine(out: std.mem.Allocator, buf: *std.ArrayList(u8)) error{OutOfMemory}!v
 }
 
 const testing = std.testing;
-const FakeHost = @import("test_host.zig").ExecHost;
+const FakeHost = @import("../host/test_host.zig").ExecHost;
 
 test "exec reports the output and the exit code" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -231,8 +232,8 @@ test "exec rejects a blank command and an invalid timeout" {
     const a = arena.allocator();
 
     var fake: FakeHost = .{ .result = .{ .stdout = "", .stderr = "", .outcome = .{ .exited = 0 } } };
-    const h = fake.host();
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"command\":\"x\",\"timeout_ms\":600001}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"command\":\"x\",\"timeout_ms\":0}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"command\":\"   \"}"));
+    const backend = fake.host();
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"command\":\"x\",\"timeout_ms\":600001}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"command\":\"x\",\"timeout_ms\":0}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"command\":\"   \"}"));
 }

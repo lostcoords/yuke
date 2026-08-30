@@ -3,7 +3,7 @@
 //! A descendant that calls `setsid` leaves the group. Only the container backend contains that case.
 
 const std = @import("std");
-const t = @import("tool.zig");
+const h = @import("host.zig");
 const paths = @import("../paths/paths.zig");
 
 /// The wait between SIGTERM and SIGKILL. A shell runs its SIGTERM trap in this time.
@@ -63,7 +63,7 @@ fn tailCeil(bytes: []const u8) []const u8 {
 
 /// Run `spec` and return its output. The caller must validate `spec`; this function returns an error
 /// instead of an assertion, because the seam is reachable from any backend caller.
-pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, scratch: std.mem.Allocator, spec: t.ExecSpec) t.HostError!t.ExecResult {
+pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
     const cwd = try resolveCwd(scratch, root, env, spec.cwd);
     const argv = [_][]const u8{ "/bin/sh", "-c", spec.command };
@@ -113,7 +113,7 @@ pub fn run(io: std.Io, root: []const u8, env: ?*const std.process.Environ.Map, s
 
 /// Wait for both drains. Escalate over the group on the deadline. Return true after a deadline.
 /// A cancel returns `error.Canceled`, never a deadline, so the model never reads a false timeout.
-fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_ms: u32) t.HostError!bool {
+fn awaitDrains(io: std.Io, group: *std.Io.Group, pid: std.posix.pid_t, timeout_ms: u32) h.HostError!bool {
     var done: std.Io.Event = .unset;
     var waiter = io.concurrent(joinGroup, .{ io, group, &done }) catch return error.HostFailure;
     const deadline: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake };
@@ -166,12 +166,12 @@ fn joinGroup(io: std.Io, group: *std.Io.Group, done: *std.Io.Event) void {
 }
 
 /// Resolve the working directory. A null `cwd` uses the workspace root itself.
-fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: ?*const std.process.Environ.Map, cwd: ?[]const u8) t.HostError![]const u8 {
+fn resolveCwd(scratch: std.mem.Allocator, root: []const u8, env: ?*const std.process.Environ.Map, cwd: ?[]const u8) h.HostError![]const u8 {
     const rel = cwd orelse return root;
     return paths.anchorAt(scratch, env, root, rel) catch error.OutOfMemory;
 }
 
-fn mapDrainError(err: anyerror) t.HostError {
+fn mapDrainError(err: anyerror) h.HostError {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
@@ -219,7 +219,7 @@ fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, half: 
 
 const testing = std.testing;
 
-fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !t.ExecResult {
+fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !h.ExecResult {
     return run(testing.io, "/tmp", null, a, .{ .command = command, .timeout_ms = timeout_ms, .max_stream_bytes = 256 });
 }
 

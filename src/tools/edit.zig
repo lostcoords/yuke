@@ -2,8 +2,9 @@
 
 const std = @import("std");
 const t = @import("tool.zig");
+const h = @import("../host/host.zig");
 const view = @import("view.zig");
-const test_host = @import("test_host.zig");
+const test_host = @import("../host/test_host.zig");
 
 /// The largest file the tool reads. An edit rewrites the whole file. The read must hold every byte.
 const max_file_bytes = 10 * 1024 * 1024;
@@ -29,7 +30,7 @@ pub const tool = t.define(
     execute,
 );
 
-fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost, args: Args) t.ToolError!t.ToolResult {
+fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, args: Args) t.ToolError!t.ToolResult {
     const path = args.path.bytes;
     const old_string = args.old_string.bytes;
     const new_string = args.new_string.bytes;
@@ -107,9 +108,9 @@ test "edit refuses an argument pair that names no edit" {
     const a = arena.allocator();
 
     var fake: FileHost = .{ .content = "alpha\n" };
-    const h = fake.host();
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"path\":\"a\",\"old_string\":\"\",\"new_string\":\"y\"}"));
-    try testing.expectError(error.NoChange, tool.execute(a, a, h, "{\"path\":\"a\",\"old_string\":\"alpha\",\"new_string\":\"alpha\"}"));
+    const backend = fake.host();
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"path\":\"a\",\"old_string\":\"\",\"new_string\":\"y\"}"));
+    try testing.expectError(error.NoChange, tool.execute(a, a, backend, "{\"path\":\"a\",\"old_string\":\"alpha\",\"new_string\":\"alpha\"}"));
     try testing.expect(fake.written == null);
 }
 
@@ -118,7 +119,7 @@ test "edit stops on every full-read error" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    for ([_]t.HostError{ error.NotFound, error.TooLarge, error.InvalidUtf8 }) |err| {
+    for ([_]h.HostError{ error.NotFound, error.TooLarge, error.InvalidUtf8 }) |err| {
         var fake: FileHost = .{ .read_error = err };
         try testing.expectError(err, tool.execute(a, a, fake.host(), "{\"path\":\"a\",\"old_string\":\"x\",\"new_string\":\"y\"}"));
         try testing.expect(fake.written == null);

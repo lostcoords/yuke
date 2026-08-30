@@ -2,14 +2,15 @@
 
 const std = @import("std");
 const t = @import("tool.zig");
-const test_host = @import("test_host.zig");
+const h = @import("../host/host.zig");
+const test_host = @import("../host/test_host.zig");
 
 /// A line number fits in u32. The bound also keeps `number` clear of an unsigned overflow.
 const max_line = std.math.maxInt(u32);
 
 /// The read limits. These limits keep one result within the transcript. opencode and Cline use the
 /// same line numbers.
-const limits: t.ReadLimits = .{
+const limits: h.ReadLimits = .{
     .max_lines = 2000,
     .max_line_bytes = 8000, // the limit allows at least 2000 four-byte codepoints
     .max_bytes = 64 * 1024,
@@ -33,7 +34,7 @@ pub const tool = t.define(
     execute,
 );
 
-fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost, args: Args) t.ToolError!t.ToolResult {
+fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, args: Args) t.ToolError!t.ToolResult {
     // The schema sets the bounds. The decoder does not enforce them. Line 0 does not exist.
     if (args.start) |s| if (s < 1) return error.InvalidArg;
     if (args.end) |e| if (e < 1) return error.InvalidArg;
@@ -43,7 +44,7 @@ fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost,
 
 /// Number each line. Add one notice for each limit the read reached. The result comes from `out`. It
 /// outlives the `scratch` allocator that holds the file bytes.
-fn render(out: std.mem.Allocator, got: t.RangeRead, first_line: u32) error{OutOfMemory}![]const u8 {
+fn render(out: std.mem.Allocator, got: h.RangeRead, first_line: u32) error{OutOfMemory}![]const u8 {
     std.debug.assert(first_line >= 1 and first_line <= max_line); // execute validated the range
     var buf: std.ArrayList(u8) = .empty;
     if (got.text.len != 0) {
@@ -120,13 +121,13 @@ test "read rejects bad arguments" {
     const a = arena.allocator();
 
     var fake: FakeHost = .{ .result = .{ .text = "" } };
-    const h = fake.host();
-    try testing.expectError(error.MissingArg, tool.execute(a, a, h, "{}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"path\":5}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"path\":\"x\",\"start\":0}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"path\":\"x\",\"start\":4294967296}"));
-    try testing.expectError(error.UnknownArg, tool.execute(a, a, h, "{\"path\":\"x\",\"extra\":1}"));
-    try testing.expectError(error.InvalidArg, tool.execute(a, a, h, "{\"path\":[120]}")); // the byte-array form
+    const backend = fake.host();
+    try testing.expectError(error.MissingArg, tool.execute(a, a, backend, "{}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"path\":5}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"path\":\"x\",\"start\":0}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"path\":\"x\",\"start\":4294967296}"));
+    try testing.expectError(error.UnknownArg, tool.execute(a, a, backend, "{\"path\":\"x\",\"extra\":1}"));
+    try testing.expectError(error.InvalidArg, tool.execute(a, a, backend, "{\"path\":[120]}")); // the byte-array form
 }
 
 test "read passes the result out of the scratch allocator" {

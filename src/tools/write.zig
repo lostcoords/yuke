@@ -2,8 +2,9 @@
 
 const std = @import("std");
 const t = @import("tool.zig");
+const h = @import("../host/host.zig");
 const view = @import("view.zig");
-const test_host = @import("test_host.zig");
+const test_host = @import("../host/test_host.zig");
 
 /// The tool reads old content up to this byte limit for the diff view. A larger file gets no view.
 const max_diff_bytes = 10 * 1024 * 1024;
@@ -24,7 +25,7 @@ pub const tool = t.define(
     execute,
 );
 
-fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: t.ToolHost, args: Args) t.ToolError!t.ToolResult {
+fn execute(out: std.mem.Allocator, scratch: std.mem.Allocator, host: h.Host, args: Args) t.ToolError!t.ToolResult {
     const path = args.path.bytes;
     const content = args.content.bytes;
     // The view uses the old content only. The tool still writes a file that it cannot diff.
@@ -78,7 +79,7 @@ test "write omits the view when the daemon cannot diff the old file" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    for ([_]t.HostError{ error.TooLarge, error.InvalidUtf8 }) |err| {
+    for ([_]h.HostError{ error.TooLarge, error.InvalidUtf8 }) |err| {
         var fake: FileHost = .{ .read_error = err };
         const res = try tool.execute(a, a, fake.host(), "{\"path\":\"big.bin\",\"content\":\"x\"}");
         try testing.expectEqualStrings("x", fake.written.?); // The write still occurs.

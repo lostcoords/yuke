@@ -219,7 +219,8 @@ const transport = @import("../provider/transport.zig");
 const provider = @import("../provider/provider.zig");
 const domain_session = @import("domain").session;
 const tools = @import("../tools/tool.zig");
-const test_host = @import("../tools/test_host.zig");
+const host_mod = @import("../host/host.zig");
+const test_host = @import("../host/test_host.zig");
 
 /// Test request handlers with a daemon state and an in-memory database.
 /// The fixture environment is empty. The map has no allocation to free.
@@ -1439,15 +1440,15 @@ const BatchGates = struct {
 const GatedHost = struct {
     gates: *BatchGates,
 
-    const vtable: tools.ToolHost.VTable = blk: {
+    const vtable: host_mod.Host.VTable = blk: {
         var v = test_host.unsupported; // The gated tests call only readRange.
         v.readRange = readRange;
         break :blk v;
     };
-    fn host(self: *GatedHost) tools.ToolHost {
+    fn host(self: *GatedHost) host_mod.Host {
         return .{ .ctx = self, .vtable = &vtable };
     }
-    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: tools.Range, limits: tools.ReadLimits) tools.HostError!tools.RangeRead {
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: host_mod.Range, limits: host_mod.ReadLimits) host_mod.HostError!host_mod.RangeRead {
         _ = .{ range, limits };
         const self: *GatedHost = @ptrCast(@alignCast(ctx));
         if (std.mem.eql(u8, path, "a")) {
@@ -2213,17 +2214,17 @@ test "the retry budget covers the whole run, not one request" {
 
 /// A tool host that answers every read with fixed bytes, so a tool round can reach its next request.
 const EchoHost = struct {
-    const vtable: tools.ToolHost.VTable = blk: {
+    const vtable: host_mod.Host.VTable = blk: {
         var v = test_host.unsupported;
         v.readRange = readRange;
         break :blk v;
     };
 
-    fn host(self: *EchoHost) tools.ToolHost {
+    fn host(self: *EchoHost) host_mod.Host {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: tools.Range, limits: tools.ReadLimits) tools.HostError!tools.RangeRead {
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: host_mod.Range, limits: host_mod.ReadLimits) host_mod.HostError!host_mod.RangeRead {
         _ = .{ ctx, path, range, limits };
         return .{ .text = try scratch.dupe(u8, "x\n") };
     }

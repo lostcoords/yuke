@@ -2,7 +2,7 @@
 //! trusted local user); the container backend is the boundary. See docs/plan.md "Execution isolation".
 
 const std = @import("std");
-const t = @import("tool.zig");
+const h = @import("host.zig");
 const paths = @import("../paths/paths.zig");
 const exec_local = @import("exec_local.zig");
 
@@ -13,13 +13,13 @@ pub const LocalHost = struct {
     root: []const u8, // The canonical workspace root, the base for a relative path.
     env: ?*const Map, // The environment expands an initial `~`.
 
-    pub fn host(self: *LocalHost) t.ToolHost {
+    pub fn host(self: *LocalHost) h.Host {
         return .{ .ctx = self, .vtable = &vtable };
     }
 
-    const vtable: t.ToolHost.VTable = .{ .readRange = readRange, .readAll = readAll, .writeFile = writeFile, .exec = exec };
+    const vtable: h.Host.VTable = .{ .readRange = readRange, .readAll = readAll, .writeFile = writeFile, .exec = exec };
 
-    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: t.Range, limits: t.ReadLimits) t.HostError!t.RangeRead {
+    fn readRange(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
@@ -37,7 +37,7 @@ pub const LocalHost = struct {
         };
     }
 
-    fn readAll(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) t.HostError![]const u8 {
+    fn readAll(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, max_bytes: u32) h.HostError![]const u8 {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         try requireRegularFile(self.io, full);
@@ -47,7 +47,7 @@ pub const LocalHost = struct {
         return text;
     }
 
-    fn writeFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, content: []const u8) t.HostError!void {
+    fn writeFile(ctx: *anyopaque, scratch: std.mem.Allocator, path: []const u8, content: []const u8) h.HostError!void {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         // The root has no parent and names a directory, so it can never accept a write.
@@ -74,7 +74,7 @@ pub const LocalHost = struct {
 
     /// Return the permissions for a replacement. Use the default permissions for a missing target.
     /// Reject a symlink, a hard link, or a special file.
-    fn targetPermissions(dir: std.Io.Dir, io: std.Io, base: []const u8) t.HostError!std.Io.File.Permissions {
+    fn targetPermissions(dir: std.Io.Dir, io: std.Io, base: []const u8) h.HostError!std.Io.File.Permissions {
         const stat = dir.statFile(io, base, .{ .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound => return .default_file,
             else => return mapError(err),
@@ -84,7 +84,7 @@ pub const LocalHost = struct {
         return stat.permissions;
     }
 
-    fn exec(ctx: *anyopaque, scratch: std.mem.Allocator, spec: t.ExecSpec) t.HostError!t.ExecResult {
+    fn exec(ctx: *anyopaque, scratch: std.mem.Allocator, spec: h.ExecSpec) h.HostError!h.ExecResult {
         const self: *LocalHost = @ptrCast(@alignCast(ctx));
         return exec_local.run(self.io, self.root, self.env, scratch, spec);
     }
@@ -102,7 +102,7 @@ const NextByte = enum { newline, other, eof };
 
 /// Stream the requested lines. Stop at the first limit. `line_buf` holds one line, so memory stays
 /// bounded by the limits and not by the file size.
-fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: t.Range, limits: t.ReadLimits) ScanError!t.RangeRead {
+fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, range: h.Range, limits: h.ReadLimits) ScanError!h.RangeRead {
     std.debug.assert(limits.max_lines > 0 and limits.max_line_bytes > 0);
     std.debug.assert(line_buf.len == limits.max_line_bytes + 1);
     // A first line must always fit. Otherwise a capped read makes no progress and the model repeats it.
@@ -209,7 +209,7 @@ const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatF
 
 /// Map a native file-system error to `HostError`. Map an unlisted error to `HostFailure`. The open
 /// call accepts a directory on POSIX. The first read reports that case.
-fn mapError(err: NativeError) t.HostError {
+fn mapError(err: NativeError) h.HostError {
     return switch (err) {
         error.FileNotFound, error.NotDir => error.NotFound,
         error.IsDir => error.NotAFile,
@@ -224,14 +224,14 @@ fn mapError(err: NativeError) t.HostError {
 
 /// Reject a path that does not name a regular file. A read of a FIFO or a device blocks forever, so
 /// every read must check first. A read follows a symlink; a write must not.
-fn requireRegularFile(io: std.Io, path: []const u8) t.HostError!void {
+fn requireRegularFile(io: std.Io, path: []const u8) h.HostError!void {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return mapError(err);
     if (stat.kind != .file) return error.NotAFile;
 }
 
 const testing = std.testing;
 
-const test_limits: t.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .max_bytes = 4096 };
+const test_limits: h.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .max_bytes = 4096 };
 
 /// The fixture writes `data` to a temporary file. It reads a range through `LocalHost`.
 const Fixture = struct {
@@ -249,7 +249,7 @@ const Fixture = struct {
         self.tmp.cleanup();
     }
     /// Build the host per call. A stored root slice would dangle if the fixture moved.
-    fn read(self: *Fixture, a: std.mem.Allocator, range: t.Range, limits: t.ReadLimits) t.HostError!t.RangeRead {
+    fn read(self: *Fixture, a: std.mem.Allocator, range: h.Range, limits: h.ReadLimits) h.HostError!h.RangeRead {
         var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = null };
         return local.host().readRange(a, "a.txt", range, limits);
     }
@@ -409,9 +409,9 @@ test "LocalHost maps a missing path and a directory" {
     defer arena.deinit();
     const a = arena.allocator();
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
-    const h = local.host();
-    try testing.expectError(error.NotFound, h.readRange(a, "nope.txt", .{}, test_limits));
-    try testing.expectError(error.NotAFile, h.readRange(a, ".", .{}, test_limits));
+    const backend = local.host();
+    try testing.expectError(error.NotFound, backend.readRange(a, "nope.txt", .{}, test_limits));
+    try testing.expectError(error.NotAFile, backend.readRange(a, ".", .{}, test_limits));
 }
 
 test "LocalHost expands a leading tilde against HOME" {
@@ -458,14 +458,14 @@ test "LocalHost readAll returns exact bytes and reports the size limit" {
     defer arena.deinit();
     const a = arena.allocator();
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
-    const h = local.host();
+    const backend = local.host();
 
     // The bytes must be exact. `readRange` cuts long lines, so a write-back needs this path.
-    try testing.expectEqualStrings("one\ntwo", try h.readAll(a, "a.txt", 1024));
+    try testing.expectEqualStrings("one\ntwo", try backend.readAll(a, "a.txt", 1024));
     // `readFileAlloc` reports the limit as StreamTooLong. The caller must see the size.
-    try testing.expectError(error.TooLarge, h.readAll(a, "a.txt", 3));
-    try testing.expectError(error.NotFound, h.readAll(a, "nope.txt", 1024));
-    try testing.expectError(error.NotAFile, h.readAll(a, ".", 1024));
+    try testing.expectError(error.TooLarge, backend.readAll(a, "a.txt", 3));
+    try testing.expectError(error.NotFound, backend.readAll(a, "nope.txt", 1024));
+    try testing.expectError(error.NotAFile, backend.readAll(a, ".", 1024));
 }
 
 test "LocalHost readAll refuses a file it cannot decode as UTF-8" {
@@ -525,11 +525,11 @@ test "LocalHost writeFile refuses a target that is not a regular file" {
     const a = arena.allocator();
 
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = null };
-    const h = local.host();
+    const backend = local.host();
     // A rename replaces the link itself, so a write through a symlink would change the wrong object.
-    try testing.expectError(error.NotAFile, h.writeFile(a, "link.txt", "x"));
-    try testing.expectError(error.NotAFile, h.writeFile(a, ".", "x"));
-    try testing.expectError(error.NotAFile, h.writeFile(a, "/", "x"));
+    try testing.expectError(error.NotAFile, backend.writeFile(a, "link.txt", "x"));
+    try testing.expectError(error.NotAFile, backend.writeFile(a, ".", "x"));
+    try testing.expectError(error.NotAFile, backend.writeFile(a, "/", "x"));
     // The target keeps its content.
-    try testing.expectEqualStrings("target\n", try h.readAll(a, "a.txt", 1024));
+    try testing.expectEqualStrings("target\n", try backend.readAll(a, "a.txt", 1024));
 }

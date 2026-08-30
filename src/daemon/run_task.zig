@@ -15,7 +15,8 @@ const provider_catalog = @import("provider_catalog.zig");
 const tools = @import("../tools/tool.zig");
 const tool_registry = @import("../tools/registry.zig");
 const retry = @import("../provider/retry.zig");
-const local_host = @import("../tools/local.zig");
+const host_mod = @import("../host/host.zig");
+const local_host = @import("../host/local.zig");
 
 const ids = wire.ids;
 const message = wire.message;
@@ -132,7 +133,7 @@ fn runSession(state: *State, slot: *RunSlot) void {
             if (terminal == .success and terminal.success == .tool_calls) {
                 // Acquire the tool host. A test injects one; production resolves the workspace root.
                 var host_backend: local_host.LocalHost = undefined;
-                const host: ?tools.ToolHost = state.tool_host orelse resolveHost(state, arena, session_id.raw, &host_backend);
+                const host: ?host_mod.Host = state.tool_host orelse resolveHost(state, arena, session_id.raw, &host_backend);
                 // A null host settles every part canceled; the run then faults on the unresolved workspace.
                 settlePendingTools(state, arena, slot, &streamer, host, live) catch |err| {
                     faultSlot(state, session_id, slot, err);
@@ -784,7 +785,7 @@ const ToolExec = struct { output: []const u8, view: ?[]const wire.view.View = nu
 
 /// Run one built-in tool. The `scratch` allocator holds temporary data. The `out` allocator holds
 /// the result for the turn. A tool error gives the model a correction for the next round.
-fn runTool(out: std.mem.Allocator, scratch: std.mem.Allocator, host: tools.ToolHost, name: []const u8, arguments: []const u8) ToolExec {
+fn runTool(out: std.mem.Allocator, scratch: std.mem.Allocator, host: host_mod.Host, name: []const u8, arguments: []const u8) ToolExec {
     const t = tool_registry.find(name) orelse return .{
         .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
         .is_error = true,
@@ -818,7 +819,7 @@ fn toolErrorMessage(out: std.mem.Allocator, t: tools.Tool, err: tools.ToolError)
 }
 
 /// Build a local tool host for the session workspace. Return null when the workspace lookup fails.
-fn resolveHost(state: *State, arena: std.mem.Allocator, session_id: [16]u8, backend: *local_host.LocalHost) ?tools.ToolHost {
+fn resolveHost(state: *State, arena: std.mem.Allocator, session_id: [16]u8, backend: *local_host.LocalHost) ?host_mod.Host {
     const root = workspaceRoot(state, arena, session_id) catch return null;
     backend.* = .{ .io = state.io, .root = root, .env = state.env };
     return backend.host();
@@ -842,7 +843,7 @@ const PendingTool = struct { part_id: wire.ids.PartId, name: []const u8, argumen
 
 /// Settle every pending tool part into a terminal state. The tools run ONE AT A TIME in provider
 /// order. Without a host, and after a cancel, each remaining part settles canceled and no tool runs.
-fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: ?tools.ToolHost, live: *const draft.Draft) !void {
+fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: ?host_mod.Host, live: *const draft.Draft) !void {
     var pending: std.ArrayList(PendingTool) = .empty;
     for (live.parts.items) |*p| {
         if (p.* != .tool or std.meta.activeTag(p.tool.state) != .pending) continue;
@@ -858,7 +859,7 @@ fn settlePendingTools(state: *State, arena: std.mem.Allocator, slot: *RunSlot, s
 }
 
 /// Run one tool in a child task, so a cancel can interrupt a blocked call.
-fn runOneTool(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool) !void {
+fn runOneTool(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: host_mod.Host, pt: PendingTool) !void {
     return switch (runChild(state, slot, toolChild, .{ state, arena, slot, streamer, host, pt })) {
         .canceled => {}, // The child settled its part canceled. The next part still settles.
         .aborted => error.Canceled,
@@ -868,7 +869,7 @@ fn runOneTool(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer:
 
 /// Run one tool and emit its running -> terminal lifecycle. A cancel during the call settles the part
 /// canceled. Each state emit blocks cancelation, so exactly one terminal state lands.
-fn toolChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: tools.ToolHost, pt: PendingTool) !void {
+fn toolChild(state: *State, arena: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer, host: host_mod.Host, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
     defer slot.wake_event.set(state.io);

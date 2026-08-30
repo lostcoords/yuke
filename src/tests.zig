@@ -14,7 +14,8 @@ test {
     _ = @import("tools/tool.zig");
     _ = @import("tools/read.zig");
     _ = @import("tools/registry.zig");
-    _ = @import("tools/local.zig");
+    _ = @import("host/host.zig");
+    _ = @import("host/local.zig");
     _ = @import("daemon/http.zig");
     _ = @import("daemon/rpc.zig");
     _ = @import("daemon/session_runtime.zig");
