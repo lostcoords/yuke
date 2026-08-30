@@ -543,7 +543,7 @@ const testing = std.testing;
 const database = @import("../database/database.zig");
 const handlers = @import("handlers.zig");
 
-const test_bind = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 7880 } };
+const test_bind = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 9853 } };
 
 /// Run admission over one head. Return the refusal, or null when the request may reach a route.
 fn admitHead(request_bytes: []const u8, allowed: []const []const u8, out: []u8) !?[]const u8 {
@@ -567,16 +567,16 @@ fn expectForbidden(request_bytes: []const u8, allowed: []const []const u8) !void
 }
 
 test "a request without an origin passes on a literal host" {
-    try expectAdmitted("GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\n\r\n", &.{});
+    try expectAdmitted("GET /up HTTP/1.1\r\nHost: 127.0.0.1:9853\r\n\r\n", &.{});
 }
 
 test "localhost is the one name that passes" {
-    try expectAdmitted("GET /up HTTP/1.1\r\nHost: localhost:7880\r\n\r\n", &.{});
+    try expectAdmitted("GET /up HTTP/1.1\r\nHost: localhost:9853\r\n\r\n", &.{});
     try expectForbidden("GET /up HTTP/1.1\r\nHost: evil.com\r\n\r\n", &.{});
 }
 
 test "an origin refuses unless the allowlist holds it" {
-    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\nOrigin: https://evil.com\r\n\r\n";
+    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:9853\r\nOrigin: https://evil.com\r\n\r\n";
     try expectForbidden(head, &.{});
     try expectAdmitted(head, &.{"https://evil.com"});
 }
@@ -586,24 +586,24 @@ test "the official origin passes a rebound host" {
 }
 
 test "a duplicate origin refuses" {
-    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\nOrigin: " ++ official_origin ++
+    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:9853\r\nOrigin: " ++ official_origin ++
         "\r\nOrigin: https://evil.com\r\n\r\n";
     try expectForbidden(head, &.{});
 }
 
 test "the wildcard address is a bind, never a destination" {
     // `0.0.0.0` reaches a loopback socket but escapes the browser gating that `127.0.0.1` receives.
-    try testing.expect(!hostIsLiteral(test_bind, "0.0.0.0:7880"));
+    try testing.expect(!hostIsLiteral(test_bind, "0.0.0.0:9853"));
     try testing.expect(!hostIsLiteral(test_bind, "[::]"));
     try testing.expect(!hostIsLiteral(test_bind, "[localhost]"));
-    try testing.expect(hostIsLiteral(test_bind, "[::1]:7880"));
-    try testing.expect(hostIsLiteral(test_bind, "[::ffff:127.0.0.1]:7880"));
+    try testing.expect(hostIsLiteral(test_bind, "[::1]:9853"));
+    try testing.expect(hostIsLiteral(test_bind, "[::ffff:127.0.0.1]:9853"));
 }
 
 test "a localhost authority holds a port or nothing" {
     try testing.expect(hostIsLiteral(test_bind, "localhost"));
     try testing.expect(!hostIsLiteral(test_bind, "localhost:"));
-    try testing.expect(!hostIsLiteral(test_bind, "localhost:7880@evil.example"));
+    try testing.expect(!hostIsLiteral(test_bind, "localhost:9853@evil.example"));
     try testing.expect(!hostIsLiteral(test_bind, "localhost.evil.example"));
 }
 
@@ -711,7 +711,7 @@ test "identity omits the device before enrollment" {
 }
 
 test "an absolute-form target refuses" {
-    try expectForbidden("GET http://evil.example/up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\n\r\n", &.{});
+    try expectForbidden("GET http://evil.example/up HTTP/1.1\r\nHost: 127.0.0.1:9853\r\n\r\n", &.{});
 }
 
 /// Screen one head. Return the refusal, or null when the request may reach a route.

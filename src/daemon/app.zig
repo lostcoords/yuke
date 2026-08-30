@@ -21,7 +21,7 @@ const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
 // zio.debug_io breaks the WebSocket upgrade in zio v0.16.0. Keep it disabled.
 
 // Use this port for the front door. A proxy terminates TLS before remote web clients connect.
-const default_port = 7880;
+const default_port = 9853;
 
 // The device credential and its key fit this buffer. A larger file fails the read and keeps no secret.
 const secret_buffer_bytes = 16 * 1024;

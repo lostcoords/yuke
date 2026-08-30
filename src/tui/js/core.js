@@ -44,7 +44,7 @@ export const config = {
   },
   daemon: {
     host: "127.0.0.1",
-    port: 7880,
+    port: 9853,
     autoConnect: true,
     retryMs: 5000,
     // Set a token for a protected daemon.
