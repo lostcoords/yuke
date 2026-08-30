@@ -22,6 +22,9 @@ const daemon_config = @import("config.zig");
 
 const State = @This();
 
+/// The daemon build version. `/identity` and the `initialize` result must report one value.
+pub const daemon_version = "0.0.1";
+
 gpa: std.mem.Allocator, // The allocator serves long-lived allocations. The per-request arena has a separate lifetime.
 io: std.Io, // The reactor uses this I/O for the clock, files, and sockets.
 db: database.Database, // The database uses one SQLite connection with prepared queries. One executor writes.
@@ -34,6 +37,7 @@ providers: ?provider.config.Loaded = null, // The daemon owns the loaded provide
 cloud_client: cloud_http.Client,
 cloud_base_url: []u8,
 cloud_credential: ?[]u8 = null,
+device_id: ?[]u8 = null, // The enrolled device id. `/identity` reports it, and it holds no secret.
 cloud_bundle: ?bundle.Snapshot = null, // The account bundle stays in memory, because it holds live credentials.
 cloud_refresh_mutex: std.Io.Mutex = .init,
 catalog: provider_catalog.Catalog, // One merged snapshot serves catalog reads and provider requests.
@@ -53,6 +57,8 @@ session_revision: u64 = 0,
 pub const Config = struct {
     listen: std.Io.net.IpAddress,
     db_path: [:0]const u8 = ":memory:",
+    /// The browser origins that admission accepts beyond the official client.
+    allowed_origins: []const []const u8 = &.{},
 };
 
 /// These options provide the state dependencies and the initial cloud identity.
@@ -68,14 +74,21 @@ pub const InitOptions = struct {
     route_transport: provider.transport.Transport,
     cloud_base_url: []const u8 = cloud_endpoint.default_base,
     cloud_credential: ?[]const u8 = null,
+    /// The enrolled device id, from the same identity the relay reads. Absent before enrollment.
+    device_id: ?[]const u8 = null,
 };
 
-/// Duplicate the cloud endpoint and credential. The state then owns both values.
-fn dupeCloud(gpa: std.mem.Allocator, options: InitOptions) !struct { []u8, ?[]u8 } {
+/// Duplicate the cloud endpoint, the credential, and the device id. The state then owns them.
+fn dupeCloud(gpa: std.mem.Allocator, options: InitOptions) !struct { []u8, ?[]u8, ?[]u8 } {
     const base_url = try gpa.dupe(u8, options.cloud_base_url);
     errdefer gpa.free(base_url);
     const credential = if (options.cloud_credential) |value| try gpa.dupe(u8, value) else null;
-    return .{ base_url, credential };
+    errdefer if (credential) |value| {
+        std.crypto.secureZero(u8, value);
+        gpa.free(value);
+    };
+    const device_id = if (options.device_id) |value| try gpa.dupe(u8, value) else null;
+    return .{ base_url, credential, device_id };
 }
 
 /// Build the daemon state. It takes ownership of `db` and borrows `io` for its lifetime.
@@ -83,7 +96,7 @@ pub fn init(options: InitOptions) !State {
     const gpa = options.gpa;
     std.debug.assert(options.cloud_base_url.len != 0);
     // The state never formed, so close the store the caller gave it.
-    const cloud_base_url, const cloud_credential = dupeCloud(gpa, options) catch |err| {
+    const cloud_base_url, const cloud_credential, const device_id = dupeCloud(gpa, options) catch |err| {
         var db = options.db;
         db.deinit();
         return err;
@@ -101,6 +114,7 @@ pub fn init(options: InitOptions) !State {
         .cloud_client = .init(gpa, options.io),
         .cloud_base_url = cloud_base_url,
         .cloud_credential = cloud_credential,
+        .device_id = device_id,
         .catalog = .init(gpa),
     };
     errdefer self.deinit();
@@ -180,6 +194,7 @@ pub fn deinit(self: *State) void {
         std.crypto.secureZero(u8, credential);
         self.gpa.free(credential);
     }
+    if (self.device_id) |id| self.gpa.free(id);
     self.gpa.free(self.cloud_base_url);
     self.cloud_client.deinit();
     if (self.providers) |*p| p.deinit();

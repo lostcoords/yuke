@@ -24,6 +24,11 @@ const text_plain = [_]std.http.Header{
     .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
 };
 
+const text_plain_allow_get = [_]std.http.Header{
+    .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
+    .{ .name = "allow", .value = "GET" },
+};
+
 /// Accept connections forever. Run each connection in its own task.
 pub fn serve(state: *State) !void {
     try run_task.resumePendingInputs(state);
@@ -64,6 +69,16 @@ fn dispatch(state: *State, stream: std.Io.net.Stream) !void {
             error.ReadFailed => return reader.err orelse err,
             else => |e| return e,
         };
+        // Reject a body before a route or the protocol upgrade can see it.
+        if (!try screenFraming(&request)) {
+            try stream.shutdown(state.io, .both);
+            return;
+        }
+        // Admit before the upgrade, because CORS never blocks a WebSocket handshake.
+        if (!try admit(state.config.listen, state.config.allowed_origins, &request)) {
+            try stream.shutdown(state.io, .both);
+            return;
+        }
         if (request.head.method == .GET and std.mem.eql(u8, request.head.target, "/ws")) {
             switch (request.upgradeRequested()) {
                 .websocket => |maybe_key| {
@@ -74,7 +89,7 @@ fn dispatch(state: *State, stream: std.Io.net.Stream) !void {
                 else => {},
             }
         }
-        try route(&request);
+        try route(state, &request);
         if (!request.head.keep_alive) {
             try stream.shutdown(state.io, .both);
             return;
@@ -329,16 +344,196 @@ test validKey {
 }
 
 fn badRequest(request: *std.http.Server.Request) !void {
-    return request.respond("bad request\n", .{ .status = .bad_request, .extra_headers = &text_plain });
+    return respondFinal(request, .bad_request, "bad request\n", &text_plain);
 }
 
-/// Route the health check and the root page. Return 404 for other requests.
-fn route(request: *std.http.Server.Request) !void {
+/// Answer and close. This keeps peer input clear of the asserts in `discardBody`.
+fn respondFinal(
+    request: *std.http.Server.Request,
+    status: std.http.Status,
+    body: []const u8,
+    extra: []const std.http.Header,
+) !void {
+    return request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = extra });
+}
+
+const Framing = enum { none, present, conflict };
+
+/// Classify the body framing that a head declares. A sender must not send both length fields.
+fn classify(request: *const std.http.Server.Request) Framing {
+    // `Head.parse` files a non-chunked transfer coding under `transfer_compression`, so read the header.
+    var has_transfer_encoding = false;
+    var headers = request.iterateHeaders();
+    while (headers.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "transfer-encoding")) {
+            has_transfer_encoding = true;
+            break;
+        }
+    }
+    const content_length = request.head.content_length;
+    if (has_transfer_encoding and content_length != null) return .conflict;
+    if (has_transfer_encoding or (content_length orelse 0) > 0) return .present;
+    return .none;
+}
+
+/// The official web client. A stock daemon serves it without configuration.
+const official_origin = "https://client.yuke.sh";
+
+/// Whether `origin` is the official client or an operator entry.
+fn originAllowed(allowed: []const []const u8, origin: []const u8) bool {
+    if (std.mem.eql(u8, origin, official_origin)) return true;
+    for (allowed) |entry| {
+        if (std.mem.eql(u8, entry, origin)) return true;
+    }
+    return false;
+}
+
+/// Whether `address` reaches a server bound to `bind`. A wildcard is a bind address, never a target.
+fn addressIsLocal(bind: std.Io.net.IpAddress, address: std.Io.net.IpAddress) bool {
+    switch (address) {
+        .ip4 => |a| {
+            if (std.mem.allEqual(u8, &a.bytes, 0)) return false;
+            if (a.bytes[0] == 127) return true;
+            return switch (bind) {
+                .ip4 => |b| std.mem.eql(u8, &a.bytes, &b.bytes),
+                .ip6 => false,
+            };
+        },
+        // The listen socket is IPv4, so loopback is the whole legitimate IPv6 set.
+        .ip6 => |a| {
+            if (std.mem.allEqual(u8, &a.bytes, 0)) return false;
+            if (std.mem.eql(u8, a.bytes[0..15], &[_]u8{0} ** 15) and a.bytes[15] == 1) return true;
+            return std.mem.eql(u8, a.bytes[0..10], &[_]u8{0} ** 10) and
+                a.bytes[10] == 0xff and a.bytes[11] == 0xff and a.bytes[12] == 127;
+        },
+    }
+}
+
+/// Whether `host` addresses the bind by literal. `localhost` is the one name a browser cannot rebind.
+fn hostIsLiteral(bind: std.Io.net.IpAddress, host: []const u8) bool {
+    // Brackets enclose a literal only, so `[localhost]` earns no name exemption.
+    if (host.len != 0 and host[0] != '[') {
+        const name_end = std.mem.findScalar(u8, host, ':') orelse host.len;
+        if (std.ascii.eqlIgnoreCase(host[0..name_end], "localhost")) {
+            if (name_end == host.len) return true;
+            // A trailing value that is not a port makes this an authority we cannot check.
+            _ = std.fmt.parseInt(u16, host[name_end + 1 ..], 10) catch return false;
+            return true;
+        }
+    }
+    const address = std.Io.net.IpAddress.parseLiteral(host) catch return false;
+    return addressIsLocal(bind, address);
+}
+
+/// Refuse a browser-driven or rebound request. Return true when the request may reach a route.
+/// CORS does not guard the WebSocket handshake, so admission refuses the shape instead.
+fn admit(
+    bind: std.Io.net.IpAddress,
+    allowed: []const []const u8,
+    request: *std.http.Server.Request,
+) !bool {
+    // Only a proxy sends an absolute-form target, and its authority overrides `Host`. Refuse it,
+    // rather than keep two authorities that can disagree.
+    if (!std.mem.startsWith(u8, request.head.target, "/")) {
+        try respondFinal(request, .forbidden, "forbidden\n", &text_plain);
+        return false;
+    }
+
+    var origins: usize = 0;
+    var hosts: usize = 0;
+    var origin: []const u8 = "";
+    var host: []const u8 = "";
+    var headers = request.iterateHeaders();
+    while (headers.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "origin")) {
+            origins += 1;
+            origin = header.value;
+        } else if (std.ascii.eqlIgnoreCase(header.name, "host")) {
+            hosts += 1;
+            host = header.value;
+        }
+    }
+
+    // A duplicate holds no single value to check, so it falls through to the refusal.
+    if (origins == 1 and originAllowed(allowed, origin)) return true;
+    if (origins == 0 and hosts == 1 and hostIsLiteral(bind, host)) return true;
+
+    try respondFinal(request, .forbidden, "forbidden\n", &text_plain);
+    return false;
+}
+
+/// Refuse a request that carries a body. Return true when the request may reach a route.
+fn screenFraming(request: *std.http.Server.Request) !bool {
+    switch (classify(request)) {
+        .conflict => {
+            try respondFinal(request, .bad_request, "bad framing\n", &text_plain);
+            return false;
+        },
+        .present => {
+            try respondFinal(request, .bad_request, "unexpected body\n", &text_plain);
+            return false;
+        },
+        .none => {
+            if (!request.head.method.requestHasBody()) return true;
+            try respondFinal(request, .method_not_allowed, "method not allowed\n", &text_plain_allow_get);
+            return false;
+        },
+    }
+}
+
+/// The `/identity` body. A daemon before enrollment omits `device_id`.
+const Identity = struct {
+    service: []const u8 = "yuke",
+    version: []const u8 = State.daemon_version,
+    device_id: ?[]const u8 = null,
+};
+
+/// Answer the discovery probe. It carries no secret, so it needs no credential.
+/// Admission already vetted the origin, so the echo reflects an allowed value.
+fn routeIdentity(state: *State, request: *std.http.Server.Request) !void {
+    // The device id has no length bound, so a fixed buffer could refuse to answer at all.
+    var body: std.Io.Writer.Allocating = .init(state.gpa);
+    defer body.deinit();
+    try std.json.Stringify.value(
+        Identity{ .device_id = state.device_id },
+        .{ .emit_null_optional_fields = false },
+        &body.writer,
+    );
+
+    var headers: [3]std.http.Header = undefined;
+    headers[0] = .{ .name = "content-type", .value = "application/json" };
+    var count: usize = 1;
+    if (requestOrigin(request)) |origin| {
+        headers[1] = .{ .name = "access-control-allow-origin", .value = origin };
+        headers[2] = .{ .name = "vary", .value = "Origin" };
+        count = 3;
+    }
+    return request.respond(body.written(), .{ .extra_headers = headers[0..count] });
+}
+
+/// Return the one `Origin` value. A duplicate carries no single value to echo.
+fn requestOrigin(request: *const std.http.Server.Request) ?[]const u8 {
+    var found: ?[]const u8 = null;
+    var headers = request.iterateHeaders();
+    while (headers.next()) |header| {
+        if (!std.ascii.eqlIgnoreCase(header.name, "origin")) continue;
+        if (found != null) return null;
+        found = header.value;
+    }
+    return found;
+}
+
+/// Route discovery, the health check, and the root page. Return 404 for other requests.
+fn route(state: *State, request: *std.http.Server.Request) !void {
     const target = request.head.target;
-    if (request.head.method == .GET and std.mem.eql(u8, target, "/up")) {
+    if (request.head.method != .GET) {
+        return respondFinal(request, .method_not_allowed, "method not allowed\n", &text_plain_allow_get);
+    }
+    if (std.mem.eql(u8, target, "/identity")) return routeIdentity(state, request);
+    if (std.mem.eql(u8, target, "/up")) {
         return request.respond("ok\n", .{ .extra_headers = &text_plain });
     }
-    if (request.head.method == .GET and std.mem.eql(u8, target, "/")) {
+    if (std.mem.eql(u8, target, "/")) {
         return request.respond("yuke daemon\n", .{ .extra_headers = &text_plain });
     }
     return request.respond("not found\n", .{ .status = .not_found, .extra_headers = &text_plain });
@@ -347,6 +542,229 @@ fn route(request: *std.http.Server.Request) !void {
 const testing = std.testing;
 const database = @import("../database/database.zig");
 const handlers = @import("handlers.zig");
+
+const test_bind = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 7880 } };
+
+/// Run admission over one head. Return the refusal, or null when the request may reach a route.
+fn admitHead(request_bytes: []const u8, allowed: []const []const u8, out: []u8) !?[]const u8 {
+    var in: std.Io.Reader = .fixed(request_bytes);
+    var writer: std.Io.Writer = .fixed(out);
+    var server = std.http.Server.init(&in, &writer);
+    var request = try server.receiveHead();
+    if (try admit(test_bind, allowed, &request)) return null;
+    return writer.buffered();
+}
+
+fn expectAdmitted(request_bytes: []const u8, allowed: []const []const u8) !void {
+    var out: [512]u8 = undefined;
+    try testing.expect(try admitHead(request_bytes, allowed, &out) == null);
+}
+
+fn expectForbidden(request_bytes: []const u8, allowed: []const []const u8) !void {
+    var out: [512]u8 = undefined;
+    const refusal = (try admitHead(request_bytes, allowed, &out)) orelse return error.TestUnexpectedResult;
+    try testing.expect(std.mem.startsWith(u8, refusal, "HTTP/1.1 403 Forbidden\r\n"));
+}
+
+test "a request without an origin passes on a literal host" {
+    try expectAdmitted("GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\n\r\n", &.{});
+}
+
+test "localhost is the one name that passes" {
+    try expectAdmitted("GET /up HTTP/1.1\r\nHost: localhost:7880\r\n\r\n", &.{});
+    try expectForbidden("GET /up HTTP/1.1\r\nHost: evil.com\r\n\r\n", &.{});
+}
+
+test "an origin refuses unless the allowlist holds it" {
+    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\nOrigin: https://evil.com\r\n\r\n";
+    try expectForbidden(head, &.{});
+    try expectAdmitted(head, &.{"https://evil.com"});
+}
+
+test "the official origin passes a rebound host" {
+    try expectAdmitted("GET /up HTTP/1.1\r\nHost: evil.com\r\nOrigin: " ++ official_origin ++ "\r\n\r\n", &.{});
+}
+
+test "a duplicate origin refuses" {
+    const head = "GET /up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\nOrigin: " ++ official_origin ++
+        "\r\nOrigin: https://evil.com\r\n\r\n";
+    try expectForbidden(head, &.{});
+}
+
+test "the wildcard address is a bind, never a destination" {
+    // `0.0.0.0` reaches a loopback socket but escapes the browser gating that `127.0.0.1` receives.
+    try testing.expect(!hostIsLiteral(test_bind, "0.0.0.0:7880"));
+    try testing.expect(!hostIsLiteral(test_bind, "[::]"));
+    try testing.expect(!hostIsLiteral(test_bind, "[localhost]"));
+    try testing.expect(hostIsLiteral(test_bind, "[::1]:7880"));
+    try testing.expect(hostIsLiteral(test_bind, "[::ffff:127.0.0.1]:7880"));
+}
+
+test "a localhost authority holds a port or nothing" {
+    try testing.expect(hostIsLiteral(test_bind, "localhost"));
+    try testing.expect(!hostIsLiteral(test_bind, "localhost:"));
+    try testing.expect(!hostIsLiteral(test_bind, "localhost:7880@evil.example"));
+    try testing.expect(!hostIsLiteral(test_bind, "localhost.evil.example"));
+}
+
+/// Accept one connection and dispatch it. The test owns the listener.
+fn serveOnce(state: *State, listener: *std.Io.net.Server) void {
+    const stream = listener.accept(state.io) catch return;
+    defer stream.close(state.io);
+    dispatch(state, stream) catch {};
+}
+
+/// Read only the status line, so a wrong upgrade fails the assertion instead of a blocked read.
+const status_line_len = "HTTP/1.1 000".len;
+
+/// Drive one request through the real `dispatch` over a loopback socket. `out` bounds the read,
+/// so a caller that wants the body must also ask the route to end the connection.
+fn frontDoor(request_bytes: []const u8, out: []u8) ![]const u8 {
+    const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
+    defer rt.deinit();
+    const io = rt.io();
+
+    const listen = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var state = try State.init(.{
+        .gpa = testing.allocator,
+        .io = io,
+        .db = try database.Database.openTest(),
+        .config = .{ .listen = listen },
+        .home = "/home/test",
+        .env = &test_env,
+        .route_transport = test_transport.transport(),
+        .device_id = "device-1",
+    });
+    defer state.deinit();
+
+    var listener = try listen.listen(io, .{});
+    defer listener.deinit(io);
+
+    var task = try rt.spawn(serveOnce, .{ &state, &listener });
+    const stream = try listener.socket.address.connect(io, .{ .mode = .stream });
+    defer stream.close(io);
+
+    var write_buf: [1024]u8 = undefined;
+    var client_writer = stream.writer(io, &write_buf);
+    try client_writer.interface.writeAll(request_bytes);
+    try client_writer.interface.flush();
+
+    var read_buf: [2048]u8 = undefined;
+    var client_reader = stream.reader(io, &read_buf);
+    const n = client_reader.interface.readSliceShort(out) catch 0;
+    // Close first, so a serve task that wrongly upgraded reaches an end of stream and joins.
+    stream.shutdown(io, .both) catch {};
+    task.join();
+    return out[0..n];
+}
+
+fn expectStatus(request_bytes: []const u8, status: []const u8) !void {
+    var out: [status_line_len]u8 = undefined;
+    try testing.expectEqualStrings(status, try frontDoor(request_bytes, &out));
+}
+
+// The handshake is valid, so only the screen or admission can stop the upgrade.
+const ws_upgrade_headers = "Upgrade: websocket\r\nConnection: Upgrade\r\n" ++
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n";
+
+test "admission runs before the websocket upgrade" {
+    const request = "GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example\r\n" ++
+        ws_upgrade_headers ++ "\r\n";
+    try expectStatus(request, "HTTP/1.1 403");
+}
+
+test "the body screen runs before the websocket upgrade" {
+    const request = "GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\n" ++ ws_upgrade_headers ++
+        "Content-Length: 4\r\n\r\nbody";
+    try expectStatus(request, "HTTP/1.1 400");
+}
+
+test "identity reports the service, the version, and the device" {
+    var out: [2048]u8 = undefined;
+    const request = "GET /identity HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    const response = try frontDoor(request, &out);
+    try testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 200 OK\r\n"));
+    try testing.expect(std.mem.containsAtLeast(u8, response, 1, "content-type: application/json\r\n"));
+    try testing.expect(std.mem.endsWith(u8, response, "{\"service\":\"yuke\",\"version\":\"" ++
+        State.daemon_version ++ "\",\"device_id\":\"device-1\"}"));
+}
+
+test "identity echoes an admitted origin so a browser can read it" {
+    var out: [2048]u8 = undefined;
+    const request = "GET /identity HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: " ++ official_origin ++
+        "\r\nConnection: close\r\n\r\n";
+    const response = try frontDoor(request, &out);
+    try testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 200 OK\r\n"));
+    try testing.expect(std.mem.containsAtLeast(u8, response, 1, //
+        "access-control-allow-origin: " ++ official_origin ++ "\r\n"));
+    try testing.expect(std.mem.containsAtLeast(u8, response, 1, "vary: Origin\r\n"));
+}
+
+test "identity omits the device before enrollment" {
+    var body_buf: [256]u8 = undefined;
+    var body: std.Io.Writer = .fixed(&body_buf);
+    try std.json.Stringify.value(Identity{}, .{ .emit_null_optional_fields = false }, &body);
+    try testing.expectEqualStrings(
+        "{\"service\":\"yuke\",\"version\":\"" ++ State.daemon_version ++ "\"}",
+        body.buffered(),
+    );
+}
+
+test "an absolute-form target refuses" {
+    try expectForbidden("GET http://evil.example/up HTTP/1.1\r\nHost: 127.0.0.1:7880\r\n\r\n", &.{});
+}
+
+/// Screen one head. Return the refusal, or null when the request may reach a route.
+fn screenHead(request_bytes: []const u8, out: []u8) !?[]const u8 {
+    var in: std.Io.Reader = .fixed(request_bytes);
+    var writer: std.Io.Writer = .fixed(out);
+    var server = std.http.Server.init(&in, &writer);
+    var request = try server.receiveHead();
+    if (try screenFraming(&request)) return null;
+    return writer.buffered();
+}
+
+fn expectScreened(request_bytes: []const u8, status: []const u8) !void {
+    var out: [512]u8 = undefined;
+    const refusal = (try screenHead(request_bytes, &out)) orelse return error.TestUnexpectedResult;
+    try testing.expect(std.mem.startsWith(u8, refusal, status));
+    try testing.expect(std.mem.containsAtLeast(u8, refusal, 1, "connection: close\r\n"));
+}
+
+fn expectPassesScreen(request_bytes: []const u8) !void {
+    var out: [512]u8 = undefined;
+    try testing.expect(try screenHead(request_bytes, &out) == null);
+}
+
+test "a body-bearing method without framing answers instead of asserting" {
+    var out: [512]u8 = undefined;
+    const refusal = (try screenHead("POST / HTTP/1.1\r\nHost: x\r\n\r\n", &out)).?;
+    try testing.expect(std.mem.startsWith(u8, refusal, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try testing.expect(std.mem.containsAtLeast(u8, refusal, 1, "connection: close\r\n"));
+    try testing.expect(std.mem.containsAtLeast(u8, refusal, 1, "allow: GET\r\n"));
+}
+
+test "a declared body is refused before any discard" {
+    try expectScreened("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc", "HTTP/1.1 400");
+}
+
+test "a body on a method that reads none closes the connection" {
+    try expectScreened("GET /up HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nGET ", "HTTP/1.1 400");
+}
+
+test "both length fields together are a framing conflict" {
+    const head = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n";
+    try expectScreened(head, "HTTP/1.1 400");
+}
+
+test "a transfer coding that is not chunked still declares a body" {
+    try expectScreened("GET /ws HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\nbody", "HTTP/1.1 400");
+}
+
+test "a request without a body passes the screen" {
+    try expectPassesScreen("GET /up HTTP/1.1\r\nHost: x\r\n\r\n");
+    try expectPassesScreen("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n");
+}
 
 fn enqueueReplyAndLaunch(state: *State, conn: *Connection, reply: FramedReply) !void {
     var launch = reply.launch;

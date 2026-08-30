@@ -133,7 +133,7 @@ pub fn initialize(state: *State, arena: std.mem.Allocator) !wire.misc.Initialize
     }
     return .{
         .protocol = wire.meta.protocol_version,
-        .daemon = .{ .version = "0.0.1", .server_now_ms = state.nowMillis() },
+        .daemon = .{ .version = State.daemon_version, .server_now_ms = state.nowMillis() },
         .workspaces = workspaces,
         .profiles = &.{},
         .agents = &.{},

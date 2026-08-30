@@ -1,4 +1,4 @@
-//! Load the `yuked.json` daemon config. It seeds a new session's system prompt and lists the small models.
+//! Load the `yuked.json` daemon config. It seeds a new session, and it lists the admitted browser origins.
 //! The file holds no secrets. A missing file returns built-in defaults. A `session.create` field overrides a default.
 
 const std = @import("std");
@@ -19,12 +19,15 @@ const FileDoc = struct {
     version: u32,
     small_model: ?[]const []const u8 = null,
     system_prompt: ?[]const u8 = null,
+    allowed_origins: ?[]const []const u8 = null,
 };
 
 /// The arena owns every string. The daemon holds one `Loaded` for its lifetime.
 pub const Loaded = struct {
     arena: std.heap.ArenaAllocator,
     defaults: Defaults = .{},
+    /// The browser origins that admission accepts beyond the official client.
+    allowed_origins: []const []const u8 = &.{},
 
     pub fn deinit(self: *Loaded) void {
         self.arena.deinit();
@@ -60,6 +63,16 @@ pub fn loadBytes(gpa: Allocator, bytes: []const u8) !Loaded {
     if (doc.version != 1) return error.BadVersion;
     // The daemon does not validate a model selector. A client validates it before it sends the request.
     out.defaults = .{ .small_model = doc.small_model, .system_prompt = doc.system_prompt };
+    if (doc.allowed_origins) |origins| {
+        // An origin holds a scheme, a host, and an optional port. A browser never sends more.
+        for (origins) |origin| {
+            const scheme_end = std.mem.indexOf(u8, origin, "://") orelse return error.BadOrigin;
+            const authority = origin[scheme_end + 3 ..];
+            if (scheme_end == 0 or authority.len == 0) return error.BadOrigin;
+            if (std.mem.indexOfAny(u8, authority, "/?#") != null) return error.BadOrigin;
+        }
+        out.allowed_origins = origins;
+    }
     return out;
 }
 
@@ -111,6 +124,39 @@ test "loadBytes accepts a minimal document" {
     defer loaded.deinit();
     try testing.expect(loaded.defaults.small_model == null);
     try testing.expect(loaded.defaults.system_prompt == null);
+}
+
+test "loadBytes reads the allowed origins" {
+    var loaded = try loadBytes(testing.allocator,
+        \\{"version":1,"allowed_origins":["https://a.example","http://localhost:5173"]}
+    );
+    defer loaded.deinit();
+    try testing.expectEqual(@as(usize, 2), loaded.allowed_origins.len);
+    try testing.expectEqualStrings("https://a.example", loaded.allowed_origins[0]);
+    try testing.expectEqualStrings("http://localhost:5173", loaded.allowed_origins[1]);
+}
+
+test "an absent allowed_origins admits the official client alone" {
+    var loaded = try loadBytes(testing.allocator,
+        \\{"version":1}
+    );
+    defer loaded.deinit();
+    try testing.expectEqual(@as(usize, 0), loaded.allowed_origins.len);
+}
+
+test "loadBytes rejects an origin that carries a path or no scheme" {
+    try testing.expectError(error.BadOrigin, loadBytes(testing.allocator,
+        \\{"version":1,"allowed_origins":["https://a.example/"]}
+    ));
+    try testing.expectError(error.BadOrigin, loadBytes(testing.allocator,
+        \\{"version":1,"allowed_origins":["https://a.example/path"]}
+    ));
+    try testing.expectError(error.BadOrigin, loadBytes(testing.allocator,
+        \\{"version":1,"allowed_origins":["a.example"]}
+    ));
+    try testing.expectError(error.BadOrigin, loadBytes(testing.allocator,
+        \\{"version":1,"allowed_origins":[""]}
+    ));
 }
 
 test "loadBytes rejects a bad version" {

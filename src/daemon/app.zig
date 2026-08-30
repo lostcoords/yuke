@@ -72,6 +72,7 @@ pub fn run(init: std.process.Init) !void {
             .route_transport = http_transport.transportFor(),
             .cloud_base_url = cloud.endpoint.baseUrl(init.environ_map, null),
             .cloud_credential = if (device) |stored| stored.credential else null,
+            .device_id = if (device) |stored| stored.device_id else null,
         });
     };
     defer state.deinit();
@@ -94,6 +95,8 @@ pub fn run(init: std.process.Init) !void {
     if (yuked_path) |path| {
         const loaded = try daemon_config.load(init.gpa, io, path);
         state.defaults = loaded.defaults;
+        // The origins borrow the `Loaded` arena, which `state.config_owner` then owns.
+        state.config.allowed_origins = loaded.allowed_origins;
         state.config_owner = loaded;
     }
 
