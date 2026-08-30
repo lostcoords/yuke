@@ -694,7 +694,7 @@ const sidebar = new SessionList({
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
 
 // --- explorer -----------------------------------------------------------------------------
-// A floating directory navigator over the workspace.browse RPC, fuzzy-filtered as you type.
+// A floating directory navigator over the fs.browse RPC, fuzzy-filtered as you type.
 // Enter/→ descends; ← goes to the parent; Esc closes.
 function openExplorer(startPath) {
   const state = { path: startPath || "", parent: null };
@@ -730,7 +730,7 @@ function openExplorer(startPath) {
   });
 
   function go(path) {
-    client.workspaceBrowse(LOCAL, path != null ? { path } : {}).then(
+    client.fsBrowse(LOCAL, path != null ? { path } : {}).then(
       (res) => {
         state.path = res.path;
         state.parent = res.parent;

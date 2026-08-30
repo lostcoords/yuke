@@ -9,6 +9,7 @@ pub const enums = @import("enums.zig");
 pub const subscription = @import("subscription.zig");
 pub const content = @import("content.zig");
 pub const auth = @import("auth.zig");
+pub const fs = @import("fs.zig");
 pub const workspace = @import("workspace.zig");
 pub const catalog = @import("catalog.zig");
 pub const activity = @import("activity.zig");

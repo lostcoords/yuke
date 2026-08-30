@@ -245,18 +245,18 @@
       "paramsOptional": false
     },
     {
-      "name": "workspace.describe",
-      "doc": "Describe a workspace.",
-      "params": "WorkspaceDescribeParams",
-      "result": "WorkspaceDescribeResult",
+      "name": "fs.stat",
+      "doc": "Describe one filesystem path.",
+      "params": "FsStatParams",
+      "result": "FsStatResult",
       "direction": "clientToServer",
       "paramsOptional": false
     },
     {
-      "name": "workspace.browse",
-      "doc": "Browse a workspace filesystem.",
-      "params": "WorkspaceBrowseParams",
-      "result": "WorkspaceBrowseResult",
+      "name": "fs.browse",
+      "doc": "List one directory for the workspace picker.",
+      "params": "FsBrowseParams",
+      "result": "FsBrowseResult",
       "direction": "clientToServer",
       "paramsOptional": true
     },
@@ -786,7 +786,7 @@
     },
     {
       "name": "DirEntry",
-      "doc": "This entry identifies one filesystem item in a browse result.",
+      "doc": "This entry identifies one item in a browse page.",
       "fields": [
         {
           "name": "name",
@@ -799,6 +799,11 @@
           "presence": "required"
         },
         {
+          "name": "is_dir",
+          "type": "bool",
+          "presence": "required"
+        },
+        {
           "name": "is_git_repo",
           "doc": "This field says whether this directory is a Git repository.",
           "type": "bool",
@@ -807,19 +812,124 @@
       ]
     },
     {
-      "name": "GitInfo",
-      "doc": "This type records Git status for a workspace root when it is a repository.",
+      "name": "FsBrowseParams",
+      "doc": "These are the parameters for `fs.browse`.",
       "fields": [
         {
-          "name": "branch",
+          "name": "path",
+          "doc": "The directory to list. A null path selects the daemon home directory.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "limit",
+          "doc": "The daemon uses its default page size when this field is absent.",
+          "type": "u64",
+          "presence": "optional"
+        },
+        {
+          "name": "cursor",
+          "doc": "An opaque cursor for continuation within the same directory.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "include_files",
+          "doc": "A false value lists directories only.",
+          "type": "bool",
+          "presence": "defaulted"
+        }
+      ]
+    },
+    {
+      "name": "FsBrowseResult",
+      "doc": "This result contains one browse page.",
+      "fields": [
+        {
+          "name": "path",
           "type": "string",
           "presence": "required"
         },
         {
-          "name": "dirty",
-          "doc": "This field says whether the working tree has uncommitted changes.",
+          "name": "parent",
+          "doc": "The daemon sets this field to null at the filesystem root.",
+          "type": "string",
+          "presence": "optional"
+        },
+        {
+          "name": "entries",
+          "doc": "The entries of this page, directories first, then each name in order.",
+          "type": "[]DirEntry",
+          "presence": "required"
+        },
+        {
+          "name": "next_cursor",
+          "doc": "An opaque continuation cursor; null on the final page.",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "FsEntry",
+      "doc": "This type describes one filesystem item. A symbolic link reports its target.",
+      "fields": [
+        {
+          "name": "is_dir",
           "type": "bool",
           "presence": "required"
+        },
+        {
+          "name": "last_modified_ms",
+          "doc": "The last modification time in epoch milliseconds.",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "git",
+          "doc": "The daemon sets this field only for a Git repository.",
+          "type": "GitInfo",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "FsStatParams",
+      "doc": "These are the parameters for `fs.stat`.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "FsStatResult",
+      "doc": "This result describes one path. A null `entry` means the path does not exist.",
+      "fields": [
+        {
+          "name": "path",
+          "doc": "The absolute path that the daemon resolved.",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "entry",
+          "type": "FsEntry",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
+      "name": "GitInfo",
+      "doc": "This type records Git state for a repository directory.",
+      "fields": [
+        {
+          "name": "branch",
+          "doc": "The current branch. Null means a detached HEAD.",
+          "type": "string",
+          "presence": "optional"
         }
       ]
     },
@@ -897,58 +1007,6 @@
       ]
     },
     {
-      "name": "WorkspaceBrowseParams",
-      "doc": "These are the parameters for `workspace.browse`.",
-      "fields": [
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "limit",
-          "doc": "The daemon uses its default page size when this field is absent.",
-          "type": "u64",
-          "presence": "optional"
-        },
-        {
-          "name": "cursor",
-          "doc": "An opaque cursor for continuation within the same directory.",
-          "type": "string",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "WorkspaceBrowseResult",
-      "doc": "This result contains one browse page.",
-      "fields": [
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "parent",
-          "doc": "The daemon sets this field to null at the filesystem root.",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "entries",
-          "doc": "The directory contents.",
-          "type": "[]DirEntry",
-          "presence": "required"
-        },
-        {
-          "name": "next_cursor",
-          "doc": "An opaque continuation cursor; null on the final page.",
-          "type": "string",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
       "name": "WorkspaceCreatedData",
       "doc": "This payload describes `workspace.created`.",
       "fields": [
@@ -957,47 +1015,6 @@
           "doc": "The newly known workspace.",
           "type": "Workspace",
           "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "WorkspaceDescribeParams",
-      "doc": "These are the parameters for `workspace.describe`.",
-      "fields": [
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "WorkspaceDescribeResult",
-      "doc": "This result describes `workspace.describe`.",
-      "fields": [
-        {
-          "name": "workspace",
-          "doc": "The resolved workspace.",
-          "type": "Workspace",
-          "presence": "required"
-        },
-        {
-          "name": "git",
-          "doc": "The daemon sets this field to null when the root is not a repository.",
-          "type": "GitInfo",
-          "presence": "optional"
-        },
-        {
-          "name": "last_modified_ms",
-          "doc": "The last filesystem modification time in epoch milliseconds.",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "last_used_model",
-          "doc": "The last model used in this workspace. The daemon leaves it null before the first run.",
-          "type": "string",
-          "presence": "optional"
         }
       ]
     },
@@ -4003,10 +4020,10 @@
           "type": "AuthLogoutParams"
         },
         {
-          "type": "WorkspaceDescribeParams"
+          "type": "FsStatParams"
         },
         {
-          "type": "WorkspaceBrowseParams"
+          "type": "FsBrowseParams"
         },
         {
           "type": "WorkspaceRef"
@@ -4067,10 +4084,10 @@
           "type": "AuthLoginResult"
         },
         {
-          "type": "WorkspaceDescribeResult"
+          "type": "FsStatResult"
         },
         {
-          "type": "WorkspaceBrowseResult"
+          "type": "FsBrowseResult"
         },
         {
           "type": "WorkspaceRemoveResult"
@@ -4632,14 +4649,14 @@
           "doc": "Log out of a provider."
         },
         {
-          "name": "workspace.describe",
-          "wire": "workspace.describe",
-          "doc": "Describe a workspace."
+          "name": "fs.stat",
+          "wire": "fs.stat",
+          "doc": "Describe one filesystem path."
         },
         {
-          "name": "workspace.browse",
-          "wire": "workspace.browse",
-          "doc": "Browse a workspace filesystem."
+          "name": "fs.browse",
+          "wire": "fs.browse",
+          "doc": "List one directory for the workspace picker."
         },
         {
           "name": "workspace.remove",

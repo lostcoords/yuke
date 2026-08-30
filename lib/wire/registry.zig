@@ -17,6 +17,7 @@ const session = @import("session.zig");
 const subscription = @import("subscription.zig");
 const tool = @import("tool.zig");
 const view = @import("view.zig");
+const fs = @import("fs.zig");
 const workspace = @import("workspace.zig");
 
 pub const TypeEntry = struct { name: []const u8, ty: type };
@@ -48,16 +49,17 @@ pub const structs = [_]TypeEntry{
     .{ .name = "AuthLogoutParams", .ty = auth.AuthLogoutParams },
     .{ .name = "AuthProvider", .ty = auth.AuthProvider },
     .{ .name = "AuthSetApiKeyParams", .ty = auth.AuthSetApiKeyParams },
-    .{ .name = "DirEntry", .ty = workspace.DirEntry },
-    .{ .name = "GitInfo", .ty = workspace.GitInfo },
+    .{ .name = "DirEntry", .ty = fs.DirEntry },
+    .{ .name = "FsBrowseParams", .ty = fs.FsBrowseParams },
+    .{ .name = "FsBrowseResult", .ty = fs.FsBrowseResult },
+    .{ .name = "FsEntry", .ty = fs.FsEntry },
+    .{ .name = "FsStatParams", .ty = fs.FsStatParams },
+    .{ .name = "FsStatResult", .ty = fs.FsStatResult },
+    .{ .name = "GitInfo", .ty = fs.GitInfo },
     .{ .name = "SkillInfo", .ty = workspace.SkillInfo },
     .{ .name = "SkillRef", .ty = workspace.SkillRef },
     .{ .name = "Workspace", .ty = workspace.Workspace },
-    .{ .name = "WorkspaceBrowseParams", .ty = workspace.WorkspaceBrowseParams },
-    .{ .name = "WorkspaceBrowseResult", .ty = workspace.WorkspaceBrowseResult },
     .{ .name = "WorkspaceCreatedData", .ty = workspace.WorkspaceCreatedData },
-    .{ .name = "WorkspaceDescribeParams", .ty = workspace.WorkspaceDescribeParams },
-    .{ .name = "WorkspaceDescribeResult", .ty = workspace.WorkspaceDescribeResult },
     .{ .name = "WorkspaceRef", .ty = workspace.WorkspaceRef },
     .{ .name = "WorkspaceRemoveResult", .ty = workspace.WorkspaceRemoveResult },
     .{ .name = "WorkspaceRemovedData", .ty = workspace.WorkspaceRemovedData },

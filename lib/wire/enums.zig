@@ -123,10 +123,10 @@ pub const MethodName = enum {
     @"auth.cancel_login",
     /// Log out of a provider.
     @"auth.logout",
-    /// Describe a workspace.
-    @"workspace.describe",
-    /// Browse a workspace filesystem.
-    @"workspace.browse",
+    /// Describe one filesystem path.
+    @"fs.stat",
+    /// List one directory for the workspace picker.
+    @"fs.browse",
     /// Remove a workspace.
     @"workspace.remove",
     /// List a workspace's skills.

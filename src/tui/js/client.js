@@ -145,6 +145,6 @@ export function catalogList(connKey, sinceRev) {
 }
 
 // The subdirectories of `params.path` (the daemon's default root when omitted), one page.
-export function workspaceBrowse(connKey, params = {}) {
-  return request(connKey, "workspace.browse", params);
+export function fsBrowse(connKey, params = {}) {
+  return request(connKey, "fs.browse", params);
 }

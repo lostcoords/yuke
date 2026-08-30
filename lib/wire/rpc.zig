@@ -14,6 +14,7 @@ const run = @import("run.zig");
 const session = @import("session.zig");
 const subscription = @import("subscription.zig");
 const tool = @import("tool.zig");
+const fs = @import("fs.zig");
 const workspace = @import("workspace.zig");
 
 fn stringifyPayload(self: anytype, jw: *std.json.Stringify) !void {
@@ -46,8 +47,8 @@ pub const RequestParams = union(enum) {
     auth_login_params: auth.AuthLoginParams,
     auth_cancel_login_params: auth.AuthCancelLoginParams,
     auth_logout_params: auth.AuthLogoutParams,
-    workspace_describe_params: workspace.WorkspaceDescribeParams,
-    workspace_browse_params: workspace.WorkspaceBrowseParams,
+    fs_stat_params: fs.FsStatParams,
+    fs_browse_params: fs.FsBrowseParams,
     workspace_ref: workspace.WorkspaceRef,
     permission_forget_params: permission.PermissionForgetParams,
 
@@ -73,8 +74,8 @@ pub const ResponseResult = union(enum) {
     catalog_refresh_result: catalog.CatalogRefreshResult,
     auth_list_result: auth.AuthListResult,
     auth_login_result: auth.AuthLoginResult,
-    workspace_describe_result: workspace.WorkspaceDescribeResult,
-    workspace_browse_result: workspace.WorkspaceBrowseResult,
+    fs_stat_result: fs.FsStatResult,
+    fs_browse_result: fs.FsBrowseResult,
     workspace_remove_result: workspace.WorkspaceRemoveResult,
     workspace_skills_result: workspace.WorkspaceSkillsResult,
     permission_rules_result: permission.PermissionRulesResult,
@@ -150,8 +151,8 @@ pub const methods = [_]MethodSpec{
     .{ .name = .@"auth.login", .params = auth.AuthLoginParams, .result = auth.AuthLoginResult, .params_optional = false },
     .{ .name = .@"auth.cancel_login", .params = auth.AuthCancelLoginParams, .result = misc.Empty, .params_optional = false },
     .{ .name = .@"auth.logout", .params = auth.AuthLogoutParams, .result = misc.Empty, .params_optional = false },
-    .{ .name = .@"workspace.describe", .params = workspace.WorkspaceDescribeParams, .result = workspace.WorkspaceDescribeResult, .params_optional = false },
-    .{ .name = .@"workspace.browse", .params = workspace.WorkspaceBrowseParams, .result = workspace.WorkspaceBrowseResult, .params_optional = true },
+    .{ .name = .@"fs.stat", .params = fs.FsStatParams, .result = fs.FsStatResult, .params_optional = false },
+    .{ .name = .@"fs.browse", .params = fs.FsBrowseParams, .result = fs.FsBrowseResult, .params_optional = true },
     .{ .name = .@"workspace.remove", .params = workspace.WorkspaceRef, .result = workspace.WorkspaceRemoveResult, .params_optional = false },
     .{ .name = .@"workspace.skills", .params = workspace.WorkspaceRef, .result = workspace.WorkspaceSkillsResult, .params_optional = false },
     .{ .name = .@"permission.rules", .params = workspace.WorkspaceRef, .result = permission.PermissionRulesResult, .params_optional = false },

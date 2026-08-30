@@ -2017,7 +2017,7 @@ test "yuke:client wraps the native and rejects an unimplemented connect" {
         \\import * as client from "yuke:client";
         \\const surface = ["connect", "disconnect", "connectionState", "connections", "devices", "sessionList",
         \\  "sessionOpen", "sessionClose", "sessionRev", "sessionResync", "sessionOutline", "sessionText", "sessionParts",
-        \\  "sessionSendInput", "sessionCancelRun", "workspaceBrowse"].every((k) => typeof client[k] === "function");
+        \\  "sessionSendInput", "sessionCancelRun", "fsBrowse"].every((k) => typeof client[k] === "function");
         \\let code = "";
         \\try { await client.connect({}); } catch (e) { code = e.code; }
         \\globalThis.result = surface && code === "bad_options" && client.connectionState("local") === "disconnected" ? "ok" : "fail";
