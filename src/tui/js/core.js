@@ -9,7 +9,6 @@ import { term } from "yuke:term";
 /** @typedef {{ daemon?: Partial<DaemonConfig>, mouse?: Partial<MouseConfig> }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
-/** @typedef {{ [index: number]: number, length: number }} GraphemeArray */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ text: string, w: number }} TextPiece */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
@@ -47,7 +46,6 @@ export const config = {
     port: 9853,
     autoConnect: true,
     retryMs: 5000,
-    // Set a token for a protected daemon.
   },
 };
 
@@ -72,16 +70,24 @@ export function defineConfig(partial) {
 /** @type {ConfigValidators} */
 const DAEMON_FIELDS = {
   host: (v) => (typeof v === "string" && v !== "") || "daemon.host must be a non-empty string",
-  port: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1 && /** @type {number} */ (v) <= 65535) || "daemon.port must be an integer 1..65535",
+  port: (v) => {
+    const port = /** @type {number} */ (v);
+    return (Number.isInteger(port) && port >= 1 && port <= 65535) || "daemon.port must be an integer 1..65535";
+  },
   autoConnect: (v) => typeof v === "boolean" || "daemon.autoConnect must be a boolean",
-  retryMs: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1) || "daemon.retryMs must be a positive integer",
-  token: (v) => typeof v === "string" || "daemon.token must be a string",
+  retryMs: (v) => {
+    const retryMs = /** @type {number} */ (v);
+    return (Number.isInteger(retryMs) && retryMs >= 1) || "daemon.retryMs must be a positive integer";
+  },
 };
 
 /** @type {ConfigValidators} */
 const MOUSE_FIELDS = {
   copyOnSelect: (v) => typeof v === "boolean" || "mouse.copyOnSelect must be a boolean",
-  scrollLines: (v) => (Number.isInteger(/** @type {number} */ (v)) && /** @type {number} */ (v) >= 1 && /** @type {number} */ (v) <= 20) || "mouse.scrollLines must be an integer 1..20",
+  scrollLines: (v) => {
+    const scrollLines = /** @type {number} */ (v);
+    return (Number.isInteger(scrollLines) && scrollLines >= 1 && scrollLines <= 20) || "mouse.scrollLines must be an integer 1..20";
+  },
 };
 
 /** @param {Record<string, unknown>} section @param {ConfigValidators} fields @param {Record<string, unknown>} src @param {string} label */
@@ -142,11 +148,13 @@ export const style = {
     const cached = this._cache[name];
     if (cached) return cached;
 
-    let def = /** @type {StyleGroup | undefined | null} */ (this.groups[name]);
+    /** @type {StyleGroup | undefined | null} */
+    let def = this.groups[name];
     for (let i = 0; def && def.link && i < link_depth_max; i++) def = this.groups[def.link];
     if (def && def.link) def = null;
 
-    const out = /** @type {import("yuke:term").Style} */ ({});
+    /** @type {import("yuke:term").Style} */
+    const out = {};
     if (def) {
       if (def.bg !== undefined) out.bg = /** @type {import("yuke:term").Color} */ (this.palette[def.bg] !== undefined ? this.palette[def.bg] : def.bg);
       if (def.bold) out.bold = true;
@@ -185,13 +193,16 @@ export function clip(s, max, ellipsis = true) {
 
   const ell = ellipsis && max > 1 ? 1 : 0;
   const budget = max - ell;
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  const gs = term.graphemes(s);
   let cut = 0;
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    if (w + /** @type {number} */ (gs[k + 2]) > budget) break;
-    w += /** @type {number} */ (gs[k + 2]);
-    cut = /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]);
+    const width = /** @type {number} */ (gs[k + 2]);
+    if (w + width > budget) break;
+    const offset = /** @type {number} */ (gs[k]);
+    const length = /** @type {number} */ (gs[k + 1]);
+    w += width;
+    cut = offset + length;
   }
 
   return s.slice(0, cut) + (ell ? "…" : "");
@@ -212,13 +223,15 @@ export function wrap(s, width) {
 
 /** @param {string} para @returns {TextPiece[]} */
 function splitWords(para) {
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(para)));
+  const gs = term.graphemes(para);
   /** @type {TextPiece[]} */
   const words = [];
   let text = "";
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    const ch = para.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]));
+    const offset = /** @type {number} */ (gs[k]);
+    const length = /** @type {number} */ (gs[k + 1]);
+    const ch = para.slice(offset, offset + length);
     if (ch === " ") {
       if (text) words.push({ text, w });
       text = "";
@@ -234,7 +247,7 @@ function splitWords(para) {
 
 /** @param {string} s @param {number} width @returns {TextPiece[]} */
 function hardBreak(s, width) {
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  const gs = term.graphemes(s);
   /** @type {TextPiece[]} */
   const pieces = [];
   let piece = "";
@@ -245,7 +258,9 @@ function hardBreak(s, width) {
       piece = "";
       w = 0;
     }
-    piece += s.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]));
+    const offset = /** @type {number} */ (gs[k]);
+    const length = /** @type {number} */ (gs[k + 1]);
+    piece += s.slice(offset, offset + length);
     w += /** @type {number} */ (gs[k + 2]);
   }
   pieces.push({ text: piece, w });
@@ -271,9 +286,13 @@ function wrapParagraph(para, width, out) {
 
     if (word.w > width) {
       const pieces = hardBreak(word.text, width);
-      for (let i = 0; i < pieces.length - 1; i++) out.push(/** @type {TextPiece} */ (pieces[i]).text);
-      line = /** @type {TextPiece} */ (pieces[pieces.length - 1]).text;
-      lineW = /** @type {TextPiece} */ (pieces[pieces.length - 1]).w;
+      for (let i = 0; i < pieces.length - 1; i++) {
+        const piece = /** @type {TextPiece} */ (pieces[i]);
+        out.push(piece.text);
+      }
+      const lastPiece = /** @type {TextPiece} */ (pieces[pieces.length - 1]);
+      line = lastPiece.text;
+      lineW = lastPiece.w;
     } else {
       const sep = line === "" ? 0 : 1;
       line += (sep ? " " : "") + word.text;
@@ -292,7 +311,7 @@ export function wrapOffsets(s, width) {
 
   /** @type {WrapRow[]} */
   const rows = [];
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  const gs = term.graphemes(s);
   let start = 0; // where the row starts
   let w = 0; // cells the row uses
   let breakAt = -1; // after the last space of the row
@@ -300,18 +319,20 @@ export function wrapOffsets(s, width) {
 
   for (let k = 0; k < gs.length; k += 3) {
     const off = /** @type {number} */ (gs[k]);
-    const ch = s.slice(off, off + /** @type {number} */ (gs[k + 1]));
+    const length = /** @type {number} */ (gs[k + 1]);
+    const ch = s.slice(off, off + length);
     if (ch === "\n") {
       rows.push({ start, end: off, soft: false });
-      start = off + /** @type {number} */ (gs[k + 1]);
+      start = off + length;
       w = 0;
       breakAt = -1;
       continue;
     }
 
+    const widthAt = /** @type {number} */ (gs[k + 2]);
     // A space hangs past the right edge, so a wrap never starts a row with the space it broke on.
     // A row keeps one grapheme even when that grapheme is wider than the width.
-    if (ch !== " " && w + /** @type {number} */ (gs[k + 2]) > width && off > start) {
+    if (ch !== " " && w + widthAt > width && off > start) {
       if (breakAt > start) {
         rows.push({ start, end: breakAt, soft: true });
         w -= breakW;
@@ -323,9 +344,9 @@ export function wrapOffsets(s, width) {
       }
       breakAt = -1;
     }
-    w += /** @type {number} */ (gs[k + 2]);
+    w += widthAt;
     if (ch === " ") {
-      breakAt = off + /** @type {number} */ (gs[k + 1]);
+      breakAt = off + length;
       breakW = w;
     }
   }
@@ -351,11 +372,12 @@ export function caretRowCol(s, rows, caret) {
 /** @param {string} s @param {WrapRow} row @param {number} col @returns {number} */
 export function caretAtCol(s, row, col) {
   const line = s.slice(row.start, row.end);
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(line)));
+  const gs = term.graphemes(line);
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
-    if (w + /** @type {number} */ (gs[k + 2]) > col) return row.start + /** @type {number} */ (gs[k]);
-    w += /** @type {number} */ (gs[k + 2]);
+    const cellWidth = /** @type {number} */ (gs[k + 2]);
+    if (w + cellWidth > col) return row.start + /** @type {number} */ (gs[k]);
+    w += cellWidth;
   }
   return row.end;
 }
@@ -561,10 +583,10 @@ export function modalKey(ev) {
 /** @param {HostEvent} ev @returns {string} */
 export function textOf(ev) {
   if (ev.type === "paste") return ev.text || "";
-  if (/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).code !== "char") return "";
-  if (/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).text) return /** @type {Extract<HostEvent, { type: "key" }>} */ (ev).text;
-  if (((/** @type {Extract<HostEvent, { type: "key" }>} */ (ev).mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
-  return /** @type {Extract<HostEvent, { type: "key" }>} */ (ev).char || "";
+  if (ev.type !== "key" || ev.code !== "char") return "";
+  if (ev.text) return ev.text;
+  if (((ev.mods | 0) & (MOD_CTRL | MOD_ALT | MOD_SUPER)) !== 0) return "";
+  return ev.char || "";
 }
 
 /** @param {HostEvent} ev @returns {boolean} */
@@ -616,10 +638,14 @@ function graphemeClass(g) {
 // The graphemes of `s` with their offset and class, so a word motion never lands inside a cluster.
 /** @param {string} s @returns {GraphemeCell[]} */
 function graphemeCells(s) {
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s)));
+  const gs = term.graphemes(s);
   /** @type {GraphemeCell[]} */
   const out = [];
-  for (let k = 0; k < gs.length; k += 3) out.push({ at: /** @type {number} */ (gs[k]), cls: graphemeClass(s.slice(/** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1]))) });
+  for (let k = 0; k < gs.length; k += 3) {
+    const at = /** @type {number} */ (gs[k]);
+    const length = /** @type {number} */ (gs[k + 1]);
+    out.push({ at, cls: graphemeClass(s.slice(at, at + length)) });
+  }
   return out;
 }
 
@@ -635,8 +661,16 @@ export function nextWordStart(s, at) {
   const cells = graphemeCells(s);
   let i = cellIndex(cells, at);
   const cls = i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).cls : 0;
-  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === cls && cls !== 0) i++;
-  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === 0) i++;
+  while (i < cells.length && cls !== 0) {
+    const cell = /** @type {GraphemeCell} */ (cells[i]);
+    if (cell.cls !== cls) break;
+    i++;
+  }
+  while (i < cells.length) {
+    const cell = /** @type {GraphemeCell} */ (cells[i]);
+    if (cell.cls !== 0) break;
+    i++;
+  }
   return i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).at : s.length;
 }
 
@@ -672,7 +706,7 @@ const grapheme_window = 256;
 /** @param {string} s @param {number} at @returns {number} */
 export function prevGrapheme(s, at) {
   const from = Math.max(0, at - grapheme_window);
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s.slice(from, at))));
+  const gs = term.graphemes(s.slice(from, at));
   let p = from;
   for (let k = 0; k < gs.length; k += 3) p = from + /** @type {number} */ (gs[k]);
   return p;
@@ -681,9 +715,11 @@ export function prevGrapheme(s, at) {
 /** @param {string} s @param {number} at @returns {number} */
 export function nextGrapheme(s, at) {
   const to = Math.min(s.length, at + grapheme_window);
-  const gs = /** @type {GraphemeArray} */ (/** @type {unknown} */ (term.graphemes(s.slice(at, to))));
+  const gs = term.graphemes(s.slice(at, to));
   if (gs.length === 0) return s.length;
-  return at + /** @type {number} */ (gs[0]) + /** @type {number} */ (gs[1]);
+  const offset = /** @type {number} */ (gs[0]);
+  const length = /** @type {number} */ (gs[1]);
+  return at + offset + length;
 }
 
 export class TextInput {
@@ -962,13 +998,17 @@ export class Node {
       callHook(v, "draw", this === activeLeaf);
       return;
     }
-    /** @type {Node} */ (this.a).draw(activeLeaf);
-    /** @type {Node} */ (this.b).draw(activeLeaf);
+    const a = /** @type {Node} */ (this.a);
+    a.draw(activeLeaf);
+    const b = /** @type {Node} */ (this.b);
+    b.draw(activeLeaf);
     if (this.kind === "row") {
-      const x = /** @type {Node} */ (this.a).rect.x + /** @type {Node} */ (this.a).rect.w;
+      const splitA = /** @type {Node} */ (this.a);
+      const x = splitA.rect.x + splitA.rect.w;
       for (let y = this.rect.y; y < this.rect.y + this.rect.h; y++) text(x, y, "│", "YukeRule");
     } else if (this.rect.w > 0) {
-      const y = /** @type {Node} */ (this.a).rect.y + /** @type {Node} */ (this.a).rect.h;
+      const splitA = /** @type {Node} */ (this.a);
+      const y = splitA.rect.y + splitA.rect.h;
       text(this.rect.x, y, "─".repeat(this.rect.w), "YukeRule");
     }
   }

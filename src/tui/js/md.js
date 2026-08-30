@@ -4,7 +4,12 @@ import { style } from "yuke:core";
 /** @typedef {{at: number, src: number, len: number}} SourceRun */
 /** @typedef {string[] & {[index: number]: string}} StringList */
 /** @typedef {number[] & {[index: number]: number}} NumberList */
-/** @typedef {RegExpExecArray & {[index: number]: string}} RequiredMatch */
+/** @typedef {[full: string, indent: string, fence: string, lang: string]} FenceMatch */
+/** @typedef {[full: string, indent: string, fence: string]} FenceCloseMatch */
+/** @typedef {[full: string, indent: string, marks: string, spacing: string | undefined, text: string | undefined]} HeadingMatch */
+/** @typedef {[full: string, indent: string, spacing: string, text: string]} QuoteMatch */
+/** @typedef {[full: string, indent: string, marker: string, spacing: string, text: string]} UlItemMatch */
+/** @typedef {[full: string, indent: string, number: string, delimiter: string, spacing: string, text: string]} OlItemMatch */
 /** @typedef {{text: string, runs: SourceRun[]}} InlineSource */
 /** @typedef {{text: string, runs: SourceRun[]}} TableCell */
 /** @typedef {{marker: string, length: number, indent: number, lang: string}} Fence */
@@ -33,7 +38,7 @@ import { style } from "yuke:core";
 /** @typedef {{raw: string, width: number | null, rows: Row[] | null}} CacheEntry */
 
 // Register the Markdown groups once.
-if (!(/** @type {{[name: string]: unknown}} */ (style.groups)).MdText) {
+if (!style.groups.MdText) {
   Object.assign(style.groups, {
     MdText: { link: "Normal" },
     MdStrong: { fg: "fg", bold: true },
@@ -61,15 +66,17 @@ const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
 
 /** @param {string} line @returns {Fence | null} */
 function fenceOpen(line) {
-  const m = /** @type {RequiredMatch | null} */ (FENCE.exec(line));
-  if (!m || (/** @type {string} */ ((/** @type {string} */ (m[2]))[0]) === "`" && /** @type {string} */ (m[3]).indexOf("`") >= 0)) return null;
-  return { marker: /** @type {string} */ ((/** @type {string} */ (m[2]))[0]), length: /** @type {string} */ (m[2]).length, indent: /** @type {string} */ (m[1]).length, lang: /** @type {string} */ (m[3]).trim() };
+  const m = /** @type {FenceMatch | null} */ (FENCE.exec(line));
+  if (!m) return null;
+  const marker = /** @type {string} */ (m[2][0]);
+  if (marker === "`" && m[3].indexOf("`") >= 0) return null;
+  return { marker, length: m[2].length, indent: m[1].length, lang: m[3].trim() };
 }
 
 /** @param {string} line @param {string} marker @param {number} length @returns {boolean | null} */
 function fenceClose(line, marker, length) {
-  const m = /** @type {RequiredMatch | null} */ (FENCE_CLOSE.exec(line));
-  return m && /** @type {string} */ ((/** @type {string} */ (m[2]))[0]) === marker && /** @type {string} */ (m[2]).length >= length;
+  const m = /** @type {FenceCloseMatch | null} */ (FENCE_CLOSE.exec(line));
+  return m && m[2][0] === marker && m[2].length >= length;
 }
 
 /** @param {string} line @returns {Fence | boolean} */
@@ -89,7 +96,7 @@ function hasUnescapedPipe(line) {
   return false;
 }
 
-/** @param {string[]} lines @param {number} i @returns {boolean} */
+/** @param {StringList} lines @param {number} i @returns {boolean} */
 function isSetextHeading(lines, i) {
   return i + 1 < lines.length && /** @type {string} */ (lines[i]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[i])) && SETEXT.test(/** @type {string} */ (lines[i + 1]));
 }
@@ -125,7 +132,10 @@ function oneRun(text, src) {
 // The run that holds inline index `i`. The runs cover the whole inline text in order.
 /** @param {SourceRun[]} runs @param {number} i @returns {SourceRun} */
 function runFor(runs, i) {
-  for (let k = runs.length - 1; k > 0; k--) if (i >= /** @type {SourceRun} */ (runs[k]).at) return /** @type {SourceRun} */ (runs[k]);
+  for (let k = runs.length - 1; k > 0; k--) {
+    const run = /** @type {SourceRun} */ (runs[k]);
+    if (i >= run.at) return run;
+  }
   return /** @type {SourceRun} */ (runs[0]);
 }
 
@@ -147,7 +157,8 @@ function segment(text) {
     let off = 0;
     for (let k = 0; k < lines.length; k++) {
       starts[k] = off;
-      off += /** @type {string} */ (lines[k]).length + 1;
+      const sourceLine = /** @type {string} */ (lines[k]);
+      off += sourceLine.length + 1;
     }
     starts[lines.length] = /** @type {number} */ (off);
   }
@@ -173,18 +184,20 @@ function segment(text) {
     const fence = fenceOpen(line);
     if (fence) {
       const marker = fence.marker;
-      const body = /** @type {StringList} */ ([]);
-      const bodyAt = /** @type {NumberList} */ ([]);
+      const body = /** @type {StringList} */ (/** @type {unknown} */ ([]));
+      const bodyAt = /** @type {NumberList} */ (/** @type {unknown} */ ([]));
       let j = i + 1;
       let closed = false;
       for (; j < lines.length; j++) {
-        if (fenceClose(/** @type {string} */ (lines[j]), marker, fence.length)) {
+        const sourceLine = /** @type {string} */ (lines[j]);
+        if (fenceClose(sourceLine, marker, fence.length)) {
           closed = true;
           break;
         }
-        const stripped = stripFenceIndent(/** @type {string} */ (lines[j]), fence.indent);
+        const sourceAt = /** @type {number} */ (starts[j]);
+        const stripped = stripFenceIndent(sourceLine, fence.indent);
         body.push(stripped);
-        bodyAt.push(/** @type {number} */ (starts[j]) + /** @type {string} */ (lines[j]).length - stripped.length);
+        bodyAt.push(sourceAt + sourceLine.length - stripped.length);
       }
       const to = closed ? j + 1 : lines.length;
       push(/** @type {CodeBlock} */ ({ kind: "code", lang: fence.lang, lines: body, lineAt: bodyAt, closed }), i, to);
@@ -194,9 +207,10 @@ function segment(text) {
 
     const heading = HEADING.exec(line);
     if (heading) {
-      const headingText = (heading[4] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
-      const src = /** @type {number} */ (starts[i]) + /** @type {string} */ (heading[1]).length + /** @type {string} */ (heading[2]).length + (heading[3] ? heading[3].length : 0);
-      push(/** @type {HeadingBlock} */ ({ kind: "heading", level: /** @type {string} */ (heading[2]).length, text: headingText, runs: oneRun(headingText, src) }), i, i + 1);
+      const m = /** @type {HeadingMatch} */ (/** @type {unknown} */ (heading));
+      const headingText = (m[4] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
+      const src = /** @type {number} */ (starts[i]) + m[1].length + m[2].length + (m[3] ? m[3].length : 0);
+      push(/** @type {HeadingBlock} */ ({ kind: "heading", level: m[2].length, text: headingText, runs: oneRun(headingText, src) }), i, i + 1);
       i++;
       continue;
     }
@@ -204,7 +218,8 @@ function segment(text) {
     if (isSetextHeading(lines, i)) {
       const headingText = line.trim();
       const src = /** @type {number} */ (starts[i]) + line.length - line.trimStart().length;
-      const level = /** @type {string} */ (lines[i + 1]).trimStart()[0] === "=" ? 1 : 2;
+      const nextLine = /** @type {string} */ (lines[i + 1]);
+      const level = nextLine.trimStart()[0] === "=" ? 1 : 2;
       push(/** @type {HeadingBlock} */ ({ kind: "heading", level, text: headingText, runs: oneRun(headingText, src) }), i, i + 2);
       i += 2;
       continue;
@@ -221,11 +236,12 @@ function segment(text) {
       const body = inlineSource();
       let markEnd = /** @type {number} */ (starts[i]);
       for (; j < lines.length && QUOTE.test(/** @type {string} */ (lines[j])); j++) {
-        const m = /** @type {RequiredMatch} */ (QUOTE.exec(/** @type {string} */ (lines[j])));
-        const src = /** @type {number} */ (starts[j]) + /** @type {string} */ (m[1]).length + 1 + /** @type {string} */ (m[2]).length;
+        const sourceLine = /** @type {string} */ (lines[j]);
+        const m = /** @type {QuoteMatch} */ (/** @type {unknown} */ (QUOTE.exec(sourceLine)));
+        const src = /** @type {number} */ (starts[j]) + m[1].length + 1 + m[2].length;
         if (j === i) markEnd = src;
         else addSource(body, "\n", /** @type {number} */ (starts[j]) - 1);
-        addSource(body, /** @type {string} */ (m[3]), src);
+        addSource(body, m[3], src);
       }
       push(/** @type {QuoteBlock} */ ({ kind: "quote", text: body.text, runs: body.runs, markAt: /** @type {number} */ (starts[i]), markEnd }), i, j);
       i = j;
@@ -237,11 +253,12 @@ function segment(text) {
       const items = /** @type {ListItem[]} */ ([]);
       let ordered = !!OL_ITEM.exec(line);
       for (; j < lines.length; j++) {
-        const m = /** @type {RequiredMatch | null} */ (ordered ? OL_ITEM.exec(/** @type {string} */ (lines[j])) : UL_ITEM.exec(/** @type {string} */ (lines[j])));
+        const sourceLine = /** @type {string} */ (lines[j]);
+        const m = /** @type {OlItemMatch | UlItemMatch | null} */ (ordered ? OL_ITEM.exec(sourceLine) : UL_ITEM.exec(sourceLine));
         if (!m) break;
         // The last group runs to the end of the line, so its offset needs no group arithmetic.
         const body = /** @type {string} */ (m[m.length - 1]);
-        const src = /** @type {number} */ (starts[j]) + /** @type {string} */ (lines[j]).length - body.length;
+        const src = /** @type {number} */ (starts[j]) + sourceLine.length - body.length;
         items.push({
           indent: Math.floor(/** @type {string} */ (m[1]).length / 2),
           marker: ordered ? /** @type {string} */ (m[2]) + "." : "•",
@@ -257,7 +274,9 @@ function segment(text) {
     }
 
     const headerCells = hasUnescapedPipe(line) ? splitTableRow(line, /** @type {number} */ (starts[i])) : [];
-    const separatorCells = i + 1 < lines.length && isTableSeparator(/** @type {string} */ (lines[i + 1])) ? splitTableRow(/** @type {string} */ (lines[i + 1]), /** @type {number} */ (starts[i + 1])) : [];
+    const nextLine = i + 1 < lines.length ? /** @type {string} */ (lines[i + 1]) : "";
+    const separatorAt = i + 1 < lines.length ? /** @type {number} */ (starts[i + 1]) : 0;
+    const separatorCells = i + 1 < lines.length && isTableSeparator(nextLine) ? splitTableRow(nextLine, separatorAt) : [];
     if (headerCells.length > 0 && headerCells.length === separatorCells.length) {
       let j = i + 2;
       for (; j < lines.length && /** @type {string} */ (lines[j]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[j])); j++);
@@ -348,7 +367,7 @@ function emphGroup(bold, italic) {
 }
 
 // Flanking: a delimiter run opens or closes emphasis by the chars around it (CommonMark rules).
-/** @param {string[]} cps @param {number} i @param {string} marker @returns {{count: number, canOpen: boolean, canClose: boolean}} */
+/** @param {StringList} cps @param {number} i @param {string} marker @returns {{count: number, canOpen: boolean, canClose: boolean}} */
 function scanDelims(cps, i, marker) {
   let count = 0;
   while (cps[i + count] === marker) count++;
@@ -370,7 +389,7 @@ function scanDelims(cps, i, marker) {
 }
 
 // Find the closing backtick run of exactly `n`, so an inner shorter run stays literal.
-/** @param {string[]} cps @param {number} start @param {number} n @returns {number} */
+/** @param {StringList} cps @param {number} start @param {number} n @returns {number} */
 function closeCodeSpan(cps, start, n) {
   let j = start;
   while (j < cps.length) {
@@ -388,7 +407,7 @@ function closeCodeSpan(cps, start, n) {
 
 // Read a `[label](dest)` link. Return the label and the end index, or null when it is not a link.
 // A destination holds no space, so a malformed link stays literal.
-/** @param {string[]} cps @param {number} open @returns {{label: string, end: number} | null} */
+/** @param {StringList} cps @param {number} open @returns {{label: string, end: number} | null} */
 function scanLink(cps, open) {
   let depth = 0;
   let close = -1;
@@ -675,8 +694,9 @@ function wrapSegments(segments, width, opts) {
       if (line.length) emit();
       const broken = hardBreakPieces(word.pieces, available());
       for (let i = 0; i < broken.length; i++) {
-        line = /** @type {BreakPiece} */ (broken[i]).segments;
-        lineW = /** @type {BreakPiece} */ (broken[i]).w;
+        const piece = /** @type {BreakPiece} */ (broken[i]);
+        line = piece.segments;
+        lineW = piece.w;
         if (i + 1 < broken.length) emit();
       }
       continue;
@@ -753,9 +773,11 @@ function hardBreakPieces(pieces, width) {
   for (const piece of pieces) {
     const gs = term.graphemes(piece.text);
     for (let k = 0; k < gs.length; k += 3) {
+      const from = /** @type {number} */ (gs[k]);
+      const len = /** @type {number} */ (gs[k + 1]);
       const w = /** @type {number} */ (gs[k + 2]);
       if (segments.length && lineW + w > width) emit();
-      append(sliceSegment(piece, /** @type {number} */ (gs[k]), /** @type {number} */ (gs[k]) + /** @type {number} */ (gs[k + 1])), w);
+      append(sliceSegment(piece, from, from + len), w);
       if (lineW >= width) emit();
     }
   }
@@ -821,12 +843,14 @@ function renderBlock(block, width) {
     case "table": {
       const rows = /** @type {Row[]} */ ([]);
       for (let r = 0; r < block.rows.length; r++) {
-        const cells = /** @type {TableCell[]} */ (/** @type {TableCell[]} */ (block.rows[r]).slice(0, block.columns));
+        const sourceCells = /** @type {TableCell[]} */ (block.rows[r]);
+        const cells = sourceCells.slice(0, block.columns);
         while (cells.length < block.columns) cells.push({ text: "", runs: [] });
         const segs = [];
         for (let c = 0; c < cells.length; c++) {
           if (c > 0) segs.push({ text: " │ ", group: "MdTableBorder" });
-          for (const s of resolveSegments(parseInline(/** @type {TableCell} */ (cells[c]).text), /** @type {TableCell} */ (cells[c]).runs)) segs.push(s);
+          const cell = /** @type {TableCell} */ (cells[c]);
+          for (const s of resolveSegments(parseInline(cell.text), cell.runs)) segs.push(s);
         }
         for (const row of wrapSegments(segs, width)) rows.push(row);
         if (r === 0) rows.push({ segments: [{ text: ruleText(width), group: "MdTableBorder", src: block.sepAt, srcEnd: block.sepEnd, mark: true }] });

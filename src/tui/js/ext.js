@@ -92,24 +92,26 @@ const RECORDS = new WeakMap(); // obj -> { [prop]: { original, list } }
 function adviceRecord(obj, prop) {
   let byProp = RECORDS.get(obj);
   if (!byProp) {
-    byProp = Object.create(null);
-    RECORDS.set(obj, /** @type {Record<string, AdviceRecord>} */ (byProp));
+    byProp = /** @type {Record<string, AdviceRecord>} */ (Object.create(null));
+    RECORDS.set(obj, byProp);
   }
 
-  let rec = (/** @type {Record<string, AdviceRecord>} */ (byProp))[prop];
+  let rec = byProp[prop];
   if (!rec) {
     // An accessor is not a method. Assigning the wrapper would call its setter.
     const desc = findDescriptor(obj, prop);
     if (desc && !("value" in desc)) throw new TypeError("advise: " + prop + " is an accessor");
 
-    const original = /** @type {AdviceFunction} */ (/** @type {Record<string, unknown>} */ (obj)[prop]);
+    const properties = /** @type {Record<string, unknown>} */ (obj);
+    const original = /** @type {AdviceFunction} */ (properties[prop]);
     if (typeof original !== "function") throw new Error("advise: " + prop + " is not a method");
 
     rec = { original, list: [] };
-    /** @type {Record<string, unknown>} */ (obj)[prop] = /** @type {AdviceFunction} */ (/** @this {object} */ function (...args) {
-      return applyAdvice(/** @type {AdviceRecord} */ (rec), /** @type {object} */ (this), args);
-    });
-    (/** @type {Record<string, AdviceRecord>} */ (byProp))[prop] = rec;
+    const record = rec;
+    properties[prop] = /** @this {object} @param {...unknown} args */ function (...args) {
+      return applyAdvice(record, this, args);
+    };
+    byProp[prop] = rec;
   }
 
   return rec;
@@ -138,11 +140,12 @@ function applyAdvice(rec, self, args) {
 
   let call = /** @type {AdviceFunction} */ ((...as) => Reflect.apply(rec.original, self, as));
   for (let i = list.length - 1; i >= 0; i--) {
-    if (/** @type {AdviceEntry} */ (list[i]).where !== "around") continue;
+    const entry = /** @type {AdviceEntry} */ (list[i]);
+    if (entry.where !== "around") continue;
 
     const inner = call;
-    const fn = /** @type {AdviceEntry} */ (list[i]).fn;
-    call = /** @type {AdviceFunction} */ ((...as) => Reflect.apply(fn, self, [inner, ...as]));
+    const fn = entry.fn;
+    call = (...as) => Reflect.apply(fn, self, [inner, ...as]);
   }
 
   let result = call(...args);
@@ -190,7 +193,8 @@ export const advice = {
     const out = [];
     for (const p in byProp) {
       if (prop && p !== prop) continue;
-      for (const a of (/** @type {AdviceRecord} */ (byProp[p])).list) {
+      const record = /** @type {AdviceRecord} */ (byProp[p]);
+      for (const a of record.list) {
         out.push({ prop: p, owner: a.owner, name: a.name, where: a.where, order: a.order });
       }
     }
@@ -304,7 +308,8 @@ export class Context {
 /** @param {Plugin} plugin @returns {PluginDefinition} */
 function resolvePlugin(plugin) {
   if (typeof plugin === "function") {
-    return { name: (/** @type {PluginFunction} */ (plugin)).pluginName || plugin.name || "plugin", apply: /** @type {PluginApply} */ (plugin) };
+    const fn = /** @type {PluginFunction} */ (plugin);
+    return { name: fn.pluginName || fn.name || "plugin", apply: fn };
   }
   if (plugin && typeof plugin.apply === "function") {
     return { name: plugin.name || "plugin", apply: plugin.apply };

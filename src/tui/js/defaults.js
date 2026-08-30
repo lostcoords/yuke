@@ -17,11 +17,12 @@ import { transcriptVim } from "yuke:transcript-vim";
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ workspace_path?: string, profile?: string, model?: string, reasoning?: string, system_prompt?: string, permission?: Wire.PermissionMode, max_rounds?: number }} CreateSessionDraft */
 /** @typedef {{ is_self?: boolean, static_public_key?: string, device_id: string, online?: boolean, name?: string }} DeviceInfo */
-/** @typedef {{ key: string, up?: boolean, dest?: string, notice?: boolean, text?: string, name?: string, path?: string, is_git_repo?: boolean }} ExplorerRow */
+/** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
 /** @typedef {{ name: string, hint: string }} CommandRow */
 /** @typedef {{ m: { id: number, type: string }, i: number, text: string }} MessagePickerItem */
 /** @typedef {{ id: number, lang: string, text: string, i: number }} CodeBlockRow */
 /** @typedef {{ connKey: string, sessionId: string | null, creating: boolean, gen: number, open: (connKey: string, id?: string | null) => void, send: (text: string) => boolean, interrupt: () => void, reload: () => void, active: (id: number) => void, startChat: (text: string) => boolean, newChat: () => void, close: () => void }} ChatSession */
+/** @typedef {{ fg?: string, bg?: string, link?: string, bold?: boolean, dim?: boolean, italic?: boolean, reverse?: boolean, underline?: boolean }} CmdlineStyleGroup */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "index" }>} NativeIndexEvent */
 /** @typedef {Extract<import("yuke:client-native").ClientEvent, { type: "conn" }> & { workspaces?: readonly Wire.Workspace[] }} NativeConnEvent */
@@ -30,10 +31,12 @@ import { transcriptVim } from "yuke:transcript-vim";
 // The ":" command line: the prompt links to Normal; an unmatched word shows in red. Seed each group
 // alone, so a theme that set one first keeps it.
 const CMDLINE_GROUPS = { YukeCmdline: { link: "Normal" }, YukeCmdlineErr: { fg: "danger", bold: true } };
+const cmdlineGroups = /** @type {Record<string, CmdlineStyleGroup>} */ (CMDLINE_GROUPS);
 let seededCmdline = false;
-for (const name in CMDLINE_GROUPS) {
+for (const name in cmdlineGroups) {
   if (!(name in style.groups)) {
-    /** @type {Record<string, object>} */ (style.groups)[name] = /** @type {object} */ (/** @type {unknown} */ ((/** @type {Record<string, object>} */ (CMDLINE_GROUPS))[name]));
+    const group = /** @type {CmdlineStyleGroup} */ (cmdlineGroups[name]);
+    style.groups[name] = group;
     seededCmdline = true;
   }
 }
@@ -99,13 +102,13 @@ class DeviceFeed {
     const p = ev && ev.params ? ev.params : {};
     switch (ev && ev.method) {
       case "session.summary_changed":
-        this._upsert(/** @type {Wire.Session} */ (p.session));
+        this._upsert(p.session);
         break;
       case "catalog.changed":
         catalogOf(this.connKey).rev = null;
         break;
       case "session.activity_changed": {
-        const activity = /** @type {Wire.SessionActivityChangedData} */ (p);
+        const activity = p;
         const existing = this.items.get(activity.session_id);
         if (existing) this.items.set(activity.session_id, { session: existing.session, activity: activity.activity });
         break;
@@ -237,7 +240,7 @@ class SessionList {
     this.list = new List({
       key: rowKey,
       itemHeight: 2,
-      format: /** @type {(row: SessionRow, index: number) => string | import("yuke:ui").ListItem} */ (row => this._format(row)),
+      format: /** @param {SessionRow} row */ (row => this._format(row)),
       group: "YukeSession",
       selGroup: "YukeSessionSel",
     });
@@ -267,8 +270,9 @@ class SessionList {
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    if (this.list.onKey(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev))) return true;
-    const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
+    const keyEv = /** @type {Extract<HostEvent, { type: "key" }>} */ (ev);
+    if (this.list.onKey(keyEv)) return true;
+    const s = strokeOf(keyEv);
     if (s === "enter") {
       this.open(this.list.selected(), "key");
       return true;
@@ -400,13 +404,13 @@ const notice = {
 };
 
 // Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
-events.on("key", /** @type {(ev: Extract<HostEvent, { type: "key" }>) => void} */ (ev => {
+events.on("key", /** @param {Extract<HostEvent, { type: "key" }>} ev */ (ev => {
   if (ev.event === "press") notice.clear();
 }));
 
 // Report every copy, wherever it came from. OSC 52 has no acknowledgement, so a byte count means
 // the sequence left this process, not that the terminal accepted it.
-events.on("copy", /** @type {(e: { text: string, bytes: number, what: string }) => void} */ (e => {
+events.on("copy", /** @param {{ text: string, bytes: number, what: string }} e */ (e => {
   if (!e) return;
   if (e.text === "") notice.show("nothing to copy");
   else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
@@ -518,9 +522,10 @@ status.add({
   order: 20,
   render: () => {
     const e = chatEntry();
+    if (!e) return "";
     const u = e && e.activity ? e.activity.context_usage : null;
     if (!u || !u.input) return "";
-    const win = contextWindowOf(chatSession.connKey, (/** @type {FeedItem} */ (e)).session.model);
+    const win = contextWindowOf(chatSession.connKey, e.session.model);
     return win ? Math.round((u.input / win) * 100) + "% ctx" : tokenLabel(u.input) + " ctx";
   },
 });
@@ -574,12 +579,12 @@ const newChatLines = () => {
 };
 
 const chat = new ChatView({
-  textOf: /** @type {(id: number) => string} */ (id => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : "")),
-  partsOf: /** @type {(id: number) => Wire.AssistantPart[]} */ (id => (chatSession.sessionId ? client.sessionParts(chatSession.connKey, chatSession.sessionId, id) : [])),
-  onSubmit: /** @type {(text: string) => boolean} */ (text => chatSession.send(text)),
-  onSelect: /** @type {(text: string) => void} */ (text => {
+  textOf: id => (chatSession.sessionId ? client.sessionText(chatSession.connKey, chatSession.sessionId, id) : ""),
+  partsOf: id => (chatSession.sessionId ? client.sessionParts(chatSession.connKey, chatSession.sessionId, id) : []),
+  onSubmit: text => chatSession.send(text),
+  onSelect: text => {
     if (config.mouse.copyOnSelect) copy(text, "selection");
-  }),
+  },
   empty: () => (chatSession.sessionId ? null : newChatLines()),
 });
 
@@ -702,14 +707,14 @@ const chatSession = {
   },
 };
 
-events.on("session", /** @type {(ev: NativeSessionEvent) => void} */ (ev => {
+events.on("session", /** @param {NativeSessionEvent} ev */ (ev => {
   if (!ev || ev.connKey !== chatSession.connKey || ev.sessionId !== chatSession.sessionId) return;
   if (ev.kind === "gone") chatSession.close();
   else if (ev.kind === "active") chatSession.active(/** @type {number} */ (ev.id));
   else chatSession.reload();
 }));
 
-events.on("index", /** @type {(ev: NativeIndexEvent) => void} */ (ev => {
+events.on("index", /** @param {NativeIndexEvent} ev */ (ev => {
   if (!ev || !ev.connKey) return;
   const f = feeds.get(ev.connKey);
   if (!f) return;
@@ -717,7 +722,7 @@ events.on("index", /** @type {(ev: NativeIndexEvent) => void} */ (ev => {
   root.invalidate();
 }));
 
-events.on("conn", /** @type {(ev: NativeConnEvent) => void} */ (ev => {
+events.on("conn", /** @param {NativeConnEvent} ev */ (ev => {
   if (!ev || !ev.key) return;
   if (ev.kind === "ready") {
     loadCatalog(ev.key);
@@ -753,10 +758,10 @@ events.on("conn", /** @type {(ev: NativeConnEvent) => void} */ (ev => {
 
 // Enter previews the session and stays on the list. Click, `l`, and → move into the chat.
 const sidebar = new SessionList({
-  onOpen: /** @type {(connKey: string, id: string, src: string) => void} */ ((connKey, id, src) => {
+  onOpen: (connKey, id, src) => {
     chatSession.open(connKey, id);
     if (src !== "key") root.focusView(chat);
-  }),
+  },
 });
 
 const workspace = Node.branch("row", new Node(sidebar), new Node(chat), SIDEBAR_RATIO);
@@ -774,27 +779,27 @@ function openExplorer(startPath) {
     border: "rounded",
     width: 0.6,
     height: 0.6,
-    key: /** @type {(e: ExplorerRow) => string} */ (e => e.key),
-    filterText: /** @type {(e: ExplorerRow) => string} */ (e => e.name || ""),
-    isSelectable: /** @type {(e: ExplorerRow) => boolean} */ (e => !e.notice),
-    format: /** @type {(e: ExplorerRow, index: number) => string | import("yuke:ui").ListItem} */ (e => {
+    key: e => e.key,
+    filterText: e => e.name || "",
+    isSelectable: e => !e.notice,
+    format: e => {
       if (e.notice) return { text: e.text, group: "UIDim" };
       if (e.up) return { text: "..", group: "UIDim" };
       return { text: e.name + "/", right: e.is_git_repo ? "git" : "" };
-    }),
-    onAccept: /** @type {(e: ExplorerRow) => void} */ (e => {
+    },
+    onAccept: e => {
       if (e.notice) return;
       go(e.up ? e.dest : e.path);
-    }),
+    },
     closeOnAccept: false,
     keymap: {
       left: () => {
         if (state.parent != null) go(state.parent);
       },
-      right: /** @type {(_ev: HostEvent, p: { selected: () => ExplorerRow | null }) => void} */ ((_ev, p) => {
+      right: (_ev, p) => {
         const e = p.selected();
         if (e && !e.up && !e.notice) go(e.path);
-      }),
+      },
     },
   });
 
@@ -813,13 +818,15 @@ function openExplorer(startPath) {
         }
         if (res.next_cursor != null) rows.push({ key: "\x00more", notice: true, text: "… more entries not shown" });
 
-        (/** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content))).query = "";
-        (/** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content))).setSource(rows);
+        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
+        content.query = "";
+        content.setSource(rows);
         root.invalidate();
       },
       () => {
-        (/** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content))).query = "";
-        (/** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content))).setSource([{ key: "\x00err", notice: true, text: "cannot browse — daemon offline?" }]);
+        const content = /** @type {import("yuke:ui").Picker<ExplorerRow>} */ (/** @type {unknown} */ (picker.content));
+        content.query = "";
+        content.setSource([{ key: "\x00err", notice: true, text: "cannot browse — daemon offline?" }]);
         root.invalidate();
       },
     );
@@ -866,10 +873,10 @@ function openPalette() {
     width: 0.5,
     height: 0.5,
     items: cmds,
-    key: /** @type {(c: CommandRow) => string} */ (c => c.name),
-    filterText: /** @type {(c: CommandRow) => string} */ (c => c.name),
-    format: /** @type {(c: CommandRow, index: number) => string | import("yuke:ui").ListItem} */ (c => ({ text: c.name, right: c.hint })),
-    onAccept: /** @type {(c: CommandRow) => void} */ (c => command.perform(c.name)),
+    key: c => c.name,
+    filterText: c => c.name,
+    format: c => ({ text: c.name, right: c.hint }),
+    onAccept: c => command.perform(c.name),
   });
 }
 
@@ -883,13 +890,13 @@ function openSessionFinder() {
     height: 0.5,
     items: sidebar.list.items,
     key: rowKey,
-    filterText: /** @type {(r: SessionRow) => string} */ (r => rowLabel(r)),
-    format: /** @type {(r: SessionRow, index: number) => string | import("yuke:ui").ListItem} */ (r => ({ text: rowLabel(r), right: activityMark(r.activity) })),
-    onAccept: /** @type {(r: SessionRow) => void} */ (r => {
+    filterText: r => rowLabel(r),
+    format: r => ({ text: rowLabel(r), right: activityMark(r.activity) }),
+    onAccept: r => {
       sidebar.active = { connKey: r.connKey, sessionId: r.id };
       sidebar.list.selectedKey = rowKey(r);
       chatSession.open(r.connKey, r.id);
-    }),
+    },
   });
 }
 
@@ -907,10 +914,10 @@ function openMessagePicker() {
     width: 0.6,
     height: 0.5,
     items: items.reverse(),
-    key: /** @type {(r: MessagePickerItem) => number} */ (r => r.m.id),
-    filterText: /** @type {(r: MessagePickerItem) => string} */ (r => r.text),
-    format: /** @type {(r: MessagePickerItem, index: number) => string | import("yuke:ui").ListItem} */ (r => ({ text: firstLine(r.text) || "(empty)", right: r.m.type })),
-    onAccept: /** @type {(r: MessagePickerItem) => void} */ (r => copy(r.text, r.m.type + " message")),
+    key: r => r.m.id,
+    filterText: r => r.text,
+    format: r => ({ text: firstLine(r.text) || "(empty)", right: r.m.type }),
+    onAccept: r => copy(r.text, r.m.type + " message"),
   });
 }
 
@@ -935,9 +942,9 @@ function openModelPicker() {
       height: 0.6,
       items: models,
       key: qualified,
-      filterText: /** @type {(m: Wire.ModelInfo) => string} */ (m => m.provider + " " + m.name + " " + m.id),
-      format: /** @type {(m: Wire.ModelInfo, index: number) => string | import("yuke:ui").ListItem} */ (m => ({ text: m.name, right: m.provider })),
-      onAccept: /** @type {(m: Wire.ModelInfo) => void} */ (m => pickReasoning(connKey, m)),
+      filterText: m => m.provider + " " + m.name + " " + m.id,
+      format: m => ({ text: m.name, right: m.provider }),
+      onAccept: m => pickReasoning(connKey, m),
     });
     p.content.selectKey(currentId);
     return p;
@@ -961,10 +968,10 @@ function pickReasoning(connKey, model) {
     width: 0.4,
     height: 0.4,
     items: levels.map((id) => ({ id })),
-    key: /** @type {(l: { id: string }) => string} */ (l => l.id),
-    filterText: /** @type {(l: { id: string }) => string} */ (l => l.id),
-    format: /** @type {(l: { id: string }, index: number) => string | import("yuke:ui").ListItem} */ (l => ({ text: l.id })),
-    onAccept: /** @type {(l: { id: string }) => void} */ (l => chooseModel(model, l.id)),
+    key: l => l.id,
+    filterText: l => l.id,
+    format: l => ({ text: l.id }),
+    onAccept: l => chooseModel(model, l.id),
   }).content.selectKey(model.default_reasoning || levels[0]);
 }
 
@@ -981,10 +988,10 @@ function openCodePicker() {
     width: 0.6,
     height: 0.5,
     items: blocks.map((b, i) => ({ ...b, i })),
-    key: /** @type {(b: CodeBlockRow) => number} */ (b => b.i),
-    filterText: /** @type {(b: CodeBlockRow) => string} */ (b => b.lang + " " + b.text),
-    format: /** @type {(b: CodeBlockRow, index: number) => string | import("yuke:ui").ListItem} */ (b => ({ text: firstLine(b.text) || "(empty)", right: b.lang })),
-    onAccept: /** @type {(b: CodeBlockRow) => void} */ (b => copy(b.text, b.lang ? b.lang + " block" : "code block")),
+    key: b => b.i,
+    filterText: b => b.lang + " " + b.text,
+    format: b => ({ text: firstLine(b.text) || "(empty)", right: b.lang }),
+    onAccept: b => copy(b.text, b.lang ? b.lang + " block" : "code block"),
   });
 }
 
@@ -1103,7 +1110,7 @@ const NO_RETRY = {
 const connection = {
   nextRetryAt: 0,
   remoteRetryAt: Object.create(null),
-  roster: /** @type {DeviceInfo[]} */ ([]),
+  roster: [],
   rosterTried: false,
 
   onStart() {
@@ -1206,9 +1213,10 @@ function connectionLabel() {
   const ready = list.filter((c) => c.state === "ready");
   if (ready.length > 1) return ready.length + " connected";
   if (ready.length === 1) {
-    return (/** @type {NonNullable<(typeof ready)[number]>} */ (ready[0])).key === LOCAL
+    const conn = /** @type {NonNullable<(typeof ready)[number]>} */ (ready[0]);
+    return conn.key === LOCAL
       ? "local · connected"
-      : (/** @type {NonNullable<(typeof ready)[number]>} */ (ready[0])).key + " · connected";
+      : conn.key + " · connected";
   }
   const st = client.connectionState(LOCAL);
   if (st === "connecting") return "local · connecting…";

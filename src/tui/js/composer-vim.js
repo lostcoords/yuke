@@ -20,7 +20,6 @@ import { register, chatView } from "yuke:vim";
 /** @typedef {"insert" | "normal"} ComposerMode */
 /** @typedef {{ mode: ComposerMode, pending: string }} ComposerVimState */
 /** @typedef {{ start: number, end: number }} LineBounds */
-/** @typedef {Extract<HostEvent, { type: "key" }>} HostKeyEvent */
 
 const NORMAL_PROMPT = "▪ ";
 /** @type {WeakMap<ComposerType, ComposerVimState>} */
@@ -242,7 +241,7 @@ export const composerVim = {
 
     ctx.keymap({ esc: "composer-vim:normal" });
 
-    ctx.advise(Composer.prototype, "onKey", "around", /** @this {ComposerType} @param {(ev: HostEvent) => boolean} inner @param {HostKeyEvent} ev @returns {boolean} */ function (inner, ev) {
+    ctx.advise(Composer.prototype, "onKey", "around", /** @this {ComposerType} @param {(ev: HostEvent) => boolean} inner @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */ function (inner, ev) {
       if (composerMode(this) !== "normal") return inner(ev);
       const k = modalKey(ev);
       const first = takePrefix(stateOf(this));

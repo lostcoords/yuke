@@ -25,6 +25,7 @@ import { Document, isLinear } from "yuke:md";
 /** @typedef {{ start: number, end: number, label: string }} PasteSpan */
 /** @typedef {{ span: PasteSpan, start: number, end: number, delta: number }} ProjectionPart */
 /** @typedef {{ text: string, parts: ProjectionPart[] }} Projection */
+/** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ prompt?: string | undefined, placeholder?: string | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, maxRows?: number | undefined }} ComposerOptions */
 /** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: ((id: number) => readonly Wire.AssistantPart[]) | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((text: string) => boolean | void) | null | undefined, empty?: (() => readonly (string | { text?: unknown, group?: string })[] | null) | null | undefined }} ChatViewOptions */
 /** @typedef {{ tl: string, t: string, tr: string, r: string, br: string, b: string, bl: string, l: string }} BorderSet */
@@ -190,7 +191,10 @@ export class List {
   /** @returns {number[]} */
   _selectable() {
     const out = [];
-    for (let i = 0; i < this.items.length; i++) if (this.isSelectable(/** @type {T} */ (this.items[i]))) out.push(i);
+    for (let i = 0; i < this.items.length; i++) {
+      const item = /** @type {T} */ (this.items[i]);
+      if (this.isSelectable(item)) out.push(i);
+    }
     return out;
   }
 
@@ -198,7 +202,8 @@ export class List {
   _selIndex() {
     if (this.selectedKey == null) return -1;
     for (let i = 0; i < this.items.length; i++) {
-      if (this.isSelectable(/** @type {T} */ (this.items[i])) && this.key(/** @type {T} */ (this.items[i])) === this.selectedKey) return i;
+      const item = /** @type {T} */ (this.items[i]);
+      if (this.isSelectable(item) && this.key(item) === this.selectedKey) return i;
     }
     return -1;
   }
@@ -207,7 +212,12 @@ export class List {
   _ensureSelection() {
     if (this._selIndex() >= 0) return;
     const sel = this._selectable();
-    this.selectedKey = sel.length ? this.key(/** @type {T} */ (this.items[/** @type {number} */ (sel[0])])) : null;
+    if (sel.length) {
+      const index = /** @type {number} */ (sel[0]);
+      this.selectedKey = this.key(/** @type {T} */ (this.items[index]));
+    } else {
+      this.selectedKey = null;
+    }
   }
 
   /** @returns {T | null} */
@@ -234,8 +244,10 @@ export class List {
     if (sel.length === 0) return;
     let pos = sel.indexOf(this._selIndex());
     pos = pos < 0 ? 0 : Math.min(Math.max(pos + delta, 0), sel.length - 1);
-    this.selectedKey = this.key(/** @type {T} */ (this.items[/** @type {number} */ (sel[pos])]));
-    if (this.onMove) this.onMove(/** @type {T} */ (this.items[/** @type {number} */ (sel[pos])]), /** @type {number} */ (sel[pos]));
+    const index = /** @type {number} */ (sel[pos]);
+    const item = /** @type {T} */ (this.items[index]);
+    this.selectedKey = this.key(item);
+    if (this.onMove) this.onMove(item, index);
   }
 
   /** @param {number} dir @returns {void} */
@@ -299,9 +311,11 @@ export class List {
     const off = Math.floor((ev.row - r.y) / this.itemHeight);
     if (off >= this._visible(r.h)) return false;
     const i = this.scroll + off;
-    if (i < 0 || i >= this.items.length || !this.isSelectable(/** @type {T} */ (this.items[i]))) return false;
-    this.selectedKey = this.key(/** @type {T} */ (this.items[i]));
-    if (this.onMove) this.onMove(/** @type {T} */ (this.items[i]), i);
+    if (i < 0 || i >= this.items.length) return false;
+    const item = /** @type {T} */ (this.items[i]);
+    if (!this.isSelectable(item)) return false;
+    this.selectedKey = this.key(item);
+    if (this.onMove) this.onMove(item, i);
     return true;
   }
 
@@ -365,7 +379,7 @@ export class List {
 function normalizeCell(cell) {
   if (cell == null) return { text: "" };
   if (typeof cell === "string") return { text: cell };
-  return /** @type {ListItem} */ ({ text: cell.text != null ? String(cell.text) : "", .../** @type {object} */ (cell) });
+  return { text: cell.text != null ? String(cell.text) : "", ...cell };
 }
 
 // A vertical pager over a row source — { rowCount(width), rows(width, top, height) } — so the source
@@ -650,12 +664,13 @@ function staticRowSource(list) {
 function wrapPlain(id, body, width, group) {
   const src = body || "";
   const contentW = Math.max(1, width - TX_GUTTER);
-  const rows = /** @type {TranscriptRow[]} */ (wrapOffsets(src, contentW).map((r) => ({
+  /** @type {TranscriptRow[]} */
+  const rows = wrapOffsets(src, contentW).map((r) => ({
     segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
     indent: TX_GUTTER,
     key: id,
     kind: "compaction",
-  })));
+  }));
   rows.push({ text: "", key: id });
   return rows;
 }
@@ -665,14 +680,15 @@ function userRows(id, body, width) {
   const src = body || "";
   const contentW = Math.max(1, width - TX_GUTTER);
   const lines = wrapOffsets(src, contentW);
-  const rows = /** @type {TranscriptRow[]} */ (lines.map((r, i) => ({
+  /** @type {TranscriptRow[]} */
+  const rows = lines.map((r, i) => ({
     segments: [{ text: src.slice(r.start, r.end), group: "TxUser", src: r.start, srcEnd: r.end }],
     bg: "TxUser",
     indent: TX_GUTTER,
     marker: i === 0 ? "⟩" : null,
     markerGroup: "TxUserMarker",
     key: id,
-  })));
+  }));
   rows.push({ text: "", key: id });
   return rows;
 }
@@ -687,10 +703,10 @@ function shiftSrc(segments, base) {
 function wrapBody(src, width, group) {
   src = src || "";
   const contentW = Math.max(1, width);
-  return /** @type {TranscriptRow[]} */ (wrapOffsets(src, contentW).map((r) => ({
+  return wrapOffsets(src, contentW).map((r) => ({
     segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
     indent: TX_GUTTER,
-  })));
+  }));
 }
 
 /** @param {TranscriptRow[]} rows @param {number} cap @returns {TranscriptRow[]} */
@@ -746,7 +762,8 @@ function toolHeaderRow(part, expanded, width) {
   const summary = toolSummary(part.arguments);
   const state = part.state || {};
   const kind = toolStateKind(state);
-  const right = toolStateLabel(state) + (/** @type {{ duration_ms?: number }} */ (state).duration_ms != null ? " · " + /** @type {{ duration_ms: number }} */ (state).duration_ms + "ms" : "");
+  const duration = /** @type {{ duration_ms?: number }} */ (state);
+  const right = toolStateLabel(state) + (duration.duration_ms != null ? " · " + duration.duration_ms + "ms" : "");
   const err = kind === "error" || kind === "denied";
   const contentW = Math.max(1, width);
   const rightW = term.measure(right);
@@ -779,7 +796,8 @@ function toolBodyText(part) {
   const s = part.state || {};
   if (s.type === "error") return s.error || "";
   if (s.type === "denied") return s.reason || "";
-  if (/** @type {{ output?: string }} */ (s).output) return /** @type {{ output: string }} */ (s).output;
+  const output = /** @type {{ output?: string }} */ (s);
+  if (output.output) return output.output;
   return "";
 }
 
@@ -838,7 +856,8 @@ function viewRows(views, width) {
       source += label;
       rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
     } else {
-      const body = v && /** @type {{ text?: string }} */ (v).text ? /** @type {{ text: string }} */ (v).text : "";
+      const view = /** @type {{ text?: string }} */ (v);
+      const body = v && view.text ? view.text : "";
       source += body;
       for (const r of wrapBody(body, width, "TxToolBody")) rows.push({ ...r, segments: shiftSrc(r.segments, base) });
     }
@@ -925,12 +944,13 @@ function errorRows(id, error, width, srcBase) {
   const label = errorLabel(error);
   const base = srcBase || 0;
   const contentW = Math.max(1, width - TX_GUTTER);
-  const rows = /** @type {TranscriptRow[]} */ (wrapOffsets(label, contentW).map((r) => ({
+  /** @type {TranscriptRow[]} */
+  const rows = wrapOffsets(label, contentW).map((r) => ({
     segments: [{ text: label.slice(r.start, r.end), group: "TxError", src: base + r.start, srcEnd: base + r.end }],
     indent: TX_GUTTER,
     key: id,
     kind: "error",
-  })));
+  }));
   rows.push({ text: "", key: id });
   return { rows, source: label };
 }
@@ -1134,7 +1154,8 @@ export class Transcript {
   _rowsFor(id) {
     const i = this._indexOf(id);
     if (i < 0 || this._width <= 0) return [];
-    return this._rowsOf(/** @type {MessageDescriptor} */ (this._at(i)), this._width);
+    const message = /** @type {MessageDescriptor} */ (this._at(i));
+    return this._rowsOf(message, this._width);
   }
 
   // The number of rendered rows in one message.
@@ -1147,7 +1168,11 @@ export class Transcript {
   /** @param {number} id @param {number} row @returns {string} */
   rowTextAt(id, row) {
     const rows = this._rowsFor(id);
-    return row >= 0 && row < rows.length ? rowText(/** @type {TranscriptRow} */ (rows[row])) : "";
+    if (row >= 0 && row < rows.length) {
+      const line = /** @type {TranscriptRow} */ (rows[row]);
+      return rowText(line);
+    }
+    return "";
   }
 
   // The row index of `pos` across every message, or -1 when the position is gone.
@@ -1170,7 +1195,8 @@ export class Transcript {
     if (!pos || pos.row < 0) return -1;
     const rows = this._rowsFor(pos.id);
     if (pos.row >= rows.length) return -1;
-    return rowSourceAt(/** @type {TranscriptRow} */ (rows[pos.row]), pos.col);
+    const row = /** @type {TranscriptRow} */ (rows[pos.row]);
+    return rowSourceAt(row, pos.col);
   }
 
   // The position that renders source `offset`, or the first one after it. The end of the source
@@ -1181,7 +1207,8 @@ export class Transcript {
     let tail = null;
     let tailOff = -1;
     for (let k = 0; k < rows.length; k++) {
-      const segments = /** @type {TranscriptRow} */ (rows[k]).segments;
+      const row = /** @type {TranscriptRow} */ (rows[k]);
+      const segments = row.segments;
       if (!segments) continue;
       let at = 0;
       for (const seg of segments) {
@@ -1191,8 +1218,9 @@ export class Transcript {
             // A caret at the end of the source before a gap belongs to that end, not past it.
             if (offset === tailOff) return tail;
             const col = offset > seg.src && isLinear(seg) ? at + (offset - seg.src) : at;
-            const body = rowText(/** @type {TranscriptRow} */ (rows[k]));
-            return { id, row: k, col: caretAtCol(body, /** @type {{ start: number, end: number, soft: boolean }} */ (/** @type {unknown} */ ({ start: 0, end: body.length })), term.measure(body.slice(0, Math.min(col, end)))) };
+            const body = rowText(row);
+            const wrapRow = { start: 0, end: body.length, soft: false };
+            return { id, row: k, col: caretAtCol(body, wrapRow, term.measure(body.slice(0, Math.min(col, end)))) };
           }
           tail = { id, row: k, col: end };
           tailOff = /** @type {number} */ (seg.srcEnd);
@@ -1211,9 +1239,10 @@ export class Transcript {
     if (!rect || rect.w <= 0 || rect.h <= 0 || g < 0) return null;
     const y = rect.y + (g - this.pager.scroll);
     if (y < rect.y || y >= rect.y + rect.h) return null;
-    const row = /** @type {TranscriptRow} */ (this._rowsFor(/** @type {number} */ (/** @type {Position} */ (pos).id))[/** @type {Position} */ (pos).row]);
+    if (!pos) return null;
+    const row = /** @type {TranscriptRow} */ (this._rowsFor(pos.id)[pos.row]);
     const body = rowText(row);
-    const x = rect.x + (row.indent || 0) + term.measure(body.slice(0, /** @type {Position} */ (pos).col));
+    const x = rect.x + (row.indent || 0) + term.measure(body.slice(0, pos.col));
     return x >= rect.x + rect.w ? null : { x, y };
   }
 
@@ -1286,7 +1315,8 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
     if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
-    return defaultExpanded(/** @type {Wire.ToolState | null | undefined} */ (/** @type {unknown} */ (part && /** @type {{ state?: Wire.ToolState }} */ (part).state)));
+    const state = part == null ? part : part.type === "tool" ? part.state : undefined;
+    return defaultExpanded(state);
   }
 
   // Flip the user override for one foldable part. A missing part is a no-op.
@@ -1363,7 +1393,10 @@ export class Transcript {
       for (const s of stops) if (this._cmpPos(s, pos) > 0) return s;
       return null;
     }
-    for (let n = stops.length - 1; n >= 0; n--) if (this._cmpPos(/** @type {Position} */ (stops[n]), pos) < 0) return /** @type {Position} */ (stops[n]);
+    for (let n = stops.length - 1; n >= 0; n--) {
+      const stop = /** @type {Position} */ (stops[n]);
+      if (this._cmpPos(stop, pos) < 0) return stop;
+    }
     return null;
   }
 
@@ -1503,7 +1536,8 @@ export class Transcript {
       if (!m) break;
       const rows = this._rowsOf(m, this._width);
       for (let k = 0; k < rows.length; k++) {
-        const body = rowText(/** @type {TranscriptRow} */ (rows[k]));
+        const row = /** @type {TranscriptRow} */ (rows[k]);
+        const body = rowText(row);
         const r = this._rowRange(range, i, k, body.length);
         if (r) out.push(body.slice(r.from, r.to));
       }
@@ -1526,10 +1560,11 @@ export class Transcript {
       let from = -1;
       let to = -1;
       for (let k = 0; k < rows.length; k++) {
-        const r = this._rowRange(range, i, k, rowText(/** @type {TranscriptRow} */ (rows[k])).length);
+        const row = /** @type {TranscriptRow} */ (rows[k]);
+        const r = this._rowRange(range, i, k, rowText(row).length);
         if (!r) continue;
-        plain.push(rowText(/** @type {TranscriptRow} */ (rows[k])).slice(r.from, r.to));
-        const span = rowSourceSpan(/** @type {TranscriptRow} */ (rows[k]), r.from, r.to);
+        plain.push(rowText(row).slice(r.from, r.to));
+        const span = rowSourceSpan(row, r.from, r.to);
         if (!span) continue;
         if (from < 0 || span.from < from) from = span.from;
         if (span.to > to) to = span.to;
@@ -1548,7 +1583,10 @@ export class Transcript {
   _emptyRows() {
     if (!this.empty || this._messages.length > 0 || this._active) return null;
     const lines = this.empty();
-    return lines && lines.length ? lines.map((l) => ({ text: /** @type {{ text?: unknown }} */ (l).text == null ? String(l) : String(/** @type {{ text: unknown }} */ (l).text), group: /** @type {{ group?: string }} */ (l).group || "YukeEmpty", indent: TX_GUTTER })) : null;
+    return lines && lines.length ? lines.map((l) => {
+      const line = /** @type {{ text?: unknown, group?: string }} */ (l);
+      return { text: line.text == null ? String(l) : String(line.text), group: line.group || "YukeEmpty", indent: TX_GUTTER };
+    }) : null;
   }
 
   /** @param {number} width @returns {number} */
@@ -1582,10 +1620,11 @@ export class Transcript {
       for (let k = 0; k < rows.length; k++) {
         const abs = base + k;
         if (abs < top || abs >= top + height) continue;
+        const row = /** @type {TranscriptRow} */ (rows[k]);
         // The row objects are cached, so a selection goes onto a copy.
-        const r = range && this._rowRange(range, i, k, rowText(/** @type {TranscriptRow} */ (rows[k])).length);
+        const r = range && this._rowRange(range, i, k, rowText(row).length);
         // An empty range paints nothing, so only a real span goes onto the row copy.
-        out.push(r && r.to > r.from ? { .../** @type {TranscriptRow} */ (rows[k]), sel: r } : /** @type {TranscriptRow} */ (rows[k]));
+        out.push(r && r.to > r.from ? { ...row, sel: r } : row);
       }
       base += rows.length;
       if (base >= top + height) break;
@@ -1607,7 +1646,8 @@ export class Transcript {
   last(type) {
     const all = this.messages();
     for (let i = all.length - 1; i >= 0; i--) {
-      if (!type || /** @type {MessageDescriptor} */ (all[i]).type === type) return /** @type {MessageDescriptor} */ (all[i]);
+      const message = /** @type {MessageDescriptor} */ (all[i]);
+      if (!type || message.type === type) return message;
     }
     return null;
   }
@@ -1663,7 +1703,8 @@ export class Transcript {
         const line = /** @type {TranscriptRow} */ (rows[g - base]);
         const body = rowText(line);
         const x = Math.max(0, col - rect.x - (line.indent || 0));
-        return { id: m.id, row: g - base, col: caretAtCol(body, /** @type {{ start: number, end: number, soft: boolean }} */ (/** @type {unknown} */ ({ start: 0, end: body.length })), x) };
+        const wrapRow = { start: 0, end: body.length, soft: false };
+        return { id: m.id, row: g - base, col: caretAtCol(body, wrapRow, x) };
       }
       base += rows.length;
     }
@@ -1739,7 +1780,7 @@ export class Composer {
     /** @type {PasteSpan[]} */
     this.spans = [];
     this.nextPaste = 1;
-    /** @type {{ start: number, end: number, soft: boolean }[] | null} */
+    /** @type {WrapRow[] | null} */
     this._rows = null;
     this._rowsW = -1;
     /** @type {Projection | null} */
@@ -1942,14 +1983,15 @@ export class Composer {
     const col = this.goalCol === null ? here.col : this.goalCol;
     const next = here.row + delta;
     if (next >= 0 && next < rows.length) {
-      this.input.caret = this._toText(caretAtCol(proj, /** @type {{ start: number, end: number, soft: boolean }} */ (rows[next]), col));
+      const row = /** @type {WrapRow} */ (rows[next]);
+      this.input.caret = this._toText(caretAtCol(proj, row, col));
       this.goalCol = col;
     }
     return true;
   }
 
   // Scroll the smallest amount that keeps the caret row on the screen.
-  /** @param {{ start: number, end: number, soft: boolean }[]} rows @param {number} h @returns {void} */
+  /** @param {WrapRow[]} rows @param {number} h @returns {void} */
   _scrollTo(rows, h) {
     const { row } = caretRowCol(this._projection().text, rows, this._toDisplay(this.input.caret));
     this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
@@ -1976,7 +2018,7 @@ export class Composer {
     // The prompt marks the first row only. A later row aligns under it.
     if (this.scroll === 0) text(x, y, this._prompt(), "UIComposer");
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
-      const r = /** @type {{ start: number, end: number, soft: boolean }} */ (rows[this.scroll + i]);
+      const r = /** @type {WrapRow} */ (rows[this.scroll + i]);
       text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
     }
   }
@@ -2417,8 +2459,9 @@ function precomputeBonus(chars) {
   const bonus = new Array(chars.length);
   let last = "/";
   for (let i = 0; i < chars.length; i++) {
-    bonus[i] = charBonus(last, /** @type {string} */ (chars[i]));
-    last = /** @type {string} */ (chars[i]);
+    const char = /** @type {string} */ (chars[i]);
+    bonus[i] = charBonus(last, char);
+    last = char;
   }
   return bonus;
 }

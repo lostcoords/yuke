@@ -8,8 +8,10 @@ import { register, chatView } from "yuke:vim";
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ on: boolean, cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null, pending: string }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
-/** @typedef {Extract<HostEvent, { type: "key" }>} KeyEvent */
-/** @typedef {Extract<HostEvent, { type: "mouse" }>} MouseEvent */
+/** @typedef {Extract<HostEvent, { type: "key" }>} HostKeyEvent */
+/** @typedef {Extract<HostEvent, { type: "mouse" }>} HostMouseEvent */
+/** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
+/** @typedef {{ kind: string, at: number, end: number }} Block */
 /** @typedef {{ command: (predicate: () => boolean, map: Record<string, () => void>) => unknown, keymap: (bindings: Record<string, string>) => unknown, advise: (obj: object, prop: string, where: string, fn: (...args: never[]) => unknown) => unknown }} PluginContext */
 
 /** @type {WeakMap<ChatView, VimState>} */
@@ -32,9 +34,10 @@ function rowOf(t, pos) {
 
 /** @param {Transcript} t @param {VimState} s @returns {void} */
 function holdCol(t, s) {
-  const body = rowOf(t, /** @type {Position} */ (s.cursor));
+  const cursor = /** @type {Position} */ (s.cursor);
+  const body = rowOf(t, cursor);
   if (body.length === 0) return;
-  if (/** @type {Position} */ (s.cursor).col >= body.length) s.cursor = { .../** @type {Position} */ (s.cursor), col: prevGrapheme(body, body.length) };
+  if (cursor.col >= body.length) s.cursor = { ...cursor, col: prevGrapheme(body, body.length) };
 }
 
 /** @param {Transcript} t @returns {number[]} */
@@ -88,73 +91,88 @@ function cursorOf(t, pos) {
 
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function stepCol(t, s, d) {
-  const body = rowOf(t, /** @type {Position} */ (s.cursor));
-  const col = d < 0 ? prevGrapheme(body, /** @type {Position} */ (s.cursor).col) : nextGrapheme(body, /** @type {Position} */ (s.cursor).col);
-  if (col === /** @type {Position} */ (s.cursor).col) return false;
-  s.cursor = { id: /** @type {Position} */ (s.cursor).id, row: /** @type {Position} */ (s.cursor).row, col: Math.min(col, body.length) };
+  const cursor = /** @type {Position} */ (s.cursor);
+  const body = rowOf(t, cursor);
+  const col = d < 0 ? prevGrapheme(body, cursor.col) : nextGrapheme(body, cursor.col);
+  if (col === cursor.col) return false;
+  s.cursor = { id: cursor.id, row: cursor.row, col: Math.min(col, body.length) };
   return true;
 }
 
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function stepRow(t, s, d) {
   const ids = idsOf(t);
-  let i = ids.indexOf(/** @type {Position} */ (s.cursor).id);
+  const cursor = /** @type {Position} */ (s.cursor);
+  let i = ids.indexOf(cursor.id);
   if (i < 0) return false;
 
-  let r = /** @type {Position} */ (s.cursor).row + d;
-  while (r < 0 || r >= t.rowCountOf(/** @type {number} */ (ids[i]))) {
+  let r = cursor.row + d;
+  let id = /** @type {number} */ (ids[i]);
+  while (r < 0 || r >= t.rowCountOf(id)) {
     if (r < 0) {
       if (i === 0) return false;
       i--;
-      r += t.rowCountOf(/** @type {number} */ (ids[i]));
+      id = /** @type {number} */ (ids[i]);
+      r += t.rowCountOf(id);
     } else {
       if (i === ids.length - 1) return false;
-      r -= t.rowCountOf(/** @type {number} */ (ids[i]));
+      r -= t.rowCountOf(id);
       i++;
+      id = /** @type {number} */ (ids[i]);
     }
   }
 
-  const goal = s.goal == null ? term.measure(rowOf(t, /** @type {Position} */ (s.cursor)).slice(0, /** @type {Position} */ (s.cursor).col)) : s.goal;
-  const body = t.rowTextAt(/** @type {number} */ (ids[i]), r);
-  s.cursor = { id: /** @type {number} */ (ids[i]), row: r, col: caretAtCol(body, /** @type {{ start: number, end: number, soft: boolean }} */ (/** @type {unknown} */ ({ start: 0, end: body.length })), goal) };
+  const goal = s.goal == null ? term.measure(rowOf(t, cursor).slice(0, cursor.col)) : s.goal;
+  const body = t.rowTextAt(id, r);
+  const row = /** @type {WrapRow} */ ({ start: 0, end: body.length });
+  s.cursor = { id, row: r, col: caretAtCol(body, row, goal) };
   s.goal = goal;
   return true;
 }
 
 /** @param {Transcript} t @param {VimState} s @param {(text: string, at: number) => number} find @param {number} edge @returns {boolean} */
 function wordStep(t, s, find, edge) {
-  const body = rowOf(t, /** @type {Position} */ (s.cursor));
-  const col = find(body, /** @type {Position} */ (s.cursor).col);
-  if (col !== /** @type {Position} */ (s.cursor).col) {
-    s.cursor = { .../** @type {Position} */ (s.cursor), col };
+  const cursor = /** @type {Position} */ (s.cursor);
+  const body = rowOf(t, cursor);
+  const col = find(body, cursor.col);
+  if (col !== cursor.col) {
+    s.cursor = { ...cursor, col };
     return true;
   }
   if (!stepRow(t, s, edge)) return false;
-  s.cursor = { .../** @type {Position} */ (s.cursor), col: edge > 0 ? 0 : rowOf(t, /** @type {Position} */ (s.cursor)).length };
+  const next = /** @type {Position} */ (s.cursor);
+  s.cursor = { ...next, col: edge > 0 ? 0 : rowOf(t, next).length };
   return true;
 }
 
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function blockStep(t, s, d) {
   const ids = idsOf(t);
-  let i = ids.indexOf(/** @type {Position} */ (s.cursor).id);
+  const cursor = /** @type {Position} */ (s.cursor);
+  let i = ids.indexOf(cursor.id);
   if (i < 0) return false;
 
-  let blocks = t.blocksOf(/** @type {number} */ (ids[i]));
-  let here = t.sourceAt(/** @type {Position} */ (s.cursor));
-  for (let r = /** @type {Position} */ (s.cursor).row - 1; here < 0 && r >= 0; r--) here = t.sourceAt({ .../** @type {Position} */ (s.cursor), row: r });
+  let id = /** @type {number} */ (ids[i]);
+  let blocks = t.blocksOf(id);
+  let here = t.sourceAt(cursor);
+  for (let r = cursor.row - 1; here < 0 && r >= 0; r--) here = t.sourceAt({ ...cursor, row: r });
   let k = -1;
-  for (let n = 0; n < blocks.length; n++) if (here >= /** @type {{ kind: string, at: number, end: number }} */ (blocks[n]).at) k = n;
+  for (let n = 0; n < blocks.length; n++) {
+    const block = /** @type {Block} */ (blocks[n]);
+    if (here >= block.at) k = n;
+  }
   k += d;
 
   while (k < 0 || k >= blocks.length) {
     i += d;
     if (i < 0 || i >= ids.length) return false;
-    blocks = t.blocksOf(/** @type {number} */ (ids[i]));
+    id = /** @type {number} */ (ids[i]);
+    blocks = t.blocksOf(id);
     k = d > 0 ? 0 : blocks.length - 1;
   }
 
-  const pos = t.posAtSource(/** @type {number} */ (ids[i]), /** @type {{ kind: string, at: number, end: number }} */ (blocks[k]).at);
+  const block = /** @type {Block} */ (blocks[k]);
+  const pos = t.posAtSource(id, block.at);
   if (!pos) return false;
   s.cursor = pos;
   return true;
@@ -291,12 +309,13 @@ export const transcriptVim = {
       this.transcript.clearSelection();
     });
 
-    ctx.advise(ChatView.prototype, "onKey", "around", /** @this {ChatView} @param {(ev: KeyEvent) => boolean} inner @param {KeyEvent} ev @returns {boolean} */ function (inner, ev) {
+    ctx.advise(ChatView.prototype, "onKey", "around", /** @this {ChatView} @param {(ev: HostEvent) => boolean} inner @param {HostKeyEvent} ev @returns {boolean} */ function (inner, ev) {
       const s = panes.get(this);
       if (!s || !s.on) return inner(ev);
 
       const t = this.transcript;
       if (!s.cursor) seed(this, s);
+      const active = /** @type {{ cursor: Position }} */ (s);
       reanchor(t, s);
       const k = modalKey(ev);
       const first = takePrefix(s);
@@ -304,7 +323,7 @@ export const transcriptVim = {
         if (k === "g" && toEnd(t, s, false)) {
           holdCol(t, s);
           syncSelection(t, s);
-          t.ensureVisible(/** @type {Position} */ (s.cursor));
+          t.ensureVisible(active.cursor);
           return place(this, s);
         }
         if (k === "y") {
@@ -322,12 +341,12 @@ export const transcriptVim = {
       }
 
       if (k === "enter") {
-        const hit = t.partAt(/** @type {Position} */ (s.cursor));
+        const hit = t.partAt(s.cursor);
         if (hit && (hit.kind === "tool-header" || hit.kind === "tool-body" || hit.kind === "reasoning-header" || hit.kind === "reasoning-body")) {
           t.togglePart(hit.id, hit.partId);
           const header = t.partHeader(hit.id, hit.partId);
           if (header) s.cursor = header;
-          t.ensureVisible(/** @type {Position} */ (s.cursor));
+          t.ensureVisible(active.cursor);
         }
         return place(this, s);
       }
@@ -349,7 +368,7 @@ export const transcriptVim = {
         s.anchor = s.cursor;
         s.cursor = swap;
         syncSelection(t, s);
-        t.ensureVisible(/** @type {Position} */ (s.cursor));
+        t.ensureVisible(active.cursor);
         return place(this, s);
       }
       if (k === "Y") {
@@ -367,7 +386,7 @@ export const transcriptVim = {
       if (!move(t, s, k)) return false;
       holdCol(t, s);
       syncSelection(t, s);
-      t.ensureVisible(/** @type {Position} */ (s.cursor));
+      t.ensureVisible(active.cursor);
       return place(this, s);
     });
 
@@ -379,7 +398,7 @@ export const transcriptVim = {
       return cursorOf(this.transcript, s.cursor) || inner();
     });
 
-    ctx.advise(ChatView.prototype, "onMouse", "around", /** @this {ChatView} @param {(ev: MouseEvent) => boolean} inner @param {MouseEvent} ev @returns {boolean} */ function (inner, ev) {
+    ctx.advise(ChatView.prototype, "onMouse", "around", /** @this {ChatView} @param {(ev: HostEvent) => boolean} inner @param {HostMouseEvent} ev @returns {boolean} */ function (inner, ev) {
       const taken = inner(ev);
       if (ev.event !== "press" || ev.button !== "left") return taken;
       const s = stateOf(this);
